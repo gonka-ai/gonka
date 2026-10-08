@@ -126,8 +126,7 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 	h.recordValidationObsFromAppliedDiff(rec.Txs)
 	phaseAfter := h.sm.Phase()
 	settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
-	shouldSnapshot := settledNow || rec.Nonce%SnapshotInterval == 0
-	h.maybeSaveSnapshotLocked(rec.Nonce, shouldSnapshot, settledNow)
+	h.maybeSaveSnapshotLocked(rec.Nonce, ShouldPersistSnapshot(rec.Nonce, settledNow), settledNow)
 	return nil
 }
 

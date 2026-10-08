@@ -12,8 +12,6 @@ import (
 
 	commonvalidation "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 
@@ -36,15 +34,7 @@ func signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	signerAddress, err := sdk.AccAddressFromBech32(recorder.GetSignerAddress())
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: recorder.GetKeyring(),
-	}
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(recorder, components, calculations.Developer)
 }
 
 func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, executorAddress string) ([]string, error) {

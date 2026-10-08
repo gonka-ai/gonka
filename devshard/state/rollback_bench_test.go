@@ -5,6 +5,8 @@ import (
 	"maps"
 	"testing"
 
+	"github.com/gtank/ristretto255"
+
 	"devshard/types"
 )
 
@@ -117,7 +119,7 @@ func benchRollbackWrite(b *testing.B, sm *StateMachine, i int, journaled bool) {
 }
 
 // benchRollbackCheck fails the benchmark if the written records do not hold
-// votes or the running XOR no longer matches the committed blobs.
+// votes or the running point sum no longer matches the committed blobs.
 func benchRollbackCheck(b *testing.B, sm *StateMachine, votes uint32) {
 	b.Helper()
 	b.StopTimer()
@@ -126,8 +128,9 @@ func benchRollbackCheck(b *testing.B, sm *StateMachine, votes uint32) {
 			b.Fatalf("inference %d votes %d, want %d", k+1, got, votes)
 		}
 	}
-	if sm.liveEntryXOR != xorInferencesHashFromEntries(sm.committedEntries) {
-		b.Fatal("running XOR does not match committed entries")
+	fresh := sumLivePointsFromEntries(sm.committedEntries)
+	if sm.liveEntrySum.Equal(&fresh) != 1 {
+		b.Fatal("running point sum does not match committed entries")
 	}
 }
 
@@ -136,7 +139,7 @@ func benchRollbackCheck(b *testing.B, sm *StateMachine, votes uint32) {
 type copyRollback struct {
 	balance, fees, finalizeNonce, latestNonce uint64
 	phase                                     types.SessionPhase
-	liveEntryXOR                              [32]byte
+	liveEntrySum                              ristretto255.Element
 	inferences                                map[uint64]*types.InferenceRecord
 	committed                                 map[uint64][]byte
 	hostStats                                 map[uint32]*types.HostStats
@@ -162,7 +165,7 @@ func copyRollbackOf(sm *StateMachine) copyRollback {
 		finalizeNonce: st.FinalizeNonce,
 		latestNonce:   st.LatestNonce,
 		phase:         st.Phase,
-		liveEntryXOR:  sm.liveEntryXOR,
+		liveEntrySum:  sm.liveEntrySum,
 		inferences:    copyInferences(st.Inferences),
 		committed:     cloneCommittedInferenceEntries(sm.committedEntries),
 		hostStats:     hostStats,
@@ -179,7 +182,7 @@ func (c copyRollback) restore(sm *StateMachine) {
 	st.FinalizeNonce = c.finalizeNonce
 	st.LatestNonce = c.latestNonce
 	st.Phase = c.phase
-	sm.liveEntryXOR = c.liveEntryXOR
+	sm.liveEntrySum = c.liveEntrySum
 	st.Inferences = c.inferences
 	sm.committedEntries = c.committed
 	st.HostStats = c.hostStats

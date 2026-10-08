@@ -6,7 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -135,6 +138,37 @@ type Host struct {
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
 const SnapshotInterval = 500
+
+// DisablePeriodicSnapshotsEnv disables periodic snapshots when set to true.
+const DisablePeriodicSnapshotsEnv = "DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS"
+
+// PeriodicSnapshotsDisabled defaults to false.
+func PeriodicSnapshotsDisabled() bool {
+	v := strings.TrimSpace(os.Getenv(DisablePeriodicSnapshotsEnv))
+	if v == "" {
+		return false
+	}
+	disabled, err := strconv.ParseBool(v)
+	if err != nil {
+		return false
+	}
+	return disabled
+}
+
+// ShouldPersistSnapshot is true on the diff that enters settlement, and on
+// every SnapshotInterval nonce unless periodic snapshots are disabled.
+func ShouldPersistSnapshot(nonce uint64, settledNow bool) bool {
+	if nonce == 0 {
+		return false
+	}
+	if settledNow {
+		return true
+	}
+	if PeriodicSnapshotsDisabled() {
+		return false
+	}
+	return nonce%SnapshotInterval == 0
+}
 
 func NewHost(
 	sm *state.StateMachine,
@@ -649,8 +683,7 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 		h.recordValidationObsFromAppliedDiff(diff.Txs)
 		phaseAfter := h.sm.Phase()
 		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
-		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
-		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
+		h.maybeSaveSnapshotLocked(diff.Nonce, ShouldPersistSnapshot(diff.Nonce, settledNow), settledNow)
 	}
 	return nil
 }

@@ -21,8 +21,6 @@ import (
 	"common/utils"
 	validationpkg "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
@@ -909,20 +907,27 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
 			} else {
 				sm.RestoreState(snapState)
-				sm.RestoreCommittedEntries(committedEntries)
-				sm.RestoreSealedNonces(sealedNonces)
-				if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
-					// Restore already mutated sm, so the rejected state has to
-					// be thrown away rather than replayed on top of.
-					logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+				if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
 					if sm, err = newStateMachine(); err != nil {
-						return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						return nil, nil, fmt.Errorf("recreate state machine after committed-entry audit: %w", err)
 					}
 				} else {
-					replayFrom = snapNonce + 1
-					logging.Info("restored devshard snapshot", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					sm.RestoreSealedNonces(sealedNonces)
+					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+						// Restore already mutated sm, so the rejected state has to
+						// be thrown away rather than replayed on top of.
+						logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+						if sm, err = newStateMachine(); err != nil {
+							return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						}
+					} else {
+						replayFrom = snapNonce + 1
+						logging.Info("restored devshard snapshot", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					}
 				}
 			}
 		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
@@ -1256,17 +1261,7 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 		ExecutorAddress: "",
 	}
 
-	signerAddressStr := m.recorder.GetSignerAddress()
-	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: m.recorder.GetKeyring(),
-	}
-
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(m.recorder, components, calculations.Developer)
 }
 
 // SessionMemory is the retained-map sizes across loaded sessions.

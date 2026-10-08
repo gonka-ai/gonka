@@ -240,6 +240,13 @@ func RecoverSession(
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
 		} else if sm.RestoreState(snapState.state); !restoredRootMatchesJournal(store, sm, escrowID, snapNonce) {
 			sm.RestoreState(initialState)
+		} else if commitErr := sm.RestoreCommittedEntries(nil); commitErr != nil {
+			// RestoreState rebuilds committed entries from the live records.
+			// A failed rebuild has already advanced the machine, so replay
+			// from 1 starts again from the state before this snapshot.
+			log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
+				escrowID, snapNonce, commitErr)
+			sm.RestoreState(initialState)
 		} else {
 			replayFrom = snapNonce + 1
 			sess.nonce = snapNonce
