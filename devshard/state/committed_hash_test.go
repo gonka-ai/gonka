@@ -414,8 +414,8 @@ func TestLiveHashRejectsJournaledMembershipMismatch(t *testing.T) {
 		Model:        "llama",
 		PromptHash:   []byte("prompt"),
 		InputLength:  100,
-		MaxTokens:    testutil.TestMaxTokens,
-		ReservedCost: 100 + testutil.TestMaxTokens,
+		MaxTokens:    50,
+		ReservedCost: 150,
 		StartedAt:    1000,
 	})
 	require.Equal(t, len(sm.state.Inferences), len(sm.committedEntries))
