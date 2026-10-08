@@ -139,13 +139,10 @@ type Host struct {
 // SnapshotInterval controls how often hosts persist full state snapshots.
 const SnapshotInterval = 500
 
-// DisablePeriodicSnapshotsEnv skips the snapshot written every SnapshotInterval
-// nonces. The snapshot taken when a session enters settlement still runs.
-// Unset or false keeps the periodic snapshots.
+// DisablePeriodicSnapshotsEnv disables periodic snapshots when set to true.
 const DisablePeriodicSnapshotsEnv = "DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS"
 
-// PeriodicSnapshotsDisabled reports whether DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS
-// is set. Unset and any value other than a true bool keep periodic snapshots.
+// PeriodicSnapshotsDisabled defaults to false.
 func PeriodicSnapshotsDisabled() bool {
 	v := strings.TrimSpace(os.Getenv(DisablePeriodicSnapshotsEnv))
 	if v == "" {

@@ -916,9 +916,7 @@ func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
 // snapshotInFlight (atomic CAS) ensures that if a previous save hasn't
 // finished by the next interval boundary we skip rather than pile up
 // concurrent writers. Skipping is safe -- the cursor will simply be
-// captured at the next interval (snapshotInterval nonces later). A
-// settlement snapshot is not skipped. DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS
-// drops the interval writes and leaves the settlement snapshot.
+// captured at the next interval. Settlement snapshots are not skipped.
 //
 // Caller must hold s.mu.
 func (s *Session) maybeSaveSnapshotLocked(settledNow bool) {
