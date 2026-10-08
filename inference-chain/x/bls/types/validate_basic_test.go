@@ -63,7 +63,8 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 
 	validCommitment := make([]byte, commitmentCompressedG2Len)
 	validCommitment[0] = 0x01
-	validShare := []byte{0x01, 0x02}
+	validShare := make([]byte, MinEncryptedShareCiphertextLen)
+	validShare[0] = 0x01
 
 	mkValidMsg := func() *MsgSubmitDealerPart {
 		return &MsgSubmitDealerPart{
@@ -138,7 +139,17 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	t.Run("oversized encrypted share ciphertext", func(t *testing.T) {
 		msg := mkValidMsg()
 		msg.EncryptedSharesForParticipants = []EncryptedSharesForParticipant{{
-			EncryptedShares: [][]byte{make([]byte, maxEncryptedShareCiphertextLen+1)},
+			EncryptedShares: [][]byte{make([]byte, MaxEncryptedShareCiphertextLen+1)},
+		}}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("undersized encrypted share ciphertext", func(t *testing.T) {
+		msg := mkValidMsg()
+		short := make([]byte, 98)
+		short[0] = 0x04
+		msg.EncryptedSharesForParticipants = []EncryptedSharesForParticipant{{
+			EncryptedShares: [][]byte{short},
 		}}
 		require.Error(t, msg.ValidateBasic())
 	})

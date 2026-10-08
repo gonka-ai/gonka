@@ -19,7 +19,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 type testBed struct {
@@ -167,6 +169,17 @@ func TestMockDAPI_OmitBlockRoutes_LooksLikeOldDapi(t *testing.T) {
 	require.NoError(t, err)
 	_ = latest.Body.Close()
 	require.Equal(t, http.StatusNotFound, latest.StatusCode)
+
+	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := gen.NewNodeManagerClient(conn)
+
+	_, err = client.GetBlockHeader(context.Background(), &gen.GetBlockHeaderRequest{Height: 1})
+	require.Equal(t, codes.Unimplemented, status.Code(err), "old dapi has no GetBlockHeader")
+
+	_, err = client.ProveBlockPath(context.Background(), &gen.ProveBlockPathRequest{Height: 1, Path: "/escrow/1"})
+	require.Equal(t, codes.Unimplemented, status.Code(err), "old dapi has no ProveBlockPath")
 }
 
 func startBedOmitBlocks(t *testing.T) testBed {
@@ -256,7 +269,39 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Equal(t, updated, cfg)
 }
 
-func TestMockDAPI_BlockAtAdvances(t *testing.T) {
+func TestMockDAPI_GetBlockHeaderMatchesHTTP(t *testing.T) {
+	bed := startBed(t)
+	t.Cleanup(bed.cleanup)
+
+	httpResp, err := http.Get(bed.httpURL + "/block/1")
+	require.NoError(t, err)
+	defer httpResp.Body.Close()
+	require.Equal(t, http.StatusOK, httpResp.StatusCode)
+	var httpHdr struct {
+		Height    int64  `json:"Height"`
+		ChainID   string `json:"ChainID"`
+		BlockHash []byte `json:"BlockHash"`
+	}
+	require.NoError(t, json.NewDecoder(httpResp.Body).Decode(&httpHdr))
+
+	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := gen.NewNodeManagerClient(conn)
+
+	grpcResp, err := client.GetBlockHeader(context.Background(), &gen.GetBlockHeaderRequest{Height: 1})
+	require.NoError(t, err)
+	require.Equal(t, httpHdr.Height, grpcResp.Header.Height)
+	require.Equal(t, httpHdr.ChainID, grpcResp.Header.ChainId)
+	require.Equal(t, httpHdr.BlockHash, grpcResp.Header.BlockHash)
+
+	proof, err := client.ProveBlockPath(context.Background(), &gen.ProveBlockPathRequest{Height: 1, Path: "/escrow/1"})
+	require.NoError(t, err)
+	require.Equal(t, "/escrow/1", proof.Proof.Path)
+	require.NotEmpty(t, proof.Proof.Value)
+}
+
+func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)
 

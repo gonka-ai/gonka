@@ -1,6 +1,6 @@
 x-proxy-policy: &proxy-policy
   image: >-
-    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.16}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
     - PROXY_PROTOCOL=true
@@ -64,7 +64,7 @@ x-proxy-policy: &proxy-policy
 
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.16
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -74,7 +74,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.15
+    image: ghcr.io/product-science/inferenced:0.2.16
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -113,7 +113,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.15-post3
+    image: ghcr.io/product-science/api:0.2.16
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -156,7 +156,7 @@ services:
 
   edge-api:
     container_name: edge-api
-    image: ghcr.io/product-science/edge-api:0.2.15
+    image: ghcr.io/product-science/edge-api:0.2.16
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
@@ -164,14 +164,19 @@ services:
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # The base topology has no readiness-aware edge-api balancer, so there
+      # is nothing to announce to before draining.
+      - EDGE_API_DRAIN_ANNOUNCE=0s
+      - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
+    stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
     restart: always
 
   versiond:
     container_name: versiond
     image: >-
-      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
+      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
@@ -217,7 +222,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.15
+    image: ghcr.io/product-science/bridge:0.2.16
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -259,7 +264,7 @@ services:
   proxy:
     container_name: proxy
     image: >-
-      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
+      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.16}
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -296,7 +301,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.15
+    image: ghcr.io/product-science/proxy-ssl:0.2.16
     profiles:
       - ssl
     environment:

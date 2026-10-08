@@ -23,6 +23,16 @@ func HeaderFromResultBlock(res *ctypes.ResultBlock) (*blocks.Header, error) {
 	return blocks.HashOnlyHeader(h.Height, h.Time, h.ChainID, hash), nil
 }
 
+// HeaderFromResultHeader maps Comet /header (LoadBlockMeta) to a hash-only
+// Header. Same hash as HeaderFromResultBlock; no txs on the wire.
+func HeaderFromResultHeader(res *ctypes.ResultHeader) (*blocks.Header, error) {
+	if res == nil || res.Header == nil {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	h := res.Header
+	return blocks.HashOnlyHeader(h.Height, h.Time, h.ChainID, h.Hash().Bytes()), nil
+}
+
 // AsEventDataNewBlock unwraps amino JSON into EventDataNewBlock. The
 // Comet decoder may store either the value or a pointer behind TMEventData.
 func AsEventDataNewBlock(v any) (cmttypes.EventDataNewBlock, bool) {

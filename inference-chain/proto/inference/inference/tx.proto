@@ -15,6 +15,7 @@ import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/poc_challenge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -64,6 +65,11 @@ service Msg {
   rpc SetPoCDelegation                 (MsgSetPoCDelegation) returns (MsgSetPoCDelegationResponse);
   rpc RefusePoCDelegation              (MsgRefusePoCDelegation) returns (MsgRefusePoCDelegationResponse);
   rpc DeclarePoCIntent                 (MsgDeclarePoCIntent) returns (MsgDeclarePoCIntentResponse);
+  rpc PutDevshardApprovedVersion       (MsgPutDevshardApprovedVersion) returns (MsgPutDevshardApprovedVersionResponse);
+  rpc DeleteDevshardApprovedVersion    (MsgDeleteDevshardApprovedVersion) returns (MsgDeleteDevshardApprovedVersionResponse);
+  rpc CreatePoCChallenge               (MsgCreatePoCChallenge) returns (MsgCreatePoCChallengeResponse);
+  rpc PoCChallengeStoreCommit          (MsgPoCChallengeStoreCommit) returns (MsgPoCChallengeStoreCommitResponse);
+  rpc SubmitPoCChallengeValidations    (MsgSubmitPoCChallengeValidations) returns (MsgSubmitPoCChallengeValidationsResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -468,3 +474,45 @@ message MsgCancelMaintenance {
 }
 
 message MsgCancelMaintenanceResponse {}
+
+message MsgPutDevshardApprovedVersion {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  DevshardApprovedVersion version = 2 [(gogoproto.nullable) = false];
+}
+
+message MsgPutDevshardApprovedVersionResponse {}
+
+message MsgDeleteDevshardApprovedVersion {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string name = 2;
+}
+
+message MsgDeleteDevshardApprovedVersionResponse {}
+
+message MsgCreatePoCChallenge {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string target = 2;
+}
+
+message MsgCreatePoCChallengeResponse {}
+
+message MsgPoCChallengeStoreCommit {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated PoCV2CommitEntry entries = 3;
+}
+
+message MsgPoCChallengeStoreCommitResponse {}
+
+message MsgSubmitPoCChallengeValidations {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  int64 poc_stage_start_block_height = 2;
+  repeated PoCValidationEntryV2 validations = 3;
+}
+
+message MsgSubmitPoCChallengeValidationsResponse {}

@@ -112,7 +112,7 @@ fun Application.configureRouting() {
         trainRoutes()
         stopRoutes()
         healthRoutes()
-        responseRoutes(responseService)
+        responseRoutes(responseService, webhookService)
         tokenizationRoutes(tokenizationService)
         fileRoutes() // Route for serving files
     }

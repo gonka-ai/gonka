@@ -5,7 +5,7 @@ package tipcache
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,11 +15,10 @@ import (
 
 const subBufSize = 16
 
-// HistoryWindow is how far below the tip Observe/Remember retain for At().
-// oldest = max(1, tip − HistoryWindow).
-const HistoryWindow = blocks.HistoryWindow
+// HistoryWindow is how many recent heights Observe/Remember retain for At().
+const HistoryWindow = 100
 
-var errNoHeader = fmt.Errorf("blockoracle/tipcache: no header yet: %w", blocks.ErrHeaderNotFound)
+var errNoHeader = errors.New("blockoracle/tipcache: no header yet")
 
 // Cache holds the latest observed header, the last HistoryWindow heights,
 // and fans new tips out to subscribers.
@@ -118,7 +117,7 @@ func (c *Cache) At(_ context.Context, height int64) (*blocks.Header, error) {
 	h := c.byHeight[height]
 	c.mu.RUnlock()
 	if h == nil {
-		return nil, fmt.Errorf("blockoracle/tipcache: no header at %d: %w", height, blocks.ErrHeaderNotFound)
+		return nil, errNoHeader
 	}
 	return cloneHeader(h), nil
 }
@@ -161,26 +160,17 @@ func (c *Cache) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks
 	return sub.ch, nil
 }
 
-// LastObservedAt is when Observe last advanced the tip. Zero means never.
-func (c *Cache) LastObservedAt() time.Time {
+// Stale is true when nothing has been observed, or the last Observe is older
+// than staleAfter.
+func (c *Cache) Stale() bool {
 	if c == nil {
-		return time.Time{}
+		return true
 	}
 	last := c.lastRecvUnix.Load()
 	if last == 0 {
-		return time.Time{}
-	}
-	return time.Unix(0, last)
-}
-
-// Stale is true when nothing has been observed, or the last Observe is older
-// than staleAfter. Callers that apply their own budget should use LastObservedAt.
-func (c *Cache) Stale() bool {
-	last := c.LastObservedAt()
-	if last.IsZero() {
 		return true
 	}
-	return time.Since(last) > c.staleAfter
+	return time.Since(time.Unix(0, last)) > c.staleAfter
 }
 
 func (c *Cache) storeLocked(h *blocks.Header) {
@@ -191,7 +181,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 		c.byHeight = make(map[int64]*blocks.Header)
 	}
 	if c.latest != nil {
-		floor := blocks.OldestHeight(c.latest.Height)
+		floor := c.latest.Height - (HistoryWindow - 1)
 		if h.Height < floor {
 			return
 		}
@@ -202,7 +192,7 @@ func (c *Cache) storeLocked(h *blocks.Header) {
 
 func (c *Cache) evictLocked() {
 	if c.latest != nil {
-		floor := blocks.OldestHeight(c.latest.Height)
+		floor := c.latest.Height - (HistoryWindow - 1)
 		for height := range c.byHeight {
 			if height < floor {
 				delete(c.byHeight, height)

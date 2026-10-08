@@ -77,6 +77,8 @@ func TestNodeManager_GetRuntimeConfig_FullResponse(t *testing.T) {
 	require.Equal(t, uint32(20000), resp.Config.MaxNonce)
 	require.Len(t, resp.Config.ApprovedVersions, 1)
 	require.Equal(t, "v1", resp.Config.ApprovedVersions[0].Name)
+	require.Equal(t, "https://example/v1", resp.Config.ApprovedVersions[0].Binary)
+	require.Equal(t, "abc123", resp.Config.ApprovedVersions[0].Sha256)
 	require.NotZero(t, resp.Config.ServedAtUnix)
 	require.Equal(t, int64(60), resp.Config.RefusalTimeout)
 	require.Equal(t, int64(1200), resp.Config.ExecutionTimeout)

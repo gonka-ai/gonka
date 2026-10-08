@@ -10,18 +10,22 @@ import org.junit.jupiter.api.TestMethodOrder
 /**
  * Integration tests for transaction fee enforcement lifecycle.
  *
- * Tests the full flow:
- * 1. Verify no fee enforcement at genesis (FeeParams nil)
- * 2. Enable fee enforcement via governance proposal (simulates v0.2.12 upgrade)
- * 3. Verify fee-required messages are rejected without sufficient fees (via CLI)
- * 4. Verify fee-required messages succeed with sufficient fees (via CLI)
+ * Covered here (merge-safe with enabled_fee_groups empty at genesis):
+ * 1. Fee groups ship disabled; global min_gas_price_ngonka is 0
+ * 2. Governance can enable the epoch group price without changing the global field
+ * 3. CLI collateral deposit rejects zero/insufficient fees and succeeds when funded
  *
- * Note: Post-enablement inference/PoC tests are not included because the DAPI
- * containers cannot be reconfigured with gas prices mid-test. Fee-exempt bypass
- * for inference and PoC messages is covered by unit tests in ante_fee_test.go.
- * MsgClaimRewards (fee-required) will fail from the DAPI after fees are enabled
- * since the DAPI has min_gas_price_ngonka=0 — this is expected and matches the
- * production rollout where DAPI config is updated alongside the upgrade.
+ * DAPI does not read DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA for group prices.
+ * After activation it prices from the on-chain fee tree (Params) and pays via
+ * the cold-to-warm feegrant. The following must be run on a rehearsal cluster
+ * before enabling epoch in production — they are not merge blockers while
+ * enabled_fee_groups stays empty:
+ * - upgrade migration from legacy flat fee fields
+ * - warm-key authz StoreCommit paying through the cold-key feegrant
+ * - first and incremental StoreCommit gas from canonical Count delta
+ * - paid HardwareDiff plus version/host/port convergence
+ * - stale-low cache recovery after an insufficient-fee CheckTx
+ * - removing epoch restores coin-price-only recovery (see finding 2)
  */
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class TransactionFeeTests : TestermintTest() {
@@ -45,12 +49,13 @@ class TransactionFeeTests : TestermintTest() {
 
     @Test
     @Order(1)
-    fun `fee params are nil at genesis`() {
-        logHighlight("Verifying FeeParams are not set at genesis")
+    fun `fee groups disabled at genesis`() {
+        logHighlight("Verifying FeeParams ship with empty enabled_fee_groups")
 
         val params = genesis.getParams()
-        assertThat(params.feeParams).isNull()
-        logHighlight("FeeParams correctly nil at genesis")
+        assertThat(params.feeParams).isNotNull
+        assertThat(params.feeParams!!.enabledFeeGroups).isEmpty()
+        logHighlight("Fee groups correctly disabled at genesis")
     }
 
     // Pre-fee classic inference smoke test removed with the dapi deprecation:
@@ -62,14 +67,24 @@ class TransactionFeeTests : TestermintTest() {
     @Test
     @Order(3)
     fun `enable fee enforcement via governance proposal`() {
-        logHighlight("Enabling fee enforcement via governance (simulates v0.2.12 upgrade)")
+        logHighlight("Enabling epoch fee group via governance")
 
         val params = genesis.getParams()
+        val existing = params.feeParams ?: FeeParamsData()
+        val groups = existing.groups?.deepCopy()
+            ?: error("FeeParams must contain the configured fee groups")
+        val epochGroup = groups
+            .map { it.asJsonObject }
+            .firstOrNull { it.get("name")?.asString == "epoch" }
+            ?: error("FeeParams must contain the epoch fee group")
+        epochGroup.addProperty("min_gas_price", 10)
         val paramsWithFees = params.copy(
-            feeParams = FeeParamsData(
-                minGasPriceNgonka = 10,
-                baseValidationGas = 500_000,
-                gasPerPocCount = 100,
+            feeParams = existing.copy(
+                enabledFeeGroups = listOf("epoch"),
+                minGasPriceNgonka = 0,
+                baseValidationGas = existing.baseValidationGas.takeIf { it > 0 } ?: 500_000,
+                gasPerPocCount = existing.gasPerPocCount.takeIf { it > 0 } ?: 100,
+                groups = groups,
             )
         )
 
@@ -78,9 +93,9 @@ class TransactionFeeTests : TestermintTest() {
         logHighlight("Fee enforcement proposal passed")
     }
 
-    // ========== POST-UPGRADE: CLI rejection tests ==========
-    // These use the CLI directly (not the DAPI) so they work even though
-    // the DAPI containers don't have gas prices configured.
+    // ========== POST-ENABLE: CLI rejection tests ==========
+    // CLI attaches fees explicitly. DAPI group pricing is independent of
+    // DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA (fee tree comes from chain Params).
 
     @Test
     @Order(4)
@@ -133,19 +148,13 @@ class TransactionFeeTests : TestermintTest() {
         logHighlight("Balance deducted: $deducted ngonka (collateral=1M + fee=5M)")
     }
 
-    // Note: Post-upgrade DAPI inference/PoC tests are intentionally omitted
-    // from this suite. The integration test containers do not configure
-    // DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA, so after fees are enabled
-    // via governance proposal, the DAPI's fee-required messages (reward
-    // claims, hardware diffs, seeds, PoC commits) fail because the DAPI
-    // declares zero fees.
-    //
-    // In production, hosts set DAPI_CHAIN_NODE__MIN_GAS_PRICE_NGONKA=10 in
-    // config.env before the upgrade activates. The feegrant allowance from
-    // cold to warm (set up by grant-ml-ops-permissions) routes the fee
-    // payment from the unfunded warm key to the funded cold account.
-    //
-    // The DAPI feegrant routing is covered by unit tests; the end-to-end
-    // flow is documented in docs/host_onboarding.md and validated manually on
-    // testnet before mainnet activation.
+    @Test
+    @Order(7)
+    fun `global min gas price stays zero after epoch enablement`() {
+        val params = genesis.getParams()
+        assertThat(params.feeParams).isNotNull
+        assertThat(params.feeParams!!.minGasPriceNgonka).isEqualTo(0)
+        assertThat(params.feeParams!!.enabledFeeGroups).contains("epoch")
+        logHighlight("Epoch group enabled; global min_gas_price_ngonka remains 0")
+    }
 }
