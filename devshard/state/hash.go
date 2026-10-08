@@ -303,6 +303,22 @@ func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) 
 	return data, nil
 }
 
+// DecodeInferenceEntries turns stored canonical entries back into records, checking each entry carries the id it is stored under.
+func DecodeInferenceEntries(entries map[uint64][]byte) (map[uint64]*types.InferenceRecord, error) {
+	records := make(map[uint64]*types.InferenceRecord, len(entries))
+	for storedID, entry := range entries {
+		id, record, err := unmarshalInferenceEntry(entry)
+		if err != nil {
+			return nil, fmt.Errorf("decode inference entry %d: %w", storedID, err)
+		}
+		if id != storedID {
+			return nil, fmt.Errorf("inference entry stored as %d carries id %d", storedID, id)
+		}
+		records[id] = record
+	}
+	return records, nil
+}
+
 func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error) {
 	msg := &types.InferenceRecordProto{}
 	if err := proto.Unmarshal(data, msg); err != nil {

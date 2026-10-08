@@ -3,9 +3,11 @@ package user
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -227,6 +229,9 @@ type Session struct {
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
 	snapshotInFlight atomic.Bool
+
+	// stateBaselined is set once the store holds this process's full live set; until then a diff replaces it whole.
+	stateBaselined bool
 
 	// finalizeInFlight guards against concurrent Finalize calls. A second
 	// call while the first is still running returns immediately with an error
@@ -737,12 +742,20 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+		sessionState, err := s.sessionStateDeltaLocked(vd)
+		if err != nil {
+			return types.Diff{}, 0, err
+		}
 		if err := s.persistDiffRetryLocked(types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
+			SessionState: sessionState,
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		}
+		if sessionState != nil {
+			s.stateBaselined = true
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
 		// so a retried compose cannot fork on a new UserSig after a durable
@@ -772,6 +785,35 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	return diff, hostIdx, nil
 }
 
+// writesStateWithDiffs reports whether the store keeps the session state in each diff's transaction, which replaces periodic snapshots.
+func (s *Session) writesStateWithDiffs() bool {
+	_, ok := s.store.(storage.SessionStateStore)
+	return ok
+}
+
+// sessionStateDeltaLocked is the state the previewed diff leaves behind, for the store to write with the diff.
+// The first diff after a start carries the whole live set, so rows older than this process cannot linger.
+func (s *Session) sessionStateDeltaLocked(vd *state.ValidatedDiff) (*types.SessionStateDelta, error) {
+	if !s.writesStateWithDiffs() {
+		return nil, nil
+	}
+	stateAfter := vd.StateAfter
+	header, err := json.Marshal(sessionSnapshot{State: &stateAfter, HostSyncNonce: maps.Clone(s.hostSyncNonce)})
+	if err != nil {
+		return nil, fmt.Errorf("marshal session state header: %w", err)
+	}
+	upserts, deletes := vd.InferenceEntryChanges()
+	if s.stateBaselined {
+		return &types.SessionStateDelta{Header: header, Upserts: upserts, Deletes: deletes}, nil
+	}
+	entries := s.sm.ExportCommittedEntries()
+	maps.Copy(entries, upserts)
+	for _, id := range deletes {
+		delete(entries, id)
+	}
+	return &types.SessionStateDelta{Header: header, Upserts: entries, ReplaceAll: true}, nil
+}
+
 // persistDiffRetryLocked retries AppendDiff with backoff while holding s.mu.
 // Unlocking during backoff would let a concurrent compose re-sign the same
 // next nonce and risk ErrDiffFork after a durable write. Persist-first means
@@ -793,7 +835,7 @@ func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
 //
 // Caller must hold s.mu.
 func (s *Session) maybeSaveSnapshotLocked() {
-	if s.store == nil {
+	if s.store == nil || s.writesStateWithDiffs() {
 		return
 	}
 	if s.nonce == 0 || s.nonce%snapshotInterval != 0 {

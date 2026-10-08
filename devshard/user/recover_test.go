@@ -35,6 +35,11 @@ func newTestStateMachine(
 	return sm
 }
 
+// snapshotOnlyStore hides the state written with diffs, so a test exercises the snapshot path alone.
+type snapshotOnlyStore struct {
+	storage.Storage
+}
+
 func newTestStore(t *testing.T) *storage.SQLite {
 	t.Helper()
 	db, err := storage.NewSQLite(filepath.Join(t.TempDir(), "test.db"))
@@ -99,7 +104,7 @@ func setupRecoverableSession(
 }
 
 func TestRecoverSession_HappyPath(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 5
 
@@ -476,7 +481,7 @@ func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group 
 // This is the primary fix for the post-restart "invalid nonce: must be
 // sequential" cascade observed on mainnet 2026-04-24.
 func TestRecoverSession_NewFormatSnapshot_RestoresHostCursor(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 4
 
@@ -598,7 +603,7 @@ func TestRecoverSession_NewFormatSnapshot_ProcessResponseUsesActualDiffNonce(t *
 // upgraded to the new wrapper format on disk so subsequent restarts
 // pay the full-backfill cost only once.
 func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
-	store := newTestStore(t)
+	store := snapshotOnlyStore{newTestStore(t)}
 	numHosts := 3
 	numInferences := 5
 

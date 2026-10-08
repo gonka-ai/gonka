@@ -87,6 +87,62 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, error) {
 	return &bare, nil, nil
 }
 
+// restoredRootMatchesJournal checks the restored state against the root the journal recorded for nonce.
+// A mismatch is logged and means the caller replays from the start instead.
+func restoredRootMatchesJournal(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) bool {
+	records, err := store.GetDiffs(escrowID, nonce, nonce)
+	if err != nil || len(records) != 1 || len(records[0].StateHash) == 0 {
+		return true
+	}
+	root, err := sm.ComputeStateRoot()
+	if err == nil && bytes.Equal(root, records[0].StateHash) {
+		return true
+	}
+	log.Printf("recover_session escrow=%s snapshot_nonce=%d restored_root_mismatch error=%v (replaying from 1)", escrowID, nonce, err)
+	return false
+}
+
+// recoveryPoint is a decoded state to restore from, or the error that made it unusable.
+type recoveryPoint struct {
+	state *types.EscrowState
+	err   error
+}
+
+// loadRecoveryPoint picks the newer of the state written with the diffs and the legacy snapshot.
+// A missing snapshot is reported as storage.ErrSnapshotNotFound.
+func loadRecoveryPoint(store storage.Storage, escrowID string) (uint64, recoveryPoint, map[int]uint64, error) {
+	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	if stateStore, ok := store.(storage.SessionStateStore); ok {
+		stored, err := stateStore.LoadSessionState(escrowID)
+		switch {
+		case err == nil && (snapErr != nil || stored.Nonce >= snapNonce):
+			restored, cursor, decodeErr := decodeSessionState(stored)
+			return stored.Nonce, recoveryPoint{state: restored, err: decodeErr}, cursor, nil
+		case err != nil && !errors.Is(err, storage.ErrSessionStateNotFound):
+			log.Printf("recover_session escrow=%s session_state_load_error=%v (using snapshot)", escrowID, err)
+		}
+	}
+	if snapErr != nil {
+		return 0, recoveryPoint{}, nil, snapErr
+	}
+	restored, cursor, decodeErr := decodeSnapshot(snapData)
+	return snapNonce, recoveryPoint{state: restored, err: decodeErr}, cursor, nil
+}
+
+// decodeSessionState rebuilds the escrow state from the stored header and live inference entries.
+func decodeSessionState(stored storage.SessionState) (*types.EscrowState, map[int]uint64, error) {
+	restored, cursor, err := decodeSnapshot(stored.Header)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode session state header: %w", err)
+	}
+	records, err := state.DecodeInferenceEntries(stored.Entries)
+	if err != nil {
+		return nil, nil, err
+	}
+	restored.Inferences = records
+	return restored, cursor, nil
+}
+
 // minHostSyncNonce returns the smallest cursor value across all hosts
 // in the group. Any host not present in the cursor map is treated as
 // "unknown" -> 0, which forces full diff backfill on recovery.
@@ -176,13 +232,14 @@ func RecoverSession(
 	legacySnapshot := false
 	snapshotRestored := false
 	replayFrom := uint64(1)
-	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	snapNonce, snapState, cursor, snapErr := loadRecoveryPoint(store, escrowID)
 	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-		snapState, cursor, decodeErr := decodeSnapshot(snapData)
-		if decodeErr != nil {
+		initialState := sm.ExportState()
+		if decodeErr := snapState.err; decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
+		} else if sm.RestoreState(snapState.state); !restoredRootMatchesJournal(store, sm, escrowID, snapNonce) {
+			sm.RestoreState(initialState)
 		} else {
-			sm.RestoreState(snapState)
 			replayFrom = snapNonce + 1
 			sess.nonce = snapNonce
 			snapshotCursor = cursor

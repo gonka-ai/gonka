@@ -135,10 +135,12 @@ type deferredObsWrite struct {
 type ValidatedDiff struct {
 	Root      []byte
 	WarmAfter map[uint32]string
-	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
-	nonce     uint64
-	journal   *mutationJournal
-	obs       []deferredObsWrite
+	// StateAfter is the post-state without inferences, set by PreviewLocalBestEffort.
+	StateAfter types.EscrowState
+	Applied    []*types.DevshardTx // populated for the best-effort (gateway) path
+	nonce      uint64
+	journal    *mutationJournal
+	obs        []deferredObsWrite
 }
 
 // Nonce reports the nonce this validated diff will commit.
@@ -357,8 +359,26 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 		return nil, err
 	}
 	warmAfter := copyStringMap(sm.state.WarmKeys)
+	stateAfter := sm.stateNoInferencesLocked()
 	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, journal: j, obs: obs}, nil
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, StateAfter: stateAfter, Applied: applied, nonce: nonce, journal: j, obs: obs}, nil
+}
+
+// InferenceEntryChanges returns the canonical entries the previewed diff wrote
+// and the ids it removed from the live set. Entries are never mutated in place.
+func (vd *ValidatedDiff) InferenceEntryChanges() (upserts map[uint64][]byte, deletes []uint64) {
+	if vd == nil || vd.journal == nil {
+		return nil, nil
+	}
+	upserts = make(map[uint64][]byte, len(vd.journal.committed.post))
+	for id, slot := range vd.journal.committed.post {
+		if slot.ok {
+			upserts[id] = slot.v
+		} else {
+			deletes = append(deletes, id)
+		}
+	}
+	return upserts, deletes
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -697,6 +717,11 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
+	return sm.stateNoInferencesLocked()
+}
+
+// stateNoInferencesLocked is SnapshotStateNoInferences for a caller that holds sm.mu.
+func (sm *StateMachine) stateNoInferencesLocked() types.EscrowState {
 	src := sm.state
 	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
 	// only ever replaced wholesale (append to a nil slice), never mutated in
