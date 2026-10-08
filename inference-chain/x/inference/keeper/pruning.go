@@ -18,6 +18,10 @@ const (
 	PruneWorkPerBlock = int64(5000)
 	// InferenceRemoveCost: an inference removal also deletes the record at a random key.
 	InferenceRemoveCost = int64(3)
+	// Epoch-0 inference pass: removals and keys read per block. A removal costs 1 budget
+	// unit: these records have no InferencesToPrune entry.
+	EpochZeroInferencePruningMaxPerBlock = 1000
+	EpochZeroInferenceScanMaxPerBlock    = 4000
 )
 
 // Prune runs every pruner within one shared PruneWorkPerBlock budget. The first pruner
@@ -39,6 +43,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		k.GetEpochGroupValidationPruner(params),
 		k.GetDevshardPruner(params),
 		k.GetClaimRecipientPruner(params),
+		k.GetEpochZeroInferencePruner(params),
 	}
 	budget := PruneWorkPerBlock
 	first := int(uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()) % uint64(len(pruners)))
@@ -50,6 +55,77 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// epochZeroInferencePruner removes finished or expired inferences left with EpochId 0
+// (started or finished without the other half), which InferencesToPrune never indexes.
+// It runs once epoch 0 is past the inference threshold, a bounded slice per block.
+type epochZeroInferencePruner struct {
+	params types.Params
+}
+
+func (k Keeper) GetEpochZeroInferencePruner(params types.Params) epochZeroInferencePruner {
+	return epochZeroInferencePruner{params: params}
+}
+
+func (p epochZeroInferencePruner) prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error {
+	if currentEpochIndex < int64(p.params.EpochParams.InferencePruningEpochThreshold) {
+		return nil
+	}
+	limit := int64(EpochZeroInferencePruningMaxPerBlock)
+	if budget != nil {
+		limit = min(limit, *budget)
+		if limit <= 0 {
+			return nil
+		}
+	}
+	state, err := k.PruningState.Get(ctx)
+	if err != nil {
+		return err
+	}
+	if state.EpochZeroInferencesPruned {
+		return nil
+	}
+	rng := new(collections.Range[string])
+	if state.EpochZeroInferencesCursor != "" {
+		rng = rng.StartExclusive(state.EpochZeroInferencesCursor)
+	}
+	iter, err := k.Inferences.Iterate(ctx, rng)
+	if err != nil {
+		return err
+	}
+	var toRemove []string
+	cursor, scanned := state.EpochZeroInferencesCursor, 0
+	for ; iter.Valid() && scanned < EpochZeroInferenceScanMaxPerBlock && int64(len(toRemove)) < limit; iter.Next() {
+		kv, err := iter.KeyValue()
+		if err != nil {
+			iter.Close()
+			return err
+		}
+		scanned++
+		cursor = kv.Key
+		status := kv.Value.Status
+		if kv.Value.EpochId == 0 && status != types.InferenceStatus_STARTED && status != types.InferenceStatus_VOTING {
+			toRemove = append(toRemove, kv.Key)
+		}
+	}
+	done := !iter.Valid()
+	iter.Close()
+	if budget != nil {
+		*budget -= int64(len(toRemove))
+	}
+	for _, id := range toRemove {
+		if err := k.Inferences.Remove(ctx, id); err != nil {
+			return err
+		}
+	}
+	state.EpochZeroInferencesCursor = cursor
+	state.EpochZeroInferencesPruned = done
+	if done {
+		state.EpochZeroInferencesCursor = ""
+		k.LogInfo("Epoch-0 inference pruning complete", types.Pruning)
+	}
+	return k.PruningState.Set(ctx, state)
 }
 
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {
