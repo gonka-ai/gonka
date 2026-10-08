@@ -67,7 +67,7 @@ message Trainshard {
 message TrainshardProposal {
   string creator = 1;
   string gpu_profile_id = 2;
-  uint32 max_nodes = 3;
+  uint32 node_count = 3;
   int64 max_duration_blocks = 4;
   uint64 id = 5;
   TrainshardProposalStatus status = 6;

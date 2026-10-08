@@ -19,7 +19,7 @@ func makeCreateTrainshardProposalMsg(authority string) *types.MsgCreateTrainshar
 		Authority:         authority,
 		Creator:           sample.AccAddress(),
 		GpuProfileId:      "NVIDIA H100 x8",
-		MaxNodes:          1,
+		NodeCount:         1,
 		MaxDurationBlocks: types.DefaultTrainingMinDurationBlocks,
 		BaseImage:         trainshardTestBaseImage,
 	}
@@ -61,7 +61,7 @@ func TestMsgServer_CreateTrainshardProposal_CreatesOpenProposalAndIncrementsCoun
 	require.Equal(t, uint64(1), p1.Id)
 	require.Equal(t, msg1.Creator, p1.Creator)
 	require.Equal(t, msg1.GpuProfileId, p1.GpuProfileId)
-	require.Equal(t, msg1.MaxNodes, p1.MaxNodes)
+	require.Equal(t, msg1.NodeCount, p1.NodeCount)
 	require.Equal(t, msg1.MaxDurationBlocks, p1.MaxDurationBlocks)
 	require.Equal(t, msg1.BaseImage, p1.BaseImage)
 	require.Equal(t, types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN, p1.Status)
@@ -105,7 +105,7 @@ func TestMsgServer_CreateTrainshardProposal_RejectsLimitsAndDisallowedProfile(t 
 
 	msgNodes := makeCreateTrainshardProposalMsg(k.GetAuthority())
 	msgNodes.GpuProfileId = "NVIDIA A100 x8"
-	msgNodes.MaxNodes = 0
+	msgNodes.NodeCount = 0
 	_, err = ms.CreateTrainshardProposal(ctx, msgNodes)
 	require.ErrorIs(t, err, types.ErrTrainshardProposalLimits)
 

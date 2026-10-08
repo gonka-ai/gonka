@@ -27,10 +27,10 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		return nil, types.ErrTrainshardProposalNotOpen.Wrapf("%d", msg.ProposalId)
 	}
 	if proposal.Creator != msg.Creator {
-		return nil, types.ErrTrainshardNotCreator
+		return nil, types.ErrTrainshardNotCreator.Wrapf("assemble of proposal %d", msg.ProposalId)
 	}
 	// governance may have tightened the limits after the vote passed
-	if err := validateTrainshardStaticLimits(params, proposal.GpuProfileId, proposal.MaxNodes, proposal.MaxDurationBlocks); err != nil {
+	if err := validateTrainshardStaticLimits(params, proposal.GpuProfileId, proposal.NodeCount, proposal.MaxDurationBlocks); err != nil {
 		return nil, err
 	}
 
@@ -55,7 +55,7 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		return nil, err
 	}
 
-	nodes, err := k.selectTrainshardNodes(goCtx, trainshardId, proposal.GpuProfileId, proposal.MaxNodes, params)
+	nodes, err := k.selectTrainshardNodes(goCtx, trainshardId, proposal.GpuProfileId, proposal.NodeCount, params)
 	if err != nil {
 		return nil, err
 	}

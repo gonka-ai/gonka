@@ -19,7 +19,7 @@ func (k msgServer) SettleTrainshard(goCtx context.Context, msg *types.MsgSettleT
 		return nil, types.ErrTrainshardNotFound.Wrapf("%d", msg.TrainshardId)
 	}
 	if shard.Creator != msg.Creator {
-		return nil, types.ErrTrainshardNotCreator
+		return nil, types.ErrTrainshardNotCreator.Wrapf("settle of shard %d", msg.TrainshardId)
 	}
 	if shard.Status != types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
 		return &types.MsgSettleTrainshardResponse{}, nil
