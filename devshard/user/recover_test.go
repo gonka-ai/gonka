@@ -781,15 +781,21 @@ func TestRecoverSession_BackfillGapUnrecoverable(t *testing.T) {
 		InitialBalance: 100000,
 	}))
 	// Diff 3 is lost; latest_nonce lands on 4.
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	snapshotRoot, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
 	for _, n := range []uint64{1, 2, 4} {
-		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: n}}))
+		record := types.DiffRecord{Diff: types.Diff{Nonce: n}}
+		if n == 4 {
+			record.StateHash = snapshotRoot
+		}
+		require.NoError(t, store.AppendDiff("escrow-1", record))
 	}
 	// Snapshot is current at 4, so nothing is replayed. Host 0 is stranded at
 	// nonce 2 and needs the backfill range 3..4, which has a hole.
-	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	saveSnapshot(store, sm, "escrow-1", 4, map[int]uint64{0: 2, 1: 4, 2: 4})
 
-	_, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	_, _, err = RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
 		buildRecoveryClients(t, hosts, group, user))
 
 	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)

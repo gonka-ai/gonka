@@ -56,11 +56,17 @@ func recoverOverBareHistory(t *testing.T, store storage.Storage, rawStore storag
 		Group:          group,
 		InitialBalance: 100000,
 	}))
+	machine := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	snapshotRoot, err := machine.ComputeStateRoot()
+	require.NoError(t, err)
 	for nonce := uint64(1); nonce <= bareHistoryLength; nonce++ {
-		require.NoError(t, rawStore.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: nonce}}))
+		record := types.DiffRecord{Diff: types.Diff{Nonce: nonce}}
+		if nonce == bareHistoryLength && hostCursors != nil {
+			record.StateHash = snapshotRoot
+		}
+		require.NoError(t, rawStore.AppendDiff("escrow-1", record))
 	}
 	if hostCursors != nil {
-		machine := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		saveSnapshot(rawStore, machine, "escrow-1", bareHistoryLength, hostCursors)
 	}
 

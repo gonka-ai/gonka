@@ -88,11 +88,12 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, error) {
 }
 
 // restoredRootMatchesJournal checks the restored state against the root the journal recorded for nonce.
-// A mismatch is logged and means the caller replays from the start instead.
+// A mismatch, or a root that cannot be checked, is logged and means the caller replays from the start instead.
 func restoredRootMatchesJournal(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) bool {
 	records, err := store.GetDiffs(escrowID, nonce, nonce)
 	if err != nil || len(records) != 1 || len(records[0].StateHash) == 0 {
-		return true
+		log.Printf("recover_session escrow=%s snapshot_nonce=%d restored_root_unverifiable records=%d error=%v (replaying from 1)", escrowID, nonce, len(records), err)
+		return false
 	}
 	root, err := sm.ComputeStateRoot()
 	if err == nil && bytes.Equal(root, records[0].StateHash) {

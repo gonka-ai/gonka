@@ -673,6 +673,19 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	return err
 }
 
+// SealedAtOrBefore returns which of ids were sealed at or before nonce.
+func (sm *StateMachine) SealedAtOrBefore(ids []uint64, nonce uint64) map[uint64]struct{} {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sealed := make(map[uint64]struct{})
+	for _, id := range ids {
+		if sealNonce, ok := sm.sealedNonces[id]; ok && sealNonce <= nonce {
+			sealed[id] = struct{}{}
+		}
+	}
+	return sealed
+}
+
 // SealedNonceCount returns the size of the seal set. Callers that only need the
 // count must not use ExportSealedNonces, which clones the whole map.
 func (sm *StateMachine) SealedNonceCount() int {

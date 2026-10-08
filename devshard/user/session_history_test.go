@@ -75,27 +75,43 @@ func TestSession_QuorumAtATrimmedNonceIsReadFromTheStore(t *testing.T) {
 }
 
 // Test flow:
-//  1. Send inferences so each nonce gets an outcome, then finalize, which seals every live inference.
-//  2. Before pruning, the outcomes are still held; after pruning none are left.
-//  3. A session with live inferences keeps their outcomes through a prune.
-func TestSession_PruneDropsOutcomesOfSealedInferencesOnly(t *testing.T) {
+//  1. Send inferences, then compose more than the retention window of empty diffs; a prune keeps the live outcomes.
+//  2. Finalize, which seals every inference now although their nonces are old: a prune keeps the freshly sealed outcomes.
+//  3. Compose one nonce short of the retention window after the seal: a prune keeps them.
+//  4. Compose the last nonce of the window: a prune drops them all.
+func TestSession_PruneDropsOutcomesSealedBeyondTheRetentionWindow(t *testing.T) {
 	session := setupStoredSession(t, storage.NewMemory())
 	for range len(session.group) {
 		_, err := session.SendInference(context.Background(), storedCatchUpInference())
 		require.NoError(t, err)
 	}
+	composeUnsentDiffs(t, session, sessionHistoryRetention+10)
 
 	session.mu.Lock()
 	liveOutcomes := len(session.nonceStates)
 	session.pruneSessionHistoryLocked()
 	require.Len(t, session.nonceStates, liveOutcomes, "live inferences keep their outcomes")
 	session.mu.Unlock()
-	require.NotZero(t, liveOutcomes)
+	require.Equal(t, len(session.group), liveOutcomes)
 
 	require.NoError(t, session.Finalize(context.Background()))
 	session.mu.Lock()
-	defer session.mu.Unlock()
-	require.NotEmpty(t, session.nonceStates, "precondition: outcomes outlive the seal until a prune")
+	require.Len(t, session.nonceStates, liveOutcomes, "precondition: outcomes outlive the seal until a prune")
 	session.pruneSessionHistoryLocked()
-	require.Empty(t, session.nonceStates, "the settlement drain sealed every inference")
+	require.Len(t, session.nonceStates, liveOutcomes, "an outcome sealed within the retention window stays, however old its nonce")
+	session.mu.Unlock()
+
+	sealNonce := session.Nonce()
+	composeUnsentDiffs(t, session, sessionHistoryRetention-1)
+	session.mu.Lock()
+	session.pruneSessionHistoryLocked()
+	require.Len(t, session.nonceStates, liveOutcomes, "sealed %d nonces ago, one short of the window", sessionHistoryRetention-1)
+	session.mu.Unlock()
+
+	composeUnsentDiffs(t, session, 1)
+	require.Equal(t, sealNonce+sessionHistoryRetention, session.Nonce())
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.pruneSessionHistoryLocked()
+	require.Empty(t, session.nonceStates, "outcomes sealed a full retention window ago are dropped")
 }

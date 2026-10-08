@@ -379,18 +379,19 @@ func (s *Session) storedGapLocked(hostIdx int) (fromNonce, toNonce uint64, hasGa
 }
 
 // pruneSessionHistoryLocked drops signatures every host has moved past, at most sessionHistoryRetention
-// nonces back with a store, and the outcomes of sealed inferences. Caller must hold s.mu.
+// nonces back with a store, and the outcomes of inferences sealed more than that many nonces ago. Caller must hold s.mu.
 func (s *Session) pruneSessionHistoryLocked() {
 	floor := minHostSyncNonce(s.hostSyncNonce, len(s.group))
 	if s.store != nil && s.nonce > sessionHistoryRetention {
 		floor = max(floor, s.nonce-sessionHistoryRetention)
 	}
 	s.dropSignaturesThroughLocked(floor)
-	live := s.sm.LiveInferenceIDs()
-	for nonce := range s.nonceStates {
-		if _, stillLive := live[nonce]; !stillLive {
-			delete(s.nonceStates, nonce)
-		}
+	if s.nonce <= sessionHistoryRetention {
+		return
+	}
+	// An outcome outlives its seal by the retention window, so a reader between ProcessResponse and IsNonceFinished still finds it.
+	for nonce := range s.sm.SealedAtOrBefore(slices.Collect(maps.Keys(s.nonceStates)), s.nonce-sessionHistoryRetention) {
+		delete(s.nonceStates, nonce)
 	}
 }
 

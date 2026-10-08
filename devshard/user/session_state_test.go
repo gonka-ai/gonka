@@ -10,6 +10,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/types"
 )
 
 const sessionStateNonceCount = 120
@@ -26,6 +27,25 @@ func (store corruptedStateStore) LoadSessionState(escrowID string) (storage.Sess
 		break
 	}
 	return stored, err
+}
+
+// hiddenRootStore drops the journal's StateHash at one nonce, so a state restored there cannot be checked.
+type hiddenRootStore struct {
+	*storage.SQLite
+	hiddenRootNonce uint64
+}
+
+func (store hiddenRootStore) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
+	records, err := store.SQLite.GetDiffs(escrowID, fromNonce, toNonce)
+	if err != nil {
+		return nil, err
+	}
+	for index := range records {
+		if records[index].Nonce == store.hiddenRootNonce {
+			records[index].StateHash = nil
+		}
+	}
+	return records, nil
 }
 
 // advanceSession composes nonceCount diffs, a real inference every inferenceEveryNonces of them.
@@ -101,6 +121,7 @@ func TestSessionStateFirstDiffAfterRecoveryStoresWholeLiveSet(t *testing.T) {
 //  1. Run a session that writes state with each diff.
 //  2. Recover it: the state root and nonce equal the live session's without replaying the journal into memory.
 //  3. Recover it again through a store whose state lost an entry: the root check rejects it and replay still yields the live root.
+//  4. Recover it through a store that hides the journal's root for that nonce: unverifiable state is not trusted, the journal is replayed.
 func TestRecoverSessionFromStateWrittenWithDiffs(t *testing.T) {
 	store := newTestStore(t)
 	live, liveMachine, group, hostKeys, userKey := buildLiveSession(t, 3, store)
@@ -115,6 +136,7 @@ func TestRecoverSessionFromStateWrittenWithDiffs(t *testing.T) {
 	}{
 		{name: "stored state", store: store},
 		{name: "corrupted stored state", store: corruptedStateStore{store}, replaysJournal: true},
+		{name: "stored state whose root cannot be checked", store: hiddenRootStore{SQLite: store, hiddenRootNonce: live.Nonce()}, replaysJournal: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			recovered, recoveredMachine, err := RecoverSession(testCase.store, userKey, signing.NewSecp256k1Verifier(), live.escrowID, testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hostKeys, group, userKey))
