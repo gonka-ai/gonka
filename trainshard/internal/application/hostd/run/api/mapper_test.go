@@ -63,6 +63,8 @@ func TestToNodesCommand(t *testing.T) {
 		{name: "deadline past what the request log remembers", path: "7", mutate: func(c *contract.Command) {
 			c.Deadline = latest.Add(time.Second).Format(time.RFC3339)
 		}},
+		{name: "request id padded with a space", path: "7", mutate: func(c *contract.Command) { c.RequestID = " req-1" }},
+		{name: "request id ending in a no-break space", path: "7", mutate: func(c *contract.Command) { c.RequestID = "req-1\u00a0" }},
 	}
 
 	for _, tc := range cases {

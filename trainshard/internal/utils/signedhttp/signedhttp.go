@@ -46,30 +46,30 @@ func New(verifier ports.Verifier, clock ports.Clock, window time.Duration, audie
 
 func (g *Guard) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestID := r.Header.Get(contract.HeaderRequestID)
-		address, body, verifiesUntil, err := g.authenticate(r)
+		requestID, err := vo.ParseRequestID(r.Header.Get(contract.HeaderRequestID))
 		if err != nil {
-			httpx.WriteError(w, requestID, err)
+			httpx.WriteError(w, "", err)
+			return
+		}
+		address, body, verifiesUntil, err := g.authenticate(r, requestID)
+		if err != nil {
+			httpx.WriteError(w, string(requestID), err)
 			return
 		}
 
 		r.Body = io.NopCloser(bytes.NewReader(body))
 		ctx := context.WithValue(r.Context(), addressKey, address)
-		ctx = context.WithValue(ctx, requestIDKey, requestID)
+		ctx = context.WithValue(ctx, requestIDKey, string(requestID))
 		next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, verifiesUntilKey, verifiesUntil)))
 	})
 }
 
-func (g *Guard) authenticate(r *http.Request) (vo.Address, []byte, time.Time, error) {
+func (g *Guard) authenticate(r *http.Request, requestID vo.RequestID) (vo.Address, []byte, time.Time, error) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
 	if err != nil || len(body) > maxBodyBytes {
 		return "", nil, time.Time{}, errBadBody
 	}
 
-	requestID, err := vo.ParseRequestID(r.Header.Get(contract.HeaderRequestID))
-	if err != nil {
-		return "", nil, time.Time{}, err
-	}
 	timestamp := r.Header.Get(contract.HeaderTimestamp)
 	verifiesUntil, err := g.fresh(timestamp)
 	if err != nil {

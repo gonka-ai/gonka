@@ -77,8 +77,8 @@ func TestStatusStaysAnAnswerWhenThePeersCannotBeRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v", err)
 	}
-	if len(items) != 1 || !items[0].OK() || !items[0].MeshUp || len(items[0].MeshSilent) != 0 {
-		t.Fatalf("got %+v, want the node's status with no peers named", items)
+	if len(items) != 1 || !items[0].OK() || !items[0].MeshUp || len(items[0].MeshSilent) != 0 || !items[0].MeshSilentUnknown {
+		t.Fatalf("got %+v, want the node's status with no peers named and the peers marked unknown", items)
 	}
 }
 

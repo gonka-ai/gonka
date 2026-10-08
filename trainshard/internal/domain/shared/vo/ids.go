@@ -84,12 +84,14 @@ type RequestID string
 
 func NewRequestID() RequestID { return RequestID(rand.Text()) }
 
+// a request id is taken exactly as sent, visible ascii only: two spellings of one signed id would
+// pass the replay check as two requests
 func ParseRequestID(s string) (RequestID, error) {
-	id := strings.TrimSpace(s)
-	if id == "" || len(id) > maxRequestIDLen {
+	invisible := func(r rune) bool { return r <= ' ' || r > '~' }
+	if s == "" || len(s) > maxRequestIDLen || strings.IndexFunc(s, invisible) >= 0 {
 		return "", fmt.Errorf("request_id %q: %w", s, shared.ErrValidation)
 	}
-	return RequestID(id), nil
+	return RequestID(s), nil
 }
 
 type Address string

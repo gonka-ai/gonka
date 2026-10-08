@@ -162,24 +162,30 @@ func (c *Client) Hardware(ctx context.Context, node vo.NodeRef) (vo.GPUInventory
 	return vo.GPUInventory{}, nil
 }
 
-// assemblyWindow reads when an assemble that may land up to lifetime blocks after it is sent is
-// taken. The next PoC is known ahead: one that starts before the transaction lands or expires would
-// refuse it, so the assemble waits that PoC out too. A confirmation PoC is random and still can
-func (c *Client) assemblyWindow(ctx context.Context, lifetime int64) (vo.Height, vo.Height, error) {
+// assemblyWindow reads the height an assemble is taken from and the next PoC start that refuses it
+// again. A transaction lands in a block after the one it is sent at, so with no block left before
+// that PoC the assemble waits it out. A confirmation PoC is random and still can refuse it
+func (c *Client) assemblyWindow(ctx context.Context) (now, opens, closes vo.Height, err error) {
 	info, err := c.query.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
 	if err != nil {
-		return 0, 0, unreachable(err)
+		return 0, 0, 0, unreachable(err)
 	}
-	if info.Params.EpochParams == nil {
-		return 0, 0, fmt.Errorf("the chain answered without epoch params")
+	if info.Params.EpochParams == nil || info.Params.EpochParams.EpochLength <= 0 {
+		return 0, 0, 0, fmt.Errorf("the chain answered without an epoch length")
 	}
 	params := *info.Params.EpochParams
-	opens := types.TrainshardAssemblyOpensAt(info.BlockHeight, info.LatestEpoch, params, info.ActiveConfirmationPocEvent)
+	at := info.BlockHeight
+	from := types.TrainshardAssemblyOpensAt(at, info.LatestEpoch, params, info.ActiveConfirmationPocEvent)
 	epoch := types.NewEpochContext(info.LatestEpoch, params)
-	if next := epoch.NextEpochContext(); opens+lifetime >= next.StartOfPoC() && opens < next.EndOfPoCValidation() {
-		opens = next.EndOfPoCValidation()
+	next := epoch.NextEpochContext()
+	for next.StartOfPoC() <= from {
+		next = next.NextEpochContext()
 	}
-	return vo.Height(info.BlockHeight), vo.Height(opens), nil
+	if at >= from && at+1 >= next.StartOfPoC() {
+		from = next.EndOfPoCValidation()
+		next = next.NextEpochContext()
+	}
+	return vo.Height(at), vo.Height(from), vo.Height(next.StartOfPoC()), nil
 }
 
 func (c *Client) Watch(ctx context.Context) (<-chan struct{}, error) {

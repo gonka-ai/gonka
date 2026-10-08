@@ -70,6 +70,14 @@ func exit(code *int) string {
 	return strconv.Itoa(*code)
 }
 
+// a mesh whose peers could not be read is not one that hears everyone
+func notHeard(status run.NodeStatus) string {
+	if status.MeshSilentUnknown {
+		return "?"
+	}
+	return peers(status.MeshSilent)
+}
+
 func peers(nodes []vo.NodeRef) string {
 	names := make([]string, 0, len(nodes))
 	for _, node := range nodes {

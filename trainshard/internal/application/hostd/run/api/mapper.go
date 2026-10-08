@@ -252,14 +252,15 @@ func toStatusOutput(statuses []run.NodeStatus) contract.StatusResult {
 			silent = append(silent, peer.String())
 		}
 		items = append(items, contract.NodeStatus{
-			NodeResult:     toNodeResult(status.NodeResult),
-			Prepared:       status.Prepared,
-			Waiting:        status.Waiting,
-			MeshUp:         status.MeshUp,
-			MeshSilent:     silent,
-			GPUsInUse:      status.GPUsInUse,
-			DiskBytes:      status.DiskBytes,
-			DiskQuotaBytes: status.DiskQuotaBytes,
+			NodeResult:        toNodeResult(status.NodeResult),
+			Prepared:          status.Prepared,
+			Waiting:           status.Waiting,
+			MeshUp:            status.MeshUp,
+			MeshSilent:        silent,
+			MeshSilentUnknown: status.MeshSilentUnknown,
+			GPUsInUse:         status.GPUsInUse,
+			DiskBytes:         status.DiskBytes,
+			DiskQuotaBytes:    status.DiskQuotaBytes,
 		})
 	}
 	return contract.StatusResult{Items: items}
