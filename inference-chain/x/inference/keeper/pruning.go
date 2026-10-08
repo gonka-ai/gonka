@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"cosmossdk.io/collections"
@@ -13,54 +14,42 @@ const (
 	LookbackMultiplier               = int64(5)
 	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
+	// PruneWorkPerBlock caps deletion work of all pruners in one EndBlock.
+	PruneWorkPerBlock = int64(5000)
+	// InferenceRemoveCost: an inference removal also deletes the record at a random key.
+	InferenceRemoveCost = int64(3)
 )
 
+// Prune runs every pruner within one shared PruneWorkPerBlock budget. The first pruner
+// rotates with the height so a long backlog in one list does not starve the others.
+// A failing pruner stops only itself; the errors are joined.
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	err = k.GetInferencePruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	pruners := []budgetedPruner{
+		k.GetInferencePruner(params),
+		k.GetPoCBatchesPruner(params),
+		k.GetPoCValidationsPruner(params),
+		k.GetPoCValidationsV2Pruner(params),
+		k.GetPoCV2StoreCommitPruner(params),
+		k.GetMLNodeWeightDistributionPruner(params),
+		k.GetPoCValidationSnapshotPruner(params),
+		k.GetEpochGroupValidationPruner(params),
+		k.GetDevshardPruner(params),
+		k.GetClaimRecipientPruner(params),
 	}
-	err = k.GetPoCBatchesPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	budget := PruneWorkPerBlock
+	first := int(uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()) % uint64(len(pruners)))
+	var errs []error
+	for i := range pruners {
+		p := pruners[(first+i)%len(pruners)]
+		if err := p.prune(ctx, k, currentEpochIndex, &budget); err != nil {
+			errs = append(errs, err)
+		}
 	}
-	err = k.GetPoCValidationsPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetPoCValidationsV2Pruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetPoCV2StoreCommitPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetMLNodeWeightDistributionPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetPoCValidationSnapshotPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetEpochGroupValidationPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetDevshardPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	err = k.GetClaimRecipientPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {
@@ -192,6 +181,7 @@ func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[
 	return Pruner[collections.Pair[int64, string], collections.NoValue]{
 		Threshold:  params.EpochParams.InferencePruningEpochThreshold,
 		PruningMax: params.EpochParams.InferencePruningMax,
+		Cost:       InferenceRemoveCost,
 		List:       k.InferencesToPrune,
 		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[int64, string]] {
 			return collections.NewPrefixedPairRange[int64, string](epoch)
@@ -366,9 +356,14 @@ func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.
 	}
 }
 
+type budgetedPruner interface {
+	prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error
+}
+
 type Pruner[K any, V any] struct {
 	Threshold      uint64
 	PruningMax     int64
+	Cost           int64 // budget units per removal; 0 means 1
 	List           collections.Map[K, V]
 	Ranger         func(ctx context.Context, epoch int64) collections.Ranger[K]
 	Logger         types.InferenceLogger
@@ -409,7 +404,14 @@ func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, p
 	return prunedCount, nil
 }
 
+// Prune runs this pruner alone, bounded by its own PruningMax.
 func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int64) error {
+	return p.prune(ctx, k, currentEpochIndex, nil)
+}
+
+// prune removes at most PruningMax entries; a non-nil budget is shared with other
+// pruners and is charged Cost per removal.
+func (p Pruner[K, V]) prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error {
 	if p.PruningMax <= 0 {
 		p.Logger.LogError("Skipping pruning with non-positive limit", types.Pruning,
 			"max", p.PruningMax,
@@ -431,14 +433,25 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 		p.Logger.LogDebug("No epochs to prune", types.Pruning)
 		return nil
 	}
+	limit := p.PruningMax
+	cost := max(p.Cost, 1)
+	if budget != nil {
+		limit = min(limit, *budget/cost)
+		if limit <= 0 {
+			return nil
+		}
+	}
+	prunedCount := int64(0)
+	if budget != nil {
+		defer func() { *budget -= prunedCount * cost }()
+	}
 	p.Logger.LogInfo("Starting pruning", types.Pruning,
 		"start_epoch", startEpoch,
 		"end_epoch", endEpoch,
 		"threshold", p.Threshold,
 		"list", p.List.GetName())
-	prunedCount := int64(0)
 	for epoch := startEpoch; epoch <= endEpoch; epoch++ {
-		prunesLeft := p.PruningMax - prunedCount
+		prunesLeft := limit - prunedCount
 		prunedForEpoch, err := p.PruneEpoch(ctx, epoch, prunesLeft)
 		prunedCount += prunedForEpoch
 		if err != nil {
@@ -448,10 +461,10 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 			)
 			return err
 		}
-		if prunedCount >= p.PruningMax {
+		if prunedCount >= limit {
 			p.Logger.LogInfo("Reached per-block pruning limit", types.Pruning,
 				"pruned", prunedCount,
-				"max", p.PruningMax,
+				"max", limit,
 				"list", p.List.GetName(),
 			)
 			return nil
