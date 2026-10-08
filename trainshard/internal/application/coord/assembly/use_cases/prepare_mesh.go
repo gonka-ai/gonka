@@ -49,7 +49,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{}, err
 		}
 
-		// 2. Wait until releases land, a chain needs a block or two to catch up
+		// 2. Wait until releases land; the chain needs a block or two to catch up
 		if record.ReservesAny(refs(released)) {
 			if !uc.clock.Now().Before(kicked.Add(uc.settle)) {
 				return PrepareResult{}, shard.ErrReleasePending
@@ -60,8 +60,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 3. Drop a node the chain holds no address for at once: unlike a quiet host, it cannot
-		// answer later, the address a shard carries is the one it was assembled with
+		// 3. Drop a node the chain holds no address for at once; a shard never gains one later
 		if unaddressed := record.Unaddressed(); len(unaddressed) > 0 {
 			gone, err := kick(ctx, uc.submitter, shardID, unaddressed, vo.ReleaseUnreachable)
 			if err != nil {
@@ -93,7 +92,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			continue
 		}
 
-		// 6. Rank them
+		// 6. Rank the members
 		config, err := mesh.Order(shardID, members)
 		if err != nil {
 			return PrepareResult{}, err
@@ -114,9 +113,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			}
 		}
 		if len(refused) > 0 {
-			// a host that will not take a peer list is as often restarting as refusing, and Apply
-			// reports both the same way, so it gets the grace a silent host gets rather than losing
-			// its reservation to one unanswered call
+			// Apply reports a restarting host the same as a refusing one, so both wait for the deadline
 			if uc.clock.Now().Before(deadline) {
 				if err := timex.Sleep(ctx, uc.poll); err != nil {
 					return PrepareResult{}, err

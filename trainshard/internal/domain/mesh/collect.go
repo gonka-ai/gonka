@@ -15,11 +15,8 @@ type answer struct {
 	err        error
 }
 
-// Collect gathers one signed member per reserved node and names those that have not reported yet.
-// A silent host only leaves its nodes missing, unless no host answers at all; an identity that does
-// not verify is a refusal and fails the whole mesh. A host speaks for the nodes the chain places on
-// it and no other: an identity it offers for another machine's node, or for one it no longer holds,
-// is not taken
+// Collect names a silent host's nodes missing, and fails only when no host answers or an identity
+// does not verify. A host speaks for the nodes the chain places on it and no other
 func Collect(
 	ctx context.Context,
 	hosts Hosts,

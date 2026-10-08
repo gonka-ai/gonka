@@ -86,8 +86,7 @@ func (g *Guard) authenticate(r *http.Request) (vo.Address, []byte, time.Time, er
 	return address, body, verifiesUntil, nil
 }
 
-// fresh also answers the last instant this timestamp still passes, so whoever remembers a spent
-// request id can keep it exactly that long and not a moment less
+// the instant returned is the last one this timestamp passes: a spent request id must be kept that long
 func (g *Guard) fresh(timestamp string) (time.Time, error) {
 	at, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil {

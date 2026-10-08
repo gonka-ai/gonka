@@ -144,14 +144,14 @@ docker inspect myrepo/trainer:1 --format '{{index .RepoDigests 0}}'
    between runs:
 
 ```
-GPU_PROFILE="TESLA T4 | 15GB x1"; MAX_NODES=2; MAX_BLOCKS=500; BASE_IMAGE=myrepo/trainer@sha256:...
+GPU_PROFILE="TESLA T4 | 15GB x1"; NODE_COUNT=2; MAX_BLOCKS=500; BASE_IMAGE=myrepo/trainer@sha256:...
 
 jq -n --arg a "$(inferenced query auth module-account gov -o json | jq -r .account.value.address)" \
       --arg c "$(inferenced keys show <key> -a)" --arg p "$GPU_PROFILE" --arg i "$BASE_IMAGE" \
-      --argjson n $MAX_NODES --argjson b $MAX_BLOCKS '{
+      --argjson n $NODE_COUNT --argjson b $MAX_BLOCKS '{
   messages: [{"@type":"/inference.inference.MsgCreateTrainshardProposal", authority:$a, creator:$c,
-    gpu_profile_id:$p, max_nodes:$n, max_duration_blocks:$b, base_image:$i, run_key:""}],
-  metadata:"trainshard", deposit:"1000000ngonka", title:"a training run", summary:"lend gpus for one run"
+    gpu_profile_id:$p, node_count:$n, max_duration_blocks:$b, base_image:$i, run_key:""}],
+  metadata:"trainshard", deposit:"1000000ngonka", title:"a training run", summary:"reserve gpus for one run"
 }' > run.json
 
 inferenced tx gov submit-proposal run.json --from <key> --gas auto --gas-adjustment 1.5 --yes

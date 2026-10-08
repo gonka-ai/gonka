@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"slices"
 	"strings"
 
@@ -37,7 +36,11 @@ func Command(use, summary string, examples ...string) *flag.FlagSet {
 }
 
 func Parse(flags *flag.FlagSet, args []string, targets ...string) ([]string, error) {
-	if slices.ContainsFunc(args, Asked) {
+	own := args
+	if end := slices.Index(args, "--"); end >= 0 {
+		own = args[:end]
+	}
+	if slices.ContainsFunc(own, Asked) {
 		flags.Usage()
 		return nil, flag.ErrHelp
 	}
@@ -46,9 +49,10 @@ func Parse(flags *flag.FlagSet, args []string, targets ...string) ([]string, err
 		return nil, fmt.Errorf("%s: %w", strings.Join(targets, " and "), shared.ErrValidation)
 	}
 
+	out := flags.Output()
 	flags.SetOutput(io.Discard)
 	err := flags.Parse(args[len(targets):])
-	flags.SetOutput(os.Stderr)
+	flags.SetOutput(out)
 	if err != nil {
 		flags.Usage()
 		return nil, err

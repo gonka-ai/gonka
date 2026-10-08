@@ -258,8 +258,6 @@ func openShell(t *testing.T, server *httptest.Server, upgrade bool) (net.Conn, *
 	return openShellWith(t, server, true, "Upgrade")
 }
 
-// openShellWith sends each connection value as a header line of its own, the way a proxy that
-// adds its own tokens may
 func openShellWith(t *testing.T, server *httptest.Server, upgrade bool, connection ...string) (net.Conn, *bufio.Reader, *http.Response) {
 	t.Helper()
 

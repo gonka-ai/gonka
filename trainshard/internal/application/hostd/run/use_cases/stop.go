@@ -30,7 +30,7 @@ func NewStopUseCase(
 }
 
 func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.NodeResult, error) {
-	// 1. Read the shard from chain
+	// 1. Read the shard from chain and refuse anyone it does not answer to
 	record, height, err := shard.Read(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
@@ -40,7 +40,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 	}
 
 	// 2. Answer once per request: refuse, mark should-stop and converge each node under its lock
-	return uc.once.Do(ctx, cmd.request(run.OpStop), func(ctx context.Context) []run.NodeResult {
+	return uc.once.Do(ctx, cmd.request(run.OpStop), func(ctx context.Context) ([]run.NodeResult, error) {
 		return run.PerNode(cmd.Nodes, run.Failed, func(node vo.NodeRef) (run.NodeResult, error) {
 			if err := shard.CanApply(cmd.forNode(node), record, uc.clock.Now(), height); err != nil {
 				return run.NodeResult{}, err
@@ -63,6 +63,6 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 				return run.NodeResult{}, err
 			}
 			return run.ResultOf(node, applied), nil
-		})
+		}), nil
 	})
 }

@@ -30,9 +30,10 @@ func TestParseImageDigest(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// act
 			_, err := vo.ParseImageDigest(tc.input)
 
+			// assert
 			if tc.valid && err != nil {
 				t.Fatalf("got %v, want no error", err)
 			}
@@ -61,9 +62,10 @@ func TestImageLayersDerivesFrom(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// act
 			got := tc.child.DerivesFrom(base)
 
+			// assert
 			if got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
@@ -72,9 +74,10 @@ func TestImageLayersDerivesFrom(t *testing.T) {
 }
 
 func TestImageLayersNeverDerivesFromAnUnknownBase(t *testing.T) {
-
+	// act
 	got := vo.ImageLayers{"one"}.DerivesFrom(nil)
 
+	// assert
 	if got {
 		t.Fatal("an image must not pass the base check when the base is unknown")
 	}

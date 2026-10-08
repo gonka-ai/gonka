@@ -37,14 +37,16 @@ func openLog(t *testing.T, dir string, clock *timex.Frozen) run.RequestLog {
 }
 
 func TestARecordedAnswerSurvivesARestartOfTheDaemon(t *testing.T) {
-
+	// arrange
 	dir, clock := t.TempDir(), timex.NewFrozen(now)
 	if err := openLog(t, dir, clock).Record(context.Background(), deployed, answer); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 
+	// act
 	replayed, found, err := openLog(t, dir, clock).Result(context.Background(), deployed)
 
+	// assert
 	if err != nil || !found {
 		t.Fatalf("got found=%v err=%v, want the answer to outlive the process", found, err)
 	}
@@ -66,15 +68,17 @@ func TestAnAnswerBelongsToTheRequestItWasGivenFor(t *testing.T) {
 
 	for name, asked := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// arrange
 			dir, clock := t.TempDir(), timex.NewFrozen(now)
 			log := openLog(t, dir, clock)
 			if err := log.Record(context.Background(), deployed, answer); err != nil {
 				t.Fatalf("record: %v", err)
 			}
 
+			// act
 			_, found, err := log.Result(context.Background(), asked)
 
+			// assert
 			if err != nil || found {
 				t.Fatalf("got found=%v err=%v, want it treated as never seen", found, err)
 			}
@@ -83,7 +87,7 @@ func TestAnAnswerBelongsToTheRequestItWasGivenFor(t *testing.T) {
 }
 
 func TestAnAnswerIsForgottenOnceItsTimeToLiveHasPassed(t *testing.T) {
-
+	// arrange
 	dir, clock := t.TempDir(), timex.NewFrozen(now)
 	log := openLog(t, dir, clock)
 	if err := log.Record(context.Background(), deployed, answer); err != nil {
@@ -91,8 +95,10 @@ func TestAnAnswerIsForgottenOnceItsTimeToLiveHasPassed(t *testing.T) {
 	}
 	clock.Advance(ttl + time.Minute)
 
+	// act
 	_, found, err := log.Result(context.Background(), deployed)
 
+	// assert
 	if err != nil || found {
 		t.Fatalf("got found=%v err=%v, want a stale answer treated as never seen", found, err)
 	}

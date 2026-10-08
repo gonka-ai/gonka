@@ -30,8 +30,7 @@ func NewEndpoints(host vo.Host, uc UseCases, once *signedhttp.Once) *Endpoints {
 	return &Endpoints{host: host, uc: uc, once: once}
 }
 
-// Mount serves each session request once: a stream cannot be recorded and replayed the way a
-// command's answer is, so a repeat would open a second shell rather than answer the first again
+// a stream cannot be recorded and replayed like a command's answer, so each request id is served once
 func (e *Endpoints) Mount(mux *http.ServeMux, boundary func(http.Handler) http.Handler) {
 	served := func(h http.HandlerFunc) http.Handler { return boundary(e.once.Wrap(h)) }
 	mux.Handle("POST "+contract.PathLogs, served(e.streamLogs))
@@ -71,8 +70,7 @@ func (e *Endpoints) openShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// a caller whose side reads as closed looks to the server like a hang up, so the shell lives
-	// as long as the connection rather than as long as the request
+	// a caller that half-closes its side looks like a hang up, so the shell outlives the request context
 	session := &duplex{writer: w}
 	defer session.close()
 	if err := e.uc.Shell.Execute(context.WithoutCancel(r.Context()), cmd, session); err != nil && !session.started {

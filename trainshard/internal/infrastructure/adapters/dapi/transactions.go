@@ -12,17 +12,15 @@ import (
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/productscience/inference/x/inference/types"
 
-	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/chain"
 )
 
 const pathSendTx = "/admin/v1/tx/send"
 
 var chainCodec = codec.NewProtoCodec(chainTypes())
 
-// OptIn offers the node for training and says where this daemon answers for it. How long the
-// offer stands is a chain parameter, not ours, so the ttl we were asked for only decides how soon
-// we say it again
+// how long the offer stands is a chain parameter, so the ttl only decides how soon the daemon repeats it
 func (c *Client) OptIn(ctx context.Context, node vo.NodeRef, _ time.Duration) error {
 	return c.send(ctx, &types.MsgRefreshTrainingNodeOptIn{
 		Creator:  string(c.cfg.Participant),
@@ -31,9 +29,7 @@ func (c *Client) OptIn(ctx context.Context, node vo.NodeRef, _ time.Duration) er
 	})
 }
 
-// Release hands the reservation back. The chain calls this an autokick whoever asks for it, and a
-// host asking for its own node is allowed to. The id is the same on every retry so a repeat of a
-// release that already landed changes nothing
+// the request id is derived, not random, so a retry of a release that already landed is a no-op on chain
 func (c *Client) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error {
 	return c.send(ctx, &types.MsgAutokickTrainshardNode{
 		Creator:      string(c.cfg.Participant),
@@ -45,9 +41,7 @@ func (c *Client) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	})
 }
 
-// send hands the message to the dapi, which signs it as this participant and broadcasts it. The
-// answer only says the chain accepted the transaction; whether it did what we asked is read back
-// from the chain like everything else
+// the dapi answers once the chain accepts the transaction, not once it runs: the outcome is read back from the chain
 func (c *Client) send(ctx context.Context, msg sdk.Msg) error {
 	message, err := codectypes.NewAnyWithValue(msg)
 	if err != nil {
@@ -59,15 +53,15 @@ func (c *Client) send(ctx context.Context, msg sdk.Msg) error {
 	}
 
 	var answer struct {
-		Code   uint32 `json:"code"`
-		RawLog string `json:"raw_log"`
+		Codespace string `json:"codespace"`
+		Code      uint32 `json:"code"`
+		RawLog    string `json:"raw_log"`
 	}
 	if err := c.call(ctx, http.MethodPost, pathSendTx, payload, &answer); err != nil {
 		return err
 	}
 	if answer.Code != 0 {
-		return shared.New("CHAIN_REFUSED", shared.ErrUnavailable,
-			fmt.Sprintf("the chain refused %s with code %d: %s", sdk.MsgTypeURL(msg), answer.Code, answer.RawLog))
+		return chain.Refused(msg, answer.Codespace, answer.Code, answer.RawLog)
 	}
 	return nil
 }

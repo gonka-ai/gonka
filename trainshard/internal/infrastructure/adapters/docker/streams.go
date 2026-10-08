@@ -56,10 +56,8 @@ func (c *Client) Shell(ctx context.Context, req run.ExecRequest, session io.Read
 	}
 	defer attached.Close()
 
-	// the end of the input is the end of the typing, not of the session: a terminal stream carries
-	// no half close, so the output is read until the shell itself exits. A caller that hung up or
-	// half closed will type nothing more, so the shell is given the end of its input the way ctrl-d
-	// gives it, or it would wait on the connection for good
+	// a terminal stream has no half close: once the caller stops typing the shell gets ctrl-d, and
+	// the output is read until the shell exits
 	go func() {
 		io.Copy(attached.Conn, session)
 		attached.Conn.Write([]byte{0x04, 0x04, 0x04})

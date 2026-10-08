@@ -47,7 +47,6 @@ func TestAddress(t *testing.T) {
 	}
 }
 
-// Two nodes of the same shard must not land on the same address
 func TestAddressesDoNotCollide(t *testing.T) {
 	// act
 	first, _ := mesh.Address(shardID, 0)

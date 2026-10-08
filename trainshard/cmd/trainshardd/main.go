@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -64,7 +65,7 @@ func serve() error {
 		log.Info("the key is not the participant's own, the chain is asked whether it was granted", "signer", signer.Address(), "participant", cfg.participant)
 	}
 
-	outside, err := connect(cfg)
+	outside, err := connect(cfg, log)
 	if err != nil {
 		return err
 	}
@@ -94,6 +95,7 @@ func serve() error {
 		Limits:      cfg.limits,
 		Interval:    cfg.reconcileInterval,
 		Patience:    cfg.prepareDeadline,
+		RequestTTL:  cfg.requestTTL,
 	}, hostdrun.Deps{
 		Chain:        outside.chain,
 		Reservations: outside.reservations,
@@ -152,24 +154,37 @@ func serve() error {
 	nodes.Mount(mux, boundary)
 	sessions.Mount(mux, boundary)
 
+	// the ports are taken before any worker runs: a node opted in by a daemon that then cannot
+	// serve is offered with nobody answering for it
+	listener, err := net.Listen("tcp", cfg.listen)
+	if err != nil {
+		return fmt.Errorf("TRAINSHARD_LISTEN: %w", err)
+	}
+	var adminListener net.Listener
+	if cfg.admin != "" {
+		if adminListener, err = net.Listen("tcp", cfg.admin); err != nil {
+			return errors.Join(fmt.Errorf("TRAINSHARD_ADMIN_LISTEN: %w", err), listener.Close())
+		}
+	}
+
 	var workers sync.WaitGroup
 	workers.Add(2)
 	go func() { defer workers.Done(); runs.Run(ctx) }()
 	go func() { defer workers.Done(); nodes.Run(ctx) }()
 
-	server := &http.Server{Addr: cfg.listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	log.Info("trainshardd listening", "participant", cfg.participant, "version", version,
 		"listen", cfg.listen, "admin", cfg.admin, "nodes", len(cfg.nodes), "machine", cfg.machine)
 
-	served := make(chan error, 1)
-	go func() { served <- server.ListenAndServe() }()
+	served := make(chan error, 2)
+	go func() { served <- server.Serve(listener) }()
 
 	var admin *http.Server
-	if cfg.admin != "" {
+	if adminListener != nil {
 		adminMux := http.NewServeMux()
 		runs.MountAdmin(adminMux)
-		admin = &http.Server{Addr: cfg.admin, Handler: adminMux, ReadHeaderTimeout: 10 * time.Second}
-		go func() { served <- admin.ListenAndServe() }()
+		admin = &http.Server{Handler: adminMux, ReadHeaderTimeout: 10 * time.Second}
+		go func() { served <- admin.Serve(adminListener) }()
 	}
 
 	select {
@@ -227,8 +242,7 @@ type outside struct {
 	close        func() error
 }
 
-// reservations reads from the chain and writes through the dapi, because a release is a transaction
-// and this machine holds no key
+// a release is a transaction and this machine holds no chain key, so it goes through the dapi
 type reservations struct {
 	*chain.Client
 	dapi *dapi.Client
@@ -238,8 +252,8 @@ func (r reservations) Release(ctx context.Context, shardID vo.ShardID, node vo.N
 	return r.dapi.Release(ctx, shardID, node, reason)
 }
 
-func connect(cfg config) (outside, error) {
-	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Poll: cfg.chainPoll, Timeout: cfg.chainTimeout})
+func connect(cfg config, log *slog.Logger) (outside, error) {
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Poll: cfg.chainPoll, Timeout: cfg.chainTimeout}, log)
 	if err != nil {
 		return outside{}, err
 	}

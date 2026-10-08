@@ -11,12 +11,12 @@ import (
 const pathAbort = "/trainshard/v0/admin/nodes/{node_id}/abort"
 
 type Admin struct {
-	participant vo.Participant
-	abort       *usecases.AbortUseCase
+	host  vo.Host
+	abort *usecases.AbortUseCase
 }
 
-func NewAdmin(participant vo.Participant, abort *usecases.AbortUseCase) *Admin {
-	return &Admin{participant: participant, abort: abort}
+func NewAdmin(host vo.Host, abort *usecases.AbortUseCase) *Admin {
+	return &Admin{host: host, abort: abort}
 }
 
 func (a *Admin) Mount(mux *http.ServeMux) {
@@ -24,7 +24,7 @@ func (a *Admin) Mount(mux *http.ServeMux) {
 }
 
 func (a *Admin) abortRun(w http.ResponseWriter, r *http.Request) {
-	node, err := vo.ParseNodeRef(string(a.participant), r.PathValue("node_id"))
+	node, err := a.host.Node(r.PathValue("node_id"))
 	if err != nil {
 		httpx.WriteError(w, "", err)
 		return

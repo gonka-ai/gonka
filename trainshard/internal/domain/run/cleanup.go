@@ -1,7 +1,7 @@
 package run
 
-// WipePlan removes everything a run left on the machine, always in the same order; a leftover
-// process is only known to be the run's by the container it came from, so it goes first
+// WipePlan kills a leftover process before its container is removed: the container is all that
+// says the process is the run's
 func WipePlan(o Observed) []Action {
 	actions := make([]Action, 0, 5)
 	if o.Container.Running() {
@@ -22,16 +22,16 @@ func WipePlan(o Observed) []Action {
 	return actions
 }
 
-// CleanupPlan asks for the handback until it goes through. A drained node with no run is left alone.
 func CleanupPlan(d Desired, o Observed) []Action {
 	if actions := WipePlan(o); len(actions) > 0 {
 		return actions
 	}
+	// a drained node with no run behind it is the operator's, and is left alone
 	if d.Shard.IsZero() {
 		return nil
 	}
-	// a node already lent on to the next shard stays drained for it rather than going through
-	// inference in between, which on a real mlnode would load a model only to unload it again
+	// a node already reserved for the next shard stays drained for it: a return in between would
+	// load a model only to unload it again
 	if d.Handover {
 		return []Action{{Kind: ActionForgetRun}}
 	}

@@ -19,14 +19,13 @@ func NewReportUseCase(chain shard.ChainReader, runs run.RunStore, machine run.Ma
 }
 
 func (uc *ReportUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.NodeReport, error) {
-	// 1. Authorize the read
+	// 1. Read the shard from chain
 	record, height, err := shard.Read(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
 	}
 
-	// 2. Return image history and exit codes; only the exit code is read off the machine, so a
-	// probe that fails elsewhere cannot hold back what is recorded
+	// 2. Return each authorized node's recorded images and the exit code its container holds
 	return run.PerNode(cmd.Nodes, run.FailedReport, func(node vo.NodeRef) (run.NodeReport, error) {
 		if err := shard.CanObserve(cmd.forNode(node), record, height); err != nil {
 			return run.NodeReport{}, err

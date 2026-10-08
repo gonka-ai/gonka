@@ -90,12 +90,14 @@ func TestCanApply(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			cmd, sh := command(), activeShard()
 			tc.mutate(&cmd, &sh)
 
+			// act
 			err := shard.CanApply(cmd, sh, now, height)
 
+			// assert
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("got %v, want %v", err, tc.wantErr)
 			}
@@ -104,24 +106,28 @@ func TestCanApply(t *testing.T) {
 }
 
 func TestCanObserveIgnoresTheDeadline(t *testing.T) {
-
+	// arrange
 	cmd, sh := command(), activeShard()
 	cmd.Deadline = now.Add(-time.Hour)
 
+	// act
 	err := shard.CanObserve(cmd, sh, height)
 
+	// assert
 	if err != nil {
 		t.Fatalf("a read must not expire, got %v", err)
 	}
 }
 
 func TestCanApplyMeshRequiresADrainedNode(t *testing.T) {
-
+	// arrange
 	cmd, sh := command(), activeShard()
 
+	// act
 	notDrained := shard.CanApplyMesh(cmd, sh, false, now, height)
 	drained := shard.CanApplyMesh(cmd, sh, true, now, height)
 
+	// assert
 	if !errors.Is(notDrained, shard.ErrNodeNotPrepared) {
 		t.Fatalf("got %v, want %v", notDrained, shard.ErrNodeNotPrepared)
 	}
@@ -131,12 +137,14 @@ func TestCanApplyMeshRequiresADrainedNode(t *testing.T) {
 }
 
 func TestRefusalsCarryStableCodes(t *testing.T) {
-
+	// arrange
 	cmd, sh := command(), activeShard()
 	cmd.Actor = shard.Actor{Address: stranger}
 
+	// act
 	code := shared.CodeOf(shard.CanApply(cmd, sh, now, height))
 
+	// assert
 	if code != "NOT_AUTHORIZED" {
 		t.Fatalf("got code %q, want NOT_AUTHORIZED", code)
 	}

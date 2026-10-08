@@ -5,9 +5,7 @@ import (
 	"testing"
 )
 
-// The catalog is built before any config is read, so help and an unknown command answer without
-// a key or a chain. A constructor that starts work in New would panic right here
-func TestTheCommandCatalogNeedsNothingToBuild(t *testing.T) {
+func TestTheCommandCatalogBuildsWithoutAKeyOrAChain(t *testing.T) {
 	// act
 	commands := catalog()
 

@@ -9,6 +9,7 @@ import (
 )
 
 func TestFromCardsMatchesWhatTheDapiPutsOnChain(t *testing.T) {
+	// arrange
 	cards := []gpuprofile.Card{
 		{Name: "NVIDIA H100 80GB HBM3", MemoryMiB: 81559},
 		{Name: "NVIDIA H100 80GB HBM3", MemoryMiB: 81559},
@@ -20,9 +21,11 @@ func TestFromCardsMatchesWhatTheDapiPutsOnChain(t *testing.T) {
 		{Type: "CPU", Count: 64},
 	}
 
+	// act
 	machine := gpuprofile.FromCards(cards)
 	chain := gpuprofile.FromHardware(declared)
 
+	// assert
 	if machine.Profile != chain.Profile {
 		t.Fatalf("machine %q, chain %q", machine.Profile, chain.Profile)
 	}
@@ -35,13 +38,19 @@ func TestFromCardsMatchesWhatTheDapiPutsOnChain(t *testing.T) {
 }
 
 func TestNoCardsIsNoProfile(t *testing.T) {
-	if got := gpuprofile.FromCards(nil); !got.IsZero() || got.Count != 0 {
-		t.Fatalf("got %+v", got)
+	// act
+	none := gpuprofile.FromCards(nil)
+	zero := gpuprofile.Declared("H100", 0)
+	eight := gpuprofile.Declared("H100", 8)
+
+	// assert
+	if !none.IsZero() || none.Count != 0 {
+		t.Fatalf("got %+v", none)
 	}
-	if got := gpuprofile.Declared("H100", 0); !got.IsZero() {
-		t.Fatalf("got %+v", got)
+	if !zero.IsZero() {
+		t.Fatalf("got %+v", zero)
 	}
-	if got := gpuprofile.Declared("H100", 8); got.Profile != "H100 x8" || got.Count != 8 {
-		t.Fatalf("got %+v", got)
+	if eight.Profile != "H100 x8" || eight.Count != 8 {
+		t.Fatalf("got %+v", eight)
 	}
 }

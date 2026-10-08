@@ -47,7 +47,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 
 func (c *Commands) Deploy(ctx context.Context, args []string) error {
 	flags := clix.Command("deploy <shard> [flags] [-- command]",
-		"Places the run on every node of the shard: an image built on the proposal's base image,\nits gpus, disk and the outside addresses it may reach. What follows -- is the command\nthe container runs. Nothing runs until start.",
+		"Places the run on every node of the shard: an image built on the proposal's base image,\nits gpus, disk and the outside addresses it may reach. What follows -- is the command\nthe container runs. Nothing runs until start, and a running run is refused: stop it first.",
 		"trainshardctl deploy 1 -image registry.example.com/run@sha256:<digest> -gpus 1 \\\n      -disk-bytes 10737418240 -source s3.amazonaws.com:443 -env EPOCHS=3 -- python train.py")
 	image := flags.String("image", "", "image digest to run, built on the proposal's base image")
 	gpus := flags.Int("gpus", 0, "gpus per node")
@@ -79,7 +79,7 @@ func (c *Commands) Deploy(ctx context.Context, args []string) error {
 
 func (c *Commands) Start(ctx context.Context, args []string) error {
 	rest, err := clix.Parse(clix.Command("start <shard>",
-		"Starts the deployed run on every node of the shard.",
+		"Starts the deployed run on every node of the shard. Refused unless every node is\nprepared, on the mesh and holds the same image.",
 		"trainshardctl start 1"), args, "shard")
 	if err != nil {
 		return err
@@ -120,7 +120,7 @@ func (c *Commands) Stop(ctx context.Context, args []string) error {
 
 func (c *Commands) Status(ctx context.Context, args []string) error {
 	rest, err := clix.Parse(clix.Command("status <shard>",
-		"Shows each node's container state, whether it is prepared and on the mesh, its gpu and\ndisk use, and why a node is not ready yet.",
+		"Shows each node's container state, image and exit code, whether it is prepared and on\nthe mesh, its gpu and disk use, and why a node is not ready yet.",
 		"trainshardctl status 1"), args, "shard")
 	if err != nil {
 		return err
@@ -136,7 +136,7 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 	}
 
 	out := tabwriter.NewWriter(c.out, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(out, "NODE\tSTATE\tPREPARED\tMESH\tGPUS\tDISK\tQUOTA\tREASON")
+	fmt.Fprintln(out, "NODE\tSTATE\tIMAGE\tEXIT\tPREPARED\tMESH\tGPUS\tDISK\tQUOTA\tREASON")
 	silent := 0
 	for _, node := range statuses {
 		why := node.Waiting
@@ -146,8 +146,8 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 		if node.Unanswered() {
 			silent++
 		}
-		fmt.Fprintf(out, "%s\t%s\t%t\t%t\t%d\t%d\t%d\t%s\n",
-			node.Node, node.State, node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
+		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%t\t%t\t%d\t%d\t%d\t%s\n",
+			node.Node, node.State, node.Image, exit(node.ExitCode), node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, why)
 	}
 	if err := out.Flush(); err != nil {
 		return err
@@ -155,8 +155,7 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 	return told(silent, len(statuses))
 }
 
-// A node that answers with a fault is still an answer, but a run where none of them did leaves the
-// caller knowing nothing, and a caller that is turned away has to hear it in the exit code
+// a fault is still an answer; only a run where no node answered fails the exit code
 func told(silent, asked int) error {
 	if asked > 0 && silent == asked {
 		return fmt.Errorf("none of %d nodes answered", asked)
@@ -207,7 +206,7 @@ func (c *Commands) Logs(ctx context.Context, args []string) error {
 	flags := clix.Command("logs <shard> <participant/node> [flags]",
 		"Streams the run output of one node, named participant/node as status prints it.",
 		"trainshardctl logs 1 gonka1s0acz7xxe2t6zz8ne5rm7eesu6tk7rhnv6u3gj/node1", "trainshardctl logs 1 gonka1s0acz7xxe2t6zz8ne5rm7eesu6tk7rhnv6u3gj/node1 -tail 100")
-	tail := flags.Int("tail", 0, "how many lines to start from, newest first")
+	tail := flags.Int("tail", 0, "start from the last this many lines instead of the whole output")
 
 	rest, err := clix.Parse(flags, args, "shard", "node")
 	if err != nil {

@@ -13,10 +13,8 @@ type served struct {
 	clock ports.Clock
 }
 
-// First writes before it answers, so a request that is being served cannot be served again by a
-// daemon that restarts mid-shell. An id is kept until the signature that carried it stops passing,
-// never until some span measured from arrival: a caller whose clock runs ahead is admitted early and
-// its signature outlives any span counted from the moment we saw it
+// an id is kept until its signature stops passing, not for a span from arrival: a caller whose clock
+// runs ahead is admitted early, and its signature outlives any such span
 func (s served) First(_ context.Context, request string, until time.Time) (bool, error) {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()

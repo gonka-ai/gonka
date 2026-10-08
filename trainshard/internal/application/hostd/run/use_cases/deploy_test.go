@@ -60,13 +60,15 @@ func TestDeployRefusesANodeWithoutFailingTheRequest(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			f := newFixture()
 			cmd := deployCommand()
 			tc.mutate(f, &cmd)
 
+			// act
 			results, err := f.deploy().Execute(context.Background(), cmd)
 
+			// assert
 			if err != nil {
 				t.Fatalf("a refused node must not fail the request: %v", err)
 			}
@@ -81,13 +83,15 @@ func TestDeployRefusesANodeWithoutFailingTheRequest(t *testing.T) {
 }
 
 func TestDeployTurnsAStrangerAwayInsteadOfAnsweringPerNode(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	cmd := deployCommand()
 	cmd.Actor = shard.Actor{Address: stranger}
 
+	// act
 	_, err := f.deploy().Execute(context.Background(), cmd)
 
+	// assert
 	if !errors.Is(err, shard.ErrNotAuthorized) {
 		t.Fatalf("got %v, want %v", err, shard.ErrNotAuthorized)
 	}
@@ -97,7 +101,7 @@ func TestDeployTurnsAStrangerAwayInsteadOfAnsweringPerNode(t *testing.T) {
 }
 
 func TestDeployReplaysAnAnswerToItsOwnActorOnly(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	cmd := deployCommand()
@@ -106,8 +110,10 @@ func TestDeployReplaysAnAnswerToItsOwnActorOnly(t *testing.T) {
 	}
 	cmd.Actor = shard.Actor{Address: stranger}
 
+	// act
 	replayed, err := f.deploy().Execute(ctx, cmd)
 
+	// assert
 	if !errors.Is(err, shard.ErrNotAuthorized) {
 		t.Fatalf("got %v, want a stranger refused the answer to someone else's request", err)
 	}
@@ -117,12 +123,14 @@ func TestDeployReplaysAnAnswerToItsOwnActorOnly(t *testing.T) {
 }
 
 func TestDeployRecordsTheRunAndDropsAnEarlierStart(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Start: true, Fault: &oldFault}
 
+	// act
 	results, err := f.deploy().Execute(context.Background(), deployCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
@@ -136,7 +144,7 @@ func TestDeployRecordsTheRunAndDropsAnEarlierStart(t *testing.T) {
 }
 
 func TestDeployAnsweredTwiceActsOnce(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	first, err := f.deploy().Execute(ctx, deployCommand())
@@ -144,9 +152,11 @@ func TestDeployAnsweredTwiceActsOnce(t *testing.T) {
 		t.Fatalf("first deploy: %v", err)
 	}
 
+	// act
 	settled := f.rec.sequence()
 	second, err := f.deploy().Execute(ctx, deployCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("second deploy: %v", err)
 	}
@@ -168,7 +178,7 @@ func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
 
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// arrange
 			f := newFixture()
 			ctx := context.Background()
 			if err := f.meshed(ctx); err != nil {
@@ -179,12 +189,14 @@ func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
 			}
 			f.containers.setState(nodeA, vo.ContainerExited)
 			f.rec.reset()
-
 			cmd := deployCommand()
 			cmd.RequestID = "req-2"
 			change(&cmd)
+
+			// act
 			results, err := f.deploy().Execute(ctx, cmd)
 
+			// assert
 			if err != nil {
 				t.Fatalf("second deploy: %v", err)
 			}
@@ -346,12 +358,14 @@ func TestADeployThatCouldNotPullStaysForTheLoopToFinish(t *testing.T) {
 }
 
 func TestDeployRejectsAShardTheChainDoesNotHave(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	delete(f.chain.shards, shardID)
 
+	// act
 	_, err := f.deploy().Execute(context.Background(), deployCommand())
 
+	// assert
 	if !errors.Is(err, shard.ErrShardUnknown) {
 		t.Fatalf("got %v, want %v", err, shard.ErrShardUnknown)
 	}

@@ -68,8 +68,6 @@ func TestASignedRequestIsGoodOnce(t *testing.T) {
 	}
 }
 
-// A caller whose clock runs ahead is admitted before its timestamp, so its signature outlives any
-// span counted from the moment the request arrived
 func TestARequestFromAClockAheadIsHeldUntilItsSignatureDies(t *testing.T) {
 	// arrange
 	store := newServedStub()

@@ -10,7 +10,7 @@ import (
 type Desired struct {
 	Reservation
 	Reserved bool
-	// Handover holds while the shard being cleaned up is not the one the chain now holds the node for
+	// Shard is then the one being cleaned up, while the chain already reserves the node for another
 	Handover       bool
 	MeshConfigured bool
 	Run            RunSpec

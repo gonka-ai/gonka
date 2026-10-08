@@ -22,7 +22,7 @@ func openRuns(t *testing.T, dir string) run.RunStore {
 }
 
 func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
-
+	// arrange
 	dir, ctx := t.TempDir(), context.Background()
 	spec := run.RunSpec{
 		Image:     vo.ImageDigest("run@sha256:" + strings.Repeat("b", 64)),
@@ -38,8 +38,10 @@ func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
 		t.Fatalf("stop: %v", err)
 	}
 
+	// act
 	state, found, err := openRuns(t, dir).Load(ctx, node)
 
+	// assert
 	if err != nil || !found {
 		t.Fatalf("got found=%v err=%v, want the run to outlive the process", found, err)
 	}
@@ -54,11 +56,8 @@ func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
 	}
 }
 
-// The clocks the host hands a node back by live in this file. A restart that forgets one restarts
-// the wait with it, so a node that has been unready for an hour reads as unready since just now
-// and is never handed back at all
 func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
-
+	// arrange
 	dir, ctx := t.TempDir(), context.Background()
 	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	slipped := reservedAt.Add(time.Hour)
@@ -74,8 +73,10 @@ func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
 		t.Fatalf("track: %v", err)
 	}
 
+	// act
 	reopened, _, err := openRuns(t, dir).Load(ctx, node)
 
+	// assert
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -85,7 +86,7 @@ func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
 }
 
 func TestADeployForAnotherShardStartsFromNothing(t *testing.T) {
-
+	// arrange
 	dir, ctx := t.TempDir(), context.Background()
 	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	spec := run.RunSpec{Image: vo.ImageDigest("run@sha256:" + strings.Repeat("b", 64))}
@@ -100,10 +101,12 @@ func TestADeployForAnotherShardStartsFromNothing(t *testing.T) {
 		t.Fatalf("track: %v", err)
 	}
 
+	// act
 	if err := run.RecordDeploy(ctx, openRuns(t, dir), node, 8, spec); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
 
+	// assert
 	reopened, _, err := openRuns(t, dir).Load(ctx, node)
 	if err != nil {
 		t.Fatalf("load: %v", err)

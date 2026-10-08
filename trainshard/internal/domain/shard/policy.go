@@ -14,8 +14,8 @@ type Command struct {
 	Deadline  time.Time
 }
 
-// CanAsk holds for whoever the shard answers to at all, whether or not it is still running,
-// so a retry of a request that already ran is replayed to its own actor and to nobody else
+// CanAsk ignores whether the shard is still running, so a retry of a request that already ran is
+// replayed to its own actor and to nobody else
 func CanAsk(shardID vo.ShardID, actor Actor, s Shard) error {
 	if shardID != s.ID {
 		return ErrShardMismatch

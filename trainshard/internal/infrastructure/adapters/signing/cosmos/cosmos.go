@@ -59,7 +59,6 @@ func FromHex(raw string) (*Key, error) {
 
 func (k *Key) Address() vo.Address { return k.address }
 
-// Account hands the key over in the shape the chain's own transaction signing takes
 func (k *Key) Account() cryptotypes.PrivKey {
 	return &cosmossecp.PrivKey{Key: k.private.Serialize()}
 }
@@ -77,8 +76,6 @@ func (k *Key) Recover(payload, signature []byte) (vo.Address, error) {
 	return Recover(payload, signature)
 }
 
-// Recover names the account that signed: the signature carries the key that made it, so reading a
-// caller's address takes nothing that belongs to the caller
 func Recover(payload, signature []byte) (vo.Address, error) {
 	digest := sha256.Sum256(payload)
 	public, _, err := ecdsa.RecoverCompact(signature, digest[:])

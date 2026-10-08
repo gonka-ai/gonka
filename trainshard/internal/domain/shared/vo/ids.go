@@ -53,9 +53,8 @@ func ParseNodeRef(participant, nodeID string) (NodeRef, error) {
 	return NodeRef{Participant: Participant(addr), NodeID: NodeID(id)}, nil
 }
 
-// plainName holds for what is safe as a single path element, a file name and a container name:
-// a node id ends up in all three, and a separator or a dotted name would walk out of the run's
-// own directory
+// a node id ends up in a path element, a file name and a container name, and a separator or a
+// dotted name would walk out of the run's own directory
 func plainName(id string) bool {
 	if id == "" || len(id) > maxNodeIDLen || id == "." || id == ".." {
 		return false

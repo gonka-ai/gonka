@@ -18,12 +18,14 @@ import (
 
 var errUnknownHost = shared.New("HOST_UNKNOWN", shared.ErrNotFound, "the chain holds no endpoint for this host: its daemon published none with the opt-in")
 
+// an answer comes from another participant's machine, so it is read no further than this
+const maxAnswerBytes = 8 << 20
+
 type Signer interface {
 	Sign(payload []byte) []byte
 }
 
-// baseURL is the address the host published on chain; there is no other place a coordinator
-// could take one from
+// the endpoint the host published on chain is the only address a coordinator may take for it
 func baseURL(host vo.Host) (string, error) {
 	if host.Endpoint.IsZero() {
 		return "", errUnknownHost
@@ -69,7 +71,7 @@ func (c *Client) call(ctx context.Context, host vo.Host, method, path string, re
 	defer response.Body.Close()
 
 	var envelope contract.Envelope
-	if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, maxAnswerBytes)).Decode(&envelope); err != nil {
 		return shared.New("HOST_ANSWER", shared.ErrUnavailable, fmt.Sprintf("host answered %d with no envelope", response.StatusCode))
 	}
 	if !envelope.OK {
@@ -78,7 +80,10 @@ func (c *Client) call(ctx context.Context, host vo.Host, method, path string, re
 	if out == nil {
 		return nil
 	}
-	return json.Unmarshal(envelope.Data, out)
+	if err := json.Unmarshal(envelope.Data, out); err != nil {
+		return shared.New("HOST_ANSWER", shared.ErrUnavailable, fmt.Sprintf("host answered with unreadable data: %v", err))
+	}
+	return nil
 }
 
 func (c *Client) request(ctx context.Context, participant vo.Participant, method, base, path string, requestID vo.RequestID, payload []byte) (*http.Request, error) {
@@ -122,7 +127,7 @@ func (c *Client) stream(ctx context.Context, host vo.Host, method, path string, 
 
 	if response.StatusCode != http.StatusOK {
 		var envelope contract.Envelope
-		if err := json.NewDecoder(response.Body).Decode(&envelope); err != nil {
+		if err := json.NewDecoder(io.LimitReader(response.Body, maxAnswerBytes)).Decode(&envelope); err != nil {
 			return toError(response.StatusCode, nil)
 		}
 		return toError(response.StatusCode, envelope.Error)

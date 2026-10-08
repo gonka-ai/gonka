@@ -32,13 +32,12 @@ func ResultOf(node vo.NodeRef, container ContainerInfo) NodeResult {
 
 func (r NodeResult) OK() bool { return r.Fault == nil }
 
-// Unanswered holds for a node the call never reached or that turned it away; a node that answered
-// always says what its container is, and a fault it carries is the one its run last hit
+// Unanswered rests on a node that answered always saying what its container is; a fault it
+// carries is the one its run last hit
 func (r NodeResult) Unanswered() bool { return r.Fault != nil && r.State == vo.ContainerUnknown }
 
 func (r NodeResult) Ref() vo.NodeRef { return r.Node }
 
-// Answer is whatever a host says about one node, so a batch can be matched back to what was asked
 type Answer interface{ Ref() vo.NodeRef }
 
 func PerNode[T any](nodes []vo.NodeRef, failed func(vo.NodeRef, error) T, run func(vo.NodeRef) (T, error)) []T {
@@ -53,9 +52,8 @@ func PerNode[T any](nodes []vo.NodeRef, failed func(vo.NodeRef, error) T, run fu
 	return results
 }
 
-// PerHost asks every host at once and answers grouped by host, in the order the hosts were
-// given, never in the order they happened to finish; every node a host serves gets an answer, so a
-// host cannot drop one and have the silence read as agreement
+// PerHost answers in the order the hosts were given, never the order they finished, and gives
+// every node an answer, so a host's silence never reads as agreement
 func PerHost[T Answer](
 	ctx context.Context,
 	hosts []vo.Host,
@@ -77,9 +75,8 @@ func PerHost[T Answer](
 	return results
 }
 
-// matched lines the answers up with the nodes they were asked about, so a host can neither drop
-// one of its nodes, nor answer twice for the same one, nor slip in an answer for a node that is
-// not its own
+// matched lets a host neither drop one of its nodes, nor answer twice for one, nor slip in a node
+// that is not its own
 func matched[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef, error) T, cause error) []T {
 	if cause == nil {
 		cause = ErrNodeNotAnswered
@@ -118,9 +115,8 @@ func FailedStatus(node vo.NodeRef, err error) NodeStatus {
 	return NodeStatus{NodeResult: Failed(node, err)}
 }
 
-// ReadyToStart holds when every node answered, is still prepared and on the mesh, can still
-// start its container, and they all hold the same image; a run started on only some of its
-// nodes waits for the rest with the gpus already taken
+// ReadyToStart refuses the whole run for one node: a run started on only some of its nodes waits
+// for the rest with the gpus already taken
 func ReadyToStart(statuses []NodeStatus) error {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
@@ -170,15 +166,12 @@ type NodeReport struct {
 	Images   []ImageRun
 	ExitCode *int
 	Fault    *shared.Fault
-	// Answered holds for a report the host drew from its records; a host from before it was sent
-	// leaves it out, and its faults all read as unanswered
+	// a host that does not send it leaves it false, and its faults all read as unanswered
 	Answered bool
 }
 
 func (r NodeReport) Ref() vo.NodeRef { return r.Node }
 
-// Unanswered holds for a node the call never reached or whose host could not read its records; a
-// fault on a node that answered is the one its run last hit
 func (r NodeReport) Unanswered() bool { return r.Fault != nil && !r.Answered }
 
 func FailedReport(node vo.NodeRef, err error) NodeReport {

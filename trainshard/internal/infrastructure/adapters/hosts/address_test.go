@@ -21,7 +21,10 @@ func TestBaseURLIsTheEndpointTheChainNames(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// act
 			got, err := baseURL(tc.host)
+
+			// assert
 			if !errors.Is(err, tc.err) {
 				t.Fatalf("got err %v, want %v", err, tc.err)
 			}
@@ -49,7 +52,10 @@ func TestHostAddressKeepsTheSchemeSoAShellIsNotSentInTheClear(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// act
 			address, secure, err := hostAddress(tc.base)
+
+			// assert
 			if err != nil {
 				t.Fatalf("host address: %v", err)
 			}

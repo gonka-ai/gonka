@@ -40,8 +40,6 @@ const (
 	runImage  = "ghcr.io/gonka/train@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 )
 
-// the host and the coordinator each hold their own key, the way they do in production: the whole
-// point of this test is that a request crosses the wire signed and comes back believed
 var (
 	hostKey        = key("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	coordinatorKey = key("c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3")
@@ -51,9 +49,6 @@ var (
 	node    = vo.NodeRef{Participant: host, NodeID: "node-a"}
 )
 
-// routePrefix stands in for the participant's proxy, which reaches one of several GPU machines
-// under its own prefix and strips it before the daemon sees the path: what the coordinator signs
-// is the path behind the prefix, and that is what the daemon has to verify
 const routePrefix = "/trainshard-node-a"
 
 type reached struct {
@@ -115,6 +110,7 @@ func newHost(t *testing.T) reached {
 		Limits:      run.Limits{MaxGPUs: 8, MaxDiskBytes: 1 << 40},
 		Interval:    10 * time.Millisecond,
 		Patience:    time.Hour,
+		RequestTTL:  time.Hour,
 	}, hostdrun.Deps{
 		Chain:        chain,
 		Reservations: chain,
@@ -196,8 +192,6 @@ func waitFor(t *testing.T, why string, ready func(run.NodeStatus) bool, client r
 	}
 }
 
-// meshed takes the node as far as a coordinator would before it deploys: a container is built
-// with the rank its peer list gives it, so there is no run without one
 func meshed(t *testing.T, client reached) {
 	t.Helper()
 
@@ -217,13 +211,13 @@ func meshed(t *testing.T, client reached) {
 }
 
 func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
-
+	// arrange
 	client := newHost(t)
 	ctx := context.Background()
-
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
 	meshed(t, client)
 
+	// act
 	deployed, err := client.Deploy(ctx, client.machine, run.DeployCall{
 		HostCommand: command(node),
 		Run: run.RunSpec{
@@ -233,6 +227,8 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 			Resources: run.Resources{GPUs: 8, DiskBytes: 1 << 30},
 		},
 	})
+
+	// assert
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
@@ -246,8 +242,10 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 		t.Fatalf("got %q, want the container built from the run image", created.Image)
 	}
 
+	// act
 	started, err := client.Start(ctx, client.machine, command(node))
 
+	// assert
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -256,8 +254,10 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 	}
 	waitFor(t, "the container to be running", func(s run.NodeStatus) bool { return s.State.Running() }, client)
 
+	// act
 	stopped, err := client.Stop(ctx, client.machine, run.StopCall{HostCommand: command(node), Grace: time.Second})
 
+	// assert
 	if err != nil {
 		t.Fatalf("stop: %v", err)
 	}
@@ -268,7 +268,7 @@ func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 }
 
 func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
-
+	// arrange
 	client := newHost(t)
 	ctx := context.Background()
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
@@ -281,8 +281,10 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	}
 	waitFor(t, "the container to be created", func(s run.NodeStatus) bool { return s.State.Exists() }, client)
 
+	// act
 	reports, err := client.Report(ctx, client.machine, shardID, []vo.NodeRef{node})
 
+	// assert
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
@@ -298,11 +300,12 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 }
 
 func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
-
+	// arrange
 	client := newHost(t)
 	ctx := context.Background()
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
 
+	// act
 	identities, err := client.Identities(ctx, shardID, client.machine)
 	if err != nil {
 		t.Fatalf("identities: %v", err)
@@ -313,6 +316,7 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 	err = client.Apply(ctx, config, client.machine, node)
 
+	// assert
 	if len(identities) != 1 || identities[0].Member.Node != node || len(identities[0].Signature) == 0 {
 		t.Fatalf("got %+v, want one signed member", identities)
 	}
@@ -321,8 +325,10 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 	waitFor(t, "the mesh to come up", func(s run.NodeStatus) bool { return s.MeshUp }, client)
 
+	// act
 	failed, err := client.Probe(ctx, config, client.machine, node)
 
+	// assert
 	if err != nil {
 		t.Fatalf("probe: %v", err)
 	}
@@ -331,8 +337,6 @@ func TestTheMeshIsBuiltAndProbedOverHTTP(t *testing.T) {
 	}
 }
 
-// echoStreams stands in for the container a shell lands in: it answers every line it is sent,
-// each after pause, until its pty reads the end of the input
 type echoStreams struct {
 	pause time.Duration
 }
@@ -362,7 +366,6 @@ func (e echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.Rea
 	}
 }
 
-// shellHost serves only the session module, behind the same route prefix a proxy strips
 func shellHost(t *testing.T, streams run.Streams) reached {
 	t.Helper()
 
@@ -394,7 +397,6 @@ func shellHost(t *testing.T, streams run.Streams) reached {
 	}
 }
 
-// terminal is what a researcher types in and reads back
 type terminal struct {
 	in  io.Reader
 	out strings.Builder
@@ -404,12 +406,14 @@ func (t *terminal) Read(p []byte) (int, error)  { return t.in.Read(p) }
 func (t *terminal) Write(p []byte) (int, error) { return t.out.Write(p) }
 
 func TestAShellCrossesTheWireBothWays(t *testing.T) {
-
+	// arrange
 	client := shellHost(t, echoStreams{})
 	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
 
+	// act
 	err := client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
 
+	// assert
 	if err != nil {
 		t.Fatalf("shell: %v", err)
 	}
@@ -418,8 +422,6 @@ func TestAShellCrossesTheWireBothWays(t *testing.T) {
 	}
 }
 
-// strictProxy tunnels each connection to target the way nginx tunnels an upgraded one: the first
-// side to stop writing ends it for both
 func strictProxy(t *testing.T, target string) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -452,7 +454,7 @@ func strictProxy(t *testing.T, target string) string {
 }
 
 func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
-
+	// arrange
 	client := shellHost(t, echoStreams{pause: 200 * time.Millisecond})
 	direct, err := url.Parse(string(client.machine.Endpoint))
 	if err != nil {
@@ -461,8 +463,10 @@ func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
 	client.machine.Endpoint = vo.Endpoint("http://" + strictProxy(t, direct.Host) + routePrefix)
 	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
 
+	// act
 	err = client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
 
+	// assert
 	if err != nil {
 		t.Fatalf("shell: %v", err)
 	}
@@ -471,8 +475,6 @@ func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
 	}
 }
 
-// silentStreams is a shell that prints its prompt, then never answers and ends only when the test
-// lets it go
 type silentStreams struct {
 	echoStreams
 	released chan struct{}
@@ -486,7 +488,6 @@ func (s silentStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.R
 	return nil
 }
 
-// watching is a terminal that says when the first output reaches it
 type watching struct {
 	in   io.Reader
 	seen chan struct{}
@@ -501,7 +502,7 @@ func (w *watching) Write(p []byte) (int, error) {
 }
 
 func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
-
+	// arrange
 	silent := silentStreams{released: make(chan struct{})}
 	client := shellHost(t, silent)
 	t.Cleanup(func() { close(silent.released) })
@@ -520,8 +521,11 @@ func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the shell never opened")
 	}
+
+	// act
 	cancel()
 
+	// assert
 	select {
 	case err := <-done:
 		if !errors.Is(err, context.Canceled) {
@@ -533,13 +537,15 @@ func TestAShellEndsWhenItsCallerGivesUp(t *testing.T) {
 }
 
 func TestLogsAndRefusalsCrossTheWireAsThemselves(t *testing.T) {
-
+	// arrange
 	client := newHost(t)
 	ctx := context.Background()
 	var out strings.Builder
 
+	// act
 	err := client.Logs(ctx, client.machine, run.LogRequest{Shard: shardID, Node: node, Tail: 10}, &out)
 
+	// assert
 	if err != nil {
 		t.Fatalf("logs: %v", err)
 	}
@@ -547,8 +553,10 @@ func TestLogsAndRefusalsCrossTheWireAsThemselves(t *testing.T) {
 		t.Fatalf("got %q, want what the machine had to say", out.String())
 	}
 
+	// act
 	_, err = client.Start(ctx, client.machine, command(vo.NodeRef{Participant: host, NodeID: "node-x"}))
 
+	// assert
 	if shared.CodeOf(err) != "NODE_NOT_SERVED" {
 		t.Fatalf("got %v, want the host's own refusal of a node it does not serve", err)
 	}

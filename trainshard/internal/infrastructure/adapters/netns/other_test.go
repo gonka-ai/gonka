@@ -11,8 +11,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// Off linux every stub must refuse, so a namespace is never reported as set up when nothing happened
-func TestUnsupportedPlatformRefuses(t *testing.T) {
+func TestEveryStubRefusesOffLinux(t *testing.T) {
 	// arrange
 	calls := map[string]error{}
 

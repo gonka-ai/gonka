@@ -7,8 +7,7 @@ import (
 	"trainshard/internal/utils/syncx"
 )
 
-// Probe asks every node which peers it cannot reach; a node no machine serves or whose machine
-// does not answer is taken as cut off from everyone
+// Probe takes a node no machine serves, or whose machine does not answer, as cut off from everyone
 func Probe(ctx context.Context, hosts Hosts, cfg Config, machines []vo.Host) []Pair {
 	answers := syncx.Fan(cfg.Refs(), func(node vo.NodeRef) []Pair {
 		host, found := vo.HostOf(machines, node)

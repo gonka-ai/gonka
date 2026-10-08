@@ -15,10 +15,11 @@ import (
 )
 
 func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	uc := f.reconcile()
 
+	// act
 	var found []run.Outcome
 	for range 3 {
 		out, err := uc.Execute(context.Background(), nodeA)
@@ -28,7 +29,7 @@ func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
 		found = append(found, out)
 	}
 
-	// the reservation, the node being marked unready, and the mark cleared once it is ready
+	// assert
 	want := []string{"runs.update", "runs.update", "control.drain", "images.pull",
 		"mesh.identity", "mesh_store.save_identity", "runs.update"}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
@@ -46,15 +47,17 @@ func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
 }
 
 func TestReconcileSignsTheMeshMemberItPublishes(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	f.control.drained = true
 	f.images.present[baseImage] = true
 
+	// act
 	if _, err := f.reconcile().Execute(context.Background(), nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	identity := f.store.identities[nodeA]
 	if len(f.attestor.payloads) != 1 {
 		t.Fatalf("the member must be signed exactly once, got %d signatures", len(f.attestor.payloads))
@@ -65,7 +68,7 @@ func TestReconcileSignsTheMeshMemberItPublishes(t *testing.T) {
 }
 
 func TestReconcileDoesNothingWhenTheRunAlreadyMatches(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -80,17 +83,19 @@ func TestReconcileDoesNothingWhenTheRunAlreadyMatches(t *testing.T) {
 	}
 	f.rec.reset()
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if calls := f.rec.sequence(); len(calls) != 0 {
 		t.Fatalf("a settled run must not touch the machine, got %v", calls)
 	}
 }
 
 func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -99,8 +104,10 @@ func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) 
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
 	f.egress.err = errors.New("nft is not there")
 
+	// act
 	_, err := f.reconcile().Execute(ctx, nodeA)
 
+	// assert
 	if err == nil {
 		t.Fatal("a run whose box cannot be closed must not come up")
 	}
@@ -113,7 +120,7 @@ func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) 
 }
 
 func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -123,8 +130,10 @@ func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
 	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerExited, Image: baseImage}
 	f.egress.err = errors.New("nft is not there")
 
+	// act
 	_, err := f.reconcile().Execute(ctx, nodeA)
 
+	// assert
 	if err == nil {
 		t.Fatal("a run whose box cannot be closed must not come up")
 	}
@@ -137,7 +146,7 @@ func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
 }
 
 func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -145,12 +154,14 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true}
 
+	// act
 	for range 3 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}
 
+	// assert
 	want := []string{"images.pull", "volumes.ensure", "egress.allow", "containers.create", "runs.update", "containers.start"}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
 		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
@@ -161,7 +172,7 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 }
 
 func TestReconcileGivesTheContainerTheRankTheMeshDecided(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -172,10 +183,12 @@ func TestReconcileGivesTheContainerTheRankTheMeshDecided(t *testing.T) {
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: spec}
 	f.images.present[runImage] = true
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	env := f.containers.created.Run.Env
 	if env["NODE_RANK"] != "0" || env["NNODES"] != "1" {
 		t.Fatalf("got %v, want the rank the peer list gave the node, not the one the run asked for", env)
@@ -192,7 +205,7 @@ func TestReconcileGivesTheContainerTheRankTheMeshDecided(t *testing.T) {
 }
 
 func TestReconcileRefusesAnImageNotBuiltOnTheBase(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -202,8 +215,10 @@ func TestReconcileRefusesAnImageNotBuiltOnTheBase(t *testing.T) {
 	f.images.present[runImage] = true
 	f.images.layers[runImage] = vo.ImageLayers{"someone-elses-layer"}
 
+	// act
 	_, err := f.reconcile().Execute(ctx, nodeA)
 
+	// assert
 	if !errors.Is(err, run.ErrImageNotDerived) {
 		t.Fatalf("got %v, want %v", err, run.ErrImageNotDerived)
 	}
@@ -214,7 +229,7 @@ func TestReconcileRefusesAnImageNotBuiltOnTheBase(t *testing.T) {
 }
 
 func TestReconcileClearsTheReasonOnceTheRunRecovers(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -223,19 +238,21 @@ func TestReconcileClearsTheReasonOnceTheRunRecovers(t *testing.T) {
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Fault: &oldFault}
 	f.images.present[runImage] = true
 
+	// act
 	for range 2 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}
 
+	// assert
 	if fault := f.runs.states[nodeA].Fault; fault != nil {
 		t.Fatalf("a recovered run must stop reporting a fault, got %v", fault)
 	}
 }
 
 func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -252,10 +269,12 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 	delete(f.chain.reservations, nodeA)
 	f.rec.reset()
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
 
+	// assert
 	want := []string{
 		"containers.stop",
 		"gpu.kill_training",
@@ -269,8 +288,7 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 	}
 }
 
-// running is a node with a started container whose reservation the chain has just dropped
-func (f *fixture) running(t *testing.T) {
+func (f *fixture) runningPastItsReservation(t *testing.T) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -292,13 +310,15 @@ func (f *fixture) running(t *testing.T) {
 }
 
 func TestReconcileCleansUpWhileTheDapiCannotSayWhetherTheNodeIsDrained(t *testing.T) {
-
+	// arrange
 	f := newFixture()
-	f.running(t)
+	f.runningPastItsReservation(t)
 	f.control.unreadable = errors.New("dapi down")
 
+	// act
 	_, err := f.reconcile().Execute(context.Background(), nodeA)
 
+	// assert
 	if err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
@@ -309,13 +329,15 @@ func TestReconcileCleansUpWhileTheDapiCannotSayWhetherTheNodeIsDrained(t *testin
 }
 
 func TestReconcileStopsTheRunButKeepsTheNodeWhileTheGPUsCannotBeRead(t *testing.T) {
-
+	// arrange
 	f := newFixture()
-	f.running(t)
+	f.runningPastItsReservation(t)
 	f.gpu.err = errors.New("nvidia-smi timed out")
 
+	// act
 	_, err := f.reconcile().Execute(context.Background(), nodeA)
 
+	// assert
 	if err == nil {
 		t.Fatal("a node whose gpus cannot be checked must report why it is not handed back")
 	}
@@ -329,7 +351,7 @@ func TestReconcileStopsTheRunButKeepsTheNodeWhileTheGPUsCannotBeRead(t *testing.
 }
 
 func TestReconcileKeepsANodeWithNoContainerWhileTheGPUsCannotBeRead(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -338,10 +360,12 @@ func TestReconcileKeepsANodeWithNoContainerWhileTheGPUsCannotBeRead(t *testing.T
 	delete(f.chain.reservations, nodeA)
 	f.gpu.err = errors.New("nvidia-smi timed out")
 
+	// act
 	for range 2 {
 		_, _ = f.reconcile().Execute(ctx, nodeA)
 	}
 
+	// assert
 	if slices.Contains(f.rec.sequence(), "control.return") {
 		t.Fatalf("got %v, want the node kept until its gpus are checked", f.rec.sequence())
 	}
@@ -357,7 +381,7 @@ func TestReconcileKeepsANodeWithNoContainerWhileTheGPUsCannotBeRead(t *testing.T
 }
 
 func TestReconcileReturnsTheNodeOnlyAfterCleanupIsDone(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -365,10 +389,12 @@ func TestReconcileReturnsTheNodeOnlyAfterCleanupIsDone(t *testing.T) {
 	}
 	delete(f.chain.reservations, nodeA)
 
+	// act
 	_, first := f.reconcile().Execute(ctx, nodeA)
 	returnedEarly := f.control.drained == false
 	_, second := f.reconcile().Execute(ctx, nodeA)
 
+	// assert
 	if first != nil || second != nil {
 		t.Fatalf("cleanup must not fail: %v then %v", first, second)
 	}
@@ -384,7 +410,7 @@ func TestReconcileReturnsTheNodeOnlyAfterCleanupIsDone(t *testing.T) {
 }
 
 func TestReconcileAsksForTheHandbackAgainUntilItGoesThrough(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -396,6 +422,7 @@ func TestReconcileAsksForTheHandbackAgainUntilItGoesThrough(t *testing.T) {
 	}
 	f.control.refuse = errors.New("dapi down")
 
+	// act
 	var errs []error
 	for range 2 {
 		_, err := f.reconcile().Execute(ctx, nodeA)
@@ -404,6 +431,7 @@ func TestReconcileAsksForTheHandbackAgainUntilItGoesThrough(t *testing.T) {
 	f.control.refuse = nil
 	_, last := f.reconcile().Execute(ctx, nodeA)
 
+	// assert
 	if errs[0] == nil || errs[1] == nil {
 		t.Fatalf("got %v, want every refused handback reported", errs)
 	}
@@ -425,17 +453,19 @@ func TestReconcileAsksForTheHandbackAgainUntilItGoesThrough(t *testing.T) {
 }
 
 func TestReconcileWipesWhatAForgottenShardLeftBeforeHandingTheNodeBack(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.drained = true
 	f.volumes.present[shardID+1] = true
 	delete(f.chain.reservations, nodeA)
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	calls := f.rec.sequence()
 	wiped, handed := slices.Index(calls, "volumes.wipe"), slices.Index(calls, "control.return")
 	if wiped < 0 {
@@ -447,24 +477,26 @@ func TestReconcileWipesWhatAForgottenShardLeftBeforeHandingTheNodeBack(t *testin
 }
 
 func TestReconcileWipesAShardKnownOnlyByItsMeshKey(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.drained = true
 	f.network.keys[shardID+1] = true
 	delete(f.chain.reservations, nodeA)
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if !slices.Contains(f.rec.sequence(), "mesh.remove") {
 		t.Fatalf("got %v, want the key of a shard local state forgot removed", f.rec.sequence())
 	}
 }
 
 func TestReconcileLeavesTheShardItIsServingToItsOwnPlan(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.meshed(ctx); err != nil {
@@ -480,21 +512,24 @@ func TestReconcileLeavesTheShardItIsServingToItsOwnPlan(t *testing.T) {
 	f.containers.leftover = []vo.ShardID{shardID}
 	f.rec.reset()
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if calls := f.rec.sequence(); len(calls) != 0 {
 		t.Fatalf("got %v, want the running shard's own labels left alone", calls)
 	}
 }
 
 func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.stuck = true
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -503,6 +538,7 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
 	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
 		t.Fatalf("got %v, want the reservation released as %s", f.chain.releases, want)
@@ -510,7 +546,7 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 }
 
 func TestReconcileAsksForTheHandbackOnceWhileTheChainCatchesUp(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.stuck = true
@@ -520,6 +556,7 @@ func TestReconcileAsksForTheHandbackOnceWhileTheChainCatchesUp(t *testing.T) {
 	}
 	f.clock.Advance(f.patience)
 
+	// act
 	for range 3 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
@@ -527,6 +564,7 @@ func TestReconcileAsksForTheHandbackOnceWhileTheChainCatchesUp(t *testing.T) {
 		f.clock.Advance(time.Minute)
 	}
 
+	// assert
 	if len(f.chain.releases) != 1 {
 		t.Fatalf("got %v, want one handback while the chain has not shown it yet", f.chain.releases)
 	}
@@ -540,24 +578,25 @@ func TestReconcileAsksForTheHandbackOnceWhileTheChainCatchesUp(t *testing.T) {
 }
 
 func TestReconcileGivesANodeThatSlipsMidRunTheSameWaitAsAFreshOne(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.drained = true
 	f.images.present[baseImage] = true
-
-	// the first pass creates the mesh key, the second observes it: only then is the node ready
 	for range 2 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}
+
+	// act
 	f.clock.Advance(10 * f.patience)
 	f.gpu.foreign = true
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if len(f.chain.releases) != 0 {
 		t.Fatalf("got %v, want a node hours into a run given its wait rather than handed back at once", f.chain.releases)
 	}
@@ -574,29 +613,32 @@ func TestReconcileGivesANodeThatSlipsMidRunTheSameWaitAsAFreshOne(t *testing.T) 
 }
 
 func TestReconcileLetsGoOfAnOldShardThatLeftNothingBehind(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.runs.states[nodeA] = run.RunState{Shard: shardID + 1}
 
+	// act
 	for range 2 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}
 
+	// assert
 	if state := f.runs.states[nodeA]; state.Shard != shardID || state.ReservedAt.IsZero() {
 		t.Fatalf("got %+v, want the node serving the shard the chain reserved it for", state)
 	}
 }
 
 func TestReconcileHandsBackANodeWhoseDeployRecordedTheShardFirst(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.stuck = true
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
@@ -605,17 +647,19 @@ func TestReconcileHandsBackANodeWhoseDeployRecordedTheShardFirst(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if len(f.chain.releases) != 1 {
 		t.Fatalf("got %v, want the node handed back even though deploy recorded the shard before the first pass", f.chain.releases)
 	}
 }
 
 func TestReconcileKeepsANodeThatIsStillWithinThePrepareDeadline(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	f.control.stuck = true
 
+	// act
 	for range 3 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
@@ -623,13 +667,14 @@ func TestReconcileKeepsANodeThatIsStillWithinThePrepareDeadline(t *testing.T) {
 		f.clock.Advance(f.patience / 4)
 	}
 
+	// assert
 	if len(f.chain.releases) != 0 {
 		t.Fatalf("got %v, want a draining node left alone until its deadline", f.chain.releases)
 	}
 }
 
 func TestReconcileCleansTheOldShardBeforeServingANewReservation(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -640,17 +685,19 @@ func TestReconcileCleansTheOldShardBeforeServingANewReservation(t *testing.T) {
 	f.chain.shards[next.ID] = next
 	f.chain.reservations[nodeA] = next.ID
 
+	// act
 	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}
 
+	// assert
 	if calls := f.rec.sequence(); !reflect.DeepEqual(calls, []string{"mesh.remove", "mesh_store.forget"}) {
 		t.Fatalf("the previous shard must be cleaned up first, got %v", calls)
 	}
 }
 
-func TestANodeLentOnToTheNextShardIsNotHandedBackInBetween(t *testing.T) {
-
+func TestANodeReservedForTheNextShardIsNotHandedBackInBetween(t *testing.T) {
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	if err := f.prepared(ctx); err != nil {
@@ -661,12 +708,14 @@ func TestANodeLentOnToTheNextShardIsNotHandedBackInBetween(t *testing.T) {
 	f.chain.shards[next.ID] = next
 	f.chain.reservations[nodeA] = next.ID
 
+	// act
 	for range 4 {
 		if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			t.Fatalf("reconcile: %v", err)
 		}
 	}
 
+	// assert
 	calls := f.rec.sequence()
 	if slices.Contains(calls, "control.return") {
 		t.Fatalf("the node went back to inference between two shards: %v", calls)
@@ -681,7 +730,7 @@ func TestANodeLentOnToTheNextShardIsNotHandedBackInBetween(t *testing.T) {
 }
 
 func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing.T) {
-
+	// arrange
 	f := newFixture()
 	ctx := context.Background()
 	writing, release, recorded := make(chan struct{}), make(chan struct{}), make(chan error, 1)
@@ -694,12 +743,14 @@ func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing
 	}()
 	<-writing
 
+	// act
 	ticked := make(chan error, 1)
 	go func() {
 		_, err := f.reconcile().Execute(ctx, nodeA)
 		ticked <- err
 	}()
 
+	// assert
 	select {
 	case <-ticked:
 		t.Fatal("the ticker applied the node while a command was still writing down what it should hold")

@@ -64,8 +64,6 @@ func TestAPeerListIsReadBackForTheShardItWasStoredFor(t *testing.T) {
 	}
 }
 
-// A write dropped on the floor while the caller is told it succeeded is the worst of both:
-// apply mesh answers ok and the run then waits on a peer list nothing will ever read back
 func TestAPeerListIsRefusedForAShardThisNodeIsNotHeldFor(t *testing.T) {
 	// arrange
 	ctx := context.Background()
@@ -115,7 +113,6 @@ func TestAnIdentityIsRefusedForAShardThisNodeIsNotHeldFor(t *testing.T) {
 	}
 }
 
-// Sweep removes what a shard this node no longer serves left behind, and asks by that shard's id
 func TestForgettingAShardThisNodeNoLongerServesIsNotAFailure(t *testing.T) {
 	// arrange
 	ctx := context.Background()

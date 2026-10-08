@@ -9,8 +9,8 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-// Reserve starts the patience clock and wipes a previous shard, and reports whether anything
-// changed; the clock is stamped once, so a node under the same shard keeps running out of time
+// Reserve stamps the patience clock once per shard, so a node under the same shard keeps running
+// out of time
 func (s *RunState) Reserve(shardID vo.ShardID, at time.Time) bool {
 	if s.Shard == shardID && !s.ReservedAt.IsZero() {
 		return false
@@ -22,8 +22,8 @@ func (s *RunState) Reserve(shardID vo.ShardID, at time.Time) bool {
 	return true
 }
 
-// For is the state as the given shard may read it: until the node is reserved for that shard,
-// what it holds belongs to the one before
+// For hides the state from the given shard until the node is reserved for it: what it holds until
+// then belongs to the shard before
 func (s RunState) For(shardID vo.ShardID) RunState {
 	if s.Shard != shardID {
 		return RunState{Shard: shardID}
@@ -35,9 +35,8 @@ func RecordReservation(ctx context.Context, runs RunStore, node vo.NodeRef, shar
 	return runs.Update(ctx, node, func(state *RunState) { state.Reserve(shardID, at) })
 }
 
-// RecordDeploy counts the deploy in: the container carries the revision it was built for, so
-// a rerun is still a new container. A deploy for another shard starts from nothing, so the
-// clocks and images of the one before do not carry over
+// RecordDeploy bumps the revision the container is built for, so a rerun of the same spec is still
+// a new container; a deploy for another shard starts from nothing
 func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, spec RunSpec) error {
 	return runs.Update(ctx, node, func(state *RunState) {
 		if state.Shard != shardID {
@@ -49,8 +48,8 @@ func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID v
 	})
 }
 
-// UndoDeploy puts back the run a refused deploy took the place of, under the revision it was
-// built for, so the container it left on the node is not rebuilt for nothing
+// UndoDeploy puts the revision back too, so the container a refused deploy left on the node is not
+// rebuilt for nothing
 func UndoDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, before RunState) error {
 	return runs.Update(ctx, node, func(state *RunState) {
 		was := before.For(state.Shard)
@@ -59,8 +58,8 @@ func UndoDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, before RunS
 	})
 }
 
-// RecordRebuild counts a container that has to be built again with what it already runs: its
-// place on the mesh is baked in at create, so a new place is a new container
+// RecordRebuild counts a new place on the mesh as a new container, even for the spec it already
+// runs: the place is baked in at create
 func RecordRebuild(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Revision++ })
 }
@@ -102,9 +101,8 @@ func ClearFault(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Fault, state.FaultAt = nil, time.Time{} })
 }
 
-// TrackPreparedness stamps when a reserved node stopped being ready and clears it once it is ready
-// again, so the wait before it is handed back is timed the way a fault is. A node the chain no
-// longer holds is on its way out and is not timed at all
+// TrackPreparedness times the wait before a handback from when the node stopped being ready, the
+// way a fault is timed; a node the chain no longer holds is not timed at all
 func TrackPreparedness(ctx context.Context, runs RunStore, node vo.NodeRef, state *RunState, d Desired, o Observed, at time.Time) error {
 	was := state.UnpreparedAt
 	switch {

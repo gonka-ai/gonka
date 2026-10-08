@@ -42,8 +42,7 @@ func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 			probe:      fake,
 		}, nil
 	case "docker":
-		// the volumes root is where a run's disk is handed out from, and free space is read off it
-		// before any run exists, so it has to be there from the start
+		// readiness reads free space off the volumes root before any run has created it
 		if err := os.MkdirAll(cfg.volumeRoot, 0o700); err != nil {
 			return parts{}, err
 		}

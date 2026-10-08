@@ -50,10 +50,9 @@ func (c *Converger) Record(ctx context.Context, node vo.NodeRef, write func(cont
 	return err
 }
 
-// Attempt is Record for a write the host may refuse on its merits: a refusal is taken back
-// under the same lock, or it would stay behind failing every pass until the node is handed back,
-// long after the caller was told nothing changed. A write that failed for want of time or of an
-// engine stays, so the loop carries on where it stopped
+// Attempt is Record whose write is undone under the same lock when the converge refuses it as
+// invalid, or it would fail every pass after the caller was told nothing changed; any other failure
+// stays for the loop to carry on from
 func (c *Converger) Attempt(ctx context.Context, node vo.NodeRef, write, undo func(context.Context) error) error {
 	defer c.applying.Lock(node)()
 
@@ -97,7 +96,7 @@ func (c *Converger) converge(ctx context.Context, node vo.NodeRef) (Outcome, err
 		return Outcome{}, err
 	}
 	found := Outcome{Reserved: desired.Reserved}
-	if desired.Reserved {
+	if desired.Reserved && desired.Active {
 		found.Waiting = Unprepared(desired, observed)
 	}
 

@@ -13,4 +13,5 @@ type Config struct {
 	Limits      run.Limits
 	Interval    time.Duration
 	Patience    time.Duration
+	RequestTTL  time.Duration
 }

@@ -33,7 +33,6 @@ type Action struct {
 	Image vo.ImageDigest
 }
 
-// ActionFailed is the step a converge stopped at
 type ActionFailed struct {
 	Kind  ActionKind
 	cause error
@@ -43,11 +42,10 @@ func (e *ActionFailed) Error() string { return fmt.Sprintf("%s: %v", e.Kind, e.c
 
 func (e *ActionFailed) Unwrap() error { return e.cause }
 
-// the steps that act on the run the mesh carries, never on the mesh itself
 var runSteps = []ActionKind{ActionVerifyImage, ActionCreateContainer, ActionReplaceContainer, ActionStartContainer, ActionStopContainer}
 
-// FailedOnTheRun says whether a converge got past the mesh and fell over on the run, which is
-// the tenant's to fix with a deploy and says nothing about the peer list the node was given
+// FailedOnTheRun holds for a converge that fell over on the run, past the mesh: that is the
+// tenant's to fix with a deploy and says nothing about the peer list the node was given
 func FailedOnTheRun(err error) bool {
 	var failed *ActionFailed
 	return errors.As(err, &failed) && slices.Contains(runSteps, failed.Kind)

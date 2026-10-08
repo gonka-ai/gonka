@@ -41,8 +41,6 @@ func TestASpentRequestIDSurvivesARestartOfTheDaemon(t *testing.T) {
 	}
 }
 
-// The id outlives the request that spent it by whatever its own signature had left, not by a span
-// counted from the moment it arrived
 func TestASpentRequestIDIsHeldForAsLongAsItsSignatureStillPasses(t *testing.T) {
 	// arrange
 	dir, clock := t.TempDir(), timex.NewFrozen(now)

@@ -55,14 +55,7 @@ func (c *Client) RemoveSandbox(ctx context.Context, shardID vo.ShardID, node vo.
 }
 
 func (c *Client) createSandbox(ctx context.Context, name string, shardID vo.ShardID, node vo.NodeRef) error {
-	if err := c.pull(ctx, c.cfg.SandboxImage); err != nil {
-		return err
-	}
-
-	ctx, cancel := c.bounded(ctx)
-	defer cancel()
-
-	_, err := c.engine.ContainerCreate(ctx, client.ContainerCreateOptions{
+	return c.create(ctx, client.ContainerCreateOptions{
 		Name:   name,
 		Config: &container.Config{Image: c.cfg.SandboxImage, Labels: labels(shardID, node, "sandbox")},
 		HostConfig: &container.HostConfig{
@@ -72,7 +65,6 @@ func (c *Client) createSandbox(ctx context.Context, name string, shardID vo.Shar
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
 		},
 	})
-	return err
 }
 
 func (c *Client) startByName(ctx context.Context, name string) error {

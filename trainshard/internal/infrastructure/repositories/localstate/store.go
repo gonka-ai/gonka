@@ -90,7 +90,16 @@ func (s *Store) writeFile(path string, value any) error {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temp.Name(), path)
+	if err := os.Rename(temp.Name(), path); err != nil {
+		return err
+	}
+	// a rename survives a crash only once its directory is synced, and a lost one forgets a spent request id
+	dir, err := os.Open(s.dir)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
 }
 
 func (s *Store) remove(node vo.NodeRef) error {
@@ -181,8 +190,7 @@ func (m meshes) SaveConfig(_ context.Context, shardID vo.ShardID, node vo.NodeRe
 	return m.update(shardID, node, func(state *meshState) { state.Peers = fromConfig(config) })
 }
 
-// Forget is the one caller that may find another shard here: a sweep drops what a shard this node
-// no longer serves left behind, and there is nothing of that shard in the file to drop
+// a sweep forgets shards this node no longer serves, so a file held for another shard is not a failure here
 func (m meshes) Forget(_ context.Context, shardID vo.ShardID, node vo.NodeRef) error {
 	err := m.update(shardID, node, func(state *meshState) { *state = meshState{} })
 	if errors.Is(err, shard.ErrNodeNotReserved) {
@@ -202,9 +210,8 @@ func (m meshes) state(shardID vo.ShardID, node vo.NodeRef) (*meshState, bool, er
 	return file.Mesh, true, nil
 }
 
-// update refuses a node this host holds for another shard, or for none at all: the mesh hangs off
-// the reservation, and answering success without writing anything leaves the caller believing a
-// peer list was stored that nothing will ever read back
+// a node held for another shard or none is refused rather than skipped: a caller told the write
+// succeeded would wait on a peer list nothing reads back
 func (m meshes) update(shardID vo.ShardID, node vo.NodeRef, apply func(*meshState)) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()

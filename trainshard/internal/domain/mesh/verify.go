@@ -24,8 +24,8 @@ func FullyConnected(nodes []vo.NodeRef, failed []Pair) bool {
 	return true
 }
 
-// Worst names nothing for two nodes: a broken link between them blames both
-// equally, and kicking either leaves a mesh of one that only looks connected.
+// Worst names nothing for two nodes: a broken link between them blames both equally, and kicking
+// either leaves a mesh of one that only looks connected
 func Worst(nodes []vo.NodeRef, failed []Pair) (vo.NodeRef, bool) {
 	members := index(nodes)
 	if len(members) < 3 {

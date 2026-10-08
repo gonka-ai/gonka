@@ -72,7 +72,7 @@ func (s signedRequest) build() *http.Request {
 }
 
 func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
-
+	// arrange
 	verifier := &verifierStub{address: "gonka1creator"}
 	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience)
 	request := newSignedRequest()
@@ -85,8 +85,10 @@ func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&seen)
 	})
 
+	// act
 	boundary.Wrap(handler).ServeHTTP(recorder, request.build())
 
+	// assert
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("got %d, want the request accepted: %s", recorder.Code, recorder.Body)
 	}
@@ -102,8 +104,6 @@ func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 	}
 }
 
-// A node id is local to a host, so the same signed request replayed elsewhere would name that
-// host's node of the same name
 func TestGuardRefusesARequestSignedForAnotherHost(t *testing.T) {
 	// arrange
 	request := newSignedRequest()
@@ -203,7 +203,7 @@ func TestGuardRefusesWhatItCannotTrust(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-
+			// arrange
 			verifier := &verifierStub{address: "gonka1creator"}
 			request := newSignedRequest()
 			tc.mutate(&request, verifier)
@@ -212,8 +212,10 @@ func TestGuardRefusesWhatItCannotTrust(t *testing.T) {
 			handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
 			recorder := httptest.NewRecorder()
 
+			// act
 			boundary.Wrap(handler).ServeHTTP(recorder, request.build())
 
+			// assert
 			if reached {
 				t.Fatal("an untrusted request must never reach the handler")
 			}

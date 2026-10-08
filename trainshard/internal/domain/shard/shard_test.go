@@ -76,6 +76,7 @@ func TestHostsGroupTheNodesByTheMachineThatServesThem(t *testing.T) {
 }
 
 func TestUnaddressedNamesTheNodesNoEndpointReaches(t *testing.T) {
+	// arrange
 	alice := vo.Participant("gonka1alice")
 	a1 := vo.NodeRef{Participant: alice, NodeID: "node-1"}
 	a2 := vo.NodeRef{Participant: alice, NodeID: "node-2"}
@@ -95,6 +96,7 @@ func TestUnaddressedNamesTheNodesNoEndpointReaches(t *testing.T) {
 }
 
 func TestHostOfFindsTheMachineOfAReservedNodeOnly(t *testing.T) {
+	// arrange
 	alice := vo.Participant("gonka1alice")
 	a1 := vo.NodeRef{Participant: alice, NodeID: "node-1"}
 	a2 := vo.NodeRef{Participant: alice, NodeID: "node-2"}

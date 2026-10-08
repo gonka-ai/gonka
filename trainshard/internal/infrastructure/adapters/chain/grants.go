@@ -64,7 +64,7 @@ func (c *Client) MissingGrants(ctx context.Context, participant vo.Participant, 
 
 func (c *Client) granted(ctx context.Context, participant vo.Participant, signer vo.Address, msgType string) (bool, error) {
 	key := grantKey{participant: participant, signer: signer, msgType: msgType}
-	now := time.Now()
+	now := c.clock.Now()
 
 	c.grants.mu.Lock()
 	answer, cached := c.grants.answers[key]
@@ -78,7 +78,7 @@ func (c *Client) granted(ctx context.Context, participant vo.Participant, signer
 		MessageTypeUrl: msgType,
 	})
 	if err != nil {
-		return false, err
+		return false, unreachable(err)
 	}
 	held := false
 	for _, grantee := range reply.Grantees {

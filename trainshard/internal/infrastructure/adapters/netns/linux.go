@@ -21,48 +21,99 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 )
 
-// hostPID is the process whose network namespace is the machine's own. The daemon runs with
-// pid: host, which makes pid 1 the machine's init; run any other way, pid 1 is the daemon and the
-// mesh port dies with it
+// hostPID is the machine's init only because the daemon runs with pid: host; run any other way,
+// pid 1 is the daemon and the mesh port dies with it
 const hostPID = 1
 
-// owned marks every link this adapter creates, so a leftover can be told apart from a link the
-// operator happens to keep under the same name
+// owned tells a leftover of ours from a link the operator keeps under the same name
 const owned = "trainshard"
 
 const ruleset = "trainshard"
 
-// handleAt opens rtnetlink onto another process's namespace; the handle carries the namespace, so
-// this thread stays where it is
-func handleAt(pid int) (*netlink.Handle, error) {
+// every write goes through the fd checked here: re-opening by pid would undo the check
+func sandbox(pid int) (ns.NsHandle, error) {
 	target, err := ns.GetFromPid(pid)
 	if err != nil {
-		return nil, fmt.Errorf("namespace of %d: %w", pid, err)
+		return ns.None(), fmt.Errorf("sandbox %d namespace: %w", pid, err)
 	}
-	defer target.Close()
+	if err := checkConfined(pid, target); err != nil {
+		target.Close()
+		return ns.None(), err
+	}
+	return target, nil
+}
 
+// the thread's namespace, not the process's: inNetns may have parked the main thread in a sandbox
+func checkConfined(pid int, target ns.NsHandle) error {
+	var held unix.Stat_t
+	if err := unix.Fstat(int(target), &held); err != nil {
+		return fmt.Errorf("sandbox %d namespace: %w", pid, err)
+	}
+	outside := make([]nsID, 0, 2)
+	for _, path := range []string{fmt.Sprintf("/proc/%d/ns/net", hostPID), "/proc/thread-self/ns/net"} {
+		var known unix.Stat_t
+		if err := unix.Stat(path, &known); err != nil {
+			return fmt.Errorf("namespace %s: %w", path, err)
+		}
+		outside = append(outside, nsID{dev: uint64(known.Dev), ino: uint64(known.Ino)})
+	}
+	return confined(pid, nsID{dev: uint64(held.Dev), ino: uint64(held.Ino)}, outside...)
+}
+
+func hostNS() (ns.NsHandle, error) {
+	target, err := ns.GetFromPid(hostPID)
+	if err != nil {
+		return ns.None(), fmt.Errorf("host namespace: %w", err)
+	}
+	return target, nil
+}
+
+func handleAt(target ns.NsHandle, where string) (*netlink.Handle, error) {
 	handle, err := netlink.NewHandleAt(target)
 	if err != nil {
-		return nil, fmt.Errorf("netlink on %d: %w", pid, err)
+		return nil, fmt.Errorf("netlink in %s: %w", where, err)
 	}
 	return handle, nil
 }
 
-// lookup finds the link in a process's namespace; absent is a normal answer and not an error
+func hostHandle() (*netlink.Handle, error) {
+	target, err := hostNS()
+	if err != nil {
+		return nil, err
+	}
+	defer target.Close()
+	return handleAt(target, "the host")
+}
+
+// find answers an absent link with nil, not an error
+func find(handle *netlink.Handle, device, where string) (netlink.Link, error) {
+	link, err := handle.LinkByName(device)
+	var absent netlink.LinkNotFoundError
+	if errors.As(err, &absent) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("look for %s in %s: %w", device, where, err)
+	}
+	return link, nil
+}
+
 func lookup(pid int, device string) (*netlink.Handle, netlink.Link, error) {
-	handle, err := handleAt(pid)
+	target, err := sandbox(pid)
 	if err != nil {
 		return nil, nil, err
 	}
+	defer target.Close()
 
-	link, err := handle.LinkByName(device)
+	where := fmt.Sprintf("sandbox %d", pid)
+	handle, err := handleAt(target, where)
 	if err != nil {
+		return nil, nil, err
+	}
+	link, err := find(handle, device, where)
+	if err != nil || link == nil {
 		handle.Close()
-		var absent netlink.LinkNotFoundError
-		if errors.As(err, &absent) {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("look for %s in %d: %w", device, pid, err)
+		return nil, nil, err
 	}
 	return handle, link, nil
 }
@@ -76,8 +127,7 @@ func present(pid int, device string) (bool, error) {
 	return true, nil
 }
 
-// holds is the link up with this address and exactly these peers, so a list already applied is
-// told from one the coordinator has since changed
+// holds wants exactly these peers, so a list the coordinator has since changed reads as not up
 func holds(pid int, device, own string, want wgtypes.Config) (bool, error) {
 	handle, link, err := lookup(pid, device)
 	if err != nil || link == nil {
@@ -163,7 +213,17 @@ func build(device string, cfg wgtypes.Config, pid int) error {
 	if err := discard(device); err != nil {
 		return err
 	}
-	host, err := handleAt(hostPID)
+	target, err := sandbox(pid)
+	if err != nil {
+		return err
+	}
+	defer target.Close()
+	root, err := hostNS()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	host, err := handleAt(root, "the host")
 	if err != nil {
 		return err
 	}
@@ -174,9 +234,9 @@ func build(device string, cfg wgtypes.Config, pid int) error {
 		return fmt.Errorf("add %s: %w", device, err)
 	}
 
-	// Until the move lands, the link is the host's. Leaving one behind would make it the only
-	// thing standing between this node and the mesh, and Remove looks in the sandbox, not here
-	if err := configure(host, link, cfg, pid); err != nil {
+	// until the move lands the link is the host's, where Remove does not look and a leftover
+	// blocks every later add
+	if err := configure(root, host, link, cfg, pid, target); err != nil {
 		if cleanup := host.LinkDel(link); cleanup != nil {
 			return errors.Join(err, fmt.Errorf("delete %s after a failed setup: %w", device, cleanup))
 		}
@@ -185,29 +245,32 @@ func build(device string, cfg wgtypes.Config, pid int) error {
 	return nil
 }
 
-func configure(host *netlink.Handle, link netlink.Link, cfg wgtypes.Config, pid int) error {
+func configure(root ns.NsHandle, host *netlink.Handle, link netlink.Link, cfg wgtypes.Config, pid int, target ns.NsHandle) error {
 	device := link.Attrs().Name
 
-	if err := withWG(hostPID, func(wg *wgctrl.Client) error {
+	if err := wgIn(root, func(wg *wgctrl.Client) error {
 		return wg.ConfigureDevice(device, cfg)
 	}); err != nil {
 		return fmt.Errorf("configure %s: %w", device, err)
 	}
-	if err := host.LinkSetNsPid(link, pid); err != nil {
+	if err := host.LinkSetNsFd(link, int(target)); err != nil {
 		return fmt.Errorf("move %s into sandbox %d: %w", device, pid, err)
 	}
 	return nil
 }
 
-// discard clears a link a setup that died mid-way left on the host. A live one lives in a sandbox,
-// so a link of ours out here is a leftover, and it would fail every later add. A link that is not
-// ours is left alone and the run refuses the node rather than take down the operator's network
+// discard clears a link of ours on the host, which can only be a setup that died mid-way: a live
+// one is in a sandbox. A link that is not ours stays, and the node is refused instead
 func discard(device string) error {
-	handle, link, err := lookup(hostPID, device)
-	if err != nil || link == nil {
+	handle, err := hostHandle()
+	if err != nil {
 		return err
 	}
 	defer handle.Close()
+	link, err := find(handle, device, "the host")
+	if err != nil || link == nil {
+		return err
+	}
 
 	if link.Type() != "wireguard" || link.Attrs().Alias != owned {
 		return fmt.Errorf("%s on the host is a %s this daemon did not create, so it stays; rename it to free the slot: %w", device, link.Type(), errForeignLink)
@@ -218,9 +281,15 @@ func discard(device string) error {
 	return nil
 }
 
-// listen binds the port on the host for a moment, where the wireguard socket will live
+// listen binds in the host's namespace because that is where the wireguard socket will live
 func listen(ctx context.Context, port int) error {
-	return inNetns(hostPID, func() error {
+	root, err := hostNS()
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+
+	return inNetns(root, func() error {
 		var open net.ListenConfig
 		socket, err := open.ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
 		if err != nil {
@@ -230,17 +299,16 @@ func listen(ctx context.Context, port int) error {
 	})
 }
 
-// inNetns runs fn on a thread parked in another process's namespace, which a wireguard or a udp
-// socket needs because it is opened where the caller stands. A thread that cannot be moved back
-// is left locked so it dies with this goroutine instead of serving other work in the wrong
-// namespace
-func inNetns(pid int, fn func() error) error {
+// inNetns parks a thread in another namespace because a wireguard or udp socket opens where its
+// thread stands. A thread that cannot be moved back stays locked, so it dies with the goroutine
+// instead of serving other work in the wrong namespace
+func inNetns(target ns.NsHandle, fn func() error) error {
 	done := make(chan error, 1)
 
 	go func() {
 		runtime.LockOSThread()
 
-		back, err := enter(pid)
+		back, err := enter(target)
 		if err != nil {
 			runtime.UnlockOSThread()
 			done <- err
@@ -261,7 +329,17 @@ func inNetns(pid int, fn func() error) error {
 }
 
 func withWG(pid int, fn func(*wgctrl.Client) error) error {
-	return inNetns(pid, func() error {
+	target, err := sandbox(pid)
+	if err != nil {
+		return err
+	}
+	defer target.Close()
+
+	return wgIn(target, fn)
+}
+
+func wgIn(target ns.NsHandle, fn func(*wgctrl.Client) error) error {
+	return inNetns(target, func() error {
 		wg, err := wgctrl.New()
 		if err != nil {
 			return err
@@ -272,35 +350,27 @@ func withWG(pid int, fn func(*wgctrl.Client) error) error {
 	})
 }
 
-func enter(pid int) (func() error, error) {
+func enter(target ns.NsHandle) (func() error, error) {
 	own, err := ns.Get()
 	if err != nil {
 		return nil, err
 	}
-	target, err := ns.GetFromPid(pid)
-	if err != nil {
-		own.Close()
-		return nil, fmt.Errorf("namespace of %d: %w", pid, err)
-	}
 	if err := ns.Set(target); err != nil {
-		target.Close()
 		own.Close()
-		return nil, fmt.Errorf("enter namespace of %d: %w", pid, err)
+		return nil, fmt.Errorf("enter namespace: %w", err)
 	}
 
 	return func() error {
 		defer own.Close()
-		defer target.Close()
 		return ns.Set(own)
 	}, nil
 }
 
-// fenced reports whether the sandbox still holds our ruleset; a sandbox docker started again
-// has none
+// fenced is false for a sandbox docker started again, which comes back with a fresh namespace
 func fenced(pid int) (bool, error) {
-	target, err := ns.GetFromPid(pid)
+	target, err := sandbox(pid)
 	if err != nil {
-		return false, fmt.Errorf("sandbox %d namespace: %w", pid, err)
+		return false, err
 	}
 	defer target.Close()
 
@@ -320,9 +390,9 @@ func fenced(pid int) (bool, error) {
 // fence replaces the sandbox's whole ruleset in one netlink transaction: a half-applied
 // firewall would either strand the run or leak it onto the operator's network
 func fence(pid int, device string, denied []string, allowed []allowance) error {
-	target, err := ns.GetFromPid(pid)
+	target, err := sandbox(pid)
 	if err != nil {
-		return fmt.Errorf("sandbox %d namespace: %w", pid, err)
+		return err
 	}
 	defer target.Close()
 
@@ -353,9 +423,8 @@ func fence(pid int, device string, denied []string, allowed []allowance) error {
 		Policy:   &drop,
 	})
 
-	// the interface accepts have to come before the denied ranges and never move below them: the
-	// mesh hands out 10.<shard>.0.<rank> addresses, which sit inside the private ranges an operator
-	// denies, so a deny read first would drop the training's own traffic to its peers
+	// the interface accepts stay above the denied ranges: mesh addresses sit inside 10.0.0.0/8, which
+	// is denied by default, so a deny read first would drop the training's own traffic to its peers
 	for _, side := range []struct {
 		chain *nftables.Chain
 		key   expr.MetaKey

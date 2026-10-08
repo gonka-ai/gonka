@@ -108,15 +108,17 @@ func (h *hostsStub) Start(_ context.Context, _ vo.Host, call run.HostCommand) ([
 }
 
 func runCommand() usecases.RunCommand {
-	return usecases.RunCommand{Shard: shardID, RequestID: "req-1", Deadline: time.Now().Add(time.Minute)}
+	return usecases.RunCommand{Shard: shardID, RequestID: "req-1", Deadline: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)}
 }
 
 func TestStartRefusesTheWholeRunWhenHostsHoldDifferentImages(t *testing.T) {
-
+	// arrange
 	hosts := &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: otherRun}}
 
+	// act
 	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
 
+	// assert
 	if !errors.Is(err, run.ErrImagesDiffer) {
 		t.Fatalf("got %v, want %v", err, run.ErrImagesDiffer)
 	}
@@ -126,11 +128,13 @@ func TestStartRefusesTheWholeRunWhenHostsHoldDifferentImages(t *testing.T) {
 }
 
 func TestStartAcceptsARunWhoseHostsAgreeOnTheImage(t *testing.T) {
-
+	// arrange
 	hosts := &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}}
 
+	// act
 	results, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
 
+	// assert
 	if err != nil {
 		t.Fatalf("start: %v", err)
 	}
@@ -140,14 +144,16 @@ func TestStartAcceptsARunWhoseHostsAgreeOnTheImage(t *testing.T) {
 }
 
 func TestStartRefusesTheWholeRunWhenAHostDoesNotSayWhatItHolds(t *testing.T) {
-
+	// arrange
 	hosts := &hostsStub{
 		images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
 		silent: map[vo.Participant]bool{hostB: true},
 	}
 
+	// act
 	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
 
+	// assert
 	if !errors.Is(err, run.ErrStatusUnknown) {
 		t.Fatalf("got %v, want the run refused rather than started on an unchecked image", err)
 	}
@@ -174,9 +180,10 @@ func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
 
 	for name, act := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// act
 			_, err := act()
 
+			// assert
 			if !errors.Is(err, shard.ErrShardClosed) {
 				t.Fatalf("got %v, want %v", err, shard.ErrShardClosed)
 			}
@@ -202,9 +209,10 @@ func TestStartRefusesARunWhoseMeshIsNotUpEverywhere(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// act
 			_, err := usecases.NewStartUseCase(chainStub{}, tc.hosts).Execute(context.Background(), runCommand())
 
+			// assert
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want the run refused rather than started off the mesh", err)
 			}
@@ -216,14 +224,16 @@ func TestStartRefusesARunWhoseMeshIsNotUpEverywhere(t *testing.T) {
 }
 
 func TestStartRefusesARunWhoseContainerHasAlreadyRun(t *testing.T) {
-
+	// arrange
 	hosts := &hostsStub{
 		images:   map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
 		finished: map[vo.NodeRef]bool{nodeB: true},
 	}
 
+	// act
 	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
 
+	// assert
 	if !errors.Is(err, run.ErrContainerFinished) {
 		t.Fatalf("got %v, want a run that cannot come up whole refused before anything starts", err)
 	}
@@ -240,11 +250,13 @@ func TestStartRefusesTheWholeRunRatherThanLeaveHalfOfItWaiting(t *testing.T) {
 
 	for name, images := range cases {
 		t.Run(name, func(t *testing.T) {
-
+			// arrange
 			hosts := &hostsStub{images: images}
 
+			// act
 			_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
 
+			// assert
 			if err == nil {
 				t.Fatal("a run cannot start on some of its nodes and wait for the rest")
 			}
