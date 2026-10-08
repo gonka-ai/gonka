@@ -3140,8 +3140,17 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	// DetailReason still report the skip.
 	var reason types.TimeoutReason
 	// A finish can land while the deadline is still ahead. The wait rechecks the
-	// record and returns when it has closed, and the check below skips the vote.
-	recordClosed := func() bool { return s.nonceClosed(nonce) }
+	// record and publishes a queued finish so the record can close before the
+	// deadline; the check below then skips the vote.
+	recordClosed := func() bool {
+		if s.nonceClosed(nonce) {
+			return true
+		}
+		s.mu.Lock()
+		queued := HasMsgFinish(s.pendingTxs, nonce)
+		s.mu.Unlock()
+		return queued && s.closedByPendingFinish(ctx, nonce)
+	}
 	if reasonLabel == "execution" {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)

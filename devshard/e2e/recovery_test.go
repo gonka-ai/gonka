@@ -11,6 +11,18 @@ import (
 	"devshard/e2e/testutil"
 )
 
+// shortenRaceCleanupWait keeps recovery finalize from waiting out the default
+// SecondaryWaitAfterWinner (5m) for speculative losers left pending across a
+// host restart.
+func shortenRaceCleanupWait(t *testing.T, client *http.Client, clientURL string) {
+	t.Helper()
+	testutil.PostJSON(t, client, clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"secondary_wait_after_winner_ms": int64(500),
+		},
+	})
+}
+
 // Test flow:
 //  1. Start the default three-host environment with persistent SQLite volumes.
 //  2. Send several OpenAI-style chat completion requests through devshardctl.
@@ -22,7 +34,7 @@ import (
 func TestE2E_SQLiteHostRestartRecovery(t *testing.T) {
 	requireE2EEnabled(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
@@ -31,6 +43,7 @@ func TestE2E_SQLiteHostRestartRecovery(t *testing.T) {
 	})
 
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	shortenRaceCleanupWait(t, client, env.clientURL)
 	testutil.SendCompletions(t, client, env.clientURL, "sqlite host restart before", 3)
 	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
@@ -56,7 +69,7 @@ func TestE2E_SQLiteHostRestartRecovery(t *testing.T) {
 func TestE2E_SQLiteAllHostsRestartRecovery(t *testing.T) {
 	requireE2EEnabled(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
@@ -65,6 +78,7 @@ func TestE2E_SQLiteAllHostsRestartRecovery(t *testing.T) {
 	})
 
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	shortenRaceCleanupWait(t, client, env.clientURL)
 	testutil.SendCompletions(t, client, env.clientURL, "sqlite all-host restart before", 3)
 	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
@@ -90,7 +104,7 @@ func TestE2E_SQLiteAllHostsRestartRecovery(t *testing.T) {
 func TestE2E_PostgresHostRestartRecovery(t *testing.T) {
 	requireE2EEnabled(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
@@ -99,6 +113,7 @@ func TestE2E_PostgresHostRestartRecovery(t *testing.T) {
 	})
 
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	shortenRaceCleanupWait(t, client, env.clientURL)
 	testutil.SendCompletions(t, client, env.clientURL, "postgres host restart before", 3)
 	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
@@ -124,7 +139,7 @@ func TestE2E_PostgresHostRestartRecovery(t *testing.T) {
 func TestE2E_PostgresAllHostsRestartRecovery(t *testing.T) {
 	requireE2EEnabled(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
@@ -133,6 +148,7 @@ func TestE2E_PostgresAllHostsRestartRecovery(t *testing.T) {
 	})
 
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	shortenRaceCleanupWait(t, client, env.clientURL)
 	testutil.SendCompletions(t, client, env.clientURL, "postgres all-host restart before", 3)
 	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)
 
