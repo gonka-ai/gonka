@@ -907,20 +907,27 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
 			} else {
 				sm.RestoreState(snapState)
-				sm.RestoreCommittedEntries(committedEntries)
-				sm.RestoreSealedNonces(sealedNonces)
-				if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
-					// Restore already mutated sm, so the rejected state has to
-					// be thrown away rather than replayed on top of.
-					logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+				if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
 					if sm, err = newStateMachine(); err != nil {
-						return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						return nil, nil, fmt.Errorf("recreate state machine after committed-entry audit: %w", err)
 					}
 				} else {
-					replayFrom = snapNonce + 1
-					logging.Info("restored devshard snapshot", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					sm.RestoreSealedNonces(sealedNonces)
+					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+						// Restore already mutated sm, so the rejected state has to
+						// be thrown away rather than replayed on top of.
+						logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+						if sm, err = newStateMachine(); err != nil {
+							return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						}
+					} else {
+						replayFrom = snapNonce + 1
+						logging.Info("restored devshard snapshot", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					}
 				}
 			}
 		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
