@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,12 +141,15 @@ func newHost(t *testing.T) reached {
 		Clock:    clock,
 	})
 
+	server := httptest.NewUnstartedServer(nil)
+	endpoint := vo.Endpoint("http://" + server.Listener.Addr().String() + routePrefix)
 	mux := http.NewServeMux()
-	boundary := signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap
+	boundary := signedhttp.New(hostKey, clock, time.Minute, vo.Address(host), endpoint).Wrap
 	module.Mount(mux, boundary)
 	streams.Mount(mux, boundary)
 
-	server := httptest.NewServer(http.StripPrefix(routePrefix, mux))
+	server.Config.Handler = http.StripPrefix(routePrefix, mux)
+	server.Start()
 	t.Cleanup(server.Close)
 
 	ctx, stop := context.WithCancel(context.Background())
@@ -157,7 +159,7 @@ func newHost(t *testing.T) reached {
 
 	return reached{
 		Client:  hosts.New(server.Client(), coordinatorKey, clock, time.Minute),
-		machine: vo.Host{Participant: host, Endpoint: vo.Endpoint(server.URL + routePrefix), Nodes: []vo.NodeRef{node}},
+		machine: vo.Host{Participant: host, Endpoint: endpoint, Nodes: []vo.NodeRef{node}},
 	}
 }
 
@@ -368,6 +370,12 @@ func (e echoStreams) Shell(_ context.Context, _ run.ExecRequest, terminal io.Rea
 
 func shellHost(t *testing.T, streams run.Streams) reached {
 	t.Helper()
+	return shellHostAt(t, streams, func(listening string) string { return listening })
+}
+
+// published turns the address the daemon listens on into the one it publishes on chain
+func shellHostAt(t *testing.T, streams run.Streams, published func(listening string) string) reached {
+	t.Helper()
 
 	clock := clock.System{}
 	chain, err := chainfake.Load(seedFile(t))
@@ -386,14 +394,17 @@ func shellHost(t *testing.T, streams run.Streams) reached {
 		Clock:    clock,
 	})
 
+	server := httptest.NewUnstartedServer(nil)
+	endpoint := vo.Endpoint("http://" + published(server.Listener.Addr().String()) + routePrefix)
 	mux := http.NewServeMux()
-	sessions.Mount(mux, signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap)
-	server := httptest.NewServer(http.StripPrefix(routePrefix, mux))
+	sessions.Mount(mux, signedhttp.New(hostKey, clock, time.Minute, vo.Address(host), endpoint).Wrap)
+	server.Config.Handler = http.StripPrefix(routePrefix, mux)
+	server.Start()
 	t.Cleanup(server.Close)
 
 	return reached{
 		Client:  hosts.New(server.Client(), coordinatorKey, clock, time.Minute),
-		machine: vo.Host{Participant: host, Endpoint: vo.Endpoint(server.URL + routePrefix), Nodes: []vo.NodeRef{node}},
+		machine: vo.Host{Participant: host, Endpoint: endpoint, Nodes: []vo.NodeRef{node}},
 	}
 }
 
@@ -484,16 +495,11 @@ func strictProxy(t *testing.T, target string) string {
 
 func TestAShellBehindAProxyGetsItsAnswersAfterTheTypingStops(t *testing.T) {
 	// arrange
-	client := shellHost(t, echoStreams{pause: 200 * time.Millisecond})
-	direct, err := url.Parse(string(client.machine.Endpoint))
-	if err != nil {
-		t.Fatalf("endpoint: %v", err)
-	}
-	client.machine.Endpoint = vo.Endpoint("http://" + strictProxy(t, direct.Host) + routePrefix)
+	client := shellHostAt(t, echoStreams{pause: 200 * time.Millisecond}, func(listening string) string { return strictProxy(t, listening) })
 	typed := &terminal{in: strings.NewReader("whoami\nls\n")}
 
 	// act
-	err = client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
+	err := client.Shell(context.Background(), client.machine, run.ExecRequest{Shard: shardID, Node: node}, typed)
 
 	// assert
 	if err != nil {
