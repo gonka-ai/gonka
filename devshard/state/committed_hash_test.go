@@ -160,7 +160,8 @@ func assertCommittedMatchesMarshalPath(t *testing.T, sm *StateMachine) {
 	fromStructs, err := computeInferencesHash(st.Inferences)
 	require.NoError(t, err)
 	folded := sumLivePointsFromEntries(entries)
-	require.Equal(t, fromStructs, folded[:])
+	encoded := encodeLivePoint(&folded)
+	require.Equal(t, fromStructs, encoded[:])
 
 	rest := restHashV2FromLiveHash(st.Balance, sealedAccBytes32(st.SealedAcc), fromStructs, st.WarmKeys)
 	hostHash, err := computeHostStatsHash(st.HostStats)
@@ -276,12 +277,13 @@ func TestLiveSumFoldsOnlyChangedEntries(t *testing.T) {
 	require.NotEqual(t, before, sm.liveEntrySum)
 	sm.closeJournalLocked(j)
 	require.Equal(t, before, sm.liveEntrySum)
-	require.Equal(t, before, sumLivePointsFromEntries(sm.committedEntries))
+	fresh := sumLivePointsFromEntries(sm.committedEntries)
+	require.Equal(t, 1, before.Equal(&fresh))
 	sm.mu.Unlock()
 
 	require.NoError(t, sm.SealInference(1))
 	sm.mu.Lock()
-	require.Equal(t, [32]byte{}, sm.liveEntrySum)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&sm.liveEntrySum))
 	require.Empty(t, sm.committedEntries)
 	sm.mu.Unlock()
 }
@@ -326,7 +328,7 @@ func TestSealInferenceObsFailureKeepsLiveSetConsistent(t *testing.T) {
 	require.Empty(t, liveIDs(sm))
 	require.Empty(t, sm.ExportCommittedEntries())
 	sm.mu.RLock()
-	require.Equal(t, [32]byte{}, sm.liveEntrySum)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&sm.liveEntrySum))
 	sm.mu.RUnlock()
 
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{startTx(2)})
