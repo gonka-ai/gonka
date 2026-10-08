@@ -504,7 +504,7 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				{
 					RpcMethod:      "SetTrainingNodeOptIn",
 					Use:            "set-training-node-opt-in [node-id] [opt-in]",
-					Short:          "Opt one of your nodes in or out of training eligibility",
+					Short:          "Opt one of your nodes out of training eligibility (only trainshardd opts a node in)",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "node_id"}, {ProtoField: "opt_in"}},
 				},
 				{

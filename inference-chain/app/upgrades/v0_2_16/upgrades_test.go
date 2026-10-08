@@ -156,6 +156,7 @@ func TestBackfillTrainingParamDefaults(t *testing.T) {
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, got.TrainingParams)
+	require.Equal(t, inferencetypes.DefaultTrainingMaxDurationBlocks, got.TrainingParams.MaxDurationBlocks)
 	require.Equal(t, inferencetypes.DefaultTrainingOptInTtlBlocks, got.TrainingParams.OptInTtlBlocks)
 	require.Equal(t, inferencetypes.DefaultTrainingReleaseBufferBlocks, got.TrainingParams.ReleaseBufferBlocks)
 }

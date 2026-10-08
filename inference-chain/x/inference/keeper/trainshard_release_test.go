@@ -354,6 +354,27 @@ func TestSetTrainingNodeOptIn_OptOutClearsTheEndpoint(t *testing.T) {
 	require.ErrorIs(t, err, collections.ErrNotFound)
 }
 
+func TestSetTrainingNodeOptIn_OptInIsRejectedAndStoresNothing(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	hardware, found := k.GetHardwareNodes(ctx, creator)
+	require.True(t, found)
+	hardware.HardwareNodes = append(hardware.HardwareNodes, &types.HardwareNode{
+		LocalId:   "node-c",
+		Hardware: []*types.Hardware{{Type: "NVIDIA H100", Count: 8}},
+	})
+	require.NoError(t, k.SetHardwareNodes(ctx, hardware))
+
+	_, err := ms.SetTrainingNodeOptIn(ctx, &types.MsgSetTrainingNodeOptIn{Creator: creator, NodeId: "node-c", OptIn: true})
+	require.ErrorIs(t, err, types.ErrTrainshardOptInRequest)
+	require.ErrorContains(t, err, "no manual opt-in")
+
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
 func TestRefreshTrainingNodeOptIn_HandlerHoldsTheEndpointToTheGrammar(t *testing.T) {
 	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
 

@@ -422,7 +422,7 @@ const (
 	DefaultTrainingMaxNodesPerShard     uint32 = 64
 	DefaultTrainingMaxActiveShards      uint32 = 16
 	DefaultTrainingMinDurationBlocks    int64  = 40
-	DefaultTrainingMaxDurationBlocks    int64  = 100_000
+	DefaultTrainingMaxDurationBlocks    int64  = 17_280
 	DefaultTrainingMaxActivePerCreator  uint32 = 4
 	DefaultTrainingCreatorCooldown      int64  = 0
 	DefaultTrainingMaxTotalReserved     uint32 = 256
