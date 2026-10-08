@@ -400,6 +400,7 @@ func TestEpochBoundaryReservationViewsStaySymmetric(t *testing.T) {
 	}{
 		{"released and returned before the PoC, its fresh PoC counts", released, 60, 70, false},
 		{"still returning when the PoC starts, it may not have made it", released, 95, 115, true},
+		{"its return ends in the PoC start block, it still counts as returning", released, 80, 100, true},
 		{"still training when the PoC starts", active, 0, 0, true},
 	}
 	for _, tc := range cases {
@@ -440,10 +441,16 @@ func TestEpochBoundaryReservationViewsStaySymmetric(t *testing.T) {
 			}
 			require.NoError(t, k.Trainshards.Set(ctx, 1, shard))
 
-			_, dropsFreshPoC := am.getInferenceServingNodeIds(ctx, upcomingEpoch)[testutil.Executor]["node-1"]
+			key := types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor, ModelID: "model-a"}
+			kept, _ := am.filterStoreCommitsFromInferenceNodes(
+				map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{key: {Count: 80}},
+				map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{key: {Weights: []*types.MLNodeWeight{{NodeId: "node-1", Weight: 80}}}},
+				am.getInferenceServingNodeIds(ctx, upcomingEpoch),
+			)
 			merged := am.mergeReservedNodesIntoPreserved(ctx, upcomingEpoch, nil)
 
-			require.Equal(t, tc.keepsFrozenWeight, dropsFreshPoC)
+			_, freshKept := kept[key]
+			require.Equal(t, !tc.keepsFrozenWeight, freshKept)
 			if !tc.keepsFrozenWeight {
 				require.Empty(t, merged)
 				return
