@@ -116,6 +116,9 @@ services:
       - KEYRING_DIR=/root/.inference
       # Open Telemetry
       - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
+      # false keeps the state snapshot every 500 nonces. true leaves only the
+      # snapshot written when a session enters settlement.
+      - DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS=${DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
     volumes:

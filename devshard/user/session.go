@@ -809,6 +809,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	candidates = append(candidates, s.pendingTxs...)
 	candidates = append(candidates, extraTxs...)
 
+	phaseBefore := s.sm.Phase()
 	var diff types.Diff
 	if s.store != nil {
 		warmBefore := s.sm.WarmKeys()
@@ -861,7 +862,8 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	}
 	s.clearPendingTxs()
 	if s.store != nil {
-		s.maybeSaveSnapshotLocked()
+		settledNow := phaseBefore != types.PhaseSettlement && s.sm.Phase() == types.PhaseSettlement
+		s.maybeSaveSnapshotLocked(settledNow)
 	}
 	s.diffObserver(diff)
 	return diff, hostIdx, nil
@@ -904,26 +906,28 @@ func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
 	return storage.AppendDiffWithRetry(context.Background(), s.store, s.escrowID, rec)
 }
 
-// maybeSaveSnapshotLocked schedules an asynchronous snapshot save when
-// the current nonce is on the snapshot interval. The deep copy of state
-// and per-host cursor is taken under the existing s.mu lock so the
+// maybeSaveSnapshotLocked schedules an asynchronous snapshot save on the
+// snapshot interval, and on the diff that enters settlement. The deep copy
+// of state and per-host cursor is taken under the existing s.mu lock so the
 // snapshot is consistent; the JSON marshal and storage write run on a
 // goroutine without any session locks held.
 //
 // snapshotInFlight (atomic CAS) ensures that if a previous save hasn't
 // finished by the next interval boundary we skip rather than pile up
 // concurrent writers. Skipping is safe -- the cursor will simply be
-// captured at the next interval (snapshotInterval nonces later).
+// captured at the next interval (snapshotInterval nonces later). A
+// settlement snapshot is not skipped. DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS
+// drops the interval writes and leaves the settlement snapshot.
 //
 // Caller must hold s.mu.
-func (s *Session) maybeSaveSnapshotLocked() {
+func (s *Session) maybeSaveSnapshotLocked(settledNow bool) {
 	if s.store == nil || s.writesStateWithDiffs() {
 		return
 	}
-	if s.nonce == 0 || s.nonce%snapshotInterval != 0 {
+	if !host.ShouldPersistSnapshot(s.nonce, settledNow) {
 		return
 	}
-	if !s.snapshotInFlight.CompareAndSwap(false, true) {
+	if !settledNow && !s.snapshotInFlight.CompareAndSwap(false, true) {
 		return
 	}
 
@@ -939,7 +943,9 @@ func (s *Session) maybeSaveSnapshotLocked() {
 	escrowID := s.escrowID
 
 	go func() {
-		defer s.snapshotInFlight.Store(false)
+		if !settledNow {
+			defer s.snapshotInFlight.Store(false)
+		}
 		writeSnapshot(store, escrowID, nonce, state, cursor)
 	}()
 }
