@@ -922,12 +922,6 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	return sig, confirmedAt, job, nil, outcome, nil
 }
 
-// executeAsync runs inference and adds MsgFinishInference to the mempool.
-// Delegates to RunExecution which also caches the response body for reconnection.
-func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	_, _ = h.RunExecution(ctx, job)
-}
-
 func (h *Host) ReleaseExecution(inferenceID uint64) {
 	h.mu.Lock()
 	delete(h.executing, inferenceID)
@@ -1447,7 +1441,12 @@ func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload
 	if err != nil || job == nil {
 		return receipt, confirmedAt, err
 	}
-	h.executeAsync(ctx, job)
+	// Returning the receipt must not cancel execution or wait for it to finish.
+	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(h.sm.Config().ExecutionTimeout)*time.Second)
+	go func() {
+		defer cancel()
+		_, _ = h.RunExecution(execCtx, job)
+	}()
 	return receipt, confirmedAt, nil
 }
 
