@@ -7,8 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
+	"syscall"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -598,6 +600,14 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	if s.store == nil {
 		return false, fmt.Errorf("missing refusal diff storage")
 	}
+	// Deadline, mempool, and payload checks do not need the executor. A rejection is final.
+	localAccept, localErr := host.VerifyRefusedTimeout(ctx, st, inferenceID, payload, nil, mempool, nil, st.Config, nowUnix)
+	if localErr != nil || !localAccept {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return localAccept, localErr
+	}
 	load := func(from uint64) ([]types.Diff, error) {
 		if from > st.LatestNonce {
 			return nil, nil
@@ -625,7 +635,15 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	queryCtx, queryCancel := context.WithTimeout(ctx, min(client.config.QueryTimeout, budget/4))
 	head, queryErr := client.GetState(queryCtx)
 	queryCancel()
-	if queryErr == nil && head.Nonce > 0 && head.Nonce <= st.LatestNonce && len(head.StateRoot) == 32 {
+	if queryErr != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		// No HTTP response: the full history would fail the same way.
+		if executorUnreachable(queryErr) {
+			return true, nil
+		}
+	} else if head.Nonce > 0 && head.Nonce <= st.LatestNonce && len(head.StateRoot) == 32 {
 		anchor, err := s.store.GetDiffs(s.host.EscrowID(), head.Nonce, head.Nonce)
 		if err != nil {
 			return false, err
@@ -638,16 +656,21 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 					return false, err
 				}
 			}
-			// Reserve time for a full retry if another executor instance is behind.
+			// No response accepts the timeout. An answer with no receipt rechecks the nonce
+			// instead of sending the history from nonce 1.
 			shortCtx, shortCancel := context.WithTimeout(ctx, budget/4)
-			accept, err := verify(shortCtx, diffs)
+			receipt, challengeErr := client.ChallengeReceipt(shortCtx, inferenceID, payload, diffs)
 			shortCancel()
 			if ctx.Err() != nil {
 				return false, ctx.Err()
 			}
-			if err == nil && !accept {
+			if challengeErr == nil && len(receipt) > 0 {
 				return false, nil
 			}
+			if challengeErr != nil && executorUnreachable(challengeErr) {
+				return true, nil
+			}
+			return s.refusalAfterProgress(ctx, client, st, inferenceID, payload, head.Nonce, load)
 		}
 	}
 	if ctx.Err() != nil {
@@ -665,6 +688,84 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 		return false, requestCtx.Err()
 	}
 	return accept, err
+}
+
+// refusalProgressRetries is how often a nonce that keeps advancing can postpone the timeout vote.
+// Past this, the vote is accepted even if the executor would move again.
+const refusalProgressRetries = 3
+
+// refusalAfterProgress runs after a challenge answered without a receipt.
+// A nonce that did not advance, or a new nonce whose root does not match, accepts the timeout.
+// A higher nonce with a matching root is challenged from that nonce, at most refusalProgressRetries times.
+func (s *Server) refusalAfterProgress(ctx context.Context, client *HTTPClient, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, previous uint64, load func(uint64) ([]types.Diff, error)) (bool, error) {
+	for range refusalProgressRetries {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		deadline, _ := ctx.Deadline()
+		queryBudget := min(client.config.QueryTimeout, time.Until(deadline)/4)
+		if queryBudget <= 0 {
+			return true, nil
+		}
+		queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
+		head, queryErr := client.GetState(queryCtx)
+		queryCancel()
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if queryErr != nil || head.Nonce <= previous || head.Nonce > st.LatestNonce || len(head.StateRoot) != 32 {
+			return true, nil
+		}
+		anchor, err := s.store.GetDiffs(s.host.EscrowID(), head.Nonce, head.Nonce)
+		if err != nil {
+			return false, err
+		}
+		if len(anchor) != 1 || anchor[0].Diff.Nonce != head.Nonce || !bytes.Equal(anchor[0].StateHash, head.StateRoot) {
+			return true, nil
+		}
+		var diffs []types.Diff
+		if head.Nonce < st.LatestNonce {
+			diffs, err = load(head.Nonce + 1)
+			if err != nil {
+				return false, err
+			}
+		}
+		challengeCtx, challengeCancel := context.WithTimeout(ctx, time.Until(deadline)/2)
+		receipt, challengeErr := client.ChallengeReceipt(challengeCtx, inferenceID, payload, diffs)
+		challengeCancel()
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if challengeErr == nil && len(receipt) > 0 {
+			return false, nil
+		}
+		if challengeErr != nil && executorUnreachable(challengeErr) {
+			return true, nil
+		}
+		previous = head.Nonce
+	}
+	return true, nil
+}
+
+// executorUnreachable reports that a refusal probe got no HTTP response.
+// An HTTP status, including 404 and 500, means the executor answered.
+func executorUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
