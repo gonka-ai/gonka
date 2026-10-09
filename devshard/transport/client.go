@@ -302,7 +302,7 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	body, err := c.doGet(ctx, url, false)
 	if err != nil {
 		return err
 	}
@@ -793,14 +793,23 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 }
 
 // doGet sends a GET request and returns the response body.
-// No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+func (c *HTTPClient) doGet(ctx context.Context, url string, authenticated bool) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if authenticated {
+		ts := time.Now().Unix()
+		sig, err := SignRequest(c.signer, c.escrowID, nil, ts)
+		if err != nil {
+			return nil, fmt.Errorf("sign request: %w", err)
+		}
+		req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
+		req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 	}
 
 	resp, err := c.http.Do(req)
@@ -860,4 +869,19 @@ func (c *HTTPClient) observeTransportFailure(path string, err error) {
 		return
 	}
 	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
+}
+
+func (c *HTTPClient) GetState(ctx context.Context) (*StateResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
+	defer cancel()
+	url := c.baseURL + c.routePrefix + fmt.Sprintf("/sessions/%s/state", c.escrowID)
+	body, err := c.doGet(ctx, url, true)
+	if err != nil {
+		return nil, err
+	}
+	var result StateResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

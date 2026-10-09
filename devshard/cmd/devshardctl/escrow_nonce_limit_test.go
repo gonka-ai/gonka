@@ -35,16 +35,14 @@ func TestNewManagedGatewayChecksBalancesWithTheChainMaxNonceFromTheStart(t *test
 	requireClosedWithin(t, maxNonce.read, "the first balance check ran without the chain max nonce")
 }
 
-// The chain allows a million nonces, so an escrow past the old 19 800 default keeps serving.
-func TestGatewayChooseRuntimeRoutesPastTheOldDefaultOnceTheChainAllowsIt(t *testing.T) {
+func TestGatewayChooseRuntimeUsesConfiguredLimitWhenChainAllowsMore(t *testing.T) {
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "6", balanceMinimumThreshold, nonceDeactivationLimit)
 	gateway := NewGateway([]*devshardRuntime{escrowRuntime}, NewGatewayLimiter(0, 0), "m")
 	gateway.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
-	chosen, err := gateway.reserveRuntimeForModel("m", 5, 0, nil)
+	_, err := gateway.reserveRuntimeForModel("m", 5, 0, nil)
 
-	require.NoError(t, err, "an escrow far below the chain max nonce was skipped as spent")
-	require.Equal(t, "6", chosen.id)
+	require.ErrorContains(t, err, "skipped: high_nonce=1")
 }
 
 // Hosts stop taking new work group size plus one nonces short of max_nonce, and the gateway stops its in-flight margin before that.
@@ -53,6 +51,7 @@ func TestGatewayChooseRuntimeStopsAnInFlightMarginShortOfTheHostActiveCap(t *tes
 	availableRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, 999_795)
 	require.EqualValues(t, 3, spentRuntime.proxy.sm.TotalSlots(), "the nonces above assume a three-slot group: 1_000_000 - (3+1) - 200")
 	gateway := NewGateway([]*devshardRuntime{spentRuntime, availableRuntime}, NewGatewayLimiter(0, 0), "m")
+	gateway.settings.EscrowRotation.NonceDeactivationLimit = 1_000_000
 	gateway.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
 	chosen, err := gateway.reserveRuntimeForModel("m", 5, 0, nil)
@@ -83,6 +82,7 @@ func TestGatewayChooseRuntimeRoutesBelowTheDefaultLimitUntilTheChainMaxNonceIsKn
 func TestGatewayCheckBalancesKeepsAnEscrowBelowTheChainLimit(t *testing.T) {
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
 	gateway, created, _ := gatewayTestDepletionGateway(t, escrowRuntime)
+	gateway.settings.EscrowRotation.NonceDeactivationLimit = 1_000_000
 	gateway.maxNonce = devshardpkg.StaticMaxNonce(1_000_000)
 
 	runBalanceTick(t, gateway, escrowRuntime.id)
@@ -91,15 +91,14 @@ func TestGatewayCheckBalancesKeepsAnEscrowBelowTheChainLimit(t *testing.T) {
 	require.True(t, escrowRuntime.active.Load(), "an escrow below the chain limit was taken out of service")
 }
 
-// An escrow past the default limit may still be far below the chain's max_nonce, so it is not retired before that value is known.
-func TestGatewayCheckBalancesKeepsAnEscrowAtTheDefaultLimitUntilTheChainMaxNonceIsKnown(t *testing.T) {
+func TestGatewayCheckBalancesUsesConfiguredLimitBeforeChainMaxNonceIsKnown(t *testing.T) {
 	escrowRuntime := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit)
 	gateway, created, _ := gatewayTestDepletionGateway(t, escrowRuntime, withoutSettlement)
 
 	runBalanceTick(t, gateway, escrowRuntime.id)
 
-	require.EqualValues(t, 0, created.Load(), "an escrow was replaced for its nonce before the chain max nonce was known")
-	require.True(t, escrowRuntime.active.Load(), "an escrow was taken out of service for its nonce before the chain max nonce was known")
+	require.EqualValues(t, 1, created.Load())
+	require.False(t, escrowRuntime.active.Load())
 }
 
 func TestGatewayChooseRuntimeReplacesNothingUntilTheChainMaxNonceIsKnown(t *testing.T) {
