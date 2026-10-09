@@ -184,6 +184,12 @@ func normalizeConfig(cfg config.Config) config.Config {
 	if cfg.RecoveryTimeout <= 0 {
 		cfg.RecoveryTimeout = 30 * time.Minute
 	}
+	if cfg.ReadyMaxWait <= 0 {
+		cfg.ReadyMaxWait = 32 * time.Minute
+	}
+	if cfg.ReadyMaxWait < cfg.ReadyTimeout {
+		cfg.ReadyMaxWait = cfg.ReadyTimeout
+	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
 	}
@@ -1826,10 +1832,17 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(
-			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, proc.Done(),
-		) {
-			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
+		// ReadyTimeout is the floor on every attempt. An initializing or
+		// absent /ready already waits up to ReadyMaxWait; raising the floor
+		// after a slow timeout would only hold a later hung child longer.
+		ready, lastProbe := waitForChildServingReadyUntil(
+			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, m.cfg.ReadyMaxWait, proc.Done(),
+		)
+		if !ready {
+			slog.Warn("child did not become ready in time",
+				"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
+				"ready_path", m.cfg.ReadyPath, "ready_timeout", m.cfg.ReadyTimeout,
+				"ready_max_wait", m.cfg.ReadyMaxWait, "probe", lastProbe.String())
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
@@ -2175,9 +2188,47 @@ func (c *child) adminAddr() string {
 	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
+type readyProbeResult int
+
+const (
+	readyProbeUnreachable readyProbeResult = iota
+	readyProbeNotReady
+	readyProbeInitializing
+	readyProbeReadyAbsent
+	readyProbeReady
+)
+
+func (r readyProbeResult) String() string {
+	switch r {
+	case readyProbeUnreachable:
+		return "unreachable"
+	case readyProbeNotReady:
+		return "not_ready"
+	case readyProbeInitializing:
+		return "initializing"
+	case readyProbeReadyAbsent:
+		return "ready_absent"
+	case readyProbeReady:
+		return "ready"
+	default:
+		return "unknown"
+	}
+}
+
+// probeAllowsReadyWaitExtension reports whether a not-yet-ready probe should
+// keep waiting up to maxWait instead of failing at minWait. Initializing is
+// the modern /ready body. ready_absent is older binaries (v3/v4): Echo returns
+// 404/405/501 for an unregistered /ready, so there is no body to inspect and
+// the wait still runs to ReadyMaxWait.
+func probeAllowsReadyWaitExtension(r readyProbeResult) bool {
+	return r == readyProbeInitializing || r == readyProbeReadyAbsent
+}
+
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
+// processDone ends the wait when the child exits; a nil channel means the
+// caller is not watching a process.
 func waitForChildServingReady(
 	ctx context.Context,
 	c *child,
@@ -2185,51 +2236,132 @@ func waitForChildServingReady(
 	timeout time.Duration,
 	processDone <-chan struct{},
 ) bool {
-	adminPort := int(c.adminPort.Load())
-	if adminPort == 0 {
-		return waitForReadiness(
-			ctx,
-			timeout,
-			processDone,
-			func(probeCtx context.Context, client *http.Client) bool {
-				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
-				if viaLegacy {
-					c.noteLegacyFallback(path)
-				}
-				return ready
-			},
-		)
-	}
-	return waitForReadiness(ctx, timeout, processDone, func(probeCtx context.Context, client *http.Client) bool {
-		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
-		return ready && publicEndpointReady(probeCtx, client, c.port)
-	})
+	ready, _ := waitForChildServingReadyUntil(ctx, c, path, timeout, timeout, processDone)
+	return ready
 }
 
-func waitForReadiness(
+// waitForChildServingReadyUntil is the same gate with a progress-aware bound.
+// It always waits at least minWait (the process may not have bound a port yet).
+// After that it keeps waiting up to maxWait while /ready is reachable and
+// either reports initializing, or is absent (404/405/501 on older binaries
+// that never registered the route). An unreachable or draining endpoint fails
+// promptly instead of stretching to maxWait. A closed processDone also fails
+// promptly, so a dead child is not held for the rest of the window.
+func waitForChildServingReadyUntil(
 	ctx context.Context,
-	timeout time.Duration,
+	c *child,
+	path string,
+	minWait, maxWait time.Duration,
 	processDone <-chan struct{},
-	probe func(context.Context, *http.Client) bool,
-) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+) (bool, readyProbeResult) {
+	if maxWait < minWait {
+		maxWait = minWait
+	}
+	start := time.Now()
+	probeCtx, cancel := context.WithTimeout(ctx, maxWait)
 	defer cancel()
 	client := &http.Client{Timeout: 500 * time.Millisecond}
+	last := readyProbeUnreachable
+	extended := false
 	for {
-		if probe(probeCtx, client) {
-			return true
+		last = probeChildServing(probeCtx, client, c, path)
+		if last == readyProbeReady {
+			return true, last
+		}
+		elapsed := time.Since(start)
+		if elapsed >= maxWait {
+			return false, last
+		}
+		if elapsed >= minWait && !probeAllowsReadyWaitExtension(last) {
+			return false, last
+		}
+		if elapsed >= minWait && probeAllowsReadyWaitExtension(last) && !extended {
+			extended = true
+			slog.Info("child still starting; extending readiness wait",
+				"version", c.version.Name, "port", c.port, "elapsed", elapsed,
+				"max_wait", maxWait, "probe", last.String())
 		}
 		retry := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-probeCtx.Done():
 			retry.Stop()
-			return false
+			return false, last
 		case <-processDone:
 			retry.Stop()
-			return false
+			return false, last
 		case <-retry.C:
 		}
 	}
+}
+
+func probeChildServing(ctx context.Context, client *http.Client, c *child, path string) readyProbeResult {
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
+		return probeReadyEndpoint(ctx, client, c.port, path, true, c)
+	}
+	admin := probeReadyEndpoint(ctx, client, adminPort, path, false, nil)
+	if admin != readyProbeReady {
+		return admin
+	}
+	if publicEndpointReady(ctx, client, c.port) {
+		return readyProbeReady
+	}
+	return readyProbeInitializing
+}
+
+func probeReadyEndpoint(
+	ctx context.Context,
+	client *http.Client,
+	port int,
+	path string,
+	allowLegacy bool,
+	c *child,
+) readyProbeResult {
+	readyPath := normalizeHTTPPath(path)
+	status, body, err := getHTTPStatusAndBody(ctx, client, port, readyPath)
+	if err != nil {
+		return readyProbeUnreachable
+	}
+	if status == http.StatusOK {
+		return readyProbeReady
+	}
+	if allowLegacy && legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
+		if c != nil {
+			c.noteLegacyFallback(path)
+		}
+		return readyProbeReady
+	}
+	if status == http.StatusServiceUnavailable && readyBodyInitializing(body) {
+		return readyProbeInitializing
+	}
+	if readyPathAbsent(status) {
+		return readyProbeReadyAbsent
+	}
+	return readyProbeNotReady
+}
+
+func readyPathAbsent(status int) bool {
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
+}
+
+func readyBodyInitializing(body []byte) bool {
+	var status struct {
+		Ready        bool `json:"ready"`
+		Draining     bool `json:"draining"`
+		StorageReady bool `json:"storage_ready"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return false
+	}
+	if status.Draining {
+		return false
+	}
+	return !status.Ready || !status.StorageReady
 }
 
 // readyEndpointReady reports readiness and whether the answer came through the
@@ -2257,17 +2389,26 @@ func publicEndpointReady(ctx context.Context, client *http.Client, port int) boo
 }
 
 func getHTTPStatus(ctx context.Context, client *http.Client, port int, path string) (int, error) {
+	status, _, err := getHTTPStatusAndBody(ctx, client, port, path)
+	return status, err
+}
+
+func getHTTPStatusAndBody(ctx context.Context, client *http.Client, port int, path string) (int, []byte, error) {
 	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, normalizeHTTPPath(path))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode, nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // getChildRecoveryStatus probes the admin readiness endpoint and returns the
@@ -2388,12 +2529,7 @@ func legacyReadyFallbackAllowed(path string, status int) bool {
 	if path != "/ready" {
 		return false
 	}
-	switch status {
-	case 0, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
-		return true
-	default:
-		return false
-	}
+	return status == 0 || readyPathAbsent(status)
 }
 
 func legacyReady(ctx context.Context, client *http.Client, port int) bool {
