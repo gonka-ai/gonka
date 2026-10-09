@@ -2,17 +2,33 @@ package mockopenai
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
 	"strconv"
 	"time"
+
+	"devshard/testenv/replay"
 )
 
 // Config wires the mock OpenAI HTTP server.
 type Config struct {
-	Addr   string
-	Faults FaultConfig
+	Addr       string
+	Faults     FaultConfig
+	Workers    int
+	Queue      int
+	ReplayFile string
+}
+
+// Stats is the test-only request outcome snapshot exposed by a Mock ML node.
+type Stats struct {
+	RequestsReceived    uint64 `json:"requests_received"`
+	SuccessfulResponses uint64 `json:"successful_responses"`
+	FailedResponses     uint64 `json:"failed_responses"`
+	Timeouts            uint64 `json:"timeouts"`
+	ReplayHits          uint64 `json:"replay_hits"`
+	ReplayMisses        uint64 `json:"replay_misses"`
 }
 
 // DefaultConfig returns local dev defaults.
@@ -28,19 +44,44 @@ func DefaultConfig() Config {
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
 type FaultConfig struct {
 	Latency          time.Duration
-	HTTPStatus       int  // 0 = OK
+	HTTPStatus       int // 0 = OK
+	FailureRate      float64
+	Hang             bool // accept the request and wait for its context to be cancelled
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
+	PauseStream      bool // pause after first content chunk until testenv release
+	// StreamErrorEnvelope returns HTTP 200 text/event-stream with an OpenAI
+	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
+	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
+	StreamErrorEnvelope bool
+}
+
+// ShouldFail deterministically selects requests for a configured failure
+// rate. The request body includes the load-generator request ID, so a fixed
+// scenario seed produces the same failure pattern on every run.
+func (f FaultConfig) ShouldFail(body []byte) bool {
+	if f.FailureRate <= 0 {
+		return false
+	}
+	if f.FailureRate >= 1 {
+		return true
+	}
+	sum := sha256.Sum256(body)
+	sample := binary.BigEndian.Uint64(sum[:8])
+	return float64(sample)/float64(^uint64(0)) < f.FailureRate
 }
 
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
-	LatencyMs        *int  `json:"latency_ms,omitempty"`
-	HTTPStatus       *int  `json:"http_status,omitempty"`
-	DropFirstChunk   *bool `json:"drop_first_chunk,omitempty"`
-	PartialStream    *bool `json:"partial_stream,omitempty"`
-	StreamChunkDelay *int  `json:"stream_chunk_delay_ms,omitempty"`
+	LatencyMs           *int  `json:"latency_ms,omitempty"`
+	HTTPStatus          *int  `json:"http_status,omitempty"`
+	DropFirstChunk      *bool `json:"drop_first_chunk,omitempty"`
+	PartialStream       *bool `json:"partial_stream,omitempty"`
+	StreamChunkDelay    *int  `json:"stream_chunk_delay_ms,omitempty"`
+	PauseStream         *bool `json:"pause_stream,omitempty"`
+	StreamErrorEnvelope *bool `json:"stream_error_envelope,omitempty"`
+	Hang                *bool `json:"hang,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -59,6 +100,15 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
 	}
+	if p.PauseStream != nil {
+		dst.PauseStream = *p.PauseStream
+	}
+	if p.StreamErrorEnvelope != nil {
+		dst.StreamErrorEnvelope = *p.StreamErrorEnvelope
+	}
+	if p.Hang != nil {
+		dst.Hang = *p.Hang
+	}
 }
 
 // ChatRequest is the subset of OpenAI chat completion we care about.
@@ -76,6 +126,14 @@ type ChatRequest struct {
 type ChatMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+func replayMessages(messages []ChatMessage) []replay.Message {
+	out := make([]replay.Message, len(messages))
+	for i, message := range messages {
+		out[i] = replay.Message{Role: message.Role, Content: message.Content}
+	}
+	return out
 }
 
 // completionText derives deterministic assistant text from model + messages.

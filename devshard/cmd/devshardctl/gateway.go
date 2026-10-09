@@ -302,6 +302,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	mux.HandleFunc("GET /v1/state", proxy.handleState)
 	mux.HandleFunc("GET /v1/debug/pending", proxy.handleDebugPending)
 	mux.HandleFunc("GET /v1/debug/state", proxy.handleDebugState)
+	mux.HandleFunc("GET /v1/debug/state-sizes", proxy.handleDebugStateSizes)
 	mux.HandleFunc("GET /v1/debug/perf", proxy.handleDebugPerf)
 	mux.HandleFunc("GET /v1/debug/pairwise", proxy.handleDebugPairwise)
 	mux.HandleFunc("GET /v1/debug/signatures", proxy.handleDebugSignatures)
@@ -585,6 +586,7 @@ func isReadOnlyDevshardPath(method, innerPath string) bool {
 		"/v1/models",
 		"/v1/debug/pending",
 		"/v1/debug/state",
+		"/v1/debug/state-sizes",
 		"/v1/debug/inferences",
 		"/v1/debug/perf",
 		"/v1/debug/pairwise",
@@ -907,6 +909,7 @@ const (
 func (g *Gateway) checkBalances() {
 	g.mu.Lock()
 	isRotationEnabled := g.settings.EscrowRotation.Enabled
+	configuredNonceLimit := g.nonceDeactivationLimit()
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
@@ -931,8 +934,11 @@ func (g *Gateway) checkBalances() {
 		}
 		nonce := rt.proxy.sm.LatestNonce()
 		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if chainMaxNonce != 0 && nonce >= nonceLimit {
-			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — deactivating before replacement",
+		if chainMaxNonce == 0 || configuredNonceLimit < nonceLimit {
+			nonceLimit = configuredNonceLimit
+		}
+		if nonce >= nonceLimit {
+			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
 				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
 		}
@@ -1394,6 +1400,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/state", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/state-sizes", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/perf", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)
@@ -2028,7 +2035,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64,
 	skipReasonCounts := make(map[string]int)
 	chainMaxNonce := g.chainMaxNonce()
 	for _, rt := range g.runtimeOrder {
-		if runtimeAtNonceLimit(rt, chainMaxNonce) {
+		if g.runtimeAtNonceLimit(rt, chainMaxNonce) {
 			if g.settings.EscrowRotation.Enabled && chainMaxNonce != 0 {
 				depletedEscrows = append(depletedEscrows, struct {
 					id     string
@@ -2157,11 +2164,25 @@ func runtimesFundingAttempts(runtimes []*devshardRuntime, reservationLength uint
 	return funded
 }
 
-func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
+func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	return rt.proxy.sm.LatestNonce() >= escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+	nonceLimit := g.nonceDeactivationLimit()
+	if chainMaxNonce != 0 {
+		chainLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		if chainLimit < nonceLimit {
+			nonceLimit = chainLimit
+		}
+	}
+	return rt.proxy.sm.LatestNonce() >= nonceLimit
+}
+
+func (g *Gateway) nonceDeactivationLimit() uint64 {
+	if g == nil || g.settings.EscrowRotation.NonceDeactivationLimit == 0 {
+		return nonceDeactivationLimit
+	}
+	return g.settings.EscrowRotation.NonceDeactivationLimit
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -2762,10 +2783,11 @@ type adminPerfRequest struct {
 }
 
 type adminEscrowRotationRequest struct {
-	Enabled           *bool                          `json:"enabled,omitempty"`
-	SettlementEnabled *bool                          `json:"settlement_enabled,omitempty"`
-	PrePoCBlocks      *int64                         `json:"pre_poc_blocks,omitempty"`
-	Models            *[]EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled                *bool                          `json:"enabled,omitempty"`
+	SettlementEnabled      *bool                          `json:"settlement_enabled,omitempty"`
+	PrePoCBlocks           *int64                         `json:"pre_poc_blocks,omitempty"`
+	NonceDeactivationLimit *uint64                        `json:"nonce_deactivation_limit,omitempty"`
+	Models                 *[]EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -2973,10 +2995,11 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": map[string]any{
-			"enabled":            settings.EscrowRotation.Enabled,
-			"settlement_enabled": settings.EscrowRotation.SettlementEnabled,
-			"pre_poc_blocks":     settings.EscrowRotation.PrePoCBlocks,
-			"models":             settings.EscrowRotation.Models,
+			"enabled":                  settings.EscrowRotation.Enabled,
+			"settlement_enabled":       settings.EscrowRotation.SettlementEnabled,
+			"pre_poc_blocks":           settings.EscrowRotation.PrePoCBlocks,
+			"nonce_deactivation_limit": settings.EscrowRotation.NonceDeactivationLimit,
+			"models":                   settings.EscrowRotation.Models,
 		},
 		"chain": map[string]any{
 			"block_height":               snapshot.BlockHeight,
@@ -3102,6 +3125,9 @@ func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscr
 	if req.PrePoCBlocks != nil {
 		settings.PrePoCBlocks = *req.PrePoCBlocks
 	}
+	if req.NonceDeactivationLimit != nil {
+		settings.NonceDeactivationLimit = *req.NonceDeactivationLimit
+	}
 	if req.Models != nil {
 		settings.Models = append([]EscrowRotationModelSettings(nil), (*req.Models)...)
 		for i := range settings.Models {
@@ -3223,6 +3249,9 @@ func validateGatewaySettings(settings GatewaySettings) error {
 	if rotation.Enabled {
 		if rotation.PrePoCBlocks <= 0 {
 			return fmt.Errorf("escrow_rotation.pre_poc_blocks must be > 0")
+		}
+		if rotation.NonceDeactivationLimit == 0 {
+			return fmt.Errorf("escrow_rotation.nonce_deactivation_limit must be > 0")
 		}
 		if len(rotation.Models) == 0 {
 			return fmt.Errorf("escrow_rotation.models must contain at least one model when rotation is enabled")

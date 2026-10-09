@@ -1623,6 +1623,56 @@ func (s *Session) PendingTxs() []*types.DevshardTx {
 	return s.pendingTxs
 }
 
+// StateSizes returns the sizes of the gateway-side protocol collections used
+// while composing and applying diffs. It is intentionally a size-only view so
+// diagnostics do not expose transaction or signature contents.
+type StateSizes struct {
+	Diffs           int
+	DiffBytes       int64
+	SignatureNonces int
+	NonceStates     int
+	PendingTxs      int
+	AppliedTxKeys   int
+}
+
+func (s *Session) StateSizes() StateSizes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var diffBytes int64
+	for _, diff := range s.diffs {
+		content := state.BuildDiffContent(s.escrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
+		diffBytes += int64(proto.Size(content) + len(diff.UserSig))
+	}
+	return StateSizes{
+		Diffs:           len(s.diffs),
+		DiffBytes:       diffBytes,
+		SignatureNonces: len(s.signatures),
+		NonceStates:     len(s.nonceStates),
+		PendingTxs:      len(s.pendingTxs),
+		// v4.2 does not keep the v5 applied-tx index. Keep the field in the
+		// diagnostic response for schema compatibility and report zero.
+		AppliedTxKeys: 0,
+	}
+}
+
+// FinishTxFor marshals the pending MsgFinishInference for inferenceID under
+// the session lock so callers never iterate pendingTxs while composeDiffLocked
+// sorts it in place.
+func (s *Session) FinishTxFor(inferenceID uint64) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, tx := range s.pendingTxs {
+		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == inferenceID {
+			data, err := proto.Marshal(tx)
+			if err != nil {
+				return nil
+			}
+			return data
+		}
+	}
+	return nil
+}
+
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
 
 // sigWeight computes the slot-weighted signature count for a set of slot signatures,

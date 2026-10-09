@@ -822,6 +822,19 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (p *Proxy) handleDebugStateSizes(w http.ResponseWriter, r *http.Request) {
+	sizes := p.session.StateSizes()
+	writeJSON(w, map[string]any{
+		"diffs":            sizes.Diffs,
+		"diffs_bytes":      sizes.DiffBytes,
+		"diffs_mb":         float64(sizes.DiffBytes) / (1024 * 1024),
+		"signature_nonces": sizes.SignatureNonces,
+		"nonce_states":     sizes.NonceStates,
+		"pending_txs":      sizes.PendingTxs,
+		"applied_tx_keys":  sizes.AppliedTxKeys,
+	})
+}
+
 func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

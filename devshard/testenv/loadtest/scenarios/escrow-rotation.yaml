@@ -1,0 +1,69 @@
+schema_version: v1
+scenario: escrow-rotation
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    # Keep the chain limit above the Gateway rotation threshold for this run.
+    escrow_amount: 5000000000
+    max_nonce: 10000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+workload:
+  max_in_flight: 512
+  duration: 10m
+  traffic:
+    type: constant
+    rps: 1
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "escrow rotation load test request"
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+  escrow_rotation:
+    enabled: true
+    settlement_enabled: true
+    # The observed baseline creates several thousand nonces in ten minutes.
+    nonce_deactivation_limit: 200
+    # Keep this run focused on nonce depletion; do not intentionally rotate at
+    # the epoch boundary.
+    pre_poc_blocks: 1
+    temp_count: 1
+    target_count: 1
+    # This is within the production create-escrow amount range.
+    amount: 5000000000
+    private_key_env: DEVSHARD_PRIVATE_KEY
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+  escrow_rotation:
+    require_new_escrow: true
+
+drain_timeout: 2m
