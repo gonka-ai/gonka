@@ -138,11 +138,12 @@ func (p *repairPair) wirePeersFrom(prober int) {
 	peers := make(map[int]*HTTPClient)
 	for j, ts := range p.httpSrv {
 		peers[j] = NewHTTPClient(ts.URL, "escrow-1", p.user, ClientConfig{
-			QueryTimeout: DefaultRepairTimeout,
-			RoutePrefix:  testRoutePrefix,
+			AllowRetiredHTTPSession: true,
+			QueryTimeout:            DefaultRepairTimeout,
+			RoutePrefix:             testRoutePrefix,
 		})
 	}
-	p.servers[prober].SetPeerClients(peers)
+	p.servers[prober].SetPeerClients(HTTPPeerClients(peers))
 }
 
 func assertNoRepairBlame(t *testing.T, h *host.Host, srv *Server) {
@@ -322,10 +323,16 @@ func TestHandleHeightSyncRepair_FloodBoundsOracleReads(t *testing.T) {
 	}
 	first := p.postSignedRepair(t, 0, 1, req)
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var firstResp heightsync.RepairResponse
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstResp))
 
 	for i := 0; i < 19; i++ {
 		rec := p.postSignedRepair(t, 0, 1, req)
-		require.Equal(t, http.StatusTooManyRequests, rec.Code)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var again heightsync.RepairResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &again))
+		require.Equal(t, firstResp.ResponderSig, again.ResponderSig)
+		require.Equal(t, firstResp.ObservedHeight, again.ObservedHeight)
 	}
 	require.Equal(t, before+1, p.oracles[1].LatestCalls(), "one HEIGHT build per (turn, requester)")
 	assertNoRepairBlame(t, p.hostObjs[1], p.servers[1])

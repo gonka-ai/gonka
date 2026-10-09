@@ -17,16 +17,21 @@ import (
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
 	devshardpkg "devshard"
+	shardbridge "devshard/bridge"
 	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/host"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
+	devshardserver "devshard/server"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
+	"devshard/transport"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -119,9 +124,17 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot, func() {
+			// Stop taking leases before the peers close, and cancel fetches
+			// still on those peers. A validation that already has the
+			// payload keeps its context and may vote.
+			host.StopValidationEnqueue()
+			transport.ReleaseOutboundPeerConns()
+			manager.ClosePeerRPC()
+		})
 	}
 	manager.Register(e.Group(""))
+	startMemoryLog(ctx, manager)
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)
@@ -132,7 +145,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	}
 
 	return &devshardApp{
-		server:        e,
+		server:        h2cPublicServer{e},
 		adminServer:   adminServer,
 		adminAddr:     cfg.AdminAddr,
 		chainEvents:   chainRuntime.chainEvents,
@@ -170,7 +183,16 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("chain id: %w", err)
 	}
 
-	identity, err := newChainIdentity(chainClient, apiAccount, kr)
+	infoPath, err := signerInfoPath(nodeConfig, apiAccount.SignerRecord.Name)
+	if err != nil {
+		return nil, fmt.Errorf("keyring file: %w", err)
+	}
+	payloadSigner, err := signing.NewCachedCosmosSigner(kr, apiAccount.SignerRecord.Name, infoPath)
+	if err != nil {
+		return nil, fmt.Errorf("payload signer: %w", err)
+	}
+
+	identity, err := newChainIdentity(chainClient, apiAccount, payloadSigner)
 	if err != nil {
 		return nil, fmt.Errorf("chain identity: %w", err)
 	}
@@ -185,7 +207,10 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	chainEvents, err := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	if err != nil {
+		return nil, fmt.Errorf("chain events: %w", err)
+	}
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -225,6 +250,23 @@ func buildMLNodeCapacityCache(ctx context.Context, mlClient *mlnodeclient.Client
 	return cache
 }
 
+func newLeaseOwner(address string) (devshardstorage.LeaseOwner, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return devshardstorage.LeaseOwner{}, fmt.Errorf("validation lease identity: %w", err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Warn("devshardd: hostname unavailable for validation leases", "error", err)
+		hostname = ""
+	}
+	return devshardstorage.LeaseOwner{
+		Address:    address,
+		InstanceID: id.String(),
+		Hostname:   hostname,
+	}, nil
+}
+
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -250,18 +292,31 @@ func buildHostManager(
 	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.LogprobsOptimizationEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
+	leaseOwner, err := newLeaseOwner(instanceAddr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("devshardd: validation lease identity",
+		"instance_address", leaseOwner.Address,
+		"instance_id", leaseOwner.InstanceID,
+		"hostname", leaseOwner.Hostname,
+	)
 
+	hostInfoCached := shardbridge.NewCachingHostInfo(chainBridge)
 	thresholds := inference.NewValidationThresholdResolver(paramsSetup.Provider, chainBridge)
 	validator := inference.NewValidator(
-		chainBridge,
+		hostInfoCached,
 		chainRuntime.identity,
 		eng,
 		phase,
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		inference.NewVocabularyResolver(chainBridge),
 		cfg.VoteFalseOnFetchFailure,
 	)
+	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
+	closers.Add(validator.ClosePayloadClients)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
 	if err != nil {
@@ -269,14 +324,19 @@ func buildHostManager(
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
 	closers.Add(func() { _ = store.Close() })
+	if credits, ok := devshardstorage.AsValidationCreditStore(store); ok {
+		eng.UseSharedValidationCredits(credits, instanceAddr)
+		slog.Info("devshardd: validation credits are shared across replicas", "participant", instanceAddr)
+	}
 
-	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
+	leaseValidator := inference.NewLeaseValidator(validator, phase, store, leaseOwner, cfg.ValidationLeaseTTL)
 
 	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
 	// host-events long-poll warm) when the live chain escrow query is
-	// unavailable. Only the session/bind read path is cache-aware; validation
-	// and settlement keep using the live chainBridge.
-	warmBridge := devshardbridge.NewCachingEscrowBridge(chainBridge, store, slog.Default())
+	// unavailable. Only the session/bind read path is cache-aware for GetEscrow;
+	// settlement keep using the live chainBridge. GetHostInfo is a 1-minute
+	// Participant URL cache shared with validation.
+	warmBridge := devshardbridge.NewCachingEscrowBridge(hostInfoCached, store, slog.Default())
 
 	manager := session.NewHostManager(
 		store,
@@ -303,6 +363,7 @@ func buildHostManager(
 	// epoch callbacks first. Do not use manager.Close(): store close and
 	// height-sync close are already on this stack.
 	closers.Add(manager.CloseHosts)
+	closers.Add(manager.ClosePeerRPC)
 
 	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
 	// chain-poll fallback) advances phase + managed-storage horizon, then
@@ -346,7 +407,7 @@ func buildHostManager(
 		store.Start()
 	}
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
+	startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, closers)
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
@@ -357,7 +418,7 @@ func buildHostManager(
 	// leaves those rows empty, and recovery will not retry once a snapshot exists.
 	closers.Add(manager.WaitRecoveryRepairs)
 
-	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, leaseOwner)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
 	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
 	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)
@@ -383,24 +444,33 @@ func buildHostManager(
 	return manager, nil
 }
 
-// startHostEventsWarm launches the DAPI GetHostEvents long-poll consumer that
-// prefetches escrow metadata into escrow_cache (PR #1443). It is a no-op when
-// disabled, and the loop also stops cleanly against an old dapi that returns
-// Unimplemented, leaving lazy escrow create as the fallback.
+// startHostEventsWarm registers directory warm on chain escrow-created
+// (the websocket already fetched the escrow) and, when enabled, the DAPI
+// GetHostEvents long-poll. Neither path starts a host or stamps a runtime
+// version. Disabled long-poll is a no-op against an old dapi that returns
+// Unimplemented; lazy escrow create remains the fallback for never-warmed ids.
 func startHostEventsWarm(
 	ctx context.Context,
 	cfg runtimeConfig,
 	chainBridge *devshardbridge.ChainBridge,
+	queryBridge shardbridge.MainnetBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
 	onSettled func(escrowID string) error,
+	localAddr string,
 	closers *closeStack,
 ) {
+	if queryBridge == nil {
+		queryBridge = chainBridge
+	}
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
+		return sink.WarmFromInfo(&info)
+	})
 	if !cfg.HostEventsEnabled {
-		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
+		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false); chain create events still warm escrow_cache")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default(), onSettled)
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {
@@ -448,6 +518,15 @@ type appHTTPServer interface {
 	Shutdown(context.Context) error
 }
 
+// h2cPublicServer is the session listen. versiond dials that port with
+// http2.Transport. StartH2C enables cleartext HTTP/2 on the Server so
+// Shutdown waits for in-flight streams.
+type h2cPublicServer struct{ *echo.Echo }
+
+func (s h2cPublicServer) Start(address string) error {
+	return devshardserver.StartH2C(s.Echo, address)
+}
+
 func (a *devshardApp) Run(ctx context.Context) error {
 	defer a.close()
 
@@ -459,7 +538,8 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		chainEventsErrCh <- a.chainEvents.Start(appCtx)
 	}()
 
-	addr := fmt.Sprintf(":%d", a.port)
+	// Loopback only. versiond dials 127.0.0.1; the port is not a published hop.
+	addr := fmt.Sprintf("127.0.0.1:%d", a.port)
 	type serverError struct {
 		name string
 		err  error

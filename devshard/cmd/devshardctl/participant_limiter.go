@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -228,8 +229,8 @@ func (e *EscrowParticipantRateLimitError) Error() string {
 
 // ParticipantThrottleStore is the persistence interface for reactive throttle state.
 type ParticipantThrottleStore interface {
-	SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
-	DeleteParticipantThrottle(key string) error
+	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
+	DeleteParticipantThrottle(ctx context.Context, key string) error
 }
 
 // ParticipantRequestLimiter is a reactive, per-host limiter. Probe quarantine
@@ -395,7 +396,7 @@ func (l *ParticipantRequestLimiter) LoadStateWithQuarantine(key string, modelIDs
 	}
 	if tokens >= l.burst && failureStrikes == 0 {
 		if l.store != nil {
-			if err := l.store.DeleteParticipantThrottle(key); err != nil {
+			if err := l.store.DeleteParticipantThrottle(context.Background(), key); err != nil {
 				log.Printf("participant_throttle_cleanup_failed participant_key=%s error=%v", key, err)
 			}
 		}
@@ -552,6 +553,10 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 			participantKey, statusCode, participantPathKind(path))
 		return
 	}
+	if transport.IsEscrowLookupLimited(statusCode, devshardError) {
+		l.observeEscrowLookupLimited(participantKey, modelID, path)
+		return
+	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
 		return
@@ -567,6 +572,40 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 		participantKey, statusCode, participantPathKind(path))
 
 	l.persistThrottledStateLocked(participantKey, l.participants[participantKey], statusCode)
+}
+
+// observeEscrowLookupLimited is a host that refused a first bind because its
+// unknown-escrow lookup budget was full. That budget is spent by other
+// callers, so a refusal is a strike, not the 429 quarantine. X-Devshard-Error
+// is host-set: a host that keeps answering it still reaches the 429
+// quarantine at the strike threshold.
+func (l *ParticipantRequestLimiter) observeEscrowLookupLimited(participantKey, modelID, path string) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	state := l.ensureStateLocked(participantKey, now)
+	l.clearExpiredQuarantineIfAnyLocked(participantKey, state, now)
+	state, ok := l.participants[participantKey]
+	if !ok {
+		state = l.ensureStateLocked(participantKey, now)
+	}
+	if l.inQuarantineLocked(state, now) {
+		return
+	}
+	l.addModelLocked(state, modelID)
+	state.failureStrikes++
+	if state.failureStrikes >= l.failureStrikeThreshold {
+		l.applyQuarantineLocked(participantKey, modelID, now.Add(l.httpThrottleQuarantine), now, participantQuarantineProbe)
+		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), "escrow_lookup_limited_quarantine")
+		log.Printf("participant_limit_escrow_lookup_limited_quarantine participant_key=%s model_id=%q path_kind=%s strikes=%d threshold=%d",
+			participantKey, normalizeModelID(modelID), participantPathKind(path), state.failureStrikes, l.failureStrikeThreshold)
+		l.persistThrottledStateLocked(participantKey, state, http.StatusTooManyRequests)
+		return
+	}
+	log.Printf("participant_limit_escrow_lookup_limited participant_key=%s model_id=%q path_kind=%s strikes=%d threshold=%d",
+		participantKey, normalizeModelID(modelID), participantPathKind(path), state.failureStrikes, l.failureStrikeThreshold)
+	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
 }
 
 // ObserveTransportFailure records that a request to this host never received an
@@ -977,14 +1016,14 @@ func (l *ParticipantRequestLimiter) persistThrottledStateLocked(key string, stat
 	if !state.quarantineUntil.IsZero() {
 		quar = state.quarantineUntil
 	}
-	if err := l.store.SaveParticipantThrottle(key, modelIDsFromSet(state.modelIDs), state.tokens, state.lastRefill, status, quar, state.failureStrikes); err != nil {
+	if err := l.store.SaveParticipantThrottle(context.Background(), key, modelIDsFromSet(state.modelIDs), state.tokens, state.lastRefill, status, quar, state.failureStrikes); err != nil {
 		log.Printf("participant_throttle_persist_failed participant_key=%s error=%v", key, err)
 	}
 }
 
 func (l *ParticipantRequestLimiter) persistDeleteLocked(key string) {
 	if l.store != nil {
-		if err := l.store.DeleteParticipantThrottle(key); err != nil {
+		if err := l.store.DeleteParticipantThrottle(context.Background(), key); err != nil {
 			log.Printf("participant_throttle_cleanup_failed participant_key=%s error=%v", key, err)
 		}
 	}

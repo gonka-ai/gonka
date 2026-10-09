@@ -14,6 +14,8 @@ services:
       - VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-metrics
       - VERSIOND_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
+      # proto h2 toward versiond. HTTP/1.1 stubs set this false.
+      - VERSIOND_ROUTER_BACKEND_H2=${VERSIOND_ROUTER_BACKEND_H2:-true}
       - GONKA_HA=true
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
