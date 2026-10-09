@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"devshard/host"
@@ -143,6 +144,216 @@ func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
 	require.Equal(t, "execution", reason,
 		"the chain still holds the confirmation, so the vote must keep matching it")
+}
+
+type voteCounter struct {
+	calls atomic.Int32
+}
+
+func (c *voteCounter) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	return &host.HostResponse{}, nil
+}
+
+func (c *voteCounter) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
+	c.calls.Add(1)
+	return false, nil, 0, nil
+}
+
+// useBubbleConfirmWait replaces the session's wake channel inside a synctest bubble. A channel
+// created outside the bubble does not count as a durable block, so Wait would never return.
+func useBubbleConfirmWait(session *Session) {
+	session.mu.Lock()
+	session.confirmWait = make(chan struct{})
+	session.mu.Unlock()
+}
+
+func TestAReceiptEndsTheRefusalWait(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	nonce := prepareNonce(t, session)
+
+	synctest.Test(t, func(t *testing.T) {
+		useBubbleConfirmWait(session)
+		done := make(chan bool, 1)
+		go func() {
+			done <- session.sleepRefusal(context.Background(), nonce, time.Now(), time.Now().Add(time.Minute), nil)
+		}()
+		synctest.Wait()
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		synctest.Wait()
+
+		require.False(t, <-done, "a confirmed inference is not a refusal, so the wait has to stop")
+	})
+}
+
+func TestAPendingInferenceWaitsOutTheRefusalDeadline(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	nonce := prepareNonce(t, session)
+
+	require.True(t, session.sleepRefusal(context.Background(), nonce, time.Unix(0, 0), time.Unix(0, 0), nil),
+		"nothing confirmed it, so the deadline still opens the refusal challenge")
+}
+
+func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		confirm func(t *testing.T, session *Session, nonce uint64)
+	}{
+		{"stream receipt", func(t *testing.T, session *Session, nonce uint64) {
+			t.Helper()
+			session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		}},
+		{"finished response", func(t *testing.T, session *Session, nonce uint64) {
+			t.Helper()
+			require.NoError(t, session.ProcessResponse(0, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()}, nonce))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			session, _, _ := setupSession(t, 3, 100000, 10)
+			prepared, err := session.PrepareInference(InferenceParams{
+				Model: "llama", Prompt: testutil.TestPrompt,
+				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Add(-time.Hour).Unix(),
+			})
+			require.NoError(t, err)
+			counter := &voteCounter{}
+			for i := range session.clients {
+				session.clients[i] = counter
+			}
+			payload := &host.InferencePayload{
+				Prompt: testutil.TestPrompt, Model: "llama",
+				InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+				StartedAt: time.Now().Add(-time.Hour).Unix(),
+			}
+
+			synctest.Test(t, func(t *testing.T) {
+				useBubbleConfirmWait(session)
+				done := make(chan TimeoutResult, 1)
+				go func() {
+					result, _ := session.HandleTimeout(context.Background(), prepared.Nonce(), time.Now(), payload)
+					done <- result
+				}()
+				synctest.Wait()
+				tc.confirm(t, session, prepared.Nonce())
+				synctest.Wait()
+
+				result := <-done
+				require.Equal(t, "skipped", result.Outcome)
+				require.Equal(t, "confirmed_before_vote", result.DetailReason)
+				require.Empty(t, result.Reason, "a challenge that was not sent is not a refused timeout")
+				require.Zero(t, counter.calls.Load(), "verifiers must not be asked for a refusal against a started inference")
+			})
+		})
+	}
+}
+
+func TestHandleTimeoutStillChallengesAPendingInference(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	startedAt := time.Now().Add(-time.Hour)
+	prepared, err := session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: startedAt.Unix(),
+	})
+	require.NoError(t, err)
+	counter := &voteCounter{}
+	for i := range session.clients {
+		session.clients[i] = counter
+	}
+
+	result, err := session.HandleTimeout(context.Background(), prepared.Nonce(), startedAt, &host.InferencePayload{
+		Prompt: testutil.TestPrompt, Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: startedAt.Unix(),
+	})
+
+	require.Error(t, err)
+	require.Equal(t, "refused", result.Reason)
+	require.NotEqual(t, "confirmed_before_vote", result.DetailReason)
+	require.Equal(t, int32(2), counter.calls.Load(), "a still-pending inference is a refusal, and both verifiers are asked")
+}
+
+func TestAReceiptWithoutAStampDoesNotEndTheRefusalWait(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	nonce := prepareNonce(t, session)
+
+	synctest.Test(t, func(t *testing.T) {
+		useBubbleConfirmWait(session)
+		done := make(chan bool, 1)
+		go func() {
+			done <- session.sleepRefusal(context.Background(), nonce, time.Now(), time.Now().Add(time.Minute), nil)
+		}()
+		synctest.Wait()
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt")})
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("a receipt without a confirmation stamp leaves the inference pending")
+		default:
+		}
+
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		synctest.Wait()
+		require.False(t, <-done)
+	})
+}
+
+func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	nonce := prepareNonce(t, session)
+	other := prepareNonce(t, session)
+
+	synctest.Test(t, func(t *testing.T) {
+		useBubbleConfirmWait(session)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan bool, 1)
+		go func() {
+			done <- session.sleepRefusal(ctx, nonce, time.Now(), time.Now().Add(time.Minute), nil)
+		}()
+		synctest.Wait()
+		session.confirmStartOnReceipt(other, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("another inference's receipt is not a confirmation of this one")
+		default:
+		}
+
+		cancel()
+		synctest.Wait()
+		require.False(t, <-done)
+	})
+}
+
+func TestHandleTimeoutCancelDuringTheRefusalWaitDoesNotChallenge(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	prepared, err := session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Unix(),
+	})
+	require.NoError(t, err)
+	counter := &voteCounter{}
+	for i := range session.clients {
+		session.clients[i] = counter
+	}
+
+	synctest.Test(t, func(t *testing.T) {
+		useBubbleConfirmWait(session)
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan TimeoutResult, 1)
+		go func() {
+			result, _ := session.HandleTimeout(ctx, prepared.Nonce(), time.Now(), &host.InferencePayload{
+				Prompt: testutil.TestPrompt, Model: "llama",
+				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Unix(),
+			})
+			done <- result
+		}()
+		synctest.Wait()
+		cancel()
+		synctest.Wait()
+
+		result := <-done
+		require.Equal(t, "skipped", result.Outcome)
+		require.Equal(t, "context_canceled", result.DetailReason)
+		require.Zero(t, counter.calls.Load())
+	})
 }
 
 type admissionRefusingClient struct {
