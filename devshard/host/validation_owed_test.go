@@ -107,8 +107,8 @@ func TestHost_CollectValidationJobs_MatchesFullScan(t *testing.T) {
 	finishTx := func(id uint64) *types.DevshardTx {
 		slot := executorOf(id)
 		msg := &types.MsgFinishInference{
-			InferenceId: id, ResponseHash: []byte("response"), InputTokens: 80, OutputTokens: 40,
-			ExecutorSlot: slot, EscrowId: escrowID,
+			InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+			InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot, EscrowId: escrowID,
 		}
 		msg.ProposerSig = testutil.SignProposerTx(t, slotSigners[slot], msg)
 		return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
