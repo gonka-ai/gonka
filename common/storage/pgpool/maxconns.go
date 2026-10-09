@@ -15,8 +15,8 @@ import (
 )
 
 // DefaultMaxConns is the pool size used when PG_POOL_MAX_CONNS is unset.
-// Session storage and payload storage share this one cap. Split them only
-// when payload reads are waiting on it.
+// Session, payload, gateway, accounting, and inference-stats pools each
+// apply this cap. Split them only when one of those pools is waiting on it.
 const DefaultMaxConns int32 = 4
 
 // ConfigureMaxConns sets cfg.MaxConns from PG_POOL_MAX_CONNS, or DefaultMaxConns

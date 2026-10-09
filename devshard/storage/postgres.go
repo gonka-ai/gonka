@@ -59,13 +59,14 @@ type Postgres struct {
 }
 
 const (
-	// postgresConnectTimeout bounds establishing a new connection.
+	// postgresConnectTimeout bounds establishing a new connection. Longer than
+	// pgtimeouts.DefaultConnectTimeout: session open rebuilds the escrow index
+	// and tolerates a slower dial at boot than gateway/accounting fail-closed opens.
 	postgresConnectTimeout = 5 * time.Second
-	// postgresStatementTimeout aborts any single query server-side. It is the
-	// primary guard against a stalled backend hanging a caller indefinitely.
+	// Server-side per-query bounds for this pool. Gateway and accounting use
+	// common/storage/pgtimeouts; devshard storage stays independently set.
 	postgresStatementTimeout = 5 * time.Second
-	// postgresLockTimeout bounds waits on row/table locks server-side.
-	postgresLockTimeout = 3 * time.Second
+	postgresLockTimeout      = 3 * time.Second
 	// postgresOpTimeout bounds each storage operation Go-side. Unlike
 	// statement_timeout it also covers the time spent acquiring a pooled
 	// connection (pool exhaustion), which the server-side timeout cannot.
