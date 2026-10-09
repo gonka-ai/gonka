@@ -361,10 +361,11 @@ func TestObserveEmptyStreamForModelWithStatsLogsSizeEvidence(t *testing.T) {
 	out := buf.String()
 	require.Contains(t, out, `"stage":"payload_quarantine"`)
 	require.Contains(t, out, `"reason":"empty_stream_quarantine"`)
-	require.Contains(t, out, `"request_bytes":"42"`)
-	require.Contains(t, out, `"response_bytes":"7"`)
-	require.Contains(t, out, `"message_count":"2"`)
-	require.Contains(t, out, `"max_tokens":"8"`)
+	require.Contains(t, out, `"request_bytes":42`)
+	require.Contains(t, out, `"response_bytes":7`)
+	require.Contains(t, out, `"message_count":2`)
+	require.Contains(t, out, `"max_tokens":8`)
+	require.Contains(t, out, `"stream":true`)
 }
 
 func TestCollectFailureResponseBody_PrefersPayloadSample(t *testing.T) {

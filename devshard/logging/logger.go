@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"reflect"
 	"strings"
 	"sync/atomic"
 
@@ -199,9 +200,30 @@ func stageFields(ctx context.Context, stage string, kv []any) []any {
 	}
 	fields = append(fields, "stage", stage)
 	for i := 0; i < len(kv); i += 2 {
-		fields = append(fields, stageKey(kv, i), stageValue(kv, i))
+		fields = append(fields, stageKey(kv, i), stageAttr(kv, i))
 	}
 	return fields
+}
+
+// stageAttr keeps booleans and numbers typed so JSON logs encode them as
+// JSON booleans and numbers. Text lines still use stageValue.
+func stageAttr(kv []any, i int) any {
+	if i+1 >= len(kv) {
+		return "<missing>"
+	}
+	v := kv[i+1]
+	if v == nil {
+		return "<nil>"
+	}
+	switch reflect.TypeOf(v).Kind() {
+	case reflect.Bool, reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		return v
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 func stageKey(kv []any, i int) string {

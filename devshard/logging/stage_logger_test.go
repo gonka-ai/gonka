@@ -67,9 +67,13 @@ func TestStageDefaultLoggerStampsTraceID(t *testing.T) {
 		SpanID:     trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
 		TraceFlags: trace.FlagsSampled,
 	})
-	Stage(trace.ContextWithSpanContext(context.Background(), sc), "send_completed", "host", "h1")
+	Stage(trace.ContextWithSpanContext(context.Background(), sc), "send_completed", "host", "h1", "count", 3, "ok", true)
 
 	out := buf.String()
 	require.Contains(t, out, sc.TraceID().String())
 	require.Contains(t, out, "send_completed")
+	require.Contains(t, out, `"count":3`)
+	require.Contains(t, out, `"ok":true`)
+	require.NotContains(t, out, `"count":"3"`)
+	require.NotContains(t, out, `"ok":"true"`)
 }
