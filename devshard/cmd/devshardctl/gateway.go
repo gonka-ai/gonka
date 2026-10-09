@@ -909,7 +909,6 @@ const (
 func (g *Gateway) checkBalances() {
 	g.mu.Lock()
 	isRotationEnabled := g.settings.EscrowRotation.Enabled
-	configuredNonceLimit := g.nonceDeactivationLimit()
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
@@ -932,11 +931,14 @@ func (g *Gateway) checkBalances() {
 			g.holdOrReplaceDepletedEscrow(rt, "low_balance")
 			continue
 		}
+		// A nonce at the configured default may still be far below the chain cap.
+		// Leave the escrow in service until that cap is known; routing already
+		// refuses new work at the default in the meantime.
+		if chainMaxNonce == 0 {
+			continue
+		}
 		nonce := rt.proxy.sm.LatestNonce()
 		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if chainMaxNonce == 0 || configuredNonceLimit < nonceLimit {
-			nonceLimit = configuredNonceLimit
-		}
 		if nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
 				rt.id, nonce, nonceLimit)
@@ -2168,12 +2170,12 @@ func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32)
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
+	// Once the chain max nonce is known it replaces the configured default,
+	// including when the chain allows more than that default. Until then the
+	// configured limit is the cap.
 	nonceLimit := g.nonceDeactivationLimit()
 	if chainMaxNonce != 0 {
-		chainLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if chainLimit < nonceLimit {
-			nonceLimit = chainLimit
-		}
+		nonceLimit = escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 	}
 	return rt.proxy.sm.LatestNonce() >= nonceLimit
 }

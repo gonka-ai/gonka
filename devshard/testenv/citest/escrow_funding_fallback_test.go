@@ -57,7 +57,7 @@ type fundingRuntimeStatus struct {
 //  1. Boot the stack with escrow 1 too small for an oversized request, then register escrow 2 that can pay for it.
 //  2. Wait until both escrows are idle and snapshot escrow 1's nonce and balance.
 //  3. Send a streaming request whose reservation only escrow 2 covers.
-//  4. Assert escrow 2 answered it and the gateway log shows escrow 1 refused to fund it first.
+//  4. Assert escrow 2 answered it and the picker skipped escrow 1 without asking it.
 //  5. Assert escrow 1 kept its nonce, its balance and its place in service.
 //  6. Send a small request straight to escrow 1 and assert it is still served.
 func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *testing.T) {
@@ -69,7 +69,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 	firstBefore := requireFundingRuntime(t, before, env.firstEscrowID)
 	require.NotZero(t, firstBefore.Balance, "the status carries no balance, so comparing it would prove nothing")
 
-	harness.Step(t, "an oversized request must move from escrow %s to escrow %s", env.firstEscrowID, env.secondEscrowID)
+	harness.Step(t, "an oversized request must be served by escrow %s and skip escrow %s", env.secondEscrowID, env.firstEscrowID)
 	result := harness.PostGatewayChatHTTP(t, env.client, env.gatewayURL, harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
 		Model:     env.model,
 		Messages:  []harness.ChatMessage{{Role: "user", Content: "funding fallback streaming request"}},
@@ -81,7 +81,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 	chunks, sawDone := harness.ParseSSEDataChunks(result.Body)
 	require.True(t, sawDone, "fallback stream did not finish: %s", string(result.Body))
 	require.NotEmpty(t, harness.AssembleSSEContent(chunks))
-	requireEscrowRefusedFunding(t, env, env.firstEscrowID)
+	requireEscrowSkippedForFunding(t, env, env.firstEscrowID, env.secondEscrowID)
 
 	afterFallback := waitForSettledEscrows(t, env, 2)
 	requireEscrowUntouched(t, firstBefore, requireFundingRuntime(t, afterFallback, env.firstEscrowID))
@@ -227,13 +227,18 @@ func requireEscrowUntouched(t *testing.T, before, after fundingRuntimeStatus) {
 	require.Equal(t, before.Balance, after.Balance, "escrow %s consumed balance for a refused reservation", after.ID)
 }
 
-// Only the log proves the escrow was asked: every other post-condition also holds for one never offered the request.
-func requireEscrowRefusedFunding(t *testing.T, env fundingFallbackEnv, escrowID string) {
+// The picker drops an escrow that cannot fund one attempt before selecting it, so
+// that escrow is never asked and never logs a funding refusal.
+func requireEscrowSkippedForFunding(t *testing.T, env fundingFallbackEnv, skippedID, servedID string) {
 	t.Helper()
 	logs, err := env.stack.ComposeLogsTail(400, "devshardctl")
 	require.NoError(t, err)
-	require.Contains(t, logs, "stage=gateway_escrow_refused_funding escrow="+escrowID,
-		"the gateway never offered the oversized request to escrow %s", escrowID)
+	require.Contains(t, logs, "stage=gateway_runtime_selected escrow="+servedID,
+		"the gateway did not select the escrow that can fund the request")
+	require.NotContains(t, logs, "stage=gateway_runtime_selected escrow="+skippedID,
+		"an escrow that cannot fund one attempt was selected")
+	require.NotContains(t, logs, "stage=gateway_escrow_refused_funding escrow="+skippedID,
+		"an escrow that cannot fund one attempt was asked and then refused")
 }
 
 func requireFundingRuntime(t *testing.T, status fundingFallbackStatus, escrowID string) fundingRuntimeStatus {
