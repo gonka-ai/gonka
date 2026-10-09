@@ -2536,6 +2536,35 @@ func (s *Session) PendingTxs() []*types.DevshardTx {
 	return s.pendingTxs
 }
 
+// StateSizes returns size-only diagnostics for the gateway-side protocol
+// collections. It intentionally does not expose transaction contents.
+type StateSizes struct {
+	Diffs           int
+	DiffBytes       int64
+	SignatureNonces int
+	NonceStates     int
+	PendingTxs      int
+	AppliedTxKeys   int
+}
+
+func (s *Session) StateSizes() StateSizes {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var diffBytes int64
+	for _, diff := range s.diffs {
+		content := state.BuildDiffContent(s.escrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
+		diffBytes += int64(proto.Size(content) + len(diff.UserSig))
+	}
+	return StateSizes{
+		Diffs:           len(s.diffs),
+		DiffBytes:       diffBytes,
+		SignatureNonces: len(s.signatures),
+		NonceStates:     len(s.nonceStates),
+		PendingTxs:      len(s.pendingTxs),
+		AppliedTxKeys:   0,
+	}
+}
+
 // FinishTxFor marshals the pending MsgFinishInference for inferenceID under
 // the session lock so callers never iterate pendingTxs while composeDiffLocked
 // sorts it in place.

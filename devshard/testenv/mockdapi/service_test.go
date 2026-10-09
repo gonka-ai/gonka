@@ -1,6 +1,7 @@
 package mockdapi_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net"
@@ -19,9 +20,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/status"
 )
 
 type testBed struct {
@@ -31,7 +30,7 @@ type testBed struct {
 	cleanup  func()
 }
 
-func startBed(t *testing.T) testBed {
+func startBed(t *testing.T, configure ...func(*mockdapi.Config)) testBed {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	st := seed.Defaults()
@@ -48,6 +47,9 @@ func startBed(t *testing.T) testBed {
 	// Disable background poll; tests drive RefreshRuntimeConfig explicitly via /testenv/*.
 	cfg.ChainPollInterval = time.Hour
 	cfg.BlockInterval = 50 * time.Millisecond
+	for _, apply := range configure {
+		apply(&cfg)
+	}
 
 	svc, err := mockdapi.New(ctx, cfg)
 	require.NoError(t, err)
@@ -151,87 +153,6 @@ func TestMockDAPI_GatewayPhaseEpochLatest(t *testing.T) {
 	require.Equal(t, "Inference", body["phase"])
 }
 
-func TestMockDAPI_OmitBlockRoutes_LooksLikeOldDapi(t *testing.T) {
-	bed := startBedOmitBlocks(t)
-	t.Cleanup(bed.cleanup)
-
-	health, err := http.Get(bed.httpURL + "/healthz")
-	require.NoError(t, err)
-	_ = health.Body.Close()
-	require.Equal(t, http.StatusOK, health.StatusCode)
-
-	vers, err := http.Get(bed.httpURL + "/versions")
-	require.NoError(t, err)
-	_ = vers.Body.Close()
-	require.Equal(t, http.StatusOK, vers.StatusCode)
-
-	latest, err := http.Get(bed.httpURL + "/block/1")
-	require.NoError(t, err)
-	_ = latest.Body.Close()
-	require.Equal(t, http.StatusNotFound, latest.StatusCode)
-
-	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	client := gen.NewNodeManagerClient(conn)
-
-	_, err = client.GetBlockHeader(context.Background(), &gen.GetBlockHeaderRequest{Height: 1})
-	require.Equal(t, codes.Unimplemented, status.Code(err), "old dapi has no GetBlockHeader")
-
-	_, err = client.ProveBlockPath(context.Background(), &gen.ProveBlockPathRequest{Height: 1, Path: "/escrow/1"})
-	require.Equal(t, codes.Unimplemented, status.Code(err), "old dapi has no ProveBlockPath")
-}
-
-func startBedOmitBlocks(t *testing.T) testBed {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	st := seed.Defaults()
-
-	grpcSrv, grpcLis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
-	require.NoError(t, err)
-
-	admin := adminface.NewServer(st, nil, nil)
-	adminHTTP := httptest.NewServer(admin.Handler())
-
-	cfg := mockdapi.DefaultConfig()
-	cfg.ChainGRPCAddr = grpcLis.Addr().String()
-	cfg.ChainTestenvURL = adminHTTP.URL
-	cfg.ChainPollInterval = time.Hour
-	cfg.BlockInterval = 50 * time.Millisecond
-	cfg.OmitBlockRoutes = true
-
-	svc, err := mockdapi.New(ctx, cfg)
-	require.NoError(t, err)
-
-	grpcL, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	httpL, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-
-	go func() { _ = svc.RunOn(ctx, grpcL, httpL) }()
-
-	require.Eventually(t, func() bool {
-		resp, err := http.Get("http://" + httpL.Addr().String() + "/healthz")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 3*time.Second, 20*time.Millisecond)
-
-	return testBed{
-		adminURL: adminHTTP.URL,
-		grpcAddr: grpcL.Addr().String(),
-		httpURL:  "http://" + httpL.Addr().String(),
-		cleanup: func() {
-			cancel()
-			adminHTTP.Close()
-			grpcSrv.Stop()
-			_ = grpcLis.Close()
-		},
-	}
-}
-
 func TestMockDAPI_VersionsJSON(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)
@@ -269,59 +190,31 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Equal(t, updated, cfg)
 }
 
-func TestMockDAPI_GetBlockHeaderMatchesHTTP(t *testing.T) {
-	bed := startBed(t)
-	t.Cleanup(bed.cleanup)
-
-	httpResp, err := http.Get(bed.httpURL + "/block/1")
-	require.NoError(t, err)
-	defer httpResp.Body.Close()
-	require.Equal(t, http.StatusOK, httpResp.StatusCode)
-	var httpHdr struct {
-		Height    int64  `json:"Height"`
-		ChainID   string `json:"ChainID"`
-		BlockHash []byte `json:"BlockHash"`
-	}
-	require.NoError(t, json.NewDecoder(httpResp.Body).Decode(&httpHdr))
-
-	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = conn.Close() })
-	client := gen.NewNodeManagerClient(conn)
-
-	grpcResp, err := client.GetBlockHeader(context.Background(), &gen.GetBlockHeaderRequest{Height: 1})
-	require.NoError(t, err)
-	require.Equal(t, httpHdr.Height, grpcResp.Header.Height)
-	require.Equal(t, httpHdr.ChainID, grpcResp.Header.ChainId)
-	require.Equal(t, httpHdr.BlockHash, grpcResp.Header.BlockHash)
-
-	proof, err := client.ProveBlockPath(context.Background(), &gen.ProveBlockPathRequest{Height: 1, Path: "/escrow/1"})
-	require.NoError(t, err)
-	require.Equal(t, "/escrow/1", proof.Proof.Path)
-	require.NotEmpty(t, proof.Proof.Value)
-}
-
 func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)
 
-	require.Eventually(t, func() bool {
-		resp, err := http.Get(bed.httpURL + "/block/1")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 3*time.Second, 20*time.Millisecond)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, bed.httpURL+"/block/stream?from=1", nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
-	require.Eventually(t, func() bool {
-		resp, err := http.Get(bed.httpURL + "/block/2")
-		if err != nil {
-			return false
+	reader := bufio.NewReader(resp.Body)
+	var lastHeight int64
+	for i := 0; i < 2; i++ {
+		line, err := readSSEDataLine(reader)
+		require.NoError(t, err)
+		var hdr struct {
+			Height int64 `json:"height"`
 		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 3*time.Second, 50*time.Millisecond)
+		require.NoError(t, json.Unmarshal([]byte(line), &hdr))
+		if i > 0 {
+			require.Greater(t, hdr.Height, lastHeight)
+		}
+		lastHeight = hdr.Height
+	}
 }
 
 func TestMockDAPI_AcquireMLNode(t *testing.T) {
@@ -336,4 +229,52 @@ func TestMockDAPI_AcquireMLNode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "http://mock-openai-0:8088", resp.Endpoint)
 	require.Equal(t, "mock-openai-0", resp.NodeId)
+}
+
+func TestMockDAPI_AcquireMLNodePool(t *testing.T) {
+	bed := startBed(t, func(cfg *mockdapi.Config) {
+		cfg.MLNodes = []mockdapi.MLNode{
+			{ID: "mock-openai-0", Endpoint: "http://mock-openai-0:8088"},
+			{ID: "mock-openai-1", Endpoint: "http://mock-openai-1:8088"},
+		}
+	})
+	t.Cleanup(bed.cleanup)
+
+	conn, err := grpc.NewClient(bed.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	client := gen.NewNodeManagerClient(conn)
+
+	first, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
+	require.NoError(t, err)
+	second, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
+	require.NoError(t, err)
+	third, err := client.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{
+		Model: "test-model", ExcludedNodes: []string{"mock-openai-0"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "mock-openai-0", first.NodeId)
+	require.Equal(t, "mock-openai-1", second.NodeId)
+	require.Equal(t, "mock-openai-1", third.NodeId)
+
+	response, err := http.Get(bed.httpURL + "/testenv/ml-allocations")
+	require.NoError(t, err)
+	defer response.Body.Close()
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var allocations map[string]uint64
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&allocations))
+	require.Equal(t, map[string]uint64{"mock-openai-0": 1, "mock-openai-1": 2}, allocations)
+}
+
+func readSSEDataLine(r *bufio.Reader) (string, error) {
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data: ") {
+			return strings.TrimPrefix(line, "data: "), nil
+		}
+	}
 }

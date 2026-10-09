@@ -100,6 +100,14 @@ func envTruthy(key string) bool {
 	return err == nil && enabled
 }
 
+func parseMLNodes(raw string) []mockdapi.MLNode {
+	nodes, err := params.ParseMLNodesEnv(raw)
+	if err != nil {
+		return nil
+	}
+	return nodes
+}
+
 func versionFromEnv() cosrv.Version {
 	name := os.Getenv("MOCK_DAPI_VERSION_NAME")
 	binary := os.Getenv("MOCK_DAPI_VERSION_BINARY")
