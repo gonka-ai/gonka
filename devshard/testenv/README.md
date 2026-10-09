@@ -296,7 +296,7 @@ Host ports (offset from join defaults): Grafana **13000**, Loki **13101**, Prome
 | `tempo-promtail` | `http://tempo:4317` | Tempo | Promtail |
 | `jaeger-alloy` | `http://alloy:4317` | Jaeger | Alloy |
 
-Roadmap: [docs/observability-plan.md](docs/observability-plan.md) · correlation: [docs/observability-trace-correlation-plan.md](docs/observability-trace-correlation-plan.md)
+Roadmap: [docs/observability-plan.md](docs/observability-plan.md) · forensics: [../docs/gateway-tracing.md](../docs/gateway-tracing.md)
 
 **Manual (after `gen-compose` + `build-devshardd`):**
 

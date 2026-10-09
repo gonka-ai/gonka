@@ -88,7 +88,7 @@ func TestDispositionTraceGhost(t *testing.T) {
 // LiveSendTimeout / NoReceiptTimeout patterns.
 func TestDispositionTraceUnfinishedRefused(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
-	t.Skip("blocked on missing testenv knobs: host protocol timeout / receipt delay (see docs/observability-test-plan.md)")
+	t.Skip("blocked on missing testenv knobs: host protocol timeout / receipt delay")
 }
 
 // TestDispositionLabelValuesMatchSpanAttrs is the stack-level check that every

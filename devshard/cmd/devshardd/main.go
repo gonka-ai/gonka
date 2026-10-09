@@ -46,7 +46,7 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 		return err
 	}
 
-	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+	installHostLogger(os.Getenv("LOG_FORMAT"), cfg.BinaryLogVersion)
 
 	observability.SetRuntime(cfg.BinaryLogVersion, cfg.ProtocolVersion, "standalone")
 	// Init degrades in-process on exporter/resource failure (Ready=false);

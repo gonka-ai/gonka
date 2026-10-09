@@ -1,6 +1,7 @@
 package accounting
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -88,6 +89,51 @@ func TestFinalizeNonceEmitsOnSettlementRelease(t *testing.T) {
 	require.Equal(t, TimeoutInsufficientVotes, events[0].Key.TimeoutOutcome)
 }
 
+func TestSnapshotPromotesDeadlineDisposition(t *testing.T) {
+	tr := newTestTracker(t)
+	sink := &captureSink{}
+	tr.SetDispositionSink(sink)
+	registerEscrow(t, tr, "e1", 16, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
+	now = now.Add(10 * time.Second)
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
+		Outcome: TimeoutInsufficientVotes,
+	}))
+	require.Empty(t, sink.delivered(tr))
+	require.Zero(t, unfinishedRefusedCount(tr, "e1"))
+
+	now = now.Add(time.Minute)
+	require.Zero(t, unfinishedRefusedCount(tr, "e1"))
+	require.NoError(t, tr.Flush(context.Background()))
+	require.Equal(t, uint64(1), unfinishedRefusedCount(tr, "e1"))
+	require.Empty(t, sink.delivered(tr))
+
+	require.NoError(t, tr.RecordPhase("e1", EscrowSettled))
+	events := sink.delivered(tr)
+	require.Len(t, events, 1)
+	require.Equal(t, DispositionUnfinishedRefused, events[0].Key.Disposition)
+}
+
+func unfinishedRefusedCount(tr *Tracker, id string) uint64 {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	var n uint64
+	e := tr.escrows[id]
+	if e == nil {
+		return 0
+	}
+	for key, v := range e.Counters {
+		if key.Disposition == DispositionUnfinishedRefused {
+			n += v
+		}
+	}
+	return n
+}
+
 func TestDispositionEventCarriesTraceRef(t *testing.T) {
 	tr := newTestTracker(t)
 	sink := &captureSink{}
@@ -110,6 +156,23 @@ func TestDispositionEventCarriesTraceRef(t *testing.T) {
 	require.Equal(t, ref.TraceID, events[0].Trace.TraceID)
 	require.Equal(t, ref.SpanID, events[0].Trace.SpanID)
 	require.True(t, events[0].Trace.Sampled)
+}
+
+func TestRecordRealSendTracedKeepsFirstTrace(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+
+	first := TraceRef{TraceID: [16]byte{1}, SpanID: [8]byte{2}, Sampled: true}
+	later := TraceRef{TraceID: [16]byte{9}, SpanID: [8]byte{8}, Sampled: true}
+	require.NoError(t, tr.RecordRealSendTraced("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone, first))
+	tr.AttachTrace("e1", 1, later)
+	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
+
+	tr.mu.Lock()
+	got := tr.escrows["e1"].Live[1].traceRef()
+	tr.mu.Unlock()
+	require.Equal(t, first, got)
 }
 
 func TestDispositionEventEmittedOutsideLock(t *testing.T) {

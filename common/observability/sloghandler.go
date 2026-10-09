@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -95,22 +96,78 @@ func (h *TraceHandler) WithGroup(name string) slog.Handler {
 
 var installedLogFormat atomic.Value // string: "json" or "text"
 
-// InstallLogger builds a JSON or text slog handler, wraps it with TraceHandler,
-// and installs it as the process default. format is "json" or "text" (default);
-// empty / unknown values keep text so local-dev output stays unchanged.
-func InstallLogger(format string) {
-	normalized := "text"
-	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
-	var inner slog.Handler
-	switch strings.ToLower(strings.TrimSpace(format)) {
-	case "json":
-		normalized = "json"
-		inner = slog.NewJSONHandler(os.Stderr, opts)
+// LoggerOptions configures the process slog handler installed by
+// InstallLoggerWithOptions.
+type LoggerOptions struct {
+	// Format is "json" or "text". Empty and unknown values keep text.
+	Format string
+	// Level is the minimum slog level. The zero value is Info.
+	Level slog.Level
+	// WrapText decorates the text handler (for example a version prefix).
+	// Ignored in JSON mode.
+	WrapText func(slog.Handler) slog.Handler
+	// Attrs are added to every record (for example binary_version in JSON mode).
+	Attrs []slog.Attr
+	// Out is the log destination. Nil writes to stderr.
+	Out io.Writer
+}
+
+// ParseLogLevel reads the devshard level grammar. debug, warn/warning and
+// error select those levels; unset or unknown values stay at Info so a typo
+// cannot start a Debug flood.
+func ParseLogLevel(raw string) slog.Level {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
 	default:
-		inner = slog.NewTextHandler(os.Stderr, opts)
+		return slog.LevelInfo
+	}
+}
+
+// InstallLogger builds a JSON or text slog handler at Info, wraps it with
+// TraceHandler, and installs it as the process default. format is "json" or
+// "text" (default); empty / unknown values keep text so local-dev output stays
+// unchanged.
+func InstallLogger(format string) {
+	InstallLoggerWithOptions(LoggerOptions{Format: format, Level: slog.LevelInfo})
+}
+
+// InstallLoggerWithOptions installs the handler described by opts as the
+// process default. Text mode is TraceHandler(WrapText(TextHandler)) so trace
+// fields are stamped and a prefix still applies to the message. JSON mode
+// ignores WrapText.
+func InstallLoggerWithOptions(opts LoggerOptions) {
+	normalized := "text"
+	if strings.EqualFold(strings.TrimSpace(opts.Format), "json") {
+		normalized = "json"
 	}
 	installedLogFormat.Store(normalized)
-	slog.SetDefault(slog.New(NewTraceHandler(inner)))
+	slog.SetDefault(slog.New(loggerHandler(opts, normalized)))
+}
+
+func loggerHandler(opts LoggerOptions, normalized string) slog.Handler {
+	out := opts.Out
+	if out == nil {
+		out = os.Stderr
+	}
+	hopts := &slog.HandlerOptions{Level: opts.Level}
+	var inner slog.Handler
+	if normalized == "json" {
+		inner = slog.NewJSONHandler(out, hopts)
+	} else {
+		inner = slog.NewTextHandler(out, hopts)
+		if opts.WrapText != nil {
+			inner = opts.WrapText(inner)
+		}
+	}
+	if len(opts.Attrs) > 0 {
+		inner = inner.WithAttrs(opts.Attrs)
+	}
+	return NewTraceHandler(inner)
 }
 
 // LogFormat returns the format last installed by InstallLogger ("json" or

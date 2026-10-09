@@ -638,8 +638,8 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 // quarantine at the strike threshold.
 func (l *ParticipantRequestLimiter) observeEscrowLookupLimited(participantKey, modelID, path string) {
 	now := time.Now()
-	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.lock()
+	defer l.unlock()
 
 	state := l.ensureStateLocked(participantKey, now)
 	l.clearExpiredQuarantineIfAnyLocked(participantKey, state, now)
@@ -760,13 +760,13 @@ func (l *ParticipantRequestLimiter) ObserveEmptyStream(participantKey string) {
 	l.ObserveEmptyStreamForModel(participantKey, "")
 }
 
-func (l *ParticipantRequestLimiter) ObserveEmptyStreamForModel(participantKey, modelID string, stats ...QuarantinePayloadStats) {
+func (l *ParticipantRequestLimiter) ObserveEmptyStreamForModel(participantKey, modelID string) {
+	l.ObserveEmptyStreamForModelWithStats(participantKey, modelID, QuarantinePayloadStats{})
+}
+
+func (l *ParticipantRequestLimiter) ObserveEmptyStreamForModelWithStats(participantKey, modelID string, stats QuarantinePayloadStats) {
 	if participantKey == "" {
 		return
-	}
-	var qs QuarantinePayloadStats
-	if len(stats) > 0 {
-		qs = stats[0]
 	}
 	now := time.Now()
 	l.lock()
@@ -785,7 +785,7 @@ func (l *ParticipantRequestLimiter) ObserveEmptyStreamForModel(participantKey, m
 	state.failureStrikes++
 	if state.failureStrikes >= l.failureStrikeThreshold {
 		l.applyQuarantineLocked(participantKey, modelID, now.Add(l.emptyStreamQuarantine), now, participantQuarantineShadow)
-		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineShadow.String(), "empty_stream_quarantine", qs)
+		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineShadow.String(), "empty_stream_quarantine", stats)
 		log.Printf("participant_limit_empty_stream_quarantine participant_key=%s model_id=%q reason=empty_stream strikes=%d threshold=%d quarantine_mode=%s",
 			participantKey, normalizeModelID(modelID), state.failureStrikes, l.failureStrikeThreshold, participantQuarantineShadow.String())
 		l.persistThrottledStateLocked(participantKey, state, participantStatusEmptyStream)

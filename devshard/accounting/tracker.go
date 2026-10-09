@@ -16,10 +16,6 @@ import (
 
 const DefaultSnapshotInterval = 5 * time.Minute
 
-// DefaultSweepInterval is how often deadline-derived dispositions are promoted
-// without a store write. Zero disables the sweep goroutine.
-const DefaultSweepInterval = 5 * time.Second
-
 type Tracker struct {
 	mu      sync.RWMutex
 	store   *Store
@@ -31,7 +27,6 @@ type Tracker struct {
 	updated        time.Time
 	stop           context.CancelFunc
 	done           chan struct{}
-	sweepDone      chan struct{}
 	once           sync.Once
 	now            func() time.Time
 	errCount       uint64
@@ -184,9 +179,6 @@ func (t *Tracker) Close() error {
 		if t.stop != nil {
 			t.stop()
 			<-t.done
-			if t.sweepDone != nil {
-				<-t.sweepDone
-			}
 		}
 		t.stopDispositions()
 		if flushErr := t.Flush(context.Background()); flushErr != nil {
@@ -197,55 +189,6 @@ func (t *Tracker) Close() error {
 		}
 	})
 	return err
-}
-
-// StartSweep runs refreshDerived on interval without a store write. interval <= 0
-// leaves classification to the recording path.
-func (t *Tracker) StartSweep(interval time.Duration) {
-	if t == nil || interval <= 0 || t.sweepDone != nil || t.stop == nil {
-		return
-	}
-	t.sweepDone = make(chan struct{})
-	ctx, cancel := context.WithCancel(context.Background())
-	prev := t.stop
-	t.stop = func() {
-		cancel()
-		prev()
-	}
-	go t.sweepLoop(ctx, interval)
-}
-
-func (t *Tracker) sweepLoop(ctx context.Context, interval time.Duration) {
-	defer close(t.sweepDone)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			t.Sweep()
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-// Sweep promotes deadline-derived dispositions into Counters under the write
-// lock without touching the store.
-func (t *Tracker) Sweep() {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.nowUTC()
-	for _, escrow := range t.escrows {
-		if escrow == nil || len(escrow.Live) == 0 {
-			continue
-		}
-		escrow.tracker = t
-		escrow.refreshDerived(now)
-	}
-	t.updated = now
 }
 
 // SetDispositionSink registers the sink that receives DispositionEvents. Nil
@@ -561,6 +504,12 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 }
 
 func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
+	return t.RecordGhostTraced(escrowID, nonce, phase, quarantine, reason, detail, timeoutPending, TraceRef{})
+}
+
+// RecordGhostTraced is RecordGhost plus the span that produced the burn, captured
+// under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordGhostTraced(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -572,6 +521,7 @@ func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quaran
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
 		s.DetailReason = normalizeDetailReason(detail)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -594,6 +544,12 @@ func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID strin
 }
 
 func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode) error {
+	return t.RecordRealSendTraced(escrowID, nonce, sentAt, phase, quarantine, TraceRef{})
+}
+
+// RecordRealSendTraced is RecordRealSend plus the span that produced the send,
+// captured under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordRealSendTraced(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -603,6 +559,7 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 		s.SendAt = sentAt.UTC()
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})

@@ -111,6 +111,19 @@ func TestReleaseMLNode_NotFound(t *testing.T) {
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 
+func TestReleaseMLNode_PaddedLockIDIsNotTrimmed(t *testing.T) {
+	var got string
+	srv := NewServer(&mockBroker{
+		releaseFunc: func(lockID string, _ broker.InferenceResult) (string, error) {
+			got = lockID
+			return "", broker.ErrLockNotFound
+		},
+	}, nil, nil)
+	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: " lock-abc "})
+	require.Equal(t, " lock-abc ", got)
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
 func TestListNodeCapacity_MapsBrokerNodes(t *testing.T) {
 	srv := NewServer(&mockBroker{
 		getNodesFunc: func() ([]broker.NodeResponse, error) {

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestMaybeLogMLNodePayload_EmptyBodyFallsBackToStatusHeaders(t *testing.T) {
 	require.NotContains(t, out, `"response":"`) // hash level, no body field
 }
 
-func TestMaybeLogMLNodePayload_SSETruncated(t *testing.T) {
+func TestMaybeLogMLNodePayload_SSETruncatedStaysTransportUnknown(t *testing.T) {
 	withPayloadPolicy(t, "full", "true", "false")
 	buf := withDispositionLogCapture(t)
 
@@ -95,15 +96,11 @@ func TestMaybeLogMLNodePayload_SSETruncated(t *testing.T) {
 	}
 	inf.contentChunks.Store(3)
 	origin := accounting.FailureOriginFromDetail("sse_truncated")
-	require.Equal(t, accounting.FailureHostResponse, origin)
+	require.Equal(t, accounting.FailureTransportUnknown, origin)
 	maybeLogMLNodePayload(inf.attemptCtx(), inf, user.InferenceParams{Prompt: prompt, Model: "m", Stream: true},
 		origin, "sse_truncated")
 
-	out := buf.String()
-	require.Contains(t, out, `"stage":"payload_captured"`)
-	require.Contains(t, out, "partial-body")
-	require.Contains(t, out, `"detail_reason":"sse_truncated"`)
-	require.Contains(t, out, `"http_status":200`)
+	require.NotContains(t, buf.String(), `"stage":"payload_captured"`)
 }
 
 func TestMaybeLogMLNodePayload_SkipsTransportUnknown(t *testing.T) {
@@ -303,6 +300,71 @@ func TestQuarantinePayloadLogEmittedOffTheLimiterLock(t *testing.T) {
 	require.Contains(t, buf.String(), `"stage":"payload_quarantine"`)
 	require.Contains(t, buf.String(), `"reason":"stalled_winner_quarantine"`)
 	require.Zero(t, limiter.pendingQuarantineCount.Load(), "queue must drain on unlock")
+}
+
+func TestEscrowLookupQuarantinePayloadEmittedBeforeReturn(t *testing.T) {
+	withPayloadPolicy(t, "off", "false", "true")
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.UpdateSettings(ParticipantThrottleSettings{
+		EmptyStreamQuarantineThreshold: 1,
+		EOFTransportFailureThreshold:   1,
+	})
+	var buf bytes.Buffer
+	prev := slog.Default()
+	prevFmt := commonobs.LogFormat()
+	observability.InstallLogger("json")
+	probe := &lockProbeWriter{t: t, limiter: limiter, buf: &buf}
+	slog.SetDefault(slog.New(commonobs.NewTraceHandler(
+		slog.NewJSONHandler(probe, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+	t.Cleanup(func() {
+		observability.InstallLogger(prevFmt)
+		slog.SetDefault(prev)
+	})
+
+	limiter.ObserveResultWithBodyForModel("lookup-host", "model-a", lookupLimitedChatPath,
+		http.StatusTooManyRequests, "too many escrow lookups", transport.DevshardErrorEscrowLookupLimited, "")
+
+	require.Contains(t, buf.String(), `"stage":"payload_quarantine"`)
+	require.Contains(t, buf.String(), `"reason":"escrow_lookup_limited_quarantine"`)
+	require.Contains(t, buf.String(), `"participant_key":"lookup-host"`)
+	require.Zero(t, limiter.pendingQuarantineCount.Load(), "queue must drain before observeEscrowLookupLimited returns")
+}
+
+func TestObserveEmptyStreamForModelWithStatsLogsSizeEvidence(t *testing.T) {
+	withPayloadPolicy(t, "off", "false", "true")
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.UpdateSettings(ParticipantThrottleSettings{
+		EmptyStreamQuarantineThreshold: 1,
+		EOFTransportFailureThreshold:   1,
+	})
+	var buf bytes.Buffer
+	prev := slog.Default()
+	prevFmt := commonobs.LogFormat()
+	observability.InstallLogger("json")
+	slog.SetDefault(slog.New(commonobs.NewTraceHandler(
+		slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+	t.Cleanup(func() {
+		observability.InstallLogger(prevFmt)
+		slog.SetDefault(prev)
+	})
+
+	limiter.ObserveEmptyStreamForModelWithStats("host-a", "model-a", QuarantinePayloadStats{
+		RequestBytes:  42,
+		ResponseBytes: 7,
+		Stream:        true,
+		MessageCount:  2,
+		MaxTokens:     8,
+	})
+
+	out := buf.String()
+	require.Contains(t, out, `"stage":"payload_quarantine"`)
+	require.Contains(t, out, `"reason":"empty_stream_quarantine"`)
+	require.Contains(t, out, `"request_bytes":"42"`)
+	require.Contains(t, out, `"response_bytes":"7"`)
+	require.Contains(t, out, `"message_count":"2"`)
+	require.Contains(t, out, `"max_tokens":"8"`)
 }
 
 func TestCollectFailureResponseBody_PrefersPayloadSample(t *testing.T) {

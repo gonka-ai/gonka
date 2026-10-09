@@ -380,7 +380,6 @@ var reasonOrigin = map[string]FailureOrigin{
 	"host_served_probe":            FailureGatewayPolicy,
 	"nonce_already_finished":       FailureGatewayPolicy,
 	"not_finished":                 FailureHostResponse,
-	"sse_truncated":                FailureHostResponse,
 	"escrow_state_root_diverged":   FailureHostResponse,
 	"timeout_diff_delivery_failed": FailureHostResponse,
 	"escrow_gone_from_hosts":       FailureHostResponse,

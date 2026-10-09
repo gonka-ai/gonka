@@ -18,6 +18,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"log/slog"
 )
 
 // brokerAcquirer is the subset of broker.Broker used by this server.
@@ -85,7 +86,7 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		if s.escrowLoad != nil {
 			s.escrowLoad.Record(req.GetEscrowId())
 		}
-		commonobs.Stage(ctx, StageMLNodeAcquire,
+		logMLNodeStage(ctx, slog.LevelInfo, StageMLNodeAcquire,
 			"outcome", "acquired",
 			"node_id", nodeID,
 			"lock_id", lockID,
@@ -97,7 +98,7 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
-		commonobs.Stage(ctx, StageMLNodeAcquire,
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
 			"outcome", "no_nodes_available",
 			"model", req.GetModel(),
 			"escrow_id", req.GetEscrowId(),
@@ -106,7 +107,7 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
 	}
 	if ctx.Err() != nil {
-		commonobs.Stage(ctx, StageMLNodeAcquire,
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
 			"outcome", "context_error",
 			"model", req.GetModel(),
 			"escrow_id", req.GetEscrowId(),
@@ -115,7 +116,7 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	// queue is full, so returning unavailable code
-	commonobs.Stage(ctx, StageMLNodeAcquire,
+	logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
 		"outcome", "unavailable",
 		"model", req.GetModel(),
 		"escrow_id", req.GetEscrowId(),
@@ -125,14 +126,14 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 }
 
 func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
-	lockID := strings.TrimSpace(req.GetLockId())
+	lockID := req.GetLockId()
 	outcome := outcomeFromProto(req.Outcome)
 	nodeID, err := s.broker.ReleaseMLNode(lockID, outcome)
 	if err == nil {
 		if req.Outcome == gen.ReleaseOutcome_TRANSPORT_ERROR || req.Outcome == gen.ReleaseOutcome_TIMEOUT {
 			s.broker.TriggerStatusQuery(false)
 		}
-		commonobs.Stage(ctx, StageMLNodeRelease,
+		logMLNodeStage(ctx, slog.LevelInfo, StageMLNodeRelease,
 			"lock_id", lockID,
 			"node_id", nodeID,
 			"outcome", req.GetOutcome().String(),
@@ -141,7 +142,7 @@ func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeReques
 		return &gen.ReleaseMLNodeResponse{}, nil
 	}
 	if errors.Is(err, broker.ErrLockNotFound) {
-		commonobs.Stage(ctx, StageMLNodeRelease,
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeRelease,
 			"lock_id", lockID,
 			"node_id", "",
 			"outcome", req.GetOutcome().String(),
@@ -149,7 +150,7 @@ func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeReques
 		)
 		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
-	commonobs.Stage(ctx, StageMLNodeRelease,
+	logMLNodeStage(ctx, slog.LevelError, StageMLNodeRelease,
 		"lock_id", lockID,
 		"node_id", nodeID,
 		"outcome", req.GetOutcome().String(),
@@ -157,6 +158,17 @@ func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeReques
 		"error", err.Error(),
 	)
 	return nil, status.Error(codes.Internal, err.Error())
+}
+
+// logMLNodeStage emits the node-selection line. Failures stay at Error and
+// keep subsystem=Nodes, the field the previous logging.Error calls carried.
+func logMLNodeStage(ctx context.Context, level slog.Level, stage string, kv ...any) {
+	args := make([]any, 0, 2+len(kv))
+	if level >= slog.LevelError {
+		args = append(args, "subsystem", "Nodes")
+	}
+	args = append(args, kv...)
+	commonobs.StageLevel(ctx, level, stage, args...)
 }
 
 func (s *Server) ListNodeCapacity(_ context.Context, _ *gen.ListNodeCapacityRequest) (*gen.ListNodeCapacityResponse, error) {

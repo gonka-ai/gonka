@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"devshard/accounting"
-	"devshard/logging"
 	"devshard/state"
 	"devshard/transport"
 	"devshard/types"
@@ -201,10 +200,14 @@ type Proxy struct {
 	logprobsOptimizationOverride func() *bool
 }
 
-// detachedInferenceContext drops the client's cancellation but keeps its request id, so the
-// inference stages join to the id the client was handed instead of minting one of their own.
+// detachedInferenceContext drops the client's cancel and deadline but keeps
+// its values, so a host stream still drains after a disconnect on the same
+// request id and trace.
 func detachedInferenceContext(clientCtx context.Context) context.Context {
-	return logging.PropagateRequestID(context.Background(), clientCtx)
+	if clientCtx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(clientCtx)
 }
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +417,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// gateway→host injects the same traceparent. WithoutCancel preserves
 	// values; metaDrainTimeout (via withMetaDrain) bounds post-disconnect work.
 	var doneWriteErr error
-	err := p.redundancy.RunInference(context.WithoutCancel(r.Context()), params, dw, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, dw, flag)
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -599,7 +602,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(context.WithoutCancel(r.Context()), params, buf, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, buf, flag)
 	if flag.Gone() {
 		return
 	}

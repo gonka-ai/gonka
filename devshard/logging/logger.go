@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"os"
 	"strings"
 	"sync/atomic"
 
@@ -55,6 +54,9 @@ func (s *slogLogger) Info(msg string, kv ...any)  { slog.Info(msg, kv...) }
 func (s *slogLogger) Error(msg string, kv ...any) { slog.Error(msg, kv...) }
 func (s *slogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, kv...) }
 func (s *slogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, kv...) }
+func (s *slogLogger) InfoContext(ctx context.Context, msg string, kv ...any) {
+	slog.InfoContext(ctx, msg, kv...)
+}
 
 // NewSlogAdapter returns a Logger that routes to the default slog handler and
 // prefixes every record with the given keyvals. Intended for embedders (e.g.
@@ -81,6 +83,16 @@ func (p *prefixedSlogLogger) Info(msg string, kv ...any)  { slog.Info(msg, p.mer
 func (p *prefixedSlogLogger) Error(msg string, kv ...any) { slog.Error(msg, p.merge(kv)...) }
 func (p *prefixedSlogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, p.merge(kv)...) }
 func (p *prefixedSlogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, p.merge(kv)...) }
+func (p *prefixedSlogLogger) InfoContext(ctx context.Context, msg string, kv ...any) {
+	slog.InfoContext(ctx, msg, p.merge(kv)...)
+}
+
+// ContextLogger is the optional Stage path that keeps the request context, so a
+// handler can stamp trace_id. Loggers that only implement Logger still receive
+// the stage line through Info.
+type ContextLogger interface {
+	InfoContext(ctx context.Context, msg string, kv ...any)
+}
 
 // WithRequestID attaches a request ID to the context. If one already exists
 // it is preserved. Optional ids[0] supplies an explicit ID (e.g. validate-*).
@@ -109,11 +121,20 @@ func PropagateRequestID(dst, src context.Context) context.Context {
 //
 //	request=req-... stage=some_stage key1=val1 key2=val2
 //
-// JSON mode (ConfigureFormat or InstallLogger) emits structured slog attrs so
+// JSON mode (InstallLogger) emits structured slog attrs so
 // TraceHandler can stamp trace_id. Text mode keeps the legacy log.Print line.
 func Stage(ctx context.Context, stage string, kv ...any) {
 	if structuredStages.Load() || commonobs.IsJSONLogFormat() {
-		slog.InfoContext(ctx, stage, stageFields(ctx, stage, kv)...)
+		fields := stageFields(ctx, stage, kv)
+		if l, ok := current.(ContextLogger); ok {
+			l.InfoContext(ctx, stage, fields...)
+			return
+		}
+		if _, isDefault := current.(*slogLogger); !isDefault {
+			current.Info(stage, fields...)
+			return
+		}
+		slog.InfoContext(ctx, stage, fields...)
 		return
 	}
 	fields := make([]string, 0, 2+len(kv)/2)
@@ -125,16 +146,6 @@ func Stage(ctx context.Context, stage string, kv ...any) {
 		fields = append(fields, stageKey(kv, i)+"="+sanitize(stageValue(kv, i)))
 	}
 	log.Print(strings.Join(fields, " "))
-}
-
-// ConfigureFormat switches stage lines to JSON, where a collector reads every field as a label
-// instead of re-parsing a line that carries log's own date prefix.
-func ConfigureFormat(raw string) {
-	if !strings.EqualFold(strings.TrimSpace(raw), "json") {
-		return
-	}
-	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
-	structuredStages.Store(true)
 }
 
 func stageFields(ctx context.Context, stage string, kv []any) []any {

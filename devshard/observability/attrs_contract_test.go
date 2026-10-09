@@ -11,7 +11,7 @@ import (
 )
 
 // C4 — span attribute values must be byte-identical to the Prometheus label
-// values for the same dimension (observability-trace-correlation-plan §2 / §9).
+// values for the same dimension.
 func TestSpanAttrValuesMatchPrometheusLabelValues(t *testing.T) {
 	t.Parallel()
 

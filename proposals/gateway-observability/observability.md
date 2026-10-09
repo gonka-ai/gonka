@@ -4,11 +4,8 @@
 [devshard/docs/gateway-tracing.md](../../devshard/docs/gateway-tracing.md)
 explains how `trace_id` joins gateway → host spans with Loki lines, how
 overscheduling appears as sibling attempt spans, and why the accounting
-tracker runs a 5 s classification sweep so late dispositions
-(`unfinished_refused` / `unfinished_execution`) get a telemetry event.
-Implementation plans live under `devshard/testenv/docs/`
-(`observability-trace-correlation-plan.md`,
-`observability-t3-implementation-plan.md`).
+tracker promotes late dispositions (`unfinished_refused` / `unfinished_execution`) on the
+5-minute snapshot, so the disposition log and span carry that key when the nonce leaves `Live`.
 
 ## Summary
 

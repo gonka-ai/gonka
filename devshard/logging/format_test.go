@@ -30,13 +30,6 @@ func TestStage_EmitsOneJSONObjectPerLine(t *testing.T) {
 	require.Equal(t, "42", line["output_chunks"])
 }
 
-func TestConfigureFormat_LeavesTheTextFormAloneByDefault(t *testing.T) {
-	for _, raw := range []string{"", "text", "logfmt"} {
-		ConfigureFormat(raw)
-		require.False(t, structuredStages.Load(), "format %q must not switch the stage form", raw)
-	}
-}
-
 func TestStage_KeepsAValueWithoutItsKey(t *testing.T) {
 	var written bytes.Buffer
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&written, nil)))

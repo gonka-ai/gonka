@@ -126,10 +126,10 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 
 | ID | Name | What we validate | Test | Status |
 |----|------|------------------|------|--------|
-| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestGatewayEscrowCreateGRPC` | ✅ |
-| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestGatewayEscrowReadGRPC` | ✅ |
-| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestGatewayChatGRPCOnly` | ✅ |
-| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestNoRESTChainClientsInGatewayProduction` | ✅ |
+| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestG1_GatewayEscrowCreateGRPC` | ✅ |
+| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestG2_GatewayEscrowReadGRPC` | ✅ |
+| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestG3_GatewayChatGRPCOnly` | ✅ |
+| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
 
@@ -760,16 +760,11 @@ alignment (`INVALID(height_regression)`) stays a unit pin.
 | Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | Profile smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression, C8/C9 mock-dapi hop + shadow multi-host, plus O1 host histogram scrape — full scenarios in [`observability-test-plan.md`](./observability-test-plan.md) |
-| Observability (node-selection hop only) | `make citest-dapi-correlation` | C8/C9 subset of the above, for iterating on the mock-dapi hop |
-| ML node pool | `make citest-ml-nodes` | T7 per-node ML fault targeting (below) |
+| Observability | `make citest-observability` | Profile smoke, trace↔log correlation, disposition spans, payload capture, jaeger-promtail regression, mock-dapi hop, and shadow multi-host — see [`gateway-tracing.md`](../../docs/gateway-tracing.md) |
+| Observability (node-selection hop only) | `make citest-dapi-correlation` | Gateway, host, and mock-dapi share one trace; subset of `citest-observability` |
+| ML node pool | `make citest-ml-nodes` | Per-node ML fault targeting |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 | No-proxy baseline versus current | [`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh) | B1 JSON, B1+RPC HTTP/1.1, N0 JSON; no `proxy` |
-
-Observability scenarios (C1–C9, S1–S17, the I invariants and the F fault taxonomy) are **not**
-duplicated here — [`observability-test-plan.md`](./observability-test-plan.md) carries each one in
-full, with its boot, setup, drive and assertion steps. Design rationale lives in
-[`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md).
 
 See [`README.md`](../README.md) for adversarial and observability detail.
 
@@ -778,10 +773,10 @@ See [`README.md`](../README.md) for adversarial and observability detail.
 **What we test:** `common/chain/tx` creates a devshard escrow via mock-chain gRPC
 (`BroadcastTx` + `GetTx` + auth `Account` query) — no LCD for the tx path.
 
-**How:** `TestGatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
+**How:** `TestG1_GatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
 calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
-**Run:** `make citest-grpc-transport` (or `-run TestGatewayEscrowCreateGRPC`).
+**Run:** `make citest-grpc-transport` (or `-run TestG1_`).
 
 ---
 
@@ -789,7 +784,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Escrow read via `bridge.GRPCBridge` / `common/chain.Client` against dockerized mock-chain (no LCD).
 
-**Test:** `TestGatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
+**Test:** `TestG2_GatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
 
 ---
 
@@ -797,13 +792,13 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Gateway chat (non-stream + SSE) with gRPC-only chain transport.
 
-**How:** `TestGatewayChatGRPCOnly` — full standard stack with
+**How:** `TestG3_GatewayChatGRPCOnly` — full standard stack with
 `docker compose up --build`; the compose gate asserts that devshardctl has no
 `DEVSHARD_CHAIN_REST` or `DEVSHARD_TX_QUERY_REST`.
 
 **Pass criteria:** Non-stream + stream chat return 200.
 
-**Run:** `make citest-grpc-transport` (or `-run TestGatewayChatGRPCOnly`).
+**Run:** `make citest-grpc-transport` (or `-run TestG3_`).
 
 ---
 
@@ -811,7 +806,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Production gateway code must not call REST chain clients.
 
-**How:** `TestNoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
+**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
 
@@ -893,52 +888,22 @@ inference succeeds with the live escrow query faulted.
 
 ---
 
-## ML node pool — per-node fault targeting (T7)
+## ML node pool — per-node fault targeting
 
-**What we test:** the stack can express "one ML node is broken while the others are fine".
-Before T7 a single `mock-openai` served every host, so any fault hit all attempts at once and
-winner/loser asymmetry was impossible to stage. `ml_nodes: N` in the citest config makes
-`gencompose` emit `mock-openai-0…N-1`, and mock-dapi hands them out through real `AcquireMLNode`
-node ids instead of a single hard-coded endpoint.
+**What we test:** the stack can express one ML node broken while the others stay healthy.
+`ml_nodes: N` in the citest config makes `gencompose` emit `mock-openai-0…N-1`, and mock-dapi
+hands them out through real `AcquireMLNode` node ids.
 
 **How:** `TestMLNodePool_PerNodeFault`
 
 1. `harness.BootMLNodePoolStack` with `ml_nodes: 2`; wait for stack health.
-2. Dial mock-dapi NodeManager gRPC; two `AcquireMLNode` calls must return **distinct** `NodeId`s
-   drawn from the pool, then release both `LockId`s.
-3. `harness.PatchMockOpenAIFaultForNode` applies `latency_ms: 1500` to `mock-openai-1` only.
-4. Chat directly against each node: node-0 stays under 800 ms, node-1 takes at least 1200 ms.
-5. `harness.StopMLNode("mock-openai-1")` — that instance refuses connections while node-0 still
-   serves `/healthz` 200; restart it at the end.
+2. Two `AcquireMLNode` calls return distinct `NodeId`s, then both locks are released.
+3. A latency fault applies to `mock-openai-1` only. Chat against node-0 stays fast; node-1 is slow.
+4. Stopping `mock-openai-1` leaves node-0 serving `/healthz`.
 
-**Pass criteria:** distinct node ids per acquire, fault and stop confined to the targeted instance.
-Per-node fault targeting is what the S3 (`finished_unused` loser) and S16 (slow node vs. fast node)
-scenarios of [`observability-test-plan.md`](./observability-test-plan.md) build on.
+**Pass criteria:** distinct node ids per acquire; fault and stop stay on the targeted instance.
 
 **Run:** `make citest-ml-nodes` (or `-run TestMLNodePool_`).
-
----
-
-## Validation-failure payload capture (C5b) — planned
-
-**What we will test:** when a validator returns `Valid: false` — including the hash-mismatch path —
-a payload line exists for the invalidated `inference_id` carrying the full prompt and response, so
-the disagreement between executor and validator can be reconstructed from the two bodies.
-
-**Why it is not here yet.** The gateway only learns of invalidation through the accounting recorder
-(`ProtocolInvalidated`), long after the request completed, and it cannot know in advance which
-inferences will be sampled. Capturing at the gateway therefore means retaining payloads for **all**
-traffic across the validation window — a full-traffic payload store that needs Postgres, not the
-SQLite accounting store. This is T4b, blocked on `ak/gateway-v2-postgres`.
-
-**Fallback if the Postgres branch slips:** capture inside `cmd/devshardd/inference/validator.go`,
-which already holds both payloads at the decision point, before the hash-mismatch check discards
-them. That costs no storage but joins on `inference_id` + payload hash rather than on `trace_id`,
-because validation runs in a different process on a different trace.
-
-Design: [`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md) §6.5.
-Both halves are written up as scenarios C5a and C5b in
-[`observability-test-plan.md`](./observability-test-plan.md).
 
 ---
 
@@ -973,15 +938,14 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A5`, the observability suite (`O1`, correlation, disposition, `C5a`,
+  `A1–A5`, the observability suite (`O1`, correlation, disposition, payload capture,
   jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
   long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to
-  **separate runners** — the supported form of parallelism today. CI
-  enumerates these targets automatically
+  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  supported form of parallelism today. CI enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,
   so adding a new `citest-*` suite runs it in parallel with no workflow change.

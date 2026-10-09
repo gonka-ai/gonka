@@ -2,6 +2,7 @@ package nodemanager_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -34,7 +35,7 @@ type captureHandler struct {
 func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
 
 func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
-	fields := map[string]string{"msg": r.Message}
+	fields := map[string]string{"msg": r.Message, "level": r.Level.String()}
 	r.Attrs(func(a slog.Attr) bool {
 		fields[a.Key] = a.Value.String()
 		return true
@@ -85,7 +86,7 @@ func (m *logMockBroker) AcquireMLNode(ctx context.Context, model string, skipNod
 func (m *logMockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) (string, error) {
 	return m.releaseFunc(lockID, outcome)
 }
-func (m *logMockBroker) TriggerStatusQuery(_ bool)              {}
+func (m *logMockBroker) TriggerStatusQuery(_ bool)                {}
 func (m *logMockBroker) GetNodes() ([]broker.NodeResponse, error) { return nil, nil }
 
 func startTracedGRPC(t *testing.T, srv *nodemanager.Server) (*grpc.ClientConn, func()) {
@@ -155,6 +156,8 @@ func TestAcquireMLNode_LogsCarryCallerTraceAndRequestID(t *testing.T) {
 	require.Equal(t, wantTrace, acquires[0]["trace_id"])
 	require.Equal(t, "req-c8", acquires[0]["request_id"])
 	require.Equal(t, "acquired", acquires[0]["outcome"])
+	require.Equal(t, "INFO", acquires[0]["level"])
+	require.Empty(t, acquires[0]["subsystem"])
 	require.Equal(t, "node-1", acquires[0]["node_id"])
 	require.Equal(t, acq.LockId, acquires[0]["lock_id"])
 	require.Equal(t, "Qwen/Test", acquires[0]["model"])
@@ -169,6 +172,7 @@ func TestAcquireMLNode_LogsCarryCallerTraceAndRequestID(t *testing.T) {
 	require.Equal(t, "node-1", releases[0]["node_id"])
 	require.Equal(t, "SUCCESS", releases[0]["outcome"])
 	require.Equal(t, "true", releases[0]["released"])
+	require.Equal(t, "INFO", releases[0]["level"])
 }
 
 func TestAcquireMLNode_LogsExhaustedPool(t *testing.T) {
@@ -194,4 +198,63 @@ func TestAcquireMLNode_LogsExhaustedPool(t *testing.T) {
 	require.Len(t, acquires, 1)
 	require.Equal(t, "no_nodes_available", acquires[0]["outcome"])
 	require.Equal(t, "solo", acquires[0]["excluded"])
+	require.Equal(t, "ERROR", acquires[0]["level"])
+	require.Equal(t, "Nodes", acquires[0]["subsystem"])
+}
+
+func TestAcquireMLNode_FailureOutcomesLogAtError(t *testing.T) {
+	capture := captureStageLogs(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	srv := nodemanager.NewServer(&logMockBroker{
+		acquireFunc: func(callCtx context.Context, _ string, _ []string) (string, string, string, error) {
+			if callCtx.Err() != nil {
+				return "", "", "", callCtx.Err()
+			}
+			return "", "", "", errors.New("queue full")
+		},
+	}, nil, nil)
+
+	_, err := srv.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{Model: "Qwen/Test", EscrowId: "12"})
+	require.Error(t, err)
+	cancelled := capture.withStage(nodemanager.StageMLNodeAcquire)
+	require.Len(t, cancelled, 1)
+	require.Equal(t, "context_error", cancelled[0]["outcome"])
+	require.Equal(t, "ERROR", cancelled[0]["level"])
+	require.Equal(t, "Nodes", cancelled[0]["subsystem"])
+
+	_, err = srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "Qwen/Test"})
+	require.Equal(t, codes.Unavailable, status.Code(err))
+	unavailable := capture.withStage(nodemanager.StageMLNodeAcquire)
+	require.Len(t, unavailable, 2)
+	require.Equal(t, "unavailable", unavailable[1]["outcome"])
+	require.Equal(t, "ERROR", unavailable[1]["level"])
+	require.Equal(t, "Nodes", unavailable[1]["subsystem"])
+}
+
+func TestReleaseMLNode_FailureOutcomesLogAtError(t *testing.T) {
+	capture := captureStageLogs(t)
+	srv := nodemanager.NewServer(&logMockBroker{
+		releaseFunc: func(lockID string, _ broker.InferenceResult) (string, error) {
+			if lockID == "missing" {
+				return "", broker.ErrLockNotFound
+			}
+			return "node-1", errors.New("release failed")
+		},
+	}, nil, nil)
+
+	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: "missing"})
+	require.Equal(t, codes.NotFound, status.Code(err))
+	_, err = srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: "lock-1"})
+	require.Equal(t, codes.Internal, status.Code(err))
+
+	releases := capture.withStage(nodemanager.StageMLNodeRelease)
+	require.Len(t, releases, 2)
+	require.Equal(t, "ERROR", releases[0]["level"])
+	require.Equal(t, "Nodes", releases[0]["subsystem"])
+	require.Equal(t, "false", releases[0]["released"])
+	require.Equal(t, "missing", releases[0]["lock_id"])
+	require.Equal(t, "ERROR", releases[1]["level"])
+	require.Equal(t, "Nodes", releases[1]["subsystem"])
+	require.Equal(t, "release failed", releases[1]["error"])
 }

@@ -9,6 +9,7 @@ import (
 
 	"devshard/accounting"
 	"devshard/observability"
+	"devshard/transport"
 	"devshard/user"
 
 	"github.com/stretchr/testify/require"
@@ -310,4 +311,49 @@ func TestAttemptSpanStartedCarriesDispatchPhase(t *testing.T) {
 	attrs := spanAttrMap(attempt)
 	require.Equal(t, string(accounting.PhaseNormal), attrs[string(observability.AttrDispatchPhase)])
 	require.Equal(t, string(accounting.QuarantineNone), attrs[string(observability.AttrQuarantineMode)])
+}
+
+func TestTruncatedStreamFailureReasonAgrees(t *testing.T) {
+	rec := withAttemptSpanRecorder(t)
+	withPayloadPolicy(t, "full", "true", "false")
+	buf := withDispositionLogCapture(t)
+	ctx, req := observability.StartGatewayRequest(context.Background())
+	e := &Redundancy{metrics: NewDevshardMetrics(), model: "m"}
+	inf := newTestInflight(4, 0, "h0")
+	inf.err = transport.ErrSSEStreamTruncated
+	inf.capturePayload = true
+	inf.payloadResponseSample = []byte("data: partial")
+	close(inf.done)
+	inf.openAttemptSpan(ctx, e, "p0")
+
+	params := user.InferenceParams{Model: "m"}
+	e.recordGatewayAttemptTerminal(inf, params, 0, false, nil)
+	inf.err = io.EOF
+	e.recordGatewayAttemptTerminal(inf, params, 0, false, nil)
+	inf.endAttemptSpan()
+	req.End()
+
+	require.Equal(t, "sse_truncated", inf.failureReason)
+	var attempt sdktrace.ReadOnlySpan
+	for _, s := range rec.Ended() {
+		if s.Name() == observability.SpanNameGatewayAttempt {
+			attempt = s
+		}
+	}
+	require.NotNil(t, attempt)
+	require.Equal(t, "sse_truncated", spanAttrMap(attempt)[string(observability.AttrDetailReason)])
+
+	families, err := e.metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterValue(t, families, "devshard_gateway_attempt_failures_total", map[string]string{
+		"participant_key": "host:0",
+		"model":           "m",
+		"role":            "primary",
+		"reason":          "sse_truncated",
+		"visibility":      "failed_not_finished",
+	}, 2)
+	// sse_truncated is transport_unknown, so payload capture does not emit a
+	// second, different reason for the same attempt.
+	require.NotContains(t, buf.String(), `"detail_reason":"eof_transport"`)
+	require.NotContains(t, buf.String(), `"stage":"payload_captured"`)
 }

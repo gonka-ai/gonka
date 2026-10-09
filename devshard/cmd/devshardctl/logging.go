@@ -2,10 +2,24 @@ package main
 
 import (
 	"context"
+	"os"
 
 	"devshard/logging"
 	"devshard/observability"
 )
+
+func gatewayLoggerOptions(format string) observability.LoggerOptions {
+	return observability.LoggerOptions{
+		Format: format,
+		Level:  observability.ParseLogLevel(os.Getenv("DEVSHARD_LOG_LEVEL")),
+	}
+}
+
+// installGatewayLogger installs the process logger. DEVSHARD_LOG_LEVEL selects
+// the minimum level; unset stays at Info.
+func installGatewayLogger(format string) {
+	observability.InstallLoggerWithOptions(gatewayLoggerOptions(format))
+}
 
 func ensureRequestLogContext(ctx context.Context) (context.Context, string) {
 	return logging.WithRequestID(ctx)

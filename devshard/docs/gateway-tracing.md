@@ -3,14 +3,12 @@
 One-page explanation of the target design for gateway request forensics via
 OpenTelemetry traces + correlated logs.
 
-**Deeper docs (testenv / implementation):**
+**Deeper docs (testenv):**
 
 | Doc | Role |
 |-----|------|
-| [observability-trace-correlation-plan.md](../testenv/docs/observability-trace-correlation-plan.md) | Design: correlation contract, span shape, late dispositions |
-| [observability-t3-implementation-plan.md](../testenv/docs/observability-t3-implementation-plan.md) | Step-by-step T3 build plan (attempt spans, classification, sweep) |
-| [observability-test-plan.md](../testenv/docs/observability-test-plan.md) | E2E / citest scenarios |
 | [observability-plan.md](../testenv/docs/observability-plan.md) | Stack / profile selection (Tempo, Alloy, Jaeger) |
+| [scenarios.md](../testenv/docs/scenarios.md) | Citest rows for the observability and ML-node suites |
 
 **Related proposals:**
 
@@ -91,7 +89,7 @@ a cross-span `{ A } && { B }` join.
 ## The late part: accounting dispositions
 
 A nonce's disposition is decided long after the response — bounded by `RefusalTimeout` (60 s) or
-`ExecutionTimeout` (32 min), plus the classification sweep (below). The request span is closed by
+`ExecutionTimeout` (32 min), plus the 5-minute accounting snapshot (below). The request span is closed by
 then, and holding it open is not an option (it would wreck latency data and stay unexported for the
 duration).
 
@@ -139,36 +137,29 @@ the protocol `FinishInference` diff and the gateway's usage fact have both lande
 past-deadline nonce with neither is held back by `persistable`, so it stays visible as
 `devshard_accounting_in_flight` / `timeout_pending` rather than emitting a premature verdict.
 
-### Why the accounting sweep runs every 5 seconds
+### Why deadline dispositions wait for the 5-minute snapshot
 
 Deadline-based dispositions (`unfinished_refused`, `unfinished_execution`) are time-dependent: a
 nonce that goes silent generates **no further accounting event** after the last gateway fact
 (`TimeoutResult`). Classification only advances when something calls `refreshDerived`.
 
-Historically that caller was only the 5-minute snapshot/`Flush` path. That is the wrong cadence for
-telemetry:
+That caller is the 5-minute snapshot. `Flush` runs `refreshDerived` before it writes, so a nonce
+whose deadline passed with no later record moves into the stored counter on that tick. When the
+nonce later leaves `Live` (settlement, or a terminal protocol timeout), the disposition log and
+`devshard.nonce.disposition` span carry that promoted key. There is no separate classification ticker.
 
-1. **The deadline transition is eventless by construction.** `TimeoutBuffer` is added *on top of*
-   `RefusalTimeout` / `ExecutionTimeout`, so the last gateway fact is guaranteed to arrive *before*
-   the accounting deadline. Crossing the deadline therefore produces no record event for a
-   disposition log line or late span to hang off — unless a short sweep re-evaluates live nonces.
+1. **The deadline transition is eventless.** `TimeoutBuffer` sits on top of `RefusalTimeout` /
+   `ExecutionTimeout`, so the last gateway fact arrives before the accounting deadline. The snapshot
+   is the next walk that sees the deadline.
 2. **Restart loses unpromoted classifications.** Live nonce state is not persisted. A past-deadline
    nonce that has not yet been folded into counters disappears on restart and resurfaces as
-   `Unclassified`. A 5 s sweep shrinks that loss window from up to one snapshot interval to one
-   sweep interval.
-3. **Terminal live entries are only reaped by reclassification.** Without a sweep, deadline-terminal
-   nonces linger in the in-memory `Live` map until the next snapshot.
+   `Unclassified`. The window is one snapshot interval.
+3. **Terminal live entries are reaped by that same reclassification.** Until the snapshot, or the
+   next record, a deadline-classified nonce stays in the in-memory `Live` map.
 
-The sweep calls `refreshDerived` under the write lock and does **not** write SQLite. Persistence
-stays on the 5-minute snapshot tick. Override with `DEVSHARD_STATS_SWEEP_SECONDS` (`0` disables).
-
-**Not why the sweep exists:** keeping Prometheus or `/api/v1/epochs` fresh. `Query` already folds
-live nonces through `counterKey` at read time with a fresh clock, so API and scrape views were
-never lagging the deadline — only promotion into persisted counters and event-driven telemetry
-were.
-
-See **T3.0** in
-[observability-t3-implementation-plan.md](../testenv/docs/observability-t3-implementation-plan.md).
+Prometheus and `/api/v1/epochs` do not wait for the snapshot. `Query` classifies live nonces at
+read time, so scrapes already show the deadline bucket. The snapshot is what promotes the stored
+counter and, once the nonce leaves `Live`, the disposition event.
 
 ## Payloads
 
@@ -222,7 +213,7 @@ itself dies with a full disk.
 1. **T1** ✅ — ctx-aware logging with `trace_id`/`span_id`; OTel init in `devshardctl`; `traceparent` +
    `X-Request-Id` on the gateway → host hop.
 2. **T2** ✅ — Tempo + Alloy profiles (`tempo-alloy` e2e default; Jaeger/Promtail still green).
-3. **T3.0** ✅ — 5 s classification sweep (this document, above).
+3. **T3.0** ✅ — deadline dispositions promote on the 5-minute accounting snapshot (this document, above).
 4. **T3** ✅ — attempt spans, classification log line, linked disposition trace
    (`TestDispositionTrace*` / C3–C4 via `make citest-observability`; unfinished late-path citest still pending G3).
 5. **T4a** ✅ — ML-node failure + quarantine payload capture (`DEVSHARD_LOG_PAYLOADS*`); T4b (validation) still deferred.
@@ -232,5 +223,4 @@ itself dies with a full disk.
    `common/nodemanager` stage names) on both mock-dapi and production `decentralized-api`
    (Init + `UnaryServerTraceInterceptor`). C8/C9 green via `make citest-observability`
    (or the focused `citest-dapi-correlation`).
-   Scenarios C8/C9: [observability-test-plan.md](../testenv/docs/observability-test-plan.md).
-7. **T6** — Grafana forensics dashboards + citest C1–C9.
+7. **T6** — Grafana forensics dashboards + the correlation citests.

@@ -15,6 +15,13 @@ import (
 // WaitLokiSubstring assertions keep matching without duplicating those keys
 // as attrs (TextHandler would reprint them).
 func Stage(ctx context.Context, stage string, kv ...any) {
+	StageLevel(ctx, slog.LevelInfo, stage, kv...)
+}
+
+// StageLevel is Stage at an explicit slog level. Failure outcomes use
+// slog.LevelError so level=error alerting still sees them. JSON and legacy
+// text shapes match Stage, including the stage key Loki joins on.
+func StageLevel(ctx context.Context, level slog.Level, stage string, kv ...any) {
 	if IsJSONLogFormat() {
 		args := make([]any, 0, 4+len(kv))
 		if id, ok := RequestID(ctx); ok {
@@ -32,10 +39,10 @@ func Stage(ctx context.Context, stage string, kv ...any) {
 			}
 			args = append(args, key, value)
 		}
-		slog.Log(ctx, slog.LevelInfo, stage, args...)
+		slog.Log(ctx, level, stage, args...)
 		return
 	}
-	slog.Log(ctx, slog.LevelInfo, formatLegacyStage(ctx, stage, kv))
+	slog.Log(ctx, level, formatLegacyStage(ctx, stage, kv))
 }
 
 func formatLegacyStage(ctx context.Context, stage string, kv []any) string {

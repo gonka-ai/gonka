@@ -834,6 +834,8 @@ type inflight struct {
 	startReason  string
 	attemptIndex int
 	triggerNonce uint64
+	// failureReason is gatewayAttemptFailureReason computed once for this attempt.
+	failureReason string
 
 	// Attempt / phase spans. Nil when OTel is disabled.
 	span         trace.Span
@@ -3108,6 +3110,19 @@ func gatewayAttemptStartReason(inf *inflight) string {
 	return inf.startReason
 }
 
+// failureReasonOnce classifies a failed attempt once. Later readers, including
+// the span, the payload log, and the failure metric, reuse that string.
+func (inf *inflight) failureReasonOnce(session nonceFinishedChecker, model string) string {
+	if inf == nil {
+		return gatewayAttemptFailureReason(nil, session, model)
+	}
+	if inf.failureReason != "" {
+		return inf.failureReason
+	}
+	inf.failureReason = gatewayAttemptFailureReason(inf, session, model)
+	return inf.failureReason
+}
+
 func gatewayRequestFailureReason(failed []*inflight) string {
 	for _, inf := range failed {
 		if inf != nil && !inf.probe {
@@ -3173,8 +3188,7 @@ func (e *Redundancy) recordGatewayAttemptStarted(ctx context.Context, inf *infli
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	e.accounting.RealSend(inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
-	e.accounting.NoteTrace(ctx, inf.escrowID, inf.nonce)
+	e.accounting.RealSendCtx(ctx, inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
 	inf.applyCounterKeyAttrs(accounting.CounterKey{
 		SlotID:         uint32(inf.hostIdx),
 		DispatchPhase:  e.accounting.DispatchPhase(),
@@ -3221,7 +3235,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 		Disposition: accounting.DispositionForUsage(accounting.UsageFor(inf.nonce, winnerNonce)),
 	}
 	if !ok {
-		detail := gatewayAttemptFailureReason(inf, e.session, e.model)
+		detail := inf.failureReasonOnce(e.session, e.model)
 		key.DetailReason = detail
 		key.FailureOrigin = accounting.FailureOriginFromDetail(detail)
 		e.maybeLogMLNodePayloadForTerminal(inf, params, key.FailureOrigin, detail)
@@ -3250,7 +3264,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 			ParticipantKey: participantKey,
 			Model:          model,
 			Role:           role,
-			Reason:         gatewayAttemptFailureReason(inf, e.session, e.model),
+			Reason:         inf.failureReasonOnce(e.session, e.model),
 			Visibility:     visibility,
 		})
 	}
@@ -3273,7 +3287,7 @@ func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight
 		if inf == nil || inf.probe {
 			continue
 		}
-		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session, e.model))
+		e.metrics.RecordGatewayHiddenFailure(model, "protected", inf.failureReasonOnce(e.session, e.model))
 		return
 	}
 }
@@ -3282,7 +3296,7 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	detailReason := gatewayAttemptFailureReason(inf, e.session, e.model)
+	detailReason := inf.failureReasonOnce(e.session, e.model)
 	timeoutReason := reason
 	if len(detailReasons) > 0 && detailReasons[0] != "" {
 		timeoutReason = detailReasons[0]
@@ -4194,7 +4208,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			"suspicious", inf.suspicious,
 		}
 		if !ok {
-			fields = append(fields, "failure_reason", gatewayAttemptFailureReason(inf, e.session, e.model))
+			fields = append(fields, "failure_reason", inf.failureReasonOnce(e.session, e.model))
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
@@ -4518,7 +4532,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 			// no content. Telemetry-only — not a host fault, no quarantine.
 			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
 		} else {
-			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+			e.participantLimiter.ObserveEmptyStreamForModelWithStats(participantKey, e.model, emptyStreamQuarantineStats(inf, params))
 		}
 	}
 	if !requestSucceeded && emptyStream {
@@ -4603,8 +4617,7 @@ func (e *Redundancy) runGhostProbe(ctx context.Context, prepared *user.PreparedI
 		QuarantineMode: quarantineMode,
 	})
 	defer observability.EndSpan(span)
-	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, false)
-	e.accounting.NoteTrace(spanCtx, e.devshardID, prepared.Nonce())
+	e.accounting.GhostCtx(spanCtx, e.devshardID, prepared.Nonce(), reason, quarantineMode, false)
 	noSend := accounting.NoSendReasonFromString(reason)
 	detail := ""
 	if noSend == accounting.NoSendUnknown {

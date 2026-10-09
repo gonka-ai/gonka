@@ -135,7 +135,7 @@ func main() {
 	if logFormat == "" {
 		logFormat = os.Getenv("DEVSHARD_LOG_FORMAT")
 	}
-	observability.InstallLogger(logFormat)
+	installGatewayLogger(logFormat)
 	// Init degrades in-process on exporter/resource failure (Ready=false);
 	// never couple gateway availability to OTel config.
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -486,7 +486,6 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
 	if accountingTracker != nil {
-		accountingTracker.StartSweep(accountingSweepInterval())
 		accountingTracker.SetDispositionSink(dispositionSink{})
 	}
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
