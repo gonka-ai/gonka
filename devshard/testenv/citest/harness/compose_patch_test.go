@@ -186,6 +186,7 @@ services:
 	text := string(body)
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:12345"))
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
+	require.Equal(t, 1, strings.Count(text, `DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`))
 }
 
 func TestEnableLegacyDapiCompose(t *testing.T) {

@@ -351,10 +351,14 @@ type Session struct {
 	heightSeedSlotCount       int
 	heightSeedWaiters         chan struct{}
 	requireHeightSeed         bool
-	heightSeedLoopOnce        sync.Once
-	heightSeedClosed          bool
-	heightSeedStop            context.CancelFunc
-	heightSeedDoneCh          chan struct{}
+	// disableHeightSyncHeartbeat skips the producer cadence. Zero keeps
+	// MaybeHeartbeat available for in-process sessions and tests. The gateway
+	// sets it when DEVSHARD_HEIGHTSYNC_HEARTBEAT is not explicitly on.
+	disableHeightSyncHeartbeat bool
+	heightSeedLoopOnce         sync.Once
+	heightSeedClosed           bool
+	heightSeedStop             context.CancelFunc
+	heightSeedDoneCh           chan struct{}
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte
@@ -428,6 +432,12 @@ func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 // not override this or the tx is dropped.
 func (s *Session) heightSyncForceSlotsLocked() uint64 {
 	return uint64(len(s.group))
+}
+
+// WithDisableHeightSyncHeartbeat turns the producer cadence off. The height
+// seed loop is unchanged. Zero leaves MaybeHeartbeat available.
+func WithDisableHeightSyncHeartbeat(on bool) SessionOption {
+	return func(sess *Session) { sess.disableHeightSyncHeartbeat = on }
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).

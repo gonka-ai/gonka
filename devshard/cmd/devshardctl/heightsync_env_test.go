@@ -115,6 +115,20 @@ func TestParseUintEnv(t *testing.T) {
 	require.Equal(t, uint64(10), v)
 }
 
+func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
+	t.Setenv(envHeightSyncHeartbeat, "")
+	require.False(t, heightSyncHeartbeatFromEnv())
+
+	for _, v := range []string{"true", "1", "on", "TRUE", " On "} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.True(t, heightSyncHeartbeatFromEnv(), v)
+	}
+	for _, v := range []string{"false", "0", "off", "no", "yes", "maybe", "TRUEISH"} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.False(t, heightSyncHeartbeatFromEnv(), v)
+	}
+}
+
 func TestGatewayChainOracle_FlagValues(t *testing.T) {
 	t.Setenv(envGatewayChainOracle, "")
 	require.False(t, gatewayChainOracleFromEnv())

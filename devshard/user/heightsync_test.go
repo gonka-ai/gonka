@@ -324,6 +324,21 @@ func heightAcksInDiffs(diffs []types.Diff) []*types.MsgHeightAck {
 	return out
 }
 
+func TestHeartbeat_DisabledSkipsSpan(t *testing.T) {
+	var height uint64 = 100
+	session := setupBlindHeartbeatSession(t, &height, WithDisableHeightSyncHeartbeat(true))
+	t.Cleanup(func() { _ = session.Close() })
+	base := session.Nonce()
+
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	require.Empty(t, heartbeatDiffsAfter(seenDiffs(session), base))
+
+	session.StartHeartbeatLoop()
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, base, session.Nonce())
+	require.Nil(t, session.heartbeatStop)
+}
+
 func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 	var height uint64 = 100
 	session := setupHeartbeatSession(t, &height)
