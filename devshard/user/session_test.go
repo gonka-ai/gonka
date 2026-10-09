@@ -2685,3 +2685,30 @@ func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *type
 	}
 	return nil
 }
+
+// Test flow:
+//  1. Hold the session lock that guards nonceStates, as PrepareInference and the outcome prune do while writing it.
+//  2. Ask for a timeout deadline from another goroutine: it must wait for the lock instead of reading the map.
+//  3. Release the lock: the deadline is returned.
+func TestSession_TimeoutDeadlineWaitsForTheSessionLock(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	deadlineReturned := make(chan struct{})
+	isDeadlineReturned := func() bool {
+		select {
+		case <-deadlineReturned:
+			return true
+		default:
+			return false
+		}
+	}
+
+	session.mu.Lock()
+	go func() {
+		session.TimeoutDeadline(1, time.Now())
+		close(deadlineReturned)
+	}()
+	require.Never(t, isDeadlineReturned, 100*time.Millisecond, 5*time.Millisecond, "TimeoutDeadline read nonceStates without the session lock")
+	session.mu.Unlock()
+
+	require.Eventually(t, isDeadlineReturned, time.Second, 5*time.Millisecond)
+}

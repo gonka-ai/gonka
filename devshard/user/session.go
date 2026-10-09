@@ -3370,6 +3370,8 @@ func (s *Session) refusalDeadlineUnreachable(reason types.TimeoutReason, payload
 }
 
 func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	cfg := s.sm.Config()
 	executionFrom := func(confirmedAt int64) (string, time.Time) {
 		return "execution", time.Unix(confirmedAt, 0).Add(
