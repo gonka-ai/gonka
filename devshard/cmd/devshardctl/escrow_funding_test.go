@@ -104,7 +104,7 @@ func TestChatRequestCostReportsOverflowInsteadOfWrapping(t *testing.T) {
 func TestEscrowCannotFundARequestPricedBeyondUint64(t *testing.T) {
 	escrowRuntime := fundingTestRuntime(t, "6", 1_000_000)
 
-	require.False(t, escrowCanFund(escrowRuntime, chatRequestCost{inputLengthBytes: 1 << 63, maxTokens: 1 << 63}))
+	require.False(t, escrowCanFundAttempts(escrowRuntime, chatRequestCost{inputLengthBytes: 1 << 63, maxTokens: 1 << 63}, 1))
 }
 
 // applyStartInferenceWithBalance runs the priced request against a real escrow funded with balance,

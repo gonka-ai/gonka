@@ -1150,3 +1150,136 @@ func TestHeartbeat_LogResidentStampsNeedDistinctExecutors(t *testing.T) {
 	session.observeTurnLocked(types.Diff{Nonce: 3, Txs: []*types.DevshardTx{stampedConfirmTx(2, 100)}})
 	require.Equal(t, 1, session.heartbeat.Turnovers())
 }
+
+func setupHeartbeatSessionWithProbedHosts(t *testing.T, now *time.Time) (*Session, []*spanProbeClient) {
+	t.Helper()
+	var height uint64 = 100
+	session := setupBlindHeartbeatSession(t, &height, WithHeartbeatClock(func() time.Time { return *now }))
+	t.Cleanup(func() { _ = session.Close() })
+	probes := make([]*spanProbeClient, len(session.Clients()))
+	for hostIdx, client := range session.Clients() {
+		inner, ok := client.(*InProcessClient)
+		require.True(t, ok)
+		probes[hostIdx] = &spanProbeClient{inner: inner, calls: &atomic.Int32{}}
+		session.Clients()[hostIdx] = probes[hostIdx]
+	}
+	return session, probes
+}
+
+// Test flow:
+//  1. Build a session on a fixed clock whose host 1 refuses every send.
+//  2. Send to host 1 twice: both attempts reach the host.
+//  3. Send a third time at the same instant: the host is skipped.
+//  4. Advance the clock by one heartbeat interval: the host is tried again.
+func TestHeartbeat_RepeatedSendFailureBacksOffTheHost(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	probes[1].fail = errors.New("injected host failure")
+	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(2), probes[1].calls.Load())
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(2), probes[1].calls.Load(), "sendComposedDiff after two failures reached the host %d times, want 2", probes[1].calls.Load())
+
+	now = now.Add(session.heartbeat.Config().Interval)
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(3), probes[1].calls.Load(), "sendComposedDiff after the back-off reached the host %d times, want 3", probes[1].calls.Load())
+}
+
+// Test flow:
+//  1. Build a session on a fixed clock whose host 1 refuses every send.
+//  2. Fail two sends so the host is backed off, then advance the clock past it.
+//  3. Let the host answer one send.
+//  4. Fail again and send once more at the same instant: the host is still tried.
+func TestHeartbeat_AnsweringHostClearsTheBackoff(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	hostFailure := errors.New("injected host failure")
+	probes[1].fail = hostFailure
+	item := composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	now = now.Add(session.heartbeat.Config().Interval)
+
+	probes[1].fail = nil
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(3), probes[1].calls.Load())
+
+	probes[1].fail = hostFailure
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.NoError(t, session.sendComposedDiff(context.Background(), item))
+	require.Equal(t, int32(5), probes[1].calls.Load(), "sendComposedDiff after an answer and one failure reached the host %d times, want 5", probes[1].calls.Load())
+}
+
+// Test flow:
+//  1. Build a session on a fixed clock whose host 1 refuses every send.
+//  2. Send to every host once per heartbeat interval for twenty intervals.
+//  3. Hosts 0 and 2 are sent every heartbeat; host 1 only at back-off ends of 1, 2, 4, 8, 8 intervals.
+func TestHeartbeat_BackoffSkipsOnlyTheFailingHost(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	probes[1].fail = errors.New("injected host failure")
+	interval := session.heartbeat.Config().Interval
+	var failingHostTicks []int
+
+	for tick := range 20 {
+		for hostIdx := range probes {
+			before := probes[hostIdx].calls.Load()
+			require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: hostIdx}))
+			if hostIdx == 1 && probes[hostIdx].calls.Load() > before {
+				failingHostTicks = append(failingHostTicks, tick)
+			}
+		}
+		now = now.Add(interval)
+	}
+
+	require.Equal(t, int32(20), probes[0].calls.Load(), "healthy host 0 was sent %d heartbeats, want 20", probes[0].calls.Load())
+	require.Equal(t, int32(20), probes[2].calls.Load(), "healthy host 2 was sent %d heartbeats, want 20", probes[2].calls.Load())
+	require.Equal(t, []int{0, 1, 2, 4, 8, 16}, failingHostTicks, "failing host was tried at ticks %v, want [0 1 2 4 8 16]", failingHostTicks)
+}
+
+// Test flow:
+//  1. Ask for the back-off after one to seven consecutive failures.
+//  2. The first failure is not backed off; then one, two, four and eight intervals, capped at eight.
+func TestHeartbeatBackoff_DoublesUpToEightIntervals(t *testing.T) {
+	interval := 12 * time.Second
+	want := []time.Duration{0, interval, 2 * interval, 4 * interval, 8 * interval, 8 * interval, 8 * interval}
+
+	for failures := 1; failures <= len(want); failures++ {
+		got := heartbeatBackoff(failures, interval)
+		require.Equal(t, want[failures-1], got, "heartbeatBackoff(%d, %s) = %s, want %s", failures, interval, got, want[failures-1])
+	}
+	require.Equal(t, 8*interval, heartbeatBackoff(1_000_000, interval), "heartbeatBackoff(1000000) must stay at the cap")
+}
+
+type deadlineProbeClient struct {
+	*spanProbeClient
+	sendBudget time.Duration
+}
+
+func (c *deadlineProbeClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.sendBudget = time.Until(deadline)
+	}
+	return c.spanProbeClient.Send(ctx, req, stream, receiptHandler)
+}
+
+// Test flow:
+//  1. Build a session whose host 1 records the deadline of the context it is sent on.
+//  2. Send host 1 a heartbeat on a context without a deadline.
+//  3. The send carries a deadline of at most heartbeatSendTimeout, well under the heartbeat interval.
+func TestHeartbeat_SendIsBoundedByTheHeartbeatSendTimeout(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	session, probes := setupHeartbeatSessionWithProbedHosts(t, &now)
+	recorder := &deadlineProbeClient{spanProbeClient: probes[1]}
+	session.Clients()[1] = recorder
+
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 1}))
+
+	require.Positive(t, recorder.sendBudget, "heartbeat send carried no deadline")
+	require.LessOrEqual(t, recorder.sendBudget, heartbeatSendTimeout)
+	require.Less(t, heartbeatSendTimeout, session.heartbeat.Config().Interval)
+}

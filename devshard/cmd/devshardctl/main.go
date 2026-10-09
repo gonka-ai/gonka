@@ -454,7 +454,8 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
-	accountingTracker := openAccountingTracker(baseStorageDir)
+	retentionEpochs := accountingRetentionEpochs()
+	accountingTracker := openAccountingTracker(baseStorageDir, retentionEpochs)
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,
@@ -473,6 +474,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
+	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
 	return gateway

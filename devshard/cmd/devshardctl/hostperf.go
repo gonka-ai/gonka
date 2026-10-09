@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"log"
 	"math"
 	"sort"
@@ -107,16 +108,25 @@ func (r *hostRing) all() []RequestSample {
 	if r.count == 0 || len(r.samples) == 0 {
 		return nil
 	}
-	out := make([]RequestSample, r.count)
-	for i := 0; i < r.count; i++ {
-		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
-		out[i] = r.samples[idx]
+	out := make([]RequestSample, 0, r.count)
+	for sample := range r.oldestFirst() {
+		out = append(out, sample)
 	}
 	return out
 }
 
+func (r *hostRing) oldestFirst() iter.Seq[RequestSample] {
+	return func(yield func(RequestSample) bool) {
+		for i := 0; i < r.count; i++ {
+			if !yield(r.samples[(r.pos-r.count+i+len(r.samples))%len(r.samples)]) {
+				return
+			}
+		}
+	}
+}
+
 func (r *hostRing) hasHostIdx(hostIdx int) bool {
-	for _, sample := range r.all() {
+	for sample := range r.oldestFirst() {
 		if sample.HostIdx == hostIdx {
 			return true
 		}
@@ -153,27 +163,27 @@ func (r *hostRing) stats(participantKey string, hostIdx int, windowStart time.Ti
 	var receiptN, cttflN, totalN int
 	var total int
 
-	for _, s := range r.all() {
-		if !windowStart.IsZero() && s.SendTime.Before(windowStart) {
+	for sample := range r.oldestFirst() {
+		if !windowStart.IsZero() && sample.SendTime.Before(windowStart) {
 			continue
 		}
 		total++
-		if s.HostIdx >= 0 {
-			base.HostIdx = s.HostIdx
+		if sample.HostIdx >= 0 {
+			base.HostIdx = sample.HostIdx
 		}
-		if s.Responsive {
+		if sample.Responsive {
 			responsive++
 		}
-		if rm := s.ReceiptMs(); rm > 0 {
-			receiptSum += rm
+		if receiptMs := sample.ReceiptMs(); receiptMs > 0 {
+			receiptSum += receiptMs
 			receiptN++
 		}
-		if c := s.CTTFL(); c > 0 && !math.IsNaN(c) && !math.IsInf(c, 0) {
-			cttflSum += c
+		if cttfl := sample.CTTFL(); cttfl > 0 && !math.IsNaN(cttfl) && !math.IsInf(cttfl, 0) {
+			cttflSum += cttfl
 			cttflN++
 		}
-		if s.TotalTime > 0 {
-			totalSum += float64(s.TotalTime.Milliseconds())
+		if sample.TotalTime > 0 {
+			totalSum += float64(sample.TotalTime.Milliseconds())
 			totalN++
 		}
 	}

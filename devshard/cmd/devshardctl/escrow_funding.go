@@ -42,7 +42,8 @@ func (cost chatRequestCost) startChargeOn(config types.SessionConfig) (uint64, e
 	return reserved + config.FeePerNonce, nil
 }
 
-func escrowCanFund(rt *devshardRuntime, cost chatRequestCost) bool {
+// escrowCanFundAttempts reports whether the balance covers attempts start charges of the request.
+func escrowCanFundAttempts(rt *devshardRuntime, cost chatRequestCost, attempts uint64) bool {
 	if rt == nil || rt.proxy == nil || rt.proxy.sm == nil {
 		return true
 	}
@@ -50,7 +51,7 @@ func escrowCanFund(rt *devshardRuntime, cost chatRequestCost) bool {
 	if err != nil {
 		return false
 	}
-	return rt.proxy.sm.Balance() >= charge
+	return rt.proxy.sm.Balance()/max(attempts, 1) >= charge
 }
 
 const escrowFundingDenom = "ngonka"

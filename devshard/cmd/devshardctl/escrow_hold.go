@@ -35,12 +35,14 @@ func (inFlight *keyedInFlight) enter(key string) (leave func(), entered bool) {
 
 const escrowHoldReleaseResponses = 32
 
-func servingEscrowsNeededForHolds(heldCount int) int {
-	return (heldCount + 1) / 2
+// escrowMinimumBalance is the balance under which an escrow is replaced: one full-context request of its model, never under balanceMinimumThreshold.
+// A reservation counts the prompt in bytes (InputLength is len(body)), so the context limit in tokens is scaled by the approximate estimatedPromptBytesPerToken.
+func escrowMinimumBalance(modelID string, config types.SessionConfig) uint64 {
+	return max(balanceMinimumThreshold, modelContextLimits[modelID]*estimatedPromptBytesPerToken*config.TokenPrice)
 }
 
-func escrowHoldReleaseBalance(config types.SessionConfig) uint64 {
-	return balanceMinimumThreshold + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
+func escrowHoldReleaseBalance(modelID string, config types.SessionConfig) uint64 {
+	return escrowMinimumBalance(modelID, config) + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
 }
 
 func escrowHoldPendingWindow(config types.SessionConfig) time.Duration {
@@ -125,7 +127,7 @@ func (g *Gateway) holdOrReplaceDepletedEscrow(runtime *devshardRuntime, reason s
 	}
 	state := runtime.proxy.sm.SnapshotState()
 	recoverable := summarizeEscrowHoldInFlight(state.Inferences, state.Config, time.Now()).recoverable(runtime.escrowHasBackgroundWork())
-	releaseBalance := escrowHoldReleaseBalance(state.Config)
+	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	if state.Balance+recoverable < releaseBalance || !g.canReplaceEscrowModel(runtime.model) {
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, reason)
 		return
@@ -158,7 +160,7 @@ func (g *Gateway) resolveHeldEscrow(runtime *devshardRuntime, now time.Time) {
 	state := runtime.proxy.sm.SnapshotState()
 	summary := summarizeEscrowHoldInFlight(state.Inferences, state.Config, now)
 	recoverable := summary.recoverable(runtime.escrowHasBackgroundWork())
-	releaseBalance := escrowHoldReleaseBalance(state.Config)
+	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	switch {
 	case state.Balance >= releaseBalance:
 		g.releaseEscrowHold(runtime, "balance_recovered")
@@ -258,7 +260,7 @@ func (g *Gateway) topUpServingEscrows(ctx context.Context, modelID string) error
 	if err != nil {
 		return fmt.Errorf("count escrows for held model: %w", err)
 	}
-	missingCount := max(servingEscrowsNeededForHolds(heldCount)-servingCount, rotationTargetForRole(model, role)-unheldCount)
+	missingCount := rotationTargetForRole(model, role) - unheldCount
 	if heldCount == 0 || missingCount <= 0 || g.rotationCreateGated(modelID, role) {
 		return nil
 	}

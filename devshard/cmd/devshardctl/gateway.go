@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"net/http"
@@ -38,6 +39,7 @@ import (
 
 const (
 	modelUnavailableRetryAfterSeconds = "10"
+	estimatedPromptBytesPerToken      = 4
 )
 
 type RuntimeConfig struct {
@@ -66,6 +68,7 @@ type Gateway struct {
 	store                        *GatewayStore
 	perf                         *PerfTracker
 	perfStore                    *PerfStore
+	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
 	apiKeys                      map[string]struct{}
@@ -77,6 +80,7 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
+	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
 	maxNonce                     devshardpkg.MaxNonceProvider
@@ -781,7 +785,7 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
 		status.Phase = sessionPhaseLabel(phase)
-		st := rt.proxy.sm.SnapshotState()
+		st := rt.proxy.sm.SnapshotStateNoInferences()
 		status.Nonce = rt.proxy.session.Nonce()
 		status.Balance = st.Balance
 		status.SessionVersion = st.StateRootAndProtocolVersion
@@ -1005,9 +1009,9 @@ func (g *Gateway) checkBalances() {
 		}
 		if rt.holdSince.Load() != 0 {
 			g.resolveHeldEscrow(rt, now)
-		} else if balance := rt.proxy.sm.Balance(); balance < balanceMinimumThreshold {
+		} else if balance, threshold := rt.proxy.sm.Balance(), escrowMinimumBalance(rt.model, rt.proxy.sm.Config()); balance < threshold {
 			log.Printf("escrow_balance_low escrow=%s balance=%d threshold=%d — holding or replacing",
-				rt.id, balance, balanceMinimumThreshold)
+				rt.id, balance, threshold)
 			g.holdOrReplaceDepletedEscrow(rt, "low_balance")
 			continue
 		}
@@ -1436,6 +1440,9 @@ func (g *Gateway) Close() error {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
+	}
+	if g.perfPruner != nil {
+		g.perfPruner.stopAndWait()
 	}
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
@@ -2181,16 +2188,14 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 		}
 		candidates = matching
 	}
-
-	affordable := make([]*devshardRuntime, 0, len(candidates))
-	for _, rt := range candidates {
-		if !escrowCanFund(rt, cost) {
-			continue
-		}
-		affordable = append(affordable, rt)
-	}
+	affordable := runtimesFundingAttempts(candidates, cost, 1)
 	if len(affordable) == 0 {
 		return nil, &EscrowsCannotFundRequestError{EscrowsRefused: len(candidates), wrapped: types.ErrRequestExceedsBalance}
+	}
+	if attempts := escrowAttemptsFundedPerRequest(); attempts > 1 {
+		if fundingEveryAttempt := runtimesFundingAttempts(affordable, cost, attempts); g.hasRuntimeWithCapacity(fundingEveryAttempt, requestModel) {
+			affordable = fundingEveryAttempt
+		}
 	}
 
 	bestScore := g.runtimeLoad(affordable[0], requestModel)
@@ -2234,6 +2239,33 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 		g.metrics.RecordPickerChoice(chosen.id, chosen.model)
 	}
 	return chosen, nil
+}
+
+// escrowAttemptsFundedPerRequest is how many nonces of one request an escrow should afford to be preferred; a whole-group cap (0) funds DefaultMaxSpeculativeAttempts.
+func escrowAttemptsFundedPerRequest() uint64 {
+	if attempts := CurrentMaxSpeculativeAttempts(); attempts > 0 {
+		return uint64(attempts)
+	}
+	return DefaultMaxSpeculativeAttempts
+}
+
+func (g *Gateway) hasRuntimeWithCapacity(runtimes []*devshardRuntime, requestModel string) bool {
+	for _, rt := range runtimes {
+		if !math.IsInf(g.runtimeLoad(rt, requestModel), +1) {
+			return true
+		}
+	}
+	return false
+}
+
+func runtimesFundingAttempts(runtimes []*devshardRuntime, cost chatRequestCost, attempts uint64) []*devshardRuntime {
+	var funded []*devshardRuntime
+	for _, rt := range runtimes {
+		if escrowCanFundAttempts(rt, cost, attempts) {
+			funded = append(funded, rt)
+		}
+	}
+	return funded
 }
 
 func runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32) bool {
@@ -2645,7 +2677,7 @@ func estimatePromptTokens(body []byte) int64 {
 		return 1
 	}
 	// Approximate tokenizer: 1 token ~= 4 bytes. Good enough for admission control.
-	estimate := (len(body) + 3) / 4
+	estimate := (len(body) + estimatedPromptBytesPerToken - 1) / estimatedPromptBytesPerToken
 	if estimate < 1 {
 		estimate = 1
 	}
@@ -4511,6 +4543,55 @@ func (g *Gateway) retireExpiredEpochEscrows() {
 			e.id, e.creationEpoch, current, cutoff)
 		g.deactivateDevshardByIDWithReason(e.id, epochRetentionRetireReason)
 		g.retireRuntime(e.id, epochRetentionRetireReason)
+	}
+
+	if cutoff > g.prunedStorageCutoff.Swap(cutoff) {
+		g.removeExpiredEpochStorage(cutoff)
+	}
+}
+
+// removeExpiredEpochStorage deletes unowned, settled registry session dirs whose newest epoch file is below cutoff.
+func (g *Gateway) removeExpiredEpochStorage(cutoff uint64) {
+	if g.store == nil {
+		return
+	}
+	state, _, err := g.store.LoadState()
+	if err != nil {
+		log.Printf("escrow_storage_prune_failed stage=load_registry error=%v", err)
+		return
+	}
+
+	g.mu.Lock()
+	registeredIDs := make(map[string]struct{}, len(g.runtimes))
+	for id := range g.runtimes {
+		registeredIDs[id] = struct{}{}
+	}
+	g.mu.Unlock()
+
+	for _, devshard := range state.Devshards {
+		storageDir := normalizeStorageDir(devshard.StoragePath)
+		if devshard.SettlementPending || storageDir == "" {
+			continue
+		}
+		newestEpoch, hasEpochFiles, err := storage.NewestSQLiteEpoch(storageDir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			log.Printf("escrow_storage_prune_failed escrow=%s dir=%s error=%v", devshard.ID, storageDir, err)
+			continue
+		}
+		if !hasEpochFiles || newestEpoch >= cutoff {
+			continue
+		}
+		if _, isRegistered := registeredIDs[devshard.ID]; isRegistered {
+			continue
+		}
+		if err := removeDevshardStorage(storageDir, g.baseStorageDir); err != nil {
+			log.Printf("escrow_storage_prune_failed escrow=%s dir=%s error=%v", devshard.ID, storageDir, err)
+			continue
+		}
+		log.Printf("escrow_storage_pruned escrow=%s dir=%s newest_epoch=%d cutoff=%d", devshard.ID, storageDir, newestEpoch, cutoff)
 	}
 }
 

@@ -302,6 +302,9 @@ type Session struct {
 	// open turn. The heartbeat cadence is wall clock, so the producer does not
 	// wait for a block tick to collect acks.
 	heartbeatFlushLeft int
+	// heartbeatSendFailures and heartbeatRetryAt back a host off heartbeat sends while it keeps failing.
+	heartbeatSendFailures []int
+	heartbeatRetryAt      []time.Time
 	// clock drives the heartbeat cadence and is injectable for tests. It is
 	// never written into Diff: turn records stay clock-free.
 	clock func() time.Time
@@ -515,6 +518,8 @@ func NewSession(
 	cfg := sess.heartbeat.Config()
 	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, cfg)
 	sess.lastContact = make([]time.Time, len(group))
+	sess.heartbeatSendFailures = make([]int, len(group))
+	sess.heartbeatRetryAt = make([]time.Time, len(group))
 	sess.lastPeerSeen = make(map[uint32][]byte)
 	sess.lastSyncState = make(map[uint32]string)
 	sess.anchors = heightsync.NewAnchorTally(cfg.AckDeadlineBlocks, 0)

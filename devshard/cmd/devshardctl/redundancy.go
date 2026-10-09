@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +35,12 @@ import (
 // offending host is recorded as non-responsive in the local PerfTracker.
 var errEmptyStream = errors.New("empty content stream")
 
+// errAttemptPanicked marks an attempt whose goroutine panicked while sending to
+// or parsing the response of its host. The goroutine runs the host's streamed
+// bytes through the response classifiers, so a parser bug reachable from host
+// input must fail that one attempt rather than terminate the gateway process.
+var errAttemptPanicked = errors.New("attempt panicked")
+
 // Fail-closed when every attempted host receipts (or never receipts) and none
 // produce a first token, with no unused host left to start. Always-stream
 // first-token / receipt timers are failover triggers; at the attempt limit they
@@ -51,6 +58,8 @@ var (
 	InterChunkStallLogThreshold = 30 * time.Second
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
+
+const DefaultMaxSpeculativeAttempts = 2
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
@@ -494,7 +503,11 @@ func normalizeRedundancySpeedPolicy(policy string) string {
 	}
 }
 
-var maxSpeculativeAttempts atomic.Int64
+var maxSpeculativeAttempts = func() *atomic.Int64 {
+	attempts := new(atomic.Int64)
+	attempts.Store(DefaultMaxSpeculativeAttempts)
+	return attempts
+}()
 
 func SetMaxSpeculativeAttempts(v int) {
 	maxSpeculativeAttempts.Store(int64(v))
@@ -2119,6 +2132,17 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer cancel()
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
+		// Registered last so it runs first: inf.err must be set before done closes.
+		defer func() {
+			if r := recover(); r != nil {
+				inf.err = fmt.Errorf("%w: %v", errAttemptPanicked, r)
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "attempt_panicked",
+					"host", inf.hostID,
+					"panic", fmt.Sprint(r),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
@@ -3931,7 +3955,7 @@ func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bo
 	if modelContextLimit == 0 || hostContextLimit == 0 {
 		return false
 	}
-	return hostContextLimit >= modelContextLimit || parseContextTotalRequested(message) > modelContextLimit
+	return hostContextLimit >= modelContextLimit || max(parseContextTotalRequested(message), parseContextRequested(message)) > modelContextLimit
 }
 
 func isToolChoiceCapabilityError(msg string) bool {
@@ -3965,17 +3989,25 @@ func parseContextTotalRequested(msg string) uint64 {
 	return parseUintAfterMarker(msg, "for a total of at least ")
 }
 
+func parseContextRequested(msg string) uint64 {
+	return parseUintAfterMarker(msg, "you requested ")
+}
+
 func parseUintAfterMarker(msg, marker string) uint64 {
 	lower := strings.ToLower(msg)
 	idx := strings.Index(lower, marker)
 	if idx < 0 {
 		return 0
 	}
-	rest := msg[idx+len(marker):]
+	// Slice lower, where idx is valid: ToLower can lengthen the string (e.g. U+023A), so idx may exceed len(msg) and msg[idx:] would panic; digits are ASCII-identical in lower.
+	rest := lower[idx+len(marker):]
 	end := strings.IndexFunc(rest, func(r rune) bool {
 		return r < '0' || r > '9'
 	})
-	if end <= 0 {
+	if end < 0 {
+		end = len(rest)
+	}
+	if end == 0 {
 		return 0
 	}
 	n, err := strconv.ParseUint(rest[:end], 10, 64)

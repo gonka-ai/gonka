@@ -499,6 +499,12 @@ func TestContextRefusalBeyondModelLimit(t *testing.T) {
 			want:              false,
 		},
 		{
+			name:              "smaller_host_with_a_request_beyond_the_model_limit",
+			modelContextLimit: 400000,
+			message:           "This model's maximum context length is 131072 tokens. However, you requested 1000000 tokens.",
+			want:              true,
+		},
+		{
 			name:              "model_without_a_known_limit",
 			modelContextLimit: 0,
 			message:           "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.",
@@ -591,28 +597,40 @@ func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *tes
 // Test flow:
 // 1. Every host of a three-host group refuses a DeepSeek prompt as longer than its context.
 // 2. Run one inference for that model, whose context limit is 400000 tokens.
-// 3. A refusal from a host at the model limit stops at the first host; one from a smaller host still moves on.
+// 3. A refusal from a host at the model limit stops at the first host; one from a smaller host still moves on, across the whole group when the cap allows it and to one more host under the default cap.
 func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
 	testCases := []struct {
 		name             string
 		message          string
+		isWholeGroup     bool
 		wantHostRequests int32
 	}{
 		{
 			name:             "host_already_serves_the_model_limit",
 			message:          "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.",
+			isWholeGroup:     true,
 			wantHostRequests: 1,
 		},
 		{
 			name:             "a_host_with_the_model_limit_could_still_serve_it",
 			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     true,
 			wantHostRequests: 3,
+		},
+		{
+			name:             "the_default_cap_tries_one_more_host",
+			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     false,
+			wantHostRequests: DefaultMaxSpeculativeAttempts,
 		},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 			zeroReceiptTimeout(t)
+			if testCase.isWholeGroup {
+				allowSpeculativeAttemptsOnWholeGroup(t)
+			}
 			env := setupTestProxy(t, 3, nil, true)
 			var hostRequests atomic.Int32
 			for _, killable := range env.killables {
