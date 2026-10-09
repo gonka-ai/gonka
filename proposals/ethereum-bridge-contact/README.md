@@ -77,6 +77,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         WITHDRAW_OPERATION,  // keccak256("WITHDRAW_OPERATION")
         recipient,
+        address(this),       // Destination bridge contract address
         tokenContract,
         amount
     )
@@ -112,6 +113,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         MINT_OPERATION,  // keccak256("MINT_OPERATION")
         recipient,
+        address(this),    // Destination bridge contract address
         amount
     )
 );
