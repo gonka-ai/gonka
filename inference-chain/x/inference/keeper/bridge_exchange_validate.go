@@ -155,7 +155,7 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			ProposedTx:       proposedTx,
 			ExistingTx:       existingTx,
 			ValidatorPower:   validatorPower,
-			TotalEpochPower:  epochGroup.GroupData.TotalWeight,
+			TotalEpochPower:  liveGroupWeight(epochGroupMembers),
 			IsCreate:         false,
 			EpochIndex:       existingTx.EpochIndex,
 		}, nil
@@ -185,10 +185,27 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		ProposedTx:       proposedTx,
 		ExistingTx:       nil,
 		ValidatorPower:   validatorPower,
-		TotalEpochPower:  currentEpochGroup.GroupData.TotalWeight,
+		TotalEpochPower:  liveGroupWeight(currentEpochMembers),
 		IsCreate:         true,
 		EpochIndex:       currentEpochGroup.GroupData.EpochIndex,
 	}, nil
+}
+
+// liveGroupWeight sums the x/group weights of the members still in the group.
+// GroupData.TotalWeight is fixed at epoch start; removed members no longer count.
+func liveGroupWeight(members []*group.GroupMember) int64 {
+	var total int64
+	for _, member := range members {
+		if member == nil || member.Member == nil {
+			continue
+		}
+		weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+		if err != nil {
+			continue
+		}
+		total += weight
+	}
+	return total
 }
 
 func memberPowerInGroup(addr sdk.AccAddress, members []*group.GroupMember) (int64, bool) {
