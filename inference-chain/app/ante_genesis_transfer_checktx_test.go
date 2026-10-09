@@ -117,3 +117,28 @@ func TestGenesisTransfer_CheckTx_RejectsInsideMsgExec(t *testing.T) {
 	_, resp := signCheckTx(t, f, []sdk.Msg{exec}, f.granter, f.granterKey)
 	require.Equal(t, genesistransfertypes.ErrNotInAllowedList.ABCICode(), resp.Code, resp.Log)
 }
+
+// An account that is both outside allowed_accounts and already transferred
+// gets the handler's error: ValidateTransfer checks the record first.
+func TestGenesisTransfer_CheckTx_AlreadyTransferredWinsOverAllowList(t *testing.T) {
+	f := setupMsgExecCheckTx(t, false)
+	setGenesisTransferAllowList(t, f, f.grantee.String())
+	ctx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	require.NoError(t, f.testApp.GenesistransferKeeper.SetTransferRecord(ctx, genesistransfertypes.TransferRecord{
+		GenesisAddress:   f.granter.String(),
+		RecipientAddress: f.grantee.String(),
+		TransferHeight:   1,
+		Completed:        true,
+	}))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{Height: f.testApp.LastBlockHeight() + 1, Time: time.Now().UTC()})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	_, resp := signCheckTx(t, f, []sdk.Msg{transferOwnershipMsg(f.granter)}, f.granter, f.granterKey)
+	require.Equal(t, genesistransfertypes.ErrAlreadyTransferred.ABCICode(), resp.Code, resp.Log)
+}

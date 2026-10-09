@@ -23,9 +23,10 @@ type GenesisTransferChecker interface {
 // allowed_accounts while restrict_to_list is on, or an account that has already
 // transferred.
 //
-// Only those two checks run here. The handler's balance check is left to
-// DeliverTx: CheckTx state does not see funds arriving from txs still in the
-// mempool, so checking it here could reject a tx the block would accept.
+// Only those two checks run here, in the handler's order. The handler's
+// balance check is left to DeliverTx: CheckTx state does not see funds arriving
+// from txs still in the mempool, so checking it here could reject a tx the
+// block would accept.
 //
 // CheckTx-only, like BridgeExchangeEarlyRejectDecorator: DeliverTx runs the
 // handler unchanged. Messages inside MsgExec are checked too, unwrapped the same
@@ -53,10 +54,7 @@ func (d GenesisTransferEarlyRejectDecorator) AnteHandle(ctx sdk.Context, tx sdk.
 		if !ok {
 			continue
 		}
-		if !d.checker.IsTransferableAccount(ctx, m.GenesisAddress) {
-			return ctx, genesistransfertypes.ErrNotInAllowedList.Wrapf(
-				"genesis account %s is not in the allowed accounts whitelist", m.GenesisAddress)
-		}
+		// The two checks run in ValidateTransfer's order.
 		genesisAddr, err := sdk.AccAddressFromBech32(m.GenesisAddress)
 		if err != nil {
 			return ctx, err
@@ -69,6 +67,10 @@ func (d GenesisTransferEarlyRejectDecorator) AnteHandle(ctx sdk.Context, tx sdk.
 			return ctx, genesistransfertypes.ErrAlreadyTransferred.Wrapf(
 				"genesis account %s has already been transferred to %s at height %d",
 				m.GenesisAddress, record.RecipientAddress, record.TransferHeight)
+		}
+		if !d.checker.IsTransferableAccount(ctx, m.GenesisAddress) {
+			return ctx, genesistransfertypes.ErrNotInAllowedList.Wrapf(
+				"genesis account %s is not in the allowed accounts whitelist", m.GenesisAddress)
 		}
 	}
 	return next(ctx, tx, simulate)
