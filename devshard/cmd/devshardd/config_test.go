@@ -1,6 +1,13 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"devshard/cmd/devshardd/session"
+)
 
 func TestValidateBinaryLogVersion(t *testing.T) {
 	t.Parallel()
@@ -34,6 +41,134 @@ func TestValidateBinaryLogVersion(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("got %q, want %q", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestEnvBoolOrUsesDevshardBooleanGrammar(t *testing.T) {
+	const key = "TEST_DEVSHARD_BOOL"
+
+	t.Setenv(key, "on")
+	if !envBoolOr(key, false) {
+		t.Fatal("on must enable the setting")
+	}
+
+	t.Setenv(key, "f")
+	if envBoolOr(key, true) {
+		t.Fatal("f must disable the setting")
+	}
+
+	t.Setenv(key, "")
+	if !envBoolOr(key, true) {
+		t.Fatal("empty value must preserve the caller fallback")
+	}
+
+	t.Setenv(key, "invalid")
+	if !envBoolOr(key, true) {
+		t.Fatal("invalid value must preserve the caller fallback")
+	}
+}
+
+func TestLoadRuntimeConfig_VoteFalseOnFetchFailureDefaultAndOverride(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  bool
+	}{
+		{name: "unset defaults on", want: true},
+		{name: "false disables", env: "false", want: false},
+		{name: "true enables", env: "true", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_VALIDATION_RETRY_INTERVAL", "")
+			t.Setenv("DEVSHARD_VALIDATION_LEASE_TTL", "")
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+			t.Setenv("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", tt.env)
+
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			if err != nil {
+				t.Fatalf("loadRuntimeConfig: %v", err)
+			}
+			if cfg.VoteFalseOnFetchFailure != tt.want {
+				t.Fatalf("VoteFalseOnFetchFailure got %v, want %v", cfg.VoteFalseOnFetchFailure, tt.want)
+			}
+			if cfg.ValidationRetryInterval != session.DefaultValidationRetryInterval {
+				t.Fatalf("ValidationRetryInterval got %s, want %s", cfg.ValidationRetryInterval, session.DefaultValidationRetryInterval)
+			}
+			if cfg.ValidationLeaseTTL != session.DefaultValidationLeaseTTL {
+				t.Fatalf("ValidationLeaseTTL got %s, want %s", cfg.ValidationLeaseTTL, session.DefaultValidationLeaseTTL)
+			}
+		})
+	}
+}
+
+func TestLoadRuntimeConfig_LogprobsOptimizationDefaultAndOverride(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  bool
+	}{
+		{name: "unset defaults on", env: "", unset: true, want: true},
+		{name: "true enables", env: "true", want: true},
+		{name: "false disables", env: "false", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_VALIDATION_RETRY_INTERVAL", "")
+			t.Setenv("DEVSHARD_VALIDATION_LEASE_TTL", "")
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+			t.Setenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED", tt.env)
+			if tt.unset {
+				require.NoError(t, os.Unsetenv("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"))
+			}
+
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			if err != nil {
+				t.Fatalf("loadRuntimeConfig: %v", err)
+			}
+			if cfg.LogprobsOptimizationEnabled != tt.want {
+				t.Fatalf("LogprobsOptimizationEnabled got %v, want %v", cfg.LogprobsOptimizationEnabled, tt.want)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Load the runtime config with DEVSHARD_PAYLOAD_ZSTD_ENABLED unset, then set to true and to false.
+//  2. Assert unset writes zstd payload files and an explicit value wins.
+func TestLoadRuntimeConfig_PayloadZstdDefaultAndOverride(t *testing.T) {
+	tests := []struct {
+		name  string
+		env   string
+		unset bool
+		want  bool
+	}{
+		{name: "unset defaults on", unset: true, want: true},
+		{name: "true enables", env: "true", want: true},
+		{name: "false disables", env: "false", want: false},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_VALIDATION_RETRY_INTERVAL", "")
+			t.Setenv("DEVSHARD_VALIDATION_LEASE_TTL", "")
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+			t.Setenv("DEVSHARD_PAYLOAD_ZSTD_ENABLED", testCase.env)
+			if testCase.unset {
+				require.NoError(t, os.Unsetenv("DEVSHARD_PAYLOAD_ZSTD_ENABLED"))
+			}
+
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, cfg.CompressPayloadFiles)
 		})
 	}
 }

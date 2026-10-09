@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"common/completionapi"
 	devshardpkg "devshard"
@@ -16,6 +15,7 @@ type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*ht
 
 type processedExecutionResponse struct {
 	responseHash []byte
+	servedHash   []byte
 	inputTokens  uint64
 	outputTokens uint64
 	responseBody []byte
@@ -28,6 +28,7 @@ func executeInference(
 	payloadEpoch uint64,
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
+	logprobsOptimizationEnabled bool,
 ) (*devshardpkg.ExecuteResult, error) {
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
@@ -43,7 +44,10 @@ func executeInference(
 	}
 	defer resp.Body.Close()
 
-	processed, err := processExecutionHTTPResponse(req, resp, inferenceID)
+	processor := completionapi.NewExecutorResponseProcessor(inferenceID, modified.AsksForLogprobs)
+	processor.SetLogprobsOptimization(req.LogprobsOptimizationOverride, logprobsOptimizationEnabled)
+
+	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, processor)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
@@ -68,6 +72,7 @@ func executeInference(
 
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: processed.responseHash,
+		ServedHash:   processed.servedHash,
 		InputTokens:  processed.inputTokens,
 		OutputTokens: processed.outputTokens,
 		ResponseBody: processed.responseBody,
@@ -78,45 +83,51 @@ func processExecutionHTTPResponse(
 	req devshardpkg.ExecuteRequest,
 	resp *http.Response,
 	inferenceID string,
+	processor *completionapi.ExecutorResponseProcessor,
 ) (*processedExecutionResponse, error) {
-	processor := completionapi.NewExecutorResponseProcessor(inferenceID)
-
-	contentType := resp.Header.Get("Content-Type")
-	isSSE := strings.HasPrefix(contentType, "text/event-stream")
+	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			return nil, fmt.Errorf("relay response: %w", err)
+		}
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
 	}
 
-	completionResp, err := processor.GetResponse()
-	if err != nil {
-		return nil, fmt.Errorf("get completion response: %w", err)
-	}
-
-	bodyBytes, err := completionResp.GetBodyBytes()
+	bodyBytes, err := processor.GetResponseBytes()
 	if err != nil {
 		return nil, fmt.Errorf("get body bytes: %w", err)
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes)
+		// The stored copy is no substitute: it carries logprobs the caller may not have asked for.
+		relayed := processor.GetForwardedJSONBytes()
+		if relayed == nil {
+			return nil, fmt.Errorf("relay response: the processor produced no forwarded body")
+		}
+		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 
+	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
-	usage, err := completionResp.GetUsage()
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("get served hash: %w", err)
+	}
+	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
 	}
 
 	return &processedExecutionResponse{
 		responseHash: hash[:],
+		servedHash:   servedHash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,

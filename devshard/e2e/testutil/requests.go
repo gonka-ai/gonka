@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,10 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+
+	"devshard/storage"
+	"devshard/types"
 )
 
 func SendCompletion(t *testing.T, client *http.Client, clientURL, content string) map[string]any {
@@ -38,9 +43,24 @@ type StreamResponse struct {
 
 func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, content string) StreamResponse {
 	t.Helper()
-	DebugLogf(t, "sending streaming completion request content=%q", content)
+	return SendStreamingBody(t, client, clientURL, ChatCompletionBody(content, true))
+}
 
-	data, err := json.Marshal(ChatCompletionBody(content, true))
+// SendStreamingCompletionWithLogprobs asks for the host's own positions, which a plain request never does.
+func SendStreamingCompletionWithLogprobs(t *testing.T, client *http.Client, clientURL, content string, topLogprobs int) StreamResponse {
+	t.Helper()
+	body := ChatCompletionBody(content, true)
+	body["logprobs"] = true
+	body["top_logprobs"] = topLogprobs
+	return SendStreamingBody(t, client, clientURL, body)
+}
+
+// SendStreamingBody streams whatever body the caller composed, for requests ChatCompletionBody cannot express.
+func SendStreamingBody(t *testing.T, client *http.Client, clientURL string, body map[string]any) StreamResponse {
+	t.Helper()
+	DebugLogf(t, "sending streaming completion request body=%v", body)
+
+	data, err := json.Marshal(body)
 	require.NoError(t, err)
 
 	req, err := http.NewRequest(http.MethodPost, clientURL+"/v1/chat/completions", strings.NewReader(string(data)))
@@ -52,9 +72,9 @@ func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, conte
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
-	body, events := readSSEEvents(t, resp.Body)
-	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), body)
-	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, body)
+	rawBody, events := readSSEEvents(t, resp.Body)
+	DebugLogf(t, "streaming completion status=%d content_type=%q body=%s", resp.StatusCode, resp.Header.Get("Content-Type"), rawBody)
+	require.Less(t, resp.StatusCode, 300, "streaming completion returned %d: %s", resp.StatusCode, rawBody)
 
 	return StreamResponse{
 		ContentType: resp.Header.Get("Content-Type"),
@@ -84,6 +104,9 @@ func ChatCompletionBody(content string, stream bool) map[string]any {
 }
 
 const ToolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+// The gateway classifies a state divergence off this wording, so a stub host has to reproduce it verbatim.
+const StateRootDivergenceMessage = "apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"
 
 func ToolCompletionBody(content string, stream bool) map[string]any {
 	body := ChatCompletionBody(content, stream)
@@ -120,24 +143,59 @@ func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
 	return raw.String(), events
 }
 
+// DriveUntilValidationObserved waits until one slot appears in validated_by on
+// at least two inferences. validateAsync publishes MsgValidation after the
+// HTTP response, so each check drains host mempools with SyncHosts instead of
+// only spraying extra completions at 250ms.
 func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL string) {
 	t.Helper()
 	const maxExtraCompletions = 20
 	const validationTarget = 2
-	for attempt := 0; attempt <= maxExtraCompletions; attempt++ {
-		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
-		reached, summary := HasInferenceValidationTarget(t, state, validationTarget)
-		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
-			validationTarget, reached, summary)
+	const drainTimeout = 3 * time.Second
+	const drainInterval = 250 * time.Millisecond
+
+	for extra := 0; extra <= maxExtraCompletions; extra++ {
+		reached, summary := drainUntilInferenceValidationTarget(t, client, clientURL, validationTarget, drainTimeout, drainInterval)
 		if reached {
 			return
 		}
-		if attempt == maxExtraCompletions {
+		if extra == maxExtraCompletions {
 			t.Fatalf("no host reached at least %d completed validations before finalize after %d extra completion rounds: %s",
 				validationTarget, maxExtraCompletions, summary)
 		}
-		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", attempt+1))
-		time.Sleep(250 * time.Millisecond)
+		SendCompletion(t, client, clientURL, fmt.Sprintf("validation probe %d", extra+1))
+	}
+}
+
+func drainUntilInferenceValidationTarget(t *testing.T, client *http.Client, clientURL string, target uint64, timeout, interval time.Duration) (bool, string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	check := func() (bool, string) {
+		t.Helper()
+		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
+		reached, summary := HasInferenceValidationTarget(t, state, target)
+		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
+			target, reached, summary)
+		return reached, summary
+	}
+	for {
+		reached, summary := check()
+		if reached {
+			return true, summary
+		}
+		expired := !time.Now().Before(deadline)
+		// Compose mempool validations/finishes. The final SyncHosts after the
+		// drain window closes the hole where validateAsync published too late
+		// for the previous compose. Best-effort: a transient 500 should not
+		// abort a drain that can succeed on the next tick.
+		resp := PostJSONRaw(t, client, clientURL+"/v1/debug/sync-hosts", map[string]any{}, AdminAPIKey)
+		if resp.StatusCode >= 300 {
+			DebugLogf(t, "sync-hosts during validation drain status=%d body=%s", resp.StatusCode, resp.Body)
+		}
+		if expired {
+			return check()
+		}
+		time.Sleep(interval)
 	}
 }
 
@@ -149,12 +207,143 @@ func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uin
 	return NumericField(t, session, "latest_nonce")
 }
 
+func GetSignatureStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/debug/signatures")
+}
+
+func GetStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/status")
+}
+
+func CollectSignatures(t *testing.T, client *http.Client, clientURL string, nonce uint64) map[string]any {
+	t.Helper()
+	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", clientURL, nonce), map[string]any{})
+}
+
+type GossipNonceStatus struct {
+	Nonce      uint64
+	Seen       bool
+	StateHash  string
+	StateSig   string
+	SenderSlot uint64
+}
+
+type TimeoutInferenceTransaction struct {
+	Nonce       uint64
+	InferenceID uint64
+	Reason      types.TimeoutReason
+	VoterSlots  []uint32
+}
+
+func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	for from := uint64(1); from <= toNonce; {
+		to := from + uint64(storage.DiffPageMaxNonces) - 1
+		if to > toNonce {
+			to = toNonce
+		}
+		diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
+		if tx, found := timeoutInferenceInDiffs(t, diffs); found {
+			return tx, true
+		}
+		if to == toNonce {
+			break
+		}
+		from = to + 1
+	}
+	return TimeoutInferenceTransaction{}, false
+}
+
+func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	for _, raw := range diffs {
+		record, ok := raw.(map[string]any)
+		require.True(t, ok, "host diff record should be an object")
+		diff, ok := record["diff"].(map[string]any)
+		require.True(t, ok, "host diff record should include a diff object")
+		rawTxs, ok := diff["txs"].(string)
+		require.True(t, ok, "host diff txs should be base64")
+		txs, err := base64.StdEncoding.DecodeString(rawTxs)
+		require.NoError(t, err, "decode host diff txs")
+
+		var content types.DiffContent
+		require.NoError(t, proto.Unmarshal(txs, &content), "decode host diff content")
+		for _, tx := range content.Txs {
+			timeout := tx.GetTimeoutInference()
+			if timeout == nil {
+				continue
+			}
+			voterSlots := make([]uint32, len(timeout.Votes))
+			for i, vote := range timeout.Votes {
+				voterSlots[i] = vote.VoterSlot
+			}
+			return TimeoutInferenceTransaction{
+				Nonce:       content.Nonce,
+				InferenceID: timeout.InferenceId,
+				Reason:      timeout.Reason,
+				VoterSlots:  voterSlots,
+			}, true
+		}
+	}
+	return TimeoutInferenceTransaction{}, false
+}
+
+func InferenceStatus(t *testing.T, client *http.Client, clientURL string, inferenceID uint64) (map[string]any, bool) {
+	t.Helper()
+	state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
+	inferences, ok := state["inferences"].(map[string]any)
+	require.True(t, ok, "debug inferences should be an object")
+	inference, ok := inferences[fmt.Sprintf("%d", inferenceID)].(map[string]any)
+	return inference, ok
+}
+
+func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefix string, nonce uint64) GossipNonceStatus {
+	t.Helper()
+	status := GetJSON(t, client, fmt.Sprintf("%s%s/debug/gossip?nonce=%d", hostURL, routePrefix, nonce))
+	seen, ok := status["seen"].(bool)
+	require.True(t, ok, "gossip status seen should be a boolean")
+	return GossipNonceStatus{
+		Nonce:      NumericField(t, status, "nonce"),
+		Seen:       seen,
+		StateHash:  fmt.Sprint(status["state_hash"]),
+		StateSig:   fmt.Sprint(status["state_sig"]),
+		SenderSlot: NumericField(t, status, "sender_slot"),
+	}
+}
+
+// The gateway refuses finalize with 409 while the escrow still has work in
+// flight. Race cleanup outlives the winning completion and may wait up to
+// SecondaryWaitAfterWinner (default 5m) for speculative losers, then run
+// HandleTimeout. After an all-host restart those losers are common. Wait for
+// the drain, then finalize.
+const (
+	finalizeDrainWait = 6 * time.Minute
+	finalizeDrainPoll = 100 * time.Millisecond
+)
+
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "finalizing devshard session")
-	settlement := PostJSON(t, client, clientURL+"/v1/finalize", map[string]any{})
+	settlement := postFinalizeRetryingConflict(t, client, clientURL+"/v1/finalize")
 	settlementJSON, err := json.MarshalIndent(settlement, "", "  ")
 	require.NoError(t, err)
 	t.Logf("SettlementContract:\n%s", settlementJSON)
 	return settlement
+}
+
+func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(finalizeDrainWait)
+	for {
+		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
+		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
+			require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
+			require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
+			return resp.JSON
+		}
+		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
+		time.Sleep(finalizeDrainPoll)
+	}
 }

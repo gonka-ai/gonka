@@ -29,9 +29,9 @@ func TestAttemptSpanDispositionForWinnerAndLoser(t *testing.T) {
 	failed.err = io.EOF
 	failed.openAttemptSpan(ctx, nil, "p2")
 
-	e.recordGatewayAttemptTerminal(winner, user.InferenceParams{}, 10, true)
-	e.recordGatewayAttemptTerminal(loser, user.InferenceParams{}, 10, true)
-	e.recordGatewayAttemptTerminal(failed, user.InferenceParams{}, 10, false)
+	e.recordGatewayAttemptTerminal(winner, user.InferenceParams{}, 10, true, nil)
+	e.recordGatewayAttemptTerminal(loser, user.InferenceParams{}, 10, true, nil)
+	e.recordGatewayAttemptTerminal(failed, user.InferenceParams{}, 10, false, nil)
 	winner.endAttemptSpan()
 	loser.endAttemptSpan()
 	failed.endAttemptSpan()
@@ -134,8 +134,8 @@ func TestAttemptSpanAttributesMatchAccountingFacts(t *testing.T) {
 
 	inf := newTestInflight(7, 3, "h3")
 	inf.openAttemptSpan(ctx, nil, "participant-7")
-	e.recordGatewayAttemptStarted(inf, user.InferenceParams{Model: "llama"})
-	e.recordGatewayAttemptTerminal(inf, user.InferenceParams{Model: "llama"}, 7, true)
+	e.recordGatewayAttemptStarted(ctx, inf, user.InferenceParams{Model: "llama"})
+	e.recordGatewayAttemptTerminal(inf, user.InferenceParams{Model: "llama"}, 7, true, nil)
 	inf.endAttemptSpan()
 	req.End()
 
@@ -296,7 +296,7 @@ func TestAttemptSpanStartedCarriesDispatchPhase(t *testing.T) {
 	inf := newTestInflight(1, 0, "h0")
 	inf.sendTime = time.Now()
 	inf.openAttemptSpan(ctx, nil, "p0")
-	e.recordGatewayAttemptStarted(inf, user.InferenceParams{})
+	e.recordGatewayAttemptStarted(ctx, inf, user.InferenceParams{})
 	inf.endAttemptSpan()
 	req.End()
 

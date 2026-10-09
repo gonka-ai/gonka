@@ -3,7 +3,6 @@ package completionapi
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -11,12 +10,15 @@ import (
 	"common/logging"
 )
 
-// ForcedTopLogprobs is the top_logprobs the validator forces; must equal the devshard gateway's TopLogprobsForcedValue so executor and validator widths are comparable (H1 #3853145).
+// ForcedTopLogprobs is the width devshard pins on every executed request, so executor and validator logprobs stay comparable (H1 #3853145).
 const ForcedTopLogprobs = 5
 
 type ModifiedRequest struct {
-	NewBody []byte
+	NewBody         []byte
+	AsksForLogprobs bool
 }
+
+const MinTokensFloor = 64
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
 	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
@@ -35,18 +37,18 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 		return nil, err
 	}
 
-	originalLogprobsValue := getOriginalLogprobs(requestMap)
-	if originalLogprobsValue == nil || *originalLogprobsValue == false {
-		requestMap["logprobs"] = true
-	}
-
-	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
+	asksForLogprobs := logprobsAsked(requestMap)
+	// Pin both fields: anything the engine reads as logprobs-off leaves the inference unvalidatable.
+	requestMap["logprobs"] = true
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
-	maxTokens := getMaxTokens(requestMap)
+	EnforceTokenBudgetFloor(requestMap)
 
-	requestMap["max_tokens"] = maxTokens
-	requestMap["max_completion_tokens"] = maxTokens
+	// Only clamp when the caller asked: injecting n into a request that never
+	// carried it would change the body we sign for a broker that never set it.
+	if _, asked := requestMap["n"]; asked {
+		requestMap["n"] = 1
+	}
 	requestMap["skip_special_tokens"] = false
 	requestMap["return_token_ids"] = true
 	if _, ok := requestMap["seed"]; !ok {
@@ -80,7 +82,8 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}
 
 	return &ModifiedRequest{
-		NewBody: modifiedRequestBytes,
+		NewBody:         modifiedRequestBytes,
+		AsksForLogprobs: asksForLogprobs,
 	}, nil
 }
 
@@ -154,6 +157,33 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 	return nil
 }
 
+func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
+	maxTokens := max(getMaxTokens(requestMap), MinTokensFloor)
+	minTokens := min(max(getMinTokens(requestMap), MinTokensFloor), maxTokens)
+
+	requestMap["min_tokens"] = minTokens
+	requestMap["max_tokens"] = maxTokens
+	requestMap["max_completion_tokens"] = maxTokens
+
+	// Unsupported: min_tokens>0 makes vLLM mask stop-token logits, so an out-of-vocab id CUDA-asserts the node; the floor is always on, so drop stop_token_ids.
+	delete(requestMap, "stop_token_ids")
+}
+
+func getMinTokens(requestMap map[string]interface{}) int {
+	minTokensValue, ok := requestMap["min_tokens"]
+	if !ok {
+		return 0
+	}
+	switch value := minTokensValue.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
+}
+
 func getMaxTokens(requestMap map[string]interface{}) int {
 	if maxTokensValue, ok := requestMap["max_tokens"]; ok {
 		if maxTokensFloat, ok := maxTokensValue.(float64); ok {
@@ -185,22 +215,19 @@ func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
 	return uint64(getMaxTokens(requestMap)), nil
 }
 
-func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
-	logprobsValue, ok := requestMap["logprobs"]
-	if !ok {
-		return nil
-	}
+// MinTokensOf returns the min_tokens the request carries (0 if unset).
+func MinTokensOf(requestMap map[string]interface{}) int {
+	return getMinTokens(requestMap)
+}
 
-	if logprobsValue == nil {
-		return nil
-	}
+// LogprobsAsked reads the pair as one intent: logprobs alone names no width, and a width of zero switches them off.
+func LogprobsAsked(logprobs bool, topLogprobs float64) bool {
+	return logprobs && topLogprobs > 0
+}
 
-	if logprobsValueBool, ok := logprobsValue.(bool); ok {
-		return &logprobsValueBool
-	}
-
-	// Interpret any non-boolean value as true
-	log.Printf("Original request logprobs = %v", logprobsValue)
-	trueValue := true
-	return &trueValue
+// Only an explicit boolean asks; the forcing above then overwrites whatever the caller wrote.
+func logprobsAsked(requestMap map[string]interface{}) bool {
+	asked, isBool := requestMap["logprobs"].(bool)
+	width, isNumber := requestMap["top_logprobs"].(float64)
+	return isBool && isNumber && LogprobsAsked(asked, width)
 }

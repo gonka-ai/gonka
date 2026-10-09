@@ -8,6 +8,7 @@ import (
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener"
+	"decentralized-api/internal/mlnodeping"
 	"decentralized-api/internal/modelmanager"
 	"decentralized-api/internal/nats/server"
 	adminserver "decentralized-api/internal/server/admin"
@@ -28,6 +29,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"common/httpguard"
 	"common/logging"
 	"decentralized-api/observability"
 	"decentralized-api/participant"
@@ -42,6 +44,25 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// envAllowPrivateAddresses disables the dial-time SSRF guard on outbound dials to
+// participant-controlled URLs. Set true only in local dev / docker-compose / e2e,
+// where participants register docker-internal hostnames that resolve to private
+// IPs. Production leaves it unset (default false = private targets blocked).
+const envAllowPrivateAddresses = "DAPI_ALLOW_PRIVATE_ADDRESSES"
+
+// envBool parses a boolean env var. Unset or unparseable values return fallback.
+func envBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
 
 // buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
 // Returns nil (a valid disabled guard) when disabled or when the local sqlite
@@ -117,6 +138,16 @@ func main() {
 
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this covers clients built later
+	// (notably poc.ProofClient, constructed per PoC validation round).
+	allowPrivateAddresses := envBool(envAllowPrivateAddresses, false)
+	httpguard.SetAllowPrivate(allowPrivateAddresses)
+	if allowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", envAllowPrivateAddresses)
 	}
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
@@ -238,6 +269,23 @@ func main() {
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
+	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
+	if err != nil {
+		logging.Error("Failed to create chainoracle", types.Server, "error", err)
+	}
+	listenerOpts := []event_listener.EventListenerOption{
+		event_listener.WithStatsStorage(statsStore),
+		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+	}
+	if chainOracle != nil {
+		o := chainOracle
+		listenerOpts = append(listenerOpts, event_listener.WithOnNewBlockHeader(func(info chainphase.BlockInfo) {
+			if err := o.ObserveHex(info.Height, info.Hash, info.Time, info.ChainID); err != nil {
+				logging.Warn("chainoracle observe", types.EventProcessing, "error", err, "height", info.Height)
+			}
+		}))
+	}
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -246,9 +294,7 @@ func main() {
 		chainPhaseTracker,
 		cancel,
 		blsManager,
-		event_listener.WithStatsStorage(statsStore),
-		event_listener.WithHostEventRing(hostEventRing),
-		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+		listenerOpts...,
 	)
 	go listener.Start(ctx)
 
@@ -260,6 +306,11 @@ func main() {
 		30*time.Minute,
 	)
 	go mlnodeBackgroundManager.Start(ctx)
+
+	mlnodePingJob := mlnodeping.New(nodeBroker, mlnodeping.Config{
+		Disabled: configManager.GetApiConfig().MLNodePingDisabled,
+	})
+	mlnodePingJob.Start(ctx)
 
 	addr := fmt.Sprintf(":%v", configManager.GetApiConfig().PublicServerPort)
 	logging.Info("start public server on addr", types.Server, "addr", addr)
@@ -283,6 +334,13 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
+	publicOpts := []pserver.ServerOption{
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	}
+	if chainOracle != nil {
+		publicOpts = append(publicOpts, pserver.WithChainOracle(chainOracle))
+	}
 	publicServer := pserver.NewServer(
 		nodeBroker,
 		configManager,
@@ -290,8 +348,7 @@ func main() {
 		blockQueue,
 		chainPhaseTracker,
 		payloadStore,
-		pserver.WithArtifactStore(artifactStore),
-		pserver.WithStatsStorage(statsStore),
+		publicOpts...,
 	)
 
 	publicServer.Start(addr)
@@ -307,17 +364,27 @@ func main() {
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
-	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
-	if nmGrpcPort != 0 {
+	if nmGrpcPort == 0 {
+		nmGrpcPort = 9400
+	}
+	// Negative ports explicitly disable the NodeManager gRPC server.
+	if nmGrpcPort > 0 {
 		// Same interceptor mock-dapi registers: continue the caller's trace and
 		// bind x-request-id so stage=mlnode_acquire/release lines join Loki.
 		nmGrpcServer := grpc.NewServer(
 			grpc.ChainUnaryInterceptor(commonobs.UnaryServerTraceInterceptor("decentralized-api.nodemanager")),
 		)
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
+		nmOpts := []nodemanager.ServerOption{
 			nodemanager.WithHostEventRing(hostEventRing),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
-		))
+		}
+		// Guard like the HTTP mount below: a nil *observer.Oracle passed as an
+		// interface is not nil, so GetBlockHeader would answer NotFound for a
+		// disabled oracle instead of FailedPrecondition.
+		if chainOracle != nil {
+			nmOpts = append(nmOpts, nodemanager.WithBlockOracle(chainOracle))
+		}
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nmOpts...))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)
@@ -335,6 +402,7 @@ func main() {
 	logging.Info("Servers started", types.Server, "addr", addr)
 
 	<-ctx.Done()
+	mlnodePingJob.Stop()
 
 	ctxFlush, cancelFlush := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelFlush()

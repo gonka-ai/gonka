@@ -14,6 +14,8 @@ import (
 	"common/logging"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
+	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/observability"
 	devshardserver "devshard/server"
 	"devshard/storage"
@@ -21,9 +23,9 @@ import (
 )
 
 const (
-	statsCacheTTL          = 60 * time.Second
-	statsNegativeCacheTTL  = 10 * time.Second
-	statsNegativeCacheMax  = 4096
+	statsCacheTTL         = 60 * time.Second
+	statsNegativeCacheTTL = 10 * time.Second
+	statsNegativeCacheMax = 4096
 )
 
 type statsShardDetailCache struct {
@@ -131,6 +133,9 @@ func statsSessionResolutionStatus(err error) (observability.MetricStatus, observ
 	}
 	if errors.Is(err, storage.ErrSessionEpochConflict) {
 		return observability.MetricStatusError, observability.ReasonEpochConflict
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return observability.MetricStatusError, observability.ReasonRateLimited
 	}
 	msg := err.Error()
 	switch {
@@ -401,6 +406,9 @@ func validationObservabilityFromStore(store storage.Storage, escrowID string) st
 func statsHTTPError(err error) error {
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "shard not found")
+	}
+	if errors.Is(err, devshardpkg.ErrInvalidEscrowID) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

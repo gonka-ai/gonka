@@ -8,37 +8,48 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
+	"common/httpguard"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
 	devshardpkg "devshard"
+	shardbridge "devshard/bridge"
 	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/host"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
+	devshardserver "devshard/server"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
+	"devshard/transport"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
-const sessionEpochRetain = 3
+const sessionEpochRetain = devshardstorage.DefaultEpochRetain
+
+type chainEventsRunner interface {
+	Start(context.Context) error
+}
 
 type devshardApp struct {
-	server        *echo.Echo
-	adminServer   *echo.Echo
+	server        appHTTPServer
+	adminServer   appHTTPServer
 	adminAddr     string
-	chainEvents   *chainEventBridge
+	chainEvents   chainEventsRunner
 	port          int
 	lifecycle     *lifecycleState
 	shutdownGrace time.Duration
+	storageErrors <-chan error
 	close         func()
 }
 
@@ -61,20 +72,22 @@ func (s closeStack) Close() {
 	}
 }
 
-type phaseEpochProvider struct {
-	phase *chain.Phase
-}
-
-func (p phaseEpochProvider) CurrentEpochID() uint64 {
-	if p.phase == nil {
-		return 0
-	}
-	return p.phase.EpochID()
-}
-
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
+	if err := requireHADeploymentStorage(); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", cfg.DataDir, err)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this also covers the package-level
+	// validation.PayloadRetrievalClient constructed at init.
+	httpguard.SetAllowPrivate(cfg.AllowPrivateAddresses)
+	if cfg.AllowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", "DEVSHARD_ALLOW_PRIVATE_ADDRESSES")
 	}
 
 	var closers closeStack
@@ -96,7 +109,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	closers.Add(func() { mlClient.Close() })
 
 	payloadDir := filepath.Join(cfg.DataDir, "payloads")
-	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir})
+	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir, CompressFiles: cfg.CompressPayloadFiles})
 	if err != nil {
 		return nil, fmt.Errorf("payload store: %w", err)
 	}
@@ -111,19 +124,35 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot, func() {
+			// Stop taking leases before the peers close, and cancel fetches
+			// still on those peers. A validation that already has the
+			// payload keeps its context and may vote.
+			host.StopValidationEnqueue()
+			transport.ReleaseOutboundPeerConns()
+			manager.ClosePeerRPC()
+		})
 	}
 	manager.Register(e.Group(""))
-	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
+	startMemoryLog(ctx, manager)
+	chainRuntime.chainEvents.OnReady(func(ready bool) {
+		lifecycle.SetReady(ready)
+		manager.SetCometConnected(ready)
+	})
+	var adminServer appHTTPServer
+	if admin != nil {
+		adminServer = admin
+	}
 
 	return &devshardApp{
-		server:        e,
-		adminServer:   admin,
+		server:        h2cPublicServer{e},
+		adminServer:   adminServer,
 		adminAddr:     cfg.AdminAddr,
 		chainEvents:   chainRuntime.chainEvents,
 		port:          cfg.Port,
 		lifecycle:     lifecycle,
 		shutdownGrace: cfg.ShutdownGrace,
+		storageErrors: manager.StorageFatalErrors(),
 		close:         closers.Close,
 	}, nil
 }
@@ -154,7 +183,16 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("chain id: %w", err)
 	}
 
-	identity, err := newChainIdentity(chainClient, apiAccount, kr)
+	infoPath, err := signerInfoPath(nodeConfig, apiAccount.SignerRecord.Name)
+	if err != nil {
+		return nil, fmt.Errorf("keyring file: %w", err)
+	}
+	payloadSigner, err := signing.NewCachedCosmosSigner(kr, apiAccount.SignerRecord.Name, infoPath)
+	if err != nil {
+		return nil, fmt.Errorf("payload signer: %w", err)
+	}
+
+	identity, err := newChainIdentity(chainClient, apiAccount, payloadSigner)
 	if err != nil {
 		return nil, fmt.Errorf("chain identity: %w", err)
 	}
@@ -169,7 +207,10 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	chainEvents, err := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	if err != nil {
+		return nil, fmt.Errorf("chain events: %w", err)
+	}
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -209,6 +250,23 @@ func buildMLNodeCapacityCache(ctx context.Context, mlClient *mlnodeclient.Client
 	return cache
 }
 
+func newLeaseOwner(address string) (devshardstorage.LeaseOwner, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return devshardstorage.LeaseOwner{}, fmt.Errorf("validation lease identity: %w", err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Warn("devshardd: hostname unavailable for validation leases", "error", err)
+		hostname = ""
+	}
+	return devshardstorage.LeaseOwner{
+		Address:    address,
+		InstanceID: id.String(),
+		Hostname:   hostname,
+	}, nil
+}
+
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -231,38 +289,54 @@ func buildHostManager(
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
 	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.LogprobsOptimizationEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
+	leaseOwner, err := newLeaseOwner(instanceAddr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("devshardd: validation lease identity",
+		"instance_address", leaseOwner.Address,
+		"instance_id", leaseOwner.InstanceID,
+		"hostname", leaseOwner.Hostname,
+	)
 
+	hostInfoCached := shardbridge.NewCachingHostInfo(chainBridge)
 	thresholds := inference.NewValidationThresholdResolver(paramsSetup.Provider, chainBridge)
 	validator := inference.NewValidator(
-		chainBridge,
+		hostInfoCached,
 		chainRuntime.identity,
 		eng,
 		phase,
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		inference.NewVocabularyResolver(chainBridge),
+		cfg.VoteFalseOnFetchFailure,
 	)
+	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
+	closers.Add(validator.ClosePayloadClients)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
 	if err != nil {
 		return nil, fmt.Errorf("devshard storage: %w", err)
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
-	if cancel := paramsSetup.RegisterEpochPrune(store); cancel != nil {
-		closers.Add(cancel)
-	}
 	closers.Add(func() { _ = store.Close() })
+	if credits, ok := devshardstorage.AsValidationCreditStore(store); ok {
+		eng.UseSharedValidationCredits(credits, instanceAddr)
+		slog.Info("devshardd: validation credits are shared across replicas", "participant", instanceAddr)
+	}
 
-	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
+	leaseValidator := inference.NewLeaseValidator(validator, phase, store, leaseOwner, cfg.ValidationLeaseTTL)
 
 	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
 	// host-events long-poll warm) when the live chain escrow query is
-	// unavailable. Only the session/bind read path is cache-aware; validation
-	// and settlement keep using the live chainBridge.
-	warmBridge := devshardbridge.NewCachingEscrowBridge(chainBridge, store, slog.Default())
+	// unavailable. Only the session/bind read path is cache-aware for GetEscrow;
+	// settlement keep using the live chainBridge. GetHostInfo is a 1-minute
+	// Participant URL cache shared with validation.
+	warmBridge := devshardbridge.NewCachingEscrowBridge(hostInfoCached, store, slog.Default())
 
 	manager := session.NewHostManager(
 		store,
@@ -277,68 +351,126 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
+		return nil, fmt.Errorf("height sync oracle: %w", err)
+	}
+	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
+	// Close hosts before the epoch-change cancel so LIFO shutdown cancels
+	// epoch callbacks first. Do not use manager.Close(): store close and
+	// height-sync close are already on this stack.
+	closers.Add(manager.CloseHosts)
+	closers.Add(manager.ClosePeerRPC)
 
-	if err := manager.RecoverSessions(); err != nil {
-		slog.Warn("recover sessions failed", "error", err)
-	}
-	store.Start()
-
-	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
-	retryLoop.WithInterval(cfg.ValidationRetryInterval)
-	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
-	retryLoopCtx, cancelRetryLoop := context.WithCancel(ctx)
-	retryLoopDone := make(chan struct{})
-	closers.Add(func() {
-		cancelRetryLoop()
-		<-retryLoopDone
-	})
-	go func() {
-		defer close(retryLoopDone)
-		retryLoop.Run(retryLoopCtx)
-	}()
-
-	var lastCleanEpoch atomic.Uint64
-	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
-		currentEpoch := phase.EpochID()
-		if currentEpoch <= lastCleanEpoch.Load() {
-			return
+	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
+	// chain-poll fallback) advances phase + managed-storage horizon, then
+	// prunes DB and drops old payload epochs. evict closes in-memory hosts
+	// for those epochs. Boot uses evict=false: prune runs before StartRecovery,
+	// so recovery never lists rows PruneOnce already dropped and there is
+	// nothing to evict from a just-rebuilt map. Live OnEpochChange uses
+	// evict=true because sessions are already in RAM.
+	applyEpoch := func(newEpoch uint64, pruneAsync, evict bool) {
+		phase.SetEpoch(newEpoch)
+		store.ObserveEpoch(newEpoch)
+		if pruneAsync {
+			store.PruneOnceAsync(ctx)
+		} else {
+			store.PruneOnce(ctx)
 		}
-		lastCleanEpoch.Store(currentEpoch)
-
-		store.PruneOnceAsync(bctx)
-
-		if currentEpoch >= 4 {
-			expiredPayloadEpoch := currentEpoch - 3
-			if err := payloadStore.DropEpoch(bctx, expiredPayloadEpoch); err != nil {
+		if evict {
+			if cutoff := store.PruneCutoff(); cutoff > 0 {
+				manager.EvictBefore(cutoff)
+			}
+		}
+		if newEpoch >= sessionEpochRetain+1 {
+			expiredPayloadEpoch := newEpoch - sessionEpochRetain
+			if err := payloadStore.DropEpoch(ctx, expiredPayloadEpoch); err != nil {
 				logCleanupError("payload epoch cleanup failed", err)
 			}
 		}
+	}
+	if cancel := chainParams.OnEpochChange(func(_, newEpoch uint64) {
+		applyEpoch(newEpoch, true, true)
+	}); cancel != nil {
+		closers.Add(cancel)
+	}
+	// Initial snapshot apply does not fire OnEpochChange; seed clocks and
+	// prune before recovery so the backlog is already retention-trimmed.
+	if epoch := chainParams.CurrentEpochID(); epoch > 0 {
+		applyEpoch(epoch, false, false)
+	} else if boot := phase.EpochID(); boot > 0 {
+		applyEpoch(boot, false, false)
+	} else {
+		store.Start()
+	}
+
+	startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, closers)
+
+	// Recovery used to run inline here, so a host with a large backlog kept the
+	// listener closed and answered 502 until every session was rebuilt. Run it
+	// in the background instead: /ready stays false until the backlog drains,
+	// and any session requested before its turn is recovered on demand.
+	closers.Add(manager.StartRecovery(ctx))
+	// A validation-obs or sealed-index rebuild interrupted after its clear
+	// leaves those rows empty, and recovery will not retry once a snapshot exists.
+	closers.Add(manager.WaitRecoveryRepairs)
+
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, leaseOwner)
+	validationRetry.WithInterval(cfg.ValidationRetryInterval)
+	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
+	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)
+	validationRetryDone := make(chan struct{})
+	closers.Add(func() {
+		cancelValidationRetry()
+		<-validationRetryDone
+	})
+	go func() {
+		defer close(validationRetryDone)
+		validationRetry.Run(validationRetryCtx)
+	}()
+
+	// Height-sync still needs Comet headers. Prune/evict stay on OnEpochChange.
+	chainRuntime.chainEvents.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
+		slog.Debug("chain events: new block",
+			"height", e.BlockHeight,
+			"hash_len", len(e.BlockHash),
+			"chain_id", e.ChainID)
+		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
 	})
 
 	return manager, nil
 }
 
-// startHostEventsWarm launches the DAPI GetHostEvents long-poll consumer that
-// prefetches escrow metadata into escrow_cache (PR #1443). It is a no-op when
-// disabled, and the loop also stops cleanly against an old dapi that returns
-// Unimplemented, leaving lazy escrow create as the fallback.
+// startHostEventsWarm registers directory warm on chain escrow-created
+// (the websocket already fetched the escrow) and, when enabled, the DAPI
+// GetHostEvents long-poll. Neither path starts a host or stamps a runtime
+// version. Disabled long-poll is a no-op against an old dapi that returns
+// Unimplemented; lazy escrow create remains the fallback for never-warmed ids.
 func startHostEventsWarm(
 	ctx context.Context,
 	cfg runtimeConfig,
 	chainBridge *devshardbridge.ChainBridge,
+	queryBridge shardbridge.MainnetBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
+	onSettled func(escrowID string) error,
+	localAddr string,
 	closers *closeStack,
 ) {
+	if queryBridge == nil {
+		queryBridge = chainBridge
+	}
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
+		return sink.WarmFromInfo(&info)
+	})
 	if !cfg.HostEventsEnabled {
-		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
+		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false); chain create events still warm escrow_cache")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default())
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {
@@ -380,6 +512,21 @@ func logCleanupError(msg string, err error) {
 	slog.Warn(msg, "error", err)
 }
 
+type appHTTPServer interface {
+	Start(string) error
+	Close() error
+	Shutdown(context.Context) error
+}
+
+// h2cPublicServer is the session listen. versiond dials that port with
+// http2.Transport. StartH2C enables cleartext HTTP/2 on the Server so
+// Shutdown waits for in-flight streams.
+type h2cPublicServer struct{ *echo.Echo }
+
+func (s h2cPublicServer) Start(address string) error {
+	return devshardserver.StartH2C(s.Echo, address)
+}
+
 func (a *devshardApp) Run(ctx context.Context) error {
 	defer a.close()
 
@@ -391,13 +538,14 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		chainEventsErrCh <- a.chainEvents.Start(appCtx)
 	}()
 
-	addr := fmt.Sprintf(":%d", a.port)
+	// Loopback only. versiond dials 127.0.0.1; the port is not a published hop.
+	addr := fmt.Sprintf("127.0.0.1:%d", a.port)
 	type serverError struct {
 		name string
 		err  error
 	}
 	errCh := make(chan serverError, 2)
-	startServer := func(name string, server *echo.Echo, addr string) {
+	startServer := func(name string, server appHTTPServer, addr string) {
 		go func() {
 			slog.Info("listening", "server", name, "addr", addr)
 			if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
@@ -412,6 +560,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 
 	var runErr error
 	chainEventsStopped := false
+	forceShutdown := false
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown requested")
@@ -424,10 +573,21 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		} else {
 			runErr = fmt.Errorf("chain events listener stopped")
 		}
+	case err := <-a.storageErrors:
+		runErr = fmt.Errorf("terminal storage failure: %w", err)
+		forceShutdown = true
 	}
 
 	a.lifecycle.StartDrain()
 	cancel()
+	if forceShutdown {
+		_ = a.server.Close()
+		if a.adminServer != nil {
+			_ = a.adminServer.Close()
+		}
+		slog.Warn("devshardd stopped after terminal storage failure")
+		return runErr
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()

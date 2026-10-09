@@ -16,33 +16,33 @@ import (
 )
 
 const (
-	autoSealTestInferenceSealGraceNonces     = 2
-	autoSealTestInferenceSealGraceSeconds   = 5
-	autoSealTestBaseConfirmedAt     = 10_000
-	autoSealAgreementNumHosts       = 16
-	autoSealAgreementPipelinedCount = 80
+	autoSealTestInferenceSealGraceNonces  = 2
+	autoSealTestInferenceSealGraceSeconds = 5
+	autoSealTestBaseConfirmedAt           = 10_000
+	autoSealAgreementNumHosts             = 16
+	autoSealAgreementPipelinedCount       = 80
 )
 
 type autoSealEnv struct {
-	session   *user.Session
-	hosts     []*host.Host
-	hostSMs   []*state.StateMachine
-	userSM    *state.StateMachine
-	user      *signing.Secp256k1Signer
+	session     *user.Session
+	hosts       []*host.Host
+	hostSMs     []*state.StateMachine
+	userSM      *state.StateMachine
+	user        *signing.Secp256k1Signer
 	hostSigners []*signing.Secp256k1Signer
-	group     []types.SlotAssignment
-	escrowID  string
+	group       []types.SlotAssignment
+	escrowID    string
 }
 
 func autoSealTestConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             0,
-		FeePerNonce:                0,
-		InferenceSealGraceNonces:            autoSealTestInferenceSealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            0,
+		FeePerNonce:               0,
+		InferenceSealGraceNonces:  autoSealTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: autoSealTestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -159,7 +159,7 @@ func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint6
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
 	}}}
@@ -169,7 +169,7 @@ func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint6
 func (env *autoSealEnv) finishInference(t *testing.T, inferenceID, finishNonce uint64) {
 	t.Helper()
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
-	finishMsg := &types.MsgFinishInference{
+	finishMsg := &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 		InferenceId:  inferenceID,
 		ResponseHash: append([]byte(nil), stub.NewInferenceEngine().ResponseHash...),
 		InputTokens:  80,
@@ -201,7 +201,9 @@ func (env *autoSealEnv) advanceToNextAutoSealNonce(t *testing.T, after uint64) u
 func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenceID uint64) uint64 {
 	t.Helper()
 	window := len(env.group) * 3 // state.stateClockWindowFactor
-	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + int64(autoSealTestInferenceSealGraceSeconds) + 1
+	cfg := env.userSM.Config()
+	required := state.FinishedClockRequiredSeconds(int64(cfg.InferenceSealGraceSeconds), cfg.ExecutionTimeout)
+	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + required + 1
 	for bump := 0; bump < window+5; bump++ {
 		startNonce = env.bumpClock(t, startNonce, targetConfirmedAt+int64(bump))
 		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {

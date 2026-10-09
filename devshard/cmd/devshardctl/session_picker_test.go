@@ -11,15 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace"
 
+	"devshard/accounting"
 	"devshard/observability"
 	"devshard/user"
 )
 
 // fakeGhost records ghost-probe dispatches so tests can assert how
 // many were burned, for what reason, and on which host/nonce.
-// Production Redundancy.runGhostProbe is also non-sending (it logs
-// and returns); the fake just captures the call so assertions can
-// check the exact branch that fired.
+// Production Redundancy.runGhostProbe is also non-sending (it records
+// ghost_no_send, logs, and returns); the fake just captures the call so
+// assertions can check the exact branch that fired.
 type fakeGhost struct {
 	mu      sync.Mutex
 	count   int32
@@ -541,7 +542,7 @@ func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
 	env.proxy.redundancy.picker.stop()
 
 	blockedKey := env.session.HostParticipantKey(1)
-	checker := func(key string, _ user.InferenceParams) (string, bool) {
+	checker := func(key string) (string, bool) {
 		if key == blockedKey {
 			return "context_limit_exceeded", true
 		}
@@ -561,16 +562,18 @@ func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
 	require.False(t, res.isProbe)
 	require.NotEqual(t, 1, res.prepared.HostIdx(),
 		"real request must skip a known capability-incompatible host while other hosts remain")
-	require.GreaterOrEqual(t, ghost.kindCount(ghostCapability), 1)
-	require.Contains(t, ghost.reasons, ghostCapability.reason())
+	require.GreaterOrEqual(t, ghost.kindCount(ghostStateDiverged), 1)
+	require.Contains(t, ghost.reasons, ghostStateDiverged.reason())
 }
 
-func TestPicker_StateRootDivergencePreservesGhostReason(t *testing.T) {
+// The reason has to be a term the ledger's no-send vocabulary admits; the block reason is not one, and
+// carrying it through filed every one of these ghosts under "unknown".
+func TestPicker_StateRootDivergenceReportsAReasonTheLedgerAdmits(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
 	blockedKey := env.session.HostParticipantKey(1)
-	checker := func(key string, _ user.InferenceParams) (string, bool) {
+	checker := func(key string) (string, bool) {
 		if key == blockedKey {
 			return "escrow_state_root_diverged", true
 		}
@@ -589,9 +592,9 @@ func TestPicker_StateRootDivergencePreservesGhostReason(t *testing.T) {
 	require.NoError(t, res.err)
 	require.False(t, res.isProbe)
 	require.NotEqual(t, 1, res.prepared.HostIdx())
-	require.GreaterOrEqual(t, ghost.kindCount(ghostCapability), 1)
-	require.Contains(t, ghost.reasons, "escrow_state_root_diverged")
-	require.NotContains(t, ghost.reasons, ghostCapability.reason())
+	require.GreaterOrEqual(t, ghost.kindCount(ghostStateDiverged), 1)
+	require.Contains(t, ghost.reasons, ghostStateDiverged.reason())
+	require.NotEqual(t, accounting.NoSendUnknown, accounting.NoSendReasonFromString(ghostStateDiverged.reason()))
 }
 
 func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) {
@@ -602,7 +605,7 @@ func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) 
 	key1 := env.session.HostParticipantKey(1)
 	key2 := env.session.HostParticipantKey(2)
 	blocked := map[string]bool{key0: true, key2: true}
-	checker := func(key string, _ user.InferenceParams) (string, bool) {
+	checker := func(key string) (string, bool) {
 		if blocked[key] {
 			return "context_limit_exceeded", true
 		}
@@ -620,7 +623,7 @@ func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) 
 
 	res := waitReply(t, req, 2*time.Second)
 	require.ErrorIs(t, res.err, ErrNoAvailableHost)
-	require.Equal(t, 0, ghost.kindCount(ghostCapability),
+	require.Equal(t, 0, ghost.kindCount(ghostStateDiverged),
 		"exhaustion sweep should drop before burning known-incompatible hosts")
 }
 

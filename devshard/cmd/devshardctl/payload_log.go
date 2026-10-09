@@ -26,6 +26,37 @@ type QuarantinePayloadStats struct {
 // emptyStreamQuarantineStats builds the size evidence for a quarantine
 // transition. It returns the zero value when quarantine capture is off so the
 // failure path does not parse the prompt for a line nobody emits.
+func (inf *inflight) enablePayloadCapture() {
+	if inf == nil || inf.probe {
+		return
+	}
+	inf.capturePayload = observability.LoadPayloadPolicy().MLNodeCaptureEnabled()
+}
+
+func (inf *inflight) capturePayloadResponseChunk(p []byte) {
+	if inf == nil || !inf.capturePayload || len(p) == 0 || inf.payloadResponseSampleTruncated {
+		return
+	}
+	remaining := emptyStreamBodySampleLimit - len(inf.payloadResponseSample)
+	if remaining <= 0 {
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	if len(p) > remaining {
+		inf.payloadResponseSample = append(inf.payloadResponseSample, p[:remaining]...)
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	inf.payloadResponseSample = append(inf.payloadResponseSample, p...)
+}
+
+func (inf *inflight) attemptCtx() context.Context {
+	if inf == nil || inf.spanCtx == nil {
+		return context.Background()
+	}
+	return inf.spanCtx
+}
+
 func emptyStreamQuarantineStats(inf *inflight, params user.InferenceParams) QuarantinePayloadStats {
 	if inf == nil || !observability.LoadPayloadPolicy().QuarantineCaptureEnabled() {
 		return QuarantinePayloadStats{}

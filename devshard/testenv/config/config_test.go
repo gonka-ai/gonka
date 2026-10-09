@@ -14,6 +14,10 @@ func TestApplyDefaults(t *testing.T) {
 	require.Equal(t, config.DefaultChainID, cfg.ChainID)
 	require.Equal(t, config.DefaultMockChainGRPCPort, cfg.MockChain.GRPCPort)
 	require.Equal(t, config.DefaultEscrowSlotURL, cfg.Escrow.SlotURL)
+	require.Equal(t, "http://versiond-router:8080", cfg.Escrow.SlotURL)
+	require.Equal(t, 8443, config.DefaultRPCH2Port)
+	require.Equal(t, 8081, config.DefaultVersiondRouterH2Port)
+	require.Equal(t, "proxy", config.DefaultProxyService)
 }
 
 func TestValidate_RequiresFilledKeys(t *testing.T) {
@@ -31,7 +35,7 @@ func TestValidate_VersiondModePostgresRules(t *testing.T) {
 			{ID: "versiond-0", Address: "gonka1a", PrivateKeyHex: "aa"},
 			{ID: "versiond-1", Address: "gonka1b", PrivateKeyHex: "bb"},
 		},
-		User:   config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
+		User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
 		Postgres: config.PostgresCfg{Enabled: false},
 	}
 	cfg.ApplyDefaults()
@@ -44,4 +48,24 @@ func TestValidate_VersiondModePostgresRules(t *testing.T) {
 	cfg.Hosts = cfg.Hosts[:1]
 	cfg.Postgres.Enabled = true
 	require.ErrorContains(t, cfg.Validate(), "mode single")
+}
+
+func TestValidate_SlotsCountOnChainIdentitiesNotContainers(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:   config.EscrowMeta{Slots: 3},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha", PrivateKeyHex: "aa"},
+			{ID: "versiond-1", Address: "gonka1replica", PrivateKeyHex: "bb"},
+			{ID: "versiond-2", Address: "gonka1solo-a", PrivateKeyHex: "cc"},
+			{ID: "versiond-3", Address: "gonka1solo-b", PrivateKeyHex: "dd"},
+		},
+		User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "ee"},
+		Postgres: config.PostgresCfg{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+	require.NoError(t, cfg.Validate(), "4 containers / 3 identities / 3 slots is valid")
+
+	cfg.Escrow.Slots = 2
+	require.ErrorContains(t, cfg.Validate(), "on-chain host identities")
 }

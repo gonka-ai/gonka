@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -17,27 +16,34 @@ import (
 	"devshard/types"
 )
 
+type nopErrorMiss struct{}
+
+func (nopErrorMiss) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
 type slotClaimingVerifier struct {
+	nopErrorMiss
 	signer      *signing.Secp256k1Signer
 	claimedSlot uint32
 	escrowID    string
 }
 
-func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
-	data, err := proto.Marshal(&types.TimeoutVoteContent{
+func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    m.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
 		Accept:      true,
 	})
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := m.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, m.claimedSlot, nil
+	return true, sig, m.claimedSlot, nil, "", nil
 }
 
 type timeoutVoteFixture struct {
@@ -87,7 +93,7 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 
 	_, err = session.SendInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
@@ -103,11 +109,11 @@ func (f *timeoutVoteFixture) dropHostReceipts() {
 
 func (f *timeoutVoteFixture) collect(t *testing.T, verifiers map[int]TimeoutVerifier) []*types.TimeoutVote {
 	t.Helper()
-	votes, err := f.session.CollectTimeoutVotes(context.Background(), 1,
+	votes, _, _, err := f.session.CollectTimeoutVotes(context.Background(), 1,
 		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	return votes
@@ -143,13 +149,17 @@ type delayedVerifier struct {
 	delay time.Duration
 }
 
-func (d *delayedVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, p *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (d *delayedVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, p *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	select {
 	case <-time.After(d.delay):
 	case <-ctx.Done():
-		return false, nil, 0, ctx.Err()
+		return false, nil, 0, nil, "", ctx.Err()
 	}
-	return d.inner.VerifyTimeout(ctx, inferenceID, reason, p, diffs)
+	return d.inner.VerifyTimeout(ctx, inferenceID, reason, p, diffs, artifacts)
+}
+
+func (d *delayedVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return d.inner.VerifyErrorMiss(ctx, inferenceID, diffs, artifacts)
 }
 
 func TestCollectTimeoutVotes_SpoofedVoteDoesNotDisplaceHonestQuorum(t *testing.T) {
@@ -250,7 +260,7 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	signVote := func(s *signing.Secp256k1Signer, slot uint32) *types.TimeoutVote {
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 			EscrowId: "escrow-1", InferenceId: 1,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})
@@ -263,7 +273,7 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	seed := func(sm *state.StateMachine) {
 		_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-				InferenceId: 1, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+				InferenceId: 1, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 			}},
 		}})
 		require.NoError(t, err)
@@ -299,7 +309,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 	t.Run("dropped", func(t *testing.T) {
 		f := newTimeoutVoteFixture(t)
 		f.dropHostReceipts()
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 			EscrowId: "escrow-1", InferenceId: 1,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})
@@ -311,7 +321,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 			[]*types.TimeoutVote{{VoterSlot: 2, Accept: true, Signature: sig}})
 
 		before := f.userSM.SnapshotState()
-		diff, err := f.session.sendPendingDiff(context.Background())
+		diff, err := f.session.sendPendingDiff(context.Background(), nil, nil)
 		require.NoError(t, err)
 		require.False(t, HasMsgTimeout(diff.Txs, 1), "rejected timeout tx is not in the diff")
 
@@ -330,7 +340,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 		require.True(t, f.session.HasSufficientTimeoutVotes(votes))
 
 		f.session.AddPendingTimeoutTx(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
-		diff, err := f.session.sendPendingDiff(context.Background())
+		diff, err := f.session.sendPendingDiff(context.Background(), nil, nil)
 		require.NoError(t, err)
 		require.True(t, HasMsgTimeout(diff.Txs, 1))
 		require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[1].Status)
@@ -354,10 +364,10 @@ func TestCollectTimeoutVotes_WarmKeySignedVotesAccepted(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: warmKeys[i], group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 
@@ -386,10 +396,10 @@ func TestCollectTimeoutVotes_UnauthorizedWarmKeyRejected(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: stranger, group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	require.Empty(t, votes, "a key the resolver does not authorize must not be counted")
@@ -446,10 +456,10 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: warmKeys[i], group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	require.True(t, session.HasSufficientTimeoutVotes(votes),

@@ -93,7 +93,7 @@ const openapiSpec = `{
     "/v1/status": {
       "get": {
         "summary": "Session status",
-        "description": "Returns escrow ID, current nonce, phase, and balance.",
+        "description": "Returns escrow ID, current nonce, phase, and balance when a runtime is resident. With zero runtimes the body stays HTTP 200 and uses phase=not_found (no empty escrow_id).",
         "responses": {
           "200": {
             "description": "Status",
@@ -104,8 +104,12 @@ const openapiSpec = `{
                   "properties": {
                     "escrow_id": { "type": "string" },
                     "nonce": { "type": "integer" },
-                    "phase": { "type": "string", "enum": ["active", "finalizing", "settlement"] },
-                    "balance": { "type": "integer" }
+                    "phase": { "type": "string", "enum": ["active", "finalizing", "settlement", "not_found"] },
+                    "balance": { "type": "integer" },
+                    "error": {
+                      "type": "object",
+                      "description": "Set when phase is not_found (no resident runtime). HTTP status stays 200 so process healthchecks still pass."
+                    }
                   }
                 }
               }
@@ -267,6 +271,26 @@ const openapiSpec = `{
           "404": { "description": "Devshard not found" },
           "409": { "description": "Devshard has active requests" },
           "502": { "description": "Finalize or settlement broadcast failed" }
+        }
+      }
+    },
+    "/v1/debug/heightsync": {
+      "get": {
+        "summary": "Height-sync operator debug",
+        "description": "Admin endpoint. Last-N cadence triggers, sealed per-height anchor counts, and the peer_seen matrix. Not a Prometheus series.",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Per-escrow height-sync debug snapshot" }
+        }
+      }
+    },
+    "/v1/debug/rpc-traffic": {
+      "get": {
+        "summary": "RPC traffic operator debug",
+        "description": "Admin endpoint. Last scraped GET /devshard/stats/rpc snapshot per chain participant InferenceUrl. Same family as /v1/debug/heightsync. Prometheus /metrics has aggregates only; banned peer/IP identities are on the closed-minute warn (tag=rpc_stats, rpc_stats_join=host/minute_unix).",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Per-host RPC traffic snapshots (last closed minute)" }
         }
       }
     },

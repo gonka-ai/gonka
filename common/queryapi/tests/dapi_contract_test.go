@@ -15,20 +15,20 @@ import (
 // public handlers for read-only query routes. edge-api must expose the same keys
 // so existing clients keep working when the proxy steers traffic to edge-api.
 var dapiTopLevelKeys = map[string][]string{
-	"GET /v1/status":                          {"status"},
-	"GET /v1/models":                          {"object", "data"},
-	"GET /v1/governance/models":               {"models"},
-	"GET /v1/governance/models-legacy":        {"model"},
-	"GET /v1/pricing":                         {"unit_of_compute_price", "models"},
-	"GET /v1/versions":                          {"api_version", "node_version", "timestamp"},
-	"GET /v1/epochs/{epoch}/participants":     {"active_participants", "addresses", "active_participants_bytes", "proof_ops", "validators", "block", "excluded_participants"},
+	"GET /v1/status":                      {"status"},
+	"GET /v1/models":                      {"object", "data"},
+	"GET /v1/governance/models":           {"models"},
+	"GET /v1/governance/models-legacy":    {"model"},
+	"GET /v1/pricing":                     {"unit_of_compute_price", "models"},
+	"GET /v1/versions":                    {"api_version", "node_version", "timestamp"},
+	"GET /v1/epochs/{epoch}/participants": {"active_participants", "addresses", "active_participants_bytes", "proof_ops", "validators", "block", "excluded_participants"},
 }
 
 func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 	cases := []struct {
-		name   string
-		keys   []string
-		run    func(t *testing.T) (int, []byte)
+		name string
+		keys []string
+		run  func(t *testing.T) (int, []byte)
 	}{
 		{
 			name: "GET /v1/status",

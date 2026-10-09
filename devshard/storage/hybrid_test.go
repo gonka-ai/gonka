@@ -36,6 +36,10 @@ func (r *recordingStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) 
 	r.lastMethod = "GetDiffs"
 	return nil, nil
 }
+func (r *recordingStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	r.lastMethod = "DiffSizes"
+	return nil, nil
+}
 func (r *recordingStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	r.lastMethod = "AddSignature"
 	return nil
@@ -68,6 +72,14 @@ func (r *recordingStorage) InsertSealedInference(escrowID string, row InferenceR
 	r.lastMethod = "InsertSealedInference"
 	return nil
 }
+func (r *recordingStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	r.lastMethod = "InsertSealedInferences"
+	return nil
+}
+func (r *recordingStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	r.lastMethod = "BulkInsertSealedInferences"
+	return nil
+}
 func (r *recordingStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	r.lastMethod = "GetSealedInference"
 	return InferenceRow{}, false, nil
@@ -76,13 +88,33 @@ func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
+func (r *recordingStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	r.lastMethod = "SealedInferenceIDs"
+	return nil, nil
+}
 func (r *recordingStorage) ClearValidationObs(escrowID string) error {
 	r.lastMethod = "ClearValidationObs"
 	return nil
 }
+func (r *recordingStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	r.lastMethod = "SetValidationObsRebuildPending"
+	return nil
+}
+func (r *recordingStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	r.lastMethod = "ValidationObsRebuildPending"
+	return false, nil
+}
+func (r *recordingStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	r.lastMethod = "LockValidationObsRebuild"
+	return func() {}, true, nil
+}
 
 func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	r.lastMethod = "RecordValidationsAppliedOnce"
+	return nil
+}
+func (r *recordingStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	r.lastMethod = "DrainInferenceValidationObsBatch"
 	return nil
 }
 func (r *recordingStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
@@ -125,6 +157,15 @@ type failingPGStorage struct {
 	liveHasRows    bool
 	liveErr        error
 	liveCheckCalls int
+}
+
+type fatalStorage struct {
+	recordingStorage
+	fatal chan error
+}
+
+func (s *fatalStorage) FatalErrors() <-chan error {
+	return s.fatal
 }
 
 func (f *failingPGStorage) CreateSession(params CreateSessionParams) error {
@@ -275,9 +316,19 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 	require.NoError(t, h.InsertSealedInference("e", InferenceRow{}))
 	require.Equal(t, "InsertSealedInference", rec.lastMethod)
 
+	require.NoError(t, h.InsertSealedInferences("e", []InferenceRow{{}}))
+	require.Equal(t, "InsertSealedInferences", rec.lastMethod)
+
+	require.NoError(t, h.BulkInsertSealedInferences("e", []InferenceRow{{}}))
+	require.Equal(t, "BulkInsertSealedInferences", rec.lastMethod)
+
 	_, _, err = h.GetSealedInference("e", 1)
 	require.NoError(t, err)
 	require.Equal(t, "GetSealedInference", rec.lastMethod)
+
+	_, err = h.SealedInferenceIDs("e")
+	require.NoError(t, err)
+	require.Equal(t, "SealedInferenceIDs", rec.lastMethod)
 
 	require.NoError(t, h.DeleteSealedInferences("e"))
 	require.Equal(t, "DeleteSealedInferences", rec.lastMethod)
@@ -400,6 +451,26 @@ func TestHybridStorage_PromotionHookFiresAfterReconnectAndImmediatelyAfterPromot
 			return false
 		}
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestHybridStorage_ForwardsFatalErrorFromPromotedPostgres(t *testing.T) {
+	h := newDegradedSQLiteRouter(nil, t.TempDir(), ErrStoragePostgresUnavailable)
+	t.Cleanup(func() { _ = h.Close() })
+	lifetimeErrors := h.FatalErrors()
+	require.NotNil(t, lifetimeErrors)
+
+	pg := &fatalStorage{fatal: make(chan error, 1)}
+	require.NoError(t, h.promotePostgres(pg))
+	want := errors.New("postgres fence session lost")
+	pg.fatal <- want
+
+	select {
+	case got := <-lifetimeErrors:
+		require.ErrorIs(t, got, want)
+	case <-time.After(time.Second):
+		t.Fatal("fatal error from promoted PostgreSQL was not forwarded")
+	}
+	require.Equal(t, lifetimeErrors, h.FatalErrors(), "hybrid fatal channel must remain stable after promotion")
 }
 
 func TestHybridStorage_ClearsPGBoundAfterFailedPGCreateWhenProvablyEmpty(t *testing.T) {

@@ -84,6 +84,9 @@ type Escrow struct {
 	AutoSealEveryNNonces      uint32   `yaml:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `yaml:"validation_rate"`
 	VoteThresholdFactor       uint32   `yaml:"vote_threshold_factor"`
+	// Optional. Omitted values inherit the mock-chain params timeout values.
+	RefusalTimeout   int64 `yaml:"refusal_timeout"`
+	ExecutionTimeout int64 `yaml:"execution_timeout"`
 }
 
 type GranteeBinding struct {
@@ -132,7 +135,7 @@ type VersiondCfg struct {
 	KeyringPassword string `yaml:"keyring_password"`
 }
 
-// VersiondRouterCfg is the sticky nginx router in front of versiond instances.
+// VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
 type VersiondRouterCfg struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
@@ -172,6 +175,11 @@ type HostCfg struct {
 	URL           string `yaml:"url"`
 	Port          int    `yaml:"port"`
 	IP            string `yaml:"ip"`
+	// KeyName is the Cosmos keyring entry (the on-chain identity) this
+	// container loads. Hosts sharing a KeyName are replicas of one identity,
+	// so identity count and router-pool membership follow this field rather
+	// than roster position. Empty keeps the 2-of-N default below.
+	KeyName string `yaml:"key_name"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -220,13 +228,21 @@ const (
 	DefaultKeyringPassword    = "testenv1"
 	DefaultVersiondRouterHost = "versiond-router"
 	DefaultVersiondRouterPort = 8080
-	DefaultDevshardctlHost    = "devshardctl"
-	DefaultPostgresHost       = "devshard-postgres"
-	DefaultPostgresPort       = 5432
-	DefaultPostgresDB         = "devshardd"
-	DefaultPostgresUser       = "devshardd"
-	DefaultPostgresPassword   = "devshardd"
-	DefaultEscrowSlots        = 4
+	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
+	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
+	// on DefaultVersiondRouterPort.
+	DefaultVersiondRouterH2Port = 8081
+	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
+	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
+	DefaultProxyService     = "proxy"
+	DefaultRPCH2Port        = 8443
+	DefaultDevshardctlHost  = "devshardctl"
+	DefaultPostgresHost     = "devshard-postgres"
+	DefaultPostgresPort     = 5432
+	DefaultPostgresDB       = "devshardd"
+	DefaultPostgresUser     = "devshardd"
+	DefaultPostgresPassword = "devshardd"
+	DefaultEscrowSlots      = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
 	DefaultEscrowSlotURL = "http://versiond-router:8080"
@@ -237,8 +253,12 @@ const (
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
 	DefaultModelID       = "test-model"
-	DefaultAdminAPIKey   = "testenv-citest-admin"
-	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	// The chain stores the similarity pass bar as value * 10^exponent, like
+	// production's 958e-3; 50e-2 is a 0.50 bar.
+	DefaultValidationThresholdValue    = int64(50)
+	DefaultValidationThresholdExponent = int32(-2)
+	DefaultAdminAPIKey                 = "testenv-citest-admin"
+	DefaultAppHash                     = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -504,6 +524,121 @@ func PrimaryModelID(c *File) string {
 	return DefaultModelID
 }
 
+// VersiondKeyName is the Cosmos keyring entry each versiond child loads.
+// An explicit hosts[].key_name wins, so a roster can declare any number of
+// replicas per identity. Without it, multi/HA defaults to 2-of-N: hosts[0]
+// and hosts[1] share hosts[0]'s key (join-style), solo hosts (index ≥ 2)
+// keep their own key. Single mode is per-host.
+func VersiondKeyName(c *File, h HostCfg) string {
+	if name := strings.TrimSpace(h.KeyName); name != "" {
+		return name
+	}
+	if c != nil && c.Versiond.Mode == VersiondModeMulti && len(c.Hosts) > 0 {
+		for i, host := range c.Hosts {
+			if host.ID != h.ID {
+				continue
+			}
+			if i <= 1 {
+				if name := strings.TrimSpace(c.Hosts[0].KeyName); name != "" {
+					return name
+				}
+				return c.Hosts[0].ID
+			}
+			return h.ID
+		}
+	}
+	if h.ID != "" {
+		return h.ID
+	}
+	return ""
+}
+
+// OnChainIdentityHosts returns the first host of every distinct KEY_NAME
+// group, in roster order. Later hosts sharing a KEY_NAME are replicas of an
+// identity already listed, not identities of their own.
+func OnChainIdentityHosts(c *File) []HostCfg {
+	if c == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(c.Hosts))
+	identities := make([]HostCfg, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		name := VersiondKeyName(c, h)
+		if name == "" {
+			continue
+		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
+		seen[name] = struct{}{}
+		identities = append(identities, h)
+	}
+	return identities
+}
+
+// KeyNameReplicaCount is how many containers load h's KEY_NAME. More than one
+// means h is part of a replicated (HA) identity.
+func KeyNameReplicaCount(c *File, h HostCfg) int {
+	if c == nil {
+		return 0
+	}
+	name := VersiondKeyName(c, h)
+	if name == "" {
+		return 0
+	}
+	n := 0
+	for _, host := range c.Hosts {
+		if VersiondKeyName(c, host) == name {
+			n++
+		}
+	}
+	return n
+}
+
+// RouterPoolHostIDs is the sticky versiond-router pool: every replica of the
+// first replicated identity in the roster. A roster with no replicated
+// identity puts every host in the pool (single mode, all-solo multi).
+func RouterPoolHostIDs(c *File) []string {
+	if c == nil {
+		return nil
+	}
+	pooledKey := ""
+	if c.Versiond.Mode == VersiondModeMulti {
+		for _, h := range c.Hosts {
+			if KeyNameReplicaCount(c, h) > 1 {
+				pooledKey = VersiondKeyName(c, h)
+				break
+			}
+		}
+	}
+	ids := make([]string, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		if pooledKey != "" && VersiondKeyName(c, h) != pooledKey {
+			continue
+		}
+		ids = append(ids, h.ID)
+	}
+	return ids
+}
+
+// IsRouterPooledHost reports whether h is reached through the sticky router
+// pool rather than a direct InferenceURL.
+func IsRouterPooledHost(c *File, h HostCfg) bool {
+	for _, id := range RouterPoolHostIDs(c) {
+		if id == h.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// onChainHostCount is the number of distinct validator identities: one per
+// distinct KEY_NAME group (hosts sharing a key are replicas), not
+// len(Hosts)-1 by position.
+func (c *File) onChainHostCount() int {
+	return len(OnChainIdentityHosts(c))
+}
+
 // Validate enforces invariants gencompose and mock-chain rely on.
 func (c *File) Validate() error {
 	if c.ChainID == "" {
@@ -512,9 +647,9 @@ func (c *File) Validate() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
-	if c.Escrow.Slots < len(c.Hosts) {
-		return fmt.Errorf("escrow.slots (%d) must be >= number of hosts (%d)",
-			c.Escrow.Slots, len(c.Hosts))
+	if c.Escrow.Slots < c.onChainHostCount() {
+		return fmt.Errorf("escrow.slots (%d) must be >= number of on-chain host identities (%d)",
+			c.Escrow.Slots, c.onChainHostCount())
 	}
 	for i, h := range c.Hosts {
 		if strings.TrimSpace(h.Address) == "" {

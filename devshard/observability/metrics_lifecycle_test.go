@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestClassifyMLNodeHTTP(t *testing.T) {
@@ -35,6 +37,23 @@ func TestClassifyMLNodeHTTP(t *testing.T) {
 				t.Fatalf("ClassifyMLNodeHTTP = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestObservePayloadFetchTTFB(t *testing.T) {
+	ensureMetrics()
+	var m dto.Metric
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	before := m.Histogram.GetSampleCount()
+	ObservePayloadFetchTTFB(25 * time.Millisecond)
+	m.Reset()
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Histogram.GetSampleCount() - before; got != 1 {
+		t.Fatalf("histogram sample delta = %d, want 1", got)
 	}
 }
 
@@ -89,6 +108,87 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 	if testutil.ToFloat64(reconcileFastForwardTotal)-beforeFF != 1 {
 		t.Fatalf("reconcile_fast_forward delta want 1")
 	}
+
+	beforeAttach := testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))
+	IncPeerRPCAttach("ok")
+	if testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))-beforeAttach != 1 {
+		t.Fatalf("peer_rpc_attach ok delta want 1")
+	}
+
+	beforeGate := testutil.ToFloat64(peerRPCGateTotal.WithLabelValues("admitted"))
+	IncPeerRPCGate("admitted")
+	if testutil.ToFloat64(peerRPCGateTotal.WithLabelValues("admitted"))-beforeGate != 1 {
+		t.Fatalf("peer_rpc_gate admitted delta want 1")
+	}
+
+	SetPeerRPCEnabled(true)
+	if got := testutil.ToFloat64(peerRPCEnabled); got != 1 {
+		t.Fatalf("peer_rpc_enabled = %v, want 1", got)
+	}
+	SetPeerRPCEnabled(false)
+	if got := testutil.ToFloat64(peerRPCEnabled); got != 0 {
+		t.Fatalf("peer_rpc_enabled after clear = %v, want 0", got)
+	}
+
+	beforeWait := testutil.ToFloat64(PeerRPCBudgetWaitCounter("GetDiffs"))
+	beforeWaitSec := testutil.ToFloat64(PeerRPCBudgetWaitSecondsCounter("GetDiffs"))
+	ObservePeerRPCBudgetWait("GetDiffs", 250*time.Millisecond)
+	if testutil.ToFloat64(PeerRPCBudgetWaitCounter("GetDiffs"))-beforeWait != 1 {
+		t.Fatalf("peer_rpc_budget_wait delta want 1")
+	}
+	if delta := testutil.ToFloat64(PeerRPCBudgetWaitSecondsCounter("GetDiffs")) - beforeWaitSec; delta < 0.249 || delta > 0.251 {
+		t.Fatalf("peer_rpc_budget_wait_seconds delta = %v, want ~0.25", delta)
+	}
+	beforeSkip := testutil.ToFloat64(PeerRPCBudgetWaitSkippedCounter("GetDiffs"))
+	IncPeerRPCBudgetWaitSkipped("GetDiffs")
+	if testutil.ToFloat64(PeerRPCBudgetWaitSkippedCounter("GetDiffs"))-beforeSkip != 1 {
+		t.Fatalf("peer_rpc_budget_wait_skipped delta want 1")
+	}
+
+	beforeReq := testutil.ToFloat64(peerRPCRequestsTotal.WithLabelValues("GetDiffs", "ok"))
+	IncPeerRPCRequests("GetDiffs", "ok")
+	if testutil.ToFloat64(peerRPCRequestsTotal.WithLabelValues("GetDiffs", "ok"))-beforeReq != 1 {
+		t.Fatalf("peer_rpc_requests ok delta want 1")
+	}
+	beforeBanned := testutil.ToFloat64(peerRPCBannedTotal.WithLabelValues("GetDiffs", "shared"))
+	IncPeerRPCBanned("GetDiffs", "shared")
+	if testutil.ToFloat64(peerRPCBannedTotal.WithLabelValues("GetDiffs", "shared"))-beforeBanned != 1 {
+		t.Fatalf("peer_rpc_banned delta want 1")
+	}
+	beforeAttachBan := testutil.ToFloat64(peerRPCAttachBannedTotal.WithLabelValues("floor"))
+	IncPeerRPCAttachBanned("floor")
+	if testutil.ToFloat64(peerRPCAttachBannedTotal.WithLabelValues("floor"))-beforeAttachBan != 1 {
+		t.Fatalf("peer_rpc_attach_banned floor delta want 1")
+	}
+
+	beforePeerAttach := testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))
+	IncPeerAttach("gonka1peer", "ok")
+	if testutil.ToFloat64(PeerAttachCounter("gonka1peer", "ok"))-beforePeerAttach != 1 {
+		t.Fatalf("peer_attach ok delta want 1")
+	}
+	SetPeerSessionState("gonka1peer", PeerSessionReady)
+	if testutil.ToFloat64(PeerSessionStateGauge("gonka1peer", PeerSessionReady)) != 1 {
+		t.Fatalf("peer_session_state ready want 1")
+	}
+	ClearPeerSessionState("gonka1peer")
+}
+
+func TestObservePostgresHealthProbeTracksOutcomeAndSaturation(t *testing.T) {
+	ensureMetrics()
+
+	before := testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("success"))
+	ObservePostgresHealthProbe(true, true)
+	if testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("success"))-before != 1 {
+		t.Fatal("postgres successful probe counter delta want 1")
+	}
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 1 {
+		t.Fatalf("postgres pool-saturated gauge = %v, want 1", got)
+	}
+
+	ObservePostgresHealthProbe(false, false)
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 0 {
+		t.Fatalf("postgres pool-saturated gauge after clear = %v, want 0", got)
+	}
 }
 
 func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
@@ -96,6 +196,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	const escrowID = "escrow-metrics-prune"
 
 	SetValidationQueueDepth(escrowID, 3)
+	SetValidationOwed(escrowID, 4)
 	SetMempoolSize(escrowID, 7)
 
 	DeleteEscrowMetrics(escrowID)
@@ -106,7 +207,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	}
 	for _, family := range mf {
 		switch family.GetName() {
-		case "devshard_validation_queue_depth", "devshard_mempool_size":
+		case "devshard_validation_queue_depth", "devshard_validation_owed", "devshard_mempool_size":
 			for _, m := range family.Metric {
 				for _, lp := range m.Label {
 					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {

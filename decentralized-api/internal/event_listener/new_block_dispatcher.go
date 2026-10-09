@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"decentralized-api/apiconfig"
@@ -17,6 +19,7 @@ import (
 	"decentralized-api/internal"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/seed"
+	"decentralized-api/poc"
 
 	"common/logging"
 
@@ -29,6 +32,9 @@ import (
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+	DevshardApprovedVersions(ctx context.Context, req *types.QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*types.QueryDevshardApprovedVersionsResponse, error)
+	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
+	OpenPoCChallenges(ctx context.Context, req *types.QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*types.QueryOpenPoCChallengesResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -37,7 +43,9 @@ type StatusFunc func() (*coretypes.ResultStatus, error)
 type SetHeightFunc func(blockHeight int64) error
 
 type pocValidator interface {
+	PrepareValidationNodes()
 	ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string)
+	ValidateOpenChallenges()
 	// MaybeCaptureEarlyShare is invoked once per synced block to let the
 	// early-share guard capture the early on-chain commitment near the
 	// first-fraction boundary of the active PoC/CPoC generation window.
@@ -80,7 +88,16 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	epochGroupDataCache  *internal.EpochGroupDataCache
 	lastThresholdEpoch   uint64 // last epoch the per-model thresholds were refreshed for
+
+	seedSubmissionMu   sync.Mutex
+	seedAttemptHeight  int64
+	seedConfirmedEpoch uint64
+	seedEnsureInFlight atomic.Bool
+
+	applyFeeTree func(*types.FeeParams)
 }
+
+const seedRetryCooldownBlocks int64 = 2
 
 // StatusResponse matches the structure expected by getStatus function
 type StatusResponse struct {
@@ -164,6 +181,9 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		configManager,
 	)
 	dispatcher.epochGroupDataCache = epochGroupDataCache
+	if a, ok := cosmosClient.(interface{ ApplyFeeTree(*types.FeeParams) }); ok {
+		dispatcher.applyFeeTree = a.ApplyFeeTree
+	}
 	return dispatcher
 }
 
@@ -181,12 +201,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return err // Skip processing this block
 	}
 
+	minPunishable := int64(0)
 	// Fetch validation parameters - skip in tests
 	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
 		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
 		if err != nil {
 			logging.Error("Failed to get params", types.Validation, "error", err)
 		} else {
+			minPunishable = types.EffectiveMinPunishableSegmentBlocks(params.Params.PocChallengeParams)
 			// Update validation parameters in config
 			validationParams := apiconfig.ValidationParamsCache{
 				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
@@ -247,11 +269,24 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
 			}
 
-			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				d.configManager.SetDevshardVersions(
-					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
-				)
+				cache := apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, nil)
+				devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
+				if verr != nil || devshardVersions == nil {
+					logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
+					cache.Versions = d.configManager.GetDevshardVersions().Versions
+				} else {
+					cache = apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, devshardVersions.Versions)
+				}
+				d.configManager.SetDevshardVersions(cache)
+			}
+
+			// Reuse this Params response for the fee-tree cache. Do not issue a
+			// second RPC (and never context.Background()): a failed query leaves
+			// the last known-good cache in place. A successful response with
+			// nil FeeParams must still apply so Load(nil) clears stale pricing.
+			if d.applyFeeTree != nil {
+				d.applyFeeTree(params.Params.FeeParams)
 			}
 		}
 	}
@@ -290,6 +325,8 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		return nil
 	}
 
+	d.refreshOpenChallenges(ctx, minPunishable)
+
 	// Pin/unpin the PoC artifact stage before any generate/validate work on
 	// this block so proof serving cannot race an unloaded store.
 	d.offChainValidator.SyncArtifactStoreStage(*epochState)
@@ -303,7 +340,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	// 3. Check for phase transitions and stage events
-	d.handlePhaseTransitions(*epochState)
+	d.handlePhaseTransitions(ctx, *epochState)
 
 	// 4. Check if reconciliation should be triggered
 	if d.shouldTriggerReconciliation(*epochState) {
@@ -385,7 +422,7 @@ func (d *OnNewBlockDispatcher) refreshModelValidationThresholds(epoch uint64) {
 	d.lastThresholdEpoch = epoch
 }
 
-func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
+func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epochState chainphase.EpochState) {
 	//To work for tests
 	if d.nodeBroker == nil {
 		return
@@ -404,10 +441,24 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		logging.Warn("Failed to refresh preserved membership cache; continuing with cached snapshot", types.Stages, "error", err)
 	}
 
-	// Check for PoC start for the next epoch. This is the most important transition.
+	if d.isSeedSubmissionWindow(epochContext, blockHeight) {
+		participantAddress := d.nodeBroker.GetParticipantAddress()
+		// Best-effort across the PoC window, not a height-exact stage flip.
+		// Run async so ListRandomSeeds / GenerateSeedInfo cannot delay the
+		// QueueMessage transitions below (same pattern as RequestMoney).
+		// At most one ensure goroutine at a time — avoid per-block spawn pile-up.
+		if d.seedEnsureInFlight.CompareAndSwap(false, true) {
+			go func(epochContext types.EpochContext, blockHeight int64, participantAddress string) {
+				defer d.seedEnsureInFlight.Store(false)
+				// Bound the query/sign path so a hung RPC cannot pin inFlight forever.
+				seedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				d.ensureSeedSubmitted(seedCtx, epochContext, blockHeight, participantAddress)
+			}(epochContext, blockHeight, participantAddress)
+		}
+	}
+
 	if epochContext.IsStartOfPocStage(blockHeight) {
-		logging.Info("DapiStage:IsStartOfPocStage: generating and submitting PoC seed for upcoming epoch", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "epochIndex", epochContext.EpochIndex)
-		d.randomSeedManager.GenerateSeedInfo(epochContext.EpochIndex)
 		return
 	}
 
@@ -434,13 +485,17 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		logging.Info("DapiStage:IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "pocStartBlockHeight", epochContext.PocStartBlockHeight)
 		pocStartBlockHeight := epochContext.PocStartBlockHeight
 		go func() {
-			pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
-			if err != nil {
-				logging.Error("Failed to get PoC start block hash", types.PoC,
-					"pocStartBlockHeight", pocStartBlockHeight, "error", err)
-				return
-			}
-			d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
+			d.offChainValidator.PrepareValidationNodes()
+			go func() {
+				pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
+				if err != nil {
+					logging.Error("Failed to get PoC start block hash", types.PoC,
+						"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+					return
+				}
+				d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
+			}()
+			go d.offChainValidator.ValidateOpenChallenges()
 		}()
 	}
 
@@ -538,7 +593,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 				"poc_seed_block_hash", event.PocSeedBlockHash)
 
 			go func() {
-				d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
+				d.offChainValidator.PrepareValidationNodes()
+				go d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
+				go d.offChainValidator.ValidateOpenChallenges()
 			}()
 		}
 
@@ -555,8 +612,128 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	}
 }
 
+func (d *OnNewBlockDispatcher) isSeedSubmissionWindow(epochContext types.EpochContext, blockHeight int64) bool {
+	return epochContext.EpochIndex > 0 &&
+		blockHeight >= epochContext.StartOfPoC() &&
+		blockHeight < epochContext.EndOfPoCValidation()
+}
+
+func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
+	ctx context.Context,
+	epochContext types.EpochContext,
+	blockHeight int64,
+	participantAddress string,
+) {
+	if d.queryClient == nil || d.randomSeedManager == nil || d.configManager == nil || participantAddress == "" {
+		return
+	}
+
+	epochIndex := epochContext.EpochIndex
+
+	d.seedSubmissionMu.Lock()
+	defer d.seedSubmissionMu.Unlock()
+
+	if d.seedConfirmedEpoch >= epochIndex {
+		return
+	}
+	// Avoid resubmitting while the previous async SubmitSeed may still be in flight.
+	if d.seedAttemptHeight > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
+		return
+	}
+
+	onChainSeed, found, err := d.getParticipantSeed(ctx, epochIndex, participantAddress)
+	if err != nil {
+		logging.Warn("Failed to verify upcoming epoch seed on chain", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"blockHeight", blockHeight,
+			"error", err)
+	} else if found {
+		if d.confirmSeedLocally(epochIndex, participantAddress, onChainSeed) {
+			d.seedConfirmedEpoch = epochIndex
+		}
+		return
+	}
+
+	logging.Info("Ensuring PoC seed is submitted for upcoming epoch", types.Claims,
+		"epochIndex", epochIndex,
+		"participant", participantAddress,
+		"blockHeight", blockHeight,
+		"retry", d.seedAttemptHeight > 0)
+	d.seedAttemptHeight = blockHeight
+	d.randomSeedManager.GenerateSeedInfo(epochIndex)
+}
+
+func (d *OnNewBlockDispatcher) getParticipantSeed(
+	ctx context.Context,
+	epochIndex uint64,
+	participantAddress string,
+) (*types.RandomSeed, bool, error) {
+	response, err := d.queryClient.ListRandomSeeds(ctx, &types.QueryRandomSeedsRequest{EpochIndex: epochIndex})
+	if err != nil {
+		return nil, false, err
+	}
+	if response == nil {
+		return nil, false, errors.New("random seeds response is nil")
+	}
+	for _, randomSeed := range response.Seeds {
+		if randomSeed != nil && randomSeed.Participant == participantAddress {
+			return randomSeed, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// confirmSeedLocally syncs local upcoming seed with an on-chain seed.
+// Returns false only on transient restore failure so the next block can retry.
+func (d *OnNewBlockDispatcher) confirmSeedLocally(
+	epochIndex uint64,
+	participantAddress string,
+	onChainSeed *types.RandomSeed,
+) bool {
+	localSeed := d.configManager.GetUpcomingSeed()
+	if localSeed.EpochIndex == epochIndex && localSeed.Signature == onChainSeed.Signature {
+		logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress)
+		return true
+	}
+
+	generatedSeed, err := d.randomSeedManager.CreateNewSeed(epochIndex)
+	if err != nil || generatedSeed == nil {
+		logging.Error("On-chain seed exists but local seed could not be restored", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"error", err)
+		return false
+	}
+	if generatedSeed.Signature != onChainSeed.Signature {
+		logging.Error("On-chain seed signature does not match local deterministic seed; refusing to overwrite", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress)
+		return true
+	}
+	if err := d.configManager.SetUpcomingSeed(*generatedSeed); err != nil {
+		logging.Error("Failed to restore confirmed upcoming seed locally", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"error", err)
+		return false
+	}
+	logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
+		"epochIndex", epochIndex,
+		"participant", participantAddress)
+	return true
+}
+
 // shouldTriggerReconciliation determines if reconciliation should be triggered
 func (d *OnNewBlockDispatcher) shouldTriggerReconciliation(epochState chainphase.EpochState) bool {
+	// Challenge generate is overlayed onto inference (and cPoC generate). Use
+	// the PoC cadence so StartPocCommand -> StartPoCNodeCommandV2 keeps
+	// driving MLNodes, including the finish-k StopPowV2 wind-down.
+	if poc.GeneratingChallengeWork(&epochState) != nil {
+		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
+	}
 	switch epochState.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCValidatePhase:
 		return shouldTriggerReconciliation(epochState.CurrentBlock.Height, &d.reconciliationConfig, d.reconciliationConfig.PoC)
@@ -616,7 +793,32 @@ func (d *OnNewBlockDispatcher) triggerReconciliation(epochState chainphase.Epoch
 	// Wait for a response or not?
 }
 
+func (d *OnNewBlockDispatcher) refreshOpenChallenges(ctx context.Context, minPunishable int64) {
+	if d.queryClient == nil {
+		return
+	}
+	self := ""
+	if d.nodeBroker != nil {
+		self = d.nodeBroker.GetParticipantAddress()
+	}
+	resp, err := d.queryClient.OpenPoCChallenges(ctx, &types.QueryOpenPoCChallengesRequest{})
+	if err != nil {
+		logging.Warn("Failed to query OpenPoCChallenges; keeping last cache", types.PoC, "error", err)
+		return
+	}
+	var list []*types.OpenPoCChallenge
+	if resp != nil {
+		list = resp.Challenges
+	}
+	poc.OpenChallenges.Replace(self, list, minPunishable)
+}
+
 func getCommandForPhase(phaseInfo chainphase.EpochState) (broker.Command, *chan bool) {
+	if poc.GeneratingChallengeWork(&phaseInfo) != nil {
+		cmd := broker.NewStartPocCommand()
+		return cmd, &cmd.Response
+	}
+
 	// Handle confirmation PoC during inference phase
 	if phaseInfo.CurrentPhase == types.InferencePhase && phaseInfo.ActiveConfirmationPoCEvent != nil {
 		event := phaseInfo.ActiveConfirmationPoCEvent
@@ -661,10 +863,33 @@ func parseNewBlockInfo(event *chainevents.JSONRPCResponse) (*chainphase.BlockInf
 		return nil, err
 	}
 
-	return &chainphase.BlockInfo{
+	info := &chainphase.BlockInfo{
 		Height: blockHeight,
 		Hash:   blockHash,
-	}, nil
+	}
+	if block, ok := event.Result.Data.Value["block"].(map[string]interface{}); ok {
+		if header, ok := block["header"].(map[string]interface{}); ok {
+			if chainID, ok := header["chain_id"].(string); ok {
+				info.ChainID = chainID
+			}
+			info.Time = parseBlockHeaderTime(header["time"])
+		}
+	}
+	return info, nil
+}
+
+func parseBlockHeaderTime(v interface{}) time.Time {
+	s, ok := v.(string)
+	if !ok || s == "" {
+		return time.Time{}
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return ts
+	}
+	if ts, err := time.Parse(time.RFC3339, s); err == nil {
+		return ts
+	}
+	return time.Time{}
 }
 
 // Helper functions moved from event_listener.go for parsing block data

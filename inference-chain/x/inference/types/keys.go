@@ -122,11 +122,17 @@ var (
 	// Index of currently-scheduled maintenance reservations (key = reservationID).
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
-	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
-	ClaimRecipientsPrefix           = collections.NewPrefix(106)
-	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
+	MaintenanceScheduledIndexPrefix        = collections.NewPrefix(105)
+	ClaimRecipientsPrefix                  = collections.NewPrefix(106)
+	ClaimRecipientsByEpochPrefix           = collections.NewPrefix(107)
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
-	ParamsKey                              = []byte("p_inference")
+	// Prefix 109 was reserved for an unused period-base KeySet and is left
+	// unused so it is not silently reused.
+	DevshardApprovedVersionsPrefix = collections.NewPrefix(110)
+	PoCChallengePrefix             = collections.NewPrefix(111)
+	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
+	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
+	ParamsKey                      = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

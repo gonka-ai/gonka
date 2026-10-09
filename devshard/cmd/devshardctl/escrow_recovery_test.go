@@ -18,7 +18,7 @@ import (
 // The root-cause layer: the gateway store must open in WAL with a busy timeout
 // so concurrent writes wait instead of failing with "database is locked".
 func TestGatewayStoreUsesWALAndBusyTimeout(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
@@ -80,16 +80,27 @@ func stubRuntimeBuilder(t *testing.T) {
 // stubCreateOnChain replaces the on-chain create with a fake that mimics the real
 // flow: it invokes onPrepared(txHash) (so the commitment is written) and aborts
 // without a result if that fails — exactly as CreateDevshardEscrow does.
-func stubCreateOnChain(t *testing.T, txHash string, escrowID uint64) {
+func stubCreateOnChain(t *testing.T, txHash string, escrowID uint64) *atomic.Int32 {
 	t.Helper()
-	saved := gatewayCreateEscrowOnChain
-	gatewayCreateEscrowOnChain = func(_ *Gateway, _ context.Context, _ GatewaySettings, _ EscrowRotationModelSettings, onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
+	var broadcasts atomic.Int32
+	stubCreateOnChainWith(t, func(onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
 		if onPrepared != nil {
 			if err := onPrepared(txHash); err != nil {
 				return nil, err
 			}
 		}
+		broadcasts.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: escrowID, TxHash: txHash}, nil
+	})
+	return &broadcasts
+}
+
+// stubCreateOnChainWith swaps the on-chain create for the given body until the test ends.
+func stubCreateOnChainWith(t *testing.T, create func(onPrepared func(string) error) (*CreateDevshardEscrowResult, error)) {
+	t.Helper()
+	saved := gatewayCreateEscrowOnChain
+	gatewayCreateEscrowOnChain = func(_ *Gateway, _ context.Context, _ GatewaySettings, _ EscrowRotationModelSettings, onPrepared func(string) error) (*CreateDevshardEscrowResult, error) {
+		return create(onPrepared)
 	}
 	t.Cleanup(func() { gatewayCreateEscrowOnChain = saved })
 }
@@ -103,21 +114,21 @@ func stubQueryTxEscrowID(t *testing.T, fn func(string) (uint64, bool, error)) {
 	t.Cleanup(func() { gatewayQueryTxEscrowID = saved })
 }
 
-func newRecoveryGateway(t *testing.T) (*Gateway, *GatewayStore, GatewaySettings) {
+func newRecoveryGateway(t *testing.T) (*Gateway, GatewayStore, GatewaySettings) {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	settings := recoveryTestSettings()
-	require.NoError(t, store.Initialize(settings, nil))
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 	stubRuntimeBuilder(t)
 	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{}}
 	return g, store, settings
 }
 
-func devshardIDs(t *testing.T, store *GatewayStore) map[string]GatewayDevshardState {
+func devshardIDs(t *testing.T, store GatewayStore) map[string]GatewayDevshardState {
 	t.Helper()
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	return gatewayDevshardsByID(state.Devshards)
@@ -134,8 +145,8 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 	require.NoError(t, err)
 
 	record := devshardIDs(t, store)["777"]
-	require.Equal(t, "4", record.ProtocolVersion, "replacement escrow uses the default protocol")
-	commitments, err := store.LoadCommitments()
+	require.Equal(t, "6", record.ProtocolVersion, "replacement escrow uses the default protocol")
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, commitments, "commitment cleared after persist")
 }
@@ -156,31 +167,104 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromRoutePrefix(t *testing.T)
 	assert.Equal(t, "3", record.ProtocolVersion, "persisted escrow inherits protocol from route prefix")
 }
 
-// A route prefix whose version segment is not a protocol version (e.g. a named
-// versiond runtime) uses the current default; semver-like versions map by major.
-func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
-	assert.Equal(t, "4", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
-	assert.Equal(t, "3", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
-	assert.Equal(t, "2", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
-	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+func TestCreateRotationEscrowCarriesProtocolVersionFromV4RoutePrefix(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPV4", 557)
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
-	assert.Equal(t, "4", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/4")
-	assert.Equal(t, "4", rotationEscrowProtocolVersion())
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["557"]
+	assert.Equal(t, "4", record.ProtocolVersion, "v4 route prefix stamps protocol 4, not empty")
+}
+
+func TestCreateRotationEscrowCarriesProtocolVersionFromV41RoutePrefix(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPV41", 558)
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1")
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["558"]
+	assert.Equal(t, "4.1", record.ProtocolVersion, "v4.1 route prefix stamps 4.1, not major 4")
+}
+
+// Named versiond runtimes stamp as-is; numeric versions stamp as N or N.x
+// (v2.1.0 -> 2.1, v4.1r5 -> 4.1). This is the gateway-DB protocol_version,
+// not the settlement StateRootAndProtocolVersion tag.
+func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
+	for _, testCase := range []struct {
+		routePrefix     string
+		protocolVersion string
+	}{
+		{"/devshard/mainnet-canary", "mainnet-canary"},
+		{"/devshard/v3", "3"},
+		{"/devshard/v2.1.0", "2.1"},
+		{"/devshard/3", "3"},
+		{"/devshard/v4", "4"},
+		{"/devshard/4", "4"},
+		{"/devshard/v4.1", "4.1"},
+		{"/devshard/4.1", "4.1"},
+		{"/devshard/v4.1r5", "4.1"},
+		{"/devshard/v4.2", "4.2"},
+		{"/devshard/v5", "5"},
+		{"/devshard/5", "5"},
+		{"/devshard/v5.1", "5.1"},
+	} {
+		t.Run(testCase.routePrefix, func(t *testing.T) {
+			assert.Equal(t, testCase.protocolVersion, escrowProtocolVersionFor(testCase.routePrefix))
+		})
+	}
+}
+
+// The prefix an escrow was born on is stored, not re-resolved: a host binds the escrow to the first
+// version that reaches it and refuses every other one forever.
+func TestRotationEscrowPinsRoutePrefixAgainstAGatewayThatMovesOn(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPIN", 555)
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["555"]
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
+	assert.Equal(t, "/devshard/v3", record.RoutePrefix)
+	assert.Equal(t, "/devshard/v3", resolveRuntimeRoutePrefix(record.RoutePrefix))
+	assert.Equal(t, "3", record.ProtocolVersion)
+}
+
+func TestCommitmentRoutePrefixKeepsTheVersionTheEscrowWasMintedUnder(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
+	assert.Equal(t, "/devshard/v4", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4"}),
+		"a numeric protocol does not ride the live named-runtime prefix")
+	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "mainnet-canary"}),
+		"a named runtime commitment keeps the live named prefix")
+	assert.Equal(t, "/devshard/v3", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "3"}),
+		"a gateway that moved versions mid-recovery follows the commitment")
+	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{}),
+		"a commitment predating the field follows the live prefix")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1")
+	assert.Equal(t, "/devshard/v4.1", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4.1"}),
+		"a v4.1 gateway keeps a v4.1 commitment on v4.1")
+	assert.Equal(t, "/devshard/v4", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4"}),
+		"a v4.1 gateway must not drag a v4 commitment onto v4.1")
 }
 
 func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TXPV2", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 11,
 		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY", ProtocolVersion: "3",
 	}))
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1)
 	assert.Equal(t, "3", commitments[0].ProtocolVersion, "commitment round-trips protocol version")
@@ -200,15 +284,16 @@ func TestCreateRotationEscrowAbortsWhenCommitmentWriteFails(t *testing.T) {
 	model := normalizedEscrowRotationModels(settings)[0]
 
 	// Make every write fail, as a locked/read-only DB would.
-	_, err := store.db.Exec("PRAGMA query_only=ON")
+	sqliteStore := requireSQLiteGatewayStore(t, store)
+	_, err := sqliteStore.db.Exec("PRAGMA query_only=ON")
 	require.NoError(t, err)
 
 	_, err = g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
 	require.Error(t, err)
 
-	_, _ = store.db.Exec("PRAGMA query_only=OFF")
+	_, _ = sqliteStore.db.Exec("PRAGMA query_only=OFF")
 	assert.NotContains(t, devshardIDs(t, store), "778", "no escrow created when intent write fails")
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments)
 }
 
@@ -229,7 +314,7 @@ func TestCreateRotationEscrowPersistFailureRecoversViaCommitment(t *testing.T) {
 	gatewayRuntimeBuilder = savedBuilder // restore (stubRuntimeBuilder's success)
 
 	require.NotContains(t, devshardIDs(t, store), "888", "not persisted yet")
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "commitment kept for recovery")
 	assert.Equal(t, "TXCCC", commitments[0].TxHash)
@@ -242,14 +327,14 @@ func TestCreateRotationEscrowPersistFailureRecoversViaCommitment(t *testing.T) {
 	g.reconcileCommitments(context.Background(), settings)
 
 	assert.Contains(t, devshardIDs(t, store), "888", "recovered via commitment")
-	commitments, _ = store.LoadCommitments()
+	commitments, _ = store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared after recovery")
 }
 
 // Reconcile persists an escrow for a pending commitment and clears it.
 func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TXDDD", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 11, PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
 	}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 999, true, nil })
@@ -257,7 +342,7 @@ func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 	g.reconcileCommitments(context.Background(), settings)
 
 	assert.Contains(t, devshardIDs(t, store), "999")
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments)
 }
 
@@ -265,12 +350,12 @@ func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 // immediately — the failure is final, the tx can never produce an escrow.
 func TestReconcileCommitmentsClearsWhenTxCommittedFailed(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXEEE", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXEEE", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, nil })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared when tx committed but created no escrow")
 }
 
@@ -279,12 +364,12 @@ func TestReconcileCommitmentsClearsWhenTxCommittedFailed(t *testing.T) {
 // index lag, not a failed broadcast. Clearing now would orphan a real escrow.
 func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXFRESH", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXFRESH", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "fresh not-found commitment retained until its tx can no longer land")
 	assert.Equal(t, "TXFRESH", commitments[0].TxHash)
@@ -294,7 +379,7 @@ func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 // never land — only then is it safe to clear.
 func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash:    "TXOLD",
 		Model:     "Qwen/Test",
 		Role:      rotationRoleTemp,
@@ -304,19 +389,19 @@ func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared once the unordered tx can no longer land")
 }
 
 // A transient chain error leaves the commitment for the next pass.
 func TestReconcileCommitmentsKeepsCommitmentOnChainError(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXFFF", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXFFF", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errors.New("chain unreachable") })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "commitment retained when chain cannot be queried")
 	assert.Equal(t, "TXFFF", commitments[0].TxHash)

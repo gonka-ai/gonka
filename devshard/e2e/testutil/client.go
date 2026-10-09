@@ -114,3 +114,24 @@ func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
 	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
 	return decoded
 }
+
+func GetJSONArray(t *testing.T, client *http.Client, url string) []any {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
+	DebugLogf(t, "GET %s", url)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	DebugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+	require.Less(t, resp.StatusCode, 300, "GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
+
+	var decoded []any
+	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
+	return decoded
+}

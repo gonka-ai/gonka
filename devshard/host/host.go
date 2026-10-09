@@ -15,8 +15,9 @@ import (
 
 	"common/completionapi"
 
+	"common/chainoracle/blocks"
 	"devshard"
-	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
@@ -52,23 +53,38 @@ type HostRequest struct {
 	Diffs   []types.Diff
 	Nonce   uint64            // nonce of the current request
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
+	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
+	// (legacy single-message override when escrow state does not carry a forced turn).
+	ForceHeightSyncAnchor        bool
+	LogprobsOptimizationOverride *bool
+	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
+	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
 
 // HostResponse carries the host's reply back to the user.
 type HostResponse struct {
-	StateSig           []byte // nil = withheld
-	StateHash          []byte // always set after applying diffs
-	Nonce              uint64 // current nonce after applying diffs
-	Receipt            []byte // executor receipt sig, nil if not executor
-	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
+	StateSig          []byte // nil = withheld
+	StateHash         []byte // always set after applying diffs
+	Nonce             uint64 // current nonce after applying diffs
+	Receipt           []byte // executor receipt sig, nil if not executor
+	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
+	ObservedHeight    uint64 // executor stamp; 0 if unstamped
+	ObservedBlockHash []byte
+	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
+	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
+	// a host-signed raise that does not match this hop's envelope (spec §14).
+	EnvelopeHeight     uint64
+	HasEnvelope        bool
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a response already stored
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
 	ExecutionExpected  bool
+
+	ReceivedResponseHashes [][32]byte
 }
 
 type receiptOutcome struct {
@@ -76,7 +92,16 @@ type receiptOutcome struct {
 	receiptExpected   bool
 	reason            observability.Reason
 	executionExpected bool
+	observedHeight    uint64
+	observedHash      []byte
+	// lookupStored means the inference already ran here and the caller loads
+	// its stored body outside the host lock. No execution claim is held.
+	lookupStored bool
 }
+
+// StoredResponse loads a response this host already persisted for an inference.
+// A nil body means it was not stored.
+type StoredResponse func(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, error)
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
 // signature when a diff contains content the host considers unacceptable
@@ -89,26 +114,46 @@ type AcceptanceChecker interface {
 const (
 	defaultValidationWorkers   = 20
 	defaultValidationQueueSize = 20_000
+	validationCooldown         = 30 * time.Second
+
+	// defaultExecutionBudget bounds a detached execution when the session config
+	// carries no ExecutionTimeout (zero is a legal value that
+	// NormalizeSessionConfig deliberately preserves).
+	defaultExecutionBudget = 32 * time.Minute
+
+	finishObsMinRetention = 2 * time.Hour
 )
+
+type inferenceFinishObs struct {
+	nonce uint64
+	at    time.Time
+}
+
+type disappearedFinishObs struct {
+	finishNonce  uint64
+	finishAt     int64
+	currentNonce uint64
+	currentAt    int64
+}
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
 	validationRecorder devshard.ValidationCompletionRecorder
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                gossipRelay     // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -117,19 +162,48 @@ type Host struct {
 	slotToAddr  map[uint32]string   // slotID -> validator address
 	addrToSlots map[string][]uint32 // address -> all slotIDs owned
 
-	sortedSlots        []uint32            // deterministic slot order for this host
-	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
+	sortedSlots []uint32            // deterministic slot order for this host
+	executing   map[uint64]struct{} // inference IDs with in-flight execution
+	validating  map[uint64]struct{} // inference IDs with queued or in-flight validation
+	// validationCooldown is inference ID -> not-before. The zero time holds the
+	// inference until it leaves the validatable set; any other time expires.
+	validationCooldown map[uint64]time.Time
 	validationQueue    chan validateJob
-	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	ownSeed            int64             // deterministic seed derived from signer + escrowID
+	// storedResponse reads the response payload written at the end of execution.
+	// Nil means this host has no payload store (tests); reconnect cannot replay.
+	storedResponse StoredResponse
+	ownSeed        int64 // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
 	validationStartOnce   sync.Once
 	validationCloseOnce   sync.Once
 	validationClosed      bool
+	validationCtx         context.Context
+	validationCancel      context.CancelFunc
+	validationWorkers     sync.WaitGroup
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
+
+	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
+	oracle blocks.BlockOracle
+
+	// peerSeen and heartbeatCfg serve host-signed height acks (spec §10.4).
+	// peerSeen is the spec §11.2 bitmap (Diff acks and repair HEIGHT).
+	// heartbeatCfg supplies D.
+	peerSeen     *heightsync.PeerSeen
+	heartbeatCfg heightsync.HeartbeatConfig
+
+	repairCfg       heightsync.RepairConfig
+	repairBudget    *heightsync.RepairBudget
+	repairResponder *heightsync.RepairResponderBudget
+	repairProbe     heightsync.RepairProbeFn
+	repairInFlight  atomic.Bool
+	closeReady      *heightsync.CloseReady
+
+	// finishObs is host-local observability: Finish nonce and wall clock when
+	// this host applied MsgFinishInference. Used when validation later finds
+	// the live record gone (sealed/drained). Not part of consensus.
+	finishObs map[uint64]inferenceFinishObs
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -195,26 +269,51 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		validationCooldown: make(map[uint64]time.Time),
+		finishObs:          make(map[uint64]inferenceFinishObs),
+		ownSeed:            ownSeed,
+		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
+		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
+		repairCfg:          heightsync.DefaultRepairConfig(),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
+	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
+	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
+	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
+	h.installOwedValidations()
 	return h, nil
+}
+
+// installOwedValidations registers this host's obligation rule on its state
+// machine and fills the set from inferences already live (recovery). Later
+// diffs maintain the set at each record write.
+func (h *Host) installOwedValidations() {
+	mySlots := h.slotIDs
+	mySlotCount := uint32(len(mySlots))
+	totalSlots := h.sm.TotalSlots()
+	seed := h.ownSeed
+	h.sm.SetOwedValidationPredicate(func(id uint64, rec *types.InferenceRecord, rate uint32) bool {
+		if rec == nil {
+			return false
+		}
+		executorSlots := h.sm.AddressSlotCount(h.slotToAddr[rec.ExecutorSlot])
+		return state.OwedValidation(seed, id, rec, mySlots, mySlotCount, executorSlots, totalSlots, rate)
+	})
 }
 
 // Start launches background workers owned by this host. Callers should invoke
@@ -229,23 +328,33 @@ func (h *Host) Start() {
 		if h.validationClosed {
 			return
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		h.validationCtx = ctx
+		h.validationCancel = cancel
 		q := make(chan validateJob, defaultValidationQueueSize)
 		h.validationQueue = q
 		h.startValidationWorkers(q, defaultValidationWorkers)
 	})
 }
 
-// Close releases host-owned background workers. It is safe to call multiple
-// times and safe to call on hosts that were never started.
+// Close cancels in-flight Validate and waits for workers to unwind. Cancel
+// aborts ML immediately; the wait is only so Release can DELETE the pending
+// lease while storage is still open. It is safe to call multiple times and
+// safe to call on hosts that were never started.
 func (h *Host) Close() {
 	h.validationCloseOnce.Do(func() {
 		h.validationLifecycleMu.Lock()
-		defer h.validationLifecycleMu.Unlock()
 		h.validationClosed = true
+		if h.validationCancel != nil {
+			h.validationCancel()
+			h.validationCancel = nil
+		}
 		if h.validationQueue != nil {
 			close(h.validationQueue)
 			h.validationQueue = nil
 		}
+		h.validationLifecycleMu.Unlock()
+		h.validationWorkers.Wait()
 	})
 }
 
@@ -268,13 +377,25 @@ func WithEpochID(epochID uint64) HostOption {
 	return func(h *Host) { h.epochID = epochID }
 }
 
+// WithStoredResponse sets the loader used to replay a response that execution
+// already persisted. The host does not keep a second copy in memory.
+func WithStoredResponse(load StoredResponse) HostOption {
+	return func(h *Host) { h.storedResponse = load }
+}
+
 // WithVerifier sets the signature verifier for gossip sig accumulation.
 func WithVerifier(v signing.Verifier) HostOption {
 	return func(h *Host) { h.verifier = v }
 }
 
+// gossipRelay is the host-side gossip surface. *gossip.Gossip implements it.
+type gossipRelay interface {
+	BroadcastTxs(ctx context.Context, txs []*types.DevshardTx)
+	PruneBelow(nonce uint64)
+}
+
 // WithGossip sets the gossip instance for pruning on finalization.
-func WithGossip(g *gossip.Gossip) HostOption {
+func WithGossip(g gossipRelay) HostOption {
 	return func(h *Host) { h.gsp = g }
 }
 
@@ -304,10 +425,11 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // via CompositeChecker.
 //
 // Production HostManager intentionally does not use this option: settlement
-// protection comes from deterministic drain accounting (settleLiveRecordLocked),
-// not signature withholding. WithGrace must not be paired with finish-gossip
-// recovery — gossip is a best-effort convenience for the user to sequence a
-// real Finish at actual cost; withholding would freeze settlement instead.
+// protection comes from deterministic drain accounting (settleLiveRecordLocked
+// credits reserved on both Started and Pending), not signature withholding.
+// WithGrace must not be paired with finish-gossip recovery — gossip is a
+// best-effort convenience for the user to sequence a real Finish at actual
+// cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
@@ -316,6 +438,33 @@ func WithGrace(grace uint64) HostOption {
 		} else {
 			h.checker = sc
 		}
+	}
+}
+
+// ErrNoChainOracle is returned by Host.LatestHeight when no BlockOracle was configured.
+var ErrNoChainOracle = errors.New("host: no chain oracle configured")
+
+// WithChainOracle injects a mainnet BlockOracle. LatestHeight returns ErrNoChainOracle when omitted.
+func WithChainOracle(o blocks.BlockOracle) HostOption {
+	return func(h *Host) {
+		if o != nil {
+			h.oracle = o
+		}
+	}
+}
+
+// WithHeartbeatConfig overlays compiled heartbeat defaults used for sync_state (D).
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) HostOption {
+	return func(h *Host) {
+		h.heartbeatCfg = cfg
+	}
+}
+
+// WithRepairConfig overlays repair-probe stagger / R_max. Stagger 0 means no
+// wait (tests); production uses DefaultRepairConfig (1s).
+func WithRepairConfig(cfg heightsync.RepairConfig) HostOption {
+	return func(h *Host) {
+		h.repairCfg = cfg
 	}
 }
 
@@ -331,7 +480,45 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 	return h.mempool.Txs()
 }
 
-func (h *Host) EscrowID() string              { return h.escrowID }
+// AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
+// recovery txs from a challenge-receipt response into a verifier's pool.
+func (h *Host) AddTx(tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
+	h.mempool.AddTx(tx)
+}
+
+func (h *Host) EscrowID() string { return h.escrowID }
+
+// MemoryCounts is the size of the maps that retain an escrow in this process.
+// Lengths only: nothing is copied and no record is visited.
+type MemoryCounts struct {
+	EscrowID   string
+	Live       int
+	Sealed     int
+	Mempool    int
+	Executing  int
+	Validating int
+}
+
+func (h *Host) MemoryCounts() MemoryCounts {
+	if h == nil {
+		return MemoryCounts{}
+	}
+	out := MemoryCounts{EscrowID: h.escrowID}
+	if h.sm != nil {
+		out.Live, out.Sealed = h.sm.LiveAndSealedCounts()
+	}
+	if h.mempool != nil {
+		out.Mempool = h.mempool.Len()
+	}
+	h.mu.Lock()
+	out.Executing = len(h.executing)
+	out.Validating = len(h.validating)
+	h.mu.Unlock()
+	return out
+}
 func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
 func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }
@@ -361,20 +548,56 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 	return h.sm.IsWarmKeyAddress(addr)
 }
 
-// IsWarmKeyForSlot returns true if addr is an authorized warm key for the
-// given slot, either via existing state bindings or via the bridge resolver.
-func (h *Host) IsWarmKeyForSlot(addr string, slotID uint32) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	warmKeys := h.sm.WarmKeys()
-	if warmKeys[slotID] == addr {
-		return true
+func (h *Host) Signer() signing.Signer { return h.signer }
+
+// SlotActors is the host-signature identity set for this escrow (cold keys,
+// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+//
+// The returned value memoises its authz lookups, so a caller that checks two
+// identities for one request -- the repair handler checks the signer and the
+// HTTP sender -- should reuse one value rather than call this twice. The memo
+// is not synchronised; treat the value as request-scoped.
+func (h *Host) SlotActors() signing.SlotActors {
+	authz := make(map[[2]string]bool, 2)
+	return signing.SlotActors{
+		SlotKeys: h.slotToAddr,
+		WarmKeys: h.sm.WarmKeys(),
+		AcceptWarm: func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			ok, seen := authz[pair]
+			if !seen {
+				ok = h.sm.CheckWarmKey(recovered, expected)
+				authz[pair] = ok
+			}
+			return ok
+		},
 	}
-	expected, ok := h.slotToAddr[slotID]
-	return ok && h.sm.CheckWarmKey(addr, expected)
 }
 
-func (h *Host) Signer() signing.Signer { return h.signer }
+// HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
+func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.HeightSyncEscrowHints(defaultK, defaultSlots)
+}
+
+// LatestHeight returns the highest mainnet block height known to the injected oracle.
+func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
+	if h.oracle == nil {
+		return 0, ErrNoChainOracle
+	}
+	hdr, err := h.oracle.Latest(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if hdr == nil {
+		return 0, fmt.Errorf("host: chain oracle returned nil header")
+	}
+	return hdr.Height, nil
+}
+
+// ChainOracle returns the injected BlockOracle or nil if unwired.
+func (h *Host) ChainOracle() blocks.BlockOracle { return h.oracle }
 
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
@@ -393,22 +616,37 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
+	var newlyApplied []types.Diff
 	diffsApplied := false
 	for _, diff := range req.Diffs {
 		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
 			h.mu.Unlock()
 			return nil, err
 		}
+		before := h.sm.LatestNonce()
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
+		}
+		if h.sm.LatestNonce() > before {
+			newlyApplied = append(newlyApplied, diff)
 		}
 		lastAppliedTxs = diff.Txs
 		diffsApplied = true
 	}
 
+	needOracle := h.oracleNeededLocked(req, newlyApplied)
+	h.mu.Unlock()
+	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
+	h.mu.Lock()
+
+	// (a2) Answer heartbeats addressed to this host's slot (spec §10.4).
+	// Acks go into the mempool of this response; they are never a general stamp.
+	h.maybeAckHeartbeatsLocked(newlyApplied, hdr, hdrErr)
+	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
+
 	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(req)
+	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr, appliedNonce(newlyApplied, req.Nonce))
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -438,6 +676,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	h.mu.Unlock()
 
+	if body := h.resolveStoredResponse(ctx, &receiptOutcome); body != nil {
+		cachedBody = body
+	}
+
 	// (f) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
@@ -454,12 +696,18 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		go h.broadcastTxsBestEffort(staleFinishes)
 	}
 
+	if h.repairProbe != nil {
+		go h.MaybeRepair(context.WithoutCancel(ctx))
+	}
+
 	return &HostResponse{
 		StateSig:           stateSig,
 		StateHash:          root,
 		Nonce:              nonce,
 		Receipt:            receipt,
 		ConfirmedAt:        confirmedAt,
+		ObservedHeight:     receiptOutcome.observedHeight,
+		ObservedBlockHash:  append([]byte(nil), receiptOutcome.observedHash...),
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
@@ -478,6 +726,7 @@ func requestBlockedWhenUnavailable(req HostRequest) bool {
 		for _, tx := range diff.Txs {
 			if tx.GetStartInference() != nil ||
 				tx.GetTimeoutInference() != nil ||
+				tx.GetErrorMiss() != nil ||
 				tx.GetValidation() != nil ||
 				tx.GetValidationVote() != nil {
 				return true
@@ -581,13 +830,9 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	}
 	h.mempool.RemoveIncluded(diff.Txs)
 
-	// Evict cached responses for finalized or timed-out inferences.
 	for _, tx := range diff.Txs {
 		if fi := tx.GetFinishInference(); fi != nil {
-			delete(h.completedResponses, fi.InferenceId)
-		}
-		if ti := tx.GetTimeoutInference(); ti != nil {
-			delete(h.completedResponses, ti.InferenceId)
+			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
 		}
 	}
 
@@ -629,17 +874,18 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 	state := h.sm.ExportState()
 	committedEntries := h.sm.ExportCommittedEntries()
 	sealedNonces := h.sm.ExportSealedNonces()
+	heightSyncFloor := h.sm.ExportHeightSyncFloor()
 
 	go func() {
 		if !settledNow {
 			defer h.snapshotInFlight.Store(false)
 		}
-		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces)
+		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) {
-	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces, heightSyncFloor)
 	if err != nil {
 		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
 		return
@@ -685,6 +931,52 @@ func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
 	return h.mempool.StaleFinishes(h.sm.LatestNonce(), grace)
 }
 
+func (h *Host) recordFinishObsLocked(inferenceID, finishNonce uint64, at time.Time) {
+	if h.finishObs == nil {
+		h.finishObs = make(map[uint64]inferenceFinishObs)
+	}
+	h.finishObs[inferenceID] = inferenceFinishObs{nonce: finishNonce, at: at}
+	h.pruneFinishObsLocked(at)
+}
+
+func (h *Host) pruneFinishObsLocked(now time.Time) {
+	retention := h.finishObsRetention()
+	for id, obs := range h.finishObs {
+		if now.Sub(obs.at) > retention {
+			delete(h.finishObs, id)
+		}
+	}
+}
+
+func (h *Host) finishObsRetention() time.Duration {
+	cfg := h.sm.Config()
+	timeout := cfg.ExecutionTimeout
+	if timeout < 0 {
+		timeout = 0
+	}
+	sec := int64(cfg.InferenceSealGraceSeconds) + timeout
+	d := time.Duration(sec*2) * time.Second
+	if d < finishObsMinRetention {
+		return finishObsMinRetention
+	}
+	return d
+}
+
+func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := disappearedFinishObs{
+		currentNonce: h.sm.LatestNonce(),
+		currentAt:    time.Now().Unix(),
+	}
+	if obs, ok := h.finishObs[inferenceID]; ok {
+		out.finishNonce = obs.nonce
+		out.finishAt = obs.at.Unix()
+		delete(h.finishObs, inferenceID)
+	}
+	return out
+}
+
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
 // stores sig and checks finalization. Caller must hold h.mu.
 func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, err error) {
@@ -718,6 +1010,52 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 	return stateSig, root, nonce, nil
 }
 
+// confirmStartLocked returns the executor receipt for a pending inference as a
+// MsgConfirmStart queued in the mempool. A receipt this host already queued is
+// returned as is, so every retry hands out the same bytes: whichever copy lands
+// in a diff, RemoveIncluded clears the queued one. Otherwise it signs a new
+// receipt with a wall-clock confirmed_at and the reference stamp for
+// inferenceID, and queues it. Caller must hold h.mu.
+func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
+	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
+		return queued, nil
+	}
+	confirmedAt := time.Now().Unix()
+	obsH, obsHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
+	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
+		InferenceId:       inferenceID,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          h.escrowID,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
+	})
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+	}
+	sig, err := h.signer.Sign(receiptData)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
+	}
+	confirm := &types.MsgConfirmStart{
+		InferenceId:       inferenceID,
+		ExecutorSig:       sig,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
+	}
+	h.mempool.Add(MempoolEntry{
+		Tx:         &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}},
+		ProposedAt: h.sm.LatestNonce(),
+	})
+	return confirm, nil
+}
+
 func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 	for i := range diffs {
 		if diffs[i].Nonce == nonce {
@@ -728,14 +1066,18 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 }
 
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
-// Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
-// and cached response body if the inference already completed (reconnect case).
+// Returns the receipt sig, confirmed_at timestamp, and an ExecuteRequest if this host is the executor.
+// A reconnect does not get the body here: resolveStoredResponse loads it from payload storage.
 //
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
+// startedHere reports that this request applied the inference's start. Only an
+// inference that existed before the request can have a response stored by an
+// earlier execution, so only those pay for a payload-storage read.
+//
 // Caller must hold h.mu.
-func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
+func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Header, hdrErr error, startedHere bool) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
@@ -771,43 +1113,41 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	}
 
 	_, alreadyExecuting := h.executing[inferenceID]
-	cached, hasCached := h.completedResponses[inferenceID]
-	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached {
-		outcome.reason = observability.ReasonInferenceDisappeared
+	// ConfirmStart applies only while the inference is pending. Returning a
+	// receipt for any later status makes the gateway queue one anyway.
+	if rec.Status != types.StatusPending {
+		finishQueued := h.mempool.HasFinish(inferenceID)
+		switch {
+		case alreadyExecuting:
+			outcome.reason = observability.ReasonAlreadyExecuting
+		case h.storedResponse != nil && replayableStatus(rec.Status, finishQueued):
+			outcome.lookupStored = true
+		case h.storedResponse != nil && rec.Status == types.StatusStarted:
+			// Started with no finish anywhere here: an earlier process ran
+			// the model and lost its finish. Publish it from storage. The
+			// model never runs for a started inference.
+			job := h.newExecuteRequest(inferenceID, rec, req.Payload)
+			job.LogprobsOptimizationOverride = req.LogprobsOptimizationOverride
+			job.Recovery = devshard.RecoveryStoredOnly
+			h.executing[inferenceID] = struct{}{}
+			outcome.executionExpected = true
+			outcome.reason = observability.ReasonOK
+			return nil, 0, job, nil, outcome, nil
+		default:
+			outcome.reason = observability.ReasonInferenceDisappeared
+		}
 		return nil, 0, nil, nil, outcome, nil
 	}
 
-	// Sign executor receipt with wall-clock confirmed_at.
-	confirmedAt := time.Now().Unix()
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: inferenceID,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    h.escrowID,
-		ConfirmedAt: confirmedAt,
-	}
-	receiptData, err := proto.Marshal(receiptContent)
+	// The ConfirmStart is queued in the mempool so it survives HTTP failures:
+	// if the response is lost (e.g. 503), the next request delivers it.
+	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
 	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+		return nil, 0, nil, nil, outcome, err
 	}
-	sig, err := h.signer.Sign(receiptData)
-	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
-	}
-
-	// Add MsgConfirmStart to mempool so it survives HTTP failures.
-	// If the response is lost (e.g. 503), the next request delivers it via mempool.
-	h.mempool.Add(MempoolEntry{
-		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: inferenceID,
-			ExecutorSig: sig,
-			ConfirmedAt: confirmedAt,
-		}}},
-		ProposedAt: h.sm.LatestNonce(),
-	})
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
+	outcome.observedHeight = confirm.ObservedHeight
+	outcome.observedHash = confirm.ObservedBlockHash
 
 	// Dedup: return receipt (proves executor alive) but skip execution.
 	if alreadyExecuting {
@@ -815,33 +1155,141 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		return sig, confirmedAt, nil, nil, outcome, nil
 	}
 
-	// Already completed: execution finished, response cached.
-	if hasCached {
-		outcome.reason = observability.ReasonCachedResponse
-		return sig, confirmedAt, nil, cached, outcome, nil
+	// A queued finish means this process already ran the model. Replay the
+	// stored body and never execute again: a second run would queue a second
+	// finish. No claim is taken because nothing will start.
+	if h.storedResponse != nil && h.mempool.HasFinish(inferenceID) {
+		outcome.lookupStored = true
+		return sig, confirmedAt, nil, nil, outcome, nil
 	}
 
+	job := h.newExecuteRequest(inferenceID, rec, req.Payload)
+	job.LogprobsOptimizationOverride = req.LogprobsOptimizationOverride
+	if !startedHere && h.storedResponse != nil {
+		job.Recovery = devshard.RecoveryStoredFirst
+	}
 	h.executing[inferenceID] = struct{}{}
 	outcome.executionExpected = true
 	outcome.reason = observability.ReasonOK
+	return sig, confirmedAt, job, nil, outcome, nil
+}
 
-	job := &devshard.ExecuteRequest{
+func (h *Host) newExecuteRequest(inferenceID uint64, rec types.InferenceRecord, payload *InferencePayload) *devshard.ExecuteRequest {
+	return &devshard.ExecuteRequest{
 		InferenceID: inferenceID,
 		Model:       rec.Model,
-		Prompt:      req.Payload.Prompt,
+		Prompt:      payload.Prompt,
 		PromptHash:  rec.PromptHash,
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
 		EscrowID:    h.escrowID,
 		EpochID:     h.epochID,
 	}
-	return sig, confirmedAt, job, nil, outcome, nil
+}
+
+// appliedNonce reports whether diffs includes the diff at nonce. The diff at
+// an inference's nonce carries its start, so this tells a fresh inference
+// from one an earlier request or process already held.
+func appliedNonce(diffs []types.Diff, nonce uint64) bool {
+	for _, diff := range diffs {
+		if diff.Nonce == nonce {
+			return true
+		}
+	}
+	return false
+}
+
+// replayableStatus reports whether a non-pending inference may replay its
+// stored body. Finished and later statuses carry an applied finish. Started
+// replays only while this host's finish is still queued. TimedOut never
+// replays: the work was not settled.
+func replayableStatus(status types.InferenceStatus, finishQueued bool) bool {
+	switch status {
+	case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+		return true
+	case types.StatusStarted:
+		return finishQueued
+	default:
+		return false
+	}
+}
+
+// resolveStoredResponse loads the body for a reconnect that signReceipt marked
+// replayable. It runs outside h.mu and never starts execution. A read failure
+// or a miss sends the response without a body: the request also carries the
+// state signature and mempool, which must not be lost to a payload-store error.
+func (h *Host) resolveStoredResponse(ctx context.Context, outcome *receiptOutcome) []byte {
+	if outcome == nil || !outcome.lookupStored || h.storedResponse == nil {
+		return nil
+	}
+	outcome.executionExpected = false
+	body, err := h.loadStoredResponse(ctx, outcome.inferenceID)
+	if err != nil {
+		logging.Warn("stored response read failed",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", outcome.inferenceID,
+			"error", err)
+	}
+	if len(body) == 0 {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil
+	}
+	outcome.reason = observability.ReasonCachedResponse
+	return body
+}
+
+// loadStoredResponse reads the response payload at the escrow epoch, then the
+// neighboring epochs. Execution stores under the chain phase epoch, which is
+// usually the escrow epoch or the one after it.
+func (h *Host) loadStoredResponse(ctx context.Context, inferenceID uint64) ([]byte, error) {
+	for _, epoch := range storedResponseEpochs(h.epochID) {
+		body, err := h.storedResponse(ctx, h.escrowID, inferenceID, epoch)
+		if err != nil {
+			return nil, err
+		}
+		if len(body) > 0 {
+			return body, nil
+		}
+	}
+	return nil, nil
+}
+
+func storedResponseEpochs(epochID uint64) []uint64 {
+	epochs := []uint64{epochID, epochID + 1}
+	if epochID > 0 {
+		epochs = append(epochs, epochID-1)
+	}
+	return epochs
 }
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
-// Delegates to RunExecution which also caches the response body for reconnection.
+// Delegates to RunExecution. A later request replays the body from payload storage.
+// The caller must not wait for the inference: it holds a request context whose
+// deadline is far shorter than a long generation, and the executor receipt is
+// already signed. Detaching from cancellation keeps MsgFinishInference on track
+// even after the challenging host hangs up.
+//
+// The detached context still carries a deadline. ReleaseExecution only runs when
+// RunExecution returns, so under a plain uncancellable context a wedged engine
+// would hold h.executing[id] for the process lifetime and permanently block this
+// inference; engine node-acquire loops also treat ctx as their only exit.
 func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	_, _ = h.RunExecution(ctx, job)
+	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+	go func() {
+		defer cancel()
+		_, _ = h.RunExecution(execCtx, job)
+	}()
+}
+
+// executionBudget is the wall clock a detached execution may use. Past
+// ExecutionTimeout verifiers accept an execution timeout for the inference, so
+// work continuing beyond it can no longer be settled.
+func (h *Host) executionBudget() time.Duration {
+	if secs := h.sm.Config().ExecutionTimeout; secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultExecutionBudget
 }
 
 func (h *Host) ReleaseExecution(inferenceID uint64) {
@@ -862,19 +1310,31 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	defer h.ReleaseExecution(inferenceID)
 
 	result, err := h.engine.Execute(ctx, *job)
+	if errors.Is(err, devshard.ErrNoStoredResponse) {
+		logging.Debug("no stored response to recover",
+			"subsystem", "host",
+			"escrow_id", h.escrowID,
+			"inference_id", inferenceID)
+		return nil, observability.Classify(observability.ReasonInferenceDisappeared, observability.WhereHostExecute, err)
+	}
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
 
+	obsH, obsHash := h.observedTip(ctx)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	finishMsg := &types.MsgFinishInference{
-		InferenceId:  inferenceID,
-		ResponseHash: result.ResponseHash,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		ExecutorSlot: executorSlot,
-		EscrowId:     h.escrowID,
+		InferenceId:       inferenceID,
+		ResponseHash:      result.ResponseHash,
+		ServedHash:        result.ServedHash,
+		InputTokens:       result.InputTokens,
+		OutputTokens:      result.OutputTokens,
+		ExecutorSlot:      executorSlot,
+		EscrowId:          h.escrowID,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
@@ -900,11 +1360,6 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 			"inference_id", inferenceID,
 			"partial_where", partialWhere)
 	}
-	if len(result.ResponseBody) > 0 {
-		h.mu.Lock()
-		h.completedResponses[inferenceID] = result.ResponseBody
-		h.mu.Unlock()
-	}
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 
 	return result, nil
@@ -918,6 +1373,7 @@ type validateJob struct {
 	model           string
 	promptHash      []byte
 	responseHash    []byte
+	servedHash      []byte
 	inputTokens     uint64
 	outputTokens    uint64
 	escrowID        string
@@ -932,80 +1388,89 @@ const (
 	validationFlowChallenged     validationFlow = "challenged"
 )
 
-// collectValidationJobs finds finished inferences that this host should validate.
-// Caller must hold h.mu.
+// collectValidationJobs finds inferences this host still owes a validation for.
+// Membership (status, sampling, self-execution, prior participation) lives in
+// the state machine's owed set, maintained as records are written. This walk
+// only applies host-local filters: model support, in-flight work, cooldown,
+// and mempool. Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
 	closed := h.validationClosed
 	h.validationLifecycleMu.RUnlock()
-	if h.validator == nil || q == nil || closed {
+	if h.validator == nil || q == nil || closed || validationEnqueueStopped.Load() {
 		return nil
 	}
 	if !h.completionRequestsEnabled() {
 		return nil
 	}
 
-	st := h.sm.SnapshotState()
 	available := cap(q) - len(q)
 	if available <= 0 {
 		return nil
 	}
-	var jobs []validateJob
-
-	for infID, rec := range st.Inferences {
-		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
-			continue
+	owed := h.sm.OwedValidationIDs()
+	if len(h.validationCooldown) > 0 {
+		owedSet := make(map[uint64]struct{}, len(owed))
+		for _, id := range owed {
+			owedSet[id] = struct{}{}
 		}
-		if h.slotIDs[rec.ExecutorSlot] {
-			continue
-		}
-
-		alreadyValidated := false
-		for slot := range h.slotIDs {
-			if rec.ValidatedBy.IsSet(slot) {
-				alreadyValidated = true
-				break
+		for id := range h.validationCooldown {
+			if _, ok := owedSet[id]; !ok {
+				delete(h.validationCooldown, id)
 			}
 		}
-		if alreadyValidated {
-			continue
-		}
-		if _, ok := h.validating[infID]; ok {
-			continue
-		}
-		if h.hasMempoolValidationOrVote(infID) {
-			continue
-		}
+	}
+	var (
+		jobs    []validateJob
+		queued  map[uint64]struct{}
+		scanned bool
+		now     = time.Now()
+	)
 
-		executorAddr := h.slotToAddr[rec.ExecutorSlot]
-
-		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
-		flow := validationFlowChallenged
-		if rec.Status == types.StatusFinished {
-			mySlotCount := uint32(len(h.slotIDs))
-			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
-			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
+	for _, infID := range owed {
+		if _, inFlight := h.validating[infID]; inFlight {
+			continue
+		}
+		if until, cooling := h.validationCooldown[infID]; cooling {
+			// A zero time is a hold, not an expiry. A skipped lease is never
+			// reclaimed, so it stays out until the inference leaves the owed set.
+			if until.IsZero() || now.Before(until) {
 				continue
 			}
-			flow = validationFlowShouldValidate
+			delete(h.validationCooldown, infID)
+		}
+		if !scanned {
+			queued, scanned = h.ownMempoolValidationIDs(), true
+		}
+		if _, ok := queued[infID]; ok {
+			continue
+		}
+		rec, ok := h.sm.GetInference(infID)
+		if !ok || !h.inferenceValidatable(&rec) {
+			continue
+		}
+		if !devshard.CanValidate(h.validator, rec.Model) {
+			continue
 		}
 
-		validatorSlot := h.sortedSlots[0]
-
+		flow := validationFlowChallenged
+		if rec.Status == types.StatusFinished {
+			flow = validationFlowShouldValidate
+		}
 		h.validating[infID] = struct{}{}
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
-			validatorSlot:   validatorSlot,
+			validatorSlot:   h.sortedSlots[0],
 			flow:            flow,
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
 			responseHash:    rec.ResponseHash,
+			servedHash:      rec.ServedHash,
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
-			executorAddress: executorAddr,
+			executorAddress: h.slotToAddr[rec.ExecutorSlot],
 			epochID:         h.epochID,
 		})
 		available--
@@ -1018,19 +1483,64 @@ func (h *Host) collectValidationJobs() []validateJob {
 }
 
 func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
+	h.validationWorkers.Add(count)
 	for i := 0; i < count; i++ {
 		go func() {
+			defer h.validationWorkers.Done()
 			for job := range q {
-				h.validateAsync(context.Background(), job)
+				h.validateAsync(h.validationJobContext(), job)
 			}
 		}()
+	}
+}
+
+func (h *Host) validationJobContext() context.Context {
+	h.validationLifecycleMu.RLock()
+	ctx := h.validationCtx
+	h.validationLifecycleMu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func (h *Host) validationIsClosed() bool {
+	h.validationLifecycleMu.RLock()
+	defer h.validationLifecycleMu.RUnlock()
+	return h.validationClosed
+}
+
+// validationEnqueueStopped is process-wide. /rpc/release sets it before
+// outbound peers close so this generation does not Acquire a lease the
+// new generation should take.
+var validationEnqueueStopped atomic.Bool
+
+// StopValidationEnqueue stops this process from taking new validation leases.
+// A Validate call that has already started keeps running.
+func StopValidationEnqueue() {
+	validationEnqueueStopped.Store(true)
+}
+
+func resetValidationEnqueueForTest() {
+	validationEnqueueStopped.Store(false)
+}
+
+// EnqueueDueValidations offers collectValidationJobs work to the validation
+// queue. GET /mempool catch-up uses this so an HA survivor can re-acquire
+// after the owner Released on graceful stop, without waiting for a new chat.
+func (h *Host) EnqueueDueValidations() {
+	h.mu.Lock()
+	jobs := h.collectValidationJobs()
+	h.mu.Unlock()
+	for _, job := range jobs {
+		h.enqueueValidation(job)
 	}
 }
 
 func (h *Host) enqueueValidation(job validateJob) {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
-	closed := h.validationClosed
+	closed := h.validationClosed || validationEnqueueStopped.Load()
 	if q == nil || closed {
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1043,7 +1553,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1058,6 +1568,27 @@ func (h *Host) enqueueValidation(job validateJob) {
 // hasMempoolValidationOrVote returns true if a MsgValidation or
 // MsgValidationVote for infID from this host is already in the mempool.
 // Caller must hold h.mu.
+// ownMempoolValidationIDs is hasMempoolValidationOrVote for every inference at
+// once: the ids this host already has a validation or vote queued for.
+func (h *Host) ownMempoolValidationIDs() map[uint64]struct{} {
+	var ids map[uint64]struct{}
+	for _, tx := range h.mempool.Txs() {
+		var id uint64
+		if v := tx.GetValidation(); v != nil && h.slotIDs[v.ValidatorSlot] {
+			id = v.InferenceId
+		} else if v := tx.GetValidationVote(); v != nil && h.slotIDs[v.VoterSlot] {
+			id = v.InferenceId
+		} else {
+			continue
+		}
+		if ids == nil {
+			ids = make(map[uint64]struct{})
+		}
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 	for _, tx := range h.mempool.Txs() {
 		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
@@ -1079,6 +1610,22 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // another host challenged the inference while this validator was running.
 // Called outside the mutex.
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
+	defer func() {
+		h.mu.Lock()
+		delete(h.validating, job.inferenceID)
+		h.mu.Unlock()
+		h.validationLifecycleMu.RLock()
+		queue := h.validationQueue
+		h.validationLifecycleMu.RUnlock()
+		if queue != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(queue))
+		}
+	}()
+	// Queued work that has not entered Validate must not take a lease after
+	// this generation was released. A call already inside Validate continues.
+	if validationEnqueueStopped.Load() {
+		return
+	}
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
@@ -1086,20 +1633,31 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
 		"validation_flow", string(job.flow))
-	defer func() {
-		h.mu.Lock()
-		delete(h.validating, job.inferenceID)
-		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
-		}
-	}()
+
+	// A job can become obsolete while waiting in the queue. Check before
+	// acquiring a lease, fetching payloads, or dispatching to MLNode.
+	h.mu.Lock()
+	rec, exists := h.sm.GetInference(job.inferenceID)
+	eligible := exists && h.inferenceValidatable(&rec) && !h.hasMempoolValidationOrVote(job.inferenceID)
+	h.mu.Unlock()
+	if !eligible || !devshard.CanValidate(h.validator, job.model) {
+		return
+	}
+
+	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
+	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow))
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
 		InferenceID:     job.inferenceID,
 		Model:           job.model,
 		PromptHash:      job.promptHash,
 		ResponseHash:    job.responseHash,
+		ServedHash:      job.servedHash,
 		InputTokens:     job.inputTokens,
 		OutputTokens:    job.outputTokens,
 		EscrowID:        job.escrowID,
@@ -1107,6 +1665,30 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
+		var conflict *devshard.LeaseConflict
+		errors.As(err, &conflict)
+		leased := conflict != nil || errors.Is(err, devshard.ErrValidationAlreadyLeased)
+		if !h.validationIsClosed() {
+			// A row that is still there, or that we failed to read, waits out
+			// the cooldown. Only a row already gone is retried on the next request.
+			// A skipped row is terminal for this epoch, so the hold lasts until
+			// the inference leaves the validatable set.
+			switch {
+			case conflict != nil && conflict.Status == devshard.LeaseStatusSkipped:
+				h.holdValidationCooldown(job.inferenceID)
+			case !leased || conflict == nil || !conflict.ReleasedBeforeRead():
+				h.stampValidationCooldown(job.inferenceID)
+			}
+			if !leased {
+				h.releaseValidationLease(ctx, job.inferenceID)
+			}
+		}
+		if errors.Is(err, devshard.ErrValidationDeferred) {
+			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
+			observability.Log(ctx, observability.LevelInfo, "validation deferred: no credit", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, "", nil,
+				"inference_id", job.inferenceID, "model", job.model)
+			return // Keep the obligation eligible after cooldown.
+		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
 		// challenge, no error in the executor receipt path.
@@ -1117,6 +1699,10 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				"executor_address", job.executorAddress,
 				"epoch_id", job.epochID,
 			)
+			return
+		}
+		if conflict != nil {
+			h.logValidationLeaseConflict(ctx, job, conflict)
 			return
 		}
 		reason, where := observability.ErrorReason(err, observability.ReasonValidateErr, observability.WhereHostValidate)
@@ -1130,13 +1716,20 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
 	if !ok {
+		h.stampValidationCooldown(job.inferenceID)
+		h.releaseValidationLease(ctx, job.inferenceID)
+		obs := h.disappearedFinishObs(job.inferenceID)
 		observability.FailValidationFinished(ctx, h.escrowID,
 			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
 			"validate: inference disappeared", nil,
 			"inference_id", job.inferenceID,
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
-			"validation_flow", string(job.flow))
+			"validation_flow", string(job.flow),
+			"finish_nonce", obs.finishNonce,
+			"finish_at", obs.finishAt,
+			"current_nonce", obs.currentNonce,
+			"current_at", obs.currentAt)
 		return
 	}
 	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
@@ -1156,6 +1749,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.stampValidationCooldown(job.inferenceID)
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation msg failed", err,
@@ -1180,6 +1775,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.stampValidationCooldown(job.inferenceID)
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignVoteErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation vote failed", err,
@@ -1196,6 +1793,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
 		validationTx = "validation_vote"
 	default:
+		h.stampValidationCooldown(job.inferenceID)
+		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
 		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
 			"inference_id", job.inferenceID,
@@ -1210,6 +1809,10 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	if h.validationRecorder != nil {
 		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
+			if errors.Is(err, devshard.ErrValidationLeaseTTLExceeded) {
+				h.stampValidationCooldown(job.inferenceID)
+			}
+			h.releaseValidationLease(ctx, job.inferenceID)
 			logging.Info("validation submit abandoned after lease check",
 				"subsystem", "host",
 				"inference_id", job.inferenceID,
@@ -1251,6 +1854,101 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	}
 }
 
+// leaseConflictSeverity grades a lease conflict. Only two of the outcomes are
+// actionable: a skipped row, which nothing will ever reclaim, and a pending row
+// held past the TTL, which means the holder died without releasing or the retry
+// loop has fallen behind.
+func leaseConflictSeverity(conflict *devshard.LeaseConflict) (observability.Level, string) {
+	switch {
+	case conflict.Status == devshard.LeaseStatusSkipped:
+		return observability.LevelWarn, "validation stopped: lease marked skipped for this epoch"
+	case conflict.Status == devshard.LeaseStatusSubmitted:
+		return observability.LevelInfo, "validation stopped: lease already submitted"
+	case conflict.Stale:
+		return observability.LevelWarn, "validation stopped: lease held past TTL"
+	default:
+		return observability.LevelInfo, "validation stopped: lease already held"
+	}
+}
+
+// logValidationLeaseConflict reports an attempt that stopped because a lease
+// row was already in place. It stays off FailValidationFinished because most of
+// these outcomes are healthy: a submitted row means the duplicate-submit guard
+// did its job, and a young pending row means a validation is in flight.
+func (h *Host) logValidationLeaseConflict(ctx context.Context, job validateJob, conflict *devshard.LeaseConflict) {
+	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusLeased)
+
+	level, msg := leaseConflictSeverity(conflict)
+	kv := []any{
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow),
+		"lease_status", conflict.Status,
+		"lease_owner", conflict.Owner,
+		"lease_instance_id", conflict.InstanceID,
+		"lease_hostname", conflict.Hostname,
+		"lease_stale", conflict.Stale,
+	}
+	if !conflict.ClaimedAt.IsZero() {
+		kv = append(kv,
+			"lease_claimed_at", conflict.ClaimedAt.UTC().Format(time.RFC3339),
+			"lease_age", time.Since(conflict.ClaimedAt).Truncate(time.Second).String())
+	}
+	if conflict.Detail != "" {
+		kv = append(kv, "lease_detail", conflict.Detail)
+	}
+	observability.Log(ctx, level, msg, observability.StageValidationFinished,
+		observability.WhereHostValidate, h.escrowID, observability.ReasonValidationLeased, conflict, kv...)
+}
+
+func (h *Host) stampValidationCooldown(inferenceID uint64) {
+	h.mu.Lock()
+	h.validationCooldown[inferenceID] = time.Now().Add(validationCooldown)
+	h.mu.Unlock()
+}
+
+// holdValidationCooldown keeps the inference out of the validation queue until
+// it is no longer a candidate. Used for a skipped lease, which nothing reclaims.
+func (h *Host) holdValidationCooldown(inferenceID uint64) {
+	h.mu.Lock()
+	h.validationCooldown[inferenceID] = time.Time{}
+	h.mu.Unlock()
+}
+
+// inferenceValidatable reports whether collectValidationJobs would consider rec.
+// A cooldown hold is dropped once this is false.
+func (h *Host) inferenceValidatable(rec *types.InferenceRecord) bool {
+	if rec == nil {
+		return false
+	}
+	if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
+		return false
+	}
+	if h.slotIDs[rec.ExecutorSlot] {
+		return false
+	}
+	for slot := range h.slotIDs {
+		if rec.ValidatedBy.IsSet(slot) {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Host) releaseValidationLease(ctx context.Context, inferenceID uint64) {
+	if h.validationRecorder == nil {
+		return
+	}
+	if err := h.validationRecorder.ReleaseValidationLease(ctx, h.escrowID, inferenceID); err != nil {
+		logging.Error("release validation lease failed",
+			"subsystem", "host",
+			"inference_id", inferenceID,
+			"error", err,
+		)
+	}
+}
+
 func validationResultLabel(valid bool) string {
 	if valid {
 		return "valid"
@@ -1288,11 +1986,8 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if addr != expected {
-		warmKeys := h.sm.WarmKeys()
-		if warmKeys[senderSlot] != addr && !h.sm.CheckWarmKey(addr, expected) {
-			return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
-		}
+	if !h.SlotActors().Allows(senderSlot, addr) {
+		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 
 	// Verify stateHash matches stored record.
@@ -1320,11 +2015,11 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 
 // ApplyRecoveredDiffs applies diffs fetched during gossip recovery.
 // Returns GossipSig for each successfully applied nonce.
-func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]gossip.GossipSig, error) {
+func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]types.GossipSig, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var sigs []gossip.GossipSig
+	var sigs []types.GossipSig
 
 	for _, diff := range diffs {
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
@@ -1339,7 +2034,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 
 		if stateSig != nil && h.store != nil {
 			for slotID := range h.slotIDs {
-				sigs = append(sigs, gossip.GossipSig{
+				sigs = append(sigs, types.GossipSig{
 					Nonce:     nonce,
 					StateHash: root,
 					Sig:       stateSig,
@@ -1362,7 +2057,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 // executor IS reachable. The verifier should already have caught bad payloads
 // before forwarding (defense-in-depth).
 func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, error) {
-	receipt, confirmedAt, job, err := h.challengeReceiptLocked(inferenceID, payload, diffs)
+	receipt, confirmedAt, job, err := h.challengeReceiptLocked(ctx, inferenceID, payload, diffs)
 	if err != nil || job == nil {
 		return receipt, confirmedAt, err
 	}
@@ -1372,12 +2067,16 @@ func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload
 
 // challengeReceiptLocked applies diffs, checks executor eligibility, and signs
 // the receipt under the mutex. Returns a non-nil ExecuteRequest when async execution is needed.
-func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
+func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
+	hdr, hdrErr := h.latestHeader(ctx)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// An inference this host already held may have been executed by an
+	// earlier process that lost its finish.
+	_, heldBefore := h.sm.GetInference(inferenceID)
 	for _, diff := range diffs {
-		if err := h.applyAndPersistReconciling(context.Background(), diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
 		}
 	}
@@ -1396,48 +2095,33 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 		return nil, 0, nil, nil
 	}
 
-	confirmedAt := time.Now().Unix()
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: inferenceID,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    h.escrowID,
-		ConfirmedAt: confirmedAt,
-	}
-	receiptData, err := proto.Marshal(receiptContent)
+	// Publish MsgConfirmStart the way the request path does. To the verifier the
+	// receipt is only a liveness proof and is discarded after the timeout vote,
+	// so without ConfirmStart the inference stays pending and applyFinishInference
+	// rejects the MsgFinishInference this execution produces as an invalid
+	// transition -- the work could never be settled. Only reachable while the
+	// record is still pending, so this cannot confirm an already-started
+	// inference.
+	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
 	if err != nil {
-		return nil, 0, nil, fmt.Errorf("marshal executor receipt: %w", err)
+		return nil, 0, nil, err
 	}
-	sig, err := h.signer.Sign(receiptData)
-	if err != nil {
-		return nil, 0, nil, fmt.Errorf("sign executor receipt: %w", err)
-	}
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
 
 	// Dedup: return receipt (proves executor alive) but skip execution
 	// if already in-flight or already finished in mempool.
 	if _, dup := h.executing[inferenceID]; dup {
 		return sig, confirmedAt, nil, nil
 	}
-	for _, tx := range h.mempool.Txs() {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			return sig, confirmedAt, nil, nil
-		}
+	if h.mempool.HasFinish(inferenceID) {
+		return sig, confirmedAt, nil, nil
 	}
 
 	h.executing[inferenceID] = struct{}{}
 
-	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+	job := h.newExecuteRequest(inferenceID, rec, payload)
+	if heldBefore && h.storedResponse != nil {
+		job.Recovery = devshard.RecoveryStoredFirst
 	}
 	return sig, confirmedAt, job, nil
 }
@@ -1501,7 +2185,7 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
-	data, err := proto.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal proposer msg: %w", err)
 	}
@@ -1551,6 +2235,9 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	}
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
+	}
+	if p.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, completionapi.MinTokensFloor)
 	}
 	return nil
 }

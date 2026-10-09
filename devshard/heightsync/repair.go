@@ -1,0 +1,229 @@
+package heightsync
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
+
+	"devshard/signing"
+	"devshard/types"
+)
+
+// DomainRepair is the signing domain for both legs of the repair probe.
+// This is the one exception to §15's request-unsigned asymmetry: there is
+// no courier user on this path.
+const DomainRepair = "heightsync.repair.v1"
+
+// Repair outcomes. The responder never emits UNREACHABLE — that is synthesized
+// by the requester on timeout / unsigned / unverifiable response.
+const (
+	RepairOutcomeHeight      = "HEIGHT"
+	RepairOutcomeUnreachable = "UNREACHABLE"
+)
+
+var (
+	ErrRepairEmpty           = errors.New("heightsync: empty repair probe")
+	ErrRepairNoSig           = errors.New("heightsync: missing repair signature")
+	ErrRepairVerify          = errors.New("heightsync: repair signature verification failed")
+	ErrRepairOutcome         = errors.New("heightsync: unknown repair outcome")
+	ErrRepairUnknownTurn     = errors.New("heightsync: unknown repair turn")
+	ErrRepairResponderBudget = errors.New("heightsync: responder budget exhausted")
+)
+
+// RepairRequest is the JSON body of POST .../heightsync/repair.
+type RepairRequest struct {
+	TurnStart         uint64 `json:"turn_start"`
+	RefNonce          uint64 `json:"ref_nonce"`
+	RequesterSlot     uint32 `json:"requester_slot"`
+	ObservedHeight    uint64 `json:"observed_height"`
+	ObservedBlockHash []byte `json:"observed_block_hash"`
+	RequesterSig      []byte `json:"requester_sig"`
+}
+
+// RepairResponse is the JSON body of a successful repair probe. Outcome is
+// HEIGHT on the wire; UNREACHABLE is requester-local.
+type RepairResponse struct {
+	Outcome           string              `json:"outcome"`
+	ObservedHeight    uint64              `json:"observed_height"`
+	ObservedBlockHash []byte              `json:"observed_block_hash"`
+	SyncState         types.SyncState     `json:"sync_state,omitempty"`
+	Ack               *types.MsgHeightAck `json:"ack,omitempty"`
+	ResponderSig      []byte              `json:"responder_sig"`
+}
+
+// cloneRepairResponse is a deep copy. The responder budget retains one signed
+// body per admitted (turn, requester) and hands callers their own bytes.
+func cloneRepairResponse(resp *RepairResponse) *RepairResponse {
+	if resp == nil {
+		return nil
+	}
+	out := *resp
+	out.ObservedBlockHash = bytes.Clone(resp.ObservedBlockHash)
+	out.ResponderSig = bytes.Clone(resp.ResponderSig)
+	if resp.Ack != nil {
+		out.Ack = proto.Clone(resp.Ack).(*types.MsgHeightAck)
+	}
+	return &out
+}
+
+// RepairProbeFn is the unicast send. Host injects Server.RepairProbe.
+type RepairProbeFn func(ctx context.Context, targetSlot uint32, req *RepairRequest) (*RepairResponse, error)
+
+// CanonicalRepairRequestBytes is DomainRepair || proto-wire fields 1–5.
+func CanonicalRepairRequestBytes(r *RepairRequest) ([]byte, error) {
+	if r == nil {
+		return nil, ErrRepairEmpty
+	}
+	var body []byte
+	body = appendVarintField(body, 1, r.TurnStart)
+	body = appendVarintField(body, 2, r.RefNonce)
+	body = appendVarintField(body, 3, uint64(r.RequesterSlot))
+	body = appendVarintField(body, 4, r.ObservedHeight)
+	body = appendBytesField(body, 5, r.ObservedBlockHash)
+	return append([]byte(DomainRepair), body...), nil
+}
+
+// CanonicalRepairResponseBytes is DomainRepair || proto-wire fields 1–5.
+// Optional ack is proto.Marshal of MsgHeightAck (including host_sig).
+func CanonicalRepairResponseBytes(r *RepairResponse) ([]byte, error) {
+	if r == nil {
+		return nil, ErrRepairEmpty
+	}
+	var body []byte
+	body = appendBytesField(body, 1, []byte(r.Outcome))
+	body = appendVarintField(body, 2, r.ObservedHeight)
+	body = appendBytesField(body, 3, r.ObservedBlockHash)
+	body = appendVarintField(body, 4, uint64(r.SyncState))
+	if r.Ack != nil {
+		ackBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(r.Ack)
+		if err != nil {
+			return nil, fmt.Errorf("marshal repair ack: %w", err)
+		}
+		body = appendBytesField(body, 5, ackBytes)
+	}
+	return append([]byte(DomainRepair), body...), nil
+}
+
+// SignRepairRequest sets requester_sig over fields 1–5.
+func SignRepairRequest(signer signing.Signer, r *RepairRequest) error {
+	if signer == nil {
+		return errors.New("heightsync: nil signer")
+	}
+	blob, err := CanonicalRepairRequestBytes(r)
+	if err != nil {
+		return err
+	}
+	sig, err := signer.Sign(blob)
+	if err != nil {
+		return fmt.Errorf("sign repair request: %w", err)
+	}
+	r.RequesterSig = sig
+	return nil
+}
+
+// SignRepairResponse sets responder_sig over the response content.
+func SignRepairResponse(signer signing.Signer, r *RepairResponse) error {
+	if signer == nil {
+		return errors.New("heightsync: nil signer")
+	}
+	blob, err := CanonicalRepairResponseBytes(r)
+	if err != nil {
+		return err
+	}
+	sig, err := signer.Sign(blob)
+	if err != nil {
+		return fmt.Errorf("sign repair response: %w", err)
+	}
+	r.ResponderSig = sig
+	return nil
+}
+
+// VerifyRepairRequest checks requester_sig against slotKey (exact match).
+func VerifyRepairRequest(verifier signing.Verifier, r *RepairRequest, slotKey string) error {
+	if r == nil {
+		return ErrRepairEmpty
+	}
+	return VerifyRepairRequestAllowed(verifier, r, signing.Exact(r.RequesterSlot, slotKey))
+}
+
+// VerifyRepairRequestAllowed checks requester_sig against the same actor set
+// as HeightAck L2 (cold / bound warm / sibling / authz).
+func VerifyRepairRequestAllowed(verifier signing.Verifier, r *RepairRequest, actors signing.SlotActors) error {
+	if verifier == nil {
+		return errors.New("heightsync: nil verifier")
+	}
+	if r == nil {
+		return ErrRepairEmpty
+	}
+	if len(r.RequesterSig) == 0 {
+		return ErrRepairNoSig
+	}
+	blob, err := CanonicalRepairRequestBytes(r)
+	if err != nil {
+		return err
+	}
+	return verifyRepairSig(verifier, blob, r.RequesterSig, r.RequesterSlot, actors)
+}
+
+// exactSlot is a placeholder id for a RepairResponse, which carries no slot
+// field. An actor set from signing.Exact holds a single key, so the id only
+// has to agree between construction and lookup.
+const exactSlot uint32 = 0
+
+// VerifyRepairResponse checks responder_sig against slotKey (exact match).
+func VerifyRepairResponse(verifier signing.Verifier, r *RepairResponse, slotKey string) error {
+	return VerifyRepairResponseAllowed(verifier, r, exactSlot, signing.Exact(exactSlot, slotKey))
+}
+
+// VerifyRepairResponseAllowed checks responder_sig for targetSlot.
+func VerifyRepairResponseAllowed(verifier signing.Verifier, r *RepairResponse, targetSlot uint32, actors signing.SlotActors) error {
+	if verifier == nil {
+		return errors.New("heightsync: nil verifier")
+	}
+	if r == nil {
+		return ErrRepairEmpty
+	}
+	if len(r.ResponderSig) == 0 {
+		return ErrRepairNoSig
+	}
+	if r.Outcome != "" && r.Outcome != RepairOutcomeHeight {
+		return fmt.Errorf("%w: %s", ErrRepairOutcome, r.Outcome)
+	}
+	blob, err := CanonicalRepairResponseBytes(r)
+	if err != nil {
+		return err
+	}
+	return verifyRepairSig(verifier, blob, r.ResponderSig, targetSlot, actors)
+}
+
+func verifyRepairSig(verifier signing.Verifier, blob, sig []byte, slotID uint32, actors signing.SlotActors) error {
+	recovered, err := verifier.RecoverAddress(blob, sig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrRepairVerify, err)
+	}
+	if !actors.Allows(slotID, recovered) {
+		expected, _ := actors.Expected(slotID)
+		return fmt.Errorf("%w: signer %q != slot key %q", ErrRepairVerify, recovered, expected)
+	}
+	return nil
+}
+
+func appendVarintField(b []byte, num protowire.Number, v uint64) []byte {
+	if v == 0 {
+		return b
+	}
+	b = protowire.AppendTag(b, num, protowire.VarintType)
+	return protowire.AppendVarint(b, v)
+}
+
+func appendBytesField(b []byte, num protowire.Number, v []byte) []byte {
+	if len(v) == 0 {
+		return b
+	}
+	b = protowire.AppendTag(b, num, protowire.BytesType)
+	return protowire.AppendBytes(b, v)
+}

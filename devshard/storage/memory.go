@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"devshard/types"
@@ -41,28 +42,29 @@ type snapshotData struct {
 }
 
 type sessionData struct {
-	escrowID      string
-	epochID       uint64
-	version       string
-	creatorAddr   string
-	config        types.SessionConfig
-	group         []types.SlotAssignment
-	balance       uint64
-	diffs         []types.DiffRecord
-	nonceToIndex  map[uint64]int
-	lastFinalized uint64
-	status        string // "active", "settled"
-	snapshot      *snapshotData
-	inferences              map[uint64]InferenceRow
-	inferenceValidationObs  map[uint64]map[uint32]SlotValidationObs
-	sealedValidationObs     map[uint64]map[uint32]SlotValidationObs
+	escrowID               string
+	epochID                uint64
+	version                string
+	creatorAddr            string
+	config                 types.SessionConfig
+	group                  []types.SlotAssignment
+	balance                uint64
+	diffs                  []types.DiffRecord
+	nonceToIndex           map[uint64]int
+	lastFinalized          uint64
+	status                 string // "active", "settled"
+	snapshot               *snapshotData
+	inferences             map[uint64]InferenceRow
+	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
+	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
+	obsRebuildPending      bool
 }
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
 	mu               sync.RWMutex
 	sessions         map[string]*sessionData
-	validationLeases map[string]map[uint64]memoryLease
+	validationLeases map[string]map[memoryLeaseKey]memoryLease
 	escrowCache      map[string]EscrowCacheInfo
 }
 
@@ -95,15 +97,15 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	}
 
 	m.sessions[params.EscrowID] = &sessionData{
-		escrowID:     params.EscrowID,
-		epochID:      params.EpochID,
-		version:      requestedVersion,
-		creatorAddr:  params.CreatorAddr,
-		config:       params.Config,
-		group:        copyGroup(params.Group),
-		balance:      params.InitialBalance,
-		nonceToIndex: make(map[uint64]int),
-		status:       "active",
+		escrowID:               params.EscrowID,
+		epochID:                params.EpochID,
+		version:                requestedVersion,
+		creatorAddr:            params.CreatorAddr,
+		config:                 params.Config,
+		group:                  copyGroup(params.Group),
+		balance:                params.InitialBalance,
+		nonceToIndex:           make(map[uint64]int),
+		status:                 "active",
 		inferences:             make(map[uint64]InferenceRow),
 		inferenceValidationObs: make(map[uint64]map[uint32]SlotValidationObs),
 		sealedValidationObs:    make(map[uint64]map[uint32]SlotValidationObs),
@@ -117,7 +119,7 @@ func (m *Memory) MarkSettled(escrowID string) error {
 
 	s, ok := m.sessions[escrowID]
 	if !ok {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	s.status = "settled"
 	return nil
@@ -304,6 +306,17 @@ func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 }
 
 func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, []InferenceRow{row})
+}
+
+func (m *Memory) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *Memory) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -311,7 +324,9 @@ func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error 
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
-	s.inferences[row.InferenceID] = row
+	for _, row := range rows {
+		s.inferences[row.InferenceID] = row
+	}
 	return nil
 }
 
@@ -342,6 +357,21 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 	return nil
 }
 
+func (m *Memory) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	out := make(map[uint64]uint64, len(s.inferences))
+	for id, row := range s.inferences {
+		out[id] = row.SealedNonce
+	}
+	return out, nil
+}
+
 func (m *Memory) ClearValidationObs(escrowID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -353,6 +383,34 @@ func (m *Memory) ClearValidationObs(escrowID string) error {
 	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	return nil
+}
+
+func (m *Memory) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.obsRebuildPending = pending
+	return nil
+}
+
+func (m *Memory) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return false, fmt.Errorf("session %s not found", escrowID)
+	}
+	return s.obsRebuildPending, nil
+}
+
+// LockValidationObsRebuild always succeeds: a Memory store has one owner.
+func (m *Memory) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
 }
 
 // ImportValidationObs replaces live/sealed validation-obs maps for an escrow
@@ -430,9 +488,31 @@ func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
+	m.drainInferenceValidationObsLocked(s, inferenceID)
+	return nil
+}
+
+func (m *Memory) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	for _, id := range inferenceIDs {
+		m.drainInferenceValidationObsLocked(s, id)
+	}
+	return nil
+}
+
+func (m *Memory) drainInferenceValidationObsLocked(s *sessionData, inferenceID uint64) {
 	bySlot := s.inferenceValidationObs[inferenceID]
 	if len(bySlot) == 0 {
-		return nil
+		return
 	}
 	if s.sealedValidationObs == nil {
 		s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
@@ -450,7 +530,6 @@ func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		sealed[slotID] = cur
 	}
 	delete(s.inferenceValidationObs, inferenceID)
-	return nil
 }
 
 func (m *Memory) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
@@ -522,13 +601,14 @@ func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := info
+	cp := stampEscrowCache(info)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}
 	if info.Slots != nil {
 		cp.Slots = append([]string(nil), info.Slots...)
 	}
+	cp.SlotURLs = cloneSlotURLs(info.SlotURLs)
 	m.escrowCache[info.EscrowID] = cp
 	return nil
 }
@@ -547,6 +627,7 @@ func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
 	if info.Slots != nil {
 		cp.Slots = append([]string(nil), info.Slots...)
 	}
+	cp.SlotURLs = cloneSlotURLs(info.SlotURLs)
 	return &cp, nil
 }
 
@@ -569,15 +650,62 @@ func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	}
 
 	var result []types.DiffRecord
-	for _, d := range s.diffs {
-		if d.Nonce < fromNonce || d.Nonce > toNonce {
-			continue
-		}
-		dc := d
+	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
+		dc := *d
 		dc.Signatures = copySignatures(d.Signatures)
 		dc.WarmKeyDelta = copyWarmKeyDelta(d.WarmKeyDelta)
 		result = append(result, dc)
-	}
-
+		return true
+	})
 	return result, nil
+}
+
+func (m *Memory) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	var out []DiffSize
+	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
+		out = append(out, DiffSize{Nonce: d.Nonce, Bytes: diffTxsProtoSize(*d)})
+		return len(out) < limit
+	})
+	return out, nil
+}
+
+// eachDiffInRange visits stored diffs in [from, to] in ascending nonce order
+// until fn returns false. A range no wider than the journal is walked through
+// nonceToIndex, so a point or page read does not scan every diff.
+func (s *sessionData) eachDiffInRange(from, to uint64, fn func(*types.DiffRecord) bool) {
+	if from > to || len(s.diffs) == 0 {
+		return
+	}
+	if to-from < uint64(len(s.diffs)) {
+		for n := from; ; n++ {
+			if idx, ok := s.nonceToIndex[n]; ok && !fn(&s.diffs[idx]) {
+				return
+			}
+			if n == to {
+				return
+			}
+		}
+	}
+	idxs := make([]int, 0, len(s.diffs))
+	for i := range s.diffs {
+		if n := s.diffs[i].Nonce; n >= from && n <= to {
+			idxs = append(idxs, i)
+		}
+	}
+	sort.Slice(idxs, func(a, b int) bool { return s.diffs[idxs[a]].Nonce < s.diffs[idxs[b]].Nonce })
+	for _, i := range idxs {
+		if !fn(&s.diffs[i]) {
+			return
+		}
+	}
 }

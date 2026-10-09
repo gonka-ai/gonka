@@ -5,34 +5,44 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"common/completionapi"
 )
 
-// logprobClientIntent records whether the client's ORIGINAL request asked for
-// logprobs / top_logprobs. The gateway force-enables logprobs upstream for
-// validation, so without this the client-facing strip cannot tell a client who
-// asked for logprobs from one who did not. The zero value (keep nothing) is the
-// historical behavior: strip everything.
-type logprobClientIntent struct {
+// clientResponseIntent is what the client asked for in fields a host answers with regardless; zero keeps nothing.
+type clientResponseIntent struct {
 	keepLogprobs    bool
 	keepTopLogprobs bool
+	keepUsage       bool
 }
 
-func logprobClientIntentFromRequest(req chatRequest) logprobClientIntent {
-	return logprobClientIntent{
-		keepLogprobs:    req.Logprobs,
-		keepTopLogprobs: req.Logprobs && req.TopLogprobs > 0,
+func clientResponseIntentFromRequest(req chatRequest) clientResponseIntent {
+	// The host forwards by this same predicate, so neither side can start showing what the other hides.
+	askedForLogprobs := completionapi.LogprobsAsked(req.Logprobs, float64(req.TopLogprobs))
+	return clientResponseIntent{
+		keepLogprobs:    askedForLogprobs,
+		keepTopLogprobs: askedForLogprobs,
+		keepUsage:       req.IncludeUsage,
 	}
 }
 
-type logprobIntentContextKey struct{}
+type clientResponseIntentContextKey struct{}
 
-func withLogprobClientIntent(ctx context.Context, intent logprobClientIntent) context.Context {
-	return context.WithValue(ctx, logprobIntentContextKey{}, intent)
+func withClientResponseIntent(ctx context.Context, intent clientResponseIntent) context.Context {
+	return context.WithValue(ctx, clientResponseIntentContextKey{}, intent)
 }
 
-func logprobClientIntentFromContext(ctx context.Context) logprobClientIntent {
-	intent, _ := ctx.Value(logprobIntentContextKey{}).(logprobClientIntent)
-	return intent
+func clientResponseIntentFromContext(ctx context.Context) (clientResponseIntent, bool) {
+	intent, recorded := ctx.Value(clientResponseIntentContextKey{}).(clientResponseIntent)
+	return intent, recorded
+}
+
+// A forwarded request carries a normalized body, whose capped width says less than the client wrote.
+func resolveClientResponseIntent(ctx context.Context, req chatRequest) clientResponseIntent {
+	if intent, recorded := clientResponseIntentFromContext(ctx); recorded {
+		return intent
+	}
+	return clientResponseIntentFromRequest(req)
 }
 
 type streamingRewritePayload struct {
@@ -77,10 +87,11 @@ type rewriteLogprob struct {
 // Only if a host sent SSE-wrapped chat.completion JSON do we synthesize
 // chat.completion.chunk events for the client. The synthetic role chunk exists
 // only in that streaming rewrite.
-func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
+func rewriteStreamingPayload(p []byte, intent clientResponseIntent) []byte {
 	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
 	needsInternalFieldsFilter := containsAnyInternalField(p)
-	if !needsCompletionRewrite && !needsInternalFieldsFilter {
+	needsUsageStrip := !intent.keepUsage && bytes.Contains(p, []byte(`"usage"`))
+	if !needsCompletionRewrite && !needsInternalFieldsFilter && !needsUsageStrip {
 		return p
 	}
 
@@ -100,19 +111,34 @@ func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
 			continue
 		}
 		payload := bytes.TrimSpace(event[len("data: "):])
-		rewritten, ok := rewriteStreamingDataEvent(payload, intent)
-		if !ok {
-			filtered := filterClientInternalFields(payload, intent)
-			if !bytes.Equal(filtered, payload) {
-				fmt.Fprintf(&out, "data: %s\n\n", filtered)
+		if bytes.Contains(payload, []byte(`"message"`)) {
+			completion := payload
+			if !intent.keepUsage {
+				if stripped, ok := stripUsageChunk(payload); ok {
+					if stripped == nil {
+						changed = true
+						continue
+					}
+					completion = stripped
+				}
+			}
+			if rewritten, ok := rewriteStreamingDataEvent(completion, intent); ok {
 				changed = true
+				out.Write(rewritten)
 				continue
 			}
-			out.Write(eventChunk)
+		}
+		filtered := filterClientEvent(payload, intent)
+		if filtered == nil {
+			changed = true
 			continue
 		}
-		changed = true
-		out.Write(rewritten)
+		if !bytes.Equal(filtered, payload) {
+			fmt.Fprintf(&out, "data: %s\n\n", filtered)
+			changed = true
+			continue
+		}
+		out.Write(eventChunk)
 	}
 	if !changed {
 		return p
@@ -120,7 +146,7 @@ func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
 	return out.Bytes()
 }
 
-func rewriteStreamingDataEvent(payload []byte, intent logprobClientIntent) ([]byte, bool) {
+func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]byte, bool) {
 	var resp streamingRewritePayload
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, false
@@ -228,7 +254,7 @@ func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, i
 // emitted as an empty array (OpenAI's shape for logprobs-without-top_logprobs).
 // Returns nil when the client did not request logprobs, so the chunk omits the
 // field entirely.
-func reconstructChunkLogprobs(token rewriteLogprob, intent logprobClientIntent) any {
+func reconstructChunkLogprobs(token rewriteLogprob, intent clientResponseIntent) any {
 	if !intent.keepLogprobs {
 		return nil
 	}
@@ -253,13 +279,8 @@ var internalStrippedFields = []string{
 	"prompt_logprobs",
 }
 
-// strippedFields returns the response fields to remove for this client. The
-// internal fields above are always stripped; the logprob/logprobs payloads are
-// stripped only when the client did not request logprobs -- the gateway force-
-// enables logprobs upstream for validation regardless of what the client asked.
-// top_logprobs is handled separately (emptied, not removed) by emptyTopLogprobs
-// so the response keeps OpenAI's logprobs-without-top_logprobs shape.
-func (intent logprobClientIntent) strippedFields() []string {
+// strippedFields returns what to remove for this client: the internal fields always, the logprobs unless it asked.
+func (intent clientResponseIntent) strippedFields() []string {
 	fields := append([]string(nil), internalStrippedFields...)
 	if !intent.keepLogprobs {
 		fields = append(fields, "logprob", "logprobs")
@@ -267,13 +288,7 @@ func (intent logprobClientIntent) strippedFields() []string {
 	return fields
 }
 
-// emptyTopLogprobs replaces every top_logprobs array in the response with an
-// empty array. The gateway forces top_logprobs upstream for validation, so a
-// client who asked for logprobs but not top_logprobs would otherwise receive the
-// forced alternatives. OpenAI returns top_logprobs as a present-but-empty array
-// in this case, which this mirrors (matching the streaming-rewrite path's
-// reconstructChunkLogprobs). top_logprobs only appears under logprobs.content[]
-// in a chat completion, so emptying every occurrence is safe.
+// emptyTopLogprobs blanks every top_logprobs array, OpenAI's shape for logprobs without alternatives.
 func emptyTopLogprobs(v any) bool {
 	switch typed := v.(type) {
 	case map[string]any:
@@ -303,6 +318,27 @@ func emptyTopLogprobs(v any) bool {
 	}
 }
 
+// stripUsageChunk returns nil when the event goes entirely: a chunk left with no choices is one a
+// client that never asked for usage cannot read.
+func stripUsageChunk(payload []byte) ([]byte, bool) {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload, false
+	}
+	if _, carries := decoded["usage"]; !carries {
+		return payload, false
+	}
+	delete(decoded, "usage")
+	if choices, _ := decoded["choices"].([]any); len(choices) == 0 {
+		return nil, true
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return payload, false
+	}
+	return out, true
+}
+
 func containsAnyInternalField(p []byte) bool {
 	return bytes.Contains(p, []byte(`"logprob`)) ||
 		bytes.Contains(p, []byte(`"token_ids"`)) ||
@@ -310,18 +346,12 @@ func containsAnyInternalField(p []byte) bool {
 		bytes.Contains(p, []byte(`"prompt_token_ids"`))
 }
 
-func filterClientInternalFields(payload []byte, intent logprobClientIntent) []byte {
+func filterClientInternalFields(payload []byte, intent clientResponseIntent) []byte {
 	var v any
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return payload
 	}
-	changed := stripClientInternalFields(v, intent.strippedFields())
-	if intent.keepLogprobs && !intent.keepTopLogprobs {
-		if emptyTopLogprobs(v) {
-			changed = true
-		}
-	}
-	if !changed {
+	if !stripClientFields(v, intent) {
 		return payload
 	}
 	out, err := json.Marshal(v)
@@ -329,6 +359,41 @@ func filterClientInternalFields(payload []byte, intent logprobClientIntent) []by
 		return payload
 	}
 	return out
+}
+
+// filterClientEvent is stripUsageChunk and filterClientInternalFields over one decode; nil drops the event.
+func filterClientEvent(payload []byte, intent clientResponseIntent) []byte {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload
+	}
+	changed := false
+	if _, carries := decoded["usage"]; carries && !intent.keepUsage {
+		delete(decoded, "usage")
+		if choices, _ := decoded["choices"].([]any); len(choices) == 0 {
+			return nil
+		}
+		changed = true
+	}
+	if stripClientFields(decoded, intent) {
+		changed = true
+	}
+	if !changed {
+		return payload
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+func stripClientFields(document any, intent clientResponseIntent) bool {
+	changed := stripClientInternalFields(document, intent.strippedFields())
+	if intent.keepLogprobs && !intent.keepTopLogprobs && emptyTopLogprobs(document) {
+		changed = true
+	}
+	return changed
 }
 
 func stripClientInternalFields(v any, fields []string) bool {

@@ -86,6 +86,9 @@ func (s *legacyOnlyStorage) AppendDiff(escrowID string, rec types.DiffRecord) er
 func (s *legacyOnlyStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return s.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
+func (s *legacyOnlyStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	return s.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
 func (s *legacyOnlyStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	return s.inner.AddSignature(escrowID, nonce, slotID, sig)
 }
@@ -110,17 +113,38 @@ func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error
 func (s *legacyOnlyStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	return s.inner.InsertSealedInference(escrowID, row)
 }
+func (s *legacyOnlyStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+func (s *legacyOnlyStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.inner.InsertSealedInferences(escrowID, rows)
+}
 func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return s.inner.GetSealedInference(escrowID, inferenceID)
 }
 func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
 	return s.inner.DeleteSealedInferences(escrowID)
 }
+func (s *legacyOnlyStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return s.inner.SealedInferenceIDs(escrowID)
+}
 func (s *legacyOnlyStorage) ClearValidationObs(escrowID string) error {
 	return s.inner.ClearValidationObs(escrowID)
 }
+func (s *legacyOnlyStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	return s.inner.SetValidationObsRebuildPending(escrowID, pending)
+}
+func (s *legacyOnlyStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	return s.inner.ValidationObsRebuildPending(escrowID)
+}
+func (s *legacyOnlyStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	return s.inner.LockValidationObsRebuild(escrowID)
+}
 func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
+}
+func (s *legacyOnlyStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return s.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return s.inner.DrainInferenceValidationObs(escrowID, inferenceID)
@@ -157,6 +181,15 @@ func sessionsAt(t *testing.T, store Storage) []uint64 {
 	}
 	sort.Slice(epochs, func(i, j int) bool { return epochs[i] < epochs[j] })
 	return epochs
+}
+
+func TestRetentionCutoff(t *testing.T) {
+	require.Equal(t, uint64(0), RetentionCutoff(0, DefaultEpochRetain))
+	require.Equal(t, uint64(0), RetentionCutoff(2, DefaultEpochRetain))
+	require.Equal(t, uint64(1), RetentionCutoff(3, DefaultEpochRetain))
+	require.Equal(t, uint64(4), RetentionCutoff(6, DefaultEpochRetain))
+	require.Equal(t, uint64(8), RetentionCutoff(10, 3))
+	require.Equal(t, uint64(5), RetentionCutoff(5, 1))
 }
 
 // TestManaged_RetainsLastN: with retain=3 and observed epochs 1..6, only

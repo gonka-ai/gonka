@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 
 	"common/chain"
 	chainbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 
-	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -18,24 +17,17 @@ type chainEventBridge struct {
 	phase    *chain.Phase
 }
 
-// bootstrapPhase fetches the current epoch and latest block height from the
-// chain and seeds the phase before the event listener starts ticking. This
-// ensures phase.EpochID() is correct from the first inference request.
-func bootstrapPhase(ctx context.Context, chainClient *chain.Client, phase *chain.Phase) {
-	epochResp, err := chainClient.InferenceQueryClient().GetCurrentEpoch(ctx, &chaintypes.QueryGetCurrentEpochRequest{})
+// bootstrapPhase fetches the current epoch from the chain and seeds phase
+// before runtime-config OnEpochChange starts firing (initial snapshot apply
+// does not emit OnEpochChange). A failure is returned so startup fails:
+// phase left at 0 would store payloads under an epoch validators never ask.
+func bootstrapPhase(ctx context.Context, query chain.InferenceClient, phase *chain.Phase) error {
+	epochResp, err := query.GetCurrentEpoch(ctx, &chaintypes.QueryGetCurrentEpochRequest{})
 	if err != nil {
-		slog.Warn("phase: failed to bootstrap epoch, starting at 0", "error", err)
-		return
+		return fmt.Errorf("query current epoch: %w", err)
 	}
-
-	blockResp, err := chainClient.CometServiceClient().GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
-	if err != nil {
-		slog.Warn("phase: failed to bootstrap block height, starting at 0", "error", err)
-		phase.Update(epochResp.Epoch, 0)
-		return
-	}
-
-	phase.Update(epochResp.Epoch, blockResp.SdkBlock.Header.Height)
+	phase.SetEpoch(epochResp.Epoch)
+	return nil
 }
 
 func newChainEventBridge(
@@ -43,27 +35,19 @@ func newChainEventBridge(
 	chainRPCURL string,
 	chainClient *chain.Client,
 	submitter chainbridge.Submitter,
-) *chainEventBridge {
+) (*chainEventBridge, error) {
 	phase := new(chain.Phase)
-	bootstrapPhase(ctx, chainClient, phase)
+	if err := bootstrapPhase(ctx, chainClient.InferenceQueryClient(), phase); err != nil {
+		return nil, err
+	}
 	eventListener := events.NewListener(chainRPCURL)
 	br := chainbridge.NewChainBridge(chainClient, submitter)
 	br.Subscribe(eventListener)
-	eventListener.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
-		// TODO: should this be called for every block?
-		resp, err := chainClient.InferenceQueryClient().GetCurrentEpoch(bctx, &chaintypes.QueryGetCurrentEpochRequest{})
-		if err != nil {
-			slog.Warn("phase: failed to query current epoch", "block", e.BlockHeight, "error", err)
-			phase.SetBlockHeight(e.BlockHeight)
-			return
-		}
-		phase.Update(resp.Epoch, e.BlockHeight)
-	})
 	return &chainEventBridge{
 		listener: eventListener,
 		bridge:   br,
 		phase:    phase,
-	}
+	}, nil
 }
 
 func (b *chainEventBridge) Bridge() *chainbridge.ChainBridge {
@@ -75,7 +59,7 @@ func (b *chainEventBridge) Phase() *chain.Phase {
 }
 
 // OnNewBlock registers an additional new-block handler on the underlying listener.
-// Must be called before Start.
+// Must be called before Start. Used for height-sync headers, not epoch/prune.
 func (b *chainEventBridge) OnNewBlock(h events.NewBlockHandler) {
 	b.listener.OnNewBlock(h)
 }

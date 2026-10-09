@@ -14,30 +14,31 @@ import (
 	"devshard/types"
 )
 
-const (
-	DefaultSnapshotInterval = 5 * time.Minute
-	// DefaultSweepInterval is how often deadline-derived dispositions are
-	// promoted into Counters without a SQLite write. See T3.0.
-	DefaultSweepInterval = 5 * time.Second
-)
+const DefaultSnapshotInterval = 5 * time.Minute
+
+// DefaultSweepInterval is how often deadline-derived dispositions are promoted
+// without a store write. Zero disables the sweep goroutine.
+const DefaultSweepInterval = 5 * time.Second
 
 type Tracker struct {
-	mu        sync.RWMutex
-	store     *Store
-	escrows   map[string]*escrowState
-	updated   time.Time
-	stop      context.CancelFunc
-	done      chan struct{}
-	sweepDone chan struct{} // nil when sweep is disabled
-	once      sync.Once
-	now       func() time.Time
-	errCount  uint64
-	wrCount   uint64
+	mu      sync.RWMutex
+	store   *Store
+	escrows map[string]*escrowState
+	dirty   map[string]struct{} // escrow IDs mutated since last successful persist
+	// pendingDeletes are pruned escrow IDs whose deletion has not been persisted
+	// yet, so a failed persist still removes them on the next attempt.
+	pendingDeletes map[string]struct{}
+	updated        time.Time
+	stop           context.CancelFunc
+	done           chan struct{}
+	sweepDone      chan struct{}
+	once           sync.Once
+	now            func() time.Time
+	errCount       uint64
+	wrCount        uint64
 
 	// Disposition delivery. Recording enqueues; a single goroutine calls the
-	// sink, so no sink work happens on the caller's goroutine — the hottest
-	// caller is the per-diff observer, which runs inside the sequencer's
-	// critical section.
+	// sink, so no sink work happens on the caller's goroutine.
 	sink        atomic.Pointer[sinkHolder]
 	dispCh      chan dispositionItem
 	dispDone    chan struct{}
@@ -46,15 +47,46 @@ type Tracker struct {
 }
 
 type escrowState struct {
-	Meta            EscrowMetadata             `json:"meta"`
-	Latest          uint64                     `json:"latest"`
-	HostStats       map[uint32]types.HostStats `json:"host_stats"`
-	Counters        map[CounterKey]uint64      `json:"counters"`
-	OpenChallenge   map[uint64]uint32          `json:"-"`
-	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
-	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
-	InvalidNonce    map[uint64]struct{}        `json:"-"`
-	Live            map[uint64]*nonceState     `json:"-"`
+	Meta      EscrowMetadata             `json:"meta"`
+	Latest    uint64                     `json:"latest"`
+	HostStats map[uint32]types.HostStats `json:"host_stats"`
+	// Counters holds the dispositions derived from a local nonceState. Only the
+	// instance that dispatched a nonce can produce one, so writers hold disjoint
+	// sets and the persisted rows are summed across them.
+	Counters map[CounterKey]uint64 `json:"counters"`
+
+	// ProtocolOnly, Challenge and Invalid record facts every instance reads off
+	// the same committed diffs. They are kept as per-nonce sets rather than
+	// counts because a count cannot be merged across writers: summing turns one
+	// chain event into two, and taking the max drops an observation a writer with
+	// a stale view never saw. A set merges by union, which is exact and
+	// idempotent. Per-slot totals are derived when a view is built.
+	ProtocolOnly map[uint64]uint32          `json:"protocol_only,omitempty"`
+	Challenge    map[uint64]challengeRecord `json:"challenges,omitempty"`
+	Invalid      map[uint64]uint32          `json:"invalid,omitempty"`
+
+	// The next three carry state written by the pre-set layout, which cannot be
+	// reconstructed as nonces. They are never incremented again, only folded into
+	// derived totals on read, and they age out with retention.
+	ChallengeBySlot map[uint32]uint64   `json:"challenge_by_slot,omitempty"`
+	InvalidBySlot   map[uint32]uint64   `json:"invalid_by_slot,omitempty"`
+	InvalidLegacy   map[uint64]struct{} `json:"invalid_nonces,omitempty"`
+
+	ValidatedBySlot map[uint32]uint64      `json:"validated_by_slot"`
+	TimedOutBySlot  map[uint32]uint64      `json:"timed_out_by_slot"`
+	Live            map[uint64]*nonceState `json:"-"`
+	LiveRequests    map[string]struct{}    `json:"-"`
+	Events          []ProtocolEvent        `json:"-"`
+	tracker         *Tracker               `json:"-"`
+}
+
+// challengeRecord tracks one challenged nonce. Resolved only ever goes false to
+// true, so two instances that both see the verdict converge, and the flag
+// replaces deleting the entry: a resolved challenge has to stay recorded or a
+// repeated verdict would open it again.
+type challengeRecord struct {
+	Slot     uint32 `json:"slot"`
+	Resolved bool   `json:"resolved,omitempty"`
 }
 
 type nonceState struct {
@@ -69,7 +101,13 @@ type nonceState struct {
 	Quarantine        QuarantineMode
 	NoSendReason      NoSendReason
 	FailureOrigin     FailureOrigin
+	LogprobsDecoded   bool
+	SlowReceipt       bool
+	SlowChunk         bool
+	ClockDrifted      bool
+	SlowDecode        bool
 	DetailReason      string
+	DeliveryReason    string
 	TimeoutKind       TimeoutKind
 	TimeoutPhase      Phase
 	TimeoutOutcome    TimeoutOutcome
@@ -78,18 +116,19 @@ type nonceState struct {
 	ReceiptAt         int64
 	ProtocolTimedOut  bool
 	TimeoutResultSeen bool
-	Counted           *CounterKey
-	// In-memory only (Live is not persisted). Captured on first recorder write.
+	// GhostTimeoutPending marks a burned nonce the gateway will raise a timeout on. The raise resolves a
+	// refusal deadline later, so the nonce has to outlive the burn to receive its own outcome.
+	GhostTimeoutPending bool
+	RequestID           string
+	Counted             *CounterKey
+	// In-memory only (Live is not persisted). Captured on the first recorder write.
 	TraceID [16]byte
 	SpanID  [8]byte
 	Sampled bool
 	Emitted bool
 }
 
-// OpenTracker opens the accounting store and starts the snapshot loop.
-// sweep <= 0 disables the classification sweep goroutine; a positive value
-// runs refreshDerived on that cadence without touching SQLite.
-func OpenTracker(path string, retention uint64, interval, sweep time.Duration) (*Tracker, error) {
+func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
 	store, err := OpenStore(path, retention)
 	if err != nil {
 		return nil, err
@@ -114,9 +153,8 @@ func OpenTracker(path string, retention uint64, interval, sweep time.Duration) (
 	t.done = make(chan struct{})
 	go t.snapshotLoop(ctx, interval)
 	go t.dispositionLoop()
-	if sweep > 0 {
-		t.sweepDone = make(chan struct{})
-		go t.sweepLoop(ctx, sweep)
+	for _, escrow := range t.escrows {
+		escrow.tracker = t
 	}
 	return t, nil
 }
@@ -137,6 +175,46 @@ func (t *Tracker) snapshotLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
+func (t *Tracker) Close() error {
+	if t == nil {
+		return nil
+	}
+	var err error
+	t.once.Do(func() {
+		if t.stop != nil {
+			t.stop()
+			<-t.done
+			if t.sweepDone != nil {
+				<-t.sweepDone
+			}
+		}
+		t.stopDispositions()
+		if flushErr := t.Flush(context.Background()); flushErr != nil {
+			err = flushErr
+		}
+		if closeErr := t.store.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	})
+	return err
+}
+
+// StartSweep runs refreshDerived on interval without a store write. interval <= 0
+// leaves classification to the recording path.
+func (t *Tracker) StartSweep(interval time.Duration) {
+	if t == nil || interval <= 0 || t.sweepDone != nil || t.stop == nil {
+		return
+	}
+	t.sweepDone = make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	prev := t.stop
+	t.stop = func() {
+		cancel()
+		prev()
+	}
+	go t.sweepLoop(ctx, interval)
+}
+
 func (t *Tracker) sweepLoop(ctx context.Context, interval time.Duration) {
 	defer close(t.sweepDone)
 	ticker := time.NewTicker(interval)
@@ -149,6 +227,25 @@ func (t *Tracker) sweepLoop(ctx context.Context, interval time.Duration) {
 			return
 		}
 	}
+}
+
+// Sweep promotes deadline-derived dispositions into Counters under the write
+// lock without touching the store.
+func (t *Tracker) Sweep() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		if escrow == nil || len(escrow.Live) == 0 {
+			continue
+		}
+		escrow.tracker = t
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
 }
 
 // SetDispositionSink registers the sink that receives DispositionEvents. Nil
@@ -182,8 +279,7 @@ func (t *Tracker) FlushDispositions() {
 	}
 }
 
-// DispositionDrops counts events discarded because the delivery queue was
-// full. Non-zero means the sink cannot keep up with classification.
+// DispositionDrops counts events discarded because the delivery queue was full.
 func (t *Tracker) DispositionDrops() uint64 {
 	if t == nil {
 		return 0
@@ -207,8 +303,6 @@ func (t *Tracker) dispositionLoop() {
 	}
 }
 
-// enqueueDisposition hands an event to the delivery goroutine. Called under
-// Tracker.mu, so it must never block: a full queue drops.
 func (t *Tracker) enqueueDisposition(event DispositionEvent) {
 	select {
 	case t.dispCh <- dispositionItem{event: event}:
@@ -217,9 +311,6 @@ func (t *Tracker) enqueueDisposition(event DispositionEvent) {
 	}
 }
 
-// stopDispositions drains what is already queued, then retires the delivery
-// goroutine. The channel is deliberately left open so a late Record* call
-// cannot panic on a closed channel during shutdown.
 func (t *Tracker) stopDispositions() {
 	if t.dispCh == nil || !t.dispStopped.CompareAndSwap(false, true) {
 		return
@@ -231,7 +322,6 @@ func (t *Tracker) stopDispositions() {
 	}
 }
 
-// hasSink reports whether building an event is worth the allocation.
 func (t *Tracker) hasSink() bool {
 	if t == nil || t.dispCh == nil || t.dispStopped.Load() {
 		return false
@@ -240,50 +330,20 @@ func (t *Tracker) hasSink() bool {
 	return holder != nil && holder.sink != nil
 }
 
-// Sweep promotes deadline-derived dispositions into Counters under the write
-// lock without touching the store. Settled escrows and escrows with no live
-// nonces are skipped.
-func (t *Tracker) Sweep() {
-	if t == nil {
+// AttachTrace stores the span context of the first write for a live nonce.
+func (t *Tracker) AttachTrace(escrowID string, nonce uint64, ref TraceRef) {
+	if t == nil || ref.IsZero() {
 		return
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	now := t.nowUTC()
-	for _, escrow := range t.escrows {
-		if escrow.Meta.Phase == EscrowSettled {
-			continue
-		}
-		if len(escrow.Live) == 0 {
-			continue
-		}
-		escrow.refreshDerived(t, now)
+	escrow := t.escrows[escrowID]
+	if escrow == nil || escrow.Live == nil {
+		return
 	}
-	t.updated = now
-}
-
-func (t *Tracker) Close() error {
-	if t == nil {
-		return nil
+	if s := escrow.Live[nonce]; s != nil {
+		s.captureTrace(ref)
 	}
-	var err error
-	t.once.Do(func() {
-		if t.stop != nil {
-			t.stop()
-			<-t.done
-			if t.sweepDone != nil {
-				<-t.sweepDone
-			}
-		}
-		t.stopDispositions()
-		if flushErr := t.Flush(context.Background()); flushErr != nil {
-			err = flushErr
-		}
-		if closeErr := t.store.Close(); closeErr != nil && err == nil {
-			err = closeErr
-		}
-	})
-	return err
 }
 
 func (t *Tracker) Flush(ctx context.Context) error {
@@ -323,25 +383,51 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			if phaseRank(meta.Phase) > phaseRank(existing.Meta.Phase) {
 				existing.Meta.Phase = meta.Phase
 			}
+			t.markDirtyLocked(meta.EscrowID)
 			return nil
 		}
-		t.escrows[meta.EscrowID] = &escrowState{
+		created := &escrowState{
+			tracker:         t,
 			Meta:            meta,
 			HostStats:       make(map[uint32]types.HostStats),
 			Counters:        make(map[CounterKey]uint64),
-			OpenChallenge:   make(map[uint64]uint32),
-			ChallengeBySlot: make(map[uint32]uint64),
-			InvalidBySlot:   make(map[uint32]uint64),
-			InvalidNonce:    make(map[uint64]struct{}),
+			ProtocolOnly:    make(map[uint64]uint32),
+			Challenge:       make(map[uint64]challengeRecord),
+			Invalid:         make(map[uint64]uint32),
+			ValidatedBySlot: make(map[uint32]uint64),
+			TimedOutBySlot:  make(map[uint32]uint64),
 			Live:            make(map[uint64]*nonceState),
+			LiveRequests:    make(map[string]struct{}),
 		}
+		t.escrows[meta.EscrowID] = created
+		t.markDirtyLocked(meta.EscrowID)
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestStarted(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		e.LiveRequests[requestID] = struct{}{}
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestFinished(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		delete(e.LiveRequests, requestID)
 		return nil
 	})
 }
 
 func (t *Tracker) RecordPhase(escrowID string, phase EscrowPhase) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
-		return e.recordPhase(t, phase)
+		return e.recordPhase(phase)
 	})
 }
 
@@ -350,7 +436,7 @@ func (t *Tracker) RecordDiff(escrowID string, nonce uint64, hasStart bool) error
 		if nonce == 0 {
 			return errors.New("nonce must be greater than zero")
 		}
-		e.recordDiff(t, nonce, hasStart)
+		e.recordDiff(nonce, hasStart)
 		return nil
 	})
 }
@@ -360,7 +446,25 @@ func (t *Tracker) RecordCommittedDiff(escrowID string, diff types.Diff, verdicts
 		if err := e.validateCommittedDiff(diff, verdicts); err != nil {
 			return err
 		}
-		e.recordCommittedDiff(t, diff, verdicts, t.nowUTC())
+		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordValidatorWork counts a validation against the slot that performed it. HostStats carries a
+// field for this, but nothing writes it: the count rides the state root, so filling it there would
+// need every host to agree on the same build.
+func (t *Tracker) RecordValidatorWork(escrowID string, validatorSlots []uint32) error {
+	if len(validatorSlots) == 0 {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		for _, slot := range validatorSlots {
+			if int(slot) >= len(e.Meta.Slots) {
+				return fmt.Errorf("slot %d out of range", slot)
+			}
+			e.ValidatedBySlot[slot]++
+		}
 		return nil
 	})
 }
@@ -381,9 +485,9 @@ func (t *Tracker) RecordCommittedState(
 		if err := e.validateState(hostStats, phase); err != nil {
 			return err
 		}
-		e.recordCommittedDiff(t, diff, verdicts, t.nowUTC())
+		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
 		e.mergeState(diff.Nonce, hostStats)
-		return e.recordPhase(t, phase)
+		return e.recordPhase(phase)
 	})
 }
 
@@ -393,29 +497,29 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 			return fmt.Errorf("slot %d out of range", slot)
 		}
 		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		if recordsProtocolEvent(kind) {
+			e.appendProtocolEvent(nonce, slot, kind, t.nowUTC())
+		}
 		switch kind {
 		case ProtocolReceiptApplied:
 			if s := e.Live[nonce]; s != nil {
 				s.Receipt = true
-				e.reclassify(t, nonce, s, t.nowUTC())
+				e.reclassify(nonce, s, t.nowUTC())
 			}
 		case ProtocolFinishApplied:
 			if s := e.Live[nonce]; s != nil {
 				s.markFinished()
-				e.reclassify(t, nonce, s, t.nowUTC())
+				e.reclassify(nonce, s, t.nowUTC())
 			}
 		case ProtocolTimeoutApplied:
 			if s := e.Live[nonce]; s != nil {
 				s.markProtocolTimeout()
-				e.reclassify(t, nonce, s, t.nowUTC())
+				e.reclassify(nonce, s, t.nowUTC())
 			}
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[nonce]; !ok {
-				e.OpenChallenge[nonce] = slot
-				e.ChallengeBySlot[slot]++
-			}
+			e.openChallenge(nonce, slot)
 		case ProtocolValidated:
-			e.closeChallenge(nonce, slot)
+			e.resolveChallenge(nonce, slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(nonce, slot)
 		default:
@@ -430,7 +534,7 @@ func (t *Tracker) RecordReceipt(escrowID string, nonce uint64, confirmedAt int64
 		if s := e.Live[nonce]; s != nil {
 			s.Receipt = true
 			s.ReceiptAt = confirmedAt
-			e.reclassify(t, nonce, s, t.nowUTC())
+			e.reclassify(nonce, s, t.nowUTC())
 		}
 		return nil
 	})
@@ -456,48 +560,112 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 	})
 }
 
-func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, ref TraceRef) error {
+func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
-		s.captureTrace(ref)
 		s.Ghost = true
+		s.GhostTimeoutPending = timeoutPending
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
 		s.DetailReason = normalizeDetailReason(detail)
-		e.reclassify(t, nonce, s, t.nowUTC())
+		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
 }
 
-func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, ref TraceRef) error {
+// RecordRequestID ties a nonce to the client request that produced it. One request fans out across
+// several nonces during a redundancy race, so this is the only route back from a miss to its cause.
+func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
-		s.captureTrace(ref)
+		s.RequestID = requestID
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
 		s.Sent = true
 		s.SendAt = sentAt.UTC()
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
-		e.reclassify(t, nonce, s, t.nowUTC())
+		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
 }
 
-func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, ref TraceRef) error {
+// RecordProbeSend stamps the reason at send, so a probe stays out of the user-facing ratios even when it fails.
+func (t *Tracker) RecordProbeSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, deliveryReason string) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
-		s.captureTrace(ref)
+		s.Sent = true
+		s.SendAt = sentAt.UTC()
+		s.DispatchPhase = normalizePhase(phase)
+		s.Quarantine = normalizeQuarantine(quarantine)
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordUsage also carries what the host delivered on this nonce: a settled nonce that streamed
+// nothing is one we paid for and could not use, and winner/loser alone cannot tell it from a
+// healthy one.
+func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, deliveryReason string) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
 		s.Usage = normalizeUsage(usage)
-		e.reclassify(t, nonce, s, t.nowUTC())
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordLogprobsDecoded marks an answer whose logprobs named tokens by text rather than by id. A
+// validator replays an inference from those ids, so it votes such an answer invalid.
+func (t *Tracker) RecordLogprobsDecoded(escrowID string, nonce uint64) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.LogprobsDecoded = true
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+func (t *Tracker) RecordAttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.SlowReceipt = timing.receiptWasSlow()
+		s.SlowChunk = timing.chunkWasSlow()
+		s.ClockDrifted = timing.clockHasDrifted()
+		s.SlowDecode = timing.decodeWasSlow()
+		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
 }
@@ -508,14 +676,13 @@ func (t *Tracker) RecordTimeout(record TimeoutRecord) error {
 		if err != nil {
 			return err
 		}
-		if !s.Sent {
+		if !s.Sent && !s.Ghost {
 			return errors.New("timeout recorded before real send")
 		}
 		outcome, ok := normalizeTimeoutOutcome(record.Outcome)
 		if !ok {
 			return fmt.Errorf("invalid timeout outcome %q", record.Outcome)
 		}
-		s.captureTrace(record.Trace)
 		s.TimeoutKind = normalizeTimeoutKind(record.Kind)
 		s.TimeoutPhase = normalizePhase(record.Phase)
 		s.TimeoutOutcome = outcome
@@ -529,7 +696,7 @@ func (t *Tracker) RecordTimeout(record TimeoutRecord) error {
 		if s.ProtocolTimedOut {
 			s.TimeoutOutcome = TimeoutApplied
 		}
-		e.reclassify(t, record.Nonce, s, t.nowUTC())
+		e.reclassify(record.Nonce, s, t.nowUTC())
 		return nil
 	})
 }
@@ -543,6 +710,113 @@ func (t *Tracker) withWrite(fn func() error) error {
 		t.errCount++
 	}
 	return err
+}
+
+func (t *Tracker) markDirtyLocked(escrowID string) {
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	if t.dirty == nil {
+		t.dirty = make(map[string]struct{})
+	}
+	t.dirty[escrowID] = struct{}{}
+}
+
+// restorePersistState re-arms the work a failed persist consumed so the next
+// snapshot retries it instead of silently dropping the changes.
+func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string) {
+	if t == nil || (len(dirtyIDs) == 0 && len(deletedIDs) == 0) {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range dirtyIDs {
+		t.markDirtyLocked(id)
+	}
+	for _, id := range deletedIDs {
+		if t.pendingDeletes == nil {
+			t.pendingDeletes = make(map[string]struct{}, len(deletedIDs))
+		}
+		t.pendingDeletes[id] = struct{}{}
+	}
+}
+
+// takePersistSnapshot refreshes derived state, prunes by retention, and returns
+// the rows to persist. dirtyIDs are escrows mutated since the last persist that
+// still exist; deletedIDs were removed by prune (including deletions a previous
+// failed persist did not land). Clears the dirty and pending-delete sets;
+// restorePersistState puts them back when the persist fails.
+func (t *Tracker) takePersistSnapshot(retention uint64) (storeSnapshot, []string, []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
+	before := make(map[string]struct{}, len(t.escrows))
+	for id := range t.escrows {
+		before[id] = struct{}{}
+	}
+	t.pruneLocked(retention)
+
+	deleted := t.pendingDeletes
+	if deleted == nil {
+		deleted = make(map[string]struct{})
+	}
+	t.pendingDeletes = nil
+	for id := range before {
+		if _, ok := t.escrows[id]; !ok {
+			deleted[id] = struct{}{}
+			delete(t.dirty, id)
+		}
+	}
+	deletedIDs := sortedKeys(deleted)
+
+	dirtyIDs := make([]string, 0, len(t.dirty))
+	for id := range t.dirty {
+		if _, ok := t.escrows[id]; ok {
+			dirtyIDs = append(dirtyIDs, id)
+		}
+	}
+	sort.Strings(dirtyIDs)
+	t.dirty = nil
+
+	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
+	for _, escrow := range t.escrows {
+		out.Escrows = append(out.Escrows, blobFromEscrow(escrow))
+	}
+	return out, dirtyIDs, deletedIDs
+}
+
+func (t *Tracker) pruneLocked(retention uint64) {
+	if retention == 0 {
+		return
+	}
+	var maxEpoch uint64
+	complete := make(map[uint64]bool)
+	for _, escrow := range t.escrows {
+		epoch := escrow.Meta.CreationEpoch
+		if epoch > maxEpoch {
+			maxEpoch = epoch
+		}
+		if _, ok := complete[epoch]; !ok {
+			complete[epoch] = true
+		}
+		if escrow.Meta.Phase != EscrowSettled {
+			complete[epoch] = false
+		}
+	}
+	var cutoff uint64
+	if maxEpoch+1 > retention {
+		cutoff = maxEpoch + 1 - retention
+	}
+	for id, escrow := range t.escrows {
+		if escrow.Meta.CreationEpoch < cutoff && complete[escrow.Meta.CreationEpoch] {
+			delete(t.escrows, id)
+		}
+	}
 }
 
 func (t *Tracker) nowUTC() time.Time {
@@ -571,7 +845,11 @@ func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error
 		if e == nil {
 			return fmt.Errorf("escrow %q not registered", escrowID)
 		}
-		return fn(e)
+		if err := fn(e); err != nil {
+			return err
+		}
+		t.markDirtyLocked(escrowID)
+		return nil
 	})
 }
 
@@ -617,7 +895,7 @@ func (e *escrowState) validateState(hostStats map[uint32]*types.HostStats, phase
 	return nil
 }
 
-func (e *escrowState) recordCommittedDiff(t *Tracker, diff types.Diff, verdicts []VerdictRecord, now time.Time) {
+func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRecord, now time.Time) {
 	if diff.Nonce <= e.Latest {
 		return
 	}
@@ -628,39 +906,43 @@ func (e *escrowState) recordCommittedDiff(t *Tracker, diff types.Diff, verdicts 
 			break
 		}
 	}
-	e.recordDiff(t, diff.Nonce, hasStart)
+	e.recordDiff(diff.Nonce, hasStart)
 	for _, tx := range diff.Txs {
 		if msg := tx.GetConfirmStart(); msg != nil {
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.Receipt = true
 				state.ReceiptAt = msg.ConfirmedAt
-				e.reclassify(t, msg.InferenceId, state, now)
+				e.reclassify(msg.InferenceId, state, now)
 			}
 			continue
 		}
 		if msg := tx.GetFinishInference(); msg != nil {
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.markFinished()
-				e.reclassify(t, msg.InferenceId, state, now)
+				e.reclassify(msg.InferenceId, state, now)
 			}
 			continue
 		}
 		if msg := tx.GetTimeoutInference(); msg != nil {
+			// The chain counts a miss on the executor slot for every one of these, so the ledger side
+			// of that cross-check is read from the same diff rather than from what the gateway
+			// reported: a timeout raised on a nonce nobody dispatched is reported nowhere.
+			e.TimedOutBySlot[AssignedNonceSlot(msg.InferenceId, uint64(len(e.Meta.Slots)))]++
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.markProtocolTimeout()
-				e.reclassify(t, msg.InferenceId, state, now)
+				e.reclassify(msg.InferenceId, state, now)
 			}
 		}
 	}
 	for _, verdict := range verdicts {
+		if recordsProtocolEvent(verdict.Kind) {
+			e.appendProtocolEvent(verdict.Nonce, verdict.Slot, verdict.Kind, now)
+		}
 		switch verdict.Kind {
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
-				e.OpenChallenge[verdict.Nonce] = verdict.Slot
-				e.ChallengeBySlot[verdict.Slot]++
-			}
+			e.openChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolValidated:
-			e.closeChallenge(verdict.Nonce, verdict.Slot)
+			e.resolveChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(verdict.Nonce, verdict.Slot)
 		}
@@ -678,7 +960,7 @@ func (e *escrowState) mergeState(latest uint64, hostStats map[uint32]*types.Host
 	}
 }
 
-func (e *escrowState) recordPhase(t *Tracker, phase EscrowPhase) error {
+func (e *escrowState) recordPhase(phase EscrowPhase) error {
 	if !validPhase(phase) {
 		return fmt.Errorf("invalid phase %q", phase)
 	}
@@ -687,7 +969,7 @@ func (e *escrowState) recordPhase(t *Tracker, phase EscrowPhase) error {
 	}
 	e.Meta.Phase = phase
 	if phase == EscrowSettled {
-		e.releaseCountedLive(t)
+		e.releaseCountedLive()
 	}
 	return nil
 }
@@ -697,25 +979,29 @@ func (e *escrowState) recordPhase(t *Tracker, phase EscrowPhase) error {
 // non-applied timeout is never terminal on its own: without this it would keep
 // its nonce state for as long as the escrow is retained. Uncounted nonces stay,
 // since they are what in_flight and pending_classification report.
-func (e *escrowState) releaseCountedLive(t *Tracker) {
+func (e *escrowState) releaseCountedLive() {
 	for nonce, state := range e.Live {
 		if state.Counted != nil {
-			e.finalizeNonce(t, nonce, state, *state.Counted)
+			e.emitDisposition(nonce, state, *state.Counted)
 			delete(e.Live, nonce)
 		}
 	}
 }
 
-func (e *escrowState) recordDiff(t *Tracker, nonce uint64, hasStart bool) {
+func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {
 	if nonce <= e.Latest {
 		return
 	}
 	e.Latest = nonce
 	slot := AssignedNonceSlot(nonce, uint64(len(e.Meta.Slots)))
 	if !hasStart {
-		key := CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly}
-		e.add(key, 1)
-		e.emitProtocolOnly(t, nonce, key)
+		// Recorded by nonce, not as a count: every instance following this escrow
+		// sees the same diff and would otherwise count it once each.
+		if e.ProtocolOnly == nil {
+			e.ProtocolOnly = make(map[uint64]uint32)
+		}
+		e.ProtocolOnly[nonce] = slot
+		e.emitProtocolOnly(nonce, CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly})
 		return
 	}
 	if _, exists := e.Live[nonce]; !exists {
@@ -727,14 +1013,14 @@ func (e *escrowState) recordDiff(t *Tracker, nonce uint64, hasStart bool) {
 	}
 }
 
-func (e *escrowState) reclassify(t *Tracker, nonce uint64, s *nonceState, now time.Time) {
+func (e *escrowState) reclassify(nonce uint64, s *nonceState, now time.Time) {
 	key, classified := s.counterKey(e.Meta, now)
 	if classified && !s.persistable(key) {
 		classified = false
 	}
 	if s.Counted != nil && classified && *s.Counted == key {
 		if s.terminal() {
-			e.finalizeNonce(t, nonce, s, key)
+			e.emitDisposition(nonce, s, key)
 			delete(e.Live, nonce)
 		}
 		return
@@ -748,30 +1034,48 @@ func (e *escrowState) reclassify(t *Tracker, nonce uint64, s *nonceState, now ti
 		s.Counted = &key
 	}
 	if s.terminal() {
-		// An unclassified terminal nonce (protocol timeout settled before the
-		// accounting deadline) leaves Live without being counted. It still gets
-		// its one event, but with the dimensions it does have rather than an
-		// all-zero key: an empty disposition is the signal, a slot id of 0
-		// would be a mis-attribution.
 		final := key
 		if !classified {
 			final = s.identityKey()
 		}
-		e.finalizeNonce(t, nonce, s, final)
+		e.emitDisposition(nonce, s, final)
 		delete(e.Live, nonce)
 	}
 }
 
-// finalizeNonce queues exactly one DispositionEvent for a nonce leaving Live.
-// Must run under Tracker.mu, so delivery is deferred to the tracker's own
-// goroutine.
-func (e *escrowState) finalizeNonce(t *Tracker, nonce uint64, s *nonceState, key CounterKey) {
+func (s *nonceState) identityKey() CounterKey {
+	return CounterKey{
+		SlotID:                 s.SlotID,
+		DispatchPhase:          s.DispatchPhase,
+		TimeoutEvaluationPhase: s.TimeoutPhase,
+		QuarantineMode:         s.Quarantine,
+		NoSendReason:           s.NoSendReason,
+		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
+		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
+		TimeoutKind:            s.TimeoutKind,
+		TimeoutOutcome:         s.TimeoutOutcome,
+		TimeoutReason:          s.TimeoutReason,
+	}
+}
+
+func (e *escrowState) emitDisposition(nonce uint64, s *nonceState, key CounterKey) {
 	if s == nil || s.Emitted {
 		return
 	}
 	s.Emitted = true
-	if !t.hasSink() {
+	t := e.tracker
+	if t == nil || !t.hasSink() {
 		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
 	}
 	t.enqueueDisposition(DispositionEvent{
 		EscrowID:    e.Meta.EscrowID,
@@ -780,35 +1084,33 @@ func (e *escrowState) finalizeNonce(t *Tracker, nonce uint64, s *nonceState, key
 		Trace:       s.traceRef(),
 		SendAt:      s.SendAt,
 		ObservedAt:  t.nowUTC(),
-		Participant: e.participantForSlot(key.SlotID),
+		Participant: participant,
 		Model:       e.Meta.Model,
 	})
 }
 
-func (e *escrowState) emitProtocolOnly(t *Tracker, nonce uint64, key CounterKey) {
-	if !t.hasSink() {
+func (e *escrowState) emitProtocolOnly(nonce uint64, key CounterKey) {
+	t := e.tracker
+	if t == nil || !t.hasSink() {
 		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
 	}
 	t.enqueueDisposition(DispositionEvent{
 		EscrowID:    e.Meta.EscrowID,
 		Nonce:       nonce,
 		Key:         key,
 		ObservedAt:  t.nowUTC(),
-		Participant: e.participantForSlot(key.SlotID),
+		Participant: participant,
 		Model:       e.Meta.Model,
 	})
 }
 
-func (e *escrowState) participantForSlot(slot uint32) string {
-	if int(slot) >= len(e.Meta.Slots) {
-		return ""
-	}
-	return e.Meta.Slots[slot].ValidatorAddress
-}
-
-func (e *escrowState) refreshDerived(t *Tracker, now time.Time) {
+func (e *escrowState) refreshDerived(now time.Time) {
 	for nonce, state := range e.Live {
-		e.reclassify(t, nonce, state, now)
+		e.reclassify(nonce, state, now)
 	}
 }
 
@@ -824,34 +1126,52 @@ func (e *escrowState) remove(key CounterKey) {
 	e.Counters[key]--
 }
 
-// closeChallenge returns the challenged slot, or fallback when no challenge was
-// open. A repeated verdict must not consume another slot's unresolved count, so
-// nothing is decremented in the fallback case.
-func (e *escrowState) closeChallenge(nonce uint64, fallback uint32) uint32 {
-	slot, open := e.OpenChallenge[nonce]
-	if !open {
-		return fallback
+// openChallenge records a challenged nonce against its executor slot. A repeated
+// challenge verdict is a no-op, and one that arrives after the challenge was
+// resolved does not reopen it.
+func (e *escrowState) openChallenge(nonce uint64, slot uint32) {
+	if _, seen := e.Challenge[nonce]; seen {
+		return
 	}
-	delete(e.OpenChallenge, nonce)
-	if e.ChallengeBySlot[slot] > 0 {
-		e.ChallengeBySlot[slot]--
+	if e.Challenge == nil {
+		e.Challenge = make(map[uint64]challengeRecord)
 	}
-	return slot
+	e.Challenge[nonce] = challengeRecord{Slot: slot}
 }
 
-// recordInvalid counts each invalidated inference once. Verdicts come from a
+// resolveChallenge marks a challenge resolved and returns the slot it was
+// challenged on, or fallback when this instance never saw the challenge. A
+// repeated verdict must not consume another slot's unresolved count, so nothing
+// changes in the fallback case.
+func (e *escrowState) resolveChallenge(nonce uint64, fallback uint32) uint32 {
+	rec, seen := e.Challenge[nonce]
+	if !seen {
+		return fallback
+	}
+	if !rec.Resolved {
+		rec.Resolved = true
+		e.Challenge[nonce] = rec
+	}
+	return rec.Slot
+}
+
+// recordInvalid records each invalidated inference once. Verdicts come from a
 // record's current status, so validations landing after an invalidation repeat
 // it, while HostStats.Invalid moves only once.
 func (e *escrowState) recordInvalid(nonce uint64, fallback uint32) {
-	slot := e.closeChallenge(nonce, fallback)
-	if _, counted := e.InvalidNonce[nonce]; counted {
+	slot := e.resolveChallenge(nonce, fallback)
+	// A nonce counted under the pre-set layout is already in InvalidBySlot;
+	// adding it to the set would count it a second time.
+	if _, legacy := e.InvalidLegacy[nonce]; legacy {
 		return
 	}
-	if e.InvalidNonce == nil {
-		e.InvalidNonce = make(map[uint64]struct{})
+	if _, counted := e.Invalid[nonce]; counted {
+		return
 	}
-	e.InvalidNonce[nonce] = struct{}{}
-	e.InvalidBySlot[slot]++
+	if e.Invalid == nil {
+		e.Invalid = make(map[uint64]uint32)
+	}
+	e.Invalid[nonce] = slot
 }
 
 func (s *nonceState) markFinished() {
@@ -871,30 +1191,34 @@ func (s *nonceState) markProtocolTimeout() {
 	s.TimeoutOutcome = TimeoutApplied
 }
 
-// identityKey is every counter dimension the nonce carries independently of
-// its disposition.
-func (s *nonceState) identityKey() CounterKey {
-	return CounterKey{
+func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey, bool) {
+	key := CounterKey{
 		SlotID:                 s.SlotID,
 		DispatchPhase:          s.DispatchPhase,
 		TimeoutEvaluationPhase: s.TimeoutPhase,
 		QuarantineMode:         s.Quarantine,
 		NoSendReason:           s.NoSendReason,
 		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
 		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
 		TimeoutKind:            s.TimeoutKind,
 		TimeoutOutcome:         s.TimeoutOutcome,
 		TimeoutReason:          s.TimeoutReason,
 	}
-}
-
-func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey, bool) {
-	key := s.identityKey()
 	switch {
 	case s.Ghost:
 		key.Disposition = DispositionGhost
-	case s.Finished && settledUsage(s.Usage):
-		key.Disposition = DispositionForUsage(s.Usage)
+	case s.Finished && s.Usage == UsageWinner:
+		key.Disposition = DispositionFinishedUsed
+	case s.Finished && s.Usage == UsageLoser:
+		key.Disposition = DispositionFinishedUnused
+	case s.Finished && s.Usage == UsageUnknownValue:
+		key.Disposition = DispositionFinishedUsageUnknown
 	case s.Sent && !s.Finished && s.deadlineReached(meta, now) && s.Receipt:
 		key.Disposition = DispositionUnfinishedExecution
 	case s.Sent && !s.Finished && s.deadlineReached(meta, now):
@@ -906,7 +1230,7 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 }
 
 func (s *nonceState) terminal() bool {
-	return s.Ghost ||
+	return (s.Ghost && (!s.GhostTimeoutPending || s.TimeoutResultSeen)) ||
 		(s.Finished && s.Usage != "") ||
 		(s.ProtocolTimedOut && s.TimeoutResultSeen)
 }
@@ -1041,7 +1365,7 @@ func normalizeQuarantine(q QuarantineMode) QuarantineMode {
 
 func normalizeNoSendReason(r NoSendReason) NoSendReason {
 	switch r {
-	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantStateDiverged, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
 		return r
 	default:
 		return NoSendUnknown
@@ -1073,7 +1397,7 @@ func normalizeTimeoutOutcome(o TimeoutOutcome) (TimeoutOutcome, bool) {
 
 func normalizeTimeoutReason(r TimeoutReason) TimeoutReason {
 	switch r {
-	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
+	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutHostServedProbe:
 		return r
 	default:
 		if r == "" {
@@ -1097,24 +1421,6 @@ func normalizeFailureOrigin(origin FailureOrigin, detail string) FailureOrigin {
 		return FailureHostResponse
 	default:
 		return FailureTransportUnknown
-	}
-}
-
-func normalizeDetailReason(reason string) string {
-	reason = strings.TrimSpace(reason)
-	switch reason {
-	case "", "none":
-		return ""
-	case "phase_transition_aborted", "error_stream", "empty_stream", "sse_truncated",
-		"eof_transport", "client_cancelled", "transport_error", "no_receipt",
-		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
-		"http_timestamp_drift", "http_error", "long_response_after_content",
-		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
-		"timeout_not_applied", "poc_unavailable_host", "participant_throttled_no_send",
-		"participant_capability_no_send", "no_compatible_request_after_stale":
-		return reason
-	default:
-		return "unknown"
 	}
 }
 

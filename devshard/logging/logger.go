@@ -2,15 +2,37 @@ package logging
 
 import (
 	"context"
+	"fmt"
+	"log"
 	"log/slog"
+	"os"
+	"strings"
+	"sync/atomic"
 
 	commonobs "common/observability"
 )
 
-func Info(msg string, keyvals ...any)  { slog.Info(msg, keyvals...) }
-func Error(msg string, keyvals ...any) { slog.Error(msg, keyvals...) }
-func Warn(msg string, keyvals ...any)  { slog.Warn(msg, keyvals...) }
-func Debug(msg string, keyvals ...any) { slog.Debug(msg, keyvals...) }
+// Logger is the interface for structured logging in the devshard package.
+// Callers pass subsystem as a keyval: Info("applied diff", "subsystem", "state", "nonce", 5).
+// When dapi integrates, it calls SetLogger() with an adapter that routes to
+// dapi's configured slog handler.
+type Logger interface {
+	Info(msg string, keyvals ...any)
+	Error(msg string, keyvals ...any)
+	Warn(msg string, keyvals ...any)
+	Debug(msg string, keyvals ...any)
+}
+
+var current Logger = &slogLogger{}
+
+var structuredStages atomic.Bool
+
+func SetLogger(l Logger) { current = l }
+
+func Info(msg string, keyvals ...any)  { current.Info(msg, keyvals...) }
+func Error(msg string, keyvals ...any) { current.Error(msg, keyvals...) }
+func Warn(msg string, keyvals ...any)  { current.Warn(msg, keyvals...) }
+func Debug(msg string, keyvals ...any) { current.Debug(msg, keyvals...) }
 
 // Ctx-aware variants forward the request context so TraceHandler can stamp
 // trace_id/span_id (and registered context fields such as request_id).
@@ -27,31 +49,126 @@ func DebugCtx(ctx context.Context, msg string, keyvals ...any) {
 	slog.DebugContext(ctx, msg, keyvals...)
 }
 
-// WithRequestID attaches a request ID to the context. Thin alias of
-// common/observability.WithRequestID so existing call sites compile unchanged.
+type slogLogger struct{}
+
+func (s *slogLogger) Info(msg string, kv ...any)  { slog.Info(msg, kv...) }
+func (s *slogLogger) Error(msg string, kv ...any) { slog.Error(msg, kv...) }
+func (s *slogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, kv...) }
+func (s *slogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, kv...) }
+
+// NewSlogAdapter returns a Logger that routes to the default slog handler and
+// prefixes every record with the given keyvals. Intended for embedders (e.g.
+// the dapi binary) that want devshard logs to land in their slog output with
+// a fixed marker like "subsystem=devshardd".
+func NewSlogAdapter(prefixKV ...any) Logger {
+	dup := make([]any, len(prefixKV))
+	copy(dup, prefixKV)
+	return &prefixedSlogLogger{prefix: dup}
+}
+
+type prefixedSlogLogger struct {
+	prefix []any
+}
+
+func (p *prefixedSlogLogger) merge(kv []any) []any {
+	out := make([]any, 0, len(p.prefix)+len(kv))
+	out = append(out, p.prefix...)
+	out = append(out, kv...)
+	return out
+}
+
+func (p *prefixedSlogLogger) Info(msg string, kv ...any)  { slog.Info(msg, p.merge(kv)...) }
+func (p *prefixedSlogLogger) Error(msg string, kv ...any) { slog.Error(msg, p.merge(kv)...) }
+func (p *prefixedSlogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, p.merge(kv)...) }
+func (p *prefixedSlogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, p.merge(kv)...) }
+
+// WithRequestID attaches a request ID to the context. If one already exists
+// it is preserved. Optional ids[0] supplies an explicit ID (e.g. validate-*).
+// Returns the (possibly new) context and the request ID.
 func WithRequestID(ctx context.Context, ids ...string) (context.Context, string) {
 	return commonobs.WithRequestID(ctx, ids...)
 }
 
-// SetRequestID forces id onto ctx. Thin alias of common/observability.SetRequestID.
+// SetRequestID forces id onto ctx, replacing any existing request ID.
 func SetRequestID(ctx context.Context, id string) context.Context {
 	return commonobs.SetRequestID(ctx, id)
 }
 
-// RequestID returns the request ID stored on ctx. Thin alias of
-// common/observability.RequestID.
+// RequestID returns the request ID stored on ctx, if any.
 func RequestID(ctx context.Context) (string, bool) {
 	return commonobs.RequestID(ctx)
 }
 
-// PropagateRequestID copies the request ID from src into dst. Thin alias of
-// common/observability.PropagateRequestID.
+// PropagateRequestID copies the request ID from src into dst.
+// Returns dst unchanged if src has no request ID.
 func PropagateRequestID(dst, src context.Context) context.Context {
 	return commonobs.PropagateRequestID(dst, src)
 }
 
-// Stage emits a correlation stage line. Thin alias of common/observability.Stage
-// so existing call sites compile unchanged.
+// Stage emits a log line in the canonical format:
+//
+//	request=req-... stage=some_stage key1=val1 key2=val2
+//
+// JSON mode (ConfigureFormat or InstallLogger) emits structured slog attrs so
+// TraceHandler can stamp trace_id. Text mode keeps the legacy log.Print line.
 func Stage(ctx context.Context, stage string, kv ...any) {
-	commonobs.Stage(ctx, stage, kv...)
+	if structuredStages.Load() || commonobs.IsJSONLogFormat() {
+		slog.InfoContext(ctx, stage, stageFields(ctx, stage, kv)...)
+		return
+	}
+	fields := make([]string, 0, 2+len(kv)/2)
+	if id, ok := RequestID(ctx); ok {
+		fields = append(fields, "request="+id)
+	}
+	fields = append(fields, "stage="+stage)
+	for i := 0; i < len(kv); i += 2 {
+		fields = append(fields, stageKey(kv, i)+"="+sanitize(stageValue(kv, i)))
+	}
+	log.Print(strings.Join(fields, " "))
+}
+
+// ConfigureFormat switches stage lines to JSON, where a collector reads every field as a label
+// instead of re-parsing a line that carries log's own date prefix.
+func ConfigureFormat(raw string) {
+	if !strings.EqualFold(strings.TrimSpace(raw), "json") {
+		return
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	structuredStages.Store(true)
+}
+
+func stageFields(ctx context.Context, stage string, kv []any) []any {
+	fields := make([]any, 0, 4+len(kv))
+	if id, ok := RequestID(ctx); ok {
+		fields = append(fields, "request", id)
+	}
+	fields = append(fields, "stage", stage)
+	for i := 0; i < len(kv); i += 2 {
+		fields = append(fields, stageKey(kv, i), stageValue(kv, i))
+	}
+	return fields
+}
+
+func stageKey(kv []any, i int) string {
+	if s, ok := kv[i].(string); ok && s != "" {
+		return s
+	}
+	return fmt.Sprintf("field_%d", i)
+}
+
+func stageValue(kv []any, i int) string {
+	if i+1 >= len(kv) {
+		return "<missing>"
+	}
+	return fmt.Sprint(kv[i+1])
+}
+
+func sanitize(v string) string {
+	if v == "" {
+		return `""`
+	}
+	if strings.ContainsAny(v, " \t\n\r\"") {
+		return fmt.Sprintf("%q", v)
+	}
+	return v
 }

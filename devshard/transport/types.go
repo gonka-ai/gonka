@@ -13,9 +13,9 @@ import (
 // Proto-serialized fields travel as base64 to preserve signature integrity.
 type DiffJSON struct {
 	Nonce         uint64 `json:"nonce"`
-	Txs           []byte `json:"txs"`                        // proto bytes of DiffContent.Txs wrapper
-	UserSig       []byte `json:"user_sig"`                   // raw sig bytes
-	PostStateRoot []byte `json:"post_state_root,omitempty"`  // state root after applying txs
+	Txs           []byte `json:"txs"`                       // proto bytes of DiffContent.Txs wrapper
+	UserSig       []byte `json:"user_sig"`                  // raw sig bytes
+	PostStateRoot []byte `json:"post_state_root,omitempty"` // state root after applying txs
 }
 
 // PayloadJSON is the JSON wire format for inference payload.
@@ -33,6 +33,9 @@ type InferenceRequest struct {
 	Nonce   uint64       `json:"nonce"`
 	Payload *PayloadJSON `json:"payload,omitempty"`
 	Stream  bool         `json:"stream,omitempty"` // hint: stream SSE deltas vs single JSON event
+	// ForceHeightSyncAnchor triggers manual-force Anchor on this message (policy hook).
+	ForceHeightSyncAnchor        bool  `json:"force_height_sync_anchor,omitempty"`
+	LogprobsOptimizationOverride *bool `json:"logprobs_optimization_override,omitempty"`
 }
 
 // InferenceResponse is the JSON body returned by the inference endpoint.
@@ -53,23 +56,44 @@ type VerifyTimeoutRequest struct {
 	Diffs       []DiffJSON   `json:"diffs,omitempty"` // catch-up diffs so verifier knows about the inference
 }
 
+// VerifyErrorMissRequest is the JSON body for POST /sessions/:id/verify-error-miss.
+type VerifyErrorMissRequest struct {
+	InferenceID     uint64     `json:"inference_id"`
+	Diffs           []DiffJSON `json:"diffs,omitempty"`
+	FinishTx        []byte     `json:"finish_tx"`
+	ResponsePayload []byte     `json:"response_payload"`
+}
+
+// VerifyErrorMissResponse is returned by the error-miss verification endpoint.
+type VerifyErrorMissResponse struct {
+	Accept      bool     `json:"accept"`
+	Signature   []byte   `json:"signature,omitempty"`
+	VoterSlot   uint32   `json:"voter_slot"`
+	Mempool     [][]byte `json:"mempool,omitempty"`
+	RejectCause string   `json:"reject_cause,omitempty"` // no_finish_tx, no_payload, sig, hash_mismatch, not_error_body
+}
+
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
 type VerifyTimeoutResponse struct {
-	Accept    bool   `json:"accept"`
-	Signature []byte `json:"signature,omitempty"` // signed TimeoutVoteContent
-	VoterSlot uint32 `json:"voter_slot"`
+	Accept      bool     `json:"accept"`
+	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
+	VoterSlot   uint32   `json:"voter_slot"`
+	Mempool     [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
+	RejectCause string   `json:"reject_cause,omitempty"`
 }
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
 type ChallengeReceiptRequest struct {
-	InferenceID uint64       `json:"inference_id"`
-	Payload     *PayloadJSON `json:"payload"`
-	Diffs       []DiffJSON   `json:"diffs"`
+	InferenceID     uint64       `json:"inference_id"`
+	Payload         *PayloadJSON `json:"payload"`
+	Diffs           []DiffJSON   `json:"diffs"`
+	ProtocolVersion string       `json:"protocol_version,omitempty"`
 }
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
 type ChallengeReceiptResponse struct {
-	Receipt []byte `json:"receipt,omitempty"`
+	Receipt []byte   `json:"receipt,omitempty"`
+	Mempool [][]byte `json:"mempool,omitempty"` // each: proto bytes of DevshardTx
 }
 
 // GossipNonceRequest is the JSON body for POST /sessions/:id/gossip/nonce.
@@ -92,12 +116,9 @@ type SignaturesResponse struct {
 
 // DiffToJSON converts a domain Diff to its JSON wire format.
 func DiffToJSON(d types.Diff) (DiffJSON, error) {
-	// Serialize the txs as a DiffContent proto (nonce + txs together)
-	// to preserve the exact bytes that were signed.
-	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs}
-	txsBytes, err := proto.Marshal(content)
+	txsBytes, err := marshalDiffWireTxs(d)
 	if err != nil {
-		return DiffJSON{}, fmt.Errorf("marshal diff content: %w", err)
+		return DiffJSON{}, err
 	}
 	return DiffJSON{
 		Nonce:         d.Nonce,
@@ -105,6 +126,17 @@ func DiffToJSON(d types.Diff) (DiffJSON, error) {
 		UserSig:       d.UserSig,
 		PostStateRoot: d.PostStateRoot,
 	}, nil
+}
+
+// marshalDiffWireTxs is the Txs field on DiffJSON / rpcpb.Diff: proto bytes
+// of DiffContent{Nonce, Txs}. Same bytes JSON and Connect must emit.
+func marshalDiffWireTxs(d types.Diff) ([]byte, error) {
+	content := &types.DiffContent{Nonce: d.Nonce, Txs: d.Txs}
+	txsBytes, err := proto.Marshal(content)
+	if err != nil {
+		return nil, fmt.Errorf("marshal diff content: %w", err)
+	}
+	return txsBytes, nil
 }
 
 // DiffFromJSON converts a JSON wire diff back to the domain Diff.
@@ -121,6 +153,22 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 	}, nil
 }
 
+// DiffsFromJSON decodes a challenge / verify diffs list.
+func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
+	if len(djs) == 0 {
+		return nil, nil
+	}
+	diffs := make([]types.Diff, 0, len(djs))
+	for i, dj := range djs {
+		d, err := DiffFromJSON(dj)
+		if err != nil {
+			return nil, fmt.Errorf("decode diff %d: %w", i, err)
+		}
+		diffs = append(diffs, d)
+	}
+	return diffs, nil
+}
+
 // HostRequestToJSON converts a HostRequest to InferenceRequest.
 func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 	diffs := make([]DiffJSON, len(req.Diffs))
@@ -133,8 +181,10 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 	}
 
 	ir := InferenceRequest{
-		Diffs: diffs,
-		Nonce: req.Nonce,
+		Diffs:                        diffs,
+		Nonce:                        req.Nonce,
+		ForceHeightSyncAnchor:        req.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
 	}
 	ir.Payload = PayloadToJSON(req.Payload)
 	return ir, nil
@@ -152,8 +202,10 @@ func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
 	}
 
 	req := host.HostRequest{
-		Diffs: diffs,
-		Nonce: ir.Nonce,
+		Diffs:                        diffs,
+		Nonce:                        ir.Nonce,
+		ForceHeightSyncAnchor:        ir.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: ir.LogprobsOptimizationOverride,
 	}
 	req.Payload = PayloadFromJSON(ir.Payload)
 	return req, nil
@@ -237,6 +289,17 @@ func TimeoutReasonToString(r types.TimeoutReason) string {
 	}
 }
 
+// timeoutVotePayload is the prompt a verify-timeout message carries.
+// An execution vote checks status and the mempool, so the prompt stays off
+// the wire. A refused vote hashes it against the start diff and challenges
+// the executor with it.
+func timeoutVotePayload(reason types.TimeoutReason, payload *host.InferencePayload) *PayloadJSON {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return nil
+	}
+	return PayloadToJSON(payload)
+}
+
 // PayloadToJSON converts a domain InferencePayload to its JSON wire format.
 func PayloadToJSON(p *host.InferencePayload) *PayloadJSON {
 	if p == nil {
@@ -279,11 +342,13 @@ func TimeoutReasonFromString(s string) (types.TimeoutReason, error) {
 
 // DevshardReceiptEvent is the first SSE event, sent before execution starts.
 type DevshardReceiptEvent struct {
-	StateSig    []byte `json:"state_sig,omitempty"`
-	StateHash   []byte `json:"state_hash,omitempty"`
-	Nonce       uint64 `json:"nonce"`
-	Receipt     []byte `json:"receipt,omitempty"`
-	ConfirmedAt int64  `json:"confirmed_at,omitempty"`
+	StateSig          []byte `json:"state_sig,omitempty"`
+	StateHash         []byte `json:"state_hash,omitempty"`
+	Nonce             uint64 `json:"nonce"`
+	Receipt           []byte `json:"receipt,omitempty"`
+	ConfirmedAt       int64  `json:"confirmed_at,omitempty"`
+	ObservedHeight    uint64 `json:"observed_height,omitempty"`
+	ObservedBlockHash []byte `json:"observed_block_hash,omitempty"`
 }
 
 // DevshardMetaEvent is the final SSE event, sent after execution completes.

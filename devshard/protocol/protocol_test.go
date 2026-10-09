@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -77,7 +78,7 @@ func defaultParams() user.InferenceParams {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }
@@ -160,10 +161,29 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 	require.NotEmpty(t, sigs)
 }
 
+// composedDiffs records every diff the session composes. The session drops
+// the prefix every host has applied, so a test that needs the whole journal
+// reads this copy instead of Session.Diffs.
+func composedDiffs(session *user.Session) func() []types.Diff {
+	var mu sync.Mutex
+	var journal []types.Diff
+	session.SetDiffObserver(func(d types.Diff) {
+		mu.Lock()
+		journal = append(journal, d)
+		mu.Unlock()
+	})
+	return func() []types.Diff {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]types.Diff(nil), journal...)
+	}
+}
+
 func TestProtocol_ReceiptPipelining(t *testing.T) {
 	env := setupEnv(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	// Send 3 inferences.
 	for i := 0; i < 3; i++ {
@@ -171,7 +191,7 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	diffs := env.session.Diffs()
+	diffs := journal()
 	require.Len(t, diffs, 3)
 
 	// Diff at nonce 2 should include MsgConfirmStart for inference 1
@@ -229,7 +249,7 @@ func TestProtocol_SignatureWithholding(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -286,7 +306,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -307,7 +327,7 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	// Nonce 2: confirm start.
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: 1, PromptHash: testutil.TestPromptHash[:], Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000, EscrowId: "escrow-1",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000, EscrowId: "escrow-1",
 		ConfirmedAt: resp.ConfirmedAt,
 	}
 	receiptData, _ := proto.Marshal(receiptContent)
@@ -360,6 +380,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 	verifier := signing.NewSecp256k1Verifier()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < 3; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -370,7 +391,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", env.user.Address(), env.config, env.group, 100000))
 	require.NoError(t, err)
 	roots := make(map[uint64][]byte)
-	for _, diff := range env.session.Diffs() {
+	for _, diff := range journal() {
 		root, err := replaySM.ApplyDiff(diff)
 		require.NoError(t, err)
 		roots[diff.Nonce] = root
@@ -459,7 +480,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 		Diffs: []types.Diff{diff1}, Nonce: 1,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		},
 	})
 	require.NoError(t, err)
@@ -528,18 +549,19 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	defaultHash := sha256.Sum256([]byte("stub"))
 	defaultResult := devshard.ExecuteResult{
 		ResponseHash: defaultHash[:],
+		ServedHash:   defaultHash[:],
 		InputTokens:  80,
 		OutputTokens: 40,
 	}
 
 	// 6 inferences with different engine outputs.
 	overrides := map[uint64]devshard.ExecuteResult{
-		1: {ResponseHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
-		2: {ResponseHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
-		3: {ResponseHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
-		4: {ResponseHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
-		5: {ResponseHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
-		6: {ResponseHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
+		1: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
+		2: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
+		3: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
+		4: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
+		5: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
+		6: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
 	}
 
 	// All 3 hosts share the same configurable engine.
@@ -557,12 +579,12 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	// Send 6 inferences. Accounting must cover the shared TestPrompt workload;
 	// MaxTokens may over-reserve, InputLength must equal len(prompt).
 	paramsList := []user.InferenceParams{
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 100, StartedAt: 2000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 3000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 3000},
 		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 75, StartedAt: 4000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 5000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 6000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 5000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 6000},
 	}
 
 	for _, p := range paramsList {
@@ -633,6 +655,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 	env := setupEnv(t, numHosts, 1000000, 100)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < numInferences; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -644,7 +667,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 
 	// Total diffs = numInferences + N (Phase A) + 1 (drain). Phase B sends catch-up only.
 	expected := numInferences + numHosts + 1
-	require.Equal(t, expected, len(env.session.Diffs()),
+	require.Equal(t, expected, len(journal()),
 		"total diffs = inferences(%d) + N+1(%d)", numInferences, numHosts+1)
 }
 

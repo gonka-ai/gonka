@@ -168,6 +168,14 @@ func TestSessionPayloadPath(t *testing.T) {
 	}
 }
 
+func TestSessionRPCPath(t *testing.T) {
+	got := SessionRPCPath("", "1", "/devshard.transport.v1.PeerAuthService/Attach")
+	want := "/devshard/" + types.DevshardStateRootAndProtocolVersion + "/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	if got != want {
+		t.Fatalf("SessionRPCPath = %q, want %q", got, want)
+	}
+}
+
 func TestVersionlessObservabilityPaths(t *testing.T) {
 	if got := VersionlessSessionDiffsPath("42"); got != "/devshard/sessions/42/diffs" {
 		t.Fatalf("diffs = %q", got)
@@ -181,6 +189,9 @@ func TestVersionlessObservabilityPaths(t *testing.T) {
 	if got := VersionlessStatsShardsPath(); got != "/devshard/stats/shards" {
 		t.Fatalf("stats = %q", got)
 	}
+	if got := VersionlessStatsRPCPath(); got != "/devshard/stats/rpc" {
+		t.Fatalf("stats rpc = %q", got)
+	}
 	if got := VersionlessStatsShardDetailPath("42"); got != "/devshard/stats/shards/42" {
 		t.Fatalf("stats detail = %q", got)
 	}
@@ -189,5 +200,14 @@ func TestVersionlessObservabilityPaths(t *testing.T) {
 	}
 	if got := VersionlessHealthzPath(); got != "/devshard/healthz" {
 		t.Fatalf("healthz = %q", got)
+	}
+	if got := RouterCatalogHealthzPath("v2"); got != "/v2/healthz" {
+		t.Fatalf("catalog healthz = %q", got)
+	}
+	if got := RouterCatalogHealthzPath("/v2/"); got != "/v2/healthz" {
+		t.Fatalf("catalog healthz trimmed = %q", got)
+	}
+	if got := RouterCatalogHealthzPath(""); got != "" {
+		t.Fatalf("empty version catalog healthz = %q", got)
 	}
 }

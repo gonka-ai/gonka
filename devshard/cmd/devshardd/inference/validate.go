@@ -4,23 +4,44 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"strings"
 	"time"
 
+	"common/completionapi"
 	commonvalidation "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
+	"connectrpc.com/connect"
 	"github.com/productscience/inference/x/inference/calculations"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
+	"devshard/transport"
+	"devshard/transport/rpcpb"
 )
+
+// errExecutorPayloadFault tags failures that are the executor's responsibility
+// (payload HTTP errors, bad signature, hash mismatch). Validator.Validate
+// converts tagged errors into Valid:false when the vote-false-on-fetch switch
+// is on.
+var errExecutorPayloadFault = errors.New("executor payload fault")
+
+func tagExecutorPayloadFault(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errExecutorPayloadFault) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", errExecutorPayloadFault, err)
+}
 
 func signPayloadRequest(
 	recorder PayloadAuthClient,
@@ -37,15 +58,7 @@ func signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	signerAddress, err := sdk.AccAddressFromBech32(recorder.GetSignerAddress())
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: recorder.GetKeyring(),
-	}
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(recorder, components, calculations.Developer)
 }
 
 func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, executorAddress string) ([]string, error) {
@@ -83,6 +96,8 @@ func fetchPayloadsFromExecutor(
 	inferenceID string,
 	epochID uint64,
 	requestPath string,
+	client *http.Client,
+	rpcFor func(executorURL, executorAddr, escrowID string) *transport.RPCClient,
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
@@ -92,11 +107,6 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("executor has no URL")
 	}
 
-	requestURL, err := commonvalidation.BuildPayloadRequestURL(executorInfo.URL, requestPath, inferenceID)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	timestamp := time.Now().UnixNano()
 	validatorAddress := recorder.GetAccountAddress()
 	signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
@@ -104,11 +114,17 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	payloadResp, err := commonvalidation.FetchPayloadsHTTP(
-		ctx, nil, requestURL, validatorAddress, timestamp, epochID, signature,
+	var rpc *transport.RPCClient
+	if rpcFor != nil {
+		rpc = rpcFor(executorInfo.URL, req.ExecutorAddress, req.EscrowID)
+	}
+	payloadResp, err := fetchSignedPayloads(
+		ctx, client, rpc, executorInfo.URL, requestPath,
+		inferenceID, validatorAddress, timestamp, epochID, signature,
+		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, classifyPayloadFetchError(ctx, err)
 	}
 
 	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
@@ -124,25 +140,283 @@ func fetchPayloadsFromExecutor(
 		req.ExecutorAddress,
 		encodedPubKeys,
 	); err != nil {
-		return nil, nil, fmt.Errorf("verify executor signature: %w", err)
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
 	}
 
-	promptHash := sha256.Sum256(payloadResp.PromptPayload)
-	if !bytes.Equal(promptHash[:], req.PromptHash) {
-		return nil, nil, fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:])
+	if err := verifyFetchedPayloadHashes(req, payloadResp.PromptPayload, payloadResp.ResponsePayload); err != nil {
+		return nil, nil, err
 	}
-
-	responseHash := sha256.Sum256(payloadResp.ResponsePayload)
-	if !bytes.Equal(responseHash[:], req.ResponseHash) {
-		return nil, nil, fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:])
-	}
-
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
 }
 
-func classifyExecuteValidationErr(err error) error {
+func verifyFetchedPayloadHashes(req devshardpkg.ValidateRequest, promptPayload, responsePayload []byte) error {
+	promptHash := sha256.Sum256(promptPayload)
+	if !bytes.Equal(promptHash[:], req.PromptHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
+	}
+
+	responseHash := sha256.Sum256(responsePayload)
+	if !bytes.Equal(responseHash[:], req.ResponseHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
+	}
+
+	served, err := completionapi.StripForGateway(responsePayload)
+	if err != nil {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served view: %w", commonvalidation.ErrHashMismatch, err))
+	}
+	servedHash := sha256.Sum256(served)
+	if !bytes.Equal(servedHash[:], req.ServedHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served expected %x got %x", commonvalidation.ErrHashMismatch, req.ServedHash, servedHash[:]))
+	}
+	return nil
+}
+
+const payloadFetchAttempts = 2
+
+// payloadFetchTimeout bounds the whole GET including body transfer. A streamed
+// or large payload can still complete after headers; shrinking this to the
+// TTFB budget would clip honest work.
+const payloadFetchTimeout = 30 * time.Second
+
+// payloadFetchHeaderTimeout is time-to-first-byte: dial, TLS, and response
+// headers. A silent executor fails here instead of occupying a worker for the
+// full body timeout on each attempt. Overridable in tests.
+var payloadFetchHeaderTimeout = 10 * time.Second
+
+var payloadFetchRetryBackoff = 500 * time.Millisecond
+
+func newPayloadFetchClient() *http.Client {
+	transport := cloneHTTPTransport()
+	transport.ResponseHeaderTimeout = payloadFetchHeaderTimeout
+	transport.TLSHandshakeTimeout = payloadFetchHeaderTimeout
+	transport.DialContext = (&net.Dialer{
+		Timeout:   payloadFetchHeaderTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+
+	// net/http ignores ResponseHeaderTimeout on HTTP/2, which would silently
+	// give a TLS executor the full body timeout to send headers. A payload GET
+	// is one small JSON document, so pin HTTP/1.1 to keep the TTFB bound.
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+
+	return &http.Client{
+		Timeout:   payloadFetchTimeout,
+		Transport: ttfbRoundTripper{base: transport},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func cloneHTTPTransport() *http.Transport {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok && t != nil {
+		return t.Clone()
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// ttfbRoundTripper records time-to-first-byte for a payload GET. RoundTrip
+// returns once the response headers are parsed and before the body is read, so
+// its duration is exactly TTFB.
+//
+// Only successful round trips are recorded. A blackholing executor would
+// otherwise fill the histogram with samples pinned at the header timeout,
+// inflating the very p99 the timeout is meant to be sized from.
+type ttfbRoundTripper struct {
+	base http.RoundTripper
+}
+
+func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	observability.ObservePayloadFetchTTFB(time.Since(start))
+	return resp, nil
+}
+
+// errPayloadRPCUnavailable is a local configuration miss. It is not an
+// executor fault: the retired HTTP payload route answers 410, and voting
+// Valid:false on that would punish an honest executor.
+var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
+
+// classifyPayloadFetchError leaves a failure of this process's closed peer
+// untagged, so the lease is released and another generation can fetch. A
+// payload that is gone or too large is still the executor's result.
+func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
+		return err
+	}
+	return tagExecutorPayloadFault(err)
+}
+
+func fetchSignedPayloads(
+	ctx context.Context,
+	client *http.Client,
+	rpc *transport.RPCClient,
+	executorURL, requestPath, inferenceID, validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	ctx, stopFetch := transport.WithPayloadFetchCancel(ctx)
+	defer stopFetch()
+	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
+		return nil, errPayloadRPCUnavailable
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
+	defer cancel()
+	if err := rpc.WaitReady(waitCtx); err != nil {
+		return nil, err
+	}
+	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
+		InferenceId:      inferenceID,
+		ValidatorAddress: validatorAddress,
+		Timestamp:        timestamp,
+		EpochId:          epochID,
+		Signature:        []byte(signature), // HTTP Authorization header text
+	}, maxBytes)
+}
+
+func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
+	if err != nil {
+		switch connect.CodeOf(err) {
+		case connect.CodeNotFound:
+			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
+		case connect.CodeResourceExhausted:
+			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+		default:
+			return nil, err
+		}
+	}
+	if resp == nil {
+		return nil, fmt.Errorf("get payload: empty response")
+	}
+	return &commonvalidation.PayloadResponse{
+		InferenceId:       resp.GetInferenceId(),
+		PromptPayload:     resp.GetPromptPayload(),
+		ResponsePayload:   resp.GetResponsePayload(),
+		ExecutorSignature: resp.GetExecutorSignature(),
+	}, nil
+}
+
+func fetchPayloadsHTTPWithRetry(
+	ctx context.Context,
+	client *http.Client,
+	requestURL, validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		payloadResp, err := commonvalidation.FetchPayloadsHTTP(
+			ctx, client, requestURL, validatorAddress, timestamp, epochID, signature, maxBytes,
+		)
+		if err == nil {
+			return payloadResp, nil
+		}
+		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == payloadFetchAttempts {
+			break
+		}
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// fetchPayloadsRPCWithRetry applies the same two-attempt pause as
+// fetchPayloadsHTTPWithRetry to an answered GetPayload failure. GetPayload
+// already retries an unanswered connection inside rpcRetry; those errors
+// return here without starting that budget again.
+func fetchPayloadsRPCWithRetry(
+	ctx context.Context,
+	rpc *transport.RPCClient,
+	req *rpcpb.GetPayloadRequest,
+	maxBytes int64,
+) (*commonvalidation.PayloadResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		resp, err := rpc.GetPayload(ctx, req, maxBytes)
+		payloadResp, err := payloadResponseFromRPC(resp, err)
+		if err == nil {
+			return payloadResp, nil
+		}
+		if payloadRPCFetchDone(err) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == payloadFetchAttempts {
+			break
+		}
+		if err := sleepPayloadFetchRetry(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// payloadRPCFetchDone reports an error that must not be tried again at this
+// layer: the payload is gone or oversize, or rpcRetry already spent its
+// budget on an unanswered connection.
+func payloadRPCFetchDone(err error) bool {
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return true
+	}
+	return transport.IsRetryableNonInference(err)
+}
+
+func sleepPayloadFetchRetry(ctx context.Context) error {
+	timer := time.NewTimer(payloadFetchRetryBackoff)
+	select {
+	case <-ctx.Done():
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func classifyExecuteValidationErr(err error) error {
+	if err == nil || errors.Is(err, devshardpkg.ErrValidationDeferred) {
+		return err
 	}
 	var classified *observability.ClassifiedError
 	if errors.As(err, &classified) {

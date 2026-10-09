@@ -8,53 +8,159 @@ rollout mechanics see [rolling-update.md](./rolling-update.md).
 
 Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
-[storage-design.md](./storage-design.md) (storage-mode selection).
+[storage-design.md](./storage-design.md) (storage-mode selection),
+[gateway.md](./gateway.md) (gateway + epoch-accounting HA merge framework).
+Authenticated peer RPC hops (Connect over HTTP/1.1 today, HTTP/2 in phase 6):
+[grpc-transport-connection.md](./grpc-transport-connection.md). The shared
+peer-RPC token is [below](#peer-rpc-sessions-under-ha).
 
 ---
 
 ## 1. Top-level topology
 
-A single public nginx (`proxy/`) is the edge of every node. It fans requests
-out to three independently-deployable backends:
+The public listener is `proxy-router/`, a host-local HAProxy. Today it
+distributes TCP connections on `:80/:443` across private nginx policy workers,
+which retain TLS, HTTP/2, CORS, rate limits, rewrites, and the existing on-chain
+route policy. The policy workers send only the two horizontally scaled API paths
+back to private HAProxy frontends. Phase 6 adds a second public bind on the same
+process (`{DEVSHARD_RPC_H2_PORT}`) for authenticated `/rpc/`; that listen skips
+nginx. It is not shipped yet.
 
 ```text
-                         ┌──────────────┐
-        client  ───────▶ │   proxy      │  :80 / :443  (proxy/)
-                         └──────┬───────┘
-          ┌─────────────────────┼─────────────────────────┐
-          ▼                     ▼                           ▼
-  ┌───────────────┐     ┌──────────────┐         ┌────────────────────┐
-  │  edge-api      │     │ decentralized│         │ versiond[-router]  │
-  │ [-router]      │     │ -api (dapi)  │         │      :8080         │
-  │   :18080       │     │    :9000     │         └─────────┬──────────┘
-  └───────┬────────┘     └──────┬───────┘                   │ per-version child
-          │ Tier A /v1          │ chat, PoC, admin,         ▼
-          │ (read-only)         │ node mgmt, bridge   ┌──────────────┐
-          ▼                     ▼                     │  devshardd   │ :5000+
-   inference-chain         inference-chain            │ (per version)│
-     gRPC :9090         gRPC :9090 + RPC :26657       └──────┬───────┘
-                                                             │
-                                              ┌──────────────┼───────────────┐
-                                              ▼              ▼               ▼
-                                        sqlite OR      nodemanager      chain RPC
-                                      devshard-postgres  :9400 → ML        + gRPC
+ clients
+    |
+    v
+ proxy-router (public HAProxy)
+    |
+    +-- :80/:443 TCP + PROXY v2 --> proxy-policy slots A/B (private nginx)
+    |        |
+    |        +-- ordinary /v1, chain, dashboard --> existing services
+    |        +-- Tier A /v1 queries --> proxy-router :18082 --> ready edge-api
+    |        +-- /devshard/* (JSON) --> proxy-router :18081
+    |                                      |
+    |                                      +--> ready versiond-router slot 0
+    |                                      +--> ready versiond-router slot 1
+    |                                      +--> ready versiond-router slot 2
+    |                                               |
+    |                                               | identical consistent hash
+    |                                               v
+    |                                        versiond hosts --> devshardd children
+    |                                               |
+    |                                        shared PostgreSQL for HA versions
+    |
+    +-- {DEVSHARD_RPC_H2_PORT} proto h2  (Phase 6; skips nginx)
+            |
+            +--> same versiond-router fleet (proto h2) --> versiond (h2c) --> child (h2c)
 ```
+
+`proxy-router` selects a ready router replica with the same escrow-derived
+consistent hash used by the inner tier. Every
+`versiond-router` independently computes the same consistent-hash placement
+from the escrow ID and the same DNS-discovered `versiond` pool. Router replicas
+hold no shared routing state and do not need Redis, leader election, or
+replica-to-replica communication. Both router tiers independently project
+protocol names from dapi's existing governance `/versions` feed into local
+pre-rendered backend slots.
+
+DAPI itself is not attached to the router-back network. The existing public
+HAProxy is dual-homed and exposes a narrow bridge there: only
+`GET /versions` is forwarded to DAPI, while every other path or method is
+rejected before it reaches the callback listener. This is an HTTP security
+boundary that a second port in the same Docker container would not provide.
+
+The public `proxy-router` process is still a **single host-level failure
+domain**. This deployment protects against failure or replacement of an inner
+router or policy worker, not against loss of the host, Docker daemon, public
+listener, or its network. A future multi-host ingress (provider LB, VIP, or
+Kubernetes Service) belongs above this layer and is outside this change. Phase 6
+adds `{DEVSHARD_RPC_H2_PORT}` on this same process (below); it does not add a
+second public failure domain.
+
+The stock Compose `devshard-postgres` is likewise one process and one
+host-local storage failure domain. It makes several `versiond` processes share
+one execution ledger, but it is not database HA. A multi-host production
+deployment must use a managed or operator-controlled PostgreSQL primary with
+synchronous durability and an effective RPO of zero for acknowledged
+devshard state. The Compose topology in this document does not provide database
+failover.
 
 | Path (public) | Backend | Purpose |
 |---------------|---------|---------|
-| 22 Tier A `/v1/*` query routes | `edge-api` (or `edge-api-router`) | Read-only chain queries |
+| 22 Tier A `/v1/*` query routes | `proxy-router :18082` → ready `edge-api` | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
-| `/devshard/<version>/sessions/...` (protocol) | `versiond` (or `versiond-router`) → `devshardd` | Chat, gossip, payloads — version binds on owner chat |
+| `/devshard/<version>/sessions/...` (JSON protocol) | `proxy-router :18081` → `versiond-router` fleet → `versiond` → `devshardd` | Chat, gossip, payloads — version binds on owner chat. HTTP/1.1. nginx is on this hop. |
+| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **Today:** same as JSON (InferenceUrl, nginx). **Phase 6:** `{DEVSHARD_RPC_H2_PORT}` on `proxy-router` → versiond-router (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
 | `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
 | `/devshard/<version>/sessions/.../diffs\|mempool\|signatures` (legacy) | join proxy **internal rewrite** → versionless | Backward-compat for scrapers |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
 | `/chain-rpc`, `/chain-api`, `/chain-grpc` | `chain-node` | Direct chain access |
 
-Routing is rendered by `proxy/entrypoint.sh` into
-`proxy/nginx.unified.conf.template`. Tier A locations are emitted **before** the
-generic `/v1/ → dapi` location so they take precedence. Key env:
-`EDGE_API_SERVICE_NAME`, `VERSIOND_SERVICE_NAME` (set to the `*-router` service
-name when running multi-instance overlays).
+HTTP policy is rendered by `proxy/entrypoint.sh` into
+`proxy/nginx.unified.conf.template`. Tier A locations are emitted before the
+generic `/v1/ → dapi` location. `proxy-router/entrypoint.sh` separately renders
+the public and private HAProxy pools. The two processes have different owners:
+nginx decides *which service* a path belongs to on InferenceUrl; HAProxy decides
+*which healthy replica* of that service receives it. Authenticated `/rpc/` after
+phase 6 never enters nginx — `proxy-router` is both the public bind and the
+replica picker for that listen.
+
+### HAProxy service pools
+
+Membership and eligibility are derived from runtime state:
+
+- `server-template` follows the `proxy-policy-front`, `versiond-router-fleet`,
+  `versiond-pool`, and `edge-api-pool` DNS aliases;
+- a TCP listener check gates private nginx policy workers, while active
+  `/readyz` checks gate application and router pools; `init-state fully-down`
+  keeps every new slot out until its first successful check;
+- the top HAProxy asks each inner router `GET /readyz?version=<v>` on its private
+  admin port, and each inner router asks every `versiond` the same route-specific
+  question;
+- `VERSIOND_VERSIONS` is only a bootstrap floor. New approved names are added to
+  both tiers through local Unix Runtime API sockets without a container reload;
+  a candidate backend starts health checks immediately, but its map entry is
+  published only after the configured ready reserve is present at that tier.
+  All additions observed in one poll pass this gate together; after the
+  projection is durably cached, each tier atomically replaces its data routing map.
+  Later degradation does not retract an admitted route;
+- each tier atomically persists its last fully projected governance snapshot;
+  replacement processes validate and pre-render a fresh snapshot before
+  listening, while stale or corrupt cache data falls back to the bootstrap floor;
+  cached additions continue to consume their bounded dynamic slots after a
+  restart, and a capacity reduction below that fresh state fails startup;
+- routers consume DAPI's existing `{"versions":[...]}` response. Projections
+  accept monotonic additions and retain the last admitted map on malformed or
+  removal snapshots. Removing a route therefore requires an explicit
+  drain-and-maintenance procedure rather than changing governance semantics in
+  the HA layer;
+- consistent hashing with `hash-key addr` keeps escrow placement stable across
+  DNS answer order and inner-router restarts. The public versiond distributor
+  uses the same escrow key to select an inner router; `edge-api` uses
+  `leastconn` for long requests;
+
+HAProxy and the catalog reconciler inside one router container intentionally run
+as the same unprivileged Unix user. They therefore form one container-level trust
+domain: mode `0600` on the Runtime API socket protects it from outside the
+container, not from sibling processes inside it. The shipped Compose services
+drop Linux capabilities and enable `no-new-privileges`. Strong process-to-process
+isolation would require a separate sidecar or a narrow privileged broker and is
+not part of this deployment model.
+
+The two policy workers are fixed Compose slots rather than one scaled service,
+and the Compose model orders them (`proxy-policy` depends on `proxy-policy2`),
+so an ordinary `docker compose up` replaces them one after the other and the
+public HAProxy keeps one admitted worker throughout. Both images declare
+`ai.gonka.proxy-policy-contract=1`; a wire-contract change would need a
+maintenance window rather than a rolling replacement. Marking any backend
+unready affects only new selections; it does not move or close an established
+stream.
+
+Both HAProxy layers retry connection failures, empty responses, and `502` only.
+They disable L7 replay for non-idempotent methods: once a POST may have reached
+an application, infrastructure cannot safely guess whether retrying it would
+execute the operation twice. This HA layer does not change devshard inference
+execution semantics. Established SSE streams remain on the connections that
+accepted them and are not moved during drain.
 
 ---
 
@@ -86,12 +192,18 @@ helpers, versions).
 
 Because edge-api holds no state, it scales horizontally already:
 
-- `edge-api-router/` is an nginx **round-robin** (not sticky) load balancer over
-  `EDGE_API_HOSTS`.
-- Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
-  (`local-test-net/docker-compose.edge-api.yml`,
-  `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the
-  router via `EDGE_API_SERVICE_NAME=edge-api-router`.
+- the private `proxy-router :18082` frontend balances the `edge-api-pool` DNS
+  alias directly; the former dedicated `edge-api-router` hop is not part of the
+  deployed steady-state topology;
+- active `/readyz` checks remove an instance that cannot reach the chain and
+  admit it again after recovery;
+- A stopping instance reports unready for `EDGE_API_DRAIN_ANNOUNCE` while it
+  keeps serving, then finishes accepted queries within
+  `EDGE_API_SHUTDOWN_BUDGET`, so replacing an instance does not cut queries.
+  The announce value is `0` only without a balancer; HA deployments require at
+  least `5s` so the router can finish its health-check failure window.
+- `deploy/join/docker-compose.edge-api-multi.yml` adds `edge-api2` and
+  `edge-api3`, and points private policy workers at `proxy-router :18082`.
 
 > edge-api is the natural foundation for the future HA "chain access layer" — see
 > the [HA proposal](./proposals/high-availability.md).
@@ -118,14 +230,15 @@ A supervisor + version-prefix reverse proxy:
   (`internal/proxy/proxy.go`, `rebuildRoutes`).
 - **Versionless observability:** also serves `/sessions/…/diffs|mempool|signatures`,
   `/stats/…`, `/metrics` without a version prefix. With shared Postgres
-  (`PGHOST` / `DATABASE_URL`), session-scoped routes look up
+  (`PGHOST`, or `DATABASE_URL` only for non-HA deployments), session-scoped routes look up
   `sessions.version` and forward to that child; unbound → 404. Without PG
   (SQLite-only), fan-out across children. See
   [versionless-observability-plan.md](./versionless-observability-plan.md).
 - **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix /
   versionless obs proxy.
 - **Overrides:** `VERSIOND_OVERRIDE_<name>` (local binary), `VERSIOND_FORCE`
-  (force-run a version).
+  (force-run a version) are local development and recovery controls. Production
+  HA deployments should leave them unset.
 
 ### devshardd (`devshard/cmd/devshardd/`)
 
@@ -152,22 +265,112 @@ compose service). It runs the per-escrow session protocol:
 
 ### versiond-router (`versiond-router/`)
 
-nginx with **consistent hashing on escrow/session ID** (`hash $sticky_key
-consistent`), so all requests for one escrow stick to the same versiond host.
-Renders upstreams from `VERSIOND_HOSTS`. Streaming-friendly (no buffering, 600s
-timeouts). Request path:
+HAProxy with **consistent hashing on escrow/session ID**, so all requests for one
+escrow stick to the same versiond host. Pool membership comes from the
+`versiond-pool` DNS alias and health from active `/readyz` checks, so hosts can
+be added, drained or removed with no router config change and no reload.
+Protocol names come from the same governance `/versions` endpoint used by
+`versiond`; approving a new name needs no host-side environment edit or router
+rollout. `versiond-router-fleet.sh wait-version <v>` is the machine-readable
+post-approval gate for per-host end-to-end capacity.
+Streaming responses are not buffered. SSE inactivity is bounded by
+`VERSIOND_ROUTER_STREAM_IDLE_SECONDS`; the separate tunnel timeout applies only
+after an HTTP Upgrade or CONNECT. Request path today (JSON and Connect over
+HTTP/1.1):
 
 ```text
-client → proxy (/devshard/) → versiond-router:8080 → versiond-N:8080 → devshardd :500x
+client
+  → public proxy-router :80/:443 (TCP)
+  → nginx policy worker
+  → proxy-router :18081
+  → one ready versiond-router replica
+  → versiond-N:8080
+  → devshardd :500x
 ```
+
+Phase 6 publishes a second public listen on the **same** `proxy-router` process
+(`{DEVSHARD_RPC_H2_PORT}`). Authenticated `/rpc/` skips nginx. HTTP/2 on every hop
+through the child. Version + escrow hash is unchanged, so sticky placement and
+host evacuation stay the same operation:
+
+```text
+client
+  → public proxy-router {DEVSHARD_RPC_H2_PORT}  (TLS+h2 if InferenceUrl is HTTPS, else h2c)
+  → one ready versiond-router replica (proto h2)
+  → versiond-N:8080 (h2c)
+  → devshardd :500x (h2c)
+```
+
+Do not put HAProxy in the versiond image. `:80/:443` stay TCP-to-nginx for JSON
+and `/v1`. See [grpc-transport-connection.md](./grpc-transport-connection.md).
+
+The fleet defaults to three fixed slots and requires two ready peers before one
+slot may stop. Each slot is a separate Compose project built from the same
+manifest. The main node Compose project therefore cannot recreate every router
+with one `up -d`. Fleet inventory is scoped by an immutable `fleet_id`; duplicate
+slot ownership and unknown slots fail closed.
+
+Rolling slots must retain one placement contract: pool DNS and backend-network
+identity, legacy owner, legacy pins, and placement-protocol image label. A
+change to that contract uses the explicit full-fleet maintenance operation,
+which drains every old router
+before exposing the new generation and restores exact old image+env snapshots
+if the required live routes do not return.
+
+Known limitations of this hop, recorded in
+[grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations):
+
+- The placement contract does not include `VERSIOND_ROUTER_H2_PORT` or
+  `VERSIOND_ROUTER_BACKEND_H2`. A direct `fleet apply` may mix a pre-h2
+  router image with a current one. While a current slot remains, redispatch
+  covers the refused connect. When the last current slot leaves and the
+  proxy still publishes `{DEVSHARD_RPC_H2_PORT}`, every slot refuses peer
+  RPC and clients fail closed. `update-devshard.sh` avoids that order: a
+  rollback off images labeled `ai.gonka.peer-rpc-h2=1` replaces the proxy
+  before the fleet. A direct fleet apply does not.
+- `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
+  not prove the HTTP/2 data ports agree. The `_rpc` health check is
+  HTTP/1.1 `GET /readyz` on router admin `:8404`. The slot compose does not
+  pass `VERSIOND_ROUTER_H2_PORT`, so it stays `8081` unless the image
+  default changes, while `DEVSHARD_RPC_H2_ROUTER_PORT` can move the proxy
+  dial alone. Stock defaults match (`9443` once in `config.env`, `8081` on
+  both sides of the router hop). A remote endpoint `{id, host, port}` is
+  the versiond listen (`8080`); that process has to speak h2c, and a remote
+  `config.env` with a different `DEVSHARD_RPC_H2_PORT` is not visible to
+  the updater on the network node.
+- Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only
+  enabled servers that DNS has resolved are probed. On a stock join that is
+  on the order of 20 extra `/readyz` plus `/healthz` requests per second
+  per versiond, and about 2 extra admin-port checks per second per router.
+  The interval stays: `fall 1` is what withdraws a failed server in about
+  a second.
 
 ### Multiple versiond instances (multi-host)
 
 This is the **key capability**: versiond instances can run on **separate
 IPs/machines**, each supervising its own set of devshardd children per version,
-all behind `versiond-router` for sticky session affinity. Compose overlays
-demonstrate it: `local-test-net/docker-compose.versiond.yml` (3 versiond +
-router), `deploy/join/docker-compose.versiond.yml` (2 versiond + router).
+all behind the `versiond-router` fleet for sticky session affinity.
+
+Pool membership has two sources. Inside one Docker host the
+`deploy/join/docker-compose.versiond.yml` overlay attaches every replica to the
+shared backend network under the `versiond-pool` alias, and the routers follow
+DNS. Across machines the operator lists the members explicitly in the file
+named by `VERSIOND_POOL_ENDPOINTS_FILE` (`{id, host, port}` entries, local
+replicas by container name, remote ones by private address); the file takes
+precedence over DNS, every router slot mounts it, and
+`deploy/join/versiond-router-fleet.sh apply` rolls the slots after an edit.
+Either way each router computes the same `hash-key addr` ring from the same
+membership, so escrow placement does not depend on which router answered.
+
+A remote versiond needs the network node's `/versions` feed (port 9100), chain
+gRPC and RPC, the node manager, and the shared PostgreSQL. The
+`docker-compose.private-endpoints.yml` overlay publishes them on the private
+interface of the network node; `docker-compose.versiond-remote.yml` runs the
+remote versiond against them with the same `KEY_NAME` and keyring. Remote
+hosts are updated one at a time by hand; the routers withdraw a host while it
+fails `/readyz`. Versions pinned in `VERSIOND_NON_HA_VERSIONS` stay on
+`VERSIOND_LEGACY_HOST` because their state is local SQLite. See
+[release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond).
 
 > **Multi-instance requires a shared Postgres** — see §4.
 
@@ -194,10 +397,76 @@ Operator signals (versiond / host logs and Prometheus):
 - `reconcile_fast_forward` — expected on failover onto a lagging replica.
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+- `postgres readiness lost` / `postgres readiness recovered` — the live database
+  failed or recovered across the two-probe readiness hysteresis. The devshardd
+  process stays alive; `/readyz` returns `503` while database readiness is lost.
+  With the default 5-second interval and 5-second probe deadline, a fully
+  blackholed database can take about 20 seconds after the last successful probe
+  to make `/readyz` return `503`. An upstream health checker adds its own polling
+  delay before it removes the replica from traffic.
+- `devshard_postgres_health_probe_total{result="success|database_error"}` —
+  outcomes from the dedicated PostgreSQL health connection. A single
+  `database_error` can be a transient connection reset and does not make the
+  service unready. Alert on `postgres readiness lost` or a sustained error
+  rate, not on one counter increment.
+- `devshard_postgres_pool_saturated` — whether all application-pool connections
+  were in use at the latest probe. Saturation is reported independently and does
+  not by itself make `/readyz` fail.
+- `proxy-router` and every `versiond-router` slot expose HAProxy's read-only
+  Prometheus exporter on the internal Compose network. The shipped Prometheus
+  uses a fixed parent target and DNS discovery for the slot fleet; no metrics
+  port is published on the host.
 
-Gateway catch-up and sticky failover remain independent: router
-`proxy_next_upstream` moves the HTTP request; host reconcile heals RAM from
-shared Postgres when the request arrives.
+Gateway catch-up and sticky failover remain independent. HAProxy redispatches
+connection failures for every method and permits L7 retries only for
+`GET`/`HEAD`/`OPTIONS`; host reconcile heals RAM from shared Postgres when the
+request reaches another replica.
+
+### Peer RPC sessions under HA
+
+The router hashes every `/{version}/sessions/{escrow}/…` request by that
+escrow segment (`balance hash`, `hash-type consistent`, `hash-key addr`).
+HTTP/2 does not pin a connection: each stream is hashed on its own. One
+peer's calls are different keys:
+
+| Call | Hash key | Lands on |
+|------|----------|----------|
+| First `Attach` | the door escrow | the child that owns that escrow |
+| `Watch` and live token renewal | `_` (`HostRPCEscrowID`) | whichever child `_` hashes to |
+| Later data call | that call's escrow | the child that owns that escrow |
+
+A token is bound to the peer, host, and version, not to an escrow. Handshake
+and renewal are in
+[grpc-transport-connection.md](./grpc-transport-connection.md#handshake-on-that-path).
+A token that only the child that served `Attach` can check would be rejected
+on every call the hash sends elsewhere. JSON has no such token: one
+`POST /sessions/{id}/height-sync` is handled by the child that owns that
+escrow.
+
+The token is a stateless HMAC tag, so every child of one host and version can
+check it without a shared table. Nothing is written per `Attach`, and HA mode,
+Postgres, and the router play no part in admission. Sessions are not shared
+across versions or across participants. The escrow hash is unchanged.
+
+| Mechanism | Behaviour |
+|-----------|-----------|
+| **Token** | `version ‖ keyID ‖ host ‖ version ‖ peer ‖ attached_unix ‖ expires_unix ‖ sha256(attach_nonce) ‖ HMAC-SHA256`. The three strings are length-prefixed. `attached_unix` is the earlier of the signed Attach timestamp and the host clock, and `expires_unix` adds `SessionTTL` (2 minutes). |
+| **Key** | HKDF-SHA256 over the host's secp256k1 key, with info `devshard/peer-rpc-session/v1|<host>|<version>|<keyID>`. Each child of one host and version derives the same key; another version or host derives a different one. The key never leaves the process. Bumping `SessionKeyID` logs out every peer of that host at once. |
+| **Admission** | `handshakeGate` in the devshardd child opens `X-Devshard-Session`: constant-time MAC check, then key id, host, version, and expiry with a 5s replica skew. Neither the router nor versiond inspects the token. Data RPCs still run `AllowsSender` for their escrow. |
+| **Renewal** | A renewal adds a token; earlier tokens stay valid until their own expiry. The same signed request returns the same bytes. An `Attach` that presents a live token skips the door and the anonymous floor, and spends a per-peer renewal bucket (burst 4, 4/min) before ECDSA. |
+| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`. It is liveness only and ends on client cancel, `host shutting down`, or `session expired`. A peer holds at most two concurrent Watches per child. The client reopens `Watch` on shutdown or EOF with the same token. Expiry and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. `/rpc/release` ends this generation's streams and stops its outbound dials. |
+
+Worst-case lifetime of a captured token is `SessionTTL` plus the replica skew,
+about two minutes. There is no per-token logout short of the key id.
+The router never takes the hash key from a request header.
+
+A forged or expired token fails in the child with
+`X-Devshard-Error: invalid_session_token`. This tree's versiond counts that
+header in the same per-origin budget as an unknown escrow; the pin's versiond
+does not. See
+[grpc-transport-connection.md](./grpc-transport-connection.md#wrong-escrow-id-by-origin-ip-versiond).
+Citest: `TestPeerRPCHASessionSpread` (`make citest-peerrpc-ha-session`) in
+[scenarios.md](../testenv/docs/scenarios.md).
 
 ---
 
@@ -224,18 +493,141 @@ The crucial property for multi-instance:
   cross-instance validation-lease table (`devshard_validation_leases`) that
   guarantees only one devshardd validates each `(escrow_id, inference_id)` pair.
 
+Postgres readiness is live, not a startup latch. Each devshardd probes its pool
+once per second; two consecutive failures remove that child from `/ready`, and
+two consecutive successes admit it again. The index-rebuild gate remains an
+independent prerequisite. This keeps a child whose database connection was lost
+out of every per-version hash ring without making a single transient probe flap
+the whole pool.
+
+A validation lease row records the process that claimed it (`instance_id`) and
+the container hostname beside the participant address. Ownership matches the
+address and the process id. A binary from before that column existed writes a
+blank `instance_id`; a current binary will not complete or release that row,
+and `AcquireOneStale` reclaims it after the lease TTL. versiond allows blue/green overlap only when both binaries print the same
+`--print-fleet-compat` token (`D_ack`, originator freshness, and lease
+identity). A binary from before that flag prints nothing, so the swap falls
+back to stop/start and the two builds do not serve one escrow together. An
+operator who runs them together anyway still has the older binary matching
+leases on the address alone, so it can release a row a current binary holds.
+
+Every versiond replica of one participant must point at the same PostgreSQL:
+the same `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`, with
+`DEVSHARD_STORAGE_MODE=postgres`. `deploy/join/update-devshard.sh --check`
+verifies this in the rendered Compose model before it changes anything. Use
+the libpq `PG*` variables rather than `DATABASE_URL`, `PGSERVICE` or
+`PGOPTIONS`, so the supervisor's session lookups and the children's writes
+cannot resolve different databases. A managed PostgreSQL is selected by
+overriding `PGHOST` on every replica and adding
+`docker-compose.versiond-external-postgres.yml`, which keeps the bundled
+`devshard-postgres` out of the model.
+
 Therefore:
+
+Core governance currently requires a non-empty version name but does not enforce
+the router's narrower grammar. Before an HA deployment or protocol activation,
+the deployment gate therefore requires every currently approved name to match
+`[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. This is the common subset that can be
+used unchanged as a URL path segment, an HAProxy map key, and a local binary
+name. Names such as `v4+hotfix` remain valid. A name containing Unicode,
+commas, semicolons, path delimiters, quotes, whitespace, or control characters
+may be accepted by core Gonka but is not HA-router-compatible and blocks the
+cutover before the fleet or ingress is changed.
+
+Each router stores data routing (`v5`) and admission (`version=v5`) as keys in
+one HAProxy map. A Runtime API transaction publishes both keys together, so a
+parent router cannot admit a child router before that child can route the same
+version.
+
+`versiond` continues to consume the existing DAPI version feed and applies its
+existing checksum verification and blue/green child lifecycle. A failed poll
+keeps the currently running children in place. The HA routers independently
+cache only their bounded name-to-backend projection; they do not redefine the
+governance or artifact-update contract.
+
+Runtime projection in this release is additions-only. Removing a previously
+projected name requires a separate maintenance procedure. A same-name SHA
+change retains versiond's existing protocol-compatible blue/green semantics.
+
+HA proxying prevents automatic retries of non-idempotent ML POST requests.
+Client retries after an ambiguous connection loss retain the existing Gonka
+semantics and can execute on another replica; cross-replica execution fencing or
+an idempotency contract is outside this HA routing change.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every
 > instance selects Postgres. SQLite is for single-instance / local-dev / tests
 > only. This rule is also stated in
 > [release-0.2.14-v4.md](./release-0.2.14-v4.md) and
-> [rolling-update.md](./rolling-update.md).
+> [rolling-update.md](./rolling-update.md). Router / NON_HA pin changes for
+> 0.2.15 are in [v5-deploy-test-plan.md](./v5-deploy-test-plan.md).
 
 Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
 `deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`
-for all versiond children.
+for all versiond children. The join overlay persists that database in the
+operator-visible `DEVSHARD_POSTGRES_DATA_DIR` bind directory. On the first
+in-place v5 start, its entrypoint atomically imports the anonymous Postgres
+volume used by v4. If that source was detached while versiond artifacts remain,
+startup fails instead of initializing an empty shared database (see
+[release-0.2.15-v5.md](./release-0.2.15-v5.md)).
+
+### Gateway + epoch accounting under HA
+
+`devshardctl` (gateway) is a separate process from `devshardd`. When several
+gateway replicas share Postgres, two persistence planes matter:
+
+| Plane | Merge | HA requirement |
+|-------|-------|----------------|
+| Gateway store (settings, devshards, throttles, …) | Last-writer-wins per primary key | Shared Postgres; configuration, not additive traffic |
+| Epoch accounting | Per-field merge (below) | Shared Postgres **and** a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
+
+**`DEVSHARD_ACCOUNTING_WRITER_ID` is required for HA gateways.** It partitions
+request-local accounting rows. Resolution is env → hostname → `"default"`.
+Defaulting is only safe when hostnames are unique and stable. Two replicas that
+share an id overwrite each other's request-local shares. SQLite mode has a
+single writer and ignores the variable.
+
+Full operator env table: [gateway.md](./gateway.md#configuration). Field table
+and factory markers: [storage-design.md](./storage-design.md#epoch-accounting).
+
+#### How accounting fields are stored (merge framework)
+
+There is no single merge rule. Each field is classified by: *if two instances
+are live on the same escrow, do both produce this value?*
+
+| Class | Test | Merge | Storage |
+| --- | --- | --- | --- |
+| Request-local | Needs a local dispatch signal (`RecordGhost` / `RecordRealSend` / `RecordUsage`) | `SUM` across `writer_id` | `(escrow_id, writer_id, key)` absolute share |
+| Replicated | Read off the committed diff / verdict — every instance derives it | Set union; flags with monotonic `OR` | One row per nonce, **no** `writer_id` |
+| Absolute mirror | Chain already publishes the total | `GREATEST` | Shared row |
+| Ordered / identity | Fixed rank or registration identity | Highest rank / identity write | Shared row |
+
+Worked examples:
+
+- `finished_used` → request-local (passive replica never learns usage).
+- Protocol-only nonce, challenge, invalidation → replicated sets (never store a
+  *count* of these; sum double-counts overlap, max drops disjoint observations).
+  Challenges keep resolved nonces (`Resolved` flag) rather than deleting them;
+  `ChallengeBySlot` is only a legacy carry — see
+  [gateway.md](./gateway.md#challenges-and-the-legacy-challengebyslot-carry).
+- Host stats / `latest` → absolute mirrors.
+- Escrow phase → ordered; slots / timeouts → identity.
+
+Invariants on every class: flush is replay-safe (absolute values or
+insert-if-absent, never `count = count + delta`); a writer never updates a
+peer’s rows; values are monotonic (resolved challenges are flagged, not deleted).
+
+**Migration of older data.** Pre-row Postgres blobs (`accounting_escrows`) convert
+once under frozen writer `_legacy_blob` (marker `blob_to_rows`). Local SQLite
+imports once when Postgres is empty (marker `sqlite_import`). Old blobs had no
+producer tag — that is why conversion invents `_legacy_blob`. Live writers treat
+those rows as a peer baseline and only publish their own share on top.
+
+**SQLite-only evolution** (no HA): new fields are new JSON keys inside the blob
+payload; missing keys decode as zero and the next flush rewrites the file. No
+`writer_id`, no SQL column migration. Checklist:
+[gateway.md](./gateway.md#ha-merge-framework) and
+[gateway.md](./gateway.md#staying-on-sqlite-how-new-fields-appear).
 
 ---
 
@@ -281,9 +673,12 @@ highly-available edge-api.
 
 | Service | Stateless? | Multi-instance today | Shared state needed for HA |
 |---------|-----------|----------------------|----------------------------|
-| `proxy` | yes | yes (immutable) | — |
-| `edge-api` | yes | **yes** (+ `edge-api-router`, round-robin) | none |
-| `versiond` + `devshardd` | per-escrow state | **yes** (+ `versiond-router`, sticky hash) | **shared Postgres** |
+| `proxy-router` | yes | one public instance; host-level SPOF accepted here | none |
+| `proxy-policy`, `proxy-policy2` | yes | **yes**, two fixed private nginx slots | shared TLS certificate volume |
+| `edge-api` | yes | **yes**, balanced directly by `proxy-router` | none |
+| `versiond-router` | yes | **yes**, independent fixed slots | none |
+| `versiond` + `devshardd` | per-escrow state | **yes**, sticky hash behind router fleet | **shared Postgres** |
+| `devshardctl` (gateway) | per-escrow state | operator-scaled | **shared Postgres** plus a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
 | `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
 
 ---
@@ -291,6 +686,9 @@ highly-available edge-api.
 ## 7. Where to go next
 
 - **Binary rollout (same version, new sha; multi-instance drain):**
-  [rolling-update.md](./rolling-update.md).
+  [rolling-update.md](./rolling-update.md). Host leave the pool:
+  [versiond-host-evacuation.md](./versiond-host-evacuation.md).
+- **Peer RPC hops (Connect HTTP/1.1 now, HTTP/2 skip-nginx later):**
+  [grpc-transport-connection.md](./grpc-transport-connection.md).
 - **Full HA target architecture (HA edge-api event hub, dapi service split,
   signer/NATS, Redis):** [proposals/high-availability.md](./proposals/high-availability.md).

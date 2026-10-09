@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
 	"common/nodemanager/gen"
 	commonobs "common/observability"
 	commonruntimeconfig "common/runtimeconfig"
-	"devshard/chainoracle/blocks"
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
@@ -204,7 +204,7 @@ func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(commonobs.UnaryServerTraceInterceptor(grpcTracerName)),
 	)
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
+	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents, s.blockMock, s.cfg.OmitBlockRoutes))
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()
@@ -219,6 +219,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e.HideBanner = true
 	cosrv.Mount(e.Group(""), cosrv.Config{
 		Blocks:          s.blockMock,
+		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
 	})
 	if s.cfg.BinaryDir != "" {

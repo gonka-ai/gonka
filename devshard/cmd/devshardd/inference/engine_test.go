@@ -63,10 +63,11 @@ func startEngineMLClient(t *testing.T, srv *engineMockNM) *mlnodeclient.Client {
 
 func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity *mlnodeclient.Cache) *Engine {
 	return &Engine{
-		mlClient:   ml,
-		mgr:        mgr,
-		capacity:   capacity,
-		httpClient: http.DefaultClient,
+		validationBudget: newValidationBudget(defaultValidationCreditTTL),
+		mlClient:         ml,
+		mgr:              mgr,
+		capacity:         capacity,
+		httpClient:       http.DefaultClient,
 	}
 }
 

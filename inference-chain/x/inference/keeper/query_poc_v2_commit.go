@@ -35,9 +35,10 @@ func (k Keeper) PoCV2StoreCommit(goCtx context.Context, req *types.QueryPoCV2Sto
 	}
 
 	return &types.QueryPoCV2StoreCommitResponse{
-		Count:    commit.Count,
-		RootHash: commit.RootHash,
-		Found:    true,
+		Count:     commit.Count,
+		RootHash:  commit.RootHash,
+		Found:     true,
+		TreeDepth: commit.TreeDepth,
 	}, nil
 }
 
@@ -86,6 +87,7 @@ func (k Keeper) AllPoCV2StoreCommitsForStage(goCtx context.Context, req *types.Q
 			Count:              value.Count,
 			RootHash:           value.RootHash,
 			HexPubKey:          utils.PubKeyToHexString(pubKey),
+			TreeDepth:          value.TreeDepth,
 		})
 	}
 

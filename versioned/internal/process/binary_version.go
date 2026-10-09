@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -17,6 +18,12 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	printChildH2CFlag        = "--print-child-h2c"
+	printFleetCompatFlag     = "--print-fleet-compat"
+	initializePostgresFlag   = "--initialize-postgres-schema"
+	childH2CAdvertise        = "h2c"
+	envHADeployment          = "GONKA_HA"
+	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
 )
 
 var (
@@ -32,22 +39,34 @@ type childPreflight struct {
 	binaryLogVersion  string
 	adminAPISupported bool
 	storageMode       string
+	// fleetCompat is empty when the binary has no --print-fleet-compat.
+	// Overlap requires the running and incoming values to be equal.
+	fleetCompat string
+	// haDeployment overrides GONKA_HA for this child. It is nil for binaries
+	// other than devshard, false for legacy-pinned versions, and true for
+	// devshard versions that can be routed across the HA pool.
+	haDeployment *bool
+	// childH2C is true when the binary's listen accepts prior-knowledge
+	// HTTP/2. Older binaries do not support --print-child-h2c; versiond
+	// dials those over HTTP/1.1.
+	childH2C bool
 }
 
-// preflightChild verifies a downloaded binary when --print-* flags are
-// available. Legacy binaries (released before the flags) fall back per flag:
+// preflightChildWithAdminProbeContext verifies a downloaded binary when
+// --print-* flags are available. Legacy binaries fall back per flag:
 //   - --print-binary-version missing: use slotName for DEVSHARD_BINARY_LOG_VERSION
 //   - --print-protocol-version missing: trust governance slot, skip embed check
-func preflightChild(binPath, slotName string) (childPreflight, error) {
-	return preflightChildWithAdminProbe(binPath, slotName, false)
-}
-
-func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (childPreflight, error) {
+func preflightChildWithAdminProbeContext(
+	ctx context.Context,
+	binPath string,
+	slotName string,
+	probeAdmin bool,
+) (childPreflight, error) {
 	if _, err := os.Stat(binPath); err != nil {
 		return childPreflight{}, fmt.Errorf("binary not found: %w", err)
 	}
 
-	binaryLogVersion, binErr := readBinaryLogVersion(binPath)
+	binaryLogVersion, binErr := readBinaryLogVersionContext(ctx, binPath)
 	if binErr != nil {
 		if !errors.Is(binErr, errVersionFlagUnsupported) {
 			return childPreflight{}, fmt.Errorf("read binary log version: %w", binErr)
@@ -61,7 +80,7 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 		binaryLogVersion = slotName
 	}
 
-	embeddedProtocol, protoErr := readProtocolVersion(binPath)
+	embeddedProtocol, protoErr := readProtocolVersionContext(ctx, binPath)
 	if protoErr != nil {
 		if !errors.Is(protoErr, errVersionFlagUnsupported) {
 			return childPreflight{}, fmt.Errorf("read protocol version: %w", protoErr)
@@ -81,8 +100,16 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 
 	adminSupported := false
 	storageMode := ""
+	fleetCompat := ""
+	var childHA *bool
 	if probeAdmin {
-		if _, adminErr := readAdminAPIVersion(binPath); adminErr != nil {
+		ha, err := childHADeployment(slotName)
+		if err != nil {
+			return childPreflight{}, err
+		}
+		childHA = &ha
+
+		if _, adminErr := readAdminAPIVersionContext(ctx, binPath); adminErr != nil {
 			if !errors.Is(adminErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read admin api version: %w", adminErr)
 			}
@@ -90,10 +117,16 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 			adminSupported = true
 		}
 
-		mode, modeErr := readStorageMode(binPath)
+		mode, modeErr := readStorageModeContext(ctx, binPath)
 		if modeErr != nil {
 			if !errors.Is(modeErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read storage mode: %w", modeErr)
+			}
+			if ha {
+				return childPreflight{}, fmt.Errorf(
+					"HA-routed devshard version %q must support %s: %w",
+					slotName, printStorageModeFlag, modeErr,
+				)
 			}
 			slog.Warn(
 				"--print-storage-mode unsupported, treating devshard storage mode as legacy",
@@ -104,21 +137,87 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 		} else {
 			storageMode = mode
 		}
+		if ha && storageMode != storageModePostgres {
+			return childPreflight{}, fmt.Errorf(
+				"HA-routed devshard version %q requires storage mode %s (got %q)",
+				slotName, storageModePostgres, storageMode,
+			)
+		}
+
+		compat, compatErr := readFleetCompatContext(ctx, binPath)
+		if compatErr != nil {
+			if !errors.Is(compatErr, errVersionFlagUnsupported) {
+				slog.Warn(
+					"--print-fleet-compat unavailable, treating fleet compat as empty",
+					"slot", slotName,
+					"bin", binPath,
+					"error", compatErr,
+				)
+			}
+		} else {
+			fleetCompat = compat
+		}
+	}
+
+	childH2C, err := readChildH2CContext(ctx, binPath)
+	if err != nil {
+		return childPreflight{}, fmt.Errorf("read child h2c: %w", err)
+	}
+	if childH2C {
+		slog.Info("child listen accepts h2c; proxy will dial HTTP/2", "slot", slotName, "bin", binPath)
+	} else {
+		slog.Info("child has no h2c listen; proxy will dial HTTP/1.1", "slot", slotName, "bin", binPath)
 	}
 
 	return childPreflight{
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
 		storageMode:       storageMode,
+		fleetCompat:       fleetCompat,
+		haDeployment:      childHA,
+		childH2C:          childH2C,
 	}, nil
 }
 
-// readEmbeddedVersion runs binPath with flag and returns trimmed stdout.
-func readEmbeddedVersion(binPath, flag string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), embeddedVersionProbeTimeout)
+func childHADeployment(slotName string) (bool, error) {
+	ha, err := parseHADeployment(os.Getenv(envHADeployment))
+	if err != nil {
+		return false, fmt.Errorf("read HA deployment mode: %s: %w", envHADeployment, err)
+	}
+	if !ha {
+		return false, nil
+	}
+	for _, version := range strings.FieldsFunc(os.Getenv(envNonHAVersions), func(r rune) bool {
+		return r == ',' || r == ';' || unicode.IsSpace(r)
+	}) {
+		if version == slotName {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func parseHADeployment(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "0", "f", "false", "no", "off":
+		return false, nil
+	case "1", "t", "true", "yes", "on":
+		return true, nil
+	default:
+		return false, fmt.Errorf(
+			"invalid boolean value %q; use empty/0/f/false/no/off for false or 1/t/true/yes/on for true",
+			raw,
+		)
+	}
+}
+
+// readEmbeddedVersionContext runs binPath with flag and returns trimmed stdout.
+func readEmbeddedVersionContext(parent context.Context, binPath, flag string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, embeddedVersionProbeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binPath, flag)
+	cmd.WaitDelay = time.Second
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -160,18 +259,64 @@ func isUnsupportedVersionFlagError(err error, output string) bool {
 		strings.Contains(msg, "unrecognized option")
 }
 
-func readBinaryLogVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printBinaryVersionFlag)
+func readBinaryLogVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printBinaryVersionFlag)
 }
 
-func readProtocolVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printProtocolVersionFlag)
+func readProtocolVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printProtocolVersionFlag)
 }
 
-func readAdminAPIVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printAdminAPIVersionFlag)
+func readAdminAPIVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printAdminAPIVersionFlag)
 }
 
-func readStorageMode(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printStorageModeFlag)
+func readStorageModeContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printStorageModeFlag)
+}
+
+// readChildH2CContext reports whether binPath advertises an h2c listen.
+// Only stdout "h2c" enables the HTTP/2 dial. A missing flag, empty output,
+// or a non-zero exit means HTTP/1.1. Any other successful output is a
+// broken advertisement and fails preflight. A timed-out probe still fails.
+func readChildH2CContext(ctx context.Context, binPath string) (bool, error) {
+	v, err := readEmbeddedVersionContext(ctx, binPath, printChildH2CFlag)
+	if err != nil {
+		if ctx.Err() != nil || strings.Contains(err.Error(), "timed out") {
+			return false, err
+		}
+		return false, nil
+	}
+	if v != childH2CAdvertise {
+		return false, fmt.Errorf("%s %s: got %q, want %q", binPath, printChildH2CFlag, v, childH2CAdvertise)
+	}
+	return true, nil
+}
+
+func readFleetCompatContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printFleetCompatFlag)
+}
+
+func initializePostgresSchemaContext(ctx context.Context, binPath string, env []string) (bool, error) {
+	cmd := exec.CommandContext(ctx, binPath, initializePostgresFlag)
+	cmd.Env = env
+	cmd.WaitDelay = time.Second
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	message := strings.TrimSpace(output.String())
+	if isUnsupportedVersionFlagError(err, message) {
+		return false, nil
+	}
+	if ctx.Err() != nil {
+		return true, fmt.Errorf("initialize postgres schema with %s: %w", binPath, ctx.Err())
+	}
+	if message != "" {
+		return true, fmt.Errorf("initialize postgres schema with %s: %w: %s", binPath, err, message)
+	}
+	return true, fmt.Errorf("initialize postgres schema with %s: %w", binPath, err)
 }

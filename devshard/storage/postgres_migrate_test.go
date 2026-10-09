@@ -9,10 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"devshard/storage/migrate"
+	"devshard/storage/pgtest"
 )
 
 type postgresPartitionDDLTracer struct {
@@ -25,7 +24,8 @@ func (t *postgresPartitionDDLTracer) TraceQueryStart(ctx context.Context, _ *pgx
 	return ctx
 }
 
-func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {
+}
 
 func (t *postgresPartitionDDLTracer) record(sql string) {
 	upper := strings.ToUpper(sql)
@@ -49,14 +49,7 @@ func setupDevshardPostgresPool(t *testing.T, tracer pgx.QueryTracer) (*pgxpool.P
 	}
 
 	ctx := context.Background()
-	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
-	)
-	require.NoError(t, err)
+	container := pgtest.MustStart(t, ctx)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
@@ -105,6 +98,18 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_escrow_cache")
 	require.NoError(t, err)
 	require.True(t, exists, "missing table devshard_escrow_cache")
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_storage_identity")
+	require.NoError(t, err)
+	require.True(t, exists, "missing table devshard_storage_identity")
+
+	var storageIdentity string
+	err = pool.QueryRow(ctx, `
+SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&storageIdentity)
+	require.NoError(t, err)
+	require.Regexp(t,
+		`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+		storageIdentity,
+	)
 
 	var indexCount int
 	err = pool.QueryRow(ctx, `
@@ -117,6 +122,110 @@ WHERE schemaname = 'public' AND indexname = 'devshard_session_index_by_epoch'`).
 	n2, err := migrate.AppliedPG(ctx, pool)
 	require.NoError(t, err)
 	require.Equal(t, n1, n2)
+	var identityAfterRerun string
+	err = pool.QueryRow(ctx, `
+SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&identityAfterRerun)
+	require.NoError(t, err)
+	require.Equal(t, storageIdentity, identityAfterRerun)
+}
+
+func TestPostgresMigrationSteps_V6IDsStayPut(t *testing.T) {
+	byID := make(map[int]string, len(PostgresMigrationSteps()))
+	for _, step := range PostgresMigrationSteps() {
+		byID[step.ID] = step.Name
+	}
+	require.Equal(t, "devshard_validation_lease_identity", byID[15])
+	require.Equal(t, "devshard_sessions_obs_rebuild_pending", byID[16])
+	require.Equal(t, "devshard_validation_credits", byID[17])
+	require.Equal(t, "devshard_peer_rpc_sessions", byID[18])
+	require.Equal(t, "devshard_peer_rpc_session_last_seen", byID[19])
+	require.Equal(t, "devshard_validation_credit_holds", byID[20])
+}
+
+func TestMigratePostgres_PeerRPCAppliesAfterV6Ledger(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	var v6 []migrate.Step
+	for _, step := range PostgresMigrationSteps() {
+		if step.ID <= 17 {
+			v6 = append(v6, step)
+		}
+	}
+	require.NoError(t, migrate.ApplyPG(ctx, pool, v6))
+
+	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_peer_rpc_sessions")
+	require.NoError(t, err)
+	require.False(t, exists, "recorded v6 IDs 15–17 must not own the peer RPC table")
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_validation_credits")
+	require.NoError(t, err)
+	require.True(t, exists, "v6 ID 17 must still create validation credits")
+
+	require.NoError(t, MigratePostgres(ctx, pool))
+
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_peer_rpc_sessions")
+	require.NoError(t, err)
+	require.True(t, exists, "peer RPC sessions must apply at an ID v6 has not recorded")
+	var lastSeen string
+	err = pool.QueryRow(ctx, `
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'devshard_peer_rpc_sessions' AND column_name = 'last_seen'`).
+		Scan(&lastSeen)
+	require.NoError(t, err)
+	require.Equal(t, "last_seen", lastSeen)
+}
+
+func TestMigratePostgres_LeaseIdentityDefaultsBlank(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	var before []migrate.Step
+	for _, step := range PostgresMigrationSteps() {
+		if step.ID < 15 {
+			before = append(before, step)
+		}
+	}
+	require.NoError(t, migrate.ApplyPG(ctx, pool, before))
+
+	_, err := pool.Exec(ctx, `
+CREATE TABLE devshard_validation_leases_epoch_10
+    PARTITION OF devshard_validation_leases
+    FOR VALUES FROM (10) TO (11)`)
+	require.NoError(t, err)
+	_, err = pool.Exec(ctx, `
+INSERT INTO devshard_validation_leases
+    (epoch_id, escrow_id, inference_id, instance_address)
+VALUES (10, 'escrow-legacy', 7, 'gonka1')`)
+	require.NoError(t, err)
+
+	require.NoError(t, MigratePostgres(ctx, pool))
+
+	var instanceID, hostname string
+	err = pool.QueryRow(ctx, `
+SELECT instance_id, hostname FROM devshard_validation_leases
+WHERE epoch_id = 10 AND escrow_id = 'escrow-legacy' AND inference_id = 7`).
+		Scan(&instanceID, &hostname)
+	require.NoError(t, err)
+	require.Empty(t, instanceID)
+	require.Empty(t, hostname)
+}
+
+func TestInitializePostgresSchemaFromEnvironment(t *testing.T) {
+	_, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	require.NoError(t, InitializePostgresSchema(context.Background()))
+
+	cfg, err := pgxpool.ParseConfig("")
+	require.NoError(t, err)
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	defer pool.Close()
+	count, err := migrate.AppliedPG(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, len(PostgresMigrationSteps()), count)
 }
 
 func TestSaveSnapshot_SameEpoch_PartitionCreateOnce(t *testing.T) {

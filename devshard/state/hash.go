@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 
-	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/types"
@@ -23,11 +22,11 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 // where:
 //
 //	host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
-//	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
+//	rest_hash       = sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash) -- 32 bytes
 //	fees_be         = uint64 fees in big-endian            -- 8 bytes
 //	version_hash    = sha256(protocol version tag)       -- 32 bytes
 //	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
-//	inferences_hash = sha256(proto(sorted inference records))
+//	live_hash       = Ristretto255 sum of hash-to-curve(framed entry)
 //	phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement
 //
 // All components have fixed, known lengths (32 + 8 + 32 + 32 + 1), so the
@@ -43,13 +42,18 @@ func ComputeStateRoot(
 	warmKeys map[uint32]string,
 	fees uint64,
 	version string,
+	heightSync ...types.HeightSyncEscrowCommit,
 ) ([]byte, error) {
 	hostStatsHash, err := computeHostStatsHash(hostStats)
 	if err != nil {
 		return nil, err
 	}
 	acc := sealedAccBytes32(nil)
-	restHash, err := ComputeRestHashV2(balance, acc, inferences, warmKeys)
+	var hs types.HeightSyncEscrowCommit
+	if len(heightSync) > 0 {
+		hs = heightSync[0]
+	}
+	restHash, err := ComputeRestHashV2(balance, acc, inferences, warmKeys, hs)
 	if err != nil {
 		return nil, err
 	}
@@ -69,9 +73,10 @@ func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecor
 	return computeRestHash(balance, inferences, warmKeys)
 }
 
-// ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash)
-// where live_inferences_hash is the same encoding as v1's inference-set hash
-// over the live map only (sorted by inference id).
+// ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash).
+// live_inferences_hash is the 32-byte encoding of the sum of one Ristretto255
+// point per live record. The frame is the protowire tag, varint length, and
+// canonical protobuf entry, hashed to the curve with RFC 9380.
 func ComputeInferencesHashV2(sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord) ([]byte, error) {
 	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
@@ -83,14 +88,39 @@ func ComputeInferencesHashV2(sealedAcc [32]byte, liveInferences map[uint64]*type
 	return h.Sum(nil), nil
 }
 
-// ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash)
-// for Phase 1 v2 sessions (sealed accumulator + live inference set).
-func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
-	infHash, err := ComputeInferencesHashV2(sealedAcc, liveInferences)
+func hashHeightSyncEscrow(h types.HeightSyncEscrowCommit) []byte {
+	buf := make([]byte, 8*6+4)
+	binary.BigEndian.PutUint64(buf[0:], h.ForcedStart)
+	binary.BigEndian.PutUint64(buf[8:], h.ForcedEnd)
+	binary.BigEndian.PutUint64(buf[16:], h.CadenceSwallowUntil)
+	binary.BigEndian.PutUint64(buf[24:], h.SwallowFe)
+	binary.BigEndian.PutUint64(buf[32:], h.TurnK)
+	binary.BigEndian.PutUint64(buf[40:], h.TurnSlots)
+	reason := []byte(h.Reason)
+	binary.BigEndian.PutUint32(buf[48:], uint32(len(reason)))
+	hsh := sha256.New()
+	hsh.Write(buf)
+	hsh.Write(reason)
+	return hsh.Sum(nil)
+}
+
+// ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash)
+// for Phase 1 v2 sessions (sealed accumulator + live inference set + height-sync escrow flags).
+func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string, heightSync types.HeightSyncEscrowCommit) ([]byte, error) {
+	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
 		return nil, err
 	}
-	warmKeysHash := computeWarmKeysHash(warmKeys)
+	return restHashFromV2Parts(balance, sealedAcc, liveHash, computeWarmKeysHash(warmKeys), hashHeightSyncEscrow(heightSync)), nil
+}
+
+// restHashFromV2Parts assembles sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash)
+// from hashes that have already been computed. inferences_hash_v2 is sha256(sealed_acc || live_inferences_hash).
+func restHashFromV2Parts(balance uint64, sealedAcc [32]byte, liveHash, warmKeysHash, heightSyncHash []byte) []byte {
+	v2 := sha256.New()
+	v2.Write(sealedAcc[:])
+	v2.Write(liveHash)
+	infHash := v2.Sum(nil)
 
 	balBytes := make([]byte, 8)
 	binary.BigEndian.PutUint64(balBytes, balance)
@@ -99,7 +129,8 @@ func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[ui
 	h.Write(balBytes)
 	h.Write(infHash)
 	h.Write(warmKeysHash)
-	return h.Sum(nil), nil
+	h.Write(heightSyncHash)
+	return h.Sum(nil)
 }
 
 func sealedAccBytes32(b []byte) [32]byte {
@@ -240,28 +271,33 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 		}
 		entries[id] = entry
 	}
-	return computeInferencesHashFromEntries(entries), nil
+	sum := sumLivePointsFromEntries(entries)
+	enc := encodeLivePoint(&sum)
+	return append([]byte(nil), enc[:]...), nil
 }
 
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
 	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
-		InferenceId:  id,
-		Status:       uint32(r.Status),
-		ExecutorSlot: r.ExecutorSlot,
-		Model:        r.Model,
-		PromptHash:   r.PromptHash,
-		ResponseHash: r.ResponseHash,
-		InputLength:  r.InputLength,
-		MaxTokens:    r.MaxTokens,
-		InputTokens:  r.InputTokens,
-		OutputTokens: r.OutputTokens,
-		ReservedCost: r.ReservedCost,
-		ActualCost:   r.ActualCost,
-		StartedAt:    r.StartedAt,
-		ConfirmedAt:  r.ConfirmedAt,
-		VotesValid:   r.VotesValid,
-		VotesInvalid: r.VotesInvalid,
-		ValidatedBy:  r.ValidatedBy.Bytes(),
+		InferenceId:       id,
+		Status:            uint32(r.Status),
+		ExecutorSlot:      r.ExecutorSlot,
+		Model:             r.Model,
+		PromptHash:        r.PromptHash,
+		ResponseHash:      r.ResponseHash,
+		ServedHash:        r.ServedHash,
+		InputLength:       r.InputLength,
+		MaxTokens:         r.MaxTokens,
+		InputTokens:       r.InputTokens,
+		OutputTokens:      r.OutputTokens,
+		ReservedCost:      r.ReservedCost,
+		ActualCost:        r.ActualCost,
+		StartedAt:         r.StartedAt,
+		ConfirmedAt:       r.ConfirmedAt,
+		StartedAtHeight:   r.StartedAtHeight,
+		ConfirmedAtHeight: r.ConfirmedAtHeight,
+		VotesValid:        r.VotesValid,
+		VotesInvalid:      r.VotesInvalid,
+		ValidatedBy:       r.ValidatedBy.Bytes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
@@ -275,41 +311,25 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		return 0, nil, fmt.Errorf("unmarshal inference entry: %w", err)
 	}
 	rec := &types.InferenceRecord{
-		Status:       types.InferenceStatus(msg.Status),
-		ExecutorSlot: msg.ExecutorSlot,
-		Model:        msg.Model,
-		PromptHash:   append([]byte(nil), msg.PromptHash...),
-		ResponseHash: append([]byte(nil), msg.ResponseHash...),
-		InputLength:  msg.InputLength,
-		MaxTokens:    msg.MaxTokens,
-		InputTokens:  msg.InputTokens,
-		OutputTokens: msg.OutputTokens,
-		ReservedCost: msg.ReservedCost,
-		ActualCost:   msg.ActualCost,
-		StartedAt:    msg.StartedAt,
-		ConfirmedAt:  msg.ConfirmedAt,
-		VotesValid:   msg.VotesValid,
-		VotesInvalid: msg.VotesInvalid,
-		ValidatedBy:  types.Bitmap128FromBytes(msg.ValidatedBy),
+		Status:            types.InferenceStatus(msg.Status),
+		ExecutorSlot:      msg.ExecutorSlot,
+		Model:             msg.Model,
+		PromptHash:        append([]byte(nil), msg.PromptHash...),
+		ResponseHash:      append([]byte(nil), msg.ResponseHash...),
+		ServedHash:        append([]byte(nil), msg.ServedHash...),
+		InputLength:       msg.InputLength,
+		MaxTokens:         msg.MaxTokens,
+		InputTokens:       msg.InputTokens,
+		OutputTokens:      msg.OutputTokens,
+		ReservedCost:      msg.ReservedCost,
+		ActualCost:        msg.ActualCost,
+		StartedAt:         msg.StartedAt,
+		ConfirmedAt:       msg.ConfirmedAt,
+		StartedAtHeight:   msg.StartedAtHeight,
+		ConfirmedAtHeight: msg.ConfirmedAtHeight,
+		VotesValid:        msg.VotesValid,
+		VotesInvalid:      msg.VotesInvalid,
+		ValidatedBy:       types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
-}
-
-func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
-	ids := make([]uint64, 0, len(entries))
-	for id := range entries {
-		ids = append(ids, id)
-	}
-	slices.SortFunc(ids, func(a, b uint64) int { return cmp.Compare(a, b) })
-
-	buf := make([]byte, 0, len(entries)*64)
-	for _, id := range ids {
-		entry := entries[id]
-		buf = protowire.AppendTag(buf, 1, protowire.BytesType)
-		buf = protowire.AppendVarint(buf, uint64(len(entry)))
-		buf = append(buf, entry...)
-	}
-
-	sum := sha256.Sum256(buf)
-	return sum[:]
 }

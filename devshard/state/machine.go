@@ -2,14 +2,18 @@ package state
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"maps"
-	"math"
 	"slices"
+	"strings"
 	"sync"
 
+	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/storage"
@@ -48,18 +52,32 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	return cost, nil
 }
 
+func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
+	return tokenCost(inputLength, maxTokens, tokenPrice)
+}
+
+func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
+	if v == nil {
+		return nil
+	}
+	cp := *v
+	if v.PromptHash != nil {
+		cp.PromptHash = append([]byte(nil), v.PromptHash...)
+	}
+	if v.ResponseHash != nil {
+		cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
+	}
+	if v.ServedHash != nil {
+		cp.ServedHash = append([]byte(nil), v.ServedHash...)
+	}
+	return &cp
+}
+
 // copyInferences deep-copies an inferences map.
 func copyInferences(src map[uint64]*types.InferenceRecord) map[uint64]*types.InferenceRecord {
 	dst := make(map[uint64]*types.InferenceRecord, len(src))
 	for k, v := range src {
-		cp := *v
-		if v.PromptHash != nil {
-			cp.PromptHash = append([]byte(nil), v.PromptHash...)
-		}
-		if v.ResponseHash != nil {
-			cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
-		}
-		dst[k] = &cp
+		dst[k] = copyInferenceRecord(v)
 	}
 	return dst
 }
@@ -78,17 +96,23 @@ type StateMachine struct {
 	state       *types.EscrowState
 	verifier    signing.Verifier
 	userAddress string
-	// committedEntries keeps the canonical protobuf entry bytes for every
-	// inference ID ever created in the session, including records already sealed
-	// out of Mutable.Inferences. This preserves byte-identical state roots under
-	// Phase 0 without rehydrating the full record set from storage on each diff.
+	// committedEntries keeps the canonical protobuf bytes for each live
+	// inference: the same bytes a fresh marshal of Inferences would produce.
+	// Seal and settlement drain delete an id from this map and from Inferences
+	// together. liveEntrySum is that Ristretto255 sum kept as a point, so an
+	// insert or delete does not decode and encode it. The 32-byte encoding
+	// is produced when the state root is read. It changes only when a blob
+	// is inserted, replaced, or removed.
 	committedEntries map[uint64][]byte
+	liveEntrySum     ristretto255.Element
 	// sealedNonces remembers the nonce at which each evicted inference was
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces   map[uint64]uint64
 	inferenceStore storage.Storage
+	// replayingPersisted is written only under mu, by ApplyLocalPersisted.
+	replayingPersisted bool
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -96,7 +120,16 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	warmResolver WarmKeyResolver // optional, nil = no warm key support
+
+	heartbeatCfg    heightsync.HeartbeatConfig
+	turnTracker     *heightsync.TurnTracker
+	heightSyncFloor *heightsync.FloorIndex
+	heightSyncMarks *heightsync.MarkLog
+	// floorReady is true when heightSyncFloor is a consistent fold of
+	// diffs 1..LatestNonce (including genesis, where that range is empty).
+	// It is not AsOf's known flag: a pruned nonce is unknown on a ready floor.
+	floorReady bool
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -105,6 +138,22 @@ type StateMachine struct {
 	// (validate + apply) nor leaves obs rows for a diff that never committed.
 	// Set only while sm.mu is held during a trial apply.
 	obsDeferred *[]deferredObsWrite
+
+	// marksDeferred is the same shape for height-sync marks: trial apply
+	// records into the buffer, CommitValidated / a successful live apply
+	// flushes to heightSyncMarks. A rejected apply discards the buffer.
+	marksDeferred *[]heightsync.AttributableMark
+
+	// journal is the undo log of the apply in progress, nil between applies.
+	// Set only while sm.mu is held.
+	journal *mutationJournal
+
+	// owedPredicate, when set, maintains owed: live inference ids this host
+	// still owes a validation for. Nil on user sequencers and on machines no
+	// host has attached. The set is host-local bookkeeping, not part of the
+	// state root, and is journaled with the inference map.
+	owedPredicate OwedValidationPredicate
+	owed          map[uint64]struct{}
 }
 
 // deferredObsWrite is a single observability-store write captured during a
@@ -119,16 +168,17 @@ type deferredObsWrite struct {
 
 // ValidatedDiff carries the precomputed result of a trial apply so a subsequent
 // CommitValidated can install the post-state without re-running applyCore.
-// The mutable snapshot captures exactly the fields applyCore mutates, so
-// installing it is equivalent to re-applying (minus the obs writes, which are
+// The detached journal holds the post value of every key the apply wrote, so
+// redoing it is equivalent to re-applying (minus the obs writes, which are
 // buffered in obs and flushed on commit).
 type ValidatedDiff struct {
 	Root      []byte
 	WarmAfter map[uint32]string
 	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
 	nonce     uint64
-	post      mutableSnapshot
+	journal   *mutationJournal
 	obs       []deferredObsWrite
+	marks     []heightsync.AttributableMark
 }
 
 // Nonce reports the nonce this validated diff will commit.
@@ -153,6 +203,27 @@ func WithStateRootAndProtocolVersion(version string) SMOption {
 // WithVersion is an alias for WithStateRootAndProtocolVersion.
 func WithVersion(version string) SMOption {
 	return WithStateRootAndProtocolVersion(version)
+}
+
+// WithHeartbeatConfig sets log-plane heartbeat knobs (K_hb, D_ack, D). Zero
+// fields fall back to compiled defaults.
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
+	return func(sm *StateMachine) { sm.heartbeatCfg = cfg }
+}
+
+// HeartbeatConfig is the log-plane config this machine was constructed with.
+func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
+	return sm.heartbeatCfg
+}
+
+// ProtocolVersion is the destshard runtime tag stamped at session bind.
+func (sm *StateMachine) ProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state == nil {
+		return ""
+	}
+	return sm.state.StateRootAndProtocolVersion
 }
 
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
@@ -226,10 +297,16 @@ func NewStateMachine(
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
 		inferenceStore:     store,
+		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
+		heightSyncMarks:    heightsync.NewMarkLog(),
 	}
+	sm.liveEntrySum.Zero()
 	for _, o := range opts {
 		o(sm)
 	}
+	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
+	sm.heightSyncFloor = heightsync.NewFloorIndex()
+	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
@@ -260,7 +337,7 @@ func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 }
 
 // ValidateDiff verifies the user signature and trial-applies the diff (nonce,
-// txs, post_state_root) against a snapshot that is restored before return. The
+// txs, post_state_root), then undoes it through the journal before return. The
 // live state is unchanged. Used for persist-first: validate → persist →
 // CommitValidated. The returned handle carries the precomputed post-state so
 // CommitValidated installs it without a second applyCore, and buffers the obs
@@ -273,35 +350,24 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	pre := sm.snapshotMutable()
 	var obs []deferredObsWrite
+	var marks []heightsync.AttributableMark
 	sm.obsDeferred = &obs
-	root, err := sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+	sm.marksDeferred = &marks
+	root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
 	sm.obsDeferred = nil
+	sm.marksDeferred = nil
 	if err != nil {
-		// applyCore self-restores mutable state on every error path.
+		// applyCore undoes its journal on every error path.
 		return nil, err
 	}
-	post := sm.snapshotMutable()
 	warmAfter := copyStringMap(sm.state.WarmKeys)
-	sm.restoreMutable(pre)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, post: post, obs: obs}, nil
+	sm.detachJournalLocked(j)
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
-	diffContent := BuildDiffContent(sm.state.EscrowID, diff.Nonce, diff.Txs, diff.PostStateRoot)
-	data, err := deterministicMarshal.Marshal(diffContent)
-	if err != nil {
-		return fmt.Errorf("marshal diff content: %w", err)
-	}
-	recovered, err := sm.verifier.RecoverAddress(data, diff.UserSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidUserSig, err)
-	}
-	if recovered != sm.userAddress {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
-	}
-	return nil
+	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -309,6 +375,16 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	return sm.applyCore(nonce, txs, nil, "user")
+}
+
+// ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
+// relaxes policy, and it relaxes it only for checks that guard the creation of new work.
+func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.replayingPersisted = true
+	defer func() { sm.replayingPersisted = false }()
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
@@ -323,26 +399,27 @@ func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.Devshard
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
 // it trial-applies candidates and returns a handle carrying root, the applied
-// subset, warm keys and the precomputed post-state, then restores mutable state
-// so the live SM is unchanged. Used for persist-first compose: preview →
+// subset, warm keys and the detached journal, then undoes the apply so the live
+// SM is unchanged. Used for persist-first compose: preview →
 // persist → CommitValidated (which installs the post-state without recompute).
 func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.DevshardTx) (*ValidatedDiff, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	pre := sm.snapshotMutable()
 	var obs []deferredObsWrite
+	var marks []heightsync.AttributableMark
 	sm.obsDeferred = &obs
-	root, applied, err := sm.localBestEffortLocked(nonce, txs)
+	sm.marksDeferred = &marks
+	root, applied, j, err := sm.localBestEffortJournaled(nonce, txs)
 	sm.obsDeferred = nil
+	sm.marksDeferred = nil
 	if err != nil {
-		// localBestEffortLocked self-restores mutable state on every error path.
+		// localBestEffortLocked undoes its journal on every error path.
 		return nil, err
 	}
 	warmAfter := copyStringMap(sm.state.WarmKeys)
-	post := sm.snapshotMutable()
-	sm.restoreMutable(pre)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs}, nil
+	sm.detachJournalLocked(j)
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -354,15 +431,16 @@ func (sm *StateMachine) CommitValidated(vd *ValidatedDiff) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	// The post snapshot was computed against LatestNonce == vd.nonce-1. It is
-	// only valid to install when the live state is still at that point. Any
-	// mutation to this SM advances the nonce, so an unchanged nonce means no
+	// The journal was recorded against LatestNonce == vd.nonce-1. It is only
+	// valid to redo when the live state is still at that point. Any mutation
+	// to this SM advances the nonce, so an unchanged nonce means no
 	// intervening change; a mismatch means someone else already committed.
 	if vd.nonce != sm.state.LatestNonce+1 {
 		return false
 	}
-	sm.restoreMutable(vd.post)
+	sm.redoJournalLocked(vd.journal)
 	sm.flushDeferredObsLocked(vd.obs)
+	sm.heightSyncMarks.AppendAll(vd.marks)
 	return true
 }
 
@@ -394,23 +472,244 @@ func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 	}
 }
 
-// localBestEffortLocked implements ApplyLocalBestEffort and the trial-apply core
-// of PreviewLocalBestEffort. It applies txs one by one (skipping non-mandatory
-// failures) and, on success, leaves the mutable state advanced to nonce. On any
-// error it self-restores the mutable state before returning. Caller must hold
-// sm.mu. The preview/restore-on-success and warm-key capture that persist-first
-// needs are handled by the PreviewLocalBestEffort wrapper.
-func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
-	// Snapshot mutable state so fee charging and root computation remain atomic
-	// with respect to this nonce, matching applyCore semantics.
-	snap := sm.snapshotMutable()
+// logDroppedTx reports what best-effort composition discarded. A dropped ConfirmStart is queued once
+// per inference and leaves it pending forever, so it warns; mempool txs are gossiped repeatedly and
+// stale ones are ordinary, so they stay at debug.
+func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
+	if confirm := tx.GetConfirmStart(); confirm != nil {
+		logging.Warn("dropped confirm start", "subsystem", "state",
+			"nonce", nonce, "inference_id", confirm.InferenceId, "error", err)
+		return
+	}
+	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
+}
 
+func heightSyncTraffic(tx *types.DevshardTx) bool {
+	return tx != nil && (tx.GetHeartbeat() != nil || tx.GetHeightAck() != nil)
+}
+
+// localBestEffortLocked implements ApplyLocalBestEffort. It applies txs one by
+// one (skipping non-mandatory failures and log-plane-invalid height-sync txs)
+// and, on success, leaves the mutable state advanced to nonce. On any error it
+// undoes its journal before returning. Caller must hold sm.mu. The
+// preview/undo-on-success and warm-key capture that persist-first needs are
+// handled by the PreviewLocalBestEffort wrapper.
+func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
+	root, applied, j, err := sm.localBestEffortJournaled(nonce, txs)
+	sm.publishOwedIfTouchedLocked(j)
+	return root, applied, err
+}
+
+// localBestEffortJournaled is localBestEffortLocked that also returns the
+// closed journal of a successful apply.
+func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, *mutationJournal, error) {
+	expectedNonce := sm.state.LatestNonce + 1
+	if nonce != expectedNonce {
+		return nil, nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
+	}
+
+	// Same pre-check as applyCore: at most one MsgStartInference, with id == nonce.
+	startCount := 0
+	for _, tx := range txs {
+		if start := tx.GetStartInference(); start != nil {
+			startCount++
+			if start.InferenceId != nonce {
+				return nil, nil, nil, types.ErrInvalidInferenceID
+			}
+		}
+	}
+	if startCount > 1 {
+		return nil, nil, nil, types.ErrMultipleStartMsgs
+	}
+	if countForceHeightSyncTurn(txs) > 1 {
+		return nil, nil, nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
+
+	if !sm.floorReady {
+		return nil, nil, nil, types.ErrFloorNotRestored
+	}
+
+	scope := sm.pushMarkScopeLocked()
+	defer scope.discard()
+
+	// Fee charging and root computation stay atomic with this nonce, matching
+	// applyCore: every error return below is undone by closeJournalLocked.
+	j, err := sm.beginJournalLocked()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer sm.closeJournalLocked(j)
+
+	// All applyTx implementations are check-first-mutate-last:
+	// preconditions are validated before any state mutation, so a
+	// failed tx leaves state unchanged. No per-tx journal needed.
+	//
+	// Height-sync txs also have to survive CheckDiffLogPlane: applyTx for
+	// heartbeat/ack is admission-only, and skipping L0–L3 here would persist
+	// a nonce every host will INVALID. Invalid txs are dropped from mixed
+	// sets so a poisoned mempool ack cannot stall a heartbeat; if nothing
+	// valid remains, fail without consuming the nonce.
+	//
+	// Once MsgFinalizeRound has flipped the phase, heartbeats and height acks
+	// are over: skip them before the log plane so a leftover mempool ack
+	// cannot abort the N+1 finalize rounds.
+	var applied []*types.DevshardTx
+	var logPlaneReject error
+	for _, tx := range txs {
+		if sm.state.Phase == types.PhaseFinalizing && heightSyncTraffic(tx) {
+			logDroppedTx(nonce, tx, types.ErrSessionFinalizing)
+			continue
+		}
+		trial := make([]*types.DevshardTx, 0, len(applied)+1)
+		trial = append(trial, applied...)
+		trial = append(trial, tx)
+		if reason, err := sm.logPlaneErrLocked(nonce, trial); err != nil {
+			// Counted once here, where the tx is actually dropped: the same
+			// prefix is re-checked for every later tx in the set.
+			heightsync.ObserveLogPlaneReject(reason)
+			if tx.GetStartInference() != nil {
+				return nil, nil, nil, err
+			}
+			logPlaneReject = err
+			continue
+		}
+		if err := sm.applyTx(tx, nonce); err != nil {
+			if tx.GetStartInference() != nil {
+				return nil, nil, nil, fmt.Errorf("mandatory start inference: %w", err)
+			}
+			logDroppedTx(nonce, tx, err)
+			continue
+		}
+		applied = append(applied, tx)
+	}
+	if len(applied) == 0 && logPlaneReject != nil {
+		return nil, nil, nil, logPlaneReject
+	}
+	sm.observeHeightSyncLocked(nonce, applied)
+
+	// Charge per applied nonce only during the active phase.
+	// NOTE: During the finalization round, the `txs` slice will contain a [types.MsgFinalizeRound] message,
+	// the call to [StateMachine.applyTx] above will transition the state machine's phase to [types.PhaseFinalizing],
+	// and this block will be skipped.
+	if sm.state.Phase == types.PhaseActive {
+		if sm.state.Balance < sm.state.Config.FeePerNonce {
+			return nil, nil, nil, types.ErrInsufficientBalance
+		}
+		sm.state.Balance -= sm.state.Config.FeePerNonce
+		sm.state.Fees += sm.state.Config.FeePerNonce
+	}
+
+	sm.state.LatestNonce = nonce
+	sm.clearExpiredHeightSyncFlags()
+
+	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
+		sm.state.FinalizeNonce = nonce
+	}
+	if sm.state.Phase == types.PhaseFinalizing {
+		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
+		if deadlinePassed {
+			sm.state.Phase = types.PhaseSettlement
+			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
+				return nil, nil, nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+			}
+		}
+	}
+
+	// Deterministically seal inferences whose grace gates have cleared, before
+	// the root is computed, so the user's signed post_state_root commits to the
+	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock,
+	// with Finished requiring InferenceSealGraceSeconds + ExecutionTimeout).
+	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
+		if _, _, err := sm.autoSealLocked("user", nonce); err != nil {
+			return nil, nil, nil, fmt.Errorf("auto-seal: %w", err)
+		}
+	}
+
+	root, err := sm.computeStateRootLocked()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("compute state root: %w", err)
+	}
+
+	logging.Debug("applied diff (best-effort)", "subsystem", "state",
+		"nonce", nonce, "applied", len(applied), "candidates", len(txs),
+		"balance", sm.state.Balance,
+		"group_size", len(sm.state.Group),
+		"host_stats_count", len(sm.state.HostStats),
+		"config_token_price", sm.state.Config.TokenPrice,
+		"config_fee_per_nonce", sm.state.Config.FeePerNonce,
+	)
+	scope.commit()
+	j.kept = true
+	return root, applied, j, nil
+}
+
+func copyStringMap(m map[uint32]string) map[uint32]string {
+	if len(m) == 0 {
+		return nil
+	}
+	cp := make(map[uint32]string, len(m))
+	maps.Copy(cp, m)
+	return cp
+}
+
+// markScope buffers height-sync marks for one apply. If the caller already
+// installed marksDeferred (ValidateDiff / Preview), this is a no-op wrapper.
+// Otherwise marks are held until commit() on a successful apply.
+type markScope struct {
+	sm    *StateMachine
+	owned bool
+	buf   []heightsync.AttributableMark
+	done  bool
+}
+
+func (sm *StateMachine) pushMarkScopeLocked() *markScope {
+	s := &markScope{sm: sm}
+	if sm.marksDeferred == nil {
+		sm.marksDeferred = &s.buf
+		s.owned = true
+	}
+	return s
+}
+
+func (s *markScope) discard() {
+	if s == nil || s.done {
+		return
+	}
+	s.done = true
+	if s.owned {
+		s.sm.marksDeferred = nil
+	}
+}
+
+func (s *markScope) commit() {
+	if s == nil || s.done {
+		return
+	}
+	if s.owned {
+		s.sm.heightSyncMarks.AppendAll(s.buf)
+	}
+	s.discard()
+}
+
+// applyCore validates nonce, applies txs, updates nonce, and returns the state root.
+// If postStateRoot is non-nil, the computed root must match; on mismatch the entire
+// operation is rolled back (including nonce) and an error is returned.
+func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, error) {
+	root, j, err := sm.applyCoreJournaled(nonce, txs, postStateRoot, side)
+	sm.publishOwedIfTouchedLocked(j)
+	return root, err
+}
+
+// applyCoreJournaled is applyCore that also returns the closed journal of a
+// successful apply, for callers that detach it.
+func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, *mutationJournal, error) {
+	// 1. Validate nonce.
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
 		return nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
 	}
 
-	// Same pre-check as applyCore: at most one MsgStartInference, with id == nonce.
+	// 2. Validate at most one MsgStartInference per diff, and inference_id == nonce.
 	startCount := 0
 	for _, tx := range txs {
 		if start := tx.GetStartInference(); start != nil {
@@ -423,127 +722,40 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	if startCount > 1 {
 		return nil, nil, types.ErrMultipleStartMsgs
 	}
-
-	// All applyTx implementations are check-first-mutate-last:
-	// preconditions are validated before any state mutation, so a
-	// failed tx leaves state unchanged. No per-tx snapshots needed.
-	var applied []*types.DevshardTx
-	for _, tx := range txs {
-		if err := sm.applyTx(tx); err != nil {
-			if tx.GetStartInference() != nil {
-				sm.restoreMutable(snap)
-				return nil, nil, fmt.Errorf("mandatory start inference: %w", err)
-			}
-			continue
-		}
-		applied = append(applied, tx)
+	if countForceHeightSyncTurn(txs) > 1 {
+		return nil, nil, types.ErrMultipleForceHeightSyncTurnMsgs
 	}
 
-	// Charge per applied nonce only during the active phase.
-	// NOTE: During the finalization round, the `txs` slice will contain a [types.MsgFinalizeRound] message,
-	// the call to [StateMachine.applyTx] above will transition the state machine's phase to [types.PhaseFinalizing],
-	// and this block will be skipped.
-	if sm.state.Phase == types.PhaseActive {
-		if sm.state.Balance < sm.state.Config.FeePerNonce {
-			sm.restoreMutable(snap)
-			return nil, nil, types.ErrInsufficientBalance
-		}
-		sm.state.Balance -= sm.state.Config.FeePerNonce
-		sm.state.Fees += sm.state.Config.FeePerNonce
+	if !sm.floorReady {
+		return nil, nil, types.ErrFloorNotRestored
 	}
 
-	sm.state.LatestNonce = nonce
+	scope := sm.pushMarkScopeLocked()
+	defer scope.discard()
 
-	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
-		sm.state.FinalizeNonce = nonce
-	}
-	if sm.state.Phase == types.PhaseFinalizing {
-		deadlinePassed := sm.state.LatestNonce >= sm.state.FinalizeNonce+uint64(len(sm.state.Group))
-		if deadlinePassed {
-			sm.state.Phase = types.PhaseSettlement
-			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
-				sm.restoreMutable(snap)
-				return nil, nil, fmt.Errorf("drain live into sealed_acc: %w", err)
-			}
-		}
+	if err := sm.checkLogPlaneLocked(nonce, txs); err != nil {
+		return nil, nil, err
 	}
 
-	// Deterministically seal inferences whose grace gates have cleared, before
-	// the root is computed, so the user's signed post_state_root commits to the
-	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
-	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
-		if _, _, err := sm.autoSealLocked("user", nonce); err != nil {
-			sm.restoreMutable(snap)
-			return nil, nil, fmt.Errorf("auto-seal: %w", err)
-		}
-	}
-
-	root, err := sm.computeStateRootLocked()
+	// 3. Journal every write so any error below undoes the whole diff.
+	j, err := sm.beginJournalLocked()
 	if err != nil {
-		sm.restoreMutable(snap)
-		return nil, nil, fmt.Errorf("compute state root: %w", err)
+		return nil, nil, err
 	}
-
-	logging.Debug("applied diff (best-effort)", "subsystem", "state",
-		"nonce", nonce, "applied", len(applied), "candidates", len(txs),
-		"balance", sm.state.Balance,
-		"group_size", len(sm.state.Group),
-		"host_stats_count", len(sm.state.HostStats),
-		"config_token_price", sm.state.Config.TokenPrice,
-		"config_fee_per_nonce", sm.state.Config.FeePerNonce,
-	)
-	return root, applied, nil
-}
-
-func copyStringMap(m map[uint32]string) map[uint32]string {
-	if len(m) == 0 {
-		return nil
-	}
-	cp := make(map[uint32]string, len(m))
-	maps.Copy(cp, m)
-	return cp
-}
-
-// applyCore validates nonce, applies txs, updates nonce, and returns the state root.
-// If postStateRoot is non-nil, the computed root must match; on mismatch the entire
-// operation is rolled back (including nonce) and an error is returned.
-func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, error) {
-	// 1. Validate nonce.
-	expectedNonce := sm.state.LatestNonce + 1
-	if nonce != expectedNonce {
-		return nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
-	}
-
-	// 2. Validate at most one MsgStartInference per diff, and inference_id == nonce.
-	startCount := 0
-	for _, tx := range txs {
-		if start := tx.GetStartInference(); start != nil {
-			startCount++
-			if start.InferenceId != nonce {
-				return nil, types.ErrInvalidInferenceID
-			}
-		}
-	}
-	if startCount > 1 {
-		return nil, types.ErrMultipleStartMsgs
-	}
-
-	// 3. Snapshot mutable state for rollback on error.
-	snap := sm.snapshotMutable()
+	defer sm.closeJournalLocked(j)
 
 	// 4. Apply each tx.
 	for _, tx := range txs {
-		if err := sm.applyTx(tx); err != nil {
-			sm.restoreMutable(snap)
-			return nil, err
+		if err := sm.applyTx(tx, nonce); err != nil {
+			return nil, nil, err
 		}
 	}
+	sm.observeHeightSyncLocked(nonce, txs)
 
 	// 5. Charge per applied nonce only during the active phase.
 	if sm.state.Phase == types.PhaseActive {
 		if sm.state.Balance < sm.state.Config.FeePerNonce {
-			sm.restoreMutable(snap)
-			return nil, types.ErrInsufficientBalance
+			return nil, nil, types.ErrInsufficientBalance
 		}
 		sm.state.Balance -= sm.state.Config.FeePerNonce
 		sm.state.Fees += sm.state.Config.FeePerNonce
@@ -551,6 +763,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 
 	// 6. Update nonce.
 	sm.state.LatestNonce = nonce
+	sm.clearExpiredHeightSyncFlags()
 
 	// Track FinalizeNonce: the nonce at which finalization started.
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
@@ -568,8 +781,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			// wire) and lets the chain recompute rest_hash from sealed_acc
 			// alone. See devshard/docs/inferences-pruning.md \u00a71.4.
 			if err := sm.drainLiveIntoSealedAccLocked(sm.state.LatestNonce); err != nil {
-				sm.restoreMutable(snap)
-				return nil, fmt.Errorf("drain live into sealed_acc: %w", err)
+				return nil, nil, fmt.Errorf("drain live into sealed_acc: %w", err)
 			}
 		}
 	}
@@ -577,26 +789,29 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// 6b. Deterministically seal inferences whose grace gates have cleared,
 	// folding them into SealedAcc before the root is computed so the seal is
 	// part of post_state_root. The decision reads only state (nonce + the
-	// ConfirmedAt-derived state clock), so user, host and replay all agree.
+	// ConfirmedAt-derived state clock, with Finished requiring
+	// InferenceSealGraceSeconds + ExecutionTimeout), so user, host and replay
+	// all agree.
 	var sealClockWin StateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		var err error
 		_, sealClockWin, err = sm.autoSealLocked(side, nonce)
 		if err != nil {
-			sm.restoreMutable(snap)
-			return nil, fmt.Errorf("auto-seal: %w", err)
+			return nil, nil, fmt.Errorf("auto-seal: %w", err)
 		}
 	}
 
-	// 7. Compute state root.
-	root, err := sm.computeStateRootLocked()
+	// 7. Compute state root. Keep the component hashes so a mismatch can
+	// report them without walking the live inference set a second time.
+	parts, err := sm.rootComponentsLocked()
 	if err != nil {
-		sm.restoreMutable(snap)
-		return nil, fmt.Errorf("compute state root: %w", err)
+		return nil, nil, fmt.Errorf("compute state root: %w", err)
 	}
+	root := parts.root
 
 	// 8. Verify post_state_root if present. On mismatch, roll back everything.
 	if len(postStateRoot) > 0 && !bytes.Equal(root, postStateRoot) {
+		inputs := sm.rootInputsFromComponents(nonce, parts)
 		sm.logStateRootMismatchDiagnosticLocked(StateRootMismatchOpts{
 			Side:          "devshardd",
 			Nonce:         nonce,
@@ -604,12 +819,17 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			ComputedState: root,
 			SealClock:     sealClockWin,
 		})
-		sm.restoreMutable(snap)
-		return nil, fmt.Errorf("%w: diff %x, computed %x", types.ErrPostStateRootMismatch, postStateRoot, root)
+		return nil, nil, &RootDivergenceError{
+			Inputs:   inputs,
+			DiffRoot: append([]byte(nil), postStateRoot...),
+			Computed: append([]byte(nil), root...),
+		}
 	}
 
 	logging.Debug("applied diff", "subsystem", "state", "nonce", nonce, "txs", len(txs))
-	return root, nil
+	scope.commit()
+	j.kept = true
+	return root, j, nil
 }
 
 // LatestNonce returns the current nonce without deep-copying state.
@@ -699,14 +919,33 @@ func (sm *StateMachine) ExportState() *types.EscrowState {
 }
 
 // RestoreState replaces the current escrow state with a deep copy from storage.
-func (sm *StateMachine) RestoreState(state *types.EscrowState) {
+// The height-sync floor is rebuilt from the journal, or from a snapshot blob
+// supplied via RestoreStateWithFloor when the journal cannot be replayed.
+func (sm *StateMachine) RestoreState(state *types.EscrowState) error {
+	return sm.RestoreStateWithFloor(state, nil)
+}
+
+// RestoreStateWithFloor is RestoreState with an optional snapshot floor.
+// The journal is preferred so the turn tracker is reconstructed. That read
+// is paged. A non-nil floor is installed when the read fails, which is the
+// restore hole that previously served an empty index and skipped L0. If
+// LatestNonce > 0 and neither source can reconstruct the fold, restore fails
+// rather than splitting the escrow.
+//
+// The fold runs on a private copy without sm.mu. The state, tracker, and
+// floor are swapped in together under the lock, so readers see the previous
+// state until the restore is complete.
+func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *heightsync.FloorIndex) error {
 	if state == nil {
-		return
+		return nil
 	}
+	restored := cloneEscrowState(state)
+	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.state = cloneEscrowState(state)
+	sm.state = restored
 	sm.rebuildCommittedEntriesLocked()
+	return hs.installLocked(sm)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
@@ -746,6 +985,31 @@ func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
 	return copyInferences(sm.state.Inferences)
 }
 
+// Inference returns a deep copy of a single inference record. Use it on the
+// inference hot path instead of SnapshotState, which clones every record.
+func (sm *StateMachine) Inference(id uint64) (*types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return nil, false
+	}
+	return copyInferenceRecord(rec), true
+}
+
+// InferenceExecutorSlot returns the executor slot of a live inference record.
+// Unlike Inference it does not deep-copy the record, so it is cheap enough for
+// per-response admission checks.
+func (sm *StateMachine) InferenceExecutorSlot(id uint64) (uint32, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return 0, false
+	}
+	return rec.ExecutorSlot, true
+}
+
 // InferenceStatusCounts returns the total number of inferences and a per-status
 // breakdown, computed under the read lock without deep-copying any records.
 func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
@@ -756,65 +1020,6 @@ func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]
 		counts[rec.Status]++
 	}
 	return len(sm.state.Inferences), counts
-}
-
-// mutableSnapshot holds the mutable fields of EscrowState for rollback.
-type mutableSnapshot struct {
-	Balance       uint64
-	Fees          uint64
-	Phase         types.SessionPhase
-	FinalizeNonce uint64
-	LatestNonce   uint64
-	Inferences    map[uint64]*types.InferenceRecord
-	Committed     map[uint64][]byte
-	HostStats     map[uint32]*types.HostStats
-	WarmKeys      map[uint32]string
-	SealedAcc     []byte
-	SealedNonces  map[uint64]uint64
-}
-
-func (sm *StateMachine) snapshotMutable() mutableSnapshot {
-	infCopy := copyInferences(sm.state.Inferences)
-
-	hsCopy := make(map[uint32]*types.HostStats, len(sm.state.HostStats))
-	for k, v := range sm.state.HostStats {
-		cp := *v
-		hsCopy[k] = &cp
-	}
-
-	warmCopy := make(map[uint32]string, len(sm.state.WarmKeys))
-	maps.Copy(warmCopy, sm.state.WarmKeys)
-
-	sealedNoncesCopy := make(map[uint64]uint64, len(sm.sealedNonces))
-	maps.Copy(sealedNoncesCopy, sm.sealedNonces)
-
-	return mutableSnapshot{
-		Balance:       sm.state.Balance,
-		Fees:          sm.state.Fees,
-		Phase:         sm.state.Phase,
-		FinalizeNonce: sm.state.FinalizeNonce,
-		LatestNonce:   sm.state.LatestNonce,
-		Inferences:    infCopy,
-		Committed:     cloneCommittedInferenceEntries(sm.committedEntries),
-		HostStats:     hsCopy,
-		WarmKeys:      warmCopy,
-		SealedAcc:     append([]byte(nil), sm.state.SealedAcc...),
-		SealedNonces:  sealedNoncesCopy,
-	}
-}
-
-func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
-	sm.state.Balance = snap.Balance
-	sm.state.Fees = snap.Fees
-	sm.state.Phase = snap.Phase
-	sm.state.FinalizeNonce = snap.FinalizeNonce
-	sm.state.LatestNonce = snap.LatestNonce
-	sm.state.Inferences = snap.Inferences
-	sm.committedEntries = snap.Committed
-	sm.state.HostStats = snap.HostStats
-	sm.state.WarmKeys = snap.WarmKeys
-	sm.state.SealedAcc = append([]byte(nil), snap.SealedAcc...)
-	sm.sealedNonces = snap.SealedNonces
 }
 
 func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
@@ -872,7 +1077,7 @@ func (sm *StateMachine) IsWarmKeyAddress(addr string) bool {
 	return false
 }
 
-func (sm *StateMachine) applyTx(tx *types.DevshardTx) error {
+func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 	switch inner := tx.GetTx().(type) {
 	case *types.DevshardTx_StartInference:
 		return sm.applyStartInference(inner.StartInference)
@@ -886,10 +1091,18 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx) error {
 		return sm.applyValidationVote(inner.ValidationVote)
 	case *types.DevshardTx_TimeoutInference:
 		return sm.applyTimeout(inner.TimeoutInference)
+	case *types.DevshardTx_ErrorMiss:
+		return sm.applyErrorMiss(inner.ErrorMiss)
 	case *types.DevshardTx_RevealSeed:
 		return sm.applyRevealSeed(inner.RevealSeed)
 	case *types.DevshardTx_FinalizeRound:
 		return sm.applyFinalizeRound()
+	case *types.DevshardTx_ForceHeightSyncTurn:
+		return sm.applyForceHeightSyncTurn(inner.ForceHeightSyncTurn, diffNonce)
+	case *types.DevshardTx_Heartbeat:
+		return sm.applyHeartbeat(inner.Heartbeat)
+	case *types.DevshardTx_HeightAck:
+		return sm.applyHeightAck(inner.HeightAck)
 	default:
 		return types.ErrEmptyTx
 	}
@@ -900,6 +1113,16 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		return types.ErrSessionFinalizing
 	}
 
+	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != "" && v != sm.state.StateRootAndProtocolVersion {
+		return fmt.Errorf("%w: start %s session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
+	}
+
+	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
+	// pending until seal. Rejecting here keeps it out of state and off the balance.
+	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	}
+
 	// Duplicate inference ID guard.
 	if sm.isDuplicateInferenceID(msg.InferenceId) {
 		return types.ErrDuplicateInferenceID
@@ -908,13 +1131,12 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	// Executor slot: group[inference_id % len(group)].SlotID
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
 
-	// Reserve cost: (input_length + max_tokens) * token_price
-	reservedCost, err := tokenCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
+	reservedCost, err := ReservedCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
 	if sm.state.Balance < reservedCost {
-		return types.ErrInsufficientBalance
+		return types.ErrRequestExceedsBalance
 	}
 
 	sm.state.Balance -= reservedCost
@@ -929,8 +1151,11 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		ReservedCost: reservedCost,
 		StartedAt:    msg.StartedAt,
 	}
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.StartedAtHeight = msg.ObservedHeight
+	}
 
-	sm.state.Inferences[msg.InferenceId] = rec
+	sm.putInferenceLocked(msg.InferenceId, rec)
 	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
 		return err
 	}
@@ -944,7 +1169,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 }
 
 func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -954,17 +1179,38 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	if rec.Status != types.StatusPending {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
 	}
+	if err := sm.checkReceiptLocked(rec, msg, sm.hostSignerAllowedLocked); err != nil {
+		return err
+	}
 
-	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
+	rec.Status = types.StatusStarted
+	rec.ConfirmedAt = msg.ConfirmedAt
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.ConfirmedAtHeight = msg.ObservedHeight
+	}
+	logging.Debug("inference pending -> started", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"confirmed_at", msg.ConfirmedAt,
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// checkReceiptLocked verifies msg.ExecutorSig over the receipt that rec and
+// msg describe (confirmed_at is the executor's wall clock), and asks allowed
+// whether the recovered key may act for the executor slot. Caller holds sm.mu.
+func (sm *StateMachine) checkReceiptLocked(rec *types.InferenceRecord, msg *types.MsgConfirmStart, allowed func(uint32, string) bool) error {
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: msg.InferenceId,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    sm.state.EscrowID,
-		ConfirmedAt: msg.ConfirmedAt,
+		InferenceId:       msg.InferenceId,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          sm.state.EscrowID,
+		ConfirmedAt:       msg.ConfirmedAt,
+		ObservedHeight:    msg.ObservedHeight,
+		ObservedBlockHash: msg.ObservedBlockHash,
 	}
 	receiptData, err := deterministicMarshal.Marshal(receiptContent)
 	if err != nil {
@@ -976,26 +1222,15 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
 	}
 
-	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
-	if recovered != expectedAddr {
-		if !sm.ResolveWarmKey(rec.ExecutorSlot, recovered, expectedAddr) {
-			return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
-				types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
-		}
+	if !allowed(rec.ExecutorSlot, recovered) {
+		return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
+			types.ErrInvalidExecutorSig, sm.slotToAddress[rec.ExecutorSlot], rec.ExecutorSlot, recovered)
 	}
-
-	rec.Status = types.StatusStarted
-	rec.ConfirmedAt = msg.ConfirmedAt
-	logging.Debug("inference pending -> started", "subsystem", "state",
-		"inference_id", msg.InferenceId,
-		"executor_slot", rec.ExecutorSlot,
-		"confirmed_at", msg.ConfirmedAt,
-	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return nil
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -1005,31 +1240,9 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	if rec.Status != types.StatusStarted {
 		return fmt.Errorf("%w: expected started, got %d", types.ErrInvalidTransition, rec.Status)
 	}
-
-	// Verify executor slot.
-	if msg.ExecutorSlot != rec.ExecutorSlot {
-		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
-	}
-
-	// Verify proposer signature from executor.
-	cloned := proto.Clone(msg).(*types.MsgFinishInference)
-	cloned.ProposerSig = nil
-	if err := sm.verifyProposerSig(cloned, msg.ProposerSig, sm.slotToAddress[rec.ExecutorSlot], rec.ExecutorSlot); err != nil {
-		return err
-	}
-
-	// Cross-session replay protection.
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
-	}
-
-	// Compute actual cost.
-	actualCost, err := tokenCost(msg.InputTokens, msg.OutputTokens, sm.state.Config.TokenPrice)
+	actualCost, err := sm.checkFinishLocked(rec, msg, sm.hostSignerAllowedLocked)
 	if err != nil {
 		return err
-	}
-	if actualCost > rec.ReservedCost {
-		actualCost = rec.ReservedCost
 	}
 
 	// Release surplus.
@@ -1038,12 +1251,13 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 
 	rec.Status = types.StatusFinished
 	rec.ResponseHash = msg.ResponseHash
+	rec.ServedHash = msg.ServedHash
 	rec.InputTokens = msg.InputTokens
 	rec.OutputTokens = msg.OutputTokens
 	rec.ActualCost = actualCost
 
 	// Update host stats.
-	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
+	sm.hostStatsForWriteLocked(rec.ExecutorSlot).Cost += actualCost
 
 	logging.Debug("inference started -> finished", "subsystem", "state",
 		"inference_id", msg.InferenceId,
@@ -1055,8 +1269,41 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
+// checkFinishLocked runs applyFinishInference's checks of msg against the
+// started record rec, with allowed deciding whether the recovered proposer may
+// act for the executor slot. It returns the cost to charge, capped at the
+// reservation. Caller holds sm.mu.
+func (sm *StateMachine) checkFinishLocked(rec *types.InferenceRecord, msg *types.MsgFinishInference, allowed func(uint32, string) bool) (uint64, error) {
+	if msg.ExecutorSlot != rec.ExecutorSlot {
+		return 0, fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
+	}
+	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
+		return 0, fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
+	}
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	if !ok {
+		return 0, fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return 0, err
+	}
+	if !allowed(msg.ExecutorSlot, recovered) {
+		return 0, fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+	// Cross-session replay protection.
+	if msg.EscrowId != sm.state.EscrowID {
+		return 0, fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
+	}
+	actualCost, err := tokenCost(msg.InputTokens, msg.OutputTokens, sm.state.Config.TokenPrice)
+	if err != nil {
+		return 0, err
+	}
+	return min(actualCost, rec.ReservedCost), nil
+}
+
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
 			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
@@ -1140,7 +1387,7 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 }
 
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
 			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
@@ -1195,8 +1442,8 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	if rec.VotesInvalid > threshold {
 		rec.Status = types.StatusInvalidated
 		// Refund cost.
-		sm.state.HostStats[rec.ExecutorSlot].Invalid++
-		hs := sm.state.HostStats[rec.ExecutorSlot]
+		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+		hs.Invalid++
 		if hs.Cost < rec.ActualCost {
 			hs.Cost = 0
 		} else {
@@ -1226,7 +1473,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
 			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
@@ -1271,7 +1518,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
 		}
-		voteData, err := deterministicMarshal.Marshal(voteContent)
+		voteData, err := types.CanonicalSignedBytes(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal timeout vote: %w", err)
 		}
@@ -1281,11 +1528,9 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
 		}
 
-		if recovered != voterAddr {
-			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
-				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
-					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
-			}
+		if !sm.hostSignerAllowedLocked(vote.VoterSlot, recovered) {
+			return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
 		}
 
 		if vote.Accept {
@@ -1300,15 +1545,85 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	}
 
 	rec.Status = types.StatusTimedOut
-	sm.state.HostStats[rec.ExecutorSlot].Missed++
-
-	// Release reserved cost back to escrow.
+	sm.hostStatsForWriteLocked(rec.ExecutorSlot).Missed++
 	sm.state.Balance += rec.ReservedCost
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
 		"reason", msg.Reason.String(),
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
+	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+	}
+	if rec.Status != types.StatusFinished {
+		return fmt.Errorf("%w: error-miss requires finished, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+
+	acceptCount := uint32(0)
+	seenAddrs := make(map[string]bool, len(msg.Votes))
+	for _, vote := range msg.Votes {
+		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
+		if !ok {
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.VoterSlot)
+		}
+		if seenAddrs[voterAddr] {
+			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.VoterSlot)
+		}
+		seenAddrs[voterAddr] = true
+
+		voteContent := &types.ErrorMissVoteContent{
+			EscrowId:     sm.state.EscrowID,
+			InferenceId:  msg.InferenceId,
+			Accept:       vote.Accept,
+			ResponseHash: rec.ResponseHash,
+		}
+		voteData, err := types.CanonicalSignedBytes(voteContent)
+		if err != nil {
+			return fmt.Errorf("marshal error-miss vote: %w", err)
+		}
+		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
+		if err != nil {
+			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+		}
+		if !sm.hostSignerAllowedLocked(vote.VoterSlot, recovered) {
+			return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
+		}
+		if vote.Accept {
+			acceptCount += sm.addressToSlotCount[voterAddr]
+		}
+	}
+
+	threshold := sm.state.Config.VoteThreshold
+	if acceptCount <= threshold {
+		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)
+	}
+
+	rec.Status = types.StatusTimedOut
+	hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+	hs.Missed++
+	// Finish already returned surplus and credited ActualCost. Unwind that
+	// credit so the client is refunded in full and the host is not paid.
+	sm.state.Balance += rec.ActualCost
+	if hs.Cost < rec.ActualCost {
+		hs.Cost = 0
+	} else {
+		hs.Cost -= rec.ActualCost
+	}
+
+	logging.Debug("inference -> timed_out", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"reason", "error_miss",
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
@@ -1334,17 +1649,16 @@ func (sm *StateMachine) applyFinalizeRound() error {
 // still-live inference at the Finalizing->Settlement drain.
 func (sm *StateMachine) settleLiveRecordLocked(rec *types.InferenceRecord) {
 	switch rec.Status {
-	case types.StatusStarted:
-		// Host committed via signed receipt: pay reserved (surplus == 0).
+	case types.StatusStarted, types.StatusPending:
+		// Credit reserved. ConfirmStart is sequenced only by the user, and
+		// delivery (receipt + execute + stream) happens before promotion to
+		// Started, so a still-Pending record at drain cannot be treated as
+		// "no work". Genuine no-work refunds stay on
+		// MsgTimeoutInference(REFUSED), which Missed++ and releases the
+		// reservation. Do not Missed++ here.
 		rec.ActualCost = rec.ReservedCost
 		rec.Status = types.StatusFinished
-		sm.state.HostStats[rec.ExecutorSlot].Cost += rec.ReservedCost
-	case types.StatusPending:
-		// No commitment: refund the reservation to the creator.
-		sm.state.Balance += rec.ReservedCost
-		rec.ActualCost = 0
-		rec.Status = types.StatusTimedOut
-		// Do not Missed++: state cannot distinguish user censorship from host absence.
+		sm.hostStatsForWriteLocked(rec.ExecutorSlot).Cost += rec.ReservedCost
 	case types.StatusChallenged:
 		// Mid-dispute: keep current tally-driven status; seal as-is.
 	default:
@@ -1362,11 +1676,100 @@ func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, po
 	}
 }
 
-// verifyProposerSig verifies that sig was produced by expectedAddress over
-// msgWithoutSig (the proto message with its proposer_sig field already zeroed).
-// slotID is used for warm key resolution; pass math.MaxUint32 to skip warm key lookup.
+// VerifyFinishProposerSig checks that msg.ProposerSig was produced by the
+// executor slot named in the message. Same check applyFinishInference uses.
+// Safe to call from a verifier goroutine. Cache hits (cold key, this slot's
+// bound warm key, or a sibling slot's binding) take only a read lock; a
+// warm-key miss takes the write lock because ResolveWarmKey writes
+// sm.state.WarmKeys and may call the bridge.
+func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+
+	sm.mu.RLock()
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
+	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	canResolve := sm.warmResolver != nil
+	sm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	if allowed {
+		return nil
+	}
+	if hasCached || !canResolve {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.ResolveWarmKey(msg.ExecutorSlot, recovered, expected) {
+		return nil
+	}
+	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+}
+
+// RejectFinishProposerSigLocal reports a proposer-signature failure that can be
+// decided from local state alone: the executor slot's cold key plus any warm
+// binding already cached in state. It never consults the warm-key resolver, so
+// it makes no network call and never takes the write lock.
+//
+// A nil return means "accepted, or not yet decidable". A mismatch is decidable
+// when the slot already has a warm binding, or when no resolver is configured
+// at all, because in neither case could the bridge change the answer. Otherwise
+// the signature may still belong to an unresolved warm key, and that is left to
+// apply-time verification via VerifyFinishProposerSig. Callers must therefore
+// treat nil as "may enqueue", not as "authenticated".
+func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+
+	sm.mu.RLock()
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
+	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	canResolve := sm.warmResolver != nil
+	sm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	if allowed {
+		return nil
+	}
+	if hasCached || !canResolve {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+	return nil
+}
+
+func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {
+	if msg == nil {
+		return "", fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
+	}
+	cloned := proto.Clone(msg).(*types.MsgFinishInference)
+	cloned.ProposerSig = nil
+	data, err := types.CanonicalSignedBytes(cloned)
+	if err != nil {
+		return "", fmt.Errorf("marshal for proposer sig: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(data, msg.ProposerSig)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
+	}
+	return recovered, nil
+}
+
+// verifyProposerSig verifies that sig over msgWithoutSig (the proto message
+// with its proposer_sig field already zeroed) was produced by an authorized
+// actor for slotID. expectedAddress must be slotToAddress[slotID]; it is
+// carried only so the error names the slot's cold key.
 func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byte, expectedAddress string, slotID uint32) error {
-	data, err := deterministicMarshal.Marshal(msgWithoutSig)
+	data, err := types.CanonicalSignedBytes(msgWithoutSig)
 	if err != nil {
 		return fmt.Errorf("marshal for proposer sig: %w", err)
 	}
@@ -1376,14 +1779,76 @@ func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byt
 		return fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
 	}
 
-	if recovered != expectedAddress {
-		if slotID != math.MaxUint32 && sm.ResolveWarmKey(slotID, recovered, expectedAddress) {
-			return nil
-		}
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expectedAddress, recovered)
+	if sm.hostSignerAllowedLocked(slotID, recovered) {
+		return nil
 	}
+	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expectedAddress, recovered)
+}
 
-	return nil
+// hostSignerCachedLocked answers from consensus state alone: the slot's cold
+// key, the slot's own warm binding, or — only while the slot is still unbound
+// — a sibling slot's binding for the same validator. authz grants are
+// per-address, so a sibling binding is the same fact, already checked. No
+// bridge call and no mutation, so every replica decides it identically.
+func (sm *StateMachine) hostSignerCachedLocked(slotID uint32, recovered string) bool {
+	return signing.SlotActors{
+		SlotKeys: sm.slotToAddress,
+		WarmKeys: sm.state.WarmKeys,
+	}.Allows(slotID, recovered)
+}
+
+// hostSignerAllowedLocked is the apply-path check: hostSignerCachedLocked plus
+// the live authz fallback for a still-unbound slot. Caller holds sm.mu.
+// Resolution goes through ResolveWarmKey, so a binding admitted here is written
+// into state and travels to the other hosts as WarmKeyDelta. Read-only callers
+// want HostSignerAllowed, which never binds.
+func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string) bool {
+	return signing.SlotActors{
+		SlotKeys:   sm.slotToAddress,
+		WarmKeys:   sm.state.WarmKeys,
+		AcceptWarm: sm.ResolveWarmKey,
+	}.Allows(slotID, recovered)
+}
+
+// HostSignerAllowed reports whether recovered may act for slotID. It never
+// binds WarmKeys, and it makes at most one bridge call — only when state alone
+// cannot decide — with sm.mu released.
+func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
+	sm.mu.RLock()
+	cached := sm.hostSignerCachedLocked(slotID, recovered)
+	expected, inGroup := sm.slotToAddress[slotID]
+	sm.mu.RUnlock()
+	if cached {
+		return true
+	}
+	if !inGroup {
+		return false
+	}
+	return sm.CheckWarmKey(recovered, expected)
+}
+
+// HostSignerAllowedAddr is HostSignerAllowed for any slot owned by expected.
+// Used where the message names a host address rather than a slot.
+func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
+	if expected == "" || recovered == "" {
+		return false
+	}
+	if recovered == expected {
+		return true
+	}
+	sm.mu.RLock()
+	cached := false
+	for _, slot := range sm.addressToSlots[expected] {
+		if sm.hostSignerCachedLocked(slot, recovered) {
+			cached = true
+			break
+		}
+	}
+	sm.mu.RUnlock()
+	if cached {
+		return true
+	}
+	return sm.CheckWarmKey(recovered, expected)
 }
 
 // ResolveWarmKey checks if recovered is an authorized warm key for the given slot.
@@ -1400,7 +1865,7 @@ func (sm *StateMachine) ResolveWarmKey(slotID uint32, recovered, expected string
 	if err != nil || !ok {
 		return false
 	}
-	sm.state.WarmKeys[slotID] = recovered
+	sm.setWarmKeyLocked(slotID, recovered)
 	return true
 }
 
@@ -1443,6 +1908,19 @@ func (sm *StateMachine) SlotAddress(slotID uint32) string {
 
 func (sm *StateMachine) AddressSlotCount(addr string) uint32 {
 	return sm.addressToSlotCount[addr]
+}
+
+// LiveAndSealedCounts reports how many inferences are in the live map and how
+// many have been folded into the sealed accumulator. Both are map lengths, so
+// the call does not walk the records.
+func (sm *StateMachine) LiveAndSealedCounts() (live, sealed int) {
+	if sm == nil {
+		return 0, 0
+	}
+	sm.mu.RLock()
+	live, sealed = len(sm.state.Inferences), len(sm.sealedNonces)
+	sm.mu.RUnlock()
+	return live, sealed
 }
 
 // LiveInferenceIDs returns the set of inference ids currently in live state.

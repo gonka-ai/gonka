@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -10,7 +11,10 @@ import (
 )
 
 // postgresMigrationSteps is the ordered forward-only schema for devshard Postgres parents.
-// Per-epoch partitions are created lazily via ensurePartition only.
+// ApplyPG executes all pending steps in one transaction, so statements that
+// require running outside a transaction (for example CREATE INDEX CONCURRENTLY)
+// need a separate migration primitive. Per-epoch partitions are created lazily
+// via ensurePartition only.
 var postgresMigrationSteps = []migrate.Step{
 	{
 		ID:   1,
@@ -181,6 +185,116 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
 		},
 	},
+	{
+		// Migration 12 was used by an unreleased HA prototype. Keep the next ID
+		// stable so databases created by that prototype can converge safely.
+		ID:   13,
+		Name: "devshard_storage_identity",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_storage_identity (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    identity  UUID    NOT NULL
+)`, `
+INSERT INTO devshard_storage_identity (singleton, identity)
+VALUES (
+    TRUE,
+    gen_random_uuid()
+)
+		ON CONFLICT (singleton) DO NOTHING`},
+	},
+	{
+		ID:   14,
+		Name: "devshard_storage_challenge",
+		Statements: []string{`
+ALTER TABLE devshard_storage_identity
+    ADD COLUMN IF NOT EXISTS challenge UUID,
+	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
+	},
+	{
+		// IDs 15–17 are already recorded on devshard-0.2.x-v6. ApplyPG skips a
+		// recorded ID, so a new step must not reuse one.
+		ID:   15,
+		Name: "devshard_validation_lease_identity",
+		Statements: []string{`
+ALTER TABLE devshard_validation_leases
+    ADD COLUMN IF NOT EXISTS instance_id TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS hostname    TEXT NOT NULL DEFAULT ''`},
+	},
+	{
+		ID:   16,
+		Name: "devshard_sessions_obs_rebuild_pending",
+		Statements: []string{`
+ALTER TABLE devshard_sessions
+    ADD COLUMN IF NOT EXISTS obs_rebuild_pending BOOLEAN NOT NULL DEFAULT FALSE`},
+	},
+	{
+		// Credits are participant-scoped, not epoch-scoped: an HA replica must
+		// spend a credit its sibling earned, and epoch prune must not drop it.
+		ID:   17,
+		Name: "devshard_validation_credits",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_validation_credits (
+    id           BIGSERIAL   PRIMARY KEY,
+    participant  TEXT        NOT NULL,
+    model        TEXT        NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL
+)`,
+			`CREATE INDEX IF NOT EXISTS devshard_validation_credits_live
+    ON devshard_validation_credits (participant, model, expires_at, id)`,
+		},
+	},
+	// 18 and 19 are unused: peer RPC session tokens are stateless. They stay
+	// so migration IDs are stable; the DDL check forbids a DROP.
+	{
+		ID:   18,
+		Name: "devshard_peer_rpc_sessions",
+		Statements: []string{`
+CREATE SEQUENCE IF NOT EXISTS devshard_peer_rpc_session_seq`, `
+CREATE TABLE IF NOT EXISTS devshard_peer_rpc_sessions (
+    token_hash    BYTEA        PRIMARY KEY,
+    host_address  TEXT         NOT NULL,
+    version       TEXT         NOT NULL,
+    peer          TEXT         NOT NULL,
+    attached_unix BIGINT       NOT NULL,
+    expires_at    TIMESTAMPTZ  NOT NULL,
+    grace_until   TIMESTAMPTZ,
+    state         TEXT         NOT NULL,
+    seq           BIGINT       NOT NULL,
+    origin        TEXT         NOT NULL,
+    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
+)`, `
+CREATE INDEX IF NOT EXISTS devshard_peer_rpc_sessions_by_peer
+    ON devshard_peer_rpc_sessions (host_address, version, peer, state)`, `
+CREATE INDEX IF NOT EXISTS devshard_peer_rpc_sessions_by_seq
+    ON devshard_peer_rpc_sessions (host_address, version, seq)`, `
+CREATE TABLE IF NOT EXISTS devshard_peer_rpc_members (
+    instance_id   TEXT        PRIMARY KEY,
+    host_address  TEXT        NOT NULL,
+    version       TEXT        NOT NULL,
+    applied_seq   BIGINT      NOT NULL,
+    heartbeat_at  TIMESTAMPTZ NOT NULL,
+    ready         BOOLEAN     NOT NULL
+)`,
+		},
+	},
+	{
+		ID:   19,
+		Name: "devshard_peer_rpc_session_last_seen",
+		Statements: []string{`
+ALTER TABLE devshard_peer_rpc_sessions
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`},
+	},
+	{
+		// A reserved credit stays in the table under a hold. A replica that
+		// dies holding it stops renewing, and the credit becomes spendable
+		// again once reserved_until passes.
+		ID:   20,
+		Name: "devshard_validation_credit_holds",
+		Statements: []string{`
+ALTER TABLE devshard_validation_credits
+    ADD COLUMN IF NOT EXISTS hold_token     UUID,
+    ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
@@ -189,6 +303,44 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("devshard postgres migrate: %w", err)
 	}
 	return nil
+}
+
+// InitializePostgresSchema applies the current schema without starting a
+// devshard server. Versiond uses this as the lock-aware initialization stage
+// before it permits legacy children to start against a fresh shared database.
+func InitializePostgresSchema(ctx context.Context) error {
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return fmt.Errorf("parse postgres config: %w", err)
+	}
+	if err := configurePostgresPool(cfg); err != nil {
+		return err
+	}
+	connectTimeout := pgConnectTimeout()
+	cfg.ConnConfig.ConnectTimeout = connectTimeout
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
+	if err == nil {
+		err = pool.Ping(connectCtx)
+	}
+	cancelConnect()
+	if err != nil {
+		if pool != nil {
+			pool.Close()
+		}
+		return fmt.Errorf("connect to postgres for schema initialization: %w", err)
+	}
+	defer pool.Close()
+
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, pgMigrationTimeout())
+	defer cancelMigration()
+	return MigratePostgres(migrationCtx, pool)
 }
 
 // PostgresMigrationSteps returns a copy of registered Postgres migration steps (for tests).

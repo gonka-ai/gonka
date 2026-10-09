@@ -40,6 +40,37 @@ func (s *replaySpyStore) GetDiffs(escrowID string, from, to uint64) ([]types.Dif
 	return recs, err
 }
 
+// clearSpyStore counts ClearValidationObs on top of the GetDiffs spy.
+type clearSpyStore struct {
+	*replaySpyStore
+	mu     sync.Mutex
+	clears int
+}
+
+func (s *clearSpyStore) ClearValidationObs(escrowID string) error {
+	s.mu.Lock()
+	s.clears++
+	s.mu.Unlock()
+	return s.Storage.ClearValidationObs(escrowID)
+}
+
+func (s *clearSpyStore) clearCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clears
+}
+
+// diffRanges returns every GetDiffs window in call order.
+func (s *replaySpyStore) diffRanges() [][2]uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([][2]uint64, len(s.calls))
+	for i, c := range s.calls {
+		out[i] = [2]uint64{c.from, c.to}
+	}
+	return out
+}
+
 // replayedRecords sums records returned for calls whose range starts strictly
 // after snapNonce -- exactly the post-snapshot diffs RecoverSession replays.
 func (s *replaySpyStore) replayedRecords(snapNonce uint64) int {
@@ -111,7 +142,7 @@ func TestFlushSnapshot_RetiredEscrowRebuildsWithoutReplay(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	for i := 0; i < numInferences; i++ {
 		_, err := session.SendInference(ctx, params)

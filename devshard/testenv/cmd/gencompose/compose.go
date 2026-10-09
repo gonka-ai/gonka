@@ -24,6 +24,9 @@ networks:
       config:
         - subnet: {{ .Network.Subnet }}
 
+volumes:
+  versiond-router-state:
+
 services:
 
   mock-chain:
@@ -129,6 +132,7 @@ services:
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
+      VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
@@ -145,12 +149,32 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
-      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
+      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
+      DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
+      DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
+      DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
+      # Peers/executors here are compose service names resolving to private IPs,
+      # so the dial-time SSRF guard must be off. Production leaves this unset.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
+      DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
+      DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
+      # Client dial. Empty keeps InferenceUrl. Citest sets 8081 + grpc so
+      # peer RPC uses versiond-router's proto h2 bind, not the proxy overlay.
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # HA replicas declare GONKA_HA for the shared-storage guard.
+      # The sqlite migration clears this before booting these hosts on sqlite.
+      GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -159,6 +183,7 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
+      # Solo hosts omit GONKA_HA.
       # Solo executor: local sqlite so it does not multi-write shared PG diffs.
       DEVSHARD_STORAGE_MODE: sqlite
 {{ end }}
@@ -169,6 +194,12 @@ services:
     networks:
       testenv:
         ipv4_address: {{ .IP }}
+{{- if inVersiondPool $ . }}
+        # One DNS name, one A record per running instance: this is the pool the
+        # router resolves. Solo hosts stay out and are reached directly.
+        aliases:
+          - versiond-pool
+{{- end }}
     depends_on:
 {{ if $.Postgres.Enabled }}
       mock-chain:
@@ -194,23 +225,41 @@ services:
       - {{ . }}
 {{ end }}
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
   versiond-router:
     build:
-      context: ../../versiond-router
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
     environment:
-      VERSIOND_HOSTS: "{{ versiondHosts . }}"
+      VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
-      # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
-      # future versions sticky-hash across VERSIOND_HOSTS (Devshard-Ha header).
+      # Pin only versions that actually have a child. A fictional v1 makes
+      # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
+      # Tests that need a SQLite pin set this to VersionName (see
+      # TestLegacyVersionPinnedToSingleHost).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
-      VERSIOND_NON_HA_VERSIONS: "v1"
+      VERSIOND_NON_HA_VERSIONS: ""
+      # Keep the current test version out of the static bootstrap floor: this
+      # stack is the end-to-end proof that governance can admit a dynamic slot.
+      VERSIOND_VERSIONS: ""
+      VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
+      VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
+      # HA replicas set GONKA_HA too, for the shared-storage guard.
+      # Solo sqlite hosts omit it. Scenarios that run the pool on sqlite clear
+      # GONKA_HA before boot and still fail at request time on Devshard-Ha.
+      GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+      # proto h2 frontend. Citest dials Connect here; :8080 denies /sessions/*/rpc.
+      # 18082 is the host side so it does not take the gateway's default 8081.
+      - "18082:8081"
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -218,6 +267,10 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    # Compose starts the replacement only after this container exits. Bound the
+    # soft stop so one long stream cannot leave the test stack without a router.
+    stop_signal: SIGUSR1
+    stop_grace_period: 10s
     restart: unless-stopped
 
   devshardctl:
@@ -232,6 +285,8 @@ services:
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
+      DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
+      NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
@@ -240,6 +295,14 @@ services:
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      # Hosts are compose service names resolving to private IPs; see versiond.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
@@ -248,6 +311,11 @@ services:
       DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}
       DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}
       DEVSHARD_LOG_PAYLOADS_MAX_BYTES: ${DEVSHARD_LOG_PAYLOADS_MAX_BYTES:-16384}
+      # Host ping (gateway → used hosts). On by default; observability only.
+      DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
+      DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
+      DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
+      DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
@@ -273,18 +341,21 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":   versionEnvSuffix,
-		"versiondHosts":      versiondHosts,
-		"versiondKeyName":    versiondKeyName,
-		"isHAReplica":        isHAReplica,
-		"legacyVersiondHost": legacyVersiondHost,
-		"primaryEscrowID":    primaryEscrowID,
-		"primaryModelID":     primaryModelID,
-		"mlNodeIDs":          mlNodeIDs,
-		"mlNodeIPOffset":     config.MLNodeIPOffset,
-		"mlNodeHostPort":     mlNodeHostPort,
-		"primaryMLEndpoint":  primaryMLEndpoint,
-		"mockMLNodesEnv":     mockMLNodesEnv,
+		"versionEnvSuffix":          versionEnvSuffix,
+		"versiondHosts":             versiondHosts,
+		"inVersiondPool":            inVersiondPool,
+		"haDeployment":              haDeployment,
+		"routingActivationMinReady": routingActivationMinReady,
+		"versiondKeyName":           versiondKeyName,
+		"isHAReplica":               isHAReplica,
+		"legacyVersiondHost":        legacyVersiondHost,
+		"primaryEscrowID":           primaryEscrowID,
+		"primaryModelID":            primaryModelID,
+		"mlNodeIDs":                 mlNodeIDs,
+		"mlNodeIPOffset":            config.MLNodeIPOffset,
+		"mlNodeHostPort":            mlNodeHostPort,
+		"primaryMLEndpoint":         primaryMLEndpoint,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -321,54 +392,60 @@ func versionEnvSuffix(versionName string) string {
 	return strings.ReplaceAll(versionName, ".", "_")
 }
 
-func versiondHosts(cfg *config.File) string {
-	if cfg == nil {
-		return ""
-	}
-	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
-	// are reached via direct InferenceURL, not VERSIOND_HOSTS.
-	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
-		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
-	}
-	names := make([]string, len(cfg.Hosts))
-	for i, h := range cfg.Hosts {
-		names[i] = h.ID
-	}
-	return strings.Join(names, " ")
-}
-
-// versiondKeyName is the Cosmos keyring entry each versiond child loads.
-// Multi/HA: hosts[0] and hosts[1] share hosts[0]'s key (join-style). Solo
-// hosts (index ≥ 2) keep their own key. Single mode is per-host.
-func versiondKeyName(cfg *config.File, h config.HostCfg) string {
-	if cfg != nil && cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) > 0 {
-		for i, host := range cfg.Hosts {
-			if host.ID != h.ID {
-				continue
-			}
-			if i <= 1 {
-				return cfg.Hosts[0].ID
-			}
-			return h.ID
-		}
-	}
-	if h.ID != "" {
-		return h.ID
+// haDeployment is "true" when the sticky pool has more than one member, which
+// is exactly when a devshardd child can have a sibling serving the same escrow.
+func haDeployment(cfg *config.File) string {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return "true"
 	}
 	return ""
 }
 
-// isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).
+// routingActivationMinReady keeps catalog admission possible in single mode
+// while requiring both members of the sticky HA pair in multi mode.
+func routingActivationMinReady(cfg *config.File) int {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return 2
+	}
+	return 1
+}
+
+// inVersiondPool reports whether the router should route sticky traffic to this
+// host. It is the membership rule behind the versiond-pool DNS alias, and must
+// stay in step with versiondHosts.
+func inVersiondPool(cfg *config.File, h config.HostCfg) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, name := range strings.Fields(versiondHosts(cfg)) {
+		if name == h.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func versiondHosts(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	// Sticky HA pool is the replicas of one KEY_NAME. Solo participants are
+	// reached via direct InferenceURL, not through the router pool.
+	return strings.Join(config.RouterPoolHostIDs(cfg), " ")
+}
+
+// versiondKeyName is the Cosmos keyring entry each versiond child loads.
+func versiondKeyName(cfg *config.File, h config.HostCfg) string {
+	return config.VersiondKeyName(cfg, h)
+}
+
+// isHAReplica reports whether h shares its KEY_NAME with another container,
+// i.e. it is one replica of a replicated identity.
 func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 	if cfg == nil || cfg.Versiond.Mode != config.VersiondModeMulti {
 		return false
 	}
-	for i, host := range cfg.Hosts {
-		if host.ID == h.ID {
-			return i <= 1
-		}
-	}
-	return false
+	return config.KeyNameReplicaCount(cfg, h) > 1
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.

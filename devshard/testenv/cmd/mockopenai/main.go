@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"devshard/internal/boolvalue"
 	"devshard/testenv/mockopenai"
 )
 
@@ -46,10 +47,10 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.HTTPStatus = code
 		}
 	}
-	if v := os.Getenv("MOCK_OPENAI_DROP_FIRST_CHUNK"); v == "1" || v == "true" {
+	if envTruthy("MOCK_OPENAI_DROP_FIRST_CHUNK") {
 		f.DropFirstChunk = true
 	}
-	if v := os.Getenv("MOCK_OPENAI_PARTIAL_STREAM"); v == "1" || v == "true" {
+	if envTruthy("MOCK_OPENAI_PARTIAL_STREAM") {
 		f.PartialStream = true
 	}
 	if v := os.Getenv("MOCK_OPENAI_SSE_ERROR_MESSAGE"); v != "" {
@@ -61,4 +62,9 @@ func faultsFromEnv() mockopenai.FaultConfig {
 		}
 	}
 	return f
+}
+
+func envTruthy(key string) bool {
+	enabled, err := boolvalue.Parse(os.Getenv(key))
+	return err == nil && enabled
 }

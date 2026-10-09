@@ -1,6 +1,7 @@
 package bridge_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -12,17 +13,66 @@ import (
 	"common/chain"
 	shardbridge "devshard/bridge"
 	"devshard/cmd/devshardd/bridge"
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 )
 
 func newTestBridge(t *testing.T, submitter bridge.Submitter) *bridge.ChainBridge {
 	t.Helper()
-	conn, err := grpc.NewClient("localhost:9090", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return newTestBridgeWithStore(t, seed.Defaults(), submitter)
+}
+
+func newTestBridgeWithStore(t *testing.T, st *store.Store, submitter bridge.Submitter) *bridge.ChainBridge {
+	t.Helper()
+	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
 	require.NoError(t, err)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() {
+		srv.Stop()
+		_ = lis.Close()
+	})
+	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	return bridge.NewChainBridge(chain.NewFromConn(conn), submitter)
+}
 
-	client := chain.NewFromConn(conn)
+func TestChainBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
+	st := seed.Defaults()
+	escrow := st.GetEscrow(1)
+	require.NotNil(t, escrow)
+	escrow.TokenPrice = 7
+	escrow.CreateDevshardFee = 12_345
+	escrow.FeePerNonce = 19
+	escrow.InferenceSealGraceNonces = 9
+	escrow.InferenceSealGraceSeconds = 77
+	escrow.AutoSealEveryNNonces = 21
+	escrow.ValidationRate = 7_777
+	escrow.VoteThresholdFactor = 67
+	escrow.RefusalTimeout = 5
+	escrow.ExecutionTimeout = 17
+	st.PutEscrow(escrow)
 
-	return bridge.NewChainBridge(client, submitter)
+	info, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), info.TokenPrice)
+	require.Equal(t, uint64(12_345), info.CreateDevshardFee)
+	require.Equal(t, uint64(19), info.FeePerNonce)
+	require.Equal(t, uint32(9), info.InferenceSealGraceNonces)
+	require.Equal(t, uint32(77), info.InferenceSealGraceSeconds)
+	require.Equal(t, uint32(21), info.AutoSealEveryNNonces)
+	require.Equal(t, uint32(7_777), info.ValidationRate)
+	require.Equal(t, uint32(67), info.VoteThresholdFactor)
+	require.Equal(t, int64(5), info.RefusalTimeout)
+	require.Equal(t, int64(17), info.ExecutionTimeout)
+}
+
+func TestBridge_GetEscrow_TransientQueryError(t *testing.T) {
+	st := seed.Defaults()
+	st.SetEscrowQueryFault(true)
+
+	_, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.ErrorIs(t, err, shardbridge.ErrChainUnavailable)
 }
 
 func TestBridge_NotificationsNoop(t *testing.T) {
@@ -30,6 +80,18 @@ func TestBridge_NotificationsNoop(t *testing.T) {
 	assert.NoError(t, b.OnEscrowCreated(shardbridge.EscrowInfo{}))
 	assert.NoError(t, b.OnSettlementProposed("1", nil, 0))
 	assert.NoError(t, b.OnSettlementFinalized("1"))
+}
+
+func TestBridge_OnEscrowCreatedHandler(t *testing.T) {
+	b := newTestBridge(t, nil)
+	var got shardbridge.EscrowInfo
+	b.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
+		got = info
+		return nil
+	})
+	require.NoError(t, b.OnEscrowCreated(shardbridge.EscrowInfo{EscrowID: "9", CreatorAddress: "gonka1owner"}))
+	assert.Equal(t, "9", got.EscrowID)
+	assert.Equal(t, "gonka1owner", got.CreatorAddress)
 }
 
 func TestBridge_SubmitDisputeState_DelegatesToSubmitter(t *testing.T) {
@@ -57,4 +119,28 @@ type stubSubmitter struct {
 
 func (s *stubSubmitter) SubmitDisputeState(id uint64, root []byte, nonce uint64, sigs map[uint32][]byte) error {
 	return s.fn(id, root, nonce, sigs)
+}
+
+// Test flow:
+// 1. The chain pins a Hugging Face repo and commit on the epoch's model snapshot.
+// 2. GetModelSource returns that pair.
+// 3. For an epoch without the model both GetModelSource and GetValidationThreshold, which share the snapshot lookup, fail.
+func TestChainBridge_GetModelSource_ReadsModelSnapshot(t *testing.T) {
+	chainState := seed.Defaults()
+	epochGroupData := chainState.GetEpochGroupData(1, "test-model")
+	require.NotNil(t, epochGroupData)
+	epochGroupData.ModelSnapshot.HfRepo = "org/model"
+	epochGroupData.ModelSnapshot.HfCommit = "abc123"
+	chainState.EpochGroupData[store.EpochGroupKey{EpochIndex: 1, ModelID: "test-model"}] = epochGroupData
+	chainBridge := newTestBridgeWithStore(t, chainState, nil)
+
+	hfRepo, hfCommit, err := chainBridge.GetModelSource(context.Background(), 1, "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "org/model", hfRepo)
+	assert.Equal(t, "abc123", hfCommit)
+
+	_, _, err = chainBridge.GetModelSource(context.Background(), 99, "test-model")
+	require.Error(t, err)
+	_, err = chainBridge.GetValidationThreshold(99, "test-model")
+	require.Error(t, err)
 }

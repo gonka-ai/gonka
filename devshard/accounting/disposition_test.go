@@ -45,7 +45,7 @@ func TestFinalizeNonceEmitsOncePerNonce(t *testing.T) {
 	tr.SetDispositionSink(sink)
 	registerEscrow(t, tr, "e1", 22, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone, TraceRef{}))
+	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone))
 	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
 		EscrowID:      "e1",
 		Nonce:         1,
@@ -56,7 +56,7 @@ func TestFinalizeNonceEmitsOncePerNonce(t *testing.T) {
 	}))
 	require.Empty(t, sink.delivered(tr), "non-terminal unfinished_refused must not emit yet")
 
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, TraceRef{}))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	events := sink.delivered(tr)
@@ -73,7 +73,7 @@ func TestFinalizeNonceEmitsOnSettlementRelease(t *testing.T) {
 	now := accountingTestNow
 	tr.now = func() time.Time { return now }
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone, TraceRef{}))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
 	now = now.Add(66 * time.Second)
 	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
 		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
@@ -100,8 +100,9 @@ func TestDispositionEventCarriesTraceRef(t *testing.T) {
 	ref.Sampled = true
 
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone, ref))
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, TraceRef{})) // must not overwrite
+	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
+	tr.AttachTrace("e1", 1, ref)
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, "")) // must not overwrite
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	events := sink.delivered(tr)
@@ -120,7 +121,7 @@ func TestDispositionEventEmittedOutsideLock(t *testing.T) {
 	tr.SetDispositionSink(sink)
 	registerEscrow(t, tr, "e1", 7, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", TraceRef{}))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", false))
 	require.Len(t, sink.delivered(tr), 1)
 }
 
@@ -227,7 +228,7 @@ func TestTerminalUnclassifiedNonceKeepsItsIdentity(t *testing.T) {
 
 	const nonce = uint64(3) // slot 1 of a two-slot escrow
 	require.NoError(t, tr.RecordDiff("e1", nonce, true))
-	require.NoError(t, tr.RecordRealSend("e1", nonce, now, PhasePoC, QuarantineShadow, TraceRef{}))
+	require.NoError(t, tr.RecordRealSend("e1", nonce, now, PhasePoC, QuarantineShadow))
 	require.NoError(t, tr.RecordProtocol("e1", nonce, 1, ProtocolTimeoutApplied, types.HostStats{Missed: 1}))
 	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
 		EscrowID: "e1", Nonce: nonce, Kind: TimeoutRefused, Phase: PhaseNormal,
@@ -249,7 +250,7 @@ func TestNoSinkIsSafe(t *testing.T) {
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 7, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", TraceRef{}))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", false))
 	require.False(t, tr.hasSink())
 	require.Zero(t, tr.DispositionDrops(), "events must not be queued when nobody is listening")
 }

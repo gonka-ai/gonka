@@ -96,6 +96,7 @@ func (r *Recorder) DiffObserver(escrowID string, state ProtocolView) func(types.
 // the diff cannot tell it and allocates nothing for a plain start inference.
 func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state ProtocolView) {
 	var verdicts []VerdictRecord
+	var validatorSlots []uint32
 	var seen map[uint64]struct{}
 	var hostStats map[uint32]*types.HostStats
 
@@ -110,6 +111,7 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			inferenceID = timeout.InferenceId
 		case validation != nil:
 			inferenceID, verdict = validation.InferenceId, true
+			validatorSlots = append(validatorSlots, validation.ValidatorSlot)
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
@@ -128,6 +130,11 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		}
 		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
 		if !verdict {
+			verdicts = append(verdicts, VerdictRecord{
+				Nonce: inferenceID,
+				Slot:  record.ExecutorSlot,
+				Kind:  ProtocolTimeoutApplied,
+			})
 			continue
 		}
 		kind := protocolKindForStatus(record.Status)
@@ -142,6 +149,9 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 	}
 
 	phase := escrowPhase(state.Phase())
+	if err := r.tracker.RecordValidatorWork(escrowID, validatorSlots); err != nil {
+		log.Printf("gateway accounting validator work escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
+	}
 	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, phase, hostStats); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
 	}
@@ -166,85 +176,165 @@ func (r *Recorder) appendHostStats(
 	return into
 }
 
-// Ghost records a burned nonce and returns the dispatch phase it stamped, so
-// the caller can label the attempt span with the same value the counter got.
-func (r *Recorder) Ghost(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string) Phase {
-	phase := r.currentPhase()
+// Ghost records a burned nonce. timeoutPending says the caller will raise a timeout on it, which keeps
+// the nonce live long enough to receive that outcome instead of retiring on the burn alone.
+func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
 	if r == nil || r.tracker == nil {
-		return phase
+		return
 	}
-	noSend, detail := NoSendFromReason(reason)
+	noSend := NoSendReasonFromString(reason)
+	detail := ""
+	if noSend == NoSendUnknown {
+		detail = reason
+	}
 	if err := r.tracker.RecordGhost(
 		escrowID,
 		nonce,
-		phase,
+		r.currentPhase(),
 		QuarantineFromString(quarantine),
 		noSend,
 		detail,
-		TraceRefFromContext(ctx),
+		timeoutPending,
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
-	return phase
 }
 
-// RealSend records the dispatch and returns the phase it stamped. That phase,
-// not the phase at some later instant, is the one the nonce keeps for the rest
-// of its life, so terminal-time callers must reuse this value.
-func (r *Recorder) RealSend(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) Phase {
-	phase := r.currentPhase()
+// NoteTrace copies the span on ctx onto the live nonce so a later disposition
+// event can be joined to the attempt that produced it.
+func (r *Recorder) NoteTrace(ctx context.Context, escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil || ctx == nil {
+		return
+	}
+	r.tracker.AttachTrace(escrowID, nonce, TraceRefFromContext(ctx))
+}
+
+// RequestID names the client request a nonce came from, so a later miss or invalid can point at it.
+func (r *Recorder) RequestID(escrowID string, nonce uint64, requestID string) {
+	if r == nil || r.tracker == nil || requestID == "" {
+		return
+	}
+	if err := r.tracker.RecordRequestID(escrowID, nonce, requestID); err != nil {
+		log.Printf("gateway accounting request id escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) RequestStarted(escrowID, requestID string) {
 	if r == nil || r.tracker == nil {
-		return phase
+		return
+	}
+	if err := r.tracker.RecordRequestStarted(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request started escrow=%s request=%s: %v", escrowID, requestID, err)
+	}
+}
+
+func (r *Recorder) RequestFinished(escrowID, requestID string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordRequestFinished(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request finished escrow=%s request=%s: %v", escrowID, requestID, err)
+	}
+}
+
+func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+	if r == nil || r.tracker == nil {
+		return
 	}
 	if err := r.tracker.RecordRealSend(
 		escrowID,
 		nonce,
 		sentAt,
-		phase,
+		r.currentPhase(),
 		QuarantineFromString(quarantine),
-		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting real send escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
-	return phase
 }
 
-func (r *Recorder) Usage(ctx context.Context, escrowID string, nonce, winnerNonce uint64) {
+func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryReason string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
-	if err := r.tracker.RecordUsage(escrowID, nonce, UsageFor(nonce, winnerNonce), TraceRefFromContext(ctx)); err != nil {
+	usage := UsageLoser
+	switch {
+	case winnerNonce == 0:
+		usage = UsageUnknownValue
+	case nonce == winnerNonce:
+		usage = UsageWinner
+	}
+	if err := r.tracker.RecordUsage(escrowID, nonce, usage, deliveryReason); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
 
-// TimeoutResult records a timeout outcome and returns the evaluation phase it
-// stamped. Actions that TimeoutActionRecorded rejects are not recorded.
+func (r *Recorder) ProbeSend(escrowID string, nonce uint64, sentAt time.Time, quarantine, deliveryReason string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordProbeSend(
+		escrowID,
+		nonce,
+		sentAt,
+		r.currentPhase(),
+		QuarantineFromString(quarantine),
+		deliveryReason,
+	); err != nil {
+		log.Printf("gateway accounting probe send escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) ProbeServed(escrowID string, nonce uint64, deliveryReason string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordUsage(escrowID, nonce, UsageLoser, deliveryReason); err != nil {
+		log.Printf("gateway accounting probe served escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) LogprobsDecoded(escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordLogprobsDecoded(escrowID, nonce); err != nil {
+		log.Printf("gateway accounting logprobs escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) AttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordAttemptTiming(escrowID, nonce, timing); err != nil {
+		log.Printf("gateway accounting timing escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
 func (r *Recorder) TimeoutResult(
-	ctx context.Context,
 	escrowID string,
 	nonce uint64,
 	kind, action, reason, detailReason, timeoutReason string,
-) Phase {
-	phase := r.currentPhase()
-	if r == nil || r.tracker == nil || !TimeoutActionRecorded(action, reason) {
-		return phase
+) {
+	if r == nil || r.tracker == nil || action == "started" {
+		return
+	}
+	if action == "skipped" && !timeoutSkipRequiresAccounting(reason) {
+		return
 	}
 	outcome := TimeoutOutcomeFromAction(action, reason)
 	if err := r.tracker.RecordTimeout(TimeoutRecord{
 		EscrowID:      escrowID,
 		Nonce:         nonce,
 		Kind:          TimeoutKind(kind),
-		Phase:         phase,
+		Phase:         r.currentPhase(),
 		Outcome:       outcome,
 		Reason:        TimeoutReasonFromString(outcome, timeoutReason),
 		FailureOrigin: FailureOriginFromDetail(detailReason),
 		DetailReason:  detailReason,
-		Trace:         TraceRefFromContext(ctx),
 	}); err != nil {
 		log.Printf("gateway accounting timeout escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
-	return phase
 }
 
 // Finalize syncs in memory without writing: it runs before the settlement JSON
@@ -296,6 +386,24 @@ func (r *Recorder) Close() error {
 	return r.tracker.Close()
 }
 
+// TimeoutActionRecorded reports whether a gateway timeout action becomes an
+// accounting fact. Callers that mirror the outcome onto a span consult it too,
+// so the span never claims a dimension the counter does not carry.
+func TimeoutActionRecorded(action, reason string) bool {
+	if action == "started" {
+		return false
+	}
+	if action != "skipped" {
+		return true
+	}
+	switch reason {
+	case "nonce_already_finished", "empty_stream_without_non_empty_winner":
+		return false
+	default:
+		return true
+	}
+}
+
 func (r *Recorder) Tracker() *Tracker {
 	if r == nil {
 		return nil
@@ -339,6 +447,14 @@ func (r *Recorder) syncAndFlush(escrowID string, phase EscrowPhase, action strin
 	}
 }
 
+// DispatchPhase is the phase stamped on the next accounting fact.
+func (r *Recorder) DispatchPhase() Phase {
+	if r == nil {
+		return PhaseNormal
+	}
+	return r.currentPhase()
+}
+
 func (r *Recorder) currentPhase() Phase {
 	if r == nil || r.phaseSource == nil {
 		return PhaseNormal
@@ -378,16 +494,7 @@ func escrowPhase(phase types.SessionPhase) EscrowPhase {
 	}
 }
 
-// TimeoutActionRecorded reports whether a gateway timeout action becomes an
-// accounting fact. Callers that mirror the outcome onto a span consult it too,
-// so the span never claims a dimension the counter does not carry.
-func TimeoutActionRecorded(action, reason string) bool {
-	if action == "started" {
-		return false
-	}
-	if action != "skipped" {
-		return true
-	}
+func timeoutSkipRequiresAccounting(reason string) bool {
 	switch reason {
 	case "nonce_already_finished", "empty_stream_without_non_empty_winner":
 		return false

@@ -1,17 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"devshard/logging"
-	"devshard/observability"
 	"devshard/user"
 )
 
@@ -29,51 +24,6 @@ func prepareForGhost(t *testing.T, session *user.Session, model string) *user.Pr
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
 	return prepared
-}
-
-// TestRunGhostProbe_AllKindsAreSilent is the regression guard for the
-// uniform-silent-probe contract. No matter what kind the picker
-// produces, runGhostProbe must NOT contact the host. The MsgStart for
-// the burned nonce stays in s.diffs and will catch-up on the host's
-// next real dispatch; here we only verify the dispatcher's no-Send
-// invariant, which is what protects the host from probe load during
-// PoC, exclude-stale, and 503-recovery windows alike.
-func TestRunGhostProbe_AllKindsAreSilent(t *testing.T) {
-	cases := []struct {
-		name string
-		kind ghostKind
-	}{
-		{"poc", ghostPoC},
-		{"exclude", ghostExclude},
-		{"throttled", ghostThrottled},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			env := setupTestProxy(t, 3, nil, true)
-			// Stop the production picker so it doesn't race with our
-			// manual runGhostProbe call below by also dispatching nonces.
-			env.proxy.redundancy.picker.stop()
-
-			prepared := prepareForGhost(t, env.session, "llama")
-			hostIdx := prepared.HostIdx()
-
-			require.Nil(t, env.killables[hostIdx].LastRequest(),
-				"precondition: no host contact before runGhostProbe")
-
-			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, tc.kind, tc.kind.reason())
-
-			// Belt-and-suspenders sleep. runGhostProbe is now strictly
-			// log-only -- no goroutine, no I/O -- so this is paranoia,
-			// not synchronization. If a future change re-introduces a
-			// goroutine that hits Send, this sleep gives it time to
-			// race so the assertion below catches the regression.
-			time.Sleep(50 * time.Millisecond)
-
-			require.Nil(t, env.killables[hostIdx].LastRequest(),
-				"%s: ghost probe must NOT call Send (silent-probe contract)", tc.name)
-		})
-	}
 }
 
 // TestRunGhostProbe_KeepsMsgStartInDiffs verifies that even though we
@@ -100,13 +50,9 @@ func TestRunGhostProbe_KeepsMsgStartInDiffs(t *testing.T) {
 		"PrepareInferenceFn must have advanced past the burned nonce")
 }
 
-// TestRunGhostProbe_NoVoteFromThisNode is a structural guard: ghost
-// probes never create an *inflight, so HandleTimeout (the only path
-// this node uses to post a timeout vote) cannot run for a burned
-// nonce. We assert this indirectly by confirming the dispatcher
-// returns synchronously -- if it ever spawns work that could trigger
-// a vote, the test will need an explicit synchronization point.
-func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
+// TestRunGhostProbe_DoesNotBlockThePicker guards the dispatcher's cost, not its silence: the picker
+// calls it inline for every burned nonce, so it must never wait on settlement.
+func TestRunGhostProbe_DoesNotBlockThePicker(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -116,74 +62,105 @@ func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
 	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostExclude, ghostExclude.reason())
 	elapsed := time.Since(start)
 
-	// Synchronous return is the structural guarantee that no
-	// background settlement (vote, retry, anything) can race in
-	// later. 50ms is generous; in practice this is microseconds.
 	require.Less(t, elapsed, 50*time.Millisecond,
-		"runGhostProbe must return synchronously (no background goroutines)")
+		"runGhostProbe must return without waiting on settlement")
 }
 
-func TestGhostProbeInheritsRequestID(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
-	env.proxy.redundancy.picker.stop()
+// ghostMissObservationWindow outlasts the test session's refusal deadline (RefusalTimeout plus
+// TimeoutBuffer), so a "no miss" assertion cannot pass merely by finishing first.
+const ghostMissObservationWindow = 1500 * time.Millisecond
 
-	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-
-	ctx := logging.SetRequestID(context.Background(), "req-caller-42")
-	prepared := prepareForGhost(t, env.session, "llama")
-	env.proxy.redundancy.runGhostProbe(ctx, prepared, ghostThrottled, ghostThrottled.reason())
-
-	require.Contains(t, buf.String(), "request=req-caller-42")
-	require.Contains(t, buf.String(), "stage=ghost_probe_skipped")
+// shortRefusalWindow shrinks the wait between burning a nonce and voting on it, so a test observes
+// the miss a burn would cause rather than the intent to raise one.
+func shortRefusalWindow(t *testing.T) {
+	t.Helper()
+	saved := user.TimeoutBuffer
+	user.TimeoutBuffer = 50 * time.Millisecond
+	t.Cleanup(func() { user.TimeoutBuffer = saved })
 }
 
-func TestGhostProbeSpanSharesTraceWithRequest(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
-	env.proxy.redundancy.picker.stop()
-	rec := withAttemptSpanRecorder(t)
+func missesForSlot(t *testing.T, env *testProxyEnv, slot int) uint32 {
+	t.Helper()
+	stats, ok := env.sm.HostStatsFor(uint32(slot))
+	require.True(t, ok, "slot %d has no host stats", slot)
+	return stats.Missed
+}
 
-	ctx, req := observability.StartGatewayRequest(context.Background())
-	prepared := prepareForGhost(t, env.session, "llama")
-	env.proxy.redundancy.runGhostProbe(ctx, prepared, ghostExclude, ghostExclude.reason())
-	req.End()
-
-	var reqSpan, attemptSpan sdktrace.ReadOnlySpan
-	for _, s := range rec.Ended() {
-		switch s.Name() {
-		case "gateway.request":
-			reqSpan = s
-		case observability.SpanNameGatewayAttempt:
-			attemptSpan = s
-		}
+// A burned nonce is the gateway's own scheduling decision, so it costs the host nothing: the burn
+// neither contacts the host nor charges it a protocol miss, whatever drove the burn.
+func TestRunGhostProbe_BurningANonceChargesTheHostNothing(t *testing.T) {
+	cases := []struct {
+		name string
+		kind ghostKind
+	}{
+		{"poc", ghostPoC},
+		{"exclude", ghostExclude},
+		{"throttled", ghostThrottled},
+		{"state_diverged", ghostStateDiverged},
 	}
-	require.NotNil(t, reqSpan)
-	require.NotNil(t, attemptSpan)
-	require.Equal(t, reqSpan.SpanContext().TraceID(), attemptSpan.SpanContext().TraceID())
-	require.Equal(t, reqSpan.SpanContext().SpanID(), attemptSpan.Parent().SpanID())
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			shortRefusalWindow(t)
+			env := setupTestProxy(t, 3, nil, true)
+			env.proxy.redundancy.picker.stop()
+
+			prepared := prepareForGhost(t, env.session, "llama")
+			slot := prepared.HostIdx()
+			require.Zero(t, missesForSlot(t, env, slot), "precondition: no miss before the burn")
+
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, tc.kind, tc.kind.reason())
+
+			require.Never(t, func() bool { return missesForSlot(t, env, slot) > 0 },
+				ghostMissObservationWindow, 20*time.Millisecond,
+				"%s: burning a nonce must not charge the host a miss", tc.name)
+			require.Nil(t, env.killables[slot].LastRequest(),
+				"%s: burning a nonce must not contact the host", tc.name)
+		})
+	}
 }
 
-func TestGhostProbeFallsBackWhenNoRequestContext(t *testing.T) {
+func TestRunGhostProbe_RecordsGhostNoSendSlotDecision(t *testing.T) {
+	cases := []ghostKind{ghostPoC, ghostExclude, ghostThrottled, ghostStateDiverged}
+	for _, kind := range cases {
+		kind := kind
+		t.Run(kind.reason(), func(t *testing.T) {
+			env := setupTestProxy(t, 3, nil, true)
+			env.proxy.redundancy.picker.stop()
+			metrics := NewDevshardMetrics()
+			env.proxy.redundancy.metrics = metrics
+			env.proxy.redundancy.devshardID = "escrow-proxy"
+
+			prepared := prepareForGhost(t, env.session, "llama")
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, kind, kind.reason())
+
+			participantKey := env.proxy.redundancy.participantKeyForHost(prepared.HostIdx())
+			families, err := metrics.registry.Gather()
+			require.NoError(t, err)
+			requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+				"participant_key": participantKey,
+				"model":           "llama",
+				"escrow_id":       "escrow-proxy",
+				"decision":        "ghost_no_send",
+				"reason":          kind.reason(),
+				"quarantine_mode": "none",
+			}, 1)
+			require.Nil(t, env.killables[prepared.HostIdx()].LastRequest(),
+				"ghost_no_send recording must not contact the host")
+		})
+	}
+}
+
+func TestRunGhostProbe_SkipsAfterRedundancyStop(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	env.proxy.redundancy.picker.stop()
-	rec := withAttemptSpanRecorder(t)
+	metrics := NewDevshardMetrics()
+	env.proxy.redundancy.metrics = metrics
+	env.proxy.redundancy.devshardID = "escrow-proxy"
+	env.proxy.redundancy.Stop()
 
 	prepared := prepareForGhost(t, env.session, "llama")
-	require.NotPanics(t, func() {
-		env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostPoC, ghostPoC.reason())
-	})
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
 
-	var attempt sdktrace.ReadOnlySpan
-	for _, s := range rec.Ended() {
-		if s.Name() == observability.SpanNameGatewayAttempt {
-			attempt = s
-		}
-	}
-	require.NotNil(t, attempt)
-	require.False(t, attempt.Parent().IsValid(), "detached ghost burn must open a root attempt span")
-	attrs := spanAttrMap(attempt)
-	require.Equal(t, "ghost", attrs[string(observability.AttrDisposition)])
-	require.Equal(t, "poc_unavailable_host", attrs[string(observability.AttrNoSendReason)])
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "escrow-proxy"})
 }

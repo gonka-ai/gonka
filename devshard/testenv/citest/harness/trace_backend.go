@@ -329,32 +329,3 @@ func tempoTraceDetail(client *http.Client, baseURL, traceID string) (map[string]
 	}
 	return services, ops, len(services) > 0 || len(ops) > 0
 }
-
-func lokiQueryContains(client *http.Client, baseURL, query, substring string) bool {
-	end := time.Now()
-	start := end.Add(-15 * time.Minute)
-	u, err := url.Parse(baseURL + "/loki/api/v1/query_range")
-	if err != nil {
-		return false
-	}
-	q := u.Query()
-	q.Set("query", query)
-	q.Set("limit", "50")
-	q.Set("start", strconv.FormatInt(start.UnixNano(), 10))
-	q.Set("end", strconv.FormatInt(end.UnixNano(), 10))
-	u.RawQuery = q.Encode()
-
-	resp, err := client.Get(u.String())
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(body), substring)
-}

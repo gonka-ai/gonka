@@ -110,3 +110,16 @@ func TestInit_ReadyWiresExporter(t *testing.T) {
 	_, ok := otel.GetTracerProvider().(*sdktrace.TracerProvider)
 	require.True(t, ok, "ready init must install an SDK tracer provider")
 }
+
+func TestOTelEnabledUsesDevshardBooleanGrammar(t *testing.T) {
+	cfg := Config{EnabledEnv: "TEST_OTEL_ENABLED"}
+
+	t.Setenv("TEST_OTEL_ENABLED", "on")
+	require.True(t, otelEnabled(cfg))
+
+	t.Setenv("TEST_OTEL_ENABLED", "f")
+	require.False(t, otelEnabled(cfg))
+
+	t.Setenv("TEST_OTEL_ENABLED", "invalid")
+	require.False(t, otelEnabled(cfg))
+}

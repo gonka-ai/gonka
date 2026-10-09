@@ -8,7 +8,7 @@ import kotlin.test.assertNotNull
 import org.assertj.core.api.Assertions.assertThat
 import java.time.Duration
 
-private val devshardProxyWarmupDelay: Duration = Duration.ofSeconds(2)
+private val devshardHeightSeedTimeout: Duration = Duration.ofMinutes(2)
 private val devshardPreFinalizeDelay: Duration = Duration.ofSeconds(2)
 private const val versionedMlNodeSegment = "v3.0.8"
 
@@ -41,6 +41,11 @@ val devshardAlwaysValidateSpec = spec<AppState> {
 const val devshardAutoSealGroupSize = 16L
 const val devshardAutoSealInferenceSealGraceNonces = 1L
 const val devshardAutoSealInferenceSealGraceSeconds = 10L
+/**
+ * Finished clock gate is grace_seconds + execution_timeout. Keep this small so
+ * the testermint sleep can actually clear the Finished gate (default is 1920s).
+ */
+const val devshardAutoSealExecutionTimeout = 2L
 /** Must match devshardShortSealGraceSpec default_auto_seal_every_n_nonces. */
 const val devshardAutoSealEveryNNonces = 1L
 
@@ -51,6 +56,7 @@ val devshardShortSealGraceSpec = spec<AppState> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
+                this[DevshardEscrowParams::executionTimeout] = devshardAutoSealExecutionTimeout
                 // Do not set validationRate=0: chain treats 0 as unset and snapshots
                 // DefaultDevshardValidationRate (1000 = 10%).
             }
@@ -190,9 +196,33 @@ fun LocalInferencePair.waitForMidEpochWindow(
     )
 }
 
-fun LocalInferencePair.waitForDevshardProxyWarmup(delay: Duration = devshardProxyWarmupDelay) {
-    logSection("Waiting for devshard proxy warmup")
-    Thread.sleep(delay.toMillis())
+/**
+ * Wait until GET /v1/status reports height_seed.state=ok (or omits the
+ * field when the seed gate is off). Chat 503s until then; a 2s sleep is
+ * not enough for catalog admission + owner height-sync quorum.
+ */
+fun LocalInferencePair.waitForDevshardProxyWarmup(
+    proxyUrl: String,
+    timeout: Duration = devshardHeightSeedTimeout,
+) {
+    logSection("Waiting for devshard height seed on $proxyUrl")
+    val deadline = System.currentTimeMillis() + timeout.toMillis()
+    var last = "unparsed"
+    while (System.currentTimeMillis() < deadline) {
+        val status = runCatching { getDevshardProxyStatus(proxyUrl) }.getOrNull()
+        if (status != null && status.heightSeedReady()) {
+            return
+        }
+        last = status?.heightSeed?.let { "state=${it.state} seeded=${it.seeded}/${it.slots}" }
+            ?: "status-unavailable"
+        Thread.sleep(500)
+    }
+    error("timed out waiting for height_seed.state=ok on $proxyUrl (last=$last)")
+}
+
+fun DevshardProxyStatus.heightSeedReady(): Boolean {
+    val state = heightSeed?.state ?: return true
+    return state.isEmpty() || state == "ok"
 }
 
 /**
@@ -575,6 +605,8 @@ fun LocalInferencePair.waitForFinishedDevshardInferences(
             "(got ${inferences.values.count { it.status == DevshardInferenceStatus.FINISHED }})",
     )
 }
+
+fun DevshardProxyDebugState.liveStatus(name: String): Int = liveStatusCounts?.get(name) ?: 0
 
 /**
  * Drive chat completions until [targetNonce] is reached and at least [minSealed]

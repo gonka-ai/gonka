@@ -14,6 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"common/probe"
+
 	"devshard/transport"
 )
 
@@ -31,26 +33,46 @@ type DevshardMetrics struct {
 	speculativeAttempts        *prometheus.CounterVec
 	inferenceTimeouts          *prometheus.CounterVec
 	pickerChoices              *prometheus.CounterVec
-	hostReceiptSeconds         *prometheus.HistogramVec
-	hostFirstTokenSeconds      *prometheus.HistogramVec
-	hostCTTFLSecondsPerToken   *prometheus.HistogramVec
-	hostTotalSeconds           *prometheus.HistogramVec
 	participantReceiptSeconds  *prometheus.HistogramVec
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+	participantMaxChunkGap     *prometheus.HistogramVec
+	participantMeanChunkGap    *prometheus.HistogramVec
 
-	gatewayRequests       *prometheus.CounterVec
-	criticalUserFailures  *prometheus.CounterVec
-	hiddenFailures        *prometheus.CounterVec
-	userVisibleWins       *prometheus.CounterVec
-	slotDecisions         *prometheus.CounterVec
-	attemptsStarted       *prometheus.CounterVec
-	attemptsTerminal      *prometheus.CounterVec
-	attemptFailures       *prometheus.CounterVec
-	quarantineTransitions *prometheus.CounterVec
-	noWinnerAttempts      *prometheus.CounterVec
-	timeoutActions        *prometheus.CounterVec
+	gatewayRequests        *prometheus.CounterVec
+	criticalUserFailures   *prometheus.CounterVec
+	hiddenFailures         *prometheus.CounterVec
+	userVisibleWins        *prometheus.CounterVec
+	slotDecisions          *prometheus.CounterVec
+	attemptsStarted        *prometheus.CounterVec
+	attemptsTerminal       *prometheus.CounterVec
+	attemptFailures        *prometheus.CounterVec
+	quarantineTransitions  *prometheus.CounterVec
+	noWinnerAttempts       *prometheus.CounterVec
+	timeoutActions         *prometheus.CounterVec
+	errorMissRejects       *prometheus.CounterVec
+	errorMissVerifyRejects *prometheus.CounterVec
+	chatCache              *prometheus.CounterVec
+	servedBindings         *prometheus.CounterVec
+
+	// Host ping observability (common/probe sink). Fleet warm RTT histogram
+	// cannot share the gauge name, so it uses _warm_rtt_seconds.
+	hostPingUp              *prometheus.GaugeVec
+	hostPingRTT             *prometheus.GaugeVec
+	hostPingWarmRTT         prometheus.Histogram
+	hostPingDivergence      *prometheus.GaugeVec
+	hostPingLastProbe       *prometheus.GaugeVec
+	hostPingProbeKind       *prometheus.GaugeVec
+	hostPingTargets         prometheus.Gauge
+	hostPingTicks           prometheus.Counter
+	hostPingTicksSkipped    prometheus.Counter
+	hostPingParticipantInfo *prometheus.GaugeVec
+
+	// Escrow work on h2 vs JSON, and which hosts have a PeerConn.
+	gatewayEscrowSessions *prometheus.CounterVec
+	gatewayHostRPC        *prometheus.GaugeVec
+	peerRPCAdoption       *transport.PeerRPCAdoption
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -174,38 +196,6 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"devshard_id", "model"},
 		),
-		hostReceiptSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_receipt_seconds",
-				Help:    "Time from inference send until host receipt confirmation.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostFirstTokenSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_first_token_seconds",
-				Help:    "Time from inference send until first streamed token.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostCTTFLSecondsPerToken: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_cttfl_seconds_per_input_token",
-				Help:    "Prefill time per input token, computed from receipt to first token.",
-				Buckets: prometheus.ExponentialBuckets(0.0001, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
-		hostTotalSeconds: prometheus.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Name:    "devshard_host_total_time_seconds",
-				Help:    "Total inference time observed per host.",
-				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
-			},
-			[]string{"devshard_id", "host_idx"},
-		),
 		participantReceiptSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "devshard_gateway_participant_receipt_seconds",
@@ -235,6 +225,22 @@ func NewDevshardMetrics() *DevshardMetrics {
 				Name:    "devshard_gateway_participant_total_attempt_seconds",
 				Help:    "Total inference attempt time observed by the gateway, by participant and model.",
 				Buckets: prometheus.ExponentialBuckets(0.01, 2, 12),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMaxChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_max_inter_chunk_seconds",
+				Help:    "Longest silence between two streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMeanChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_inter_chunk_seconds",
+				Help:    "Mean silence between streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
 			},
 			[]string{"participant_key", "model"},
 		),
@@ -315,6 +321,115 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model", "kind", "action", "reason"},
 		),
+		errorMissRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_rejects_total",
+				Help: "Rejected error-miss attempts by reconstruction cause (cancelled, drift, truncated).",
+			},
+			[]string{"cause"},
+		),
+		errorMissVerifyRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_verify_rejects_total",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+			},
+			[]string{"cause", "completeness"},
+		),
+		chatCache: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_chat_cache_total",
+				Help: "Total chat response cache outcomes by model: hit, stored, or skipped_<reason>.",
+			},
+			[]string{"model", "result"},
+		),
+		servedBindings: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_served_bindings_total",
+				Help: "Streams checked against the executor's signed Finish, by verdict (bound, mismatch).",
+			},
+			[]string{"verdict"},
+		),
+		hostPingUp: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_up",
+				Help: "Whether the last host ping probe succeeded (1) or failed (0).",
+			},
+			[]string{"host"},
+		),
+		hostPingRTT: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_rtt_seconds",
+				Help: "Last warm host ping RTT in seconds.",
+			},
+			[]string{"host"},
+		),
+		hostPingWarmRTT: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_host_ping_warm_rtt_seconds",
+				Help:    "Fleet-wide warm host ping RTT distribution (no host label).",
+				Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
+			},
+		),
+		hostPingDivergence: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_clock_divergence_seconds",
+				Help: "Last estimated clock divergence versus a host; omitted when no timestamp is available.",
+			},
+			[]string{"host", "source"},
+		),
+		hostPingLastProbe: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_last_probe_timestamp_seconds",
+				Help: "Unix timestamp of the last host ping probe attempt.",
+			},
+			[]string{"host"},
+		),
+		hostPingProbeKind: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_probe_kind",
+				Help: "Sticky probe capability kind for a host (info-style gauge).",
+			},
+			[]string{"host", "kind"},
+		),
+		hostPingTargets: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_targets",
+				Help: "Number of dial targets currently probed by the gateway host ping job.",
+			},
+		),
+		hostPingTicks: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_host_ping_ticks_total",
+				Help: "Total host ping scheduler ticks started.",
+			},
+		),
+		hostPingTicksSkipped: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_host_ping_ticks_skipped_total",
+				Help: "Total host ping scheduler ticks skipped because a prior tick was still in flight.",
+			},
+		),
+		hostPingParticipantInfo: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_participant_info",
+				Help: "Mapping from dial host to participant_key for host ping targets.",
+			},
+			[]string{"host", "participant_key"},
+		),
+		gatewayEscrowSessions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_escrow_sessions_total",
+				Help: "Escrow sessions that started talking to a host over Connect/h2 or JSON. Once per escrow per host, not per Attach.",
+			},
+			[]string{"path"},
+		),
+		gatewayHostRPC: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_rpc",
+				Help: "Whether this host currently has a ready PeerConn (h2) or is reached over JSON.",
+			},
+			[]string{"peer", "mode"},
+		),
 	}
 
 	registry.MustRegister(
@@ -328,14 +443,12 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.speculativeAttempts,
 		m.inferenceTimeouts,
 		m.pickerChoices,
-		m.hostReceiptSeconds,
-		m.hostFirstTokenSeconds,
-		m.hostCTTFLSecondsPerToken,
-		m.hostTotalSeconds,
 		m.participantReceiptSeconds,
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
 		m.participantTotalSeconds,
+		m.participantMaxChunkGap,
+		m.participantMeanChunkGap,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -347,8 +460,25 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.quarantineTransitions,
 		m.noWinnerAttempts,
 		m.timeoutActions,
+		m.errorMissRejects,
+		m.errorMissVerifyRejects,
+		m.chatCache,
+		m.servedBindings,
+		m.hostPingUp,
+		m.hostPingRTT,
+		m.hostPingWarmRTT,
+		m.hostPingDivergence,
+		m.hostPingLastProbe,
+		m.hostPingProbeKind,
+		m.hostPingTargets,
+		m.hostPingTicks,
+		m.hostPingTicksSkipped,
+		m.hostPingParticipantInfo,
+		m.gatewayEscrowSessions,
+		m.gatewayHostRPC,
 	)
 
+	m.peerRPCAdoption = transport.NewPeerRPCAdoption(m)
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return m
 }
@@ -364,6 +494,9 @@ func (m *DevshardMetrics) AttachGateway(g *Gateway) {
 	if m == nil || g == nil {
 		return
 	}
+	// Host-side log-plane gauges (turn_state, close_ready_armed, peer_seen_slots)
+	// stay on devshardd only — one escrow per process. The gateway already
+	// exposes labelled operator views via gatewayMetricsCollector.
 	m.registry.MustRegister(newGatewayMetricsCollector(g))
 }
 
@@ -401,6 +534,13 @@ func (m *DevshardMetrics) RecordLimitRejection(reason string) {
 		return
 	}
 	m.gatewayLimitRejections.WithLabelValues(reason).Inc()
+}
+
+func (m *DevshardMetrics) RecordChatCache(model, result string) {
+	if m == nil {
+		return
+	}
+	m.chatCache.WithLabelValues(normalizeModelID(model), result).Inc()
 }
 
 func (m *DevshardMetrics) RecordParticipantLimitRejection(participantKey, model, scope string) {
@@ -507,6 +647,21 @@ func (m *DevshardMetrics) RecordGatewaySlotDecision(decision GatewaySlotDecision
 	).Inc()
 }
 
+// ForgetEscrow drops escrow-labelled children the dashboard still uses:
+// slot_decisions_total, picker_choice_total, and startup_skipped_escrow.
+func (m *DevshardMetrics) ForgetEscrow(escrowID string) {
+	if m == nil {
+		return
+	}
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	m.slotDecisions.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+	m.pickerChoices.DeletePartialMatch(prometheus.Labels{"devshard_id": escrowID})
+	m.startupSkippedEscrows.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+}
+
 func (m *DevshardMetrics) RecordGatewayAttemptStarted(start GatewayAttemptStartMetric) {
 	if m == nil {
 		return
@@ -583,33 +738,227 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 	).Inc()
 }
 
-func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {
+func (m *DevshardMetrics) RecordErrorMissReject(cause string) {
 	if m == nil {
 		return
 	}
+	m.errorMissRejects.WithLabelValues(metricLabel(cause, "unknown")).Inc()
+}
 
-	labels := []string{devshardID, strconv.Itoa(sample.HostIdx)}
+func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string) {
+	if m == nil {
+		return
+	}
+	m.errorMissVerifyRejects.WithLabelValues(
+		metricLabel(cause, "unknown"),
+		metricLabel(completeness, "unknown"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordServedBinding(verdict string) {
+	if m == nil {
+		return
+	}
+	m.servedBindings.WithLabelValues(metricLabel(verdict, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {
+	if m == nil {
+		return
+	}
 	participantLabels := []string{
 		metricLabel(sample.ParticipantKey, "unknown"),
 		metricLabel(sample.Model, "unknown"),
 	}
 	if receiptSeconds := sample.ReceiptMs() / 1000; receiptSeconds > 0 {
-		m.hostReceiptSeconds.WithLabelValues(labels...).Observe(receiptSeconds)
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
-	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
-		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
+	// Fed from the first CONTENT chunk, which is what this metric is named for: FirstToken fires on
+	// a role-only chunk and made it report a prefill no client ever waited for.
+	if !sample.SendTime.IsZero() && !sample.FirstContent.IsZero() {
+		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(sample.FirstContent.Sub(sample.SendTime).Seconds())
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
-		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
 		m.participantPrefillPerToken.WithLabelValues(participantLabels...).Observe(cttfl)
 	}
 	if sample.TotalTime > 0 {
-		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
 	}
+}
+
+// ObserveStreamCadence separates a host that streams slowly from one that streams then stops: the
+// two are indistinguishable in a per-chunk distribution, where a single 60s gap sits below p99.9.
+func (m *DevshardMetrics) ObserveStreamCadence(participantKey, model string, maxGap, meanGap time.Duration) {
+	if m == nil {
+		return
+	}
+	labels := []string{metricLabel(participantKey, "unknown"), metricLabel(model, "unknown")}
+	if maxGap > 0 {
+		m.participantMaxChunkGap.WithLabelValues(labels...).Observe(maxGap.Seconds())
+	}
+	if meanGap > 0 {
+		m.participantMeanChunkGap.WithLabelValues(labels...).Observe(meanGap.Seconds())
+	}
+}
+
+func (m *DevshardMetrics) ObserveHostPingResult(r probe.Result) {
+	if m == nil {
+		return
+	}
+	host := strings.TrimSpace(r.Key)
+	if host == "" {
+		return
+	}
+	if r.Up {
+		m.hostPingUp.WithLabelValues(host).Set(1)
+	} else {
+		m.hostPingUp.WithLabelValues(host).Set(0)
+	}
+	at := r.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	m.hostPingLastProbe.WithLabelValues(host).Set(float64(at.Unix()))
+
+	kind := r.Kind.String()
+	for _, k := range []string{probe.KindClock.String(), probe.KindDate.String(), probe.KindHealth.String(), probe.KindNone.String()} {
+		v := 0.0
+		if k == kind {
+			v = 1
+		}
+		m.hostPingProbeKind.WithLabelValues(host, k).Set(v)
+	}
+
+	if r.Up && r.ConnReused && r.RTT > 0 {
+		sec := r.RTT.Seconds()
+		m.hostPingRTT.WithLabelValues(host).Set(sec)
+		m.hostPingWarmRTT.Observe(sec)
+	}
+
+	if r.HasDivergence {
+		src := r.DivergenceSource.String()
+		if src == "" || src == probe.KindNone.String() {
+			src = kind
+		}
+		m.hostPingDivergence.WithLabelValues(host, src).Set(r.Divergence.Seconds())
+	} else {
+		m.hostPingDivergence.DeleteLabelValues(host, probe.KindClock.String())
+		m.hostPingDivergence.DeleteLabelValues(host, probe.KindDate.String())
+	}
+}
+
+func (m *DevshardMetrics) SetHostPingParticipantInfo(host, participantKey string, present bool) {
+	if m == nil {
+		return
+	}
+	host = strings.TrimSpace(host)
+	participantKey = strings.TrimSpace(participantKey)
+	if host == "" || participantKey == "" {
+		return
+	}
+	if present {
+		m.hostPingParticipantInfo.WithLabelValues(host, participantKey).Set(1)
+		return
+	}
+	m.hostPingParticipantInfo.DeleteLabelValues(host, participantKey)
+}
+
+func (m *DevshardMetrics) DeleteHostPingMetrics(host string, participants []string) {
+	if m == nil {
+		return
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return
+	}
+	m.hostPingUp.DeleteLabelValues(host)
+	m.hostPingRTT.DeleteLabelValues(host)
+	m.hostPingLastProbe.DeleteLabelValues(host)
+	for _, src := range []string{probe.KindClock.String(), probe.KindDate.String()} {
+		m.hostPingDivergence.DeleteLabelValues(host, src)
+	}
+	for _, k := range []string{probe.KindClock.String(), probe.KindDate.String(), probe.KindHealth.String(), probe.KindNone.String()} {
+		m.hostPingProbeKind.DeleteLabelValues(host, k)
+	}
+	for _, pk := range participants {
+		pk = strings.TrimSpace(pk)
+		if pk != "" {
+			m.hostPingParticipantInfo.DeleteLabelValues(host, pk)
+		}
+	}
+}
+
+func (m *DevshardMetrics) SetHostPingTargets(n int) {
+	if m == nil {
+		return
+	}
+	m.hostPingTargets.Set(float64(n))
+}
+
+func (m *DevshardMetrics) IncHostPingTicks() {
+	if m == nil {
+		return
+	}
+	m.hostPingTicks.Inc()
+}
+
+func (m *DevshardMetrics) IncHostPingTicksSkipped() {
+	if m == nil {
+		return
+	}
+	m.hostPingTicksSkipped.Inc()
+}
+
+// IncEscrowSession counts escrow work on h2 vs JSON.
+func (m *DevshardMetrics) IncEscrowSession(path string) {
+	if m == nil || m.gatewayEscrowSessions == nil {
+		return
+	}
+	switch path {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	m.gatewayEscrowSessions.WithLabelValues(path).Inc()
+}
+
+// SetHostRPC records whether this host is reached over h2 or JSON.
+func (m *DevshardMetrics) SetHostRPC(peer, mode string, on bool) {
+	if m == nil || m.gatewayHostRPC == nil || peer == "" {
+		return
+	}
+	switch mode {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	v := 0.0
+	if on {
+		v = 1
+	}
+	m.gatewayHostRPC.WithLabelValues(peer, mode).Set(v)
+}
+
+// DeleteHostRPC drops a host_rpc series so retired peers do not occupy
+// cardinality after the last escrow bind.
+func (m *DevshardMetrics) DeleteHostRPC(peer, mode string) {
+	if m == nil || m.gatewayHostRPC == nil || peer == "" {
+		return
+	}
+	switch mode {
+	case transport.PeerRPCPathH2, transport.PeerRPCPathJSON:
+	default:
+		return
+	}
+	m.gatewayHostRPC.DeleteLabelValues(peer, mode)
+}
+
+// PeerRPCAdoption is the gateway-side tracker PeerConn should call.
+func (m *DevshardMetrics) PeerRPCAdoption() *transport.PeerRPCAdoption {
+	if m == nil {
+		return nil
+	}
+	return m.peerRPCAdoption
 }
 
 func metricLabel(value, fallback string) string {
@@ -649,6 +998,10 @@ type gatewayMetricsCollector struct {
 	escrowBlockedParticipantsDesc  *prometheus.Desc
 	hostOpenDesc                   *prometheus.Desc
 	hostStateDesc                  *prometheus.Desc
+
+	heightSync heightSyncDescs
+	rpcStats   rpcStatsDescs
+	peerMatrix bool
 }
 
 func newGatewayMetricsCollector(gateway *Gateway) *gatewayMetricsCollector {
@@ -789,6 +1142,9 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			[]string{"address", "state"},
 			nil,
 		),
+		heightSync: newHeightSyncDescs(),
+		rpcStats:   newRPCStatsDescs(),
+		peerMatrix: heightSyncPeerMatrixEnabled(),
 	}
 }
 
@@ -814,6 +1170,8 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.escrowBlockedParticipantsDesc
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
+	c.heightSync.describe(ch)
+	c.rpcStats.describe(ch)
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -901,6 +1259,11 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.escrowBlockedParticipantsDesc, prometheus.GaugeValue, float64(blocked), labels...)
 	}
 
+	c.collectHeightSync(ch, runtimes)
+	if c.gateway.rpcStats != nil {
+		c.rpcStats.emit(ch, c.gateway.rpcStats.hosts())
+	}
+
 	if c.hostConnections == nil {
 		return
 	}
@@ -972,7 +1335,7 @@ type nonceFinishedChecker interface {
 	IsNonceFinished(uint64) bool
 }
 
-func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) string {
+func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, model string) string {
 	if inf == nil {
 		return "unknown"
 	}
@@ -981,6 +1344,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		return "phase_transition_aborted"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
+	case isModelBurnEmpty(inf, model):
+		return "model_burn_empty"
 	case isEmptyStreamAttempt(inf):
 		return "empty_stream"
 	}
@@ -989,8 +1354,18 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		switch {
 		case errors.As(inf.err, &upstreamErr):
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
+		case errors.Is(inf.err, ErrAggregateResponseTooLarge):
+			return "aggregate_response_too_large"
+		case errors.Is(inf.err, ErrAggregateFoldTooLarge):
+			return "aggregate_fold_too_large"
 		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
 			return "sse_truncated"
+		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
+			return "sse_event_too_large"
+		case errors.Is(inf.err, transport.ErrSSEStreamTooLarge):
+			return "sse_stream_too_large"
+		case errors.Is(inf.err, transport.ErrResponseBodyTooLarge):
+			return "response_body_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
 			return "eof_transport"
 		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):
@@ -1089,17 +1464,23 @@ func normalizeMetricsPath(path string) string {
 	}
 }
 
+// limiterRejectionLogFields says how full the gateway was, not only that it was full.
+func limiterRejectionLogFields(err error) []any {
+	fields := []any{"reason", limiterReasonLabel(err)}
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) {
+		return append(fields, "in_flight", rejection.InFlight, "limit", rejection.Limit)
+	}
+	return fields
+}
+
 func limiterReasonLabel(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "concurrent requests"):
-		return "max_concurrent_requests"
-	case strings.Contains(msg, "input tokens in flight"):
-		return "max_input_tokens_in_flight"
-	default:
-		return "unknown"
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) && rejection.Kind != "" {
+		return rejection.Kind
 	}
+	return "unknown"
 }

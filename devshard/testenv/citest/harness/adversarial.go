@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
+	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,17 +21,34 @@ import (
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
 	"devshard/transport"
+	"devshard/transport/rpcpb"
+	"devshard/transport/rpcpb/rpcpbconnect"
 
+	"connectrpc.com/connect"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
 func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack, cfg, eps := BootStack(t, prefix)
+	client := GatewayChatClient()
+	WaitStackHealthy(t, stack, eps)
+	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
+	return stack, cfg, eps
+}
+
+// BootErrorMissAdversarialStack boots HA + two solos so error-finish-miss
+// votes from two non-executor identities exceed VoteThreshold.
+func BootErrorMissAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack, cfg, eps := BootErrorMissStack(t, prefix)
 	client := GatewayChatClient()
 	WaitStackHealthy(t, stack, eps)
 	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
@@ -58,13 +77,26 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 	f := false
 	empty := ""
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
-		LatencyMs:        &zero,
-		HTTPStatus:       &zero,
-		DropFirstChunk:   &f,
-		PartialStream:    &f,
-		SSEErrorMessage:  &empty,
-		StreamChunkDelay: &zero,
+		LatencyMs:           &zero,
+		HTTPStatus:          &zero,
+		DropFirstChunk:      &f,
+		PartialStream:       &f,
+		SSEErrorMessage:     &empty,
+		StreamChunkDelay:    &zero,
+		PauseStream:         &f,
+		StreamErrorEnvelope: &f,
 	})
+}
+
+func ReleaseMockOpenAIStreams(t *testing.T, client *http.Client, mockOpenAIURL string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	resp, err := client.Post(mockOpenAIURL+"/testenv/stream/release", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST mock-openai stream release")
 }
 
 // PatchTestenvGrantees replaces warm-key grantees for a validator via mock-dapi.
@@ -97,46 +129,86 @@ func RequireWarmKeyRevoked(t *testing.T, eps Endpoints, granter, warmAddress str
 	}
 }
 
-// PostWarmKeySignedTransport posts a devshard transport request signed by a warm grantee key
-// through versiond-router. Returns the HTTP status (body is discarded).
-func PostWarmKeySignedTransport(t *testing.T, client *http.Client, routerHTTP, version, escrowID, pathSuffix, warmPrivateKeyHex string, body []byte) int {
+// RequireWarmKeyTransportRejected asserts Connect gossip denies a revoked warm key.
+// Echo POST /sessions/:id/gossip/nonce is retired (410 before auth). Peers call
+// GossipService.Nonce. Membership is VerifyWarmKey: Attach runs it before a
+// token exists, and Nonce runs it again for a peer that already has one.
+// A revoked grantee therefore comes back permission-denied. A valid key is
+// not: this does not accept "no handshake" (unauthenticated), which every
+// caller without a token would see.
+func RequireWarmKeyTransportRejected(t *testing.T, stack *Stack, cfg *config.File, eps Endpoints, warmPrivateKeyHex string) {
 	t.Helper()
-	if client == nil {
-		client = HTTPClient()
+	require.NotNil(t, stack)
+	require.NotNil(t, cfg)
+	require.NotEmpty(t, cfg.Hosts)
+	hostAddr := cfg.Hosts[0].Address
+	require.NotEmpty(t, hostAddr, "host address")
+	version := cfg.Versiond.VersionName
+	if version == "" {
+		version = "v2"
 	}
+	escrowID := GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	signer, err := signing.SignerFromHex(warmPrivateKeyHex)
 	require.NoError(t, err)
 
-	ts := time.Now().Unix()
-	sig, err := transport.SignRequest(signer, escrowID, body, ts)
-	require.NoError(t, err)
+	base := strings.TrimRight(stack.RouterH2HTTP(t), "/") + "/devshard/" + version + "/sessions/" + escrowID + "/rpc"
+	httpClient := routerH2Client(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 
-	url := RouterSessionURL(routerHTTP, version, escrowID, pathSuffix)
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	require.NoError(t, err)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set(transport.HeaderSignature, hex.EncodeToString(sig))
-	httpReq.Header.Set(transport.HeaderTimestamp, fmt.Sprintf("%d", ts))
+	auth := rpcpbconnect.NewPeerAuthServiceClient(httpClient, base, connect.WithGRPC())
+	attachReq := connect.NewRequest(signedWarmKeyAttach(t, signer, hostAddr))
+	attachResp, err := auth.Attach(ctx, attachReq)
+	if err != nil {
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
+			"revoked warm key must be permission-denied at Connect attach (gossip's membership gate): %v", err)
+		return
+	}
+	require.NotNil(t, attachResp)
+	require.NotEmpty(t, attachResp.Msg.GetSessionToken())
 
-	resp, err := client.Do(httpReq)
+	payload, err := proto.Marshal(&rpcpb.GossipNonceRequest{Nonce: 1, StateSig: []byte{0}})
 	require.NoError(t, err)
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	env, err := transport.SignEnvelope(signer, escrowID, payload, time.Now().Unix())
+	require.NoError(t, err)
+	nonceReq := connect.NewRequest(env)
+	transport.SetSessionHeader(nonceReq.Header(), attachResp.Msg.GetSessionToken())
+	gossip := rpcpbconnect.NewGossipServiceClient(httpClient, base, connect.WithGRPC())
+	_, err = gossip.Nonce(ctx, nonceReq)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
+		"revoked warm key must be permission-denied on Connect gossip: %v", err)
 }
 
-// RequireWarmKeyTransportRejected asserts a warm-key signed devshard transport call is
-// rejected after grantee revocation (devshardd bridge + router auth path).
-func RequireWarmKeyTransportRejected(t *testing.T, client *http.Client, cfg *config.File, eps Endpoints, warmPrivateKeyHex string) {
+func signedWarmKeyAttach(t *testing.T, signer signing.Signer, hostAddr string) *rpcpb.AttachRequest {
 	t.Helper()
-	escrowID := GetGatewayEscrowID(t, client, eps.GatewayHTTP)
-	// Minimal gossip/nonce body: auth runs before handler validation.
-	body := []byte(`{"nonce":1,"slot_id":0,"state_hash":"","state_sig":"00"}`)
-	status := PostWarmKeySignedTransport(
-		t, client, eps.RouterHTTP, cfg.Versiond.VersionName, escrowID, "/gossip/nonce", warmPrivateKeyHex, body,
-	)
-	require.Equal(t, http.StatusForbidden, status,
-		"warm-key transport should be forbidden after grantee revocation (got HTTP %d)", status)
+	nonce := make([]byte, 16)
+	_, err := rand.Read(nonce)
+	require.NoError(t, err)
+	ts := time.Now().Unix()
+	sig, err := transport.SignAttach(signer, hostAddr, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	return &rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		Signature:       sig,
+		HostAddress:     hostAddr,
+		Timestamp:       ts,
+	}
+}
+
+// routerH2Client speaks prior-knowledge HTTP/2 to versiond-router's h2 bind.
+func routerH2Client(t *testing.T) *http.Client {
+	t.Helper()
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	return &http.Client{Transport: tr, Timeout: 20 * time.Second}
 }
 
 // DialMockChainGRPC dials the mock-chain inference gRPC port from a citest config.
@@ -187,14 +259,75 @@ func GetGatewayEscrowID(t *testing.T, client *http.Client, gatewayURL string) st
 	}
 	var status map[string]any
 	require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &status))
-	id, ok := status["escrow_id"].(string)
-	if !ok || id == "" {
-		if n, ok := status["escrow_id"].(float64); ok && n > 0 {
-			return fmt.Sprintf("%.0f", n)
-		}
+	id, ok := statusEscrowID(status)
+	if !ok {
 		t.Fatalf("gateway /v1/status missing escrow_id: %v", status)
 	}
 	return id
+}
+
+// WaitGatewayEscrowRetired polls GET /v1/status until escrowID is no longer
+// the resident runtime (missing escrow_id, typically phase=not_found, or a
+// different id after rotation). Height-sync series drop only after retireRuntime
+// removes the runtime from the registry.
+func WaitGatewayEscrowRetired(t *testing.T, client *http.Client, gatewayURL, escrowID string, timeout time.Duration) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	if timeout == 0 {
+		timeout = 2 * time.Minute
+	}
+	require.NotEmpty(t, escrowID)
+	ok := AssertEventually(t, timeout, 500*time.Millisecond, func() bool {
+		var status map[string]any
+		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
+			return false
+		}
+		id, present := statusEscrowID(status)
+		return !present || id != escrowID
+	})
+	require.True(t, ok, "escrow %s still resident on /v1/status after %s", escrowID, timeout)
+}
+
+// RequireGatewayEscrowNotRotated asserts /v1/status did not pick up a new
+// escrow after previousEscrowID died. A retired last runtime leaves no
+// escrow_id and reports phase=not_found; that is deactivation, not rotation.
+// Polls briefly so retire-after-drain can land as not_found; a still-resident
+// runtime with the same id also passes.
+func RequireGatewayEscrowNotRotated(t *testing.T, client *http.Client, gatewayURL, previousEscrowID string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	var last map[string]any
+	for {
+		require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &last))
+		id, ok := statusEscrowID(last)
+		if ok {
+			require.Equal(t, previousEscrowID, id, "gateway silently rotated to a new escrow after stale settlement")
+			if time.Now().After(deadline) {
+				t.Logf("gateway still resident with escrow %s after settle (not rotated)", id)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		phase, _ := last["phase"].(string)
+		require.Equal(t, "not_found", phase, "retired /v1/status must name the absence (phase=not_found), got %v", last)
+		return
+	}
+}
+
+func statusEscrowID(status map[string]any) (string, bool) {
+	if id, ok := status["escrow_id"].(string); ok && id != "" {
+		return id, true
+	}
+	if n, ok := status["escrow_id"].(float64); ok && n > 0 {
+		return fmt.Sprintf("%.0f", n), true
+	}
+	return "", false
 }
 
 // PatchAdversarialFastTimeouts lowers refusal/execution timeouts so gateway adversarial paths fail quickly.
@@ -376,6 +509,16 @@ func PostGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 	}
 	t.Fatalf("expected gateway error, got %d: %s", status, body)
 	return status
+}
+
+// PostGatewayChatFailure posts non-stream chat and requires HTTP status >= 400.
+// Unlike PostGatewayChatExpectFailure, a transport timeout is a test failure.
+func PostGatewayChatFailure(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (int, string) {
+	t.Helper()
+	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	require.NoError(t, transportErr, "gateway chat transport error")
+	require.GreaterOrEqual(t, status, 400, "expected gateway error body, got %d: %s", status, body)
+	return status, body
 }
 
 // WaitGatewayChatExpectFailure polls until gateway chat returns HTTP >= 400 or a transport error.

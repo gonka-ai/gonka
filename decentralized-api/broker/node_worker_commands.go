@@ -4,7 +4,10 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/mlnodeclient"
+	"errors"
+	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -64,48 +67,54 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	// Idempotency check - skip redeploy if already running correct model
-	if state, err := worker.GetClient().NodeState(ctx); err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
-		if healthy, _ := worker.GetClient().InferenceHealth(ctx); healthy {
-			// Check if loaded model matches expected
-			modelMatches := true
-			expectedModel, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
-			if ok && expectedModel != "" {
-				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
-					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
-				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
-					logging.Info("Model mismatch detected, will redeploy", types.Nodes,
-						"node_id", worker.nodeId, "loaded", loadedModels[0], "expected", expectedModel)
-					modelMatches = false
-				}
-			}
+	client := worker.GetClient()
+	state, stateErr := client.NodeState(ctx)
+	healthyServing := false
+	if stateErr == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
+		healthyServing, _ = client.InferenceHealth(ctx)
+	}
 
-			if modelMatches {
-				// Stop any running PoC V2 (runs inside inference/vLLM)
-				if pocStatus, err := worker.GetClient().GetPowStatusV2(ctx); err != nil {
-					logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", worker.nodeId, "error", err)
-				} else if pocStatus != nil {
-					logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", worker.nodeId, "status", pocStatus.Status)
-					if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
-						if _, err := worker.GetClient().StopPowV2(ctx); err != nil {
-							logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", worker.nodeId, "error", err)
-						}
-					}
-				}
+	selectedModel, err := selectInferenceModel(worker)
+	if err != nil {
+		if healthyServing && !worker.node.State.DeploymentUpdatePending {
+			logging.Warn("Could not resolve model for healthy node; keeping existing inference deployment", types.Nodes,
+				"node_id", worker.nodeId, "error", err)
+			return keepHealthyInference(ctx, client, result, worker.nodeId)
+		}
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+		return result
+	}
+	localConfig := worker.node.Node.Models[selectedModel.Id]
+	deployment := worker.broker.ResolveModelDeployment(*selectedModel, localConfig)
+	if healthyServing {
+		modelMatches := true
+		if state.LoadedModel != "" && state.LoadedModel != deployment.LoadModel {
+			logging.Info("Loaded model source mismatch detected, will redeploy", types.Nodes,
+				"node_id", worker.nodeId, "loaded", state.LoadedModel, "expected", deployment.LoadModel)
+			modelMatches = false
+		}
+		if loadedModels, err := client.GetLoadedModels(ctx); err != nil {
+			logging.Debug("GetLoadedModels failed, assuming served model match", types.Nodes, "node_id", worker.nodeId, "error", err)
+		} else if len(loadedModels) > 0 && !loadedModelsContain(loadedModels, deployment.GovernanceID) {
+			logging.Info("Served model mismatch detected, will redeploy", types.Nodes,
+				"node_id", worker.nodeId, "loaded", loadedModels, "expected", deployment.GovernanceID)
+			modelMatches = false
+		}
 
-				logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
-				result.Succeeded = true
-				result.FinalStatus = types.HardwareNodeStatus_INFERENCE
-				result.FinalPocStatus = PocStatusIdle
-				return result
-			}
+		if modelMatches && !worker.node.State.DeploymentUpdatePending {
+			return keepHealthyInference(ctx, client, result, worker.nodeId)
 		}
 	}
 
-	// Redeploy: stop and start with correct model
+	if healthyServing {
+		if deferred := ensureDeploymentReady(ctx, client, deployment, result, worker.nodeId); deferred != nil {
+			return *deferred
+		}
+	}
 
-	// Stop node first
-	if err := worker.GetClient().Stop(ctx); err != nil {
+	if err := client.Stop(ctx); err != nil {
 		logging.Error("Failed to stop node for inference up", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -113,68 +122,9 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	var selectedModel *types.Model
-	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
-	if ok && expectedModelID != "" {
-		if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
-			selectedModel = &model
-		}
-	}
-
-	if selectedModel == nil {
-		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
-		if err != nil {
-			result.Succeeded = false
-			result.Error = "Failed to get governance models: " + err.Error()
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		if !ok || expectedModelID == "" {
-			result.Succeeded = false
-			result.Error = "No epoch models available for this node"
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		for i := range govModels.Model {
-			if govModels.Model[i].Id == expectedModelID {
-				selectedModel = &govModels.Model[i]
-				break
-			}
-		}
-
-		if selectedModel == nil {
-			result.Succeeded = false
-			result.Error = "No epoch models available for this node"
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		logging.Info("No epoch model snapshot configured for this node, using deterministic configured governance model", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
-	}
-
-	if selectedModel == nil || selectedModel.Id == "" {
-		result.Succeeded = false
-		result.Error = "Could not select a model from epoch models"
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-		return result
-	}
-
-	logging.Info("Selected model for inference", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
-
-	// Merge epoch model args with local ones
-	var localArgs []string
-	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
-		localArgs = localModelConfig.Args
-	}
-	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
-
-	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
+	logging.Info("Selected model deployment for inference", types.Nodes,
+		"node_id", worker.nodeId, "governance_model", deployment.GovernanceID, "load_model", deployment.LoadModel)
+	if err := client.InferenceUp(ctx, deployment.LoadModel, deployment.Args); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -183,9 +133,108 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_INFERENCE
 		result.FinalPocStatus = PocStatusIdle
+		result.DeploymentApplied = true
+		result.DeploymentModelID = deployment.GovernanceID
+		result.DeploymentUsesOverride = localConfig.ModelOverride != nil
+		result.DeploymentFingerprint = deployment.Fingerprint()
 		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
 	}
 	return result
+}
+
+func keepHealthyInference(
+	ctx context.Context,
+	client mlnodeclient.MLNodeClient,
+	result NodeResult,
+	nodeID string,
+) NodeResult {
+	if pocStatus, err := client.GetPowStatusV2(ctx); err != nil {
+		logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", nodeID, "error", err)
+	} else if pocStatus != nil {
+		logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", nodeID, "status", pocStatus.Status)
+		if powStatusNeedsStop(pocStatus.Status) {
+			if _, err := client.StopPowV2(ctx); err != nil {
+				logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", nodeID, "error", err)
+			}
+		}
+	}
+	logging.Info("Node already in healthy inference state", types.Nodes, "node_id", nodeID)
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+	result.FinalPocStatus = PocStatusIdle
+	return result
+}
+
+func selectInferenceModel(worker *NodeWorker) (*types.Model, error) {
+	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
+	if !ok || expectedModelID == "" {
+		return nil, errors.New("no epoch models available for this node")
+	}
+	if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
+		return &model, nil
+	}
+
+	govModels, err := worker.broker.chainBridge.GetGovernanceModels()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get governance models: %w", err)
+	}
+	for i := range govModels.Model {
+		if govModels.Model[i].Id == expectedModelID {
+			return &govModels.Model[i], nil
+		}
+	}
+	return nil, errors.New("no epoch models available for this node")
+}
+
+func ensureDeploymentReady(
+	ctx context.Context,
+	client mlnodeclient.MLNodeClient,
+	deployment ModelDeployment,
+	result NodeResult,
+	nodeID string,
+) *NodeResult {
+	var commit *string
+	if deployment.LoadCommit != "" {
+		commit = &deployment.LoadCommit
+	}
+
+	target := mlnodeclient.Model{
+		HfRepo:   deployment.LoadModel,
+		HfCommit: commit,
+	}
+	status, err := client.CheckModelStatus(ctx, target)
+	if err != nil {
+		var notImplemented *mlnodeclient.ErrAPINotImplemented
+		if errors.As(err, &notImplemented) {
+			// Preserve compatibility with older MLNodes.
+			return nil
+		}
+		logging.Warn("Failed to check deployment cache readiness; deferring redeploy", types.Nodes,
+			"node_id", nodeID, "model", deployment.LoadModel, "error", err)
+		return deferredDeploymentResult(result)
+	}
+
+	switch status.Status {
+	case mlnodeclient.ModelStatusDownloaded:
+		return nil
+	case mlnodeclient.ModelStatusNotFound, mlnodeclient.ModelStatusPartial:
+		if _, err := client.DownloadModel(ctx, target); err != nil {
+			logging.Warn("Failed to start target model download", types.Nodes,
+				"node_id", nodeID, "model", deployment.LoadModel, "error", err)
+		}
+		return deferredDeploymentResult(result)
+	default:
+		return deferredDeploymentResult(result)
+	}
+}
+
+func deferredDeploymentResult(result NodeResult) *NodeResult {
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+	result.FinalPocStatus = PocStatusIdle
+	result.DeploymentDeferred = true
+	result.DeploymentRetryAfter = time.Now().Add(time.Minute)
+	return &result
 }
 
 // NoOpNodeCommand is a command that does nothing (used as placeholder)
@@ -205,16 +254,27 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 }
 
 type StartPoCNodeCommandV2 struct {
-	BlockHeight    int64
-	BlockHash      string
-	PubKey         string
-	CallbackUrl    string
-	TotalNodes     int
-	Model          string
-	SeqLen         int64
-	PocStrongerRng bool
+	BlockHeight          int64
+	BlockHash            string
+	PubKey               string
+	CallbackUrl          string
+	TotalNodes           int
+	Model                string
+	SeqLen               int64
+	PocStrongerRng       bool
+	WindDown             bool
+	LastPocV2BlockHeight int64
+	LastPocV2BlockHash   string
 }
 
+// MIXED handling:
+//
+//	Start PoC, same/unknown stage -> init only (preserve ongoing generation)
+//	Start PoC, known old stage    -> stop, then init (partial success allowed)
+//	Challenge wind-down          -> stop only (any backend error fails)
+//	Return to healthy inference  -> stop only (best effort)
+//
+// Init retries rely on generating backends rejecting init without restarting.
 func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) NodeResult {
 	result := NodeResult{
 		OriginalTarget:    types.HardwareNodeStatus_POC,
@@ -229,19 +289,40 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		return result
 	}
 
-	// Idempotency check - if already generating, skip restart
-	// This is safe: any old-epoch generation was stopped during inference transition
+	if c.WindDown {
+		return c.executeWindDown(ctx, worker, result)
+	}
+
 	status, err := worker.GetClient().GetPowStatusV2(ctx)
 	if err != nil {
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 failed, proceeding with init", types.PoC, "node_id", worker.nodeId, "error", err)
 	} else if status != nil {
 		logging.Debug("[StartPoCNodeCommandV2] GetPowStatusV2 status", types.PoC, "node_id", worker.nodeId, "status", status.Status)
-		if status.Status == "GENERATING" {
+		knownLast := c.LastPocV2BlockHeight != 0
+		sameParams := c.LastPocV2BlockHeight == c.BlockHeight && c.LastPocV2BlockHash == c.BlockHash
+		// A zero last height means the stage is unknown after a DAPI restart.
+		if status.Status == "GENERATING" && (sameParams || !knownLast) {
 			logging.Info("[StartPoCNodeCommandV2] Already generating, skipping restart", types.PoC, "node_id", worker.nodeId)
 			result.Succeeded = true
 			result.FinalStatus = types.HardwareNodeStatus_POC
 			result.FinalPocStatus = PocStatusGenerating
+			result.PocV2Updated = true
+			result.PocV2BlockHeight = c.BlockHeight
+			result.PocV2BlockHash = c.BlockHash
 			return result
+		}
+		if status.Status == "MIXED" && (sameParams || !knownLast) {
+			logging.Info("[StartPoCNodeCommandV2] MIXED in the same stage, re-init without stop", types.PoC, "node_id", worker.nodeId)
+		} else if powStatusNeedsStop(status.Status) {
+			if stopErr := stopPowV2Tolerant(ctx, worker); stopErr != nil {
+				logging.Warn("[StartPoCNodeCommandV2] StopPowV2 before re-init failed", types.PoC,
+					"node_id", worker.nodeId, "error", stopErr)
+				result.Succeeded = false
+				result.Error = stopErr.Error()
+				result.FinalStatus = worker.node.State.CurrentStatus
+				result.FinalPocStatus = worker.node.State.PocCurrentStatus
+				return result
+			}
 		}
 	}
 
@@ -259,18 +340,111 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		PocStrongerRng: c.PocStrongerRng,
 	}
 
-	if _, err := worker.GetClient().InitGenerateV2(ctx, req); err != nil {
+	if err := initGenerateV2Checked(ctx, worker, req); err != nil {
 		logging.Error("[StartPoCNodeCommandV2] Failed to start PoC v2", types.PoC, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
 		result.FinalStatus = types.HardwareNodeStatus_FAILED
-	} else {
-		result.Succeeded = true
-		result.FinalStatus = types.HardwareNodeStatus_POC
-		result.FinalPocStatus = PocStatusGenerating
-		logging.Info("[StartPoCNodeCommandV2] Successfully started PoC v2 on node", types.PoC, "node_id", worker.nodeId)
+		return result
 	}
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_POC
+	result.FinalPocStatus = PocStatusGenerating
+	result.PocV2Updated = true
+	result.PocV2BlockHeight = c.BlockHeight
+	result.PocV2BlockHash = c.BlockHash
+	logging.Info("[StartPoCNodeCommandV2] Successfully started PoC v2 on node", types.PoC, "node_id", worker.nodeId)
 	return result
+}
+
+func (c StartPoCNodeCommandV2) executeWindDown(ctx context.Context, worker *NodeWorker, result NodeResult) NodeResult {
+	status, err := worker.GetClient().GetPowStatusV2(ctx)
+	if err != nil || status == nil {
+		result.Succeeded = false
+		if err != nil {
+			result.Error = err.Error()
+		} else {
+			result.Error = "GetPowStatusV2 returned nil during wind-down"
+		}
+		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
+		return result
+	}
+	if powStatusNeedsStop(status.Status) {
+		if stopErr := stopPowV2Checked(ctx, worker); stopErr != nil {
+			logging.Warn("[StartPoCNodeCommandV2] StopPowV2 during challenge wind-down failed", types.PoC,
+				"node_id", worker.nodeId, "error", stopErr)
+			result.Succeeded = false
+			result.Error = stopErr.Error()
+			result.FinalStatus = worker.node.State.CurrentStatus
+			result.FinalPocStatus = worker.node.State.PocCurrentStatus
+			return result
+		}
+	}
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_POC
+	result.FinalPocStatus = PocStatusGenerating
+	return result
+}
+
+func powStatusNeedsStop(status string) bool {
+	return status == "GENERATING" || status == "VALIDATING" || status == "MIXED"
+}
+
+func stopPowV2Checked(ctx context.Context, worker *NodeWorker) error {
+	resp, err := worker.GetClient().StopPowV2(ctx)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		return fmt.Errorf("StopPowV2 backend errors: %s", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// stopPowV2Tolerant allows re-init when only some backends stopped.
+func stopPowV2Tolerant(ctx context.Context, worker *NodeWorker) error {
+	resp, err := worker.GetClient().StopPowV2(ctx)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("StopPowV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] StopPowV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "stopped", len(resp.Results), "error", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// initGenerateV2Checked accepts partial backend success.
+func initGenerateV2Checked(ctx context.Context, worker *NodeWorker, req mlnodeclient.PoCInitGenerateRequestV2) error {
+	resp, err := worker.GetClient().InitGenerateV2(ctx, req)
+	if err != nil {
+		return err
+	}
+	if resp != nil && len(resp.Errors) > 0 {
+		if len(resp.Results) == 0 {
+			return fmt.Errorf("InitGenerateV2 backend errors: %s", resp.Errors[0].Error)
+		}
+		logging.Warn("[StartPoCNodeCommandV2] InitGenerateV2 failed on some backends", types.PoC,
+			"node_id", worker.nodeId, "failed", len(resp.Errors), "started", len(resp.Results), "error", resp.Errors[0].Error)
+	}
+	return nil
+}
+
+// ChallengeCommitLeadBlocksValue is set from poc at init to avoid a package cycle.
+var challengeCommitLeadBlocks int64 = 4
+
+func SetChallengeCommitLeadBlocks(n int64) {
+	if n > 0 {
+		challengeCommitLeadBlocks = n
+	}
+}
+
+func ChallengeCommitLeadBlocksValue() int64 {
+	return challengeCommitLeadBlocks
 }
 
 // TransitionPoCToValidatingCommandV2 is a no-network command that transitions the broker's

@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+
+# Renders the router with an explicit versiond endpoint list, with the legacy
+# VERSIOND_HOSTS list, and with DNS discovery, then checks the resulting server
+# lines and validates each configuration with the real HAProxy image.
+
+set -Eeuo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+haproxy_image=${HAPROXY_IMAGE:-haproxy:3.2-alpine}
+tmpdir=$(mktemp -d)
+chmod 755 "$tmpdir"
+trap 'rm -rf "$tmpdir"' EXIT
+
+fail() {
+    echo "endpoints-render_test: $*" >&2
+    exit 1
+}
+
+render() {
+    local name=$1
+    shift
+    env "$@" \
+        HAPROXY_BIN=true \
+        VERSIOND_ROUTER_RENDER_ONLY=1 \
+        VERSIOND_ROUTER_TEMPLATE="$script_dir/haproxy.cfg.template" \
+        VERSIOND_ROUTER_POOL_TEMPLATE="$script_dir/pool-backend.cfg.template" \
+        VERSIOND_ROUTER_OUT="$tmpdir/$name.cfg" \
+        VERSIOND_ROUTER_NON_HA_MAP="$tmpdir/$name.map" \
+        VERSIOND_ROUTER_VERSIONS_MAP="$tmpdir/$name.versions.map" \
+        "$script_dir/entrypoint.sh"
+}
+
+pool_servers() {
+    grep -E '^ *server(-template)? ' "$tmpdir/$1.cfg" | grep -v '127.0.0.1:1 '
+}
+
+cat >"$tmpdir/endpoints.json" <<'EOF'
+[
+  {"id": "versiond", "host": "versiond", "port": 8080},
+  {"id": "versiond-b", "host": "10.20.0.12", "port": 18080},
+  {"id": "versiond-c", "host": "10.20.0.13"}
+]
+EOF
+
+# The inline list renders exactly like the file (the fleet hands membership
+# over as an environment value so a generation carries its own list).
+render inline \
+    VERSIOND_POOL_ENDPOINTS="$(jq -c . "$tmpdir/endpoints.json")" \
+    VERSIOND_ROUTER_VERSION_CAPACITY=2 2>"$tmpdir/inline.err"
+grep -q 'explicit list of 3 endpoint(s)' "$tmpdir/inline.err" || \
+    fail "inline endpoint list was not recognised: $(cat "$tmpdir/inline.err")"
+[[ $(pool_servers inline) == "$(render endpoints-again \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" \
+    VERSIOND_ROUTER_VERSION_CAPACITY=2 2>/dev/null; pool_servers endpoints-again)" ]] || \
+    fail "inline and file endpoint lists render differently"
+
+# Explicit endpoints: one server per entry, names versiond1..N for the catalog
+# reconciler, the default port applied, IPv4 literals without a resolver, and
+# the legacy owner selected by endpoint id.
+render endpoints \
+    GONKA_HA=true VERSIOND_VERSIONS="v4 v5" VERSIOND_NON_HA_VERSIONS=v1 \
+    VERSIOND_LEGACY_HOST=versiond \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" \
+    VERSIOND_ROUTING_CATALOG_URL=http://oracle:9100/versions \
+    VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+    VERSIOND_ROUTER_VERSION_CAPACITY=2 2>"$tmpdir/endpoints.err"
+grep -q 'explicit list of 3 endpoint(s)' "$tmpdir/endpoints.err" || \
+    fail "endpoint mode did not report its membership"
+# Pipeline assertions must read all input: grep -q can close the pipe early,
+# giving a producer SIGPIPE and failing pipefail even when the match exists.
+! pool_servers endpoints | grep 'server-template' >/dev/null || \
+    fail "endpoint mode still renders a DNS server-template"
+pool_servers endpoints | grep '^ *server versiond1 versiond:8080 .*resolvers docker init-addr none' >/dev/null || \
+    fail "a named endpoint must keep re-resolving through the Docker resolver"
+pool_servers endpoints | grep '^ *server versiond2 10.20.0.12:18080 check inter 1s fall 1 rise 2 init-state fully-down hash-key addr' >/dev/null || \
+    fail "an explicit port was not rendered"
+! pool_servers endpoints | grep '10.20.0.12' | grep resolvers >/dev/null || \
+    fail "an IPv4 literal must not carry resolver options"
+pool_servers endpoints | grep '^ *server versiond3 10.20.0.13:8080 ' >/dev/null || \
+    fail "VERSIOND_PORT was not applied as the default endpoint port"
+# Every HA backend (coarse, two static versions, two dynamic slots) lists all
+# three members; the legacy backend lists only the owner.
+# Five JSON backends plus the native-gRPC twin of each.
+[[ $(pool_servers endpoints | grep -c '^ *server versiond2 ') -eq 10 ]] || \
+    fail "expected ten HA backends with the second endpoint"
+[[ $(grep -c '^backend versiond_legacy_v1$' "$tmpdir/endpoints.cfg") -eq 1 ]] || \
+    fail "legacy backend is missing"
+grep -q 'uri /readyz?peer-rpc=1&version=' "$tmpdir/endpoints.cfg" || \
+    fail "peer-RPC backends must check /readyz?peer-rpc=1"
+grep -q 'http-check expect status 200$' "$tmpdir/endpoints.cfg" || \
+    fail "peer-RPC readiness must not treat a 404 as success"
+[[ $(grep -c 'http-check expect string peer-rpc-ok' "$tmpdir/endpoints.cfg") -eq \
+    $(grep -c '^backend .*_rpc$' "$tmpdir/endpoints.cfg") ]] || \
+    fail "every peer-RPC backend must expect the peer-rpc-ok body, and JSON backends must not"
+# JSON stays HTTP/1.1. proto h2 is enabled only on the peer-RPC twin, and
+# that twin keeps the health check on HTTP/1.1.
+json_servers=$(awk '
+    $1 == "backend" { json = ($2 !~ /_rpc$/); next }
+    json && ($1 == "server" || $1 == "server-template") { print }
+' "$tmpdir/endpoints.cfg")
+rpc_servers=$(awk '
+    $1 == "backend" { rpc = ($2 ~ /_rpc$/); next }
+    rpc && ($1 == "server" || $1 == "server-template") { print }
+' "$tmpdir/endpoints.cfg")
+[[ -n $json_servers && -n $rpc_servers ]] || fail "expected both JSON and peer-RPC server lines"
+! grep -q 'proto h2' <<<"$json_servers" || \
+    fail "JSON backends must stay HTTP/1.1 while proto h2 is enabled"
+grep -q 'proto h2 check-proto h1' <<<"$rpc_servers" || \
+    fail "peer-RPC twins must enable proto h2 with an HTTP/1.1 health check"
+! grep -v 'proto h2 check-proto h1' <<<"$rpc_servers" | grep -q 'server' || \
+    fail "every peer-RPC server line must enable proto h2"
+grep -q ' check inter 1s fall 1 rise 2 ' "$tmpdir/endpoints.cfg" || \
+    fail "h2 server lines must keep a health check"
+sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \
+    grep '^ *server versiond1 versiond:8080 ' >/dev/null || \
+    fail "legacy backend must resolve VERSIOND_LEGACY_HOST through the endpoint list"
+! sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/endpoints.cfg" | \
+    grep '10.20.0' >/dev/null || fail "legacy backend must list only the owner"
+grep -q '^ *server versiond1 .* disabled$' "$tmpdir/endpoints.cfg" || \
+    fail "dynamic slots must start disabled in endpoint mode"
+
+# A legacy owner that is not an endpoint id keeps the single-host DNS contract.
+render legacy-dns \
+    GONKA_HA=true VERSIOND_VERSIONS=v4 VERSIOND_NON_HA_VERSIONS=v1 \
+    VERSIOND_LEGACY_HOST=versiond-old \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" 2>/dev/null
+sed -n '/^backend versiond_legacy_v1/,/^backend /p' "$tmpdir/legacy-dns.cfg" | \
+    grep '^ *server-template versiond 1 versiond-old:8080 ' >/dev/null || \
+    fail "an unlisted legacy owner must fall back to its DNS name"
+
+# Legacy VERSIOND_HOSTS renders the same explicit list, with optional ports.
+render hosts \
+    GONKA_HA=true VERSIOND_VERSIONS=v4 \
+    VERSIOND_HOSTS="versiond versiond2:18080" 2>"$tmpdir/hosts.err"
+grep -q 'VERSIOND_HOSTS is a legacy setting' "$tmpdir/hosts.err" || \
+    fail "legacy VERSIOND_HOSTS must be reported"
+pool_servers hosts | grep '^ *server versiond1 versiond:8080 ' >/dev/null || \
+    fail "VERSIOND_HOSTS entry without a port did not get VERSIOND_PORT"
+pool_servers hosts | grep '^ *server versiond2 versiond2:18080 ' >/dev/null || \
+    fail "VERSIOND_HOSTS host:port entry was not rendered"
+
+# An endpoint file wins over VERSIOND_HOSTS.
+render precedence \
+    GONKA_HA=true VERSIOND_VERSIONS=v4 \
+    VERSIOND_HOSTS="ignored-host" \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" 2>/dev/null
+! grep -q 'ignored-host' "$tmpdir/precedence.cfg" || \
+    fail "VERSIOND_HOSTS must be ignored when an endpoint file is set"
+
+# DNS discovery is unchanged when neither explicit form is set.
+render dns GONKA_HA=true VERSIOND_VERSIONS=v4 2>/dev/null
+pool_servers dns | grep '^ *server-template versiond 64 versiond-pool:8080 .*resolvers docker init-addr none' >/dev/null || \
+    fail "DNS mode no longer renders the pool server-template"
+! pool_servers dns | grep '^ *server versiond1 ' >/dev/null || \
+    fail "DNS mode must not render explicit servers"
+
+# Rejected inputs.
+expect_rejected() {
+    local name=$1 message=$2 body=$3
+    printf '%s\n' "$body" >"$tmpdir/$name.json"
+    if render "$name" GONKA_HA=true VERSIOND_VERSIONS=v4 \
+        VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/$name.json" 2>"$tmpdir/$name.err"; then
+        fail "$name: an invalid endpoint file was accepted"
+    fi
+    grep -q -- "$message" "$tmpdir/$name.err" || \
+        fail "$name: unexpected rejection: $(cat "$tmpdir/$name.err")"
+}
+expect_rejected empty 'non-empty JSON array' '[]'
+expect_rejected object 'cannot parse' '{"id": "a", "host": "1.1.1.1"}'
+expect_rejected duplicate 'declared twice' \
+    '[{"id":"a","host":"1.1.1.1"},{"id":"a","host":"1.1.1.2"}]'
+expect_rejected port 'out-of-range port' '[{"id":"a","host":"1.1.1.1","port":70000}]'
+expect_rejected host 'invalid host' '[{"id":"a","host":"bad host"}]'
+expect_rejected id 'invalid id' '[{"id":"a b","host":"1.1.1.1"}]'
+if render missing GONKA_HA=true VERSIOND_VERSIONS=v4 \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/does-not-exist.json" 2>"$tmpdir/missing.err"; then
+    fail "a missing endpoint file was accepted"
+fi
+grep -q 'is not readable' "$tmpdir/missing.err" || \
+    fail "missing endpoint file: unexpected rejection"
+
+# HTTP/1.1 mock upstreams keep the check and do not speak h2. The h2
+# frontend bind stays; only the versiond server lines change.
+render h1 VERSIOND_ROUTER_BACKEND_H2=false GONKA_HA=true VERSIOND_VERSIONS=v4 2>/dev/null
+h1_servers=$(grep -E '^[[:space:]]*server(-template)? versiond' "$tmpdir/h1.cfg")
+! grep -q 'proto h2' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must not be proto h2"
+! grep -q 'check-proto' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must not set check-proto"
+grep -q ' check inter 1s fall 1 rise 2 ' <<<"$h1_servers" || \
+    fail "HTTP/1.1 upstreams must still be health-checked"
+
+# The real HAProxy must accept every rendered shape.
+for name in endpoints legacy-dns hosts dns h1; do
+    docker run --rm --user 0 -v "$tmpdir:$tmpdir:ro" "$haproxy_image" \
+        haproxy -c -f "$tmpdir/$name.cfg" >/dev/null 2>"$tmpdir/$name.check" || \
+        fail "$name: HAProxy rejected the rendered configuration: $(cat "$tmpdir/$name.check")"
+done
+
+echo "endpoints-render_test: ok"

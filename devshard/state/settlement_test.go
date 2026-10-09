@@ -39,7 +39,7 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 
 	// RestHash should match independently computed value.
 	acc := sealedAccBytes32(st.SealedAcc)
-	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, types.HeightSyncEscrowCommitFromState(&st))
 	require.NoError(t, err)
 	require.Equal(t, restHash, payload.RestHash)
 }
@@ -257,6 +257,44 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	root, err := VerifySettlement(*payload, group, verifier, warmKeys)
 	require.NoError(t, err)
 	require.Len(t, root, 32)
+}
+
+func TestVerifySettlement_SiblingWarmKeySignatures(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{2, 1})
+	require.Len(t, group, 3)
+	verifier := signing.NewSecp256k1Verifier()
+
+	hostStats := map[uint32]*types.HostStats{
+		0: {Cost: 100},
+		1: {Cost: 200},
+		2: {Cost: 150},
+	}
+	st := types.EscrowState{Balance: 9900, StateRootAndProtocolVersion: "dev", HostStats: hostStats}
+
+	payload, err := BuildSettlement("escrow-sibling", st, nil, 5)
+	require.NoError(t, err)
+	hostStatsHash, err := ComputeHostStatsHash(hostStats)
+	require.NoError(t, err)
+	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
+	sigData, err := proto.Marshal(&types.StateSignatureContent{
+		StateRoot: stateRoot, EscrowId: "escrow-sibling", Nonce: 5,
+	})
+	require.NoError(t, err)
+
+	sig0, err := warm.Sign(sigData)
+	require.NoError(t, err)
+	sig1, err := warm.Sign(sigData)
+	require.NoError(t, err)
+	sig2, err := other.Sign(sigData)
+	require.NoError(t, err)
+	payload.Signatures = map[uint32][]byte{0: sig0, 1: sig1, 2: sig2}
+
+	warmKeys := map[uint32]string{0: warm.Address()}
+	_, err = VerifySettlement(*payload, group, verifier, warmKeys)
+	require.NoError(t, err, "warm key bound on slot 0 must count for sibling slot 1")
 }
 
 func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {

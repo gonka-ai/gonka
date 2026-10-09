@@ -3,8 +3,8 @@ package observability
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -164,6 +164,19 @@ func valueOrDefault(value, fallback string) string {
 	return value
 }
 
+// parseEnabledFlag accepts the devshard boolean grammar (on/off/yes/no)
+// plus the strconv.ParseBool tokens.
+func parseEnabledFlag(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "t", "true", "yes", "on":
+		return true, nil
+	case "0", "f", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid boolean value %q", raw)
+	}
+}
+
 func otelEnabled(cfg Config) bool {
 	env := strings.TrimSpace(cfg.EnabledEnv)
 	if env == "" {
@@ -173,7 +186,7 @@ func otelEnabled(cfg Config) bool {
 	if raw == "" {
 		return false
 	}
-	enabled, err := strconv.ParseBool(raw)
+	enabled, err := parseEnabledFlag(raw)
 	if err != nil {
 		logWarn(cfg, "config.invalid_enabled",
 			"Invalid OpenTelemetry enabled flag; observability will stay disabled",

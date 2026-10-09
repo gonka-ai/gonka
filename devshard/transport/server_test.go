@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -48,7 +49,10 @@ func registerServer(g *echo.Group, srv *Server) {
 		}
 	}
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
+	g.POST("/sessions/:id/verify-error-miss", withAuth(false, srv.HandleVerifyErrorMiss))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
 	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
@@ -57,7 +61,15 @@ func registerServer(g *echo.Group, srv *Server) {
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }
 
-func setupServerEnv(t *testing.T) *serverTestEnv {
+func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
+	return setupServerEnvHost(t, nil, opts...)
+}
+
+func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
+	return setupServerEnvEngine(t, nil, hostOpts, opts...)
+}
+
+func setupServerEnvEngine(t *testing.T, engine devshard.InferenceEngine, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -67,7 +79,9 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
-	engine := stub.NewInferenceEngine()
+	if engine == nil {
+		engine = stub.NewInferenceEngine()
+	}
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
@@ -77,10 +91,12 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 		InitialBalance: 100000,
 	}))
 
-	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
+	allHost := []host.HostOption{host.WithGrace(100), host.WithStorage(store)}
+	allHost = append(allHost, hostOpts...)
+	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, allHost...)
 	require.NoError(t, err)
 
-	srv, err := NewServer(h, store, verifier, userSigner.Address())
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), opts...)
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -98,6 +114,35 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	}
 }
 
+func TestNewServer_DefaultsRequestBodyLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	require.Equal(t, DefaultMaxBodySize, env.server.maxBodySize)
+}
+
+func TestServer_RejectsChunkedBodyOverActualLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	env.server.maxBodySize = 8
+
+	body := []byte("123456789")
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		testRoutePrefix+"/sessions/escrow-1/chat/completions",
+		strings.NewReader(string(body)),
+	)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+}
+
 func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -107,6 +152,20 @@ func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httpte
 
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+	return rec
+}
+
+func (env *serverTestEnv) doPostContentType(t *testing.T, path, contentType string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
 	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
 	rec := httptest.NewRecorder()
@@ -137,7 +196,7 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}
@@ -219,7 +278,7 @@ func TestServer_GetDiffs(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
@@ -229,6 +288,51 @@ func TestServer_GetDiffs(t *testing.T) {
 	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=1")
 	require.Equal(t, http.StatusOK, rec.Code)
 
+	var diffs []json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
+	require.Len(t, diffs, 1)
+}
+
+func TestServer_GetDiffs_RejectsRangeOverOnePage(t *testing.T) {
+	env := setupServerEnv(t)
+	const n = storage.DiffPageMaxNonces + 1
+	for i := uint64(1); i <= n; i++ {
+		require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+			Diff: types.Diff{Nonce: i},
+		}))
+	}
+
+	rec := env.doGet(t, fmt.Sprintf("/devshard/v2/sessions/escrow-1/diffs?from=1&to=%d", n))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxNonces))
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxBytes))
+
+	rec = env.doGet(t, fmt.Sprintf("/devshard/v2/sessions/escrow-1/diffs?from=1&to=%d", storage.DiffPageMaxNonces))
+	require.Equal(t, http.StatusOK, rec.Code)
+	var diffs []json.RawMessage
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
+	require.Len(t, diffs, storage.DiffPageMaxNonces)
+}
+
+func TestServer_GetDiffs_RejectsByteBudget(t *testing.T) {
+	env := setupServerEnv(t)
+	huge := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		PromptHash: bytes.Repeat([]byte{0xab}, storage.DiffPageMaxBytes+1),
+	}}}
+	require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff: types.Diff{Nonce: 1, Txs: []*types.DevshardTx{huge}},
+	}))
+	require.NoError(t, env.store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff: types.Diff{Nonce: 2},
+	}))
+
+	rec := env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=2")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxNonces))
+	require.Contains(t, rec.Body.String(), fmt.Sprintf("%d", storage.DiffPageMaxBytes))
+
+	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=1")
+	require.Equal(t, http.StatusOK, rec.Code)
 	var diffs []json.RawMessage
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &diffs))
 	require.Len(t, diffs, 1)
@@ -244,7 +348,7 @@ func TestServer_GetMempool(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
@@ -320,7 +424,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// inference 1 % 1 = 0, executor = slot 0.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
 	}}}
@@ -409,7 +513,7 @@ func TestServer_StreamingInference(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 		Stream: true,
@@ -539,6 +643,69 @@ func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
+	env := setupServerEnv(t)
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(ChallengeReceiptRequest{
+		InferenceID: 1,
+		Payload: &PayloadJSON{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   testutil.TestMaxTokens,
+			StartedAt:   1000,
+		},
+		Diffs: []DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	env.server.host.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}})
+
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp ChallengeReceiptResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Receipt, "challenge must return the executor receipt")
+	require.NotEmpty(t, resp.Mempool, "challenge response must return recovery mempool txs")
+
+	txs, err := DevshardTxsFromBytes(resp.Mempool)
+	require.NoError(t, err)
+	require.True(t, hasConfirmStartTx(txs, 1), "recovery mempool must include MsgConfirmStart")
+	require.False(t, hasConfirmStartTx(txs, 99), "recovery mempool must not include other inferences")
+	requireRecoveryOnlyFor(t, txs, 1)
+}
+
+func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
+func requireRecoveryOnlyFor(t *testing.T, txs []*types.DevshardTx, id uint64) {
+	t.Helper()
+	require.NotEmpty(t, txs)
+	for _, tx := range txs {
+		switch {
+		case tx.GetConfirmStart() != nil:
+			require.Equal(t, id, tx.GetConfirmStart().InferenceId)
+		case tx.GetFinishInference() != nil:
+			require.Equal(t, id, tx.GetFinishInference().InferenceId)
+		default:
+			t.Fatalf("unexpected recovery tx type: %T", tx.GetTx())
+		}
+	}
+}
+
 func TestServer_NonExecutor_SSE(t *testing.T) {
 	// 3 hosts, request to non-executor.
 	hostSigners := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
@@ -576,7 +743,7 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
 

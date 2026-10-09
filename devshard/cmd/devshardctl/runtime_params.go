@@ -87,6 +87,8 @@ type runtimeBuildDeps struct {
 	chainClient  *chain.Client
 	defaultModel string
 	perf         *PerfTracker
+	params       runtimeparams.Provider
+	metrics      *DevshardMetrics
 }
 
 func (d runtimeBuildDeps) validate() error {

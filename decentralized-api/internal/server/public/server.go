@@ -13,8 +13,9 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"net/http"
-	"net/url"
 	"time"
+
+	"common/chainoracle/blocks"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
@@ -43,6 +44,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	chainOracle         blocks.BlockOracle
 }
 
 // ServerOption configures optional Server dependencies.
@@ -156,12 +158,15 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
+	e.GET("/v1/versions", s.getVersions)
+
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
 	return s
 }
 
 func (s *Server) Start(addr string) {
+	s.mountChainOracle()
 	go s.e.Start(addr)
 }
 
@@ -199,7 +204,9 @@ func (s *Server) mlNodeMetricsTargets() ([]observability.MLNodeTarget, error) {
 	}
 	targets := make([]observability.MLNodeTarget, 0, len(nodes))
 	for _, n := range nodes {
-		target, err := url.JoinPath(n.Node.PoCUrl(), "/api/v1/metrics")
+		// Shared helper with the mlnode ping job so federation and ping
+		// cannot drift onto different dial bases (PoCUrl, not PoCUrlWithVersion).
+		target, err := observability.JoinMLNodePoCPath(n.Node.PoCUrl(), observability.MLNodeMetricsPath)
 		if err != nil {
 			// unreachable for PoCUrl's format, but a silently vanished node
 			// is the exact failure class this endpoint must not have

@@ -7,10 +7,13 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/transport/rpcserver"
+	"devshard/types"
 )
 
 // ErrInitializing means devshard storage is not ready to serve session state yet.
@@ -27,28 +30,128 @@ type OwnerChatBinder interface {
 	BindOwnerChat(c echo.Context) (*transport.Server, error)
 }
 
+// GroupPeerBinder authenticates a creator or slot member. Challenge / verify
+// may bind a new session when the body carries a gateway-signed start proof.
+// Gossip and repair must not CreateSession. Observability GETs must not.
+type GroupPeerBinder interface {
+	BindGroupPeer(c echo.Context) (*transport.Server, error)
+}
+
 // PayloadHandler serves GET /sessions/:id/payloads for a resolved session.
 type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
 }
 
-// RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Observability and host protocol routes resolve existing sessions only.
-// Only owner chat may bind a new session (via OwnerChatBinder).
-func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
+// StaleSessionReloader evicts an in-memory session that fell behind the shared
+// store and recovers it again. HostManager implements this; tests may not.
+type StaleSessionReloader interface {
+	ReloadStaleSession(escrowID string, stale *transport.Server) (*transport.Server, error)
+	RememberStaleNonce(escrowID string)
+}
+
+type routeOptions struct {
+	rpcAuth    *rpcserver.PeerAuthHandler
+	rpcSession *rpcserver.SessionHandler
+	rpcMuxOpts []rpcserver.MuxOption
+}
+
+// RouteOption configures RegisterLazySessionRoutes.
+type RouteOption func(*routeOptions)
+
+// WithPeerRPC mounts Connect handlers under /sessions/:id/rpc/*.
+func WithPeerRPC(auth *rpcserver.PeerAuthHandler, session *rpcserver.SessionHandler, muxOpts ...rpcserver.MuxOption) RouteOption {
+	return func(o *routeOptions) {
+		o.rpcAuth = auth
+		o.rpcSession = session
+		o.rpcMuxOpts = muxOpts
+	}
+}
+
+// retiredPeerHTTPRoutes are the Echo session routes Phase 7 removed. They
+// stay mounted so a pre-phase-3 peer gets 410 http_session_retired, not a
+// bare 404. diffs, mempool, and signatures stay as the versionless ops GETs.
+var retiredPeerHTTPRoutes = []struct {
+	method string
+	path   string
+}{
+	{http.MethodPost, "/sessions/:id/chat/completions"},
+	{http.MethodPost, "/sessions/:id/height-sync"},
+	{http.MethodPost, "/sessions/:id/heightsync/repair"},
+	{http.MethodPost, "/sessions/:id/verify-timeout"},
+	{http.MethodPost, "/sessions/:id/verify-error-miss"},
+	{http.MethodPost, "/sessions/:id/challenge-receipt"},
+	{http.MethodPost, "/sessions/:id/gossip/nonce"},
+	{http.MethodPost, "/sessions/:id/gossip/txs"},
+	{http.MethodGet, "/sessions/:id/payloads"},
+}
+
+func retiredPeerHTTP(c echo.Context) error {
+	return transport.HTTPError(c, http.StatusGone, transport.DevshardErrorHTTPSessionRetired, transport.HTTPSessionRetiredMessage)
+}
+
+// IsRetiredPeerHTTP reports a decommissioned Echo session route. The path may
+// be the child shape (/sessions/id/...) or still carry /devshard/<version>.
+func IsRetiredPeerHTTP(method, path string) bool {
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	if len(parts) >= 4 && parts[0] == "devshard" {
+		parts = parts[2:]
+	}
+	if len(parts) < 3 || parts[0] != "sessions" || parts[1] == "" {
+		return false
+	}
+	rest := strings.Join(parts[2:], "/")
+	switch method {
+	case http.MethodPost:
+		switch rest {
+		case "chat/completions", "height-sync", "heightsync/repair", "verify-timeout", "verify-error-miss", "challenge-receipt", "gossip/nonce", "gossip/txs":
+			return true
+		}
+	case http.MethodGet:
+		return rest == "payloads"
+	}
+	return false
+}
+
+// RetiredPeerHTTPMiddleware answers 410 before drain, the HA storage guard,
+// and the canonical-id check. Those run first on the Echo instance and would
+// otherwise give an old peer a retryable 503 or a 400.
+func RetiredPeerHTTPMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			if req != nil && IsRetiredPeerHTTP(req.Method, req.URL.Path) {
+				return retiredPeerHTTP(c)
+			}
+			return next(c)
+		}
+	}
+}
+
+// RegisterLazySessionRoutes mounts the devshard HTTP surface on g.
+// Observability GETs (diffs, mempool, signatures) resolve existing sessions
+// only. Protocol session routes answer 410; peers use Connect /rpc/.
+func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler, opts ...RouteOption) {
+	var cfg routeOptions
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(canonicalEscrowIDMiddleware)
+	// Before auth: the signature covers the body, not its transfer encoding.
+	g.Use(skipPeerRPC(transport.RequestDecompressionMiddleware))
 
-	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
-		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
-	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
-		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
-	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
-		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
-	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
-		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipNonce }))
-	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver, false,
-		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipTxs }))
+	for _, route := range retiredPeerHTTPRoutes {
+		g.Add(route.method, route.path, retiredPeerHTTP)
+	}
+	_ = binder
+	_ = payloadHandler
 
 	g.GET("/sessions/:id/diffs", withSession(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetDiffs }))
@@ -57,16 +160,30 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 	g.GET("/sessions/:id/signatures", withSession(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetSignatures }))
 
-	if payloadHandler != nil {
-		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
-			srv, err := resolver.SessionServerExisting(c.Param("id"))
-			if err != nil {
-				recordSessionResolution(c, err, false)
-				return sessionHTTPError(c, err)
-			}
-			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-			return payloadHandler.HandlePayloads(c, srv)
-		})
+	if cfg.rpcAuth != nil {
+		mountPeerRPC(g, rpcserver.NewMux(cfg.rpcAuth, cfg.rpcSession, cfg.rpcMuxOpts...))
+	}
+}
+
+func canonicalEscrowIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		escrowID := c.Param("id")
+		if escrowID == "" {
+			return next(c)
+		}
+		// Watch and live Attach renewals use HostRPCEscrowID so the URL
+		// still matches /sessions/:id/rpc/. It is not a real escrow; JSON
+		// session routes must keep rejecting it.
+		if escrowID == transport.HostRPCEscrowID && isPeerRPCPath(c) {
+			return next(c)
+		}
+		if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusError, observability.ReasonInvalidEscrowID)
+			observability.Log(c.Request().Context(), observability.LevelWarn, "devshard rejected non-canonical escrow id",
+				observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, observability.ReasonInvalidEscrowID, err)
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return next(c)
 	}
 }
 
@@ -81,42 +198,9 @@ func withSession(
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return pick(srv)(c)
-	}
-}
-
-func withSessionAuth(
-	resolver SessionResolver,
-	recordChatTerminal bool,
-	pick func(*transport.Server) echo.HandlerFunc,
-) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		srv, err := resolver.SessionServerExisting(c.Param("id"))
-		if err != nil {
-			recordSessionResolution(c, err, recordChatTerminal)
-			return sessionHTTPError(c, err)
-		}
-		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		handler := pick(srv)
-		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
-		return srv.AuthMiddleware(wrapped)(c)
-	}
-}
-
-func withOwnerChat(
-	binder OwnerChatBinder,
-	recordChatTerminal bool,
-	pick func(*transport.Server) echo.HandlerFunc,
-) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		srv, err := binder.BindOwnerChat(c)
-		if err != nil {
-			recordSessionResolution(c, err, recordChatTerminal)
-			return sessionHTTPError(c, err)
-		}
-		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		handler := pick(srv)
-		return srv.RateLimitMiddleware(recordChatTerminal)(handler)(c)
+		return retryIfStale(c, resolver, srv, pick(srv)(c), func(next *transport.Server) error {
+			return pick(next)(c)
+		})
 	}
 }
 
@@ -139,8 +223,14 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return observability.MetricStatusError, observability.ReasonEscrowSettled
+	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return observability.MetricStatusError, observability.ReasonRateLimited
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
 		return observability.MetricStatusError, observability.ReasonVersionConflict
@@ -178,12 +268,16 @@ func routeLabel(c echo.Context) string {
 		return "chat_completions"
 	case strings.HasSuffix(path, "/payloads"):
 		return "payloads"
+	case strings.Contains(path, "verify-error-miss"):
+		return "verify_error_miss"
 	case strings.Contains(path, "verify-timeout"):
 		return "verify_timeout"
 	case strings.Contains(path, "challenge-receipt"):
 		return "challenge_receipt"
 	case strings.Contains(path, "gossip"):
 		return "gossip"
+	case strings.Contains(path, "/height-sync"):
+		return "height_sync"
 	default:
 		return "other"
 	}
@@ -203,8 +297,49 @@ func sessionHTTPError(c echo.Context, err error) error {
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
 	}
-	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return transport.HTTPError(c, http.StatusTooManyRequests, transport.DevshardErrorEscrowLookupLimited, "too many escrow lookups")
+	}
+	if errors.Is(err, bridge.ErrEscrowNotFound) {
+		return transport.HTTPError(c, http.StatusInternalServerError, transport.DevshardErrorEscrowNotFound, err.Error())
+	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) || errors.Is(err, types.ErrProtocolVersionMismatch) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}
+	if errors.Is(err, types.ErrStartProofMissing) {
+		return echo.NewHTTPError(http.StatusNotFound, err.Error())
+	}
+	if errors.Is(err, types.ErrInvalidUserSig) {
+		return echo.NewHTTPError(http.StatusForbidden, err.Error())
+	}
 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+}
+
+func isInvalidNonce(err error) bool {
+	return err != nil && errors.Is(err, types.ErrInvalidNonce)
+}
+
+// retryIfStale reloads a session that failed apply with ErrInvalidNonce and
+// retries the handler once. A second mismatch is treated as a bad client nonce
+// and negative-cached rather than spinning reload.
+func retryIfStale(c echo.Context, source any, stale *transport.Server, err error, retry func(*transport.Server) error) error {
+	if !isInvalidNonce(err) {
+		return err
+	}
+	reloader, ok := source.(StaleSessionReloader)
+	if !ok {
+		return err
+	}
+	next, reloadErr := reloader.ReloadStaleSession(c.Param("id"), stale)
+	if reloadErr != nil {
+		return err
+	}
+	err = retry(next)
+	if isInvalidNonce(err) {
+		reloader.RememberStaleNonce(c.Param("id"))
+	}
+	return err
 }

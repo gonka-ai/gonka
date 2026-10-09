@@ -2,29 +2,18 @@ package mode
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"strings"
 )
 
 // HeaderDevshardHA is set by versiond-router on requests that sticky-hash across
-// multiple VERSIOND_HOSTS (version not in VERSIOND_NON_HA_VERSIONS).
+// the HA pool (version not in VERSIOND_NON_HA_VERSIONS) when the deployment
+// declares itself HA or the selected backend has more than one usable server.
 const HeaderDevshardHA = "Devshard-Ha"
 
-// HasDevshardHAHeader reports whether the request was marked as multi-instance HA
-// by the router. Accepts value "true" / "1" / "yes" (case-insensitive) or an
-// empty value when the header is present.
-func HasDevshardHAHeader(h http.Header) bool {
-	if h == nil {
-		return false
-	}
-	vals, ok := h[http.CanonicalHeaderKey(HeaderDevshardHA)]
-	if !ok || len(vals) == 0 {
-		return false
-	}
-	v := strings.TrimSpace(strings.ToLower(vals[0]))
-	return v == "" || v == "true" || v == "1" || v == "yes"
-}
+// EnvHADeployment declares that multiple devshard instances may serve the same
+// escrow and therefore require fail-closed shared storage.
+const EnvHADeployment = "GONKA_HA"
 
 // ConfiguredForHA reports whether process env is explicitly fail-closed Postgres
 // suitable for multi-instance routing: DEVSHARD_STORAGE_MODE must be the literal

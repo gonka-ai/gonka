@@ -60,23 +60,15 @@ func PostGatewayChatSoftEx(
 		return resp.StatusCode, resp.Header.Clone(), ""
 	}
 	if resp.StatusCode >= 300 {
-		t.Logf("citest: chat status=%d body=%s", resp.StatusCode, truncateForLog(string(body)))
+		t.Logf("citest: chat status=%d body=%s", resp.StatusCode, truncateForLog(string(body), 300))
 		return resp.StatusCode, resp.Header.Clone(), ""
 	}
 	var out ChatCompletionResponse
 	if err := json.Unmarshal(body, &out); err != nil || len(out.Choices) == 0 {
-		t.Logf("citest: chat 200 but unusable body: %v %s", err, truncateForLog(string(body)))
+		t.Logf("citest: chat 200 but unusable body: %v %s", err, truncateForLog(string(body), 300))
 		return resp.StatusCode, resp.Header.Clone(), ""
 	}
 	return resp.StatusCode, resp.Header.Clone(), out.Choices[0].Message.Content
-}
-
-func truncateForLog(s string) string {
-	const max = 300
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
 }
 
 // LokiEntry is one JSON log line plus the stream labels Loki attached to it.

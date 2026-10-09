@@ -35,6 +35,19 @@ func (inf *inflight) openAttemptSpan(ctx context.Context, e *Redundancy, partici
 	inf.span = span
 }
 
+func endAttemptSpans(attempts []*inflight) {
+	for _, inf := range attempts {
+		inf.endAttemptSpan()
+	}
+}
+
+func (inf *inflight) noteAttemptStream(stream bool) {
+	if inf == nil || inf.span == nil || !inf.span.IsRecording() {
+		return
+	}
+	inf.span.SetAttributes(observability.AttrStream.Bool(stream))
+}
+
 func (inf *inflight) applyAttemptSpanAttrs() {
 	if inf == nil {
 		return

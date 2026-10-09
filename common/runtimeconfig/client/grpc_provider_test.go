@@ -153,7 +153,10 @@ func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	_, err := New(ctx, cfg)
 	require.NoError(t, err)
 
-	time.Sleep(30 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for len(srv.Calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	require.Equal(t, 1, len(srv.Calls()), "expected one initial_fetch while server height is 0, not a busy loop")
 
 	time.Sleep(60 * time.Millisecond)
@@ -253,6 +256,16 @@ func (r *recordingClient) GetHostEvents(ctx context.Context, in *gen.GetHostEven
 func (r *recordingClient) ListNodeCapacity(ctx context.Context, in *gen.ListNodeCapacityRequest, opts ...grpc.CallOption) (*gen.ListNodeCapacityResponse, error) {
 	return r.inner.ListNodeCapacity(ctx, in, opts...)
 }
+
+func (r *recordingClient) GetBlockHeader(ctx context.Context, in *gen.GetBlockHeaderRequest, opts ...grpc.CallOption) (*gen.GetBlockHeaderResponse, error) {
+	return r.inner.GetBlockHeader(ctx, in, opts...)
+}
+
+func (r *recordingClient) ProveBlockPath(ctx context.Context, in *gen.ProveBlockPathRequest, opts ...grpc.CallOption) (*gen.ProveBlockPathResponse, error) {
+	return r.inner.ProveBlockPath(ctx, in, opts...)
+}
+
+var _ gen.NodeManagerClient = (*recordingClient)(nil)
 
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	srv := testserver.New()

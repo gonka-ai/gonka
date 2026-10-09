@@ -8,6 +8,8 @@ assignees: ''
 
 ---
 
+> **Security issues:** do not use this form. Submit privately through the [HackerOne form](https://gonka.ai/docs/report-vulnerability/).
+
 # Title
 A short, specific, searchable title.
 ## Summary

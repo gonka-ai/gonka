@@ -1,9 +1,11 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -13,6 +15,7 @@ import (
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 func testEchoContext(t *testing.T) echo.Context {
@@ -93,11 +96,33 @@ func TestSessionHTTPErrorChainUnavailable(t *testing.T) {
 	require.Equal(t, transport.DevshardErrorChainUnavailable, rec.Header().Get(transport.HeaderDevshardError))
 }
 
+func TestSessionHTTPErrorEscrowLookupLimited(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowLookupLimited, rec.Header().Get(transport.HeaderDevshardError))
+	status, reason := sessionResolutionStatus(fmt.Errorf("get escrow: %w", bridge.ErrEscrowLookupLimited))
+	require.Equal(t, observability.ReasonRateLimited, reason)
+	_ = status
+}
+
 func TestSessionHTTPErrorEscrowNotFoundStill500(t *testing.T) {
-	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)).(*echo.HTTPError)
-	require.True(t, ok)
-	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusInternalServerError, rec.Code)
+	require.Equal(t, transport.DevshardErrorEscrowNotFound, rec.Header().Get(transport.HeaderDevshardError))
 }
 
 func TestSessionHTTPErrorDefault(t *testing.T) {
@@ -105,4 +130,160 @@ func TestSessionHTTPErrorDefault(t *testing.T) {
 	httpErr, ok := sessionHTTPError(c, fmt.Errorf("boom")).(*echo.HTTPError)
 	require.True(t, ok)
 	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+}
+
+// payloadsOnlyResolver refuses every escrow but one, so a route can be exercised without a real session.
+type payloadsOnlyResolver struct{ resolves string }
+
+func (r payloadsOnlyResolver) SessionServerExisting(escrowID string) (*transport.Server, error) {
+	if escrowID != r.resolves {
+		return nil, ErrInitializing
+	}
+	return nil, nil
+}
+
+func TestPayloadsRouteIsRetired(t *testing.T) {
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, countingBinder{n: new(int)}, nil)
+
+	request := httptest.NewRequest(http.MethodGet, "/sessions/"+compressedRequestEscrowID+"/payloads", nil)
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusGone, recorder.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, recorder.Header().Get(transport.HeaderDevshardError))
+	require.Contains(t, recorder.Body.String(), "Connect")
+}
+
+func TestRetiredPeerHTTPAnswersBeforeDrainAndCanonicalID(t *testing.T) {
+	e := echo.New()
+	e.Use(RetiredPeerHTTPMiddleware())
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
+		}
+	})
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil)
+
+	chat := httptest.NewRequest(http.MethodPost, "/sessions/not-an-id/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, chat)
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+
+	diffs := httptest.NewRequest(http.MethodGet, "/sessions/1/diffs", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, diffs)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Empty(t, rec.Header().Get(transport.HeaderDevshardError))
+}
+
+func TestIsRetiredPeerHTTP(t *testing.T) {
+	require.True(t, IsRetiredPeerHTTP(http.MethodPost, "/sessions/1/chat/completions"))
+	require.True(t, IsRetiredPeerHTTP(http.MethodPost, "/devshard/v5/sessions/1/height-sync"))
+	require.True(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/payloads"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/diffs"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/signatures"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodPost, "/sessions/1/rpc/devshard.transport.v1.SessionService/Chat"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/healthz"))
+}
+
+func TestChatRouteIsRetired(t *testing.T) {
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, countingBinder{n: new(int)}, nil)
+
+	request := httptest.NewRequest(http.MethodPost, "/sessions/"+compressedRequestEscrowID+"/chat/completions", nil)
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusGone, recorder.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, recorder.Header().Get(transport.HeaderDevshardError))
+}
+
+type countingBinder struct{ n *int }
+
+func (b countingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	*b.n++
+	return nil, ErrInitializing
+}
+
+func TestHeightSyncSeedUsesOwnerBind(t *testing.T) {
+	var n int
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: &n}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/1/height-sync", strings.NewReader("{}"))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+	require.Zero(t, n, "a retired height-sync POST must not bind a session")
+}
+
+type fakeStaleReloader struct {
+	reloads    int
+	remembered int
+	next       *transport.Server
+	reloadErr  error
+}
+
+func (f *fakeStaleReloader) ReloadStaleSession(string, *transport.Server) (*transport.Server, error) {
+	f.reloads++
+	return f.next, f.reloadErr
+}
+
+func (f *fakeStaleReloader) RememberStaleNonce(string) { f.remembered++ }
+
+func staleRetryContext(t *testing.T) echo.Context {
+	t.Helper()
+	c := testEchoContext(t)
+	c.SetParamNames("id")
+	c.SetParamValues("escrow-1")
+	return c
+}
+
+func TestRetryIfStale_ReloadsAndSucceeds(t *testing.T) {
+	stale, next := &transport.Server{}, &transport.Server{}
+	f := &fakeStaleReloader{next: next}
+	var saw *transport.Server
+	err := retryIfStale(staleRetryContext(t), f, stale, fmt.Errorf("wrap: %w", types.ErrInvalidNonce), func(s *transport.Server) error {
+		saw = s
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, f.reloads)
+	require.Equal(t, next, saw)
+	require.Zero(t, f.remembered)
+}
+
+func TestRetryIfStale_RemembersBogusNonce(t *testing.T) {
+	stale, next := &transport.Server{}, &transport.Server{}
+	f := &fakeStaleReloader{next: next}
+	err := retryIfStale(staleRetryContext(t), f, stale, fmt.Errorf("wrap: %w", types.ErrInvalidNonce), func(*transport.Server) error {
+		return fmt.Errorf("still: %w", types.ErrInvalidNonce)
+	})
+	require.ErrorIs(t, err, types.ErrInvalidNonce)
+	require.Equal(t, 1, f.reloads)
+	require.Equal(t, 1, f.remembered)
+}
+
+func TestRetryIfStale_IgnoresOtherErrors(t *testing.T) {
+	f := &fakeStaleReloader{next: &transport.Server{}}
+	orig := errors.New("not a nonce")
+	err := retryIfStale(staleRetryContext(t), f, &transport.Server{}, orig, func(*transport.Server) error {
+		t.Fatal("retry must not run for other errors")
+		return nil
+	})
+	require.Equal(t, orig, err)
+	require.Zero(t, f.reloads)
+}
+
+func TestRetryIfStale_SkipsWithoutReloader(t *testing.T) {
+	orig := fmt.Errorf("wrap: %w", types.ErrInvalidNonce)
+	err := retryIfStale(staleRetryContext(t), struct{}{}, &transport.Server{}, orig, func(*transport.Server) error {
+		t.Fatal("retry must not run without a reloader")
+		return nil
+	})
+	require.Equal(t, orig, err)
 }

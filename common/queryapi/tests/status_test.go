@@ -22,7 +22,9 @@ func TestGetStatus_Returns200(t *testing.T) {
 
 // -- GetVersions --
 
-type stubNodeInfoServer struct{ cmtservice.UnimplementedServiceServer }
+type stubNodeInfoServer struct {
+	cmtservice.UnimplementedServiceServer
+}
 
 func (s *stubNodeInfoServer) GetNodeInfo(_ context.Context, _ *cmtservice.GetNodeInfoRequest) (*cmtservice.GetNodeInfoResponse, error) {
 	return &cmtservice.GetNodeInfoResponse{
@@ -48,7 +50,9 @@ func TestGetVersions_Returns200(t *testing.T) {
 	assert.Contains(t, body, `"timestamp"`)
 }
 
-type errNodeInfoServer struct{ cmtservice.UnimplementedServiceServer }
+type errNodeInfoServer struct {
+	cmtservice.UnimplementedServiceServer
+}
 
 func (s *errNodeInfoServer) GetNodeInfo(_ context.Context, _ *cmtservice.GetNodeInfoRequest) (*cmtservice.GetNodeInfoResponse, error) {
 	return nil, status.Error(codes.Unavailable, "node down")

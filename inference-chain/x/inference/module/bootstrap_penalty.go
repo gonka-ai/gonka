@@ -14,7 +14,6 @@ type BootstrapPenaltyMode int
 const (
 	BootstrapPenaltyDirect BootstrapPenaltyMode = iota
 	BootstrapPenaltyDelegate
-	BootstrapPenaltyIntentOK
 	BootstrapPenaltyIntentMissed
 	BootstrapPenaltyNone
 )
@@ -75,6 +74,7 @@ func (am AppModule) resolveBootstrapPenaltyModes(
 	participants []*types.ActiveParticipant,
 	pocStageStartHeight int64,
 	inputs bootstrapPenaltyInputs,
+	previous *previousConfirmedWeights,
 ) (map[string]map[string]BootstrapPenaltyMode, error) {
 	if len(inputs.ReportByModel) == 0 {
 		return map[string]map[string]BootstrapPenaltyMode{}, nil
@@ -87,6 +87,7 @@ func (am AppModule) resolveBootstrapPenaltyModes(
 
 	return ResolveBootstrapPenaltyModes(
 		participants,
+		previousRootMembers(previous),
 		inputs.ReportByModel,
 		inputs.Delegations,
 		inputs.Intents,
@@ -94,8 +95,20 @@ func (am AppModule) resolveBootstrapPenaltyModes(
 	), nil
 }
 
+func previousRootMembers(previous *previousConfirmedWeights) map[string]bool {
+	members := make(map[string]bool)
+	if previous == nil {
+		return members
+	}
+	for addr := range previous.weights {
+		members[addr] = true
+	}
+	return members
+}
+
 func ResolveBootstrapPenaltyModes(
 	participants []*types.ActiveParticipant,
+	previousRoot map[string]bool,
 	reportByModel map[string]*types.BootstrapModelPreEligibility,
 	delegations map[string]map[string]string,
 	intents map[string]map[string]bool,
@@ -110,7 +123,9 @@ func ResolveBootstrapPenaltyModes(
 	modes := make(map[string]map[string]BootstrapPenaltyMode, len(modelIDs))
 	for _, modelID := range modelIDs {
 		report := reportByModel[modelID]
-		preEligible := report != nil && report.PreEligible
+		if report == nil || !report.PreEligible {
+			continue
+		}
 
 		modelModes := make(map[string]BootstrapPenaltyMode)
 		modelDelegations := delegations[modelID]
@@ -123,9 +138,8 @@ func ResolveBootstrapPenaltyModes(
 			}
 
 			addr := participant.Index
-			intentMode := BootstrapPenaltyIntentOK
-			if preEligible {
-				intentMode = BootstrapPenaltyIntentMissed
+			if !previousRoot[addr] {
+				continue
 			}
 			switch {
 			case modelCommitters[addr]:
@@ -133,7 +147,7 @@ func ResolveBootstrapPenaltyModes(
 			case modelDelegations != nil && modelDelegations[addr] != "":
 				modelModes[addr] = BootstrapPenaltyDelegate
 			case modelIntents != nil && modelIntents[addr]:
-				modelModes[addr] = intentMode
+				modelModes[addr] = BootstrapPenaltyIntentMissed
 			default:
 				modelModes[addr] = BootstrapPenaltyNone
 			}
