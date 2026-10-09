@@ -629,6 +629,42 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 	require.Greater(t, hits[1].Load(), int32(1))
 }
 
+func TestHeartbeatDisabled_SeedGateStillBlocks(t *testing.T) {
+	env := setupSeedSession(t, []bool{true}, WithRequireHeightSeed(true), WithDisableHeightSyncHeartbeat(true))
+	inner := env.slots[0].server.Config.Handler
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/devshard/v2/healthz" {
+			http.Error(w, "undeclared", http.StatusServiceUnavailable)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxy.Close)
+	cfg := seedHTTPConfig()
+	cfg.RoutePrefix = seedTestRoutePrefix
+	cfg.QueryTimeout = 2 * time.Second
+	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+	cfg.HeightSyncPeerTips = env.peerTips
+	env.session.clients = []HostClient{
+		transport.NewHTTPClient(proxy.URL, "escrow-1", env.session.signer, cfg),
+	}
+
+	logs := captureInfoLog(t)
+	base := env.session.Nonce()
+	env.session.StartHeartbeatLoop()
+	require.True(t, logs.contains("heartbeat loop disabled"))
+	require.Nil(t, env.session.heartbeatStop)
+	require.NotNil(t, env.session.heightSeedStop, "disabling the cadence must still start the seed loop")
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	err := env.session.WaitHeightSeed(waitCtx)
+	cancel()
+	var se *HeightSeedError
+	require.ErrorAs(t, err, &se)
+	require.Equal(t, transport.DevshardErrorCatalogPending, se.Code)
+	require.Equal(t, base, env.session.Nonce())
+}
+
 func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 	env := setupSeedSession(t, []bool{true}, WithRequireHeightSeed(true))
 	var catalogReady atomic.Bool

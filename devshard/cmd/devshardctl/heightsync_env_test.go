@@ -118,10 +118,12 @@ func TestParseUintEnv(t *testing.T) {
 func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
 	t.Setenv(envHeightSyncHeartbeat, "")
 	require.False(t, heightSyncHeartbeatFromEnv())
+	require.True(t, !heightSyncHeartbeatFromEnv(), "unset is the bit gateway.go stores in DisableHeightSyncHeartbeat")
 
 	for _, v := range []string{"true", "1", "on", "TRUE", " On "} {
 		t.Setenv(envHeightSyncHeartbeat, v)
 		require.True(t, heightSyncHeartbeatFromEnv(), v)
+		require.False(t, !heightSyncHeartbeatFromEnv(), v)
 	}
 	for _, v := range []string{"false", "0", "off", "no", "yes", "maybe", "TRUEISH"} {
 		t.Setenv(envHeightSyncHeartbeat, v)
