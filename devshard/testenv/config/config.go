@@ -116,8 +116,23 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int    `yaml:"http_port"`
-	Host     string `yaml:"host"`
+	HTTPPort   int                 `yaml:"http_port"`
+	Host       string              `yaml:"host"`
+	ReplayFile string              `yaml:"replay_file,omitempty"`
+	Nodes      []MockOpenAINodeCfg `yaml:"nodes"`
+}
+
+// MockOpenAINodeCfg configures one independently-behaving Mock ML container.
+// An empty Nodes slice preserves the historical single mock-openai service.
+type MockOpenAINodeCfg struct {
+	Name          string  `yaml:"name"`
+	TTFT          string  `yaml:"ttft,omitempty"`
+	TokenInterval string  `yaml:"token_interval,omitempty"`
+	Workers       int     `yaml:"workers,omitempty"`
+	Queue         int     `yaml:"queue,omitempty"`
+	Hang          bool    `yaml:"hang,omitempty"`
+	FailureRate   float64 `yaml:"failure_rate,omitempty"`
+	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -146,15 +161,19 @@ type DevshardctlCfg struct {
 	IP   string `yaml:"ip"`
 }
 
-// PostgresCfg is optional shared storage for devshardd children.
+// PostgresCfg configures storage for devshardd children. PerParticipant creates
+// one isolated Postgres service per on-chain participant while replicas of that
+// participant share its service. The default is the existing shared service
+// used by HA-specific testenv scenarios.
 type PostgresCfg struct {
-	Enabled  bool   `yaml:"enabled"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	IP       string `yaml:"ip"`
+	Enabled        bool   `yaml:"enabled"`
+	PerParticipant bool   `yaml:"per_participant"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	Database       string `yaml:"database"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	IP             string `yaml:"ip"`
 }
 
 // EscrowMeta describes slot layout gencompose owns (distinct from escrows[] seed).
@@ -584,10 +603,29 @@ func (c *File) Validate() error {
 		return errors.New("user key and address must be set (run gencompose)")
 	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
-		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")
+		return errors.New("versiond.mode multi requires postgres.enabled: true")
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
+	for i, node := range c.MockOpenAI.Nodes {
+		if strings.TrimSpace(node.Name) == "" {
+			return fmt.Errorf("mock_openai.nodes[%d].name must not be empty", i)
+		}
+		if _, exists := seenMLNodes[node.Name]; exists {
+			return fmt.Errorf("mock_openai.nodes contains duplicate name %q", node.Name)
+		}
+		if node.Workers < 0 || node.Queue < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		if node.FailureRate < 0 || node.FailureRate > 1 {
+			return fmt.Errorf("mock_openai.nodes[%d] failure_rate must be between 0 and 1", i)
+		}
+		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
+			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		seenMLNodes[node.Name] = struct{}{}
 	}
 	return nil
 }

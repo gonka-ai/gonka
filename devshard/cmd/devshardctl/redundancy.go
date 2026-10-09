@@ -2080,6 +2080,12 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		if attemptCtx.Err() != nil {
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_unwound_after_cancel",
+				"host", inf.hostID,
+				"cancel_error", attemptCtx.Err(),
+			)
+		}
 		streamBytes := int64(0)
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
@@ -2927,6 +2933,10 @@ func (e *Redundancy) goTrackedRaceCleanup(parent context.Context, fn func(contex
 		defer e.raceCleanupWG.Done()
 		defer cancel()
 		defer stopPropagate()
+		logRequestStage(ctx, "race_cleanup_started", "escrow", e.devshardID)
+		defer func() {
+			logRequestStage(ctx, "race_cleanup_finished", "escrow", e.devshardID, "context_error", ctx.Err())
+		}()
 		if e.onRaceCleanupDone != nil {
 			defer e.onRaceCleanupDone()
 		}
@@ -3272,8 +3282,19 @@ func (e *Redundancy) recordHandleTimeoutResult(ctx context.Context, inf *infligh
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
 	bgCtx, _ := ensureRequestLogContext(context.Background())
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+	logRequestStage(bgCtx, "race_cleanup_waiting_for_pending",
+		"escrow", e.devshardID,
+		"winner_nonce", winnerNonce,
+		"pending", len(pendingInflights(attempts)),
+		"max_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
+	)
 
 	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
+	logRequestStage(bgCtx, "race_cleanup_pending_wait_finished",
+		"escrow", e.devshardID,
+		"winner_nonce", winnerNonce,
+		"pending", len(pendingInflights(attempts)),
+	)
 
 	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, opts); err != nil {
 		logRequestStage(bgCtx, "background_race_finalize_failed", "escrow", e.devshardID, "error", err)
@@ -3379,6 +3400,12 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 	if len(pending) == 0 {
 		return
 	}
+	logRequestStage(ctx, "speculative_wait_started",
+		"escrow", e.devshardID,
+		"winner_nonce", winnerNonce,
+		"pending", len(pending),
+		"wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
+	)
 
 	timer := time.NewTimer(SecondaryWaitAfterWinner)
 	defer stopTimer(timer)
@@ -3395,8 +3422,12 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 	remaining := len(pending)
 	for remaining > 0 {
 		select {
-		case <-naturalDone:
+		case inf := <-naturalDone:
 			remaining--
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "speculative_attempt_finished_during_grace",
+				"host", inf.hostID,
+				"remaining", remaining,
+			)
 		case <-timer.C:
 			still := pendingInflights(attempts)
 			logRequestStage(ctx, "speculative_wait_abandoned",
@@ -3419,8 +3450,12 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 			// hung transport leaks its own goroutine rather than corrupting
 			// finalization with a concurrent write to inf.resp/inf.err.
 			for remaining > 0 {
-				<-naturalDone
+				inf := <-naturalDone
 				remaining--
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "speculative_attempt_drained_after_cancel",
+					"host", inf.hostID,
+					"remaining", remaining,
+				)
 			}
 			return
 		}
