@@ -11,6 +11,7 @@ import (
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/transport"
 	"devshard/types"
 	"net/http"
@@ -56,8 +57,8 @@ func pendingConfirmStarts(session *Session) []uint64 {
 }
 
 func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
-	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{}), receipt: []byte("receipt")}
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
 	prepared, err := session.PrepareInference(InferenceParams{
@@ -66,6 +67,7 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, prepared.HostIdx())
+	holding.receipt = signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 1000)
 
 	sent := make(chan struct{})
 	go func() {
@@ -91,8 +93,8 @@ func TestAResponseWithoutAReceiptQueuesNothing(t *testing.T) {
 }
 
 func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
-	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{}), receipt: []byte("receipt")}
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
 	prepared, err := session.PrepareInference(InferenceParams{
@@ -100,6 +102,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
+	holding.receipt = signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 1000)
 
 	sent := make(chan struct{})
 	go func() {
@@ -117,28 +120,33 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 }
 
 func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	prepared, err := session.PrepareInference(InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt")})
+	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{
+		Receipt: signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 0),
+	})
+	require.Empty(t, pendingConfirmStarts(session), "a receipt with no confirmation time must not be queued")
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
 	require.Equal(t, "refused", reason, "no confirmation stamp means the chain was told nothing to match")
 }
 
 func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	prepared, err := session.PrepareInference(InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: 1000})
+	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{
+		Receipt: signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 1000), ConfirmedAt: 1000,
+	})
 	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt")})
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
@@ -168,7 +176,7 @@ func useBubbleConfirmWait(session *Session) {
 }
 
 func TestAReceiptEndsTheRefusalWait(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	nonce := prepareNonce(t, session)
 
 	synctest.Test(t, func(t *testing.T) {
@@ -178,10 +186,42 @@ func TestAReceiptEndsTheRefusalWait(t *testing.T) {
 			done <- session.sleepRefusal(context.Background(), nonce, time.Now(), time.Now().Add(time.Minute), nil)
 		}()
 		synctest.Wait()
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		confirmedAt := time.Now().Unix()
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{
+			Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
+		})
 		synctest.Wait()
 
 		require.False(t, <-done, "a confirmed inference is not a refusal, so the wait has to stop")
+	})
+}
+
+func TestAForgedReceiptDoesNotEndTheRefusalWait(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	nonce := prepareNonce(t, session)
+
+	synctest.Test(t, func(t *testing.T) {
+		useBubbleConfirmWait(session)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done := make(chan bool, 1)
+		go func() {
+			done <- session.sleepRefusal(ctx, nonce, time.Now(), time.Now().Add(time.Minute), nil)
+		}()
+		synctest.Wait()
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("forged"), ConfirmedAt: time.Now().Unix()})
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("a receipt that is not the executor's signature must not stop the refusal")
+		default:
+		}
+		reason, _ := session.TimeoutDeadline(nonce, time.Now())
+		require.Equal(t, "refused", reason)
+
+		cancel()
+		synctest.Wait()
+		require.False(t, <-done)
 	})
 }
 
@@ -196,19 +236,25 @@ func TestAPendingInferenceWaitsOutTheRefusalDeadline(t *testing.T) {
 func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
-		confirm func(t *testing.T, session *Session, nonce uint64)
+		confirm func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64)
 	}{
-		{"stream receipt", func(t *testing.T, session *Session, nonce uint64) {
+		{"stream receipt", func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) {
 			t.Helper()
-			session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+			confirmedAt := time.Now().Unix()
+			session.confirmStartOnReceipt(nonce, &host.HostResponse{
+				Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
+			})
 		}},
-		{"finished response", func(t *testing.T, session *Session, nonce uint64) {
+		{"finished response", func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) {
 			t.Helper()
-			require.NoError(t, session.ProcessResponse(0, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()}, nonce))
+			confirmedAt := time.Now().Unix()
+			require.NoError(t, session.ProcessResponse(0, &host.HostResponse{
+				Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
+			}, nonce))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			session, _, _ := setupSession(t, 3, 100000, 10)
+			session, hosts, _ := setupSession(t, 3, 100000, 10)
 			prepared, err := session.PrepareInference(InferenceParams{
 				Model: "llama", Prompt: testutil.TestPrompt,
 				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Add(-time.Hour).Unix(),
@@ -232,7 +278,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 					done <- result
 				}()
 				synctest.Wait()
-				tc.confirm(t, session, prepared.Nonce())
+				tc.confirm(t, session, hosts, prepared.Nonce())
 				synctest.Wait()
 
 				result := <-done
@@ -270,7 +316,7 @@ func TestHandleTimeoutStillChallengesAPendingInference(t *testing.T) {
 }
 
 func TestAReceiptWithoutAStampDoesNotEndTheRefusalWait(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	nonce := prepareNonce(t, session)
 
 	synctest.Test(t, func(t *testing.T) {
@@ -288,14 +334,17 @@ func TestAReceiptWithoutAStampDoesNotEndTheRefusalWait(t *testing.T) {
 		default:
 		}
 
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		confirmedAt := time.Now().Unix()
+		session.confirmStartOnReceipt(nonce, &host.HostResponse{
+			Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
+		})
 		synctest.Wait()
 		require.False(t, <-done)
 	})
 }
 
 func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	nonce := prepareNonce(t, session)
 	other := prepareNonce(t, session)
 
@@ -308,7 +357,10 @@ func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
 			done <- session.sleepRefusal(ctx, nonce, time.Now(), time.Now().Add(time.Minute), nil)
 		}()
 		synctest.Wait()
-		session.confirmStartOnReceipt(other, &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		confirmedAt := time.Now().Unix()
+		session.confirmStartOnReceipt(other, &host.HostResponse{
+			Receipt: signedExecutorReceipt(t, session, hosts, other, confirmedAt), ConfirmedAt: confirmedAt,
+		})
 		synctest.Wait()
 		select {
 		case <-done:

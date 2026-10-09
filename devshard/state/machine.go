@@ -980,34 +980,8 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	if rec.Status != types.StatusPending {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
 	}
-
-	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: msg.InferenceId,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    sm.state.EscrowID,
-		ConfirmedAt: msg.ConfirmedAt,
-	}
-	receiptData, err := deterministicMarshal.Marshal(receiptContent)
-	if err != nil {
-		return fmt.Errorf("marshal executor receipt: %w", err)
-	}
-
-	recovered, err := sm.verifier.RecoverAddress(receiptData, msg.ExecutorSig)
-	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
-	}
-
-	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
-	if recovered != expectedAddr {
-		if !sm.ResolveWarmKey(rec.ExecutorSlot, recovered, expectedAddr) {
-			return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
-				types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
-		}
+	if err := sm.verifyExecutorReceiptLocked(rec, msg.InferenceId, msg.ConfirmedAt, msg.ExecutorSig, true); err != nil {
+		return err
 	}
 
 	rec.Status = types.StatusStarted
@@ -1018,6 +992,74 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		"confirmed_at", msg.ConfirmedAt,
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// VerifyConfirmStart reports whether sig is the assigned executor's receipt for inferenceID
+// at confirmedAt. It does not change the inference or warm-key bindings: a warm key is stored
+// only when the confirm is applied, so a receipt that never lands cannot move the state root.
+// Caller must not hold sm.mu.
+func (sm *StateMachine) VerifyConfirmStart(inferenceID uint64, confirmedAt int64, sig []byte) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	rec, ok := sm.state.Inferences[inferenceID]
+	if !ok {
+		if sm.isInferenceEvictedFromLive(inferenceID) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, inferenceID)
+		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, inferenceID)
+	}
+	if rec.Status != types.StatusPending {
+		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+	return sm.verifyExecutorReceiptLocked(rec, inferenceID, confirmedAt, sig, false)
+}
+
+// verifyExecutorReceiptLocked checks that sig recovers to the assigned executor (or its warm key)
+// over the receipt the chain will rebuild. persistWarm stores a newly resolved warm key; only the
+// apply path sets it, because that write is part of the diff's post-state. Caller holds sm.mu.
+func (sm *StateMachine) verifyExecutorReceiptLocked(rec *types.InferenceRecord, inferenceID uint64, confirmedAt int64, sig []byte, persistWarm bool) error {
+	receiptContent := &types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  rec.PromptHash,
+		Model:       rec.Model,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		StartedAt:   rec.StartedAt,
+		EscrowId:    sm.state.EscrowID,
+		ConfirmedAt: confirmedAt,
+	}
+	receiptData, err := deterministicMarshal.Marshal(receiptContent)
+	if err != nil {
+		return fmt.Errorf("marshal executor receipt: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(receiptData, sig)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
+	}
+	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
+	if recovered == expectedAddr {
+		return nil
+	}
+	authorized := false
+	if persistWarm {
+		authorized = sm.ResolveWarmKey(rec.ExecutorSlot, recovered, expectedAddr)
+	} else {
+		authorized = sm.warmKeyAcceptedLocked(rec.ExecutorSlot, recovered, expectedAddr)
+	}
+	if !authorized {
+		return fmt.Errorf("%w: expected executor %s (slot %d), got %s",
+			types.ErrInvalidExecutorSig, expectedAddr, rec.ExecutorSlot, recovered)
+	}
+	return nil
+}
+
+// warmKeyAcceptedLocked reports whether recovered may sign for slotID. A binding that is not
+// cached yet is checked with the resolver and left unstored. Caller holds sm.mu.
+func (sm *StateMachine) warmKeyAcceptedLocked(slotID uint32, recovered, expected string) bool {
+	if warm, ok := sm.state.WarmKeys[slotID]; ok {
+		return warm == recovered
+	}
+	return sm.CheckWarmKey(recovered, expected)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
