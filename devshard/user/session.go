@@ -86,6 +86,9 @@ var VerifyTimeoutSlowLog = 15 * time.Second
 // timeout_vote_queue_expired. The count is still exact.
 const inflightSnapshotLimit = 8
 
+// nonceOutcomeRetention is how many nonces an outcome outlives its inference's seal.
+const nonceOutcomeRetention = 1024
+
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
 	confirmedAt int64
@@ -682,6 +685,9 @@ func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
 // maxRetainedDiffs. Signatures are trimmed to the same floor. Caller must
 // hold s.mu.
 func (s *Session) dropDiffPrefixLocked() {
+	if s.nonce%nonceOutcomeRetention == 0 {
+		s.dropSealedOutcomesLocked()
+	}
 	floor := minHostSyncNonce(s.hostSyncNonce, len(s.group))
 	if s.store != nil && len(s.diffs) > maxRetainedDiffs {
 		floor = max(floor, s.diffs[len(s.diffs)-maxRetainedDiffs].Nonce-1)
@@ -704,6 +710,17 @@ func (s *Session) dropDiffPrefixLocked() {
 	kept := make([]types.Diff, len(s.diffs)-cut)
 	copy(kept, s.diffs[cut:])
 	s.diffs = kept
+}
+
+// dropSealedOutcomesLocked drops the outcomes of inferences sealed at least nonceOutcomeRetention nonces ago,
+// so a reader between ProcessResponse and IsNonceFinished still finds a fresh one. Caller must hold s.mu.
+func (s *Session) dropSealedOutcomesLocked() {
+	if s.nonce < nonceOutcomeRetention {
+		return
+	}
+	for nonce := range s.sm.SealedAtOrBefore(slices.Collect(maps.Keys(s.nonceStates)), s.nonce-nonceOutcomeRetention) {
+		delete(s.nonceStates, nonce)
+	}
 }
 
 // dropSignaturesThroughLocked drops signature entries at or below floor.
