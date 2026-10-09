@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -267,9 +269,11 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "versiond-1:")
 	require.Contains(t, text, "versiond-2:")
 	require.Contains(t, text, "versiond-router:")
+	require.Contains(t, text, "context: ../../versiond-router")
+	require.Contains(t, text, "dockerfile: Dockerfile")
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
-	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
+	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: ""`)
 	require.Contains(t, text, "VERSIOND_ORACLE_URL")
 	require.Contains(t, text, "VERSIOND_OVERRIDE_v2")
 	require.Contains(t, text, "NODE_MANAGER_ADDR")
@@ -280,7 +284,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "KEY_NAME: versiond-0"))
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
-	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
@@ -298,6 +302,84 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "/health")
 	require.Contains(t, text, "DEVSHARD_MODEL")
 	require.Contains(t, text, "/v1/status")
+}
+
+func TestWriteCompose_ReplayUsesGatewayRuntimeCatalog(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+	cfg.MockOpenAI.ReplayFile = "/fixtures/replay.jsonl"
+	cfg.Escrows[0].ModelID = "model-a"
+	cfg.Escrows = append(cfg.Escrows, cfg.Escrows[0])
+	cfg.Escrows[1].ID = 2
+	cfg.Escrows[1].ModelID = "model-b"
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "DEVSHARDS_JSON:")
+	require.NotContains(t, text, "DEVSHARD_ESCROW_ID:")
+	require.NotContains(t, text, "DEVSHARD_MODEL:")
+
+	line := ""
+	for _, candidate := range strings.Split(text, "\n") {
+		if strings.Contains(candidate, "DEVSHARDS_JSON:") {
+			line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(candidate), "DEVSHARDS_JSON:"))
+			break
+		}
+	}
+	var runtimes []map[string]string
+	decoded, err := strconv.Unquote(line)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(decoded), &runtimes))
+	require.Len(t, runtimes, 2)
+	require.Equal(t, "model-a", runtimes[0]["model"])
+	require.Equal(t, "model-b", runtimes[1]["model"])
+}
+
+func TestWriteCompose_MultipleMockMLNodes(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", TTFT: "10ms", TokenInterval: "2ms", Workers: 8, Queue: 16},
+		{Name: "mock-openai-1", TTFT: "20ms", TokenInterval: "3ms", Workers: 4, Queue: 8, Hang: true},
+	}
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1:")
+	require.Contains(t, text, `MOCK_ML_NODES: "mock-openai-0=http://mock-openai-0:8088,mock-openai-1=http://mock-openai-1:8088"`)
+	require.Contains(t, text, `MOCK_OPENAI_WORKERS: "8"`)
+	require.Contains(t, text, `MOCK_OPENAI_QUEUE: "8"`)
+	require.Contains(t, text, `MOCK_OPENAI_HANG: "true"`)
+}
+
+func TestWriteCompose_PerParticipantPostgres(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Postgres.PerParticipant = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "devshard-postgres-versiond-0:")
+	require.Contains(t, text, "devshard-postgres-versiond-2:")
+	require.NotContains(t, text, "devshard-postgres-versiond-1:")
+	require.Equal(t, 2, strings.Count(text, "PGHOST: devshard-postgres-versiond-0"))
+	require.Equal(t, 1, strings.Count(text, "PGHOST: devshard-postgres-versiond-2"))
+	require.Equal(t, len(cfg.Hosts), strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
+	require.NotContains(t, text, "# HA pair shares Postgres")
 }
 
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
