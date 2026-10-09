@@ -38,13 +38,11 @@ func TestProveConstantTermKnowledge(t *testing.T) {
 	require.NoError(t, c.SetBytesCanonical(proof[:fr.Bytes]))
 	require.NoError(t, z.SetBytesCanonical(proof[fr.Bytes:]))
 
-	expected, err := types.DealerConstantTermPoKChallenge(42, "gonka1dealer", commitments, recomputeNonceCommitment(t, commitments[0], &c, &z))
-	require.NoError(t, err)
-	require.True(t, expected.Equal(&c))
+	expected := types.DealerConstantTermPoKChallenge(42, "gonka1dealer", commitments, recomputeNonceCommitment(t, commitments[0], &c, &z))
+	require.Equal(t, proof[:fr.Bytes], expected[:])
 
-	other, err := types.DealerConstantTermPoKChallenge(43, "gonka1dealer", commitments, recomputeNonceCommitment(t, commitments[0], &c, &z))
-	require.NoError(t, err)
-	require.False(t, other.Equal(&c))
+	other := types.DealerConstantTermPoKChallenge(43, "gonka1dealer", commitments, recomputeNonceCommitment(t, commitments[0], &c, &z))
+	require.NotEqual(t, proof[:fr.Bytes], other[:])
 }
 
 func TestProveConstantTermKnowledge_FreshNonce(t *testing.T) {

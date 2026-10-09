@@ -43,8 +43,9 @@ func commitPolynomial(coefficients []fr.Element) [][]byte {
 
 func proveConstantTerm(t testing.TB, epochID uint64, dealer string, commitments [][]byte, a0 *fr.Element) []byte {
 	k := randomScalar(t)
-	c, err := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, g2Mul(&k).ToAffine().Compress())
-	require.NoError(t, err)
+	challenge := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, g2Mul(&k).ToAffine().Compress())
+	var c fr.Element
+	require.NoError(t, c.SetBytesCanonical(challenge[:]))
 	var z fr.Element
 	z.Mul(&c, a0).Add(&z, &k)
 	cb, zb := c.Bytes(), z.Bytes()

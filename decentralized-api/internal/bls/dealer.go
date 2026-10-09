@@ -362,9 +362,10 @@ func proveConstantTermKnowledge(epochID uint64, dealer string, commitments [][]b
 	}
 	nonceCommitment := blst.P2Generator().Mult(kBytes[:], 255).ToAffine().Compress()
 
-	c, err := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceCommitment)
-	if err != nil {
-		return nil, err
+	challenge := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceCommitment)
+	var c fr.Element
+	if err := c.SetBytesCanonical(challenge[:]); err != nil {
+		return nil, fmt.Errorf("invalid challenge: %w", err)
 	}
 	var z fr.Element
 	z.Mul(&c, a0).Add(&z, &k)

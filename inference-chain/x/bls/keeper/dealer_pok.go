@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -42,11 +43,8 @@ func verifyDealerConstantTermPoK(epochID uint64, dealer string, commitments [][]
 		return fmt.Errorf("nonce commitment is the identity")
 	}
 
-	expected, err := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceCommitment.Compress())
-	if err != nil {
-		return err
-	}
-	if !expected.Equal(&c) {
+	expected := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceCommitment.Compress())
+	if !bytes.Equal(expected[:], proof[:fr.Bytes]) {
 		return fmt.Errorf("challenge mismatch")
 	}
 	return nil
