@@ -1073,20 +1073,6 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
-// SessionHead reads the executor's applied nonce and state root over HTTP.
-// Peer retries use RPCClient.SessionHead, which calls SessionService.GetState.
-func (c *HTTPClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
-	timeout := c.config.QueryTimeout
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	var resp StateResponse
-	if err := c.getBounded(ctx, "/sessions/"+c.escrowID+"/state", timeout, 64<<10, &resp); err != nil {
-		return 0, nil, err
-	}
-	return resp.Nonce, resp.StateRoot, nil
-}
-
 // RefusalQueryBudget is the tip-read budget a refused-timeout verifier uses.
 func (c *HTTPClient) RefusalQueryBudget() time.Duration {
 	if c == nil || c.config.QueryTimeout <= 0 {

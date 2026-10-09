@@ -1033,16 +1033,8 @@ func (s *Server) ServeGetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return s.host.GetSignatures(nonce)
 }
 
-func (s *Server) HandleGetState(c echo.Context) error {
-	nonce, root, err := s.ServeGetState()
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
-	}
-	c.Response().Header().Set("Cache-Control", "no-store")
-	return writeJSON(c, http.StatusOK, StateResponse{Nonce: nonce, StateRoot: root})
-}
-
-// ServeGetState is the transport-neutral core behind GET .../state.
+// ServeGetState is the applied tip behind SessionService.GetState.
+// The peer session and AllowsSender gate that RPC.
 func (s *Server) ServeGetState() (uint64, []byte, error) {
 	return s.host.StateHead()
 }

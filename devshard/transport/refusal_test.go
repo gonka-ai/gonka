@@ -6,11 +6,9 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"connectrpc.com/connect"
-	json "github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
 
 	"devshard/storage"
@@ -30,27 +28,6 @@ func (m refusalMapStore) GetDiffs(_ string, from, to uint64) ([]types.DiffRecord
 		}
 	}
 	return out, nil
-}
-
-func TestGetStateReturnsTheAppliedTip(t *testing.T) {
-	env := setupServerEnv(t)
-	rec := env.doGet(t, testRoutePrefix+"/sessions/escrow-1/state")
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
-	var resp StateResponse
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, uint64(0), resp.Nonce)
-	require.Len(t, resp.StateRoot, 32)
-
-	remote := httptest.NewServer(env.echo)
-	t.Cleanup(remote.Close)
-	cfg := DefaultClientConfig()
-	cfg.RoutePrefix = testRoutePrefix
-	client := NewHTTPClient(remote.URL, "escrow-1", env.hostSigner, cfg)
-	nonce, root, err := client.SessionHead(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, resp.Nonce, nonce)
-	require.Equal(t, resp.StateRoot, root)
 }
 
 func TestRefusalJournalRequiresAContiguousRange(t *testing.T) {

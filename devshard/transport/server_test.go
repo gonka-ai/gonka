@@ -56,7 +56,6 @@ func registerServer(g *echo.Group, srv *Server) {
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
 	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
-	g.GET("/sessions/:id/state", srv.HandleGetState)
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)

@@ -448,9 +448,9 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	return diffs, nil
 }
 
-// SessionHead is the executor tip read for a refused-timeout retry. It uses the
-// peer RPC, including the gRPC codec when the connection has it. It does not
-// call the HTTP session route.
+// SessionHead is the executor tip read for a refused-timeout retry. It calls
+// SessionService.GetState on the peer session, using the gRPC codec when the
+// connection has it. The session token and AllowsSender gate that RPC.
 func (c *RPCClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
 	if c == nil || !c.Uses(EndpointState) {
 		return 0, nil, fmt.Errorf("session head requires the state rpc")
