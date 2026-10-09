@@ -36,7 +36,7 @@ FROM golang:1.25.9-alpine3.23 AS builder
 
 ARG GOOS
 ARG GOARCH=amd64
-ARG BLST_PORTABLE=0
+ARG BLST_PORTABLE=1
 ARG DEVSHARD_VERSION=dev
 ARG DEVSHARD_BINARY_VERSION=dev-log
 # Extra build tags appended to the release tag set. Testenv builds pass

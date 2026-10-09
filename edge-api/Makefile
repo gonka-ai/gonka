@@ -3,7 +3,7 @@
 include ../scripts/blst-portable.mk
 
 VERSION ?= $(shell git describe --always)
-BLST_PORTABLE ?= 0
+BLST_PORTABLE ?= 1
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORM ?= linux/amd64
@@ -13,7 +13,8 @@ GOARCH ?= amd64
 BUILD_FLAGS := -ldflags "-X main.version=$(VERSION)"
 
 ifeq ($(BLST_PORTABLE),1)
-export CGO_CFLAGS := $(CGO_CFLAGS) -D__BLST_PORTABLE__
+# Keep Go's default -O2 -g when CGO_CFLAGS is unset: blst must not be built unoptimized.
+export CGO_CFLAGS := $(or $(CGO_CFLAGS),-O2 -g) -D__BLST_PORTABLE__
 endif
 
 USE_REGISTRY_CACHE ?= 0
