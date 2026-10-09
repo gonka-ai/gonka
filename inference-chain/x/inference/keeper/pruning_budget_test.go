@@ -36,7 +36,7 @@ func countEpochGroupValidations(t *testing.T, k keeper.Keeper, ctx context.Conte
 	return n
 }
 
-// Two lists catch up at once: weighted removals per block stay within the shared
+// Two lists catch up at once: removals per block stay within the shared
 // budget, both lists make progress, and both backlogs are eventually cleared.
 func TestPruneSharedBudgetPerBlock(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
@@ -56,7 +56,7 @@ func TestPruneSharedBudgetPerBlock(t *testing.T) {
 	for block := int64(1); block <= 40 && inf+egv > 0; block++ {
 		require.NoError(t, k.Prune(ctx.WithBlockHeight(block), current))
 		inf2, egv2 := countInferencesToPrune(t, k, ctx, epochs), countEpochGroupValidations(t, k, ctx, epochs)
-		work := int64(inf-inf2)*keeper.InferenceRemoveCost + int64(egv-egv2)
+		work := int64(inf-inf2) + int64(egv-egv2)
 		require.LessOrEqual(t, work, keeper.PruneWorkPerBlock, "block %d", block)
 		if block == 1 {
 			require.Positive(t, work)

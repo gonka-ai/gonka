@@ -17,16 +17,14 @@ const (
 	// PruneWorkPerBlock caps removals of all pruners in one EndBlock. Reads are not
 	// charged; the epoch-0 pass bounds its reads separately.
 	PruneWorkPerBlock = int64(5000)
-	// InferenceRemoveCost: an inference removal also deletes the record at a random key.
-	InferenceRemoveCost = int64(3)
-	// Epoch-0 inference pass: removals and keys read per block. A removal costs 1 budget
-	// unit: these records have no InferencesToPrune entry.
+	// Epoch-0 inference pass: removals and keys read per block.
 	EpochZeroInferencePruningMaxPerBlock = 1000
 	EpochZeroInferenceScanMaxPerBlock    = 4000
 )
 
 // Prune runs every pruner within one shared PruneWorkPerBlock budget. The first pruner
-// rotates with the height so a long backlog in one list does not starve the others.
+// rotates with the height, so each pruner runs first at least once per len(pruners) blocks
+// and then removes up to its PruningMax; in other blocks a backlog ahead of it may take the rest.
 // A failing pruner stops only itself; the errors are joined.
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	params, err := k.GetParams(ctx)
@@ -298,7 +296,6 @@ func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[
 	return Pruner[collections.Pair[int64, string], collections.NoValue]{
 		Threshold:  params.EpochParams.InferencePruningEpochThreshold,
 		PruningMax: params.EpochParams.InferencePruningMax,
-		Cost:       InferenceRemoveCost,
 		List:       k.InferencesToPrune,
 		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[int64, string]] {
 			return collections.NewPrefixedPairRange[int64, string](epoch)
@@ -480,7 +477,6 @@ type budgetedPruner interface {
 type Pruner[K any, V any] struct {
 	Threshold      uint64
 	PruningMax     int64
-	Cost           int64 // budget units per removal; 0 means 1
 	List           collections.Map[K, V]
 	Ranger         func(ctx context.Context, epoch int64) collections.Ranger[K]
 	Logger         types.InferenceLogger
@@ -527,7 +523,7 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 }
 
 // prune removes at most PruningMax entries; a non-nil budget is shared with other
-// pruners and is charged Cost per removal.
+// pruners and is charged one unit per removal.
 func (p Pruner[K, V]) prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error {
 	if p.PruningMax <= 0 {
 		p.Logger.LogError("Skipping pruning with non-positive limit", types.Pruning,
@@ -551,16 +547,15 @@ func (p Pruner[K, V]) prune(ctx context.Context, k Keeper, currentEpochIndex int
 		return nil
 	}
 	limit := p.PruningMax
-	cost := max(p.Cost, 1)
 	if budget != nil {
-		limit = min(limit, *budget/cost)
+		limit = min(limit, *budget)
 		if limit <= 0 {
 			return nil
 		}
 	}
 	prunedCount := int64(0)
 	if budget != nil {
-		defer func() { *budget -= prunedCount * cost }()
+		defer func() { *budget -= prunedCount }()
 	}
 	p.Logger.LogInfo("Starting pruning", types.Pruning,
 		"start_epoch", startEpoch,
