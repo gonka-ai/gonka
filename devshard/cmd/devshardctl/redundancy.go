@@ -2610,14 +2610,6 @@ func nextInterChunkStallPlan(attempts []*inflight) (interChunkStallPlan, bool) {
 	return best, ok
 }
 
-func nextInterChunkStallTrigger(attempts []*inflight) (*inflight, time.Time, bool) {
-	plan, ok := nextInterChunkStallPlan(attempts)
-	if !ok {
-		return nil, time.Time{}, false
-	}
-	return plan.inf, plan.deadline, true
-}
-
 func winnerHardTimeoutDeadline(inf *inflight) (time.Time, bool) {
 	if inf == nil || inf.probe || inflightDone(inf) || StreamingAttemptHardTimeout <= 0 || inf.sendTime.IsZero() {
 		return time.Time{}, false
