@@ -1069,6 +1069,22 @@ type attemptStallLog struct {
 	OutputBytesAfter    int64 `json:"output_bytes_after"`
 }
 
+// signalChunkForwarded pokes the awaitRace loop so it re-derives its deadlines
+// against the lastChunkAt the writer has just set. See the chunkCh field for
+// why no existing select case covers this. The send is non-blocking and the
+// channel is buffered: a wake already sitting in the slot is equivalent to the
+// one being posted, since the loop re-derives the plan from lastChunkAt rather
+// than counting wakes.
+func (rg *raceGroup) signalChunkForwarded() {
+	if rg == nil || rg.chunkCh == nil {
+		return
+	}
+	select {
+	case rg.chunkCh <- struct{}{}:
+	default:
+	}
+}
+
 func (inf *inflight) finishActiveStall(now time.Time) {
 	if inf == nil {
 		return
@@ -1285,12 +1301,33 @@ type raceGroup struct {
 	writeCtx       context.Context
 	escrow         string
 
+	// chunkCh is the awaitRace loop's "some attempt forwarded an event" edge,
+	// carrying the wake that lastChunkAt has no other representation in the
+	// select. The inter-chunk stall deadline is anchored on lastChunkAt, which
+	// raceWriter.Write sets, but nothing else in the awaitRace select observes a
+	// chunk: winnerCh closes only on a *content* chunk, and both firstTokenCh
+	// and receiptCh are deliberately not select cases. Without this signal a
+	// pending attempt whose first forwarded event is a role-only delta leaves
+	// the loop parked on unrelated timers, so the inter-chunk cancel fires at
+	// whatever deadline wakes it next (an escalation, or the attempt hard
+	// timeout) instead of at lastChunkAt + InterChunkStallTimeout.
+	//
+	// It lives on the group rather than on each inflight so it exists before the
+	// first attempt's send goroutine starts -- a per-attempt field could not be
+	// armed by awaitRace in time, which would both race the writer and drop the
+	// very first chunk's wake. buffered/1 with a non-blocking send keeps the
+	// writer unblocked, and one shared channel is safe because every attempt is
+	// under the same loop, which re-derives its plan from lastChunkAt instead of
+	// counting wakes.
+	chunkCh chan struct{}
+
 	deterministicallyRejected atomic.Bool
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
 	return &raceGroup{
 		winnerCh: make(chan struct{}),
+		chunkCh:  make(chan struct{}, 1),
 		logCtx:   logCtx,
 		writeCtx: writeCtx,
 		escrow:   escrow,
@@ -1753,6 +1790,12 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	rw.inf.outputBytes.Add(int64(len(p)))
 	nowNano := now.UnixNano()
 	previousChunkNano := rw.inf.lastChunkAt.Swap(nowNano)
+	// Signal after the anchor moves, never before: the wake exists so the loop
+	// re-derives its deadlines from lastChunkAt, so a loop that wakes in the gap
+	// would still see the previous anchor -- and for an attempt's first chunk
+	// that is 0, which yields no deadline at all and silently drops the wake
+	// this fix exists to deliver.
+	rw.group.signalChunkForwarded()
 	// The silence before [DONE] is the end of the stream, not a host that went quiet.
 	if bytes.HasPrefix(p, sseDoneMarker) {
 		// Latch the terminator: everything after this is the upstream's meta tail,
@@ -2673,8 +2716,29 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 	return true, fmt.Errorf("%w (nonce_finished=%v)", errWinnerIncomplete, nonceFinished)
 }
 
+// adoptAttempt registers a newly started attempt with the awaitRace loop. Both
+// halves matter: the loop must see the attempt complete, and the attempt must be
+// able to wake the loop. The wake needs no wiring here -- every attempt writes
+// through its raceWriter, which signals the group's channel, so an attempt
+// started inside the loop is reachable the moment it exists.
+//
+// The two halves are kept together on purpose: at every call site the loop is
+// growing a slice it ranges over later, and pairing the append with the
+// registration is what keeps the slice from holding an attempt whose completion
+// the loop would never observe.
+func (e *Redundancy) adoptAttempt(inf *inflight, attempts []*inflight, doneCh chan<- *inflight) []*inflight {
+	if inf == nil {
+		return attempts
+	}
+	e.watchInflightDone(inf, doneCh)
+	return append(attempts, inf)
+}
+
 func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []*inflight, race *raceGroup, params user.InferenceParams, decision Decision, triedParticipants map[string]bool, clientFlag *cancelFlag) error {
 	doneCh := make(chan *inflight, e.maxAttempts()+1)
+	// chunkC is the group's, so it is already armed for every attempt -- including
+	// these, whose send goroutines started before this loop existed.
+	chunkC := race.chunkCh
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
@@ -2824,8 +2888,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				e.reincludePhaseTransitionAbortParticipant(inf, triedParticipants)
 				if len(attempts) < maxAttempts {
 					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "phase_transition_retry", inf, "phase_transition_aborted", triedParticipants, clientFlag); next != nil {
-						attempts = append(attempts, next)
-						e.watchInflightDone(next, doneCh)
+						attempts = e.adoptAttempt(next, attempts, doneCh)
 					}
 				}
 			}
@@ -2851,8 +2914,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if len(attempts) < maxAttempts {
 				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
 					trigger.inf.escalated = true
-					attempts = append(attempts, next)
-					e.watchInflightDone(next, doneCh)
+					attempts = e.adoptAttempt(next, attempts, doneCh)
 					break
 				}
 			}
@@ -2967,8 +3029,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				e.reincludeStallCanceledParticipant(stallInf, triedParticipants)
 				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "stream_stall_retry", stallInf, "stream_stalled", triedParticipants, clientFlag); next != nil {
 					stallInf.escalated = true
-					attempts = append(attempts, next)
-					e.watchInflightDone(next, doneCh)
+					attempts = e.adoptAttempt(next, attempts, doneCh)
 				}
 			}
 		case <-winnerHardTimeoutC:
@@ -2991,6 +3052,16 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if winning.cancel != nil {
 				winning.cancel()
 			}
+		// A chunk just landed on some attempt, so lastChunkAt moved and the
+		// inter-chunk deadline must be re-derived from it. This is the only case
+		// that observes a non-content forwarded event: the winner signal closes
+		// on content only, and firstTokenCh / receiptCh are deliberately not
+		// watched. Without it a pending attempt whose first event is a role-only
+		// delta never gets its stall timer armed, and the cancel fires whenever
+		// some unrelated timer happens to wake the loop.
+		// No body: the next iteration re-derives every deadline from lastChunkAt
+		// via nextInterChunkStallPlan.
+		case <-chunkC:
 		case <-winnerC:
 		case <-streamCtx.Done():
 			if escalationTimer != nil {

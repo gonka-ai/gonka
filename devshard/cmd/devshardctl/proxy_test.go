@@ -1328,6 +1328,87 @@ func closedCh() chan struct{} {
 	return ch
 }
 
+// delayedRoleChunkThenStallClient emits its role-only SSE event after delay, then
+// hangs. It is the shape that stranded the inter-chunk deadline: the chunk lands
+// while the loop is parked on the first-token escalation timer, and nothing in
+// the awaitRace select observes it.
+type delayedRoleChunkThenStallClient struct{ delay time.Duration }
+
+func (c delayedRoleChunkThenStallClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"role":"assistant"}}]}`+"\n\n")
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunInference_PendingRoleChunkStallCancelledAtDeadline is the regression for
+// the chunk-wake gap that #1917 review caught. A pending attempt (no winner) whose
+// only forwarded event is a role-only delta moves lastChunkAt, which is the anchor
+// for the inter-chunk cancel deadline -- but that chunk does not close winnerCh
+// (content only) and the select deliberately does not watch firstTokenCh/receiptCh.
+// Without a chunk wake the loop stays parked until some other timer fires, so the
+// cancel lands wherever that timer's deadline is rather than at
+// lastChunkAt + InterChunkStallTimeout.
+//
+// The escalation fallback is deliberately set far beyond the cancel threshold
+// (4s vs 100ms) so that the old code cannot cancel early by accident: the only way
+// to land near the threshold is for the chunk itself to wake the loop.
+func TestRunInference_PendingRoleChunkStallCancelledAtDeadline(t *testing.T) {
+	applyRedundancySettingsForTest(t, RedundancySettings{
+		ReceiptTimeoutMS:              5000,
+		FirstTokenTimeoutFloorMS:      4000,
+		PerInputTokenFirstTokenLagMS:  10,
+		InterChunkStallTimeoutMS:      100,
+		StreamingAttemptHardTimeoutMS: 30000,
+		PerInputTokenResponseLagMS:    100,
+		SecondaryWaitAfterWinnerMS:    5000,
+	})
+	// The observational threshold stays above the cancel threshold here; this test
+	// is about the cancel deadline alone.
+	savedStallLogThreshold := InterChunkStallLogThreshold
+	InterChunkStallLogThreshold = time.Second
+	t.Cleanup(func() { InterChunkStallLogThreshold = savedStallLogThreshold })
+
+	previousAttempts := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(3)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previousAttempts) })
+	previousPolicy := RedundancySpeedPolicy
+	RedundancySpeedPolicy = RedundancySpeedPolicyLegacy
+	t.Cleanup(func() { RedundancySpeedPolicy = previousPolicy })
+
+	env := setupTestProxy(t, 3, nil, true)
+	env.killables[0].inner = delayedRoleChunkThenStallClient{delay: 5 * time.Millisecond}
+	env.killables[1].inner = delayedRoleChunkThenStallClient{delay: 5 * time.Millisecond}
+	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "the request should be served once a replacement host answers")
+	require.Contains(t, buf.String(), `"content":"x"`,
+		"the replacement host's content should reach the client")
+	require.NotNil(t, env.killables[2].LastRequest(),
+		"the third host should have been asked after the first stalled")
+	// 5ms chunk delay + 100ms cancel + a replacement that answers immediately.
+	// Pre-fix this was ~4s (the first-token escalation wake), so the bound is not
+	// tightened to the threshold alone: it has to be far below the escalation
+	// deadline to distinguish the two paths, and far above the nominal 105ms to
+	// absorb scheduling jitter on a loaded CI box.
+	require.Less(t, elapsed, 2*time.Second,
+		"a pending role-only stall must be cancelled at the inter-chunk deadline, not at the escalation wake")
+}
+
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
 	setStreamingAttemptHardTimeout(t, 120*time.Millisecond)
