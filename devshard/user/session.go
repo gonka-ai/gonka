@@ -281,6 +281,7 @@ type Session struct {
 	signatures      map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
+	confirmWait     chan struct{}                // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
 	diffObserver    func(types.Diff)
 
@@ -513,6 +514,7 @@ func NewSession(
 		pinnedFinishIDs: make(map[uint64]int),
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
+		confirmWait:     make(chan struct{}),
 		verifierQueue:   SharedVerifierQueue,
 		diffObserver:    func(types.Diff) {},
 		//TODO: check if we should move it from Session
@@ -976,6 +978,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 
 	if outcome, ok := s.nonceStates[inferenceNonce]; ok && resp.Receipt != nil && resp.ConfirmedAt > 0 {
 		outcome.confirmedAt = resp.ConfirmedAt
+		s.wakeConfirmWaitLocked()
 	}
 
 	s.noteGatewayTipLocked()
@@ -1591,7 +1594,18 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 	// against a record the chain already advanced, which every verifier then rejects.
 	if outcome, tracked := s.nonceStates[inferenceNonce]; tracked && resp.ConfirmedAt > 0 {
 		outcome.confirmedAt = resp.ConfirmedAt
+		s.wakeConfirmWaitLocked()
 	}
+}
+
+// wakeConfirmWaitLocked releases every refusal wait. The receipt may belong to one of them, and a
+// wait for a different nonce simply looks again and goes back to sleep. Caller holds s.mu.
+func (s *Session) wakeConfirmWaitLocked() {
+	if s.confirmWait == nil {
+		return
+	}
+	close(s.confirmWait)
+	s.confirmWait = make(chan struct{})
 }
 
 func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
@@ -3181,10 +3195,12 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
-		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
+		if !s.sleepRefusal(ctx, nonce, sendTime, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}, recordClosed) {
-			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			if ctx.Err() != nil {
+				return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			}
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
@@ -3199,6 +3215,14 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 
 	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
+
+	// The challenge is chosen here, after the wait. A receipt that landed during it is no longer a
+	// refusal: the next diff starts the inference, verifiers reject a refusal against that record,
+	// and the execution sweep votes the timeout that matches the confirmation. Stop before any vote is sent.
+	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.inferenceConfirmed(nonce, sendTime) {
+		logging.Stage(ctx, "timeout_skipped", logFields("reason", "confirmed_before_vote")...)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "confirmed_before_vote"}, fmt.Errorf("inference %d: confirmed before the refusal vote", nonce)
+	}
 
 	if elapsed, refusalTimeout, unreachable := s.refusalDeadlineUnreachable(reason, payload); unreachable {
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "refusal_deadline_unreachable",
@@ -3459,6 +3483,68 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 	result.Accepted = true
 	logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out: error: %w", nonce, ErrInferenceMissed)
+}
+
+// inferenceConfirmed reports that a receipt with a confirmation stamp is known for nonce, either on
+// the record or queued for the next diff. That is the moment the inference leaves the refusal path.
+func (s *Session) inferenceConfirmed(nonce uint64, sendTime time.Time) bool {
+	reason, _ := s.TimeoutDeadline(nonce, sendTime)
+	return reason != "refused"
+}
+
+// sleepRefusal waits until the refusal deadline. A receipt for this inference ends the wait early, and
+// so does canceling ctx. It returns false in both of those cases; the caller tells them apart from ctx.
+// done, when set, is the v6 close check: a queued finish can end the wait before the deadline.
+func (s *Session) sleepRefusal(ctx context.Context, nonce uint64, sendTime time.Time, deadline time.Time, heartbeat func(), done ...func() bool) bool {
+	var nextHeartbeat time.Time
+	if heartbeat != nil && TimeoutHeartbeatInterval > 0 {
+		nextHeartbeat = time.Now().Add(TimeoutHeartbeatInterval)
+	}
+	var closed func() bool
+	if len(done) > 0 {
+		closed = done[0]
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return false
+		}
+		if closed != nil && closed() {
+			return false
+		}
+		if s.inferenceConfirmed(nonce, sendTime) {
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return !s.inferenceConfirmed(nonce, sendTime)
+		}
+
+		s.mu.Lock()
+		notify := s.confirmWait
+		s.mu.Unlock()
+		// The snapshot has to precede the check. A receipt in between closes the channel this
+		// select is about to watch; one that landed earlier is visible to inferenceConfirmed.
+		if s.inferenceConfirmed(nonce, sendTime) {
+			return false
+		}
+
+		wake := deadline
+		if !nextHeartbeat.IsZero() && nextHeartbeat.Before(wake) {
+			wake = nextHeartbeat
+		}
+		timer := time.NewTimer(time.Until(wake))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-notify:
+			timer.Stop()
+		case <-timer.C:
+			if heartbeat != nil && !nextHeartbeat.IsZero() && !time.Now().Before(nextHeartbeat) {
+				heartbeat()
+				nextHeartbeat = time.Now().Add(TimeoutHeartbeatInterval)
+			}
+		}
+	}
 }
 
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
