@@ -651,7 +651,9 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
-	var sawMeta bool       // true once we observe a devshard_meta tail
+	var sawDone bool
+	var forwardedInference bool
+	var sawMeta bool // true once we observe a devshard_meta tail
 	received := completionapi.NewReceivedResponseHasher()
 	defer func() { result.ReceivedResponseHashes = received.Sums() }()
 
@@ -661,7 +663,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 			streamBytes += int64(len(raw))
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			// Handled before the bound: the line arrived whole.
-			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
+			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawDone, &forwardedInference, &sawMeta)
 			if streamBytes > maxStream {
 				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
 				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
@@ -696,6 +698,16 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				}
 				if !sawTerminator {
 					return &result, ErrSSEStreamTruncated
+				}
+				// Receipt (or [DONE]) still completes the read. A content-bearing
+				// body that never emitted [DONE] is logged and is not an extra miss.
+				if forwardedInference && !sawDone {
+					logging.Error("sse_content_without_done",
+						"subsystem", "transport",
+						"escrow", c.escrowID,
+						"nonce", result.Nonce,
+						"has_receipt", len(result.Receipt) > 0,
+					)
 				}
 				return &result, nil
 			}
@@ -770,9 +782,12 @@ func (c *HTTPClient) handleSSELine(
 	received *completionapi.ReceivedResponseHasher,
 	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
-	writeErrLogged, unexpectedLineLogged, sawTerminator, sawMeta *bool,
+	writeErrLogged, unexpectedLineLogged, sawTerminator, sawDone, forwardedInference, sawMeta *bool,
 ) {
 	forward := func(event string) {
+		if event == "data" && forwardedInference != nil {
+			*forwardedInference = true
+		}
 		received.Add(line)
 		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
 			*writeErrLogged = true
@@ -797,6 +812,9 @@ func (c *HTTPClient) handleSSELine(
 	data := strings.TrimPrefix(line, "data: ")
 	if data == "[DONE]" {
 		*sawTerminator = true
+		if sawDone != nil {
+			*sawDone = true
+		}
 		forward("[DONE]")
 		return
 	}
