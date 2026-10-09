@@ -101,10 +101,11 @@ func TestDeveloperStatsPruningChargesSharedBudget(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	setDeveloperStatsForPruning(t, ctx, k, 1)
 
-	// Three index keys take 3 units; the ByEpoch record needs 400 more.
-	budget := int64(3 + keeper.DeveloperStatsByEpochRemoveCost - 1)
+	// 399 units cannot pay for the ByEpoch record: it is skipped and the three
+	// index keys still go.
+	budget := keeper.DeveloperStatsByEpochRemoveCost - 1
 	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
-	require.Equal(t, keeper.DeveloperStatsByEpochRemoveCost-1, budget)
+	require.Equal(t, keeper.DeveloperStatsByEpochRemoveCost-4, budget)
 	require.Empty(t, k.GetDeveloperStatsByTime(ctx, "developer", 0, 2))
 	_, found := k.GetDevelopersStatsByEpoch(ctx, "developer", 1)
 	require.True(t, found)
@@ -118,4 +119,17 @@ func TestDeveloperStatsPruningChargesSharedBudget(t *testing.T) {
 	budget = 0
 	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
 	require.Zero(t, budget)
+}
+
+func TestDeveloperStatsByEpochPrunedBeforeIndexBacklogDrains(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	// 1500 inferences: 4500 index keys, more than one block's key cap per prefix.
+	setDeveloperStatsForPruning(t, ctx, k, 1500)
+
+	budget := keeper.PruneWorkPerBlock
+	require.NoError(t, keeper.PruneDeveloperStatsWithBudgetForTesting(k, ctx, &budget))
+	_, found := k.GetDevelopersStatsByEpoch(ctx, "developer", 1)
+	require.False(t, found)
+	// 1 ByEpoch record (400 units) and 999 index keys.
+	require.Equal(t, keeper.PruneWorkPerBlock-keeper.DeveloperStatsByEpochRemoveCost-999, budget)
 }

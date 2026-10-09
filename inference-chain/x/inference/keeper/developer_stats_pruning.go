@@ -23,12 +23,12 @@ type developerStatsPruningTarget struct {
 }
 
 var developerStatsPruningTargets = []developerStatsPruningTarget{
+	// Each value holds all inference IDs of one developer and epoch and can be large:
+	// one per block, and first, so it does not wait for the index prefixes to drain.
+	{prefix: StatsDevelopersByEpoch, maxPerBlock: DeveloperStatsByEpochPruningMaxPerBlock, cost: DeveloperStatsByEpochRemoveCost},
 	{prefix: StatsDevelopersByInferenceAndModel, maxPerBlock: DeveloperStatsPruningMaxPerBlock, cost: 1},
 	{prefix: StatsDevelopersByInference, maxPerBlock: DeveloperStatsPruningMaxPerBlock, cost: 1},
 	{prefix: StatsDevelopersByTime, maxPerBlock: DeveloperStatsPruningMaxPerBlock, cost: 1},
-	// This prefix has relatively few keys, but each value contains all inference
-	// IDs for one developer and epoch and can be large. Delete only one per block.
-	{prefix: StatsDevelopersByEpoch, maxPerBlock: DeveloperStatsByEpochPruningMaxPerBlock, cost: DeveloperStatsByEpochRemoveCost},
 }
 
 // PruneDeveloperStats gradually removes the obsolete pre-devshard statistics.
@@ -55,7 +55,7 @@ func (k Keeper) pruneDeveloperStats(ctx context.Context, budget int64) (int64, i
 		if budget >= 0 {
 			limit = min(limit, (budget-used)/target.cost)
 			if limit <= 0 {
-				break
+				continue // a cheaper target may still fit
 			}
 		}
 		targetStore := prefix.NewStore(store, types.KeyPrefix(target.prefix))
@@ -74,9 +74,6 @@ func (k Keeper) pruneDeveloperStats(ctx context.Context, budget int64) (int64, i
 		prunedFromTarget := int64(len(keysToDelete))
 		pruned += prunedFromTarget
 		used += prunedFromTarget * target.cost
-		if prunedFromTarget == target.maxPerBlock {
-			break
-		}
 	}
 
 	if pruned > 0 {
