@@ -77,6 +77,16 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		}
 	}
 
+	// Reject a polynomial with a root at any real slot. A random dealer
+	// polynomial is zero at a fixed slot only with negligible probability, so a
+	// zero share is never legitimate: it opens the identity commitment, cannot be
+	// disputed, and leaves the recipient unable to produce a valid proof.
+	if slot, err := dealerCommitmentsZeroSlot(msg.Commitments, epochBLSData.ITotalSlots); err != nil {
+		return nil, fmt.Errorf("invalid commitments: %w", err)
+	} else if slot >= 0 {
+		return nil, fmt.Errorf("dealer part rejected: polynomial evaluates to zero at slot %d (would deal a zero share)", slot)
+	}
+
 	// Create dealer part storage
 	participantShares := make([]*types.EncryptedSharesForParticipant, len(msg.EncryptedSharesForParticipants))
 	for i := range msg.EncryptedSharesForParticipants {
