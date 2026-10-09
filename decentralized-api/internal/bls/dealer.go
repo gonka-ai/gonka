@@ -275,11 +275,18 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 		return nil, fmt.Errorf("failed to persist dealer openings for epoch %d: %w", epochID, err)
 	}
 
+	dealerAddress := bm.cosmosClient.GetAddress()
+	constantTermPoK, err := proveConstantTermKnowledge(epochID, dealerAddress, commitments, polynomial[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to prove knowledge of constant term: %w", err)
+	}
+
 	dealerPart := &types.MsgSubmitDealerPart{
-		Creator:                        bm.cosmosClient.GetAddress(),
+		Creator:                        dealerAddress,
 		EpochId:                        epochID,
 		Commitments:                    commitments,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,
+		ConstantTermPok:                constantTermPoK,
 	}
 
 	logging.Info("Generated dealer part with actual cryptography", inferenceTypes.BLS,
@@ -342,6 +349,31 @@ func computeG2CommitmentsBlst(coefficients []*fr.Element) [][]byte {
 		commitments[i] = commitment.Compress()
 	}
 	return commitments
+}
+
+func proveConstantTermKnowledge(epochID uint64, dealer string, commitments [][]byte, a0 *fr.Element) ([]byte, error) {
+	var k fr.Element
+	if _, err := k.SetRandom(); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+	kBytes := k.Bytes()
+	for j := 0; j < 16; j++ {
+		kBytes[j], kBytes[31-j] = kBytes[31-j], kBytes[j]
+	}
+	nonceCommitment := blst.P2Generator().Mult(kBytes[:], 255).ToAffine().Compress()
+
+	c, err := types.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceCommitment)
+	if err != nil {
+		return nil, err
+	}
+	var z fr.Element
+	z.Mul(&c, a0).Add(&z, &k)
+
+	cBytes := c.Bytes()
+	zBytes := z.Bytes()
+	proof := make([]byte, 0, types.DealerConstantTermPoKLen)
+	proof = append(proof, cBytes[:]...)
+	return append(proof, zBytes[:]...), nil
 }
 
 // evaluatePolynomial evaluates polynomial at given x using Horner's method

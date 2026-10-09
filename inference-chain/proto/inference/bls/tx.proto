@@ -74,6 +74,8 @@ message MsgSubmitDealerPart {
   // encrypted_shares_for_participants contains encrypted shares for all participants in order
   // Index i = shares for EpochBLSData.participants[i]
   repeated EncryptedSharesForParticipant encrypted_shares_for_participants = 4 [(gogoproto.nullable) = false];
+
+  bytes constant_term_pok = 5;
 }
 
 // MsgSubmitDealerPartResponse defines the response structure for executing a

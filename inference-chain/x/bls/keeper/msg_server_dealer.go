@@ -77,6 +77,10 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		}
 	}
 
+	if err := verifyDealerConstantTermPoK(msg.EpochId, msg.Creator, msg.Commitments, msg.ConstantTermPok); err != nil {
+		return nil, fmt.Errorf("invalid constant term proof of knowledge: %w", err)
+	}
+
 	// Create dealer part storage
 	participantShares := make([]*types.EncryptedSharesForParticipant, len(msg.EncryptedSharesForParticipants))
 	for i := range msg.EncryptedSharesForParticipants {
@@ -87,6 +91,7 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		DealerAddress:     msg.Creator,
 		Commitments:       msg.Commitments,
 		ParticipantShares: participantShares,
+		ConstantTermPok:   msg.ConstantTermPok,
 	}
 
 	// Constant-cost write: only this dealer's sub-key is updated.
