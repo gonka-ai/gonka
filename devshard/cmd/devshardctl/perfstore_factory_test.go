@@ -197,7 +197,7 @@ func TestPerfPrunerOnPostgresKeepsRequestAccounting(t *testing.T) {
 // Test flow:
 //  1. Replica A serves on Postgres and records a recent sample and a recent request.
 //  2. Replica B starts with a perf.db holding a sample a little inside the walk's stop line and a full request log, and imports it.
-//  3. A prune pass a few minutes later and a restart's load still return A's recent sample, and the request log still ends with A's request.
+//  3. A prune a few minutes later ends the walk at B's imported sample, below A's: A's recent sample survives it, and the request log still ends with A's request.
 func TestNewPerfStoreImportIntoAServingDatabaseKeepsTheServingReplicasHistory(t *testing.T) {
 	ctx := context.Background()
 	t.Cleanup(setupPostgresContainer(t))
@@ -226,13 +226,114 @@ func TestNewPerfStoreImportIntoAServingDatabaseKeepsTheServingReplicasHistory(t 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, replicaB.Close()) })
 
-	_, found, err := findHostSampleBoundary(ctx, replicaB, now.Add(5*time.Minute), func() bool { return true })
+	boundary, found, err := findHostSampleBoundary(ctx, replicaB, now.Add(5*time.Minute), func() bool { return true })
 	require.NoError(t, err)
-	require.False(t, found, "an imported sample must not end the walk above the serving replica's samples")
+	require.True(t, found, "the imported sample has fallen past the stop line and ends the walk")
+	_, err = replicaB.deleteHostSamplesUpTo(ctx, boundary, perfPruneBatchSize)
+	require.NoError(t, err)
 	samples, err := replicaB.LoadSamples(ctx)
 	require.NoError(t, err)
 	require.Contains(t, samples, recentOfA)
 	requests, err := replicaB.LoadRequests(ctx)
 	require.NoError(t, err)
 	require.Equal(t, requestOfA, requests[len(requests)-1], "the request log still ends with the newest request")
+}
+
+// Test flow:
+//  1. Replica B serves on an empty Postgres; replica A has more history samples and request log rows than one import page holds.
+//  2. A imports while B writes a live sample and a live request between A's import pages.
+//  3. B's writes stay the newest rows: the startup walk and the request log end with them, not with A's older history.
+func TestNewPerfStoreImportKeepsLiveWritesNewerThanTheImportedHistory(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(setupPostgresContainer(t))
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	replicaB, err := NewPerfStore(ctx, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, replicaB.Close()) })
+
+	storageDirOfA := t.TempDir()
+	localOfA, err := newSQLitePerfStore(filepath.Join(storageDirOfA, "perf.db"))
+	require.NoError(t, err)
+	historyStart := now.Add(-30 * time.Minute)
+	for index := range perfImportPageSize + 5 {
+		require.NoError(t, localOfA.InsertSample(ctx, perfContractSample("participant-of-a", historyStart.Add(time.Duration(index)*time.Millisecond))))
+	}
+	for index := range requestLogSize {
+		require.NoError(t, localOfA.InsertRequest(ctx, perfContractRequest(index)))
+	}
+	require.NoError(t, localOfA.Close())
+
+	liveSampleOfB := perfContractSample("participant-of-b", now)
+	liveRequestOfB := perfContractRequest(requestLogSize + 10)
+	liveRequestOfB.Timestamp = now
+	writtenDuringImport := map[string]bool{}
+	testHookPerfImportPageCopied = func(tableName string) {
+		if writtenDuringImport[tableName] {
+			return
+		}
+		writtenDuringImport[tableName] = true
+		switch tableName {
+		case "perf_host_samples":
+			require.NoError(t, replicaB.InsertSample(ctx, liveSampleOfB))
+		case "perf_request_log":
+			require.NoError(t, replicaB.InsertRequest(ctx, liveRequestOfB))
+		}
+	}
+	t.Cleanup(func() { testHookPerfImportPageCopied = nil })
+	replicaA, err := NewPerfStore(ctx, storageDirOfA)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, replicaA.Close()) })
+	require.True(t, writtenDuringImport["perf_host_samples"])
+	require.True(t, writtenDuringImport["perf_request_log"])
+
+	samples, err := replicaA.LoadSamples(ctx)
+	require.NoError(t, err)
+	require.Equal(t, liveSampleOfB, samples[len(samples)-1], "a live sample written during the import must stay above the imported history")
+	requests, err := replicaA.LoadRequests(ctx)
+	require.NoError(t, err)
+	require.Equal(t, liveRequestOfB, requests[len(requests)-1], "a live request written during the import must stay the newest")
+}
+
+// Test flow:
+//  1. Replica A has served long enough to hold a live sample past the walk's stop line and a full request log.
+//  2. Replica B imports a perf.db holding a recent sample and request log rows.
+//  3. B's samples and request log rows are not copied, since the served walk and log would never read them; B's accounting still is.
+func TestNewPerfStoreImportSkipsHistoryAServedDatabaseWouldNeverRead(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(setupPostgresContainer(t))
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	now := time.Now().UTC().Truncate(time.Millisecond)
+
+	replicaA, err := NewPerfStore(ctx, t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, replicaA.InsertSample(ctx, perfContractSample("participant-of-a", now.Add(-5*time.Hour))))
+	require.NoError(t, replicaA.InsertSample(ctx, perfContractSample("participant-of-a", now.Add(-time.Minute))))
+	for index := range requestLogSize {
+		require.NoError(t, replicaA.InsertRequest(ctx, perfContractRequest(index)))
+	}
+	require.NoError(t, replicaA.Close())
+
+	storageDirOfB := t.TempDir()
+	localOfB, err := newSQLitePerfStore(filepath.Join(storageDirOfB, "perf.db"))
+	require.NoError(t, err)
+	require.NoError(t, localOfB.InsertSample(ctx, perfContractSample("participant-of-b", now.Add(-2*time.Minute))))
+	require.NoError(t, localOfB.InsertRequest(ctx, perfContractRequest(requestLogSize+1)))
+	startedAt := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	require.NoError(t, localOfB.UpsertAccountingRequest(ctx, "request-of-b", "escrow-1", "Qwen/Test", startedAt))
+	require.NoError(t, localOfB.Close())
+
+	replicaB, err := NewPerfStore(ctx, storageDirOfB)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, replicaB.Close()) })
+	postgres := replicaB.(*postgresPerfStore)
+	var samplesOfB, requestRows int
+	require.NoError(t, postgres.pool.QueryRow(ctx, `SELECT count(*) FROM perf_host_samples WHERE participant_key = 'participant-of-b'`).Scan(&samplesOfB))
+	require.NoError(t, postgres.pool.QueryRow(ctx, `SELECT count(*) FROM perf_request_log`).Scan(&requestRows))
+	require.Zero(t, samplesOfB)
+	require.Equal(t, requestLogSize, requestRows)
+	_, found, err := replicaB.FindAccountingRequest(ctx, "request-of-b", "escrow-1")
+	require.NoError(t, err)
+	require.True(t, found)
 }

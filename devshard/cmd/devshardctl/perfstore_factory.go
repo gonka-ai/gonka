@@ -20,12 +20,17 @@ const (
 	perfImportPageSize     = 2000
 )
 
+// testHookPerfImportPageCopied runs between import pages in tests; it is nil in production.
+var testHookPerfImportPageCopied func(tableName string)
+
 // perfImportTable copies one perf.db table: selectPage reads the key column first and then insertRow's values in order.
 type perfImportTable struct {
-	name       string
-	selectPage string
-	insertRow  string
-	afterKey   int64
+	name                string
+	selectPage          string
+	insertRow           string
+	afterKey            int64
+	selectSourceMaxID   string
+	selectExistingMinID string
 }
 
 // NewPerfStore picks the backend like NewGatewayStore: sqlite keeps perf.db; hybrid and postgres import it once and fail closed.
@@ -63,7 +68,7 @@ func NewPerfStore(ctx context.Context, baseStorageDir string) (PerfStore, error)
 	return store, nil
 }
 
-// importPerfSQLite copies each perf.db file once; samples and the request log only into empty tables, since their order is their id.
+// importPerfSQLite copies each perf.db file once; history ordered by id lands below every row already there, live writes included.
 func importPerfSQLite(ctx context.Context, sqlitePath string, store *postgresPerfStore) error {
 	if _, err := os.Stat(sqlitePath); err != nil {
 		if os.IsNotExist(err) {
@@ -116,12 +121,16 @@ func importPerfSQLite(ctx context.Context, sqlitePath string, store *postgresPer
 	if err != nil {
 		return fmt.Errorf("perf store: find request log boundary: %w", err)
 	}
-	var hasSamples, hasRequestLog bool
-	if err := tx.QueryRow(importCtx, `SELECT EXISTS (SELECT 1 FROM perf_host_samples), EXISTS (SELECT 1 FROM perf_request_log)`).Scan(&hasSamples, &hasRequestLog); err != nil {
-		return fmt.Errorf("perf store: check served history: %w", err)
+	_, isSampleWalkFull, err := findHostSampleBoundary(importCtx, store, time.Now(), func() bool { return true })
+	if err != nil {
+		return fmt.Errorf("perf store: find served sample boundary: %w", err)
+	}
+	var retainedRequests int
+	if err := tx.QueryRow(importCtx, `SELECT count(*) FROM (SELECT 1 FROM perf_request_log LIMIT $1) AS retained`, requestLogSize).Scan(&retainedRequests); err != nil {
+		return fmt.Errorf("perf store: count served request log: %w", err)
 	}
 	var summary []string
-	for _, table := range perfImportTables(sampleBoundary, logBoundary, !hasSamples, !hasRequestLog) {
+	for _, table := range perfImportTables(sampleBoundary, logBoundary, !isSampleWalkFull, retainedRequests < requestLogSize) {
 		copied, err := copyPerfImportTable(importCtx, source, tx, table)
 		if err != nil {
 			return fmt.Errorf("perf store: import %s: %w", table.name, err)
@@ -138,27 +147,32 @@ func importPerfSQLite(ctx context.Context, sqlitePath string, store *postgresPer
 	return nil
 }
 
-// perfImportTables lists the copy of each table; ids are left to Postgres so its identity sequences stay ahead of them.
-func perfImportTables(sampleBoundary, logBoundary int64, isSampleTableEmpty, isRequestLogEmpty bool) []perfImportTable {
+// perfImportTables skips history a served database would never read: imported rows land below its walk's end or its log.
+func perfImportTables(sampleBoundary, logBoundary int64, copiesSamples, copiesRequestLog bool) []perfImportTable {
 	var tables []perfImportTable
-	if isSampleTableEmpty {
+	if copiesSamples {
 		tables = append(tables, perfImportTable{
 			name: "perf_host_samples",
 			selectPage: `SELECT id, host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens, source_escrow, source_sample_id
 				FROM perf_host_samples WHERE id > ? ORDER BY id LIMIT ?`,
-			insertRow: `INSERT INTO perf_host_samples (host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens, source_escrow, source_sample_id)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING`,
-			afterKey: sampleBoundary,
+			insertRow: `INSERT INTO perf_host_samples (id, host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens, source_escrow, source_sample_id)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+				ON CONFLICT (source_escrow, source_sample_id) WHERE source_sample_id IS NOT NULL DO NOTHING`,
+			afterKey:            sampleBoundary,
+			selectSourceMaxID:   `SELECT COALESCE(MAX(id), 0) FROM perf_host_samples`,
+			selectExistingMinID: `SELECT LEAST(COALESCE(MIN(id), $1), $1) FROM perf_host_samples`,
 		})
 	}
-	if isRequestLogEmpty {
+	if copiesRequestLog {
 		tables = append(tables, perfImportTable{
 			name: "perf_request_log",
 			selectPage: `SELECT id, timestamp, model, input_tokens, winner_host_idx, winner_nonce, decision, hosts_json
 				FROM perf_request_log WHERE id > ? ORDER BY id LIMIT ?`,
-			insertRow: `INSERT INTO perf_request_log (timestamp, model, input_tokens, winner_host_idx, winner_nonce, decision, hosts_json)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-			afterKey: logBoundary,
+			insertRow: `INSERT INTO perf_request_log (id, timestamp, model, input_tokens, winner_host_idx, winner_nonce, decision, hosts_json)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			afterKey:            logBoundary,
+			selectSourceMaxID:   `SELECT COALESCE(MAX(id), 0) FROM perf_request_log`,
+			selectExistingMinID: `SELECT LEAST(COALESCE(MIN(id), $1), $1) FROM perf_request_log`,
 		})
 	}
 	return append(tables, []perfImportTable{
@@ -188,6 +202,10 @@ func perfImportTables(sampleBoundary, logBoundary int64, isSampleTableEmpty, isR
 
 // copyPerfImportTable streams one table page by page, so the import holds one page of rows at a time.
 func copyPerfImportTable(ctx context.Context, source *sqlitePerfStore, tx pgx.Tx, table perfImportTable) (int64, error) {
+	idOffset, err := importIDOffset(ctx, source, tx, table)
+	if err != nil {
+		return 0, err
+	}
 	var copied int64
 	afterKey := table.afterKey
 	for {
@@ -200,15 +218,46 @@ func copyPerfImportTable(ctx context.Context, source *sqlitePerfStore, tx pgx.Tx
 		}
 		batch := &pgx.Batch{}
 		for _, values := range page {
+			if !table.isOrderedByID() {
+				values = values[1:]
+			} else {
+				values[0] = values[0].(int64) + idOffset
+			}
 			batch.Queue(table.insertRow, values...)
 		}
 		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
 			return copied, err
 		}
 		copied += int64(len(page))
+		if testHookPerfImportPageCopied != nil {
+			testHookPerfImportPageCopied(table.name)
+		}
 		if len(page) < perfImportPageSize {
 			return copied, nil
 		}
 		afterKey = lastKey
 	}
+}
+
+func (table perfImportTable) isOrderedByID() bool {
+	return table.selectExistingMinID != ""
+}
+
+// importIDOffset places the file's rows just below the lowest id the table holds, keeping their order.
+func importIDOffset(ctx context.Context, source *sqlitePerfStore, tx pgx.Tx, table perfImportTable) (int64, error) {
+	if !table.isOrderedByID() {
+		return 0, nil
+	}
+	var sourceMaxID, existingMinID int64
+	if err := source.db.QueryRowContext(ctx, table.selectSourceMaxID).Scan(&sourceMaxID); err != nil {
+		return 0, fmt.Errorf("read source max id: %w", err)
+	}
+	if err := tx.QueryRow(ctx, table.selectExistingMinID, perfImportedIDCeiling).Scan(&existingMinID); err != nil {
+		return 0, fmt.Errorf("read min id: %w", err)
+	}
+	offset := existingMinID - 1 - sourceMaxID
+	if lowestImportedID := table.afterKey + 1 + offset; lowestImportedID < 1 {
+		return 0, fmt.Errorf("no id room below %d for an id span of %d", existingMinID, sourceMaxID-table.afterKey)
+	}
+	return offset, nil
 }

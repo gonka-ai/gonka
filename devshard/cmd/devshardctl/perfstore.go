@@ -482,7 +482,7 @@ func (s *sqlitePerfStore) importSourceID(ctx context.Context) (string, error) {
 	return sourceID, err
 }
 
-// readImportPage returns up to perfImportPageSize rows after afterKey without their key column, and the last key read.
+// readImportPage returns up to perfImportPageSize rows after afterKey, key column first, and the last key read.
 func (s *sqlitePerfStore) readImportPage(ctx context.Context, selectPage string, afterKey int64) ([][]any, int64, error) {
 	rows, err := s.db.QueryContext(ctx, selectPage, afterKey, perfImportPageSize)
 	if err != nil {
@@ -509,7 +509,7 @@ func (s *sqlitePerfStore) readImportPage(ctx context.Context, selectPage string,
 			return nil, afterKey, fmt.Errorf("import key %v is not an integer", values[0])
 		}
 		lastKey = key
-		page = append(page, values[1:])
+		page = append(page, values)
 	}
 	return page, lastKey, rows.Err()
 }
