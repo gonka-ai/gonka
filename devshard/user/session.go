@@ -949,37 +949,31 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		s.dropDiffPrefixLocked()
 	}
 
-	// Queue mempool txs first so a stamped ConfirmStart wins over the
-	// receipt-synthesized copy (same confirm:<id> dedup key).
+	// A ConfirmStart is admitted only when it verifies. The receipt is checked
+	// before the mempool so a forged confirm cannot take its dedup slot.
+	if len(resp.Receipt) > 0 {
+		s.acceptConfirmStartLocked(hostIdx, resp, &types.MsgConfirmStart{
+			InferenceId:       inferenceNonce,
+			ExecutorSig:       resp.Receipt,
+			ConfirmedAt:       resp.ConfirmedAt,
+			ObservedHeight:    resp.ObservedHeight,
+			ObservedBlockHash: resp.ObservedBlockHash,
+		})
+	}
 	for _, tx := range resp.Mempool {
+		if tx != nil && tx.GetConfirmStart() != nil {
+			s.acceptConfirmStartLocked(hostIdx, resp, tx.GetConfirmStart())
+			continue
+		}
 		s.addPendingFromHostLocked(hostIdx, resp, tx)
 	}
 
 	s.noteResponseClaimLocked(hostIdx, resp)
 
-	// Queue receipt as MsgConfirmStart for the next diff if mempool did not
-	// already carry it. Use inferenceNonce (the logical inference ID).
-	if resp.Receipt != nil {
-		s.addPendingFromHostLocked(hostIdx, resp, &types.DevshardTx{
-			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId:       inferenceNonce,
-				ExecutorSig:       resp.Receipt,
-				ConfirmedAt:       resp.ConfirmedAt,
-				ObservedHeight:    resp.ObservedHeight,
-				ObservedBlockHash: resp.ObservedBlockHash,
-			}},
-		})
-	}
-
 	// Gossiped mempool may carry finishes for other nonces. Only a finish that
 	// closes its record counts: one apply would reject must not skip the
 	// timeout.
 	s.markFinishedLocked(s.finishProbesLocked(resp.Mempool))
-
-	if outcome, ok := s.nonceStates[inferenceNonce]; ok && resp.Receipt != nil && resp.ConfirmedAt > 0 {
-		outcome.confirmedAt = resp.ConfirmedAt
-		s.wakeConfirmWaitLocked()
-	}
 
 	s.noteGatewayTipLocked()
 	return nil
@@ -1580,22 +1574,50 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.addPendingTx(&types.DevshardTx{
-		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId:       inferenceNonce,
-			ExecutorSig:       resp.Receipt,
-			ConfirmedAt:       resp.ConfirmedAt,
-			ObservedHeight:    resp.ObservedHeight,
-			ObservedBlockHash: resp.ObservedBlockHash,
-		}},
+	s.acceptConfirmStartLocked(-1, nil, &types.MsgConfirmStart{
+		InferenceId:       inferenceNonce,
+		ExecutorSig:       resp.Receipt,
+		ConfirmedAt:       resp.ConfirmedAt,
+		ObservedHeight:    resp.ObservedHeight,
+		ObservedBlockHash: resp.ObservedBlockHash,
 	})
-	// Both halves of the receipt move together: the chain learns the inference started, and this session
-	// must vote the execution timeout that matches. Leaving confirmedAt behind makes it vote a refusal
-	// against a record the chain already advanced, which every verifier then rejects.
-	if outcome, tracked := s.nonceStates[inferenceNonce]; tracked && resp.ConfirmedAt > 0 {
-		outcome.confirmedAt = resp.ConfirmedAt
-		s.wakeConfirmWaitLocked()
+}
+
+// acceptConfirmStartLocked queues msg only when it is the assigned executor's signature over a
+// confirmation time. That is what ends a refusal wait. An unverified confirm, or one with no stamp,
+// is dropped: the chain would either reject it or move the record to Started with no deadline, and
+// neither a refusal nor the execution sweep could then record the miss. A duplicate does not move
+// the stamp, so the queued signature and the deadline stay the same message. Caller holds s.mu.
+func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse, msg *types.MsgConfirmStart) {
+	if msg == nil || len(msg.ExecutorSig) == 0 {
+		return
 	}
+	if msg.ConfirmedAt <= 0 {
+		logging.Warn("rejected executor receipt", "subsystem", "session",
+			"escrow", s.escrowID, "nonce", msg.InferenceId, "error", "confirmed_at is unset")
+		return
+	}
+	rec, ok := s.sm.GetInference(msg.InferenceId)
+	if !ok {
+		logging.Debug("dropped confirm for unknown or sealed inference", "subsystem", "session",
+			"escrow", s.escrowID, "nonce", msg.InferenceId)
+		return
+	}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
+	if err := s.sm.CheckEvidence(&rec, tx); err != nil {
+		logging.Warn("rejected executor receipt", "subsystem", "session",
+			"escrow", s.escrowID, "nonce", msg.InferenceId, "error", err)
+		return
+	}
+	s.addPendingFromHostLocked(hostIdx, resp, tx)
+	queued := s.pendingConfirmLocked(msg.InferenceId)
+	if queued == nil || !bytes.Equal(queued.GetConfirmStart().GetExecutorSig(), msg.ExecutorSig) {
+		return
+	}
+	if outcome, tracked := s.nonceStates[msg.InferenceId]; tracked {
+		outcome.confirmedAt = queued.GetConfirmStart().GetConfirmedAt()
+	}
+	s.wakeConfirmWaitLocked()
 }
 
 // wakeConfirmWaitLocked releases every refusal wait. The receipt may belong to one of them, and a
@@ -3216,9 +3238,10 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 
 	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
 
-	// The challenge is chosen here, after the wait. A receipt that landed during it is no longer a
-	// refusal: the next diff starts the inference, verifiers reject a refusal against that record,
-	// and the execution sweep votes the timeout that matches the confirmation. Stop before any vote is sent.
+	// The challenge is chosen here, after the wait. A verified executor receipt that landed during it
+	// is no longer a refusal: the chain will accept that signature, verifiers reject a refusal against
+	// the started record, and the execution sweep votes the timeout that matches it. An unverified
+	// receipt never sets this stamp. Stop before any vote is sent.
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.inferenceConfirmed(nonce, sendTime) {
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "confirmed_before_vote")...)
 		return TimeoutResult{Outcome: "skipped", DetailReason: "confirmed_before_vote"}, fmt.Errorf("inference %d: confirmed before the refusal vote", nonce)

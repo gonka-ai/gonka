@@ -1229,6 +1229,36 @@ func (sm *StateMachine) checkReceiptLocked(rec *types.InferenceRecord, msg *type
 	return nil
 }
 
+// VerifyConfirmStart reports whether sig is the assigned executor's receipt for inferenceID
+// at confirmedAt. It does not change the inference or warm-key bindings: a warm key is stored
+// only when the confirm is applied, so a receipt that never lands cannot move the state root.
+// Caller must not hold sm.mu.
+func (sm *StateMachine) VerifyConfirmStart(inferenceID uint64, confirmedAt int64, sig []byte) error {
+	sm.mu.RLock()
+	rec, ok := sm.state.Inferences[inferenceID]
+	if !ok {
+		sealed := sm.isInferenceEvictedFromLive(inferenceID)
+		sm.mu.RUnlock()
+		if sealed {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, inferenceID)
+		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, inferenceID)
+	}
+	if rec.Status != types.StatusPending {
+		sm.mu.RUnlock()
+		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+	recCopy := *rec
+	sm.mu.RUnlock()
+	return sm.CheckEvidence(&recCopy, &types.DevshardTx{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: inferenceID,
+			ExecutorSig: sig,
+			ConfirmedAt: confirmedAt,
+		}},
+	})
+}
+
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
 	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {

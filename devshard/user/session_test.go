@@ -721,18 +721,15 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 		ConfirmedAt: 1000,
 	}}}
 
-	// A non-executor host wins the race to confirm:<id>.
+	// A non-executor host wins the race to confirm:<id>. The signature is
+	// checked before the dedup slot is claimed, so the forgery never occupies it.
 	nonExecIdx := (execIdx + 1) % len(session.clients)
 	require.NoError(t, session.ProcessResponse(nonExecIdx, &host.HostResponse{
 		Nonce:   nonce,
 		Mempool: []*types.DevshardTx{forged},
 	}, nonce))
-	require.NotNil(t, findPendingConfirm(session.PendingTxs(), nonce),
-		"fixture must queue the forged ConfirmStart")
-
-	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Nil(t, findPendingConfirm(session.PendingTxs(), nonce),
-		"forged ConfirmStart must be dropped by best-effort apply")
+		"a ConfirmStart the chain would reject must not be queued")
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 	require.NotEqual(t, types.StatusStarted, rec.Status,

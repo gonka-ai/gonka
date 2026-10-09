@@ -2747,6 +2747,40 @@ func applyStartConfirmWithWarmKey(t *testing.T, sm *StateMachine, user *signing.
 	require.NoError(t, err)
 }
 
+func TestWarmKey_VerifyConfirmStartDoesNotStoreTheBinding(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warmSigner := testutil.MustGenerateKey(t)
+	executorIdx := 1
+
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+	}
+	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
+
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	require.NoError(t, sm.VerifyConfirmStart(1, 1000, execSig))
+	require.Empty(t, sm.WarmKeys(), "a receipt check must not write a warm key before the diff")
+	rec, ok := sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+
+	nonce++
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, warmSigner.Address(), sm.WarmKeys()[uint32(executorIdx)])
+}
+
 func TestWarmKey_ConfirmStartWithWarmKey(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)
