@@ -35,17 +35,43 @@ func Debug(msg string, keyvals ...any) { current.Debug(msg, keyvals...) }
 
 // Ctx-aware variants forward the request context so TraceHandler can stamp
 // trace_id/span_id (and registered context fields such as request_id).
+// An installed Logger that does not implement the context method still
+// receives the line through Info/Error/Warn/Debug.
 func InfoCtx(ctx context.Context, msg string, keyvals ...any) {
-	slog.InfoContext(ctx, msg, keyvals...)
+	if l, ok := current.(interface {
+		InfoContext(context.Context, string, ...any)
+	}); ok {
+		l.InfoContext(ctx, msg, keyvals...)
+		return
+	}
+	current.Info(msg, keyvals...)
 }
 func ErrorCtx(ctx context.Context, msg string, keyvals ...any) {
-	slog.ErrorContext(ctx, msg, keyvals...)
+	if l, ok := current.(interface {
+		ErrorContext(context.Context, string, ...any)
+	}); ok {
+		l.ErrorContext(ctx, msg, keyvals...)
+		return
+	}
+	current.Error(msg, keyvals...)
 }
 func WarnCtx(ctx context.Context, msg string, keyvals ...any) {
-	slog.WarnContext(ctx, msg, keyvals...)
+	if l, ok := current.(interface {
+		WarnContext(context.Context, string, ...any)
+	}); ok {
+		l.WarnContext(ctx, msg, keyvals...)
+		return
+	}
+	current.Warn(msg, keyvals...)
 }
 func DebugCtx(ctx context.Context, msg string, keyvals ...any) {
-	slog.DebugContext(ctx, msg, keyvals...)
+	if l, ok := current.(interface {
+		DebugContext(context.Context, string, ...any)
+	}); ok {
+		l.DebugContext(ctx, msg, keyvals...)
+		return
+	}
+	current.Debug(msg, keyvals...)
 }
 
 type slogLogger struct{}
@@ -56,6 +82,15 @@ func (s *slogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, kv...) }
 func (s *slogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, kv...) }
 func (s *slogLogger) InfoContext(ctx context.Context, msg string, kv ...any) {
 	slog.InfoContext(ctx, msg, kv...)
+}
+func (s *slogLogger) ErrorContext(ctx context.Context, msg string, kv ...any) {
+	slog.ErrorContext(ctx, msg, kv...)
+}
+func (s *slogLogger) WarnContext(ctx context.Context, msg string, kv ...any) {
+	slog.WarnContext(ctx, msg, kv...)
+}
+func (s *slogLogger) DebugContext(ctx context.Context, msg string, kv ...any) {
+	slog.DebugContext(ctx, msg, kv...)
 }
 
 // NewSlogAdapter returns a Logger that routes to the default slog handler and
@@ -85,6 +120,15 @@ func (p *prefixedSlogLogger) Warn(msg string, kv ...any)  { slog.Warn(msg, p.mer
 func (p *prefixedSlogLogger) Debug(msg string, kv ...any) { slog.Debug(msg, p.merge(kv)...) }
 func (p *prefixedSlogLogger) InfoContext(ctx context.Context, msg string, kv ...any) {
 	slog.InfoContext(ctx, msg, p.merge(kv)...)
+}
+func (p *prefixedSlogLogger) ErrorContext(ctx context.Context, msg string, kv ...any) {
+	slog.ErrorContext(ctx, msg, p.merge(kv)...)
+}
+func (p *prefixedSlogLogger) WarnContext(ctx context.Context, msg string, kv ...any) {
+	slog.WarnContext(ctx, msg, p.merge(kv)...)
+}
+func (p *prefixedSlogLogger) DebugContext(ctx context.Context, msg string, kv ...any) {
+	slog.DebugContext(ctx, msg, p.merge(kv)...)
 }
 
 // ContextLogger is the optional Stage path that keeps the request context, so a

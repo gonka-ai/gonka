@@ -203,11 +203,21 @@ func writeIsolatedObservabilityCompose(t *testing.T, s *Stack) {
 	dashboards, err := filepath.Abs(grafanaDashboardsDir(s.TestenvDir))
 	require.NoError(t, err)
 	require.DirExists(t, dashboards)
-	for _, dir := range []string{"jaeger", "loki", "prometheus", "grafana", "promtail"} {
+	for _, dir := range []string{"jaeger", "loki", "prometheus", "grafana", "promtail", "tempo", "alloy"} {
 		require.NoError(t, os.MkdirAll(filepath.Join(s.WorkDir, "data", dir), 0o755))
 	}
 	rewritten := rewriteObservabilityCompose(string(src), filepath.ToSlash(dashboards))
 	require.NoError(t, os.WriteFile(filepath.Join(s.WorkDir, "docker-compose.observability.yml"), []byte(rewritten), 0o644))
+	profile := s.ObsProfile
+	if profile == "" {
+		profile = ResolveObsProfile()
+	}
+	for _, frag := range profile.ComposeFragmentNames() {
+		body, err := os.ReadFile(filepath.Join(s.TestenvDir, frag))
+		require.NoError(t, err, "read observability fragment %s", frag)
+		isolated := rewriteObservabilityCompose(string(body), filepath.ToSlash(dashboards))
+		require.NoError(t, os.WriteFile(filepath.Join(s.WorkDir, frag), []byte(isolated), 0o644))
+	}
 }
 
 func rewriteObservabilityCompose(src, dashboardsAbs string) string {
@@ -217,6 +227,8 @@ func rewriteObservabilityCompose(src, dashboardsAbs string) string {
 		{"testenv_loki_data:/loki", "./data/loki:/loki"},
 		{"testenv_promtail_data:/tmp", "./data/promtail:/tmp"},
 		{"testenv_grafana_data:/var/lib/grafana", "./data/grafana:/var/lib/grafana"},
+		{"testenv_tempo_data:/var/tempo", "./data/tempo:/var/tempo"},
+		{"testenv_alloy_data:/var/lib/alloy/data", "./data/alloy:/var/lib/alloy/data"},
 		{"../../../deploy/join/observability/grafana/dashboards", dashboardsAbs},
 	}
 	out := src

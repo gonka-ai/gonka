@@ -313,20 +313,35 @@ func composeStopArgs(fileArgs []string, service string, timeout time.Duration) [
 	return append(args, "stop", "--timeout", strconv.Itoa(seconds), service)
 }
 
+// observabilityFragmentArgs prefers the isolated copies written next to the
+// stack. Those copies bind-mount ./data and publish a random host port.
+func (s *Stack) observabilityFragmentArgs(profile ObsProfile) []string {
+	args := make([]string, 0, len(profile.ComposeFragmentNames())*2)
+	for _, frag := range profile.ComposeFragmentNames() {
+		path := filepath.Join(s.WorkDir, frag)
+		if _, err := os.Stat(path); err != nil {
+			path = filepath.Join(s.TestenvDir, frag)
+		}
+		args = append(args, "-f", path)
+	}
+	return args
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.ProxyOverlay {
 		args = append(args, "-f", proxyOverlayPath(s))
 	}
 	if s.Observability {
+		profile := s.ObsProfile
+		if profile == "" {
+			profile = ResolveObsProfile()
+		}
 		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
 		if _, err := os.Stat(overlay); err == nil {
 			args = append(args, "-f", overlay)
+			args = append(args, s.observabilityFragmentArgs(profile)...)
 		} else {
-			profile := s.ObsProfile
-			if profile == "" {
-				profile = ResolveObsProfile()
-			}
 			args = append(args, "-f", filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
 			for _, frag := range profile.ComposeFragmentNames() {
 				args = append(args, "-f", filepath.Join(s.TestenvDir, frag))

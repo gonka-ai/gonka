@@ -94,7 +94,9 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 # Pin previous participant images with TESTENV_VERSIOND_IMAGE +
 # TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl
+# gencompose names the pool mock-openai-0 … mock-openai-{N-1}. Every member
+# shares image devshard-mock-openai:latest, so building the first service is enough.
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl
 CITEST_BUILD_INFRA := versiond-router versiond-0
 # Rolling-update and warm-cutover stay in their own targets. Versiond.* used to
 # pull them into this suite as well.

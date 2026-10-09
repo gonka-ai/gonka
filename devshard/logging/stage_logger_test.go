@@ -16,10 +16,10 @@ type captureStageLogger struct {
 	msgs []string
 }
 
-func (c *captureStageLogger) Info(msg string, _ ...any) { c.msgs = append(c.msgs, msg) }
-func (c *captureStageLogger) Error(string, ...any)      {}
-func (c *captureStageLogger) Warn(string, ...any)       {}
-func (c *captureStageLogger) Debug(string, ...any)      {}
+func (c *captureStageLogger) Info(msg string, _ ...any)  { c.msgs = append(c.msgs, "info:"+msg) }
+func (c *captureStageLogger) Error(msg string, _ ...any) { c.msgs = append(c.msgs, "error:"+msg) }
+func (c *captureStageLogger) Warn(msg string, _ ...any)  { c.msgs = append(c.msgs, "warn:"+msg) }
+func (c *captureStageLogger) Debug(string, ...any)       {}
 
 func TestStageJSONReachesSetLogger(t *testing.T) {
 	capture := &captureStageLogger{}
@@ -32,7 +32,17 @@ func TestStageJSONReachesSetLogger(t *testing.T) {
 	})
 
 	Stage(context.Background(), "send_completed", "host", "h1")
-	require.Equal(t, []string{"send_completed"}, capture.msgs)
+	require.Equal(t, []string{"info:send_completed"}, capture.msgs)
+}
+
+func TestErrorCtxReachesSetLogger(t *testing.T) {
+	capture := &captureStageLogger{}
+	prev := current
+	SetLogger(capture)
+	t.Cleanup(func() { SetLogger(prev) })
+
+	ErrorCtx(context.Background(), "validate: inference disappeared", "finish_nonce", 3)
+	require.Equal(t, []string{"error:validate: inference disappeared"}, capture.msgs)
 }
 
 func TestStageDefaultLoggerStampsTraceID(t *testing.T) {
