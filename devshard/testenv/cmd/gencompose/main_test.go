@@ -284,6 +284,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "KEY_NAME: versiond-0"))
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
+	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
 	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")

@@ -282,6 +282,10 @@ services:
     image: devshard-versiond-router:latest
     logging: *loadtest-logging
     environment:
+      # This image's entrypoint still requires the explicit host list. It exits
+      # before nginx binds when VERSIOND_HOSTS is empty, so the published :8080
+      # never appears. VERSIOND_POOL_HOST is unused by that entrypoint.
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
       # Pin only versions that actually have a child. A fictional v1 makes
