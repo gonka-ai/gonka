@@ -109,6 +109,12 @@ type GossipTxsRequest struct {
 	Txs [][]byte `json:"txs"` // each: proto bytes of DevshardTx
 }
 
+// StateResponse is the applied tip returned by GET /sessions/:id/state.
+type StateResponse struct {
+	Nonce     uint64 `json:"nonce"`
+	StateRoot []byte `json:"state_root"`
+}
+
 // SignaturesResponse is returned by the signatures endpoint.
 type SignaturesResponse struct {
 	Signatures map[uint32][]byte `json:"signatures"` // slotID -> sig bytes

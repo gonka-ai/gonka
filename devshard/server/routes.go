@@ -131,7 +131,7 @@ func RetiredPeerHTTPMiddleware() echo.MiddlewareFunc {
 }
 
 // RegisterLazySessionRoutes mounts the devshard HTTP surface on g.
-// Observability GETs (diffs, mempool, signatures) resolve existing sessions
+// Observability GETs (state, diffs, mempool, signatures) resolve existing sessions
 // only. Protocol session routes answer 410; peers use Connect /rpc/.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler, opts ...RouteOption) {
 	var cfg routeOptions
@@ -153,6 +153,8 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 	_ = binder
 	_ = payloadHandler
 
+	g.GET("/sessions/:id/state", withSession(resolver,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetState }))
 	g.GET("/sessions/:id/diffs", withSession(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetDiffs }))
 	g.GET("/sessions/:id/mempool", withSession(resolver,

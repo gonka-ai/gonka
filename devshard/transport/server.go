@@ -641,7 +641,7 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
@@ -1031,6 +1031,20 @@ func (s *Server) HandleGetSignatures(c echo.Context) (err error) {
 // and SessionService.GetSignatures.
 func (s *Server) ServeGetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return s.host.GetSignatures(nonce)
+}
+
+func (s *Server) HandleGetState(c echo.Context) error {
+	nonce, root, err := s.ServeGetState()
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	c.Response().Header().Set("Cache-Control", "no-store")
+	return writeJSON(c, http.StatusOK, StateResponse{Nonce: nonce, StateRoot: root})
+}
+
+// ServeGetState is the transport-neutral core behind GET .../state.
+func (s *Server) ServeGetState() (uint64, []byte, error) {
+	return s.host.StateHead()
 }
 
 func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
