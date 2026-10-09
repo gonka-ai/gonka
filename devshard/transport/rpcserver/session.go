@@ -193,6 +193,28 @@ func (h *SessionHandler) GetDiffs(ctx context.Context, req *connect.Request[rpcp
 	return connect.NewResponse(&rpcpb.GetDiffsResponse{Records: out}), nil
 }
 
+func (h *SessionHandler) GetState(ctx context.Context, req *connect.Request[rpcpb.GetStateRequest]) (*connect.Response[rpcpb.GetStateResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	_, _, srv, err := h.resolve(ctx, "rpc_get_state")
+	if err != nil {
+		return nil, err
+	}
+	type stateCore interface {
+		ServeGetState() (uint64, []byte, error)
+	}
+	core, ok := srv.(stateCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	nonce, root, err := core.ServeGetState()
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(&rpcpb.GetStateResponse{Nonce: nonce, StateRoot: root}), nil
+}
+
 func (h *SessionHandler) GetMempool(ctx context.Context, req *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error) {
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))

@@ -38,6 +38,7 @@ func RPCProcedureWeight(procedure string) int {
 	case rpcpbconnect.GossipServiceTxsProcedure:
 		return RPCWeightGossipTxs
 	case rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.GossipServiceNonceProcedure:
 		return RPCWeightGetSignatures
 	case rpcpbconnect.SessionServiceGetMempoolProcedure:

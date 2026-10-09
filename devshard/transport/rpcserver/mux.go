@@ -166,6 +166,7 @@ func sessionUnaryProcedures() []string {
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,
 	}
 }
@@ -183,6 +184,7 @@ func AllProcedurePaths() []string {
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,
 		rpcpbconnect.GossipServiceNonceProcedure,
 		rpcpbconnect.GossipServiceTxsProcedure,

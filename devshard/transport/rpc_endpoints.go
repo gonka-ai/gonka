@@ -17,6 +17,7 @@ const (
 	EndpointDiffs            = "diffs"
 	EndpointSignatures       = "signatures"
 	EndpointMempool          = "mempool"
+	EndpointState            = "state"
 	EndpointSeed             = "height-sync"
 	EndpointRepair           = "repair"
 	EndpointVerifyTimeout    = "verify-timeout"
@@ -70,6 +71,7 @@ var attachRPCEndpoints = []string{
 	EndpointChat,
 	EndpointSignatures,
 	EndpointMempool,
+	EndpointState,
 	EndpointDiffs,
 	EndpointGossip,
 	EndpointRepair,
@@ -86,6 +88,7 @@ var knownRPCEndpoints = map[string]struct{}{
 	EndpointDiffs:            {},
 	EndpointSignatures:       {},
 	EndpointMempool:          {},
+	EndpointState:            {},
 	EndpointSeed:             {},
 	EndpointRepair:           {},
 	EndpointVerifyTimeout:    {},

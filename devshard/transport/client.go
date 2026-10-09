@@ -1073,7 +1073,8 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
-// SessionHead reads the executor's applied nonce and state root.
+// SessionHead reads the executor's applied nonce and state root over HTTP.
+// Peer retries use RPCClient.SessionHead, which calls SessionService.GetState.
 func (c *HTTPClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
 	timeout := c.config.QueryTimeout
 	if timeout <= 0 {
