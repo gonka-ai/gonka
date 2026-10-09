@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,40 +9,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func openPruneTestStore(t *testing.T) *PerfStore {
+func openPruneTestStore(t *testing.T) *sqlitePerfStore {
 	t.Helper()
-	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	store, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
-func countRows(t *testing.T, store *PerfStore, query string, args ...any) int {
+func countRows(t *testing.T, store *sqlitePerfStore, query string, args ...any) int {
 	t.Helper()
 	var count int
 	require.NoError(t, store.db.QueryRow(query, args...).Scan(&count))
 	return count
 }
 
-func insertAccountingRows(t *testing.T, store *PerfStore, requestID, escrowID string) {
+func insertAccountingRows(t *testing.T, store *sqlitePerfStore, requestID, escrowID string) {
 	t.Helper()
 	now := time.Now()
-	require.NoError(t, store.UpsertAccountingRequest(requestID, escrowID, "m", now))
-	require.NoError(t, store.UpsertAccountingAttempt(RequestAccountingAttempt{RequestID: requestID, EscrowID: escrowID, Nonce: 1, CreatedAt: now}))
-	require.NoError(t, store.UpsertAccountingAlias(requestID, escrowID, "source-"+requestID, escrowID, "retry", now))
+	require.NoError(t, store.UpsertAccountingRequest(context.Background(), requestID, escrowID, "m", now))
+	require.NoError(t, store.UpsertAccountingAttempt(context.Background(), RequestAccountingAttempt{RequestID: requestID, EscrowID: escrowID, Nonce: 1, CreatedAt: now}))
+	require.NoError(t, store.UpsertAccountingAlias(context.Background(), requestID, escrowID, "source-"+requestID, escrowID, "retry", now))
 }
 
-func accountingRowsOf(t *testing.T, store *PerfStore, escrowID string) int {
+func accountingRowsOf(t *testing.T, store *sqlitePerfStore, escrowID string) int {
 	t.Helper()
 	total := 0
-	for _, table := range accountingTables {
+	for _, table := range []string{"request_accounting", "request_accounting_attempts", "request_accounting_aliases"} {
 		total += countRows(t, store, "SELECT count(*) FROM "+table+" WHERE escrow_id = ?", escrowID)
 	}
 	return total
 }
 
-func newTestPerfPruner(store *PerfStore, retainsEscrow func(string) bool, currentEpoch func() uint64) *perfPruner {
-	return newPerfPruner(store, retainsEscrow, currentEpoch, perfPrunerTiming{interval: time.Hour})
+func newTestPerfPruner(store *sqlitePerfStore, retainsEscrow func(string) bool, currentEpoch func() uint64) *perfPruner {
+	return newPerfPruner(store, store, retainsEscrow, currentEpoch, perfPrunerTiming{interval: time.Hour})
 }
 
 // Test flow:
@@ -59,12 +60,12 @@ func TestPerfPrunerDropsSampleHistoryWithoutChangingWhatStartupLoads(t *testing.
 	insertPerfSampleRow(t, store, "late-finisher", cutoff.Add(-10*time.Minute), "", 0)
 	insertPerfSampleRow(t, store, "backfilled-inside", now.Add(-30*time.Minute), "legacy-escrow", 1)
 	insertPerfSampleRow(t, store, "fresh", now.Add(-time.Minute), "", 0)
-	before, err := store.LoadSamples()
+	before, err := store.LoadSamples(context.Background())
 	require.NoError(t, err)
 
-	result := newTestPerfPruner(store, nil, nil).runOnce()
+	result := newTestPerfPruner(store, nil, nil).runOnce(context.Background())
 
-	after, err := store.LoadSamples()
+	after, err := store.LoadSamples(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 	require.Zero(t, countRows(t, store, "SELECT count(*) FROM perf_host_samples WHERE participant_key = 'old-history'"))
@@ -80,16 +81,16 @@ func TestPerfPrunerKeepsOnlyTheRequestLogStartupReads(t *testing.T) {
 	_, err := store.db.Exec("BEGIN")
 	require.NoError(t, err)
 	for index := range requestLogSize + 300 {
-		require.NoError(t, store.InsertRequest(RequestRecord{Timestamp: time.Unix(int64(index), 0), WinnerNonce: uint64(index)}))
+		require.NoError(t, store.InsertRequest(context.Background(), RequestRecord{Timestamp: time.Unix(int64(index), 0), WinnerNonce: uint64(index)}))
 	}
 	_, err = store.db.Exec("COMMIT")
 	require.NoError(t, err)
-	before, err := store.LoadRequests()
+	before, err := store.LoadRequests(context.Background())
 	require.NoError(t, err)
 
-	result := newTestPerfPruner(store, nil, nil).runOnce()
+	result := newTestPerfPruner(store, nil, nil).runOnce(context.Background())
 
-	after, err := store.LoadRequests()
+	after, err := store.LoadRequests(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 	require.Equal(t, requestLogSize, countRows(t, store, "SELECT count(*) FROM perf_request_log"))
@@ -105,10 +106,10 @@ func TestPerfPrunerDropsAccountingOnlyForEscrowsTheLedgerNoLongerRetains(t *test
 	insertAccountingRows(t, store, "chatcmpl-kept", "kept")
 	insertAccountingRows(t, store, "chatcmpl-expired", "expired")
 
-	newTestPerfPruner(store, nil, func() uint64 { return 5 }).runOnce()
+	newTestPerfPruner(store, nil, func() uint64 { return 5 }).runOnce(context.Background())
 	require.Equal(t, 3, accountingRowsOf(t, store, "expired"))
 
-	result := newTestPerfPruner(store, func(escrowID string) bool { return escrowID == "kept" }, func() uint64 { return 5 }).runOnce()
+	result := newTestPerfPruner(store, func(escrowID string) bool { return escrowID == "kept" }, func() uint64 { return 5 }).runOnce(context.Background())
 
 	require.Zero(t, accountingRowsOf(t, store, "expired"))
 	require.Equal(t, 3, accountingRowsOf(t, store, "kept"))
@@ -123,14 +124,14 @@ func TestPerfPrunerWalksAccountingOncePerEpoch(t *testing.T) {
 	store := openPruneTestStore(t)
 	epoch := uint64(5)
 	pruner := newTestPerfPruner(store, func(string) bool { return false }, func() uint64 { return epoch })
-	pruner.runOnce()
+	pruner.runOnce(context.Background())
 
 	insertAccountingRows(t, store, "chatcmpl-late", "late")
-	pruner.runOnce()
+	pruner.runOnce(context.Background())
 	require.Equal(t, 3, accountingRowsOf(t, store, "late"))
 
 	epoch = 6
-	pruner.runOnce()
+	pruner.runOnce(context.Background())
 	require.Zero(t, accountingRowsOf(t, store, "late"))
 }
 
@@ -149,7 +150,7 @@ func TestPerfPrunerStopsWhileItWaits(t *testing.T) {
 	insertPerfSampleRow(t, store, "fresh", time.Now(), "", 0)
 	_, err = store.db.Exec("COMMIT")
 	require.NoError(t, err)
-	pruner := newPerfPruner(store, nil, nil, perfPrunerTiming{startDelay: 0, interval: time.Hour, pause: time.Hour})
+	pruner := newPerfPruner(store, store, nil, nil, perfPrunerTiming{startDelay: 0, interval: time.Hour, pause: time.Hour})
 	pruner.start()
 	require.Eventually(t, func() bool {
 		return countRows(t, store, "SELECT count(*) FROM perf_host_samples") <= 2*perfPruneBatchSize+1
@@ -184,7 +185,7 @@ func TestPerfPrunerRetentionCheckCanUseTheStore(t *testing.T) {
 
 	finished := make(chan struct{})
 	go func() {
-		pruner.runOnce()
+		pruner.runOnce(context.Background())
 		close(finished)
 	}()
 
@@ -215,7 +216,7 @@ func TestPerfPrunerFindsTheSampleBoundaryPastTheFirstBatch(t *testing.T) {
 	_, err = store.db.Exec("COMMIT")
 	require.NoError(t, err)
 
-	result := newTestPerfPruner(store, nil, nil).runOnce()
+	result := newTestPerfPruner(store, nil, nil).runOnce(context.Background())
 
 	require.Equal(t, int64(100), result.samples)
 	require.Zero(t, countRows(t, store, "SELECT count(*) FROM perf_host_samples WHERE participant_key = 'old-history'"))

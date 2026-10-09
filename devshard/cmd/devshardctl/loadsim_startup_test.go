@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,7 +43,7 @@ func startupSimulationSettingsFromEnv(t *testing.T) startupSimulationSettings {
 }
 
 // fillPerfStoreLikeProduction writes each simulated request's samples, request log row and accounting rows in turn, the way serving interleaves them.
-func fillPerfStoreLikeProduction(t *testing.T, store *PerfStore, settings startupSimulationSettings) {
+func fillPerfStoreLikeProduction(t *testing.T, store *sqlitePerfStore, settings startupSimulationSettings) {
 	t.Helper()
 	end := time.Now()
 	start := end.Add(-time.Duration(settings.days) * 24 * time.Hour)
@@ -62,7 +63,7 @@ func fillPerfStoreLikeProduction(t *testing.T, store *PerfStore, settings startu
 		escrowID := strconv.Itoa(90_000 + request%400)
 		for slot := range settings.samplesPerRequest {
 			participant := fmt.Sprintf("gonka1%038d", (request*7+slot)%300)
-			require.NoError(t, store.InsertSample(RequestSample{
+			require.NoError(t, store.InsertSample(context.Background(), RequestSample{
 				HostIdx: slot, ParticipantKey: participant, Responsive: true, SendTime: sentAt,
 				ReceiptTime: sentAt.Add(300 * time.Millisecond), FirstToken: sentAt.Add(900 * time.Millisecond),
 				TotalTime: 4 * time.Second, InputTokens: 5000,
@@ -71,16 +72,16 @@ func fillPerfStoreLikeProduction(t *testing.T, store *PerfStore, settings startu
 				HostIdx: slot, ParticipantKey: participant, Nonce: uint64(request*settings.samplesPerRequest + slot + 1),
 				OutputChunks: 120, ReceiptTimeMs: 300, FirstTokenMs: 900, TotalTimeMs: 4000, Responsive: true, Finished: true, Winner: slot == 0,
 			}
-			require.NoError(t, store.UpsertAccountingAttempt(RequestAccountingAttempt{
+			require.NoError(t, store.UpsertAccountingAttempt(context.Background(), RequestAccountingAttempt{
 				RequestID: requestID, EscrowID: escrowID, Nonce: hosts[slot].Nonce, HostIdx: slot,
 				ParticipantKey: participant, Winner: slot == 0, CreatedAt: sentAt,
 			}))
 		}
-		require.NoError(t, store.InsertRequest(RequestRecord{
+		require.NoError(t, store.InsertRequest(context.Background(), RequestRecord{
 			Timestamp: sentAt, Model: "deepseek-ai/DeepSeek-V4-Flash-0731", InputTokens: 5000,
 			WinnerNonce: hosts[0].Nonce, Decision: "speculative", Hosts: hosts,
 		}))
-		require.NoError(t, store.UpsertAccountingRequest(requestID, escrowID, "deepseek-ai/DeepSeek-V4-Flash-0731", sentAt))
+		require.NoError(t, store.UpsertAccountingRequest(context.Background(), requestID, escrowID, "deepseek-ai/DeepSeek-V4-Flash-0731", sentAt))
 		_, err := store.db.Exec(`UPDATE request_accounting SET completed_at = ?, outcome = 'success', decision = 'speculative', winner_nonce = ? WHERE request_id = ? AND escrow_id = ?`,
 			sentAt.Add(4*time.Second).Format(time.RFC3339Nano), hosts[0].Nonce, requestID, escrowID)
 		require.NoError(t, err)
@@ -98,7 +99,7 @@ func TestStartupSimulation(t *testing.T) {
 	settings := startupSimulationSettingsFromEnv(t)
 	path := filepath.Join(settings.directory, "perf.db")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		filling, err := NewPerfStore(path)
+		filling, err := newSQLitePerfStore(path)
 		require.NoError(t, err)
 		started := time.Now()
 		fillPerfStoreLikeProduction(t, filling, settings)
@@ -111,7 +112,7 @@ func TestStartupSimulation(t *testing.T) {
 	require.NoError(t, err)
 
 	openStarted := time.Now()
-	store, err := NewPerfStore(path)
+	store, err := newSQLitePerfStore(path)
 	require.NoError(t, err)
 	openElapsed := time.Since(openStarted)
 	t.Cleanup(func() { _ = store.Close() })
@@ -130,9 +131,9 @@ func TestStartupSimulation(t *testing.T) {
 }
 
 // measurePruneUnderWrites runs one production-paced prune pass beside a request-path writer and logs both sides.
-func measurePruneUnderWrites(t *testing.T, store *PerfStore) {
+func measurePruneUnderWrites(t *testing.T, store *sqlitePerfStore) {
 	t.Helper()
-	pruner := newPerfPruner(store, func(string) bool { return false }, func() uint64 { return 1 }, perfPrunerTiming{pause: perfPrunePause})
+	pruner := newPerfPruner(store, store, func(string) bool { return false }, func() uint64 { return 1 }, perfPrunerTiming{pause: perfPrunePause})
 	stopWriting := make(chan struct{})
 	var latencies []time.Duration
 	var writer sync.WaitGroup
@@ -146,7 +147,7 @@ func measurePruneUnderWrites(t *testing.T, store *PerfStore) {
 			case <-ticker.C:
 			}
 			started := time.Now()
-			if err := store.InsertSample(RequestSample{ParticipantKey: "writer", SendTime: started, Responsive: true}); err != nil {
+			if err := store.InsertSample(context.Background(), RequestSample{ParticipantKey: "writer", SendTime: started, Responsive: true}); err != nil {
 				t.Errorf("InsertSample() = %v, want nil", err)
 				return
 			}
@@ -154,7 +155,7 @@ func measurePruneUnderWrites(t *testing.T, store *PerfStore) {
 		}
 	})
 	started := time.Now()
-	result := pruner.runOnce()
+	result := pruner.runOnce(context.Background())
 	elapsed := time.Since(started)
 	close(stopWriting)
 	writer.Wait()

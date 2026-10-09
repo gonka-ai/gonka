@@ -1,17 +1,16 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 )
 
-var accountingTables = []string{"request_accounting", "request_accounting_attempts", "request_accounting_aliases"}
-
 // hostSampleBoundaryBatch continues LoadSamples' newest-first walk below beforeID for up to limit rows and returns the id of the live sample that ends it, or zero with the last id it read.
-func (s *PerfStore) hostSampleBoundaryBatch(stopBefore time.Time, beforeID int64, limit int) (boundary, lastScannedID int64, scanned int, err error) {
-	rows, err := s.db.Query(`SELECT id, send_time, source_escrow FROM perf_host_samples WHERE id < ? ORDER BY id DESC LIMIT ?`, beforeID, limit)
+func (s *sqlitePerfStore) hostSampleBoundaryBatch(ctx context.Context, stopBefore time.Time, beforeID int64, limit int) (boundary, lastScannedID int64, scanned int, err error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, send_time, source_escrow FROM perf_host_samples WHERE id < ? ORDER BY id DESC LIMIT ?`, beforeID, limit)
 	if err != nil {
 		return 0, beforeID, 0, err
 	}
@@ -39,30 +38,53 @@ func (s *PerfStore) hostSampleBoundaryBatch(stopBefore time.Time, beforeID int64
 }
 
 // requestLogRetentionBoundary is the newest request log id LoadRequests no longer reads, or zero when it reads them all.
-func (s *PerfStore) requestLogRetentionBoundary() (int64, error) {
+func (s *sqlitePerfStore) requestLogRetentionBoundary(ctx context.Context) (int64, error) {
 	var boundary int64
-	err := s.db.QueryRow(`SELECT id FROM perf_request_log ORDER BY id DESC LIMIT 1 OFFSET ?`, requestLogSize).Scan(&boundary)
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM perf_request_log ORDER BY id DESC LIMIT 1 OFFSET ?`, requestLogSize).Scan(&boundary)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return boundary, err
 }
 
-func (s *PerfStore) deleteOldestRowsUpTo(table string, boundaryID int64, limit int) (int64, error) {
-	result, err := s.db.Exec(`DELETE FROM `+table+` WHERE id IN (SELECT id FROM `+table+` WHERE id <= ? ORDER BY id LIMIT ?)`, boundaryID, limit)
+func (s *sqlitePerfStore) deleteHostSamplesUpTo(ctx context.Context, boundaryID int64, limit int) (int64, error) {
+	return s.deleteRowsUpTo(ctx, `DELETE FROM perf_host_samples WHERE id IN (SELECT id FROM perf_host_samples WHERE id <= ? ORDER BY id LIMIT ?)`, boundaryID, limit)
+}
+
+func (s *sqlitePerfStore) deleteRequestLogUpTo(ctx context.Context, boundaryID int64, limit int) (int64, error) {
+	return s.deleteRowsUpTo(ctx, `DELETE FROM perf_request_log WHERE id IN (SELECT id FROM perf_request_log WHERE id <= ? ORDER BY id LIMIT ?)`, boundaryID, limit)
+}
+
+func (s *sqlitePerfStore) deleteRowsUpTo(ctx context.Context, statement string, boundaryID int64, limit int) (int64, error) {
+	result, err := s.db.ExecContext(ctx, statement, boundaryID, limit)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected()
 }
 
+func (s *sqlitePerfStore) deleteUnretainedAccountingRequests(ctx context.Context, afterRowID int64, limit int, retainsEscrow func(string) bool) (int64, int, int64, error) {
+	return s.deleteUnretainedAccountingBatch(ctx, `SELECT rowid, escrow_id FROM request_accounting WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+		`DELETE FROM request_accounting WHERE rowid IN (SELECT value FROM json_each(?))`, afterRowID, limit, retainsEscrow)
+}
+
+func (s *sqlitePerfStore) deleteUnretainedAccountingAttempts(ctx context.Context, afterRowID int64, limit int, retainsEscrow func(string) bool) (int64, int, int64, error) {
+	return s.deleteUnretainedAccountingBatch(ctx, `SELECT rowid, escrow_id FROM request_accounting_attempts WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+		`DELETE FROM request_accounting_attempts WHERE rowid IN (SELECT value FROM json_each(?))`, afterRowID, limit, retainsEscrow)
+}
+
+func (s *sqlitePerfStore) deleteUnretainedAccountingAliases(ctx context.Context, afterRowID int64, limit int, retainsEscrow func(string) bool) (int64, int, int64, error) {
+	return s.deleteUnretainedAccountingBatch(ctx, `SELECT rowid, escrow_id FROM request_accounting_aliases WHERE rowid > ? ORDER BY rowid LIMIT ?`,
+		`DELETE FROM request_accounting_aliases WHERE rowid IN (SELECT value FROM json_each(?))`, afterRowID, limit, retainsEscrow)
+}
+
 // deleteUnretainedAccountingBatch reads the next limit rows after afterRowID and deletes those whose escrow is not retained; the check runs with no cursor open, since it may need the store's single connection or a lock held by a caller of the store.
-func (s *PerfStore) deleteUnretainedAccountingBatch(table string, afterRowID int64, limit int, retainsEscrow func(string) bool) (lastRowID int64, scanned int, deleted int64, err error) {
+func (s *sqlitePerfStore) deleteUnretainedAccountingBatch(ctx context.Context, selectBatch, deleteByRowIDs string, afterRowID int64, limit int, retainsEscrow func(string) bool) (lastRowID int64, scanned int, deleted int64, err error) {
 	type accountingRow struct {
 		rowID    int64
 		escrowID string
 	}
-	rows, err := s.db.Query(`SELECT rowid, escrow_id FROM `+table+` WHERE rowid > ? ORDER BY rowid LIMIT ?`, afterRowID, limit)
+	rows, err := s.db.QueryContext(ctx, selectBatch, afterRowID, limit)
 	if err != nil {
 		return afterRowID, 0, 0, err
 	}
@@ -82,7 +104,7 @@ func (s *PerfStore) deleteUnretainedAccountingBatch(table string, afterRowID int
 		return afterRowID, 0, 0, nil
 	}
 	retained := make(map[string]bool)
-	var expired []any
+	var expired []int64
 	for _, row := range batch {
 		keep, checked := retained[row.escrowID]
 		if !checked {
@@ -97,8 +119,11 @@ func (s *PerfStore) deleteUnretainedAccountingBatch(table string, afterRowID int
 	if len(expired) == 0 {
 		return lastRowID, len(batch), 0, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(expired)), ",")
-	result, err := s.db.Exec(`DELETE FROM `+table+` WHERE rowid IN (`+placeholders+`)`, expired...)
+	expiredJSON, err := json.Marshal(expired)
+	if err != nil {
+		return afterRowID, len(batch), 0, err
+	}
+	result, err := s.db.ExecContext(ctx, deleteByRowIDs, string(expiredJSON))
 	if err != nil {
 		return afterRowID, len(batch), 0, err
 	}

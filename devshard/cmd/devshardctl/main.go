@@ -438,7 +438,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		log.Fatalf("height sync oracle: %v", err)
 	}
 
-	perfStore, err := NewPerfStore(filepath.Join(baseStorageDir, "perf.db"))
+	perfStore, err := NewPerfStore(ctx, baseStorageDir)
 	if err != nil {
 		log.Fatalf("open global perf store: %v", err)
 	}
