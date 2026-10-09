@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -900,14 +901,33 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
+		if meta.ImportedNonce > 0 {
+			_, root, rootErr := types.SnapshotData(snapData)
+			if snapErr != nil || rootErr != nil || len(root) != 32 || snapNonce < meta.ImportedNonce || snapNonce > meta.LatestNonce {
+				return nil, nil, fmt.Errorf("imported snapshot unavailable or missing root")
+			}
+		}
+
 		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
 			snapState, committedEntries, sealedNonces, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
+			if meta.ImportedNonce > 0 {
+				if decodeErr != nil {
+					return nil, nil, decodeErr
+				}
+				if snapState.LatestNonce != snapNonce || snapState.EscrowID != escrowID || snapState.StateRootAndProtocolVersion != recoveredVersion || snapState.Config != meta.Config || !slices.Equal(snapState.Group, meta.Group) {
+					return nil, nil, fmt.Errorf("imported snapshot binding mismatch")
+				}
+			}
+
 			if decodeErr != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
 			} else {
 				sm.RestoreState(snapState)
 				if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					if meta.ImportedNonce > 0 {
+						return nil, nil, commitErr
+					}
 					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
 						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
 					if sm, err = newStateMachine(); err != nil {
@@ -916,6 +936,9 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				} else {
 					sm.RestoreSealedNonces(sealedNonces)
 					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+						if meta.ImportedNonce > 0 {
+							return nil, nil, verifyErr
+						}
 						// Restore already mutated sm, so the rejected state has to
 						// be thrown away rather than replayed on top of.
 						logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,

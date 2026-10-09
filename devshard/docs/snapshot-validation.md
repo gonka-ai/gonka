@@ -4,8 +4,8 @@ The goal is to prove that some `State(M)`, with `N <= M <= T`, is confirmed by
 quorum. Ordinary owner-signature and transition checks on every supplied diff
 are prerequisites for this proof.
 
-Host signatures may be at different nonces. The rule below is a
-proposed condition, not the current implementation.
+Host signatures may be at different nonces. The verifier and gateway use the
+rule below.
 
 ## Definitions
 
@@ -135,13 +135,8 @@ Thus the package proves a common checkpoint under the stated assumptions,
 except with negligible probability of a signature forgery or root-binding failure.
 Ordinary validated diffs extend that checkpoint to T.
 
-## Limits and current status
+## Limits
 
 The conclusion is quorum confirmation of M, not necessarily N or T. It relies
 on the common-history and prefix-acceptance assumptions above. Without them,
 later root signatures need not prove acceptance of earlier states.
-
-The current verifier counts one union of owners across `[N,T]`. It does not
-require either `AtN` or `AfterN` to reach quorum separately. That union can
-authenticate the final state under the assumptions above without proving the
-quorum-confirmed checkpoint required here.

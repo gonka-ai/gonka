@@ -51,6 +51,7 @@ type sessionData struct {
 	diffs                  []types.DiffRecord
 	nonceToIndex           map[uint64]int
 	lastFinalized          uint64
+	importedNonce          uint64
 	status                 string // "active", "settled"
 	snapshot               *snapshotData
 	sessionState           *SessionState
@@ -144,6 +145,10 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	s, ok := m.sessions[escrowID]
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
+	}
+
+	if rec.Nonce <= s.importedNonce && s.importedNonce > 0 {
+		return ErrSnapshotAdvanced
 	}
 
 	if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
@@ -257,6 +262,7 @@ func (m *Memory) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		Group:          copyGroup(s.group),
 		InitialBalance: s.balance,
 		LastFinalized:  s.lastFinalized,
+		ImportedNonce:  s.importedNonce,
 		Status:         s.status,
 	}
 
@@ -264,6 +270,7 @@ func (m *Memory) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 		meta.LatestNonce = s.diffs[len(s.diffs)-1].Nonce
 	}
 
+	meta.LatestNonce = max(meta.LatestNonce, s.importedNonce)
 	if err := finalizeSessionMeta(meta); err != nil {
 		return nil, err
 	}
@@ -321,6 +328,9 @@ func (m *Memory) SaveSnapshot(escrowID string, nonce uint64, data []byte) error 
 	s, ok := m.sessions[escrowID]
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
+	}
+	if s.importedNonce > 0 && nonce <= s.importedNonce {
+		return nil
 	}
 	if s.snapshot != nil && nonce < s.snapshot.nonce {
 		return nil

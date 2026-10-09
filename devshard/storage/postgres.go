@@ -769,6 +769,14 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 	defer tx.Rollback(ctx)
 
+	var imported uint64
+	if err = tx.QueryRow(ctx, `SELECT imported_nonce FROM devshard_sessions WHERE epoch_id=$1 AND escrow_id=$2 FOR UPDATE`, epochID, escrowID).Scan(&imported); err != nil {
+		return err
+	}
+	if imported > 0 && rec.Nonce <= imported {
+		return ErrSnapshotAdvanced
+	}
+
 	tag, err := tx.Exec(ctx,
 		`INSERT INTO devshard_diffs
 		    (epoch_id, escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
@@ -875,6 +883,16 @@ func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error 
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	var imported uint64
+	if err = tx.QueryRow(ctx, `SELECT imported_nonce FROM devshard_sessions WHERE epoch_id=$1 AND escrow_id=$2 FOR UPDATE`, epochID, escrowID).Scan(&imported); err != nil {
+		return err
+	}
+	for _, rec := range diffs {
+		if imported > 0 && rec.Nonce <= imported {
+			return ErrSnapshotAdvanced
+		}
+	}
 
 	_, err = tx.CopyFrom(ctx,
 		pgx.Identifier{pgDiffsParent},
@@ -1025,7 +1043,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	defer cancel()
 	row := s.pool.QueryRow(ctx,
 		`SELECT escrow_id, version, creator_addr, config_json, group_json,
-		        initial_balance, latest_nonce, last_finalized, status
+		        initial_balance, latest_nonce, last_finalized, status, imported_nonce
 		 FROM devshard_sessions
 		 WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
@@ -1035,7 +1053,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.ImportedNonce,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, pgx.ErrNoRows) {
@@ -1202,7 +1220,7 @@ func (s *Postgres) SaveSnapshot(escrowID string, nonce uint64, data []byte) erro
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (epoch_id, escrow_id) DO UPDATE
 		 SET nonce = EXCLUDED.nonce, state_data = EXCLUDED.state_data, created_at = EXCLUDED.created_at
-		 WHERE devshard_snapshots.nonce <= EXCLUDED.nonce`,
+		 WHERE devshard_snapshots.nonce <= EXCLUDED.nonce AND EXCLUDED.nonce > (SELECT imported_nonce FROM devshard_sessions WHERE epoch_id=EXCLUDED.epoch_id AND escrow_id=EXCLUDED.escrow_id)`,
 		epochID, escrowID, nonce, data, time.Now().Unix(),
 	)
 	return err

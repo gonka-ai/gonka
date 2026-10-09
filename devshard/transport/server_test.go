@@ -534,8 +534,9 @@ func TestServer_VerifyTimeout_RequestsDisabled(t *testing.T) {
 func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	env := setupServerEnv(t)
 	// Group members (peer hosts) must be allowed to call ChallengeReceipt
-	// during timeout verification. Empty diffs + no matching inference = 200 with empty receipt.
-	body := []byte(`{"inference_id":999,"diffs":[],"payload":null}`)
+	// during timeout verification. A connected empty tail needs no snapshot decode.
+	body, err := json.Marshal(ChallengeReceiptRequest{InferenceID: 999, Refusal: &RefusalPackageJSON{EscrowID: "escrow-1", Version: types.EffectiveStateRootAndProtocolVersion, Snapshot: []byte("opaque")}})
+	require.NoError(t, err)
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
 	require.Equal(t, http.StatusOK, rec.Code)
 }

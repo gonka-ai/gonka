@@ -53,6 +53,7 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
 	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
 	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
+	g.GET("/sessions/:id/state", srv.HandleGetState)
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
@@ -300,9 +301,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 	ctx := context.Background()
 
 	// Send one inference. Executor is slot 1%5=1.
-	params := defaultParams()
-	_, err := env.session.SendInference(ctx, params)
-	require.NoError(t, err)
+	warmRefusalCheckpoint(t, env)
 
 	// Shut down executor (host 1) to simulate refusal (unreachable).
 	// ChallengeReceipt will fail, so verifying hosts accept the timeout.
@@ -431,7 +430,7 @@ func TestHTTP_TimeoutRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try timeout verification -- should fail because inference is finished.
-	accept, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil)
+	accept, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil, nil)
 	require.Error(t, err)
 	require.False(t, accept)
 }
@@ -441,11 +440,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 	// executor via ChallengeReceipt, executor produces receipt -> timeout rejected.
 	env := setupHTTPEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
-	params := defaultParams()
-
-	// Send inference. Executor is host 1 (nonce 1 % 5 = 1).
-	_, err := env.session.SendInference(ctx, params)
-	require.NoError(t, err)
+	warmRefusalCheckpoint(t, env)
 
 	// Catch up non-executor hosts.
 	allDiffs := env.session.Diffs()
@@ -973,4 +968,18 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must succeed after rejected bypass attempts")
+}
+
+func warmRefusalCheckpoint(t *testing.T, env *httpTestEnv) {
+	t.Helper()
+	// Keep the target Pending: prepare requests without delivering their payloads.
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	diffs := env.session.Diffs()
+	for i, h := range env.hosts {
+		resp, err := h.HandleRequest(context.Background(), host.HostRequest{Diffs: diffs, Nonce: prepared.Nonce()})
+		require.NoError(t, err)
+		require.NoError(t, env.session.ProcessResponse(i, resp, prepared.Nonce()))
+	}
+	require.Eventually(t, func() bool { _, err := env.session.BuildRefusalPackage(1); return err == nil }, time.Second, time.Millisecond)
 }

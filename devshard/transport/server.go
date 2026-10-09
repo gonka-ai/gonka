@@ -536,8 +536,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		s.host.ApplyCatchUpDiffs(diffs)
 	}
 
-	st := s.host.SnapshotState()
-	localMempool := s.host.MempoolTxs()
+	st, localMempool := s.host.TimeoutState(req.InferenceID)
 
 	// Determine executor slot from inference_id.
 	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
@@ -553,18 +552,26 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		// Fetch stored diffs to forward to executor during challenge.
-		var storedDiffs []types.Diff
-		if s.store != nil && st.LatestNonce > 0 {
-			records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-			if dErr == nil {
-				storedDiffs = make([]types.Diff, len(records))
-				for i, r := range records {
-					storedDiffs[i] = r.Diff
-				}
-			}
+		payload := PayloadFromJSON(req.Payload)
+		eligible, checkErr := host.CheckRefusedTimeout(st, req.InferenceID, payload, localMempool, st.Config, nowUnix)
+		if checkErr != nil {
+			err = checkErr
+			break
 		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		if !eligible {
+			break
+		}
+		proof, decodeErr := refusalFromJSON(req.Refusal)
+		if decodeErr != nil {
+			err = decodeErr
+			break
+		}
+		if err = s.host.VerifyRefusalPackage(proof, req.InferenceID, payload); err != nil {
+			break
+		}
+		st, localMempool = s.host.TimeoutState(req.InferenceID)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, payload, proof, localMempool, executorClient, st.Config, time.Now().Unix())
+
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -629,18 +636,22 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
 	}
 	observability.Request.SetInferenceID(op, req.InferenceID)
-	observability.Request.SetDiffsCount(op, len(req.Diffs))
-
-	diffs := make([]types.Diff, len(req.Diffs))
-	for i, dj := range req.Diffs {
-		d, err := DiffFromJSON(dj)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("decode diff %d: %v", i, err))
-		}
-		diffs[i] = d
+	if req.Refusal != nil {
+		observability.Request.SetDiffsCount(op, len(req.Refusal.Diffs))
 	}
 
-	receipt, _, err := s.host.ChallengeReceipt(c.Request().Context(), req.InferenceID, PayloadFromJSON(req.Payload), diffs)
+	proof, err := refusalFromJSON(req.Refusal)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	payload := PayloadFromJSON(req.Payload)
+	if err = s.host.CatchUpForChallenge(c.Request().Context(), proof, req.InferenceID, payload); err != nil {
+		if errors.Is(err, host.ErrChallengeStateChanged) {
+			return echo.NewHTTPError(http.StatusConflict, err.Error())
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	receipt, _, err := s.host.ChallengeReceipt(c.Request().Context(), req.InferenceID, payload, nil)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
 	}

@@ -579,3 +579,8 @@ func TestHybridStorage_ListActiveSessionsDedupesEscrowIDs(t *testing.T) {
 		{EscrowID: "pg-only", EpochID: 10},
 	}, sessions)
 }
+
+func (r *recordingStorage) ImportSnapshot(id string, n uint64, data []byte) error {
+	r.lastMethod = "ImportSnapshot"
+	return nil
+}

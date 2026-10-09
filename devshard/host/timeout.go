@@ -13,22 +13,22 @@ type ExecutorClient interface {
 	// Used by VerifyExecutionTimeout to check for MsgFinishInference.
 	GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 
-	// ChallengeReceipt forwards diffs + payload to the executor.
-	// The executor applies missing diffs, verifies the payload, and returns
+	// ChallengeReceipt forwards a verified snapshot package and target payload.
+	// The executor catches up, verifies the payload, and returns
 	// a signed receipt if it can produce one. Also triggers execution so
 	// the inference actually completes. Returns nil receipt if executor
 	// cannot produce one (not the executor, inference not pending, etc).
-	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, err error)
+	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, refusal *types.RefusalPackage) (receipt []byte, err error)
 }
 
-// VerifyRefusedTimeout checks if a refused timeout is valid.
+// VerifyRefusedTimeout challenges the executor after package verification.
 //
 // Flow:
 //  1. Check local state: inference must be pending (no receipt).
 //  2. Check deadline has passed.
 //  3. Check local mempool for MsgConfirmStart -- if found, reject.
 //  4. Validate payload against on-chain record (same checks executor does).
-//  5. Challenge executor: forward diffs + payload in one call.
+//  5. Challenge executor with verified catch-up data and payload.
 //  6. If executor produces receipt -> reject (it received data and will compute).
 //  7. If executor unreachable or no receipt -> accept.
 func VerifyRefusedTimeout(
@@ -36,48 +36,19 @@ func VerifyRefusedTimeout(
 	st types.EscrowState,
 	inferenceID uint64,
 	payload *InferencePayload,
-	storedDiffs []types.Diff,
+	refusal *types.RefusalPackage,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
 	config types.SessionConfig,
 	nowUnix int64,
 ) (bool, error) {
-	rec, ok := st.Inferences[inferenceID]
-	if !ok {
-		return false, fmt.Errorf("inference %d not found", inferenceID)
-	}
-	if rec.Status != types.StatusPending {
-		return false, fmt.Errorf("inference %d: expected pending, got %d", inferenceID, rec.Status)
+	eligible, err := CheckRefusedTimeout(st, inferenceID, payload, localMempool, config, nowUnix)
+	if err != nil || !eligible {
+		return false, err
 	}
 
-	// Reject if refusal timeout deadline has not passed.
-	if nowUnix-rec.StartedAt < config.RefusalTimeout {
-		return false, nil
-	}
-
-	// Fast path: check local mempool for MsgConfirmStart or MsgFinishInference.
-	for _, tx := range localMempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			return false, nil // executor already confirmed
-		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			return false, nil // executor already finished
-		}
-	}
-
-	// Reject if no payload provided.
-	if payload == nil {
-		return false, fmt.Errorf("no payload for refused timeout verification")
-	}
-
-	// Verifier validates payload against on-chain record (same checks executor does).
-	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return false, nil // bad payload -> reject timeout
-	}
-
-	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
 	if executorClient != nil {
-		receipt, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
+		receipt, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, refusal)
 		if err != nil {
 			// Executor unreachable or internal error -> accept timeout.
 			return true, nil
@@ -140,6 +111,44 @@ func VerifyExecutionTimeout(
 			}
 		}
 		// err != nil means executor unreachable, which supports the timeout claim.
+	}
+
+	return true, nil
+}
+
+// CheckRefusedTimeout performs the local checks before proof replay.
+func CheckRefusedTimeout(st types.EscrowState, inferenceID uint64, payload *InferencePayload, localMempool []*types.DevshardTx, config types.SessionConfig, nowUnix int64) (bool, error) {
+	rec, ok := st.Inferences[inferenceID]
+	if !ok {
+		return false, fmt.Errorf("inference %d not found", inferenceID)
+	}
+	if rec.Status != types.StatusPending {
+		return false, fmt.Errorf("inference %d: expected pending, got %d", inferenceID, rec.Status)
+	}
+
+	// Reject if refusal timeout deadline has not passed.
+	if nowUnix-rec.StartedAt < config.RefusalTimeout {
+		return false, nil
+	}
+
+	// Fast path: check local mempool for MsgConfirmStart or MsgFinishInference.
+	for _, tx := range localMempool {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return false, nil // executor already confirmed
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return false, nil // executor already finished
+		}
+	}
+
+	// Reject if no payload provided.
+	if payload == nil {
+		return false, fmt.Errorf("no payload for refused timeout verification")
+	}
+
+	// Verifier validates payload against on-chain record (same checks executor does).
+	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+		return false, nil // bad payload -> reject timeout
 	}
 
 	return true, nil

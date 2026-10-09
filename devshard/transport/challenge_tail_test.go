@@ -49,7 +49,8 @@ func TestChallengeReceiptMissingDiffs(t *testing.T) {
 				}
 				var req ChallengeReceiptRequest
 				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-				sizes = append(sizes, len(req.Diffs))
+				require.NotNil(t, req.Refusal)
+				sizes = append(sizes, len(req.Refusal.Diffs))
 				if len(sizes) == 1 {
 					w.WriteHeader(tc.firstStatus)
 					if tc.empty {
@@ -61,7 +62,8 @@ func TestChallengeReceiptMissingDiffs(t *testing.T) {
 			}))
 			defer server.Close()
 			client := NewHTTPClient(server.URL, "escrow-1", testutil.MustGenerateKey(t))
-			receipt, err := client.ChallengeReceipt(context.Background(), 1, nil, diffs)
+			proof := &types.RefusalPackage{EscrowID: "escrow-1", Version: "v4.2", N: 0, T: 2, Snapshot: []byte("verified snapshot"), Diffs: diffs}
+			receipt, err := client.ChallengeReceipt(context.Background(), 1, nil, proof)
 			require.NoError(t, err)
 			require.NotEmpty(t, receipt)
 			require.Equal(t, tc.sizes, sizes)

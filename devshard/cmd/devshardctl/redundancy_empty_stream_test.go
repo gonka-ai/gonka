@@ -603,10 +603,12 @@ func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 			zeroReceiptTimeout(t)
+			shortRefusalWindow(t)
 			if testCase.isWholeGroup {
 				allowSpeculativeAttemptsOnWholeGroup(t)
 			}
 			env := setupTestProxy(t, 3, nil, true)
+			cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 			var hostRequests atomic.Int32
 			for _, killable := range env.killables {
 				killable.inner = contextRefusalClient{message: testCase.message, calls: &hostRequests}
@@ -618,6 +620,7 @@ func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
 			_ = env.proxy.redundancy.RunInference(context.Background(), params, &sink, nil)
 
 			require.Equal(t, testCase.wantHostRequests, hostRequests.Load())
+			requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
 		})
 	}
 }

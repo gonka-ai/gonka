@@ -63,3 +63,22 @@ func TestOpenEpochPool_MigrationsRunOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, n1, n2)
 }
+
+func TestSnapshotImportMigrationPreservesSessionState(t *testing.T) {
+	ctx := context.Background()
+	db := openEpochTestDB(t)
+	steps := SQLiteEpochMigrationSteps()
+	require.NoError(t, migrate.ApplySQLite(ctx, db, steps[:8]))
+	_, err := db.Exec(`INSERT INTO sessions (escrow_id, creator_addr, config_json, group_json, initial_balance) VALUES ('e1', 'user', '{}', '[]', 100)`)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO session_state (escrow_id, nonce, header) VALUES ('e1', 5, X'0102')`)
+	require.NoError(t, err)
+	require.NoError(t, MigrateEpochPool(ctx, db))
+	var imported, nonce uint64
+	var header []byte
+	require.NoError(t, db.QueryRow(`SELECT imported_nonce FROM sessions WHERE escrow_id = 'e1'`).Scan(&imported))
+	require.Zero(t, imported)
+	require.NoError(t, db.QueryRow(`SELECT nonce, header FROM session_state WHERE escrow_id = 'e1'`).Scan(&nonce, &header))
+	require.Equal(t, uint64(5), nonce)
+	require.Equal(t, []byte{1, 2}, header)
+}

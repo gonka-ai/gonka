@@ -24,7 +24,7 @@ func (m *mockExecutorClient) GetMempool(_ context.Context) ([]*types.DevshardTx,
 	return m.mempool, m.mempoolErr
 }
 
-func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, _ []types.Diff) ([]byte, error) {
+func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, _ *types.RefusalPackage) ([]byte, error) {
 	return m.challengeReceipt, m.challengeReceiptErr
 }
 

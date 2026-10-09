@@ -23,7 +23,7 @@ type slotClaimingVerifier struct {
 	escrowID    string
 }
 
-func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ *types.RefusalPackage) (bool, []byte, uint32, error) {
 	data, err := proto.Marshal(&types.TimeoutVoteContent{
 		EscrowId:    m.escrowID,
 		InferenceId: inferenceID,
@@ -92,6 +92,16 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 	require.NoError(t, err)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
 
+	// Catch up every host before recording its checkpoint signature.
+	for slot, client := range clients {
+		resp, err := client.Send(context.Background(), host.HostRequest{Diffs: session.Diffs(), Nonce: 1}, nil, nil)
+		require.NoError(t, err)
+		require.NoError(t, session.ProcessResponse(slot, resp, 1))
+	}
+	require.Eventually(t, func() bool {
+		_, err := session.BuildRefusalPackage(1)
+		return err == nil
+	}, time.Second, time.Millisecond)
 	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config}
 }
 
@@ -143,13 +153,13 @@ type delayedVerifier struct {
 	delay time.Duration
 }
 
-func (d *delayedVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, p *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (d *delayedVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, p *host.InferencePayload, diffs []types.Diff, refusal *types.RefusalPackage) (bool, []byte, uint32, error) {
 	select {
 	case <-time.After(d.delay):
 	case <-ctx.Done():
 		return false, nil, 0, ctx.Err()
 	}
-	return d.inner.VerifyTimeout(ctx, inferenceID, reason, p, diffs)
+	return d.inner.VerifyTimeout(ctx, inferenceID, reason, p, diffs, refusal)
 }
 
 func TestCollectTimeoutVotes_SpoofedVoteDoesNotDisplaceHonestQuorum(t *testing.T) {
@@ -354,7 +364,7 @@ func TestCollectTimeoutVotes_WarmKeySignedVotesAccepted(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: warmKeys[i], group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -386,7 +396,7 @@ func TestCollectTimeoutVotes_UnauthorizedWarmKeyRejected(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: stranger, group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -446,7 +456,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: warmKeys[i], group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,

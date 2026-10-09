@@ -298,7 +298,14 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	}
 
 	replayFrom := uint64(1)
-	if snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID); snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	if meta.ImportedNonce > 0 {
+		_, root, err := types.SnapshotData(snapData)
+		if snapErr != nil || err != nil || len(root) != 32 || snapNonce < meta.ImportedNonce || snapNonce > meta.LatestNonce {
+			return fmt.Errorf("imported snapshot missing root or unavailable")
+		}
+	}
+	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
 		snapState, err := host.UnmarshalStateSnapshot(snapData)
 		if err != nil {
 			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)

@@ -86,3 +86,5 @@ func TestSession_Close_ClosesUnderlyingStore(t *testing.T) {
 	require.NoError(t, session.Close())
 	require.Equal(t, 1, store.closeCalls, "Session.Close must close the injected storage exactly once")
 }
+
+func (s *closeCountingStore) ImportSnapshot(string, uint64, []byte) error { return nil }

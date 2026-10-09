@@ -8,6 +8,7 @@ import (
 
 	"devshard/logging"
 	"devshard/observability"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -33,9 +34,32 @@ func (h *Host) applyAndPersistReconciling(ctx context.Context, diff types.Diff) 
 			return nil
 		}
 		if diff.Nonce == currentNonce+1 {
-			return h.applyAndPersist(ctx, diff)
+			err := h.applyAndPersist(ctx, diff)
+			if !errors.Is(err, storage.ErrSnapshotAdvanced) {
+				return err
+			}
+			if err = h.reconcileSnapshotLocked(); err != nil {
+				return err
+			}
+			if h.sm.LatestNonce() == currentNonce {
+				return ErrReconcileGap
+			}
+			continue
 		}
 
+		// A peer may have imported a snapshot instead of the missing history.
+		if h.store != nil {
+			meta, err := h.store.GetSessionMeta(h.escrowID)
+			if err != nil {
+				return err
+			}
+			if meta.ImportedNonce > currentNonce {
+				if err := h.reconcileSnapshotLocked(); err != nil {
+					return err
+				}
+				continue
+			}
+		}
 		// Nonce gap: memory is behind shared durable state.
 		if h.store == nil {
 			return fmt.Errorf("%w: escrow %s mem=%d incoming=%d (no store)",
@@ -60,7 +84,17 @@ func (h *Host) applyAndPersistReconciling(ctx context.Context, diff types.Diff) 
 			return nil
 		}
 		if diff.Nonce == currentNonce+1 {
-			return h.applyAndPersist(ctx, diff)
+			err := h.applyAndPersist(ctx, diff)
+			if !errors.Is(err, storage.ErrSnapshotAdvanced) {
+				return err
+			}
+			if err = h.reconcileSnapshotLocked(); err != nil {
+				return err
+			}
+			if h.sm.LatestNonce() == currentNonce {
+				return ErrReconcileGap
+			}
+			continue
 		}
 
 		from = currentNonce + 1

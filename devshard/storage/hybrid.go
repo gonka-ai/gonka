@@ -883,3 +883,11 @@ func (h *HybridStorage) Close() error {
 
 var _ Storage = (*HybridStorage)(nil)
 var _ LeaseStore = (*HybridStorage)(nil)
+
+func (h *HybridStorage) ImportSnapshot(escrowID string, nonce uint64, data []byte) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.ImportSnapshot(escrowID, nonce, data)
+}

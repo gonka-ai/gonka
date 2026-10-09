@@ -316,3 +316,5 @@ func itoa(n uint64) string {
 	}
 	return string(buf[i:])
 }
+
+func (s *legacyOnlyStorage) ImportSnapshot(string, uint64, []byte) error { return nil }

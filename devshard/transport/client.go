@@ -635,42 +635,43 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 	return &resp, nil
 }
 
-// ChallengeReceipt forwards diffs + payload to the executor and returns the receipt.
-func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
+// ChallengeReceipt retries with the full package if shortened catch-up fails.
+func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, refusal *types.RefusalPackage) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
-
-	start := 0
-	if len(diffs) > 0 {
+	full := refusal
+	if refusal != nil && refusal.CheckBounds() == nil && len(refusal.Snapshot) > 0 {
 		queryCtx, queryCancel := context.WithTimeout(ctx, min(c.config.QueryTimeout, c.config.VerifyTimeout/4))
 		head, err := c.GetState(queryCtx)
 		queryCancel()
 		if err == nil && len(head.StateRoot) == 32 {
-			for i, diff := range diffs {
+			for i, diff := range refusal.Diffs {
 				if head.Nonce == diff.Nonce && bytes.Equal(head.StateRoot, diff.PostStateRoot) {
-					start = i + 1
+					refusal = &types.RefusalPackage{
+						EscrowID: refusal.EscrowID, Version: refusal.Version,
+						N: head.Nonce, T: refusal.T, BaseRoot: diff.PostStateRoot,
+						Diffs: refusal.Diffs[i+1:],
+					}
 					break
 				}
 			}
 		}
 	}
-
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		dj, err := DiffToJSON(d)
-		if err != nil {
-			return nil, fmt.Errorf("encode diff %d: %w", i, err)
-		}
-		djList[i] = dj
+	proof, err := refusalToJSON(refusal)
+	if err != nil {
+		return nil, err
 	}
+	req := ChallengeReceiptRequest{InferenceID: inferenceID, Payload: PayloadToJSON(payload), Refusal: proof}
 
-	req := ChallengeReceiptRequest{InferenceID: inferenceID, Payload: PayloadToJSON(payload), Diffs: djList[start:]}
 	path := "/sessions/" + c.escrowID + "/challenge-receipt"
 	var resp ChallengeReceiptResponse
-	err := c.post(ctx, path, c.config.VerifyTimeout, req, &resp)
-	if start > 0 && (err != nil || len(resp.Receipt) == 0) {
-		// Another instance may be behind the queried host.
-		req.Diffs = djList
+	err = c.post(ctx, path, c.config.VerifyTimeout, req, &resp)
+	if refusal != full && (err != nil || len(resp.Receipt) == 0) {
+		// Retry once with all data.
+		req.Refusal, err = refusalToJSON(full)
+		if err != nil {
+			return nil, err
+		}
 		resp = ChallengeReceiptResponse{}
 		err = c.post(ctx, path, c.config.VerifyTimeout, req, &resp)
 	}
@@ -681,7 +682,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 }
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
-func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, refusal *types.RefusalPackage) (bool, []byte, uint32, error) {
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
@@ -693,7 +694,12 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 			djList[i] = dj
 		}
 	}
+	proof, err := refusalToJSON(refusal)
+	if err != nil {
+		return false, nil, 0, err
+	}
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
+		Refusal:     proof,
 		InferenceID: inferenceID,
 		Reason:      TimeoutReasonToString(reason),
 		Payload:     PayloadToJSON(payload),
@@ -882,6 +888,7 @@ func (c *HTTPClient) observeTransportFailure(path string, err error) {
 	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
 }
 
+// GetState fetches the host's current nonce and state root.
 func (c *HTTPClient) GetState(ctx context.Context) (*StateResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.QueryTimeout)
 	defer cancel()

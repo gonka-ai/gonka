@@ -67,6 +67,8 @@ var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is r
 // ErrDiffFork is defined in diff_identity.go and returned by AppendDiff when
 // an existing durable row at the same nonce has a conflicting payload.
 
+var ErrSnapshotAdvanced = errors.New("durable snapshot advanced; reconcile")
+
 // Storage persists devshard session state and diffs.
 //
 // The store is partitioned by EpochID. PruneEpoch drops everything that
@@ -91,6 +93,7 @@ type Storage interface {
 	LastFinalized(escrowID string) (uint64, error)
 	SaveSnapshot(escrowID string, nonce uint64, data []byte) error
 	LoadSnapshot(escrowID string) (nonce uint64, data []byte, err error)
+	ImportSnapshot(escrowID string, nonce uint64, data []byte) error
 	// InsertSealedInference upserts the per-inference observability snapshot
 	// (insert or update on conflict).
 	InsertSealedInference(escrowID string, row InferenceRow) error
@@ -198,6 +201,7 @@ type SessionMeta struct {
 	Group          []types.SlotAssignment
 	InitialBalance uint64
 	LatestNonce    uint64
+	ImportedNonce  uint64
 	LastFinalized  uint64
 	Status         string // "active", "settled"
 }

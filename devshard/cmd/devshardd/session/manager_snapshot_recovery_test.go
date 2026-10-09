@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -592,4 +593,75 @@ func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.
 		require.Equal(t, rec.MaxTokens, gotRec.MaxTokens)
 		require.Equal(t, rec.ReservedCost, gotRec.ReservedCost)
 	}
+}
+
+func TestRecoverImportedSnapshotWithoutJournal(t *testing.T) {
+	source := newManagerTestStore(t)
+	group, user, signer := populateStore(t, source, 5)
+	st := fullReplayState(t, source)
+	data, err := host.MarshalStateSnapshotWithCommitted(&st, nil, nil)
+	require.NoError(t, err)
+	dest := newManagerTestStore(t)
+	meta, err := source.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.NoError(t, dest.CreateSession(storage.CreateSessionParams{EscrowID: "1", EpochID: meta.EpochID, Version: meta.Version, CreatorAddr: meta.CreatorAddr, Config: meta.Config, Group: meta.Group, InitialBalance: meta.InitialBalance}))
+	require.NoError(t, dest.ImportSnapshot("1", 5, data))
+	store := &recordingStore{Storage: dest}
+	mgr := recoverTestManager(t, store, signer, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+	got := recoveredHostState(t, mgr)
+	require.Equal(t, st.LatestNonce, got.LatestNonce)
+	want, err := state.SnapshotRoot(&st)
+	require.NoError(t, err)
+	root, err := state.SnapshotRoot(&got)
+	require.NoError(t, err)
+	require.Equal(t, want, root)
+	for _, r := range store.ranges() {
+		require.Equal(t, diffRange{5, 5}, r)
+	}
+}
+
+func TestRecoverImportedSnapshotRejectsMissingOrCorruptRoot(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint(missing), func(t *testing.T) {
+			source := newManagerTestStore(t)
+			group, user, signer := populateStore(t, source, 5)
+			st := fullReplayState(t, source)
+			data, err := host.MarshalStateSnapshotWithCommitted(&st, nil, nil)
+			require.NoError(t, err)
+			meta, err := source.GetSessionMeta("1")
+			require.NoError(t, err)
+			dest := newManagerTestStore(t)
+			require.NoError(t, dest.CreateSession(storage.CreateSessionParams{EscrowID: "1", EpochID: meta.EpochID, Version: meta.Version, CreatorAddr: meta.CreatorAddr, Config: meta.Config, Group: meta.Group, InitialBalance: meta.InitialBalance}))
+			require.NoError(t, dest.ImportSnapshot("1", 5, data))
+			if missing {
+				data, _, err = types.SnapshotData(data)
+				require.NoError(t, err)
+			} else {
+				data[len("devshard-snapshot-root-v1\x00")] ^= 1
+			}
+			store := &snapshotBlobStore{Storage: dest, nonce: 5, data: data}
+			mgr := recoverTestManager(t, store, signer, user, group)
+			_, _, err = mgr.recoverStoredSession("1")
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestRecoverImportedSnapshotRejectsOrphanCommittedEntry(t *testing.T) {
+	source := newManagerTestStore(t)
+	group, user, signer := populateStore(t, source, 5)
+	st := fullReplayState(t, source)
+	data, err := host.MarshalStateSnapshotWithCommitted(&st, map[uint64][]byte{999: {1}}, nil)
+	require.NoError(t, err)
+	dest := newManagerTestStore(t)
+	meta, err := source.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.NoError(t, dest.CreateSession(storage.CreateSessionParams{EscrowID: "1", EpochID: meta.EpochID, Version: meta.Version, CreatorAddr: meta.CreatorAddr, Config: meta.Config, Group: meta.Group, InitialBalance: meta.InitialBalance}))
+	require.NoError(t, dest.ImportSnapshot("1", 5, data))
+	store := &recordingStore{Storage: dest}
+	mgr := recoverTestManager(t, store, signer, user, group)
+	_, _, err = mgr.recoverStoredSession("1")
+	require.ErrorContains(t, err, "committed inference entries")
+	require.Empty(t, store.ranges(), "an imported snapshot cannot fall back to the missing journal")
 }

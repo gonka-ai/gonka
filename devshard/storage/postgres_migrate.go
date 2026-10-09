@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
 		},
 	},
+	{ID: 12, Name: "snapshot_import_watermark", Statements: []string{`ALTER TABLE devshard_sessions ADD COLUMN imported_nonce BIGINT NOT NULL DEFAULT 0`}},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
