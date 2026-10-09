@@ -663,6 +663,12 @@ func TestHeartbeatDisabled_SeedGateStillBlocks(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 	require.Equal(t, transport.DevshardErrorCatalogPending, se.Code)
 	require.Equal(t, base, env.session.Nonce())
+
+	// captureInfoLog restores logging.current in a cleanup, and cleanups run
+	// LIFO, so that write happens before setupSeedSession closes the session.
+	// The seed loop is still in WaitRouterCatalog calling logging.Debug until
+	// Close. Stop it here so the restore does not race that read.
+	require.NoError(t, env.session.Close())
 }
 
 func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
