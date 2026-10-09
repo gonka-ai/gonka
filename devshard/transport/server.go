@@ -690,49 +690,59 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	return accept, err
 }
 
-// refusalAfterProgress runs once a challenge answered without a receipt.
+// refusalProgressRetries is how often a nonce that keeps advancing can postpone the timeout vote.
+// Past this, the vote is accepted even if the executor would move again.
+const refusalProgressRetries = 3
+
+// refusalAfterProgress runs after a challenge answered without a receipt.
 // A nonce that did not advance, or a new nonce whose root does not match, accepts the timeout.
-// A higher nonce with a matching root is challenged from that nonce only.
+// A higher nonce with a matching root is challenged from that nonce, at most refusalProgressRetries times.
 func (s *Server) refusalAfterProgress(ctx context.Context, client *HTTPClient, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, previous uint64, load func(uint64) ([]types.Diff, error)) (bool, error) {
-	if err := ctx.Err(); err != nil {
-		return false, err
-	}
-	deadline, _ := ctx.Deadline()
-	queryBudget := min(client.config.QueryTimeout, time.Until(deadline)/4)
-	if queryBudget <= 0 {
-		return true, nil
-	}
-	queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
-	head, queryErr := client.GetState(queryCtx)
-	queryCancel()
-	if ctx.Err() != nil {
-		return false, ctx.Err()
-	}
-	if queryErr != nil || head.Nonce <= previous || head.Nonce > st.LatestNonce || len(head.StateRoot) != 32 {
-		return true, nil
-	}
-	anchor, err := s.store.GetDiffs(s.host.EscrowID(), head.Nonce, head.Nonce)
-	if err != nil {
-		return false, err
-	}
-	if len(anchor) != 1 || anchor[0].Diff.Nonce != head.Nonce || !bytes.Equal(anchor[0].StateHash, head.StateRoot) {
-		return true, nil
-	}
-	var diffs []types.Diff
-	if head.Nonce < st.LatestNonce {
-		diffs, err = load(head.Nonce + 1)
+	for range refusalProgressRetries {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		deadline, _ := ctx.Deadline()
+		queryBudget := min(client.config.QueryTimeout, time.Until(deadline)/4)
+		if queryBudget <= 0 {
+			return true, nil
+		}
+		queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
+		head, queryErr := client.GetState(queryCtx)
+		queryCancel()
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if queryErr != nil || head.Nonce <= previous || head.Nonce > st.LatestNonce || len(head.StateRoot) != 32 {
+			return true, nil
+		}
+		anchor, err := s.store.GetDiffs(s.host.EscrowID(), head.Nonce, head.Nonce)
 		if err != nil {
 			return false, err
 		}
-	}
-	challengeCtx, challengeCancel := context.WithTimeout(ctx, time.Until(deadline)/2)
-	receipt, challengeErr := client.ChallengeReceipt(challengeCtx, inferenceID, payload, diffs)
-	challengeCancel()
-	if ctx.Err() != nil {
-		return false, ctx.Err()
-	}
-	if challengeErr == nil && len(receipt) > 0 {
-		return false, nil
+		if len(anchor) != 1 || anchor[0].Diff.Nonce != head.Nonce || !bytes.Equal(anchor[0].StateHash, head.StateRoot) {
+			return true, nil
+		}
+		var diffs []types.Diff
+		if head.Nonce < st.LatestNonce {
+			diffs, err = load(head.Nonce + 1)
+			if err != nil {
+				return false, err
+			}
+		}
+		challengeCtx, challengeCancel := context.WithTimeout(ctx, time.Until(deadline)/2)
+		receipt, challengeErr := client.ChallengeReceipt(challengeCtx, inferenceID, payload, diffs)
+		challengeCancel()
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		if challengeErr == nil && len(receipt) > 0 {
+			return false, nil
+		}
+		if challengeErr != nil && executorUnreachable(challengeErr) {
+			return true, nil
+		}
+		previous = head.Nonce
 	}
 	return true, nil
 }

@@ -227,6 +227,39 @@ func TestRefusalRecheckRetriesAdvancedNonce(t *testing.T) {
 	}
 }
 
+func TestRefusalProgressRetryCap(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	var gets int
+	var sizes []int
+	remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			gets++
+			_ = json.NewEncoder(w).Encode(StateResponse{Nonce: uint64(gets), StateRoot: root})
+			return
+		}
+		var req ChallengeReceiptRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		sizes = append(sizes, len(req.Diffs))
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer remote.Close()
+	env := setupServerEnv(t)
+	diffs := make([]types.Diff, 8)
+	for i := range diffs {
+		diffs[i] = types.Diff{Nonce: uint64(i + 1), PostStateRoot: root}
+	}
+	store := &refusalDiffStore{diffs: diffs}
+	env.server.store = store
+	st, payload := refusalTestState()
+	st.LatestNonce = uint64(len(diffs))
+	client := NewHTTPClient(remote.URL, "escrow-1", env.hostSigner)
+	accept, err := env.server.verifyRefusedTimeout(context.Background(), st, 1, payload, nil, client, 2000)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Equal(t, 1+refusalProgressRetries, gets)
+	require.Len(t, sizes, 1+refusalProgressRetries)
+}
+
 func TestRefusalUnreachableSkipsFullDiffs(t *testing.T) {
 	env := setupServerEnv(t)
 	store := &refusalDiffStore{diffs: []types.Diff{{Nonce: 1}, {Nonce: 2}}}
