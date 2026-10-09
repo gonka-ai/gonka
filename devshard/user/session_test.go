@@ -2233,7 +2233,7 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 }
 
 func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -2251,28 +2251,19 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 	}
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
-	execHost := session.clients[execIdx].(*InProcessClient).Host
-	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
-	require.NoError(t, err)
-	require.NotEmpty(t, receipt)
-
-	var confirmTx *types.DevshardTx
-	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
-			confirmTx = tx
-			break
-		}
-	}
-	require.NotNil(t, confirmTx)
+	// TimeoutDeadline counts the execution deadline from the committed record, so the signed receipt itself has to carry a stamp whose deadline is already past.
+	const confirmedAt = int64(1000)
+	receipt := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", prepared.diff.Nonce,
+		testutil.TestPromptHash[:], params.Model, params.InputLength, params.MaxTokens, params.StartedAt, confirmedAt)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: prepared.diff.Nonce, ExecutorSig: receipt, ConfirmedAt: confirmedAt,
+	}}}
 
 	session.mu.Lock()
 	session.addPendingTx(confirmTx)
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 	require.NoError(t, session.SendPendingDiff(ctx), "test setup must publish ConfirmStart before execution timeout")
-
-	session.mu.Lock()
-	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
-	session.mu.Unlock()
 
 	beforeDiffs := len(session.Diffs())
 	for i, c := range session.clients {
@@ -2315,15 +2306,17 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
 	execHost := session.clients[execIdx].(*InProcessClient).Host
-	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	liveReceipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
 	require.NoError(t, err)
-	require.NotEmpty(t, receipt)
-	confirmTx := findRecoveryConfirmStart(execHost.MempoolTxs(), prepared.diff.Nonce)
-	require.NotNil(t, confirmTx)
+	require.NotEmpty(t, liveReceipt)
 
+	// The host stamps its own receipt with the wall clock, but TimeoutDeadline counts the execution deadline from the committed record, so the session confirms on a receipt already past its deadline.
+	const confirmedAt = int64(1000)
+	backdatedReceipt := testutil.SignExecutorReceipt(t, signers[execIdx], "escrow-1", prepared.diff.Nonce,
+		testutil.TestPromptHash[:], params.Model, params.InputLength, params.MaxTokens, params.StartedAt, confirmedAt)
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
-		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+		Receipt:     backdatedReceipt,
+		ConfirmedAt: confirmedAt,
 	}, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
@@ -2339,7 +2332,7 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 	session.mu.Unlock()
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), prepared.diff.Nonce))
 	session.mu.Lock()
-	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 
 	for i, c := range session.clients {
@@ -2648,15 +2641,6 @@ func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
 	return count
 }
 
-func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
-	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			return tx
-		}
-	}
-	return nil
-}
-
 func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
@@ -2691,4 +2675,40 @@ func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.De
 		}
 	}
 	return nil
+}
+
+func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+// Test flow:
+//  1. Hold the session lock that guards nonceStates, as PrepareInference and the outcome prune do while writing it.
+//  2. Ask for a timeout deadline from another goroutine: it must wait for the lock instead of reading the map.
+//  3. Release the lock: the deadline is returned.
+func TestSession_TimeoutDeadlineWaitsForTheSessionLock(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	deadlineReturned := make(chan struct{})
+	isDeadlineReturned := func() bool {
+		select {
+		case <-deadlineReturned:
+			return true
+		default:
+			return false
+		}
+	}
+
+	session.mu.Lock()
+	go func() {
+		session.TimeoutDeadline(1, time.Now())
+		close(deadlineReturned)
+	}()
+	require.Never(t, isDeadlineReturned, 100*time.Millisecond, 5*time.Millisecond, "TimeoutDeadline read nonceStates without the session lock")
+	session.mu.Unlock()
+
+	require.Eventually(t, isDeadlineReturned, time.Second, 5*time.Millisecond)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"testing"
@@ -669,4 +670,69 @@ func TestExecuteValidation_TokenInflationAboveTolerance_Fails(t *testing.T) {
 	require.NoError(t, err)
 	assert.IsType(t, &InvalidInferenceResult{}, result)
 	assert.False(t, result.IsSuccessful())
+}
+
+func TestExecuteValidation_DeepSeekInputUsageException(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		model         string
+		input, output uint64
+		history       bool
+		wrongToken    bool
+		valid         bool
+		exception     bool
+		suspected     bool
+	}{
+		{name: "prefix 78", input: 178, output: 100, valid: true, exception: true},
+		{name: "prefix 79", input: 179, output: 100, valid: true, exception: true},
+		{name: "below exception", input: 177, output: 100},
+		{name: "above exception", input: 180, output: 100},
+		{name: "normal tolerance", input: 103, output: 100, valid: true},
+		{name: "reverse direction", input: 21, output: 100, valid: true},
+		{name: "other model", model: "other-model", input: 179, output: 100},
+		{name: "output still checked", input: 179, output: 104, exception: true},
+		{name: "logits still checked", input: 179, output: 100, wrongToken: true, exception: true},
+		{name: "history suspected", input: 60468, output: 100, history: true, suspected: true},
+		{name: "large delta without history", input: 60468, output: 100},
+		{name: "history with output mismatch", input: 60468, output: 104, history: true},
+		{name: "other model with history", model: "other-model", input: 60468, output: 100, history: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			model := tc.model
+			if model == "" {
+				model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+			}
+			messages := []map[string]interface{}{{"role": "user", "content": "hello"}}
+			if tc.history {
+				messages = append(messages, map[string]interface{}{"role": "assistant", "content": "answer", "reasoning_content": "previous reasoning"})
+				messages = append(messages, map[string]interface{}{"role": "user", "content": "continue"})
+			}
+			prompt, err := json.Marshal(map[string]interface{}{"model": model, "messages": messages})
+			require.NoError(t, err)
+			validatorPayload := responsePayloadTokensWithUsage(100, 100, 100)
+			if tc.wrongToken {
+				validatorPayload = bytes.ReplaceAll(validatorPayload, []byte(`"42"`), []byte(`"43"`))
+			}
+			calls := 0
+			execute := staticExecutor(http.StatusOK, validatorPayload)
+			result, err := ExecuteValidation(context.Background(), "inf-1", prompt, responsePayloadTokens(100, "length", ""),
+				func(ctx context.Context, body []byte) (*http.Response, error) {
+					calls++
+					return execute(ctx, body)
+				}, tc.input, tc.output, "processed_logprobs", 0)
+			require.NoError(t, err)
+			assert.Equal(t, tc.valid, result.IsSuccessful())
+			assert.Equal(t, 1, calls)
+			assert.Equal(t, tc.exception, bytes.Contains(logs.Bytes(), []byte("exception=deepseek_formatter_prefix")))
+			assert.Equal(t, tc.suspected, bytes.Contains(logs.Bytes(), []byte("suspected_cause=deepseek_formatter_history")))
+			if tc.suspected {
+				assert.IsType(t, &InvalidInferenceResult{}, result)
+				assert.Contains(t, logs.String(), "resolution=invalid")
+			}
+		})
+	}
 }

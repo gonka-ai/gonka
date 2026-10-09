@@ -125,6 +125,7 @@ func (s *PostgresGatewayStore) ensureSchema(ctx context.Context) error {
 			rotation_epoch BIGINT NOT NULL DEFAULT 0,
 			settlement_pending SMALLINT NOT NULL DEFAULT 0,
 			protocol_version TEXT NOT NULL DEFAULT '',
+			on_hold_since TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -222,6 +223,9 @@ func (s *PostgresGatewayStore) ensureSchema(ctx context.Context) error {
 	if err := ensurePGGatewayDevshardsColumn(ctx, s.pool, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate gateway devshard protocol version: %w", err)
 	}
+	if err := ensurePGGatewayDevshardsColumn(ctx, s.pool, "on_hold_since", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return fmt.Errorf("migrate gateway devshard on hold since: %w", err)
+	}
 	if err := ensurePGColumn(ctx, s.pool, "escrow_rotation_commitments", "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return fmt.Errorf("migrate escrow rotation commitments protocol version: %w", err)
 	}
@@ -263,7 +267,7 @@ func (s *PostgresGatewayStore) LoadState(ctx context.Context) (GatewayState, boo
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -288,6 +292,7 @@ func (s *PostgresGatewayStore) LoadState(ctx context.Context) (GatewayState, boo
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
 			&settlementPending,
+			&devshard.OnHoldSince,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
 		}
@@ -648,12 +653,13 @@ func (s *PostgresGatewayStore) upsertDevshardTx(ctx context.Context, tx pgx.Tx, 
 	// never silently clears a queued settlement; a brand-new row falls back
 	// to the value carried on devshard.
 	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
-	_ = tx.QueryRow(ctx, `SELECT settlement_pending FROM gateway_devshards WHERE id = $1`, devshard.ID).Scan(&settlementPending)
+	onHoldSince := devshard.OnHoldSince
+	_ = tx.QueryRow(ctx, `SELECT settlement_pending, on_hold_since FROM gateway_devshards WHERE id = $1`, devshard.ID).Scan(&settlementPending, &onHoldSince)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			protocol_version, rotation_role, rotation_epoch, settlement_pending
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE SET
 			private_key_hex = EXCLUDED.private_key_hex,
 			private_key_env = EXCLUDED.private_key_env,
@@ -666,7 +672,8 @@ func (s *PostgresGatewayStore) upsertDevshardTx(ctx context.Context, tx pgx.Tx, 
 			protocol_version = EXCLUDED.protocol_version,
 			rotation_role = EXCLUDED.rotation_role,
 			rotation_epoch = EXCLUDED.rotation_epoch,
-			settlement_pending = EXCLUDED.settlement_pending`,
+			settlement_pending = EXCLUDED.settlement_pending,
+			on_hold_since = EXCLUDED.on_hold_since`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -680,6 +687,7 @@ func (s *PostgresGatewayStore) upsertDevshardTx(ctx context.Context, tx pgx.Tx, 
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		settlementPending,
+		onHoldSince,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
 	}
@@ -702,7 +710,7 @@ func (s *PostgresGatewayStore) GetDevshard(ctx context.Context, id string) (Gate
 	var settlementPending int
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		WHERE id = $1`, id).Scan(
 		&devshard.ID,
@@ -718,6 +726,7 @@ func (s *PostgresGatewayStore) GetDevshard(ctx context.Context, id string) (Gate
 		&devshard.RotationRole,
 		&devshard.RotationEpoch,
 		&settlementPending,
+		&devshard.OnHoldSince,
 	)
 	if err == pgx.ErrNoRows {
 		return GatewayDevshardState{}, false, nil
@@ -735,7 +744,7 @@ func (s *PostgresGatewayStore) SetDevshardActive(ctx context.Context, id string,
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `
 		UPDATE gateway_devshards
-		SET active = $1, updated_at = $2
+		SET active = $1, on_hold_since = '', updated_at = $2
 		WHERE id = $3`,
 		gatewayBoolToInt(active),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -755,7 +764,7 @@ func (s *PostgresGatewayStore) DeactivateDevshardIfActive(ctx context.Context, i
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `
 		UPDATE gateway_devshards
-		SET active = 0, settlement_pending = GREATEST(settlement_pending, $1), updated_at = $2
+		SET active = 0, settlement_pending = GREATEST(settlement_pending, $1), on_hold_since = '', updated_at = $2
 		WHERE id = $3 AND active = 1`,
 		gatewayBoolToInt(settlementPending),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -765,6 +774,44 @@ func (s *PostgresGatewayStore) DeactivateDevshardIfActive(ctx context.Context, i
 		return false, fmt.Errorf("deactivate devshard %s settlement_pending=%t: %w", id, settlementPending, err)
 	}
 	return cmdTag.RowsAffected() == 1, nil
+}
+
+// HoldDevshardIfActive puts an active devshard on hold, keeping the start of a hold already in place, and returns that start.
+func (s *PostgresGatewayStore) HoldDevshardIfActive(ctx context.Context, id string, since time.Time) (time.Time, bool, error) {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+	var storedSince string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE gateway_devshards
+		SET on_hold_since = CASE WHEN on_hold_since = '' THEN $1 ELSE on_hold_since END, updated_at = $2
+		WHERE id = $3 AND active = 1
+		RETURNING on_hold_since`,
+		since.UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	).Scan(&storedSince)
+	if err == pgx.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("hold devshard %s: %w", id, err)
+	}
+	return parseDevshardHoldSince(id, storedSince)
+}
+
+func (s *PostgresGatewayStore) ReleaseDevshardHold(ctx context.Context, id string) error {
+	ctx, cancel := s.opCtx(ctx)
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, `
+		UPDATE gateway_devshards
+		SET on_hold_since = '', updated_at = $1
+		WHERE id = $2`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	); err != nil {
+		return fmt.Errorf("release devshard %s hold: %w", id, err)
+	}
+	return nil
 }
 
 func (s *PostgresGatewayStore) SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error {

@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,6 +37,12 @@ import (
 // offending host is recorded as non-responsive in the local PerfTracker.
 var errEmptyStream = errors.New("empty content stream")
 
+// errAttemptPanicked marks an attempt whose goroutine panicked while sending to
+// or parsing the response of its host. The goroutine runs the host's streamed
+// bytes through the response classifiers, so a parser bug reachable from host
+// input must fail that one attempt rather than terminate the gateway process.
+var errAttemptPanicked = errors.New("attempt panicked")
+
 // Fail-closed when every attempted host receipts (or never receipts) and none
 // produce a first token, with no unused host left to start. Always-stream
 // first-token / receipt timers are failover triggers; at the attempt limit they
@@ -54,7 +61,17 @@ var (
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
+const DefaultMaxSpeculativeAttempts = 2
+
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+// modelContextLimits mirrors each model's --max-model-len in the chain's model_args.
+// TODO: temporary fix until protocol will be updated - https://github.com/gonka-ai/gonka/pull/1763
+var modelContextLimits = map[string]uint64{
+	"MiniMaxAI/MiniMax-M2.7":             180000,
+	"deepseek-ai/DeepSeek-V4-Flash-0731": 400000,
+	"zai-org/GLM-5.3-Flash":              400000,
+}
 
 var sseUsageKeyMarker = []byte(`"usage"`)
 
@@ -488,7 +505,11 @@ func normalizeRedundancySpeedPolicy(policy string) string {
 	}
 }
 
-var maxSpeculativeAttempts atomic.Int64
+var maxSpeculativeAttempts = func() *atomic.Int64 {
+	attempts := new(atomic.Int64)
+	attempts.Store(DefaultMaxSpeculativeAttempts)
+	return attempts
+}()
 
 func SetMaxSpeculativeAttempts(v int) {
 	maxSpeculativeAttempts.Store(int64(v))
@@ -817,6 +838,7 @@ type inflight struct {
 	hostID                     string
 	nonce                      uint64
 	escrowID                   string
+	model                      string
 	sendTime                   time.Time
 	escalated                  bool
 	probe                      bool
@@ -2081,6 +2103,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			hostID:                   e.session.HostLabel(res.prepared.HostIdx()),
 			nonce:                    res.prepared.Nonce(),
 			escrowID:                 e.devshardID,
+			model:                    normalizeModelID(params.Model),
 			probe:                    res.isProbe,
 			suspicious:               noWinnerOK,
 			noWinnerReason:           noWinner.reason,
@@ -2145,6 +2168,17 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer cancel()
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
+		// Registered last so it runs first: inf.err must be set before done closes.
+		defer func() {
+			if r := recover(); r != nil {
+				inf.err = fmt.Errorf("%w: %v", errAttemptPanicked, r)
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "attempt_panicked",
+					"host", inf.hostID,
+					"panic", fmt.Sprint(r),
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
@@ -3719,8 +3753,16 @@ func isTrustedDeterministicRejection(inf *inflight) bool {
 		return false
 	}
 	details := inf.errorDetails()
-	return parseContextLengthLimit(details.Message) > 0 ||
-		details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+	if parseContextLengthLimit(details.Message) > 0 {
+		return contextRefusalIsFinal(details.Message, inf.model)
+	}
+	return details.statusCode() == http.StatusBadRequest && isCacheableOpenAIErrorDetails(details)
+}
+
+// contextRefusalIsFinal keeps a model with a known context limit racing while a larger host could still serve the request.
+func contextRefusalIsFinal(message, model string) bool {
+	modelContextLimit, known := modelContextLimits[model]
+	return !known || contextRefusalBeyondModelLimit(message, modelContextLimit)
 }
 
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
@@ -3984,6 +4026,15 @@ func isRetriableCapabilityErrorMessage(msg string) bool {
 	return isToolChoiceCapabilityError(msg) || parseContextLengthLimit(msg) > 0
 }
 
+// contextRefusalBeyondModelLimit is a context-length refusal no honest host avoids: the host already serves the model limit, or the request exceeds it.
+func contextRefusalBeyondModelLimit(message string, modelContextLimit uint64) bool {
+	hostContextLimit := parseContextLengthLimit(message)
+	if modelContextLimit == 0 || hostContextLimit == 0 {
+		return false
+	}
+	return hostContextLimit >= modelContextLimit || max(parseContextTotalRequested(message), parseContextRequested(message)) > modelContextLimit
+}
+
 func isToolChoiceCapabilityError(msg string) bool {
 	return strings.Contains(msg, toolChoiceUnsupportedMessage)
 }
@@ -4015,17 +4066,25 @@ func parseContextTotalRequested(msg string) uint64 {
 	return parseUintAfterMarker(msg, "for a total of at least ")
 }
 
+func parseContextRequested(msg string) uint64 {
+	return parseUintAfterMarker(msg, "you requested ")
+}
+
 func parseUintAfterMarker(msg, marker string) uint64 {
 	lower := strings.ToLower(msg)
 	idx := strings.Index(lower, marker)
 	if idx < 0 {
 		return 0
 	}
-	rest := msg[idx+len(marker):]
+	// Slice lower, where idx is valid: ToLower can lengthen the string (e.g. U+023A), so idx may exceed len(msg) and msg[idx:] would panic; digits are ASCII-identical in lower.
+	rest := lower[idx+len(marker):]
 	end := strings.IndexFunc(rest, func(r rune) bool {
 		return r < '0' || r > '9'
 	})
-	if end <= 0 {
+	if end < 0 {
+		end = len(rest)
+	}
+	if end == 0 {
 		return 0
 	}
 	n, err := strconv.ParseUint(rest[:end], 10, 64)

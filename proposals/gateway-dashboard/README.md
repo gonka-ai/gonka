@@ -477,10 +477,10 @@ through the registry. Aggregates are never stored. `in_flight`,
 `timeout_pending`, `pending_classification`, and `unclassified` are
 computed or refreshed from current memory, time, and `latest_nonce`.
 
-`DEVSHARD_STATS_RETENTION_EPOCHS=0` disables automatic deletion. A
-positive value removes only complete epochs older than the configured
-count. `DEVSHARD_STATS_SNAPSHOT_SECONDS` sets the snapshot tick, default
-300.
+`DEVSHARD_STATS_RETENTION_EPOCHS` defaults to 2; `0` disables automatic
+deletion. A positive value removes only complete epochs older than the
+configured count. `DEVSHARD_STATS_SNAPSHOT_SECONDS` sets the snapshot
+tick, default 300.
 
 On restart, counters resume from the last snapshot and the gateway reads
 recovered `HostStats`. It does not replay diffs or invent dispositions for

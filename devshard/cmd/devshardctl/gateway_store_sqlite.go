@@ -97,6 +97,7 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 			rotation_role TEXT NOT NULL DEFAULT '',
 			rotation_epoch INTEGER NOT NULL DEFAULT 0,
 			settlement_pending INTEGER NOT NULL DEFAULT 0,
+			on_hold_since TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -166,6 +167,10 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard protocol version: %w", err)
+	}
+	if err := ensureGatewayDevshardsColumn(db, "on_hold_since", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard on hold since: %w", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
@@ -287,7 +292,7 @@ func (s *SQLiteGatewayStore) LoadState(ctx context.Context) (GatewayState, bool,
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -312,6 +317,7 @@ func (s *SQLiteGatewayStore) LoadState(ctx context.Context) (GatewayState, bool,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
 			&settlementPending,
+			&devshard.OnHoldSince,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
 		}
@@ -640,12 +646,13 @@ func (s *SQLiteGatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevsha
 	// never silently clears a queued settlement; a brand-new row falls back
 	// to the value carried on devshard.
 	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
-	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
+	onHoldSince := devshard.OnHoldSince
+	_ = tx.QueryRow(`SELECT settlement_pending, on_hold_since FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending, &onHoldSince)
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			protocol_version, rotation_role, rotation_epoch, settlement_pending
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -659,6 +666,7 @@ func (s *SQLiteGatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevsha
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		settlementPending,
+		onHoldSince,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
 	}
@@ -676,7 +684,7 @@ func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (Gatewa
 	var settlementPending int
 	err := s.db.QueryRow(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		WHERE id = ?`, id).Scan(
 		&devshard.ID,
@@ -692,6 +700,7 @@ func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (Gatewa
 		&devshard.RotationRole,
 		&devshard.RotationEpoch,
 		&settlementPending,
+		&devshard.OnHoldSince,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayDevshardState{}, false, nil
@@ -707,7 +716,7 @@ func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (Gatewa
 func (s *SQLiteGatewayStore) SetDevshardActive(ctx context.Context, id string, active bool) error {
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards
-		SET active = ?, updated_at = ?
+		SET active = ?, on_hold_since = '', updated_at = ?
 		WHERE id = ?`,
 		gatewayBoolToInt(active),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -729,7 +738,7 @@ func (s *SQLiteGatewayStore) SetDevshardActive(ctx context.Context, id string, a
 func (s *SQLiteGatewayStore) DeactivateDevshardIfActive(ctx context.Context, id string, settlementPending bool) (bool, error) {
 	result, err := s.db.Exec(`
 		UPDATE gateway_devshards
-		SET active = 0, settlement_pending = MAX(settlement_pending, ?), updated_at = ?
+		SET active = 0, settlement_pending = MAX(settlement_pending, ?), on_hold_since = '', updated_at = ?
 		WHERE id = ? AND active = 1`,
 		gatewayBoolToInt(settlementPending),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -743,6 +752,40 @@ func (s *SQLiteGatewayStore) DeactivateDevshardIfActive(ctx context.Context, id 
 		return false, fmt.Errorf("rows affected for devshard %s: %w", id, err)
 	}
 	return deactivatedRows == 1, nil
+}
+
+// HoldDevshardIfActive puts an active devshard on hold, keeping the start of a hold already in place, and returns that start.
+func (s *SQLiteGatewayStore) HoldDevshardIfActive(ctx context.Context, id string, since time.Time) (time.Time, bool, error) {
+	var storedSince string
+	err := s.db.QueryRow(`
+		UPDATE gateway_devshards
+		SET on_hold_since = CASE WHEN on_hold_since = '' THEN ? ELSE on_hold_since END, updated_at = ?
+		WHERE id = ? AND active = 1
+		RETURNING on_hold_since`,
+		since.UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	).Scan(&storedSince)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("hold devshard %s: %w", id, err)
+	}
+	return parseDevshardHoldSince(id, storedSince)
+}
+
+func (s *SQLiteGatewayStore) ReleaseDevshardHold(ctx context.Context, id string) error {
+	if _, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET on_hold_since = '', updated_at = ?
+		WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	); err != nil {
+		return fmt.Errorf("release devshard %s hold: %w", id, err)
+	}
+	return nil
 }
 
 func (s *SQLiteGatewayStore) SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error {
