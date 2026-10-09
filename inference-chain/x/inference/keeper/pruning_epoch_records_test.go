@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -99,4 +100,38 @@ func TestPruneEpochRecordsBacklogBoundedPerBlock(t *testing.T) {
 	state, err := k.PruningState.Get(ctx)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), state.RandomSeedsPrunedEpoch)
+}
+
+// Seed and CPoC event pruners run in the Prune rotation and draw on the shared
+// PruneWorkPerBlock budget: a block where the inference backlog goes first and takes
+// the whole budget removes no seeds; a block where the seed pruner goes first removes
+// its PruningMax and leaves the rest of the budget to the others.
+func TestPruneEpochRecordsShareBudget(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+	setPruningConfig(ctx, k, PruningSettings{InferenceThreshold: 2, InferenceMaxPrune: keeper.PruneWorkPerBlock})
+
+	const current = 20
+	for e := uint64(1); e <= 5; e++ {
+		for i := 0; i < 2000; i++ {
+			k.SetInference(ctx, types.Inference{Index: fmt.Sprintf("inf-%d-%d", e, i), EpochId: e, Status: types.InferenceStatus_FINISHED})
+		}
+	}
+	const seeds = 3000
+	for i := 0; i < seeds; i++ {
+		require.NoError(t, k.SetRandomSeed(ctx, types.RandomSeed{Participant: seqAddr(i).String(), EpochIndex: 1, Signature: "abcd"}))
+	}
+
+	// Rotation order in Prune: the inference pruner is at index 0, the seed pruner at 11.
+	const pruners = 13
+	inf := countInferencesToPrune(t, k, ctx, 5)
+	require.NoError(t, k.Prune(ctx.WithBlockHeight(pruners*7), current))
+	inf2 := countInferencesToPrune(t, k, ctx, 5)
+	require.Equal(t, int(keeper.PruneWorkPerBlock), inf-inf2)
+	require.Equal(t, seeds, countPrefixed(t, ctx, k.RandomSeeds, 1))
+
+	require.NoError(t, k.Prune(ctx.WithBlockHeight(pruners*7+11), current))
+	inf3 := countInferencesToPrune(t, k, ctx, 5)
+	require.Equal(t, seeds-int(keeper.EpochRecordPruningMaxPerBlock), countPrefixed(t, ctx, k.RandomSeeds, 1))
+	require.Equal(t, int(keeper.PruneWorkPerBlock-keeper.EpochRecordPruningMaxPerBlock), inf2-inf3)
 }
