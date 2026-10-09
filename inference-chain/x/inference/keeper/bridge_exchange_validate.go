@@ -21,8 +21,12 @@ type ValidatedBridgeExchange struct {
 	ExistingTx       *types.BridgeTransaction // nil if IsCreate
 	ValidatorPower   int64
 	TotalEpochPower  int64
-	IsCreate         bool
-	EpochIndex       uint64
+	// VotedPower is the current weight of the members still in the group that
+	// have voted, this vote included. Set only when !IsCreate.
+	VotedPower    int64
+	RequiredPower int64
+	IsCreate      bool
+	EpochIndex    uint64
 }
 
 // RequireActiveOrPreviousActiveParticipant returns nil if addr is in the
@@ -150,12 +154,15 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			return nil, types.ErrBridgeAlreadyValidated
 		}
 
+		liveWeight := liveGroupWeight(epochGroupMembers)
 		return &ValidatedBridgeExchange{
 			ValidatorAddress: addr,
 			ProposedTx:       proposedTx,
 			ExistingTx:       existingTx,
 			ValidatorPower:   validatorPower,
-			TotalEpochPower:  liveGroupWeight(epochGroupMembers),
+			TotalEpochPower:  liveWeight,
+			VotedPower:       validatorPower + liveVotedPower(existingTx.Validators, epochGroupMembers),
+			RequiredPower:    bridgeRequiredPower(epochGroup.GroupData.TotalWeight, liveWeight),
 			IsCreate:         false,
 			EpochIndex:       existingTx.EpochIndex,
 		}, nil
@@ -204,6 +211,50 @@ func liveGroupWeight(members []*group.GroupMember) int64 {
 			continue
 		}
 		total += weight
+	}
+	return total
+}
+
+// bridgeRequiredPower is a majority of the weight still in the group, but never
+// less than a third of the epoch-start weight, so a group that lost most of its
+// members cannot complete records with a small remainder.
+func bridgeRequiredPower(epochStartWeight, liveWeight int64) int64 {
+	base := liveWeight
+	if epochStartWeight > 0 && epochStartWeight < base {
+		base = epochStartWeight
+	}
+	required := base/2 + 1
+	if floor := epochStartWeight/3 + 1; floor > required {
+		required = floor
+	}
+	return required
+}
+
+// liveVotedPower sums the current weights of the voters still in the group;
+// votes of members removed after voting no longer count.
+func liveVotedPower(voters []string, members []*group.GroupMember) int64 {
+	weights := make(map[string]int64, len(members))
+	for _, member := range members {
+		if member == nil || member.Member == nil {
+			continue
+		}
+		memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
+		if err != nil {
+			continue
+		}
+		weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
+		if err != nil {
+			continue
+		}
+		weights[memberAddr.String()] = weight
+	}
+	var total int64
+	for _, voter := range voters {
+		voterAddr, err := sdk.AccAddressFromBech32(voter)
+		if err != nil {
+			continue
+		}
+		total += weights[voterAddr.String()]
 	}
 	return total
 }

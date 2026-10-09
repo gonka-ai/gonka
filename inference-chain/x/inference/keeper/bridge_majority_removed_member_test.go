@@ -72,8 +72,7 @@ func TestBridgeExchange_MajorityUnreachableAfterMemberRemoval(t *testing.T) {
 	validated, err := k.ValidateBridgeExchange(ctx, msgB)
 	require.NoError(t, err)
 	require.False(t, validated.IsCreate)
-	power := validated.ExistingTx.TotalValidationPower + validated.ValidatorPower
-	require.Equal(t, int64(40), power, "every member still in the group has voted")
-	require.GreaterOrEqual(t, power, validated.TotalEpochPower/2+1,
+	require.Equal(t, int64(40), validated.VotedPower, "every member still in the group has voted")
+	require.GreaterOrEqual(t, validated.VotedPower, validated.RequiredPower,
 		"all remaining weight voted, yet the record needs a majority of the epoch-start weight")
 }
