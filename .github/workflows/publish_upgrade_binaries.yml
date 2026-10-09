@@ -168,7 +168,8 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x .github/scripts/devshard-release-meta.sh
-          make devshardd-release
+          # BLST_PORTABLE=1: same reason as the chain zips above.
+          make devshardd-release BLST_PORTABLE=1
           .github/scripts/devshard-release-meta.sh check-stamps \
             --binary ./build/devshardd \
             --protocol "$DEVSHARD_VERSION" \

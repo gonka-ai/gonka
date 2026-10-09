@@ -1,8 +1,13 @@
+# BLST_PORTABLE=1 by default on every host: blst checks the CPU at startup and keeps the
+# ADX/MULX code path where it exists, so binaries and images also start on x86-64 CPUs
+# without ADX (pre-Broadwell Intel, pre-Zen AMD, VMs with generic CPU models) and under
+# Docker on Apple Silicon. Non-portable blst exits there with
+# "Caught SIGILL in blst_cgo_init".
+#
 # Apple Silicon auto-detection (Darwin + hw.optional.arm64 via sysctl, not uname -m).
 # Rosetta/x86_64 shells on M-series Macs still match the host.
 #
 # When detected:
-#   BLST_PORTABLE=1     — portable BLST (avoids SIGILL under Docker on Mac)
 #   DOCKER_PLATFORM=linux/arm64 — native arm64 images (CometBFT P2P on Docker Desktop)
 #
 # Override: make build-docker BLST_PORTABLE=0
@@ -13,11 +18,7 @@ _APPLE_SILICON := $(shell \
   fi)
 
 ifeq ($(origin BLST_PORTABLE),undefined)
-  ifeq ($(_APPLE_SILICON),1)
-    BLST_PORTABLE := 1
-  else
-    BLST_PORTABLE := 0
-  endif
+  BLST_PORTABLE := 1
 endif
 
 ifeq ($(origin DOCKER_PLATFORM),undefined)
@@ -34,8 +35,6 @@ endif
 
 ifeq ($(BLST_PORTABLE),1)
   BLST_PORTABLE_CGO_CFLAGS := -D__BLST_PORTABLE__
-  # warning (stderr) — not $(info), which pollutes $(shell make ...) / export captures
-  $(warning --> BLST_PORTABLE=1 (Apple Silicon: portable BLST))
 endif
 
 ifeq ($(_APPLE_SILICON),1)

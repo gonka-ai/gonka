@@ -5,7 +5,8 @@ COMMIT := $(shell git log -1 --format='%H')
 
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= $(VERSION)
-BLST_PORTABLE ?= 0
+# Portable BLST by default, as in ../scripts/blst-portable.mk (BLST_PORTABLE=0 opts out)
+BLST_PORTABLE ?= 1
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORM ?= linux/amd64
