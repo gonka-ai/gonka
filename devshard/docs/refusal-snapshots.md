@@ -32,6 +32,12 @@ An executor at or past the snapshot nonce applies only missing diffs. It does
 not decode the snapshot. Proof verification checks signing-key authorization
 independently of the snapshot's claims.
 
+Before forwarding a verified package, the verifier compares its local root when
+its nonce is in `[N,T]`. If it is ahead of T, it compares the stored diff root at T
+when available. A mismatch rejects the package. Missing history skips that
+comparison, while a storage error stops verification. This check rejects known
+contradictions. It does not prove ancestry or prevent forks after the local head.
+
 Without a usable snapshot and signatures, refusal voting waits. After startup
 or restart, the gateway must build a new proof through normal activity. A
 snapshot expires once more than 1,000 diffs follow it. There is no fallback to
@@ -43,6 +49,9 @@ in one transaction. If a stale instance tries to write a diff covered by an
 import, it reloads the saved state before continuing. Startup and HA recovery
 check the saved snapshot root, even when no diff is stored at the imported
 nonce. Old snapshots remain readable. Later host snapshots also include a root.
+
+Import persists only the final state, not the supplied owner-signed tail diffs.
+It therefore does not retain those diffs as evidence of owner equivocation.
 
 Imported snapshots omit the index of sealed inference IDs. Caches are rebuilt
 from the remaining records. Late transactions for sealed IDs are still rejected,

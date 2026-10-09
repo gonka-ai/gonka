@@ -60,7 +60,61 @@ func (h *Host) VerifyRefusalPackage(p *types.RefusalPackage, id uint64, payload 
 	if err != nil {
 		return err
 	}
-	return checkRefusalTarget(st, id, payload, &rec)
+	if err := checkRefusalTarget(st, id, payload, &rec); err != nil {
+		return err
+	}
+	return h.checkRefusalState(p, st)
+}
+
+func (h *Host) checkRefusalState(p *types.RefusalPackage, final *types.EscrowState) error {
+	h.mu.Lock()
+	nonce := h.sm.LatestNonce()
+	var knownRoot []byte
+	var err error
+	if nonce >= p.N && nonce <= p.T {
+		knownRoot, err = h.sm.ComputeStateRoot()
+	}
+	h.mu.Unlock()
+	if err != nil || nonce < p.N {
+		return err
+	}
+	if nonce > p.T {
+		if h.store == nil {
+			return nil
+		}
+		nonce = p.T
+		rows, err := h.store.GetDiffs(h.escrowID, nonce, nonce)
+		if err != nil {
+			return err
+		}
+		// Imports and pruning can leave no local root at this nonce.
+		if len(rows) == 0 || len(rows[0].StateHash) == 0 {
+			return nil
+		}
+		knownRoot = rows[0].StateHash
+	}
+
+	var suppliedRoot []byte
+	if nonce > p.N {
+		// Replay already checked every signed post-state root.
+		suppliedRoot = p.Diffs[nonce-p.N-1].PostStateRoot
+	} else {
+		snapshot := final
+		if p.N < p.T {
+			snapshot, _, _, err = types.UnmarshalStateSnapshotProto(p.Snapshot)
+			if err != nil {
+				return err
+			}
+		}
+		suppliedRoot, err = state.SnapshotRoot(snapshot)
+		if err != nil {
+			return err
+		}
+	}
+	if !bytes.Equal(knownRoot, suppliedRoot) {
+		return fmt.Errorf("%w: refusal state at nonce %d", types.ErrStateHashMismatch, nonce)
+	}
+	return nil
 }
 
 // CatchUpForChallenge leaves snapshot bytes undecoded when the tail connects.

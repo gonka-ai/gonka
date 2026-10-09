@@ -34,7 +34,7 @@ func (s *noHistoryStore) GetDiffs(string, uint64, uint64) ([]types.DiffRecord, e
 }
 
 func TestRefusalHTTPProofAndOutcomes(t *testing.T) {
-	for _, name := range []string{"receipt", "no_receipt", "unavailable", "bad_proof", "no_proof", "missing_target", "bad_payload"} {
+	for _, name := range []string{"receipt", "no_receipt", "unavailable", "bad_proof", "no_proof", "missing_target", "bad_payload", "conflicting_state"} {
 		t.Run(name, func(t *testing.T) {
 			env := setupServerEnv(t)
 			seq, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.userSigner.Address(), signing.NewSecp256k1Verifier(), env.store)
@@ -79,6 +79,16 @@ func TestRefusalHTTPProofAndOutcomes(t *testing.T) {
 				peer.err = errors.New("unavailable")
 			case "bad_proof":
 				p.Signatures[1][0] = []byte("bad")
+			case "conflicting_state":
+				st.Balance++
+				p.Snapshot, err = types.MarshalStateSnapshotProto(st, nil, nil)
+				require.NoError(t, err)
+				root, err = state.SnapshotRoot(st)
+				require.NoError(t, err)
+				content, err = proto.Marshal(&types.StateSignatureContent{EscrowId: "escrow-1", Nonce: 1, StateRoot: root})
+				require.NoError(t, err)
+				p.Signatures[1][0], err = env.hostSigner.Sign(content)
+				require.NoError(t, err)
 			case "no_proof":
 				p = nil
 			case "bad_payload":
@@ -92,7 +102,7 @@ func TestRefusalHTTPProofAndOutcomes(t *testing.T) {
 			require.NoError(t, err)
 			result := env.doPost(t, testRoutePrefix+"/sessions/escrow-1/verify-timeout", body)
 			require.Zero(t, guarded.calls)
-			if name == "bad_proof" || name == "no_proof" || name == "missing_target" {
+			if name == "bad_proof" || name == "no_proof" || name == "missing_target" || name == "conflicting_state" {
 				require.NotEqual(t, http.StatusOK, result.Code)
 				require.Zero(t, peer.calls)
 				return
