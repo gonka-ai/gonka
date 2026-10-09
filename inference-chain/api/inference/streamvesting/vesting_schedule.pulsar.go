@@ -560,10 +560,58 @@ func (x *_VestingSchedule_2_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_VestingSchedule_4_list)(nil)
+
+type _VestingSchedule_4_list struct {
+	list *[]uint64
+}
+
+func (x *_VestingSchedule_4_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_VestingSchedule_4_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfUint64((*x.list)[i])
+}
+
+func (x *_VestingSchedule_4_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_VestingSchedule_4_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_VestingSchedule_4_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message VestingSchedule at list field Amounts as it is not of Message kind"))
+}
+
+func (x *_VestingSchedule_4_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_VestingSchedule_4_list) NewElement() protoreflect.Value {
+	v := uint64(0)
+	return protoreflect.ValueOfUint64(v)
+}
+
+func (x *_VestingSchedule_4_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
 	md_VestingSchedule                     protoreflect.MessageDescriptor
 	fd_VestingSchedule_participant_address protoreflect.FieldDescriptor
 	fd_VestingSchedule_epoch_amounts       protoreflect.FieldDescriptor
+	fd_VestingSchedule_denom               protoreflect.FieldDescriptor
+	fd_VestingSchedule_amounts             protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -571,6 +619,8 @@ func init() {
 	md_VestingSchedule = File_inference_streamvesting_vesting_schedule_proto.Messages().ByName("VestingSchedule")
 	fd_VestingSchedule_participant_address = md_VestingSchedule.Fields().ByName("participant_address")
 	fd_VestingSchedule_epoch_amounts = md_VestingSchedule.Fields().ByName("epoch_amounts")
+	fd_VestingSchedule_denom = md_VestingSchedule.Fields().ByName("denom")
+	fd_VestingSchedule_amounts = md_VestingSchedule.Fields().ByName("amounts")
 }
 
 var _ protoreflect.Message = (*fastReflection_VestingSchedule)(nil)
@@ -650,6 +700,18 @@ func (x *fastReflection_VestingSchedule) Range(f func(protoreflect.FieldDescript
 			return
 		}
 	}
+	if x.Denom != "" {
+		value := protoreflect.ValueOfString(x.Denom)
+		if !f(fd_VestingSchedule_denom, value) {
+			return
+		}
+	}
+	if len(x.Amounts) != 0 {
+		value := protoreflect.ValueOfList(&_VestingSchedule_4_list{list: &x.Amounts})
+		if !f(fd_VestingSchedule_amounts, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -669,6 +731,10 @@ func (x *fastReflection_VestingSchedule) Has(fd protoreflect.FieldDescriptor) bo
 		return x.ParticipantAddress != ""
 	case "inference.streamvesting.VestingSchedule.epoch_amounts":
 		return len(x.EpochAmounts) != 0
+	case "inference.streamvesting.VestingSchedule.denom":
+		return x.Denom != ""
+	case "inference.streamvesting.VestingSchedule.amounts":
+		return len(x.Amounts) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.streamvesting.VestingSchedule"))
@@ -689,6 +755,10 @@ func (x *fastReflection_VestingSchedule) Clear(fd protoreflect.FieldDescriptor) 
 		x.ParticipantAddress = ""
 	case "inference.streamvesting.VestingSchedule.epoch_amounts":
 		x.EpochAmounts = nil
+	case "inference.streamvesting.VestingSchedule.denom":
+		x.Denom = ""
+	case "inference.streamvesting.VestingSchedule.amounts":
+		x.Amounts = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.streamvesting.VestingSchedule"))
@@ -713,6 +783,15 @@ func (x *fastReflection_VestingSchedule) Get(descriptor protoreflect.FieldDescri
 			return protoreflect.ValueOfList(&_VestingSchedule_2_list{})
 		}
 		listValue := &_VestingSchedule_2_list{list: &x.EpochAmounts}
+		return protoreflect.ValueOfList(listValue)
+	case "inference.streamvesting.VestingSchedule.denom":
+		value := x.Denom
+		return protoreflect.ValueOfString(value)
+	case "inference.streamvesting.VestingSchedule.amounts":
+		if len(x.Amounts) == 0 {
+			return protoreflect.ValueOfList(&_VestingSchedule_4_list{})
+		}
+		listValue := &_VestingSchedule_4_list{list: &x.Amounts}
 		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
@@ -740,6 +819,12 @@ func (x *fastReflection_VestingSchedule) Set(fd protoreflect.FieldDescriptor, va
 		lv := value.List()
 		clv := lv.(*_VestingSchedule_2_list)
 		x.EpochAmounts = *clv.list
+	case "inference.streamvesting.VestingSchedule.denom":
+		x.Denom = value.Interface().(string)
+	case "inference.streamvesting.VestingSchedule.amounts":
+		lv := value.List()
+		clv := lv.(*_VestingSchedule_4_list)
+		x.Amounts = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.streamvesting.VestingSchedule"))
@@ -766,8 +851,16 @@ func (x *fastReflection_VestingSchedule) Mutable(fd protoreflect.FieldDescriptor
 		}
 		value := &_VestingSchedule_2_list{list: &x.EpochAmounts}
 		return protoreflect.ValueOfList(value)
+	case "inference.streamvesting.VestingSchedule.amounts":
+		if x.Amounts == nil {
+			x.Amounts = []uint64{}
+		}
+		value := &_VestingSchedule_4_list{list: &x.Amounts}
+		return protoreflect.ValueOfList(value)
 	case "inference.streamvesting.VestingSchedule.participant_address":
 		panic(fmt.Errorf("field participant_address of message inference.streamvesting.VestingSchedule is not mutable"))
+	case "inference.streamvesting.VestingSchedule.denom":
+		panic(fmt.Errorf("field denom of message inference.streamvesting.VestingSchedule is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.streamvesting.VestingSchedule"))
@@ -786,6 +879,11 @@ func (x *fastReflection_VestingSchedule) NewField(fd protoreflect.FieldDescripto
 	case "inference.streamvesting.VestingSchedule.epoch_amounts":
 		list := []*EpochCoins{}
 		return protoreflect.ValueOfList(&_VestingSchedule_2_list{list: &list})
+	case "inference.streamvesting.VestingSchedule.denom":
+		return protoreflect.ValueOfString("")
+	case "inference.streamvesting.VestingSchedule.amounts":
+		list := []uint64{}
+		return protoreflect.ValueOfList(&_VestingSchedule_4_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.streamvesting.VestingSchedule"))
@@ -865,6 +963,17 @@ func (x *fastReflection_VestingSchedule) ProtoMethods() *protoiface.Methods {
 				n += 1 + l + runtime.Sov(uint64(l))
 			}
 		}
+		l = len(x.Denom)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if len(x.Amounts) > 0 {
+			l = 0
+			for _, e := range x.Amounts {
+				l += runtime.Sov(uint64(e))
+			}
+			n += 1 + runtime.Sov(uint64(l)) + l
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -893,6 +1002,33 @@ func (x *fastReflection_VestingSchedule) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.Amounts) > 0 {
+			var pksize2 int
+			for _, num := range x.Amounts {
+				pksize2 += runtime.Sov(uint64(num))
+			}
+			i -= pksize2
+			j1 := i
+			for _, num := range x.Amounts {
+				for num >= 1<<7 {
+					dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+					num >>= 7
+					j1++
+				}
+				dAtA[j1] = uint8(num)
+				j1++
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(pksize2))
+			i--
+			dAtA[i] = 0x22
+		}
+		if len(x.Denom) > 0 {
+			i -= len(x.Denom)
+			copy(dAtA[i:], x.Denom)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Denom)))
+			i--
+			dAtA[i] = 0x1a
 		}
 		if len(x.EpochAmounts) > 0 {
 			for iNdEx := len(x.EpochAmounts) - 1; iNdEx >= 0; iNdEx-- {
@@ -1032,6 +1168,114 @@ func (x *fastReflection_VestingSchedule) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Denom", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Denom = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 4:
+				if wireType == 0 {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					x.Amounts = append(x.Amounts, v)
+				} else if wireType == 2 {
+					var packedLen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						packedLen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if packedLen < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					postIndex := iNdEx + packedLen
+					if postIndex < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					if postIndex > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					var elementCount int
+					var count int
+					for _, integer := range dAtA[iNdEx:postIndex] {
+						if integer < 128 {
+							count++
+						}
+					}
+					elementCount = count
+					if elementCount != 0 && len(x.Amounts) == 0 {
+						x.Amounts = make([]uint64, 0, elementCount)
+					}
+					for iNdEx < postIndex {
+						var v uint64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							v |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						x.Amounts = append(x.Amounts, v)
+					}
+				} else {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Amounts", wireType)
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1128,6 +1372,11 @@ type VestingSchedule struct {
 	// The first element is unlocked in the next epoch, second in epoch+1, etc.
 	// Each element contains sdk.Coins supporting multiple denominations per epoch
 	EpochAmounts []*EpochCoins `protobuf:"bytes,2,rep,name=epoch_amounts,json=epochAmounts,proto3" json:"epoch_amounts,omitempty"`
+	// Storage form set by the keeper when every epoch holds at most one coin of one denom:
+	// the denom once and each epoch's amount (0 for none) instead of epoch_amounts.
+	// Reads restore epoch_amounts; queries never return these fields set.
+	Denom   string   `protobuf:"bytes,3,opt,name=denom,proto3" json:"denom,omitempty"`
+	Amounts []uint64 `protobuf:"varint,4,rep,packed,name=amounts,proto3" json:"amounts,omitempty"`
 }
 
 func (x *VestingSchedule) Reset() {
@@ -1164,6 +1413,20 @@ func (x *VestingSchedule) GetEpochAmounts() []*EpochCoins {
 	return nil
 }
 
+func (x *VestingSchedule) GetDenom() string {
+	if x != nil {
+		return x.Denom
+	}
+	return ""
+}
+
+func (x *VestingSchedule) GetAmounts() []uint64 {
+	if x != nil {
+		return x.Amounts
+	}
+	return nil
+}
+
 var File_inference_streamvesting_vesting_schedule_proto protoreflect.FileDescriptor
 
 var file_inference_streamvesting_vesting_schedule_proto_rawDesc = []byte{
@@ -1183,7 +1446,7 @@ var file_inference_streamvesting_vesting_schedule_proto_rawDesc = []byte{
 	0xaa, 0xdf, 0x1f, 0x28, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x63,
 	0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2f, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x2d, 0x73, 0x64, 0x6b,
 	0x2f, 0x74, 0x79, 0x70, 0x65, 0x73, 0x2e, 0x43, 0x6f, 0x69, 0x6e, 0x73, 0xa8, 0xe7, 0xb0, 0x2a,
-	0x01, 0x52, 0x05, 0x63, 0x6f, 0x69, 0x6e, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x9d,
+	0x01, 0x52, 0x05, 0x63, 0x6f, 0x69, 0x6e, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xcd,
 	0x01, 0x0a, 0x0f, 0x56, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67, 0x53, 0x63, 0x68, 0x65, 0x64, 0x75,
 	0x6c, 0x65, 0x12, 0x2f, 0x0a, 0x13, 0x70, 0x61, 0x72, 0x74, 0x69, 0x63, 0x69, 0x70, 0x61, 0x6e,
 	0x74, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
@@ -1193,7 +1456,10 @@ var file_inference_streamvesting_vesting_schedule_proto_rawDesc = []byte{
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x76, 0x65, 0x73,
 	0x74, 0x69, 0x6e, 0x67, 0x2e, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x43, 0x6f, 0x69, 0x6e, 0x73, 0x42,
 	0x09, 0xc8, 0xde, 0x1f, 0x00, 0xa8, 0xe7, 0xb0, 0x2a, 0x01, 0x52, 0x0c, 0x65, 0x70, 0x6f, 0x63,
-	0x68, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xda,
+	0x68, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x73, 0x12, 0x14, 0x0a, 0x05, 0x64, 0x65, 0x6e, 0x6f,
+	0x6d, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x64, 0x65, 0x6e, 0x6f, 0x6d, 0x12, 0x18,
+	0x0a, 0x07, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x04, 0x52,
+	0x07, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xda,
 	0x01, 0x0a, 0x1b, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
 	0x2e, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d, 0x76, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67, 0x42, 0x14,
 	0x56, 0x65, 0x73, 0x74, 0x69, 0x6e, 0x67, 0x53, 0x63, 0x68, 0x65, 0x64, 0x75, 0x6c, 0x65, 0x50,

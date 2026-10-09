@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/collections"
+
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -14,6 +16,23 @@ func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGrou
 	}
 
 	return k.GetEpochGroup(ctx, effectiveEpochIndex, "")
+}
+
+// GetCurrentEpochIndexWithGroup returns the effective epoch index once its root
+// group data exists, without decoding the group data.
+func (k Keeper) GetCurrentEpochIndexWithGroup(ctx context.Context) (uint64, error) {
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return 0, types.ErrEffectiveEpochNotFound
+	}
+	has, err := k.EpochGroupDataMap.Has(ctx, collections.Join(effectiveEpochIndex, ""))
+	if err != nil {
+		return 0, err
+	}
+	if !has {
+		return 0, types.ErrEpochGroupDataNotFound
+	}
+	return effectiveEpochIndex, nil
 }
 
 func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
@@ -126,14 +145,16 @@ func (k Keeper) GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (
 }
 
 func (k Keeper) epochGroupFromData(data types.EpochGroupData) *epochgroup.EpochGroup {
+	// One pointer for all five roles: each Keeper value boxed into an interface is a ~7 KB heap copy.
+	kp := &k
 	return epochgroup.NewEpochGroup(
 		k.group,
-		k,
-		k,
-		k,
+		kp,
+		kp,
+		kp,
 		k.GetAuthority(),
-		k,
-		k,
+		kp,
+		kp,
 		&data,
 	)
 }

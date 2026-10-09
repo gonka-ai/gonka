@@ -15,7 +15,25 @@ func (k Keeper) SetEpochPerformanceSummary(ctx context.Context, epochPerformance
 		return err
 	}
 
-	return k.EpochPerformanceSummaries.Set(ctx, collections.Join(addr, epochPerformanceSummary.EpochIndex), epochPerformanceSummary)
+	return k.EpochPerformanceSummaries.Set(ctx, collections.Join(addr, epochPerformanceSummary.EpochIndex), storedPerformanceSummary(epochPerformanceSummary, addr))
+}
+
+// storedPerformanceSummary drops the participant and epoch the key holds; restoredPerformanceSummary
+// fills them back. The full record is kept when the key would not restore the same address string.
+func storedPerformanceSummary(s types.EpochPerformanceSummary, participant sdk.AccAddress) types.EpochPerformanceSummary {
+	trimmed := s
+	trimmed.ParticipantId, trimmed.EpochIndex = "", 0
+	if participant.String() != s.ParticipantId || trimmed == (types.EpochPerformanceSummary{}) {
+		return s
+	}
+	return trimmed
+}
+
+func restoredPerformanceSummary(key collections.Pair[sdk.AccAddress, uint64], s types.EpochPerformanceSummary) types.EpochPerformanceSummary {
+	if s.ParticipantId == "" {
+		s.ParticipantId, s.EpochIndex = key.K1().String(), key.K2()
+	}
+	return s
 }
 
 // GetEpochPerformanceSummary returns a epochPerformanceSummary from its index
@@ -28,11 +46,12 @@ func (k Keeper) GetEpochPerformanceSummary(
 	if err != nil {
 		return val, false
 	}
-	v, err := k.EpochPerformanceSummaries.Get(ctx, collections.Join(addr, epochIndex))
+	key := collections.Join(addr, epochIndex)
+	v, err := k.EpochPerformanceSummaries.Get(ctx, key)
 	if err != nil {
 		return val, false
 	}
-	return v, true
+	return restoredPerformanceSummary(key, v), true
 }
 
 // RemoveEpochPerformanceSummary removes a epochPerformanceSummary from the store
@@ -55,11 +74,15 @@ func (k Keeper) GetAllEpochPerformanceSummary(ctx context.Context) (list []types
 		return nil
 	}
 	defer it.Close()
-	values, err := it.Values()
+	kvs, err := it.KeyValues()
 	if err != nil {
 		return nil
 	}
-	return values
+	list = make([]types.EpochPerformanceSummary, len(kvs))
+	for i, kv := range kvs {
+		list[i] = restoredPerformanceSummary(kv.Key, kv.Value)
+	}
+	return list
 }
 
 // GetEpochPerformanceSummariesByParticipant returns all epochPerformanceSummary for a specific participant
@@ -75,11 +98,11 @@ func (k Keeper) GetEpochPerformanceSummariesByParticipant(ctx context.Context, p
 	defer it.Close()
 	var out []types.EpochPerformanceSummary
 	for ; it.Valid(); it.Next() {
-		v, err := it.Value()
+		kv, err := it.KeyValue()
 		if err != nil {
 			return nil
 		}
-		out = append(out, v)
+		out = append(out, restoredPerformanceSummary(kv.Key, kv.Value))
 	}
 	return out
 }
@@ -95,11 +118,12 @@ func (k Keeper) GetParticipantsEpochSummaries(
 		if err != nil {
 			continue
 		}
-		v, err := k.EpochPerformanceSummaries.Get(ctx, collections.Join(addr, epochIndex))
+		key := collections.Join(addr, epochIndex)
+		v, err := k.EpochPerformanceSummaries.Get(ctx, key)
 		if err != nil {
 			continue
 		}
-		summaries = append(summaries, v)
+		summaries = append(summaries, restoredPerformanceSummary(key, v))
 	}
 	return summaries
 }

@@ -12,9 +12,8 @@ type ReputationContext struct {
 }
 
 type reputationContextDecimal struct {
-	EpochCount           decimal.Decimal
-	EpochMissPercentages []decimal.Decimal
-	ValidationParams     *validationParamsDecimal
+	EpochCount       decimal.Decimal
+	ValidationParams *validationParamsDecimal
 }
 
 type validationParamsDecimal struct {
@@ -32,21 +31,45 @@ var one = decimal.NewFromInt(1)
 var oneHundred = decimal.NewFromInt(100)
 
 func CalculateReputation(ctx *ReputationContext) int64 {
-	// For clarity, convert everything to decimal before we calculate
-	decimalCtx := reputationContextDecimal{
-		EpochCount:           decimal.NewFromInt(ctx.EpochCount),
-		EpochMissPercentages: ctx.EpochMissPercentages,
-		ValidationParams: &validationParamsDecimal{
-			EpochsToMax:          decimal.NewFromInt(ctx.ValidationParams.EpochsToMax),
-			MissPercentageCutoff: ctx.ValidationParams.MissPercentageCutoff.ToDecimal(),
-			MissRequestsPenalty:  ctx.ValidationParams.MissRequestsPenalty.ToDecimal(),
-		},
-	}
-	return calculateReputation(&decimalCtx).IntPart()
+	return CalculateReputationFromMissSum(ctx.EpochCount, MissSumAboveCutoff(ctx.EpochMissPercentages, ctx.ValidationParams.MissPercentageCutoff.ToDecimal()), ctx.ValidationParams)
 }
 
-func calculateReputation(ctx *reputationContextDecimal) decimal.Decimal {
-	actualEpochCount := ctx.EpochCount.Sub(addMissCost(ctx.EpochMissPercentages, ctx.ValidationParams))
+// CalculateReputationFromMissSum is CalculateReputation given the sum of the
+// epoch miss rates above the cutoff (MissSumAboveCutoff).
+func CalculateReputationFromMissSum(epochCount int64, missSum decimal.Decimal, params *types.ValidationParams) int64 {
+	decimalCtx := reputationContextDecimal{
+		EpochCount: decimal.NewFromInt(epochCount),
+		ValidationParams: &validationParamsDecimal{
+			EpochsToMax:          decimal.NewFromInt(params.EpochsToMax),
+			MissPercentageCutoff: params.MissPercentageCutoff.ToDecimal(),
+			MissRequestsPenalty:  params.MissRequestsPenalty.ToDecimal(),
+		},
+	}
+	return calculateReputation(&decimalCtx, missSum).IntPart()
+}
+
+// EpochMissRate is MissedRequests / InferenceCount of one epoch, zero without inferences.
+func EpochMissRate(inferenceCount, missedRequests uint64) decimal.Decimal {
+	if inferenceCount == 0 {
+		return decimal.Zero
+	}
+	return decimal.NewFromInt(int64(missedRequests)).Div(decimal.NewFromInt(int64(inferenceCount)))
+}
+
+// MissSumAboveCutoff adds the miss rates above cutoff; the sum can be extended
+// epoch by epoch without changing the reputation it gives.
+func MissSumAboveCutoff(missPercentages []decimal.Decimal, cutoff decimal.Decimal) decimal.Decimal {
+	sum := decimal.Zero
+	for _, missPercentage := range missPercentages {
+		if missPercentage.GreaterThan(cutoff) {
+			sum = sum.Add(missPercentage)
+		}
+	}
+	return sum
+}
+
+func calculateReputation(ctx *reputationContextDecimal, missSum decimal.Decimal) decimal.Decimal {
+	actualEpochCount := ctx.EpochCount.Sub(missCost(missSum, ctx.ValidationParams))
 	if actualEpochCount.GreaterThan(ctx.ValidationParams.EpochsToMax) {
 		return oneHundred
 	}
@@ -56,13 +79,9 @@ func calculateReputation(ctx *reputationContextDecimal) decimal.Decimal {
 	return actualEpochCount.Div(ctx.ValidationParams.EpochsToMax).Truncate(2).Mul(oneHundred)
 }
 
-func addMissCost(missPercentages []decimal.Decimal, params *validationParamsDecimal) decimal.Decimal {
+// missCost equals the per-epoch sum of missRate * (1/EpochsToMax) * penalty,
+// times EpochsToMax: decimal Mul and Add are exact.
+func missCost(missSum decimal.Decimal, params *validationParamsDecimal) decimal.Decimal {
 	singleEpochValue := one.Div(params.EpochsToMax)
-	missCost := decimal.Zero
-	for _, missPercentage := range missPercentages {
-		if missPercentage.GreaterThan(params.MissPercentageCutoff) {
-			missCost = missCost.Add(missPercentage.Mul(singleEpochValue).Mul(params.MissRequestsPenalty))
-		}
-	}
-	return missCost.Mul(params.EpochsToMax)
+	return missSum.Mul(singleEpochValue).Mul(params.MissRequestsPenalty).Mul(params.EpochsToMax)
 }

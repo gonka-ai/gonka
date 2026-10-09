@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 
@@ -14,6 +15,7 @@ import (
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 	"github.com/shopspring/decimal"
 )
 
@@ -38,16 +40,16 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		k.LogError("GetParams failed in claim", types.Claims, "error", err, "account", msg.Creator)
-		return &types.MsgClaimRewardsResponse{
+		return k.recordClaimAttempt(ctx, settleAmount, &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Internal error loading params",
-		}, nil
+		}), nil
 	}
 	if params.ValidationParams != nil && params.ValidationParams.ClaimValidationEnabled {
 		validationResponse, validationErr := k.validateClaim(ctx, msg, settleAmount)
 		if validationErr != nil {
 			k.LogError("Claim validation failed", types.Claims, "error", validationErr, "account", msg.Creator)
-			return validationResponse, nil
+			return k.recordClaimAttempt(ctx, settleAmount, validationResponse), nil
 		}
 		k.LogDebug("Claim verified", types.Claims, "account", msg.Creator, "seed", msg.Seed)
 	}
@@ -55,7 +57,7 @@ func (k msgServer) ClaimRewards(goCtx context.Context, msg *types.MsgClaimReward
 	payoutResponse, payoutErr := k.payoutClaim(ctx, msg, settleAmount)
 	if payoutErr != nil {
 		k.LogError("Claim payout failed", types.Claims, "error", payoutErr, "account", msg.Creator)
-		return payoutResponse, nil
+		return k.recordClaimAttempt(ctx, settleAmount, payoutResponse), nil
 	}
 
 	return payoutResponse, nil
@@ -87,7 +89,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
+	workFailed := func(err error) (*types.MsgClaimRewardsResponse, error) {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -101,13 +104,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 			Result: "Error paying participant from escrow, claim can be retried",
 		}, err
 	}
-	if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
-		ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
-	}
-
-	// Pay rewards from module
-	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	rewardFailed := func(err error) (*types.MsgClaimRewardsResponse, error) {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -117,6 +114,39 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 			Amount: 0,
 			Result: "Reward payment failed, claim can be retried",
 		}, err
+	}
+
+	if escrowPayment > 0 && settleAmount.GetRewardCoins() > 0 && *workVestingPeriod > 0 && *rewardVestingPeriod > 0 {
+		// Both payments vest into the same schedule: write it once, not twice.
+		err := ms.payParticipantVested(cacheCtx, payoutAddress, []vestedPayment{
+			{amount: int64(escrowPayment), memo: "work_coins:" + settleAmount.Participant, vestingPeriods: workVestingPeriod},
+			{amount: int64(settleAmount.GetRewardCoins()), memo: "reward_coins:" + settleAmount.Participant, vestingPeriods: rewardVestingPeriod},
+		})
+		if err != nil {
+			var paymentErr *streamvestingtypes.VestedRewardError
+			if !errors.As(err, &paymentErr) {
+				return workFailed(err)
+			}
+			if paymentErr.Index == 1 {
+				return rewardFailed(paymentErr.Err)
+			}
+			return workFailed(paymentErr.Err)
+		}
+		if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
+			ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
+		}
+	} else {
+		if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+			return workFailed(err)
+		}
+		if err := ms.AddTokenomicsData(cacheCtx, &types.TokenomicsData{TotalFees: settleAmount.GetWorkCoins()}); err != nil {
+			ms.LogError("Failed to update tokenomics data after work payment", types.Claims, "error", err)
+		}
+
+		// Pay rewards from module
+		if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+			return rewardFailed(err)
+		}
 	}
 
 	ms.finishSettle(cacheCtx, settleAmount)
@@ -212,22 +242,29 @@ func (k msgServer) validateRequest(ctx sdk.Context, msg *types.MsgClaimRewards) 
 			Result: "Claim rate limited",
 		}
 	}
+	// Stored only by a claim that fails: a paid claim removes the record.
 	settleAmount.LastClaimAttempt = ctx.BlockHeight()
-	if err := k.SetSettleAmount(ctx, settleAmount); err != nil {
-		return nil, &types.MsgClaimRewardsResponse{
+	if settleAmount.GetTotalCoins() == 0 {
+		k.LogInfo("SettleAmount had zero coins", types.Claims, "address", msg.Creator)
+		return nil, k.recordClaimAttempt(ctx, &settleAmount, &types.MsgClaimRewardsResponse{
+			Amount: 0,
+			Result: "No rewards for this address",
+		})
+	}
+
+	return &settleAmount, nil
+}
+
+// recordClaimAttempt stores the attempt height that rate-limits a retry of a failed claim.
+func (k msgServer) recordClaimAttempt(ctx sdk.Context, settleAmount *types.SettleAmount, failure *types.MsgClaimRewardsResponse) *types.MsgClaimRewardsResponse {
+	if err := k.SetSettleAmount(ctx, *settleAmount); err != nil {
+		k.LogError("Failed to record claim attempt", types.Claims, "error", err, "account", settleAmount.Participant)
+		return &types.MsgClaimRewardsResponse{
 			Amount: 0,
 			Result: "Internal error updating settle amount",
 		}
 	}
-	if settleAmount.GetTotalCoins() == 0 {
-		k.LogInfo("SettleAmount had zero coins", types.Claims, "address", msg.Creator)
-		return nil, &types.MsgClaimRewardsResponse{
-			Amount: 0,
-			Result: "No rewards for this address",
-		}
-	}
-
-	return &settleAmount, nil
+	return failure
 }
 
 func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, settleAmount *types.SettleAmount) (*types.MsgClaimRewardsResponse, error) {

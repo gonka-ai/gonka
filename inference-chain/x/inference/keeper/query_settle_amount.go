@@ -19,7 +19,9 @@ func (k Keeper) SettleAmountAll(ctx context.Context, req *types.QueryAllSettleAm
 		ctx,
 		k.SettleAmounts,
 		req.Pagination,
-		func(_ sdk.AccAddress, v types.SettleAmount) (types.SettleAmount, error) { return v, nil },
+		func(addr sdk.AccAddress, v types.SettleAmount) (types.SettleAmount, error) {
+			return restoredSettleAmount(addr, v), nil
+		},
 	)
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())

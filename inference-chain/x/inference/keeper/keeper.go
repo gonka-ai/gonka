@@ -68,6 +68,7 @@ type (
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
 		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
+		ReputationAggregates      collections.Map[sdk.AccAddress, types.ReputationAggregate]
 		TrainingExecAllowListSet  collections.KeySet[sdk.AccAddress]
 		TrainingStartAllowListSet collections.KeySet[sdk.AccAddress]
 		ParticipantAllowListSet   collections.KeySet[sdk.AccAddress]
@@ -113,6 +114,7 @@ type (
 		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardSettledEscrows    collections.KeySet[uint64]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
@@ -378,6 +380,13 @@ func NewKeeper(
 			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
 			codec.CollValue[types.EpochPerformanceSummary](cdc),
 		),
+		ReputationAggregates: collections.NewMap(
+			sb,
+			types.ReputationAggregatesPrefix,
+			"reputation_aggregate",
+			sdk.AccAddressKey,
+			codec.CollValue[types.ReputationAggregate](cdc),
+		),
 		TrainingExecAllowListSet: collections.NewKeySet(
 			sb,
 			types.TrainingExecAllowListPrefix,
@@ -588,6 +597,12 @@ func NewKeeper(
 			"devshard_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		DevshardSettledEscrows: collections.NewKeySet(
+			sb,
+			types.DevshardSettledEscrowsPrefix,
+			"devshard_settled_escrows",
+			collections.Uint64Key,
 		),
 		DevshardApprovedVersionsMap: collections.NewMap(
 			sb,

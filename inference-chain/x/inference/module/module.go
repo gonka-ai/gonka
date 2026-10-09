@@ -35,7 +35,6 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/epochgroup"
-	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
 
 	// this line is used by starport scaffolding # 1
@@ -202,6 +201,11 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		}
 	}
 
+	// SPRT, pricing and maintenance all read params; load them once for the block.
+	if paramsCtx, err := am.keeper.InjectParamsIntoContext(sdkCtx); err == nil {
+		ctx = paramsCtx
+	}
+
 	// Precompute SPRT values for the block
 	err := am.keeper.PrecomputeSPRTValues(ctx)
 	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
@@ -216,13 +220,6 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	if err != nil {
 		am.LogError("Failed to update dynamic pricing", types.Pricing, "error", err)
 		// Don't return error - allow block processing to continue even if pricing update fails
-	}
-
-	// Cache epoch model metadata in transient store.
-	// This avoids repeated heavy model-group reads during validation.
-	err = am.keeper.BuildEpochDataTransientCache(ctx)
-	if err != nil {
-		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
 	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
@@ -406,16 +403,12 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 // errors internally with log+return patterns. A previous-epoch trust-cap
 // membership-read failure is epoch-formation-critical and is propagated to EndBlock.
 func (am AppModule) EndBlock(ctx context.Context) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// Epoch-stage handlers each read params and the effective epoch index; pay the store once.
+	sdkCtx := keeper.WithTxParamsCache(sdk.UnwrapSDKContext(ctx))
+	ctx = sdkCtx
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
-	// Handle confirmation PoC trigger decisions and phase transitions
-	err := am.handleConfirmationPoC(ctx, blockHeight)
-	if err != nil {
-		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
-		// Don't return error - allow block processing to continue
-	}
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("Unable to get parameters", types.Settle, "error", err.Error())
@@ -433,6 +426,13 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if err != nil {
 		am.LogError("Unable to create epoch context", types.EpochGroup, "error", err.Error())
 		return nil
+	}
+
+	// Handle confirmation PoC trigger decisions and phase transitions
+	err = am.handleConfirmationPoC(ctx, blockHeight, &params, epochContext)
+	if err != nil {
+		am.LogError("Failed to handle confirmation PoC", types.PoC, "error", err)
+		// Don't return error - allow block processing to continue
 	}
 
 	currentEpochGroup, err := am.keeper.GetEpochGroupForEpoch(ctx, *currentEpoch)
@@ -505,6 +505,12 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			return err
 		}
 		am.keeper.PayAndDeleteOldChallenges(ctx, getNextEpochIndex(*currentEpoch))
+		// The active model set changes only here; drop windows of models that left it.
+		if groupData, found := am.keeper.GetEpochGroupData(ctx, getNextEpochIndex(*currentEpoch), ""); found {
+			if err := am.keeper.RemoveInactiveModelRollingStates(ctx, groupData.SubGroupModels); err != nil {
+				am.LogWarn("Failed to remove inactive model rolling windows", types.Pricing, "error", err)
+			}
+		}
 		am.LogInfo("Epoch index flipped; new validator set activates at H+2",
 			types.Stages,
 			"blockHeight", blockHeight,
@@ -575,8 +581,17 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 		if found && upcomingEpoch != nil {
-			am.captureDelegationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight)
-			am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC")
+			// Both snapshots share one read of the base state and the stage's store commits.
+			baseState := am.getEffectiveValidationBaseState(ctx)
+			storeCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, upcomingEpoch.PocStartBlockHeight)
+			if err != nil {
+				am.LogError("captureValidationSnapshot: Failed to get store commits", types.PoC,
+					"context", "regular PoC", "error", err)
+				am.writeValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC", nil, baseState.totalWeight)
+			} else {
+				am.captureDelegationSnapshot(ctx, blockHeight, baseState, storeCommits)
+				am.captureValidationSnapshot(ctx, blockHeight, upcomingEpoch.PocStartBlockHeight, "regular PoC", baseState, storeCommits)
+			}
 		} else {
 			am.LogError("captureValidationSnapshot: Unable to get upcoming epoch", types.PoC)
 		}
@@ -1088,9 +1103,11 @@ func (am AppModule) captureGenerationStartTimestamp(
 //
 // For confirmation PoC: voting powers come from AP(N).voting_powers (already delegation-resolved
 // at epoch formation). DIRECT = who was assigned models in AP(N).
-func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64, logContext string) {
-	baseState := am.getEffectiveValidationBaseState(ctx)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, snapshotKey, logContext)
+func (am AppModule) captureValidationSnapshot(
+	ctx context.Context, blockHeight, snapshotKey int64, logContext string,
+	baseState effectiveValidationBaseState, allStoreCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+) {
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, baseState, allStoreCommits, logContext)
 	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, logContext, modelWeights, totalWeight)
 }
 
@@ -1275,7 +1292,10 @@ func emptyValidationBaseState() effectiveValidationBaseState {
 // computeStoreCommitVotingPowers builds validation-time voting powers by combining:
 // - existing model voting powers from the provided base state
 // - bootstrap-model voting powers derived from bootstrap delegation + consensus weights + store commits
-func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseState effectiveValidationBaseState, snapshotKey int64, logContext string) ([]*types.ModelVotingPowers, int64) {
+func (am AppModule) computeStoreCommitVotingPowers(
+	ctx context.Context, baseState effectiveValidationBaseState,
+	allStoreCommits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, logContext string,
+) ([]*types.ModelVotingPowers, int64) {
 	consensusWeights := baseState.weights
 	totalNetworkWeight := baseState.totalWeight
 	if totalNetworkWeight == 0 {
@@ -1297,12 +1317,6 @@ func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseStat
 		bootstrapDelegations = map[string]map[string]string{}
 	}
 
-	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, snapshotKey)
-	if err != nil {
-		am.LogError("computeStoreCommitVotingPowers: Failed to get store commits", types.PoC,
-			"context", logContext, "error", err)
-		return nil, totalNetworkWeight
-	}
 	// Bootstrap intent is frozen at start_poc - deploy_window. If a participant
 	// switches from intent to delegation after that snapshot, the late delegation
 	// is intentionally ignored for the current bootstrap-model validation path.
@@ -1389,6 +1403,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
 	coefficients := types.ConfirmationWeightCoefficients(scales)
 
+	members := make([]epochgroup.EpochMember, 0, len(activeParticipants))
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
 		if err != nil {
@@ -1403,13 +1418,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 
 		// Confirmation events can only lower ConfirmationWeight via min-take, never raise it.
 		initialConfirmationWeight := types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
-		member := epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight)
-		err = upcomingEg.AddMember(ctx, member)
-		if err != nil {
-			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
-			continue
-		}
+		members = append(members, epochgroup.NewEpochMemberFromActiveParticipant(p, reputation, initialConfirmationWeight))
 	}
+	upcomingEg.AddMembers(ctx, members, func(_ epochgroup.EpochMember, err error) {
+		am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
+	})
 }
 
 func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch, upcomingEg *epochgroup.EpochGroup) (uint64, error) {
@@ -1449,27 +1462,12 @@ func (am AppModule) computePrice(ctx context.Context, upcomingEpoch types.Epoch,
 }
 
 func (am AppModule) calculateParticipantReputation(ctx context.Context, p *types.ActiveParticipant, params *types.ValidationParams) (int64, error) {
-	summaries := am.keeper.GetEpochPerformanceSummariesByParticipant(ctx, p.Index)
-
-	reputationContext := calculations.ReputationContext{
-		EpochCount:           int64(len(summaries)),
-		EpochMissPercentages: make([]decimal.Decimal, len(summaries)),
-		ValidationParams:     params,
+	epochCount, missSum, err := am.keeper.ReputationMissTotals(ctx, p.Index, params.MissPercentageCutoff.ToDecimal())
+	if err != nil {
+		return 0, err
 	}
 
-	for i, summary := range summaries {
-		inferenceCount := decimal.NewFromInt(int64(summary.InferenceCount))
-		if inferenceCount.IsZero() {
-			reputationContext.EpochMissPercentages[i] = decimal.Zero
-			continue
-		}
-
-		missed := decimal.NewFromInt(int64(summary.MissedRequests))
-		reputationMetric := missed.Div(inferenceCount)
-		reputationContext.EpochMissPercentages[i] = reputationMetric
-	}
-
-	reputation := calculations.CalculateReputation(&reputationContext)
+	reputation := calculations.CalculateReputationFromMissSum(epochCount, missSum, params)
 	am.LogInfo("ReputationCalculated", types.EpochGroup, "participantIndex", p.Index, "reputation", reputation)
 
 	return reputation, nil
@@ -1528,9 +1526,10 @@ func (am AppModule) moveUpcomingToEffectiveGroup(ctx context.Context, blockHeigh
 
 	am.LogInfo("Setting participants to active", types.EpochGroup, "len(participants)", len(participants))
 	for _, participant := range participants {
+		storedStats := participant.CurrentEpochStats.StoredCopy()
 		participant.Status = types.ParticipantStatus_ACTIVE
 		participant.ConsecutiveInvalidInferences = 0
-		err := am.keeper.SetParticipant(ctx, participant)
+		err := am.keeper.SetParticipantFromStored(ctx, participant, storedStats)
 		if err != nil {
 			am.LogError("Unable to set participant to active", types.EpochGroup, "participantIndex", participant.Index, "error", err.Error())
 			continue

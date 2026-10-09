@@ -23,7 +23,7 @@ func (k Keeper) ParticipantsWithBalances(ctx context.Context, req *types.QueryPa
 		func(address sdk.AccAddress, p types.Participant) (types.ParticipantWithBalance, error) {
 			balances := k.BankView.GetAllBalances(ctx, address)
 			return types.ParticipantWithBalance{
-				Participant: p,
+				Participant: restoredParticipant(address, p),
 				Balances:    balances,
 			}, nil
 		},

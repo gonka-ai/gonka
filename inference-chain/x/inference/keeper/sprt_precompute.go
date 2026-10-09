@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -50,21 +51,39 @@ func (k Keeper) PrecomputeSPRTValues(ctx context.Context) error {
 		return fmt.Errorf("DowntimeGoodPercentage must be between 0 and 1, got: %s", vp.DowntimeGoodPercentage.String())
 	}
 
-	precomputed := &types.SPRTPrecomputedValues{
-		InvalidationLogFail: types.DecimalFromDecimal(CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), true)),
-		InvalidationLogPass: types.DecimalFromDecimal(CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), false)),
-		InactiveLogFail:     types.DecimalFromDecimal(CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), true)),
-		InactiveLogPass:     types.DecimalFromDecimal(CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), false)),
+	in := sprtInputs{*vp.BadParticipantInvalidationRate, *vp.FalsePositiveRate, *vp.DowntimeBadPercentage, *vp.DowntimeGoodPercentage}
+	m := lastSPRT.Load()
+	if m == nil || m.in != in {
+		precomputed := &types.SPRTPrecomputedValues{
+			InvalidationLogFail: types.DecimalFromDecimal(CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), true)),
+			InvalidationLogPass: types.DecimalFromDecimal(CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), false)),
+			InactiveLogFail:     types.DecimalFromDecimal(CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), true)),
+			InactiveLogPass:     types.DecimalFromDecimal(CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), false)),
+		}
+		bz, err := precomputed.Marshal()
+		if err != nil {
+			return err
+		}
+		m = &sprtMemo{in: in, bz: bz}
+		lastSPRT.Store(m)
 	}
-
-	bz, err := precomputed.Marshal()
-	if err != nil {
-		return err
-	}
+	bz := append([]byte(nil), m.bz...)
 
 	transientStore := k.transientStoreService.OpenTransientStore(ctx)
+	turnOffTxCache(ctx)
 	return transientStore.Set(types.TransientSPRTValuesKey, bz)
 }
+
+// The values are a pure function of four governance params, so the Ln work is
+// redone only when one of them changes; the transient store still gets them every block.
+type sprtInputs [4]types.Decimal
+
+type sprtMemo struct {
+	in sprtInputs
+	bz []byte
+}
+
+var lastSPRT atomic.Pointer[sprtMemo]
 
 // In the rare case of some kind of error or not finding this, default to zero
 // This effectively turns off SPRT tracking, meaning no one will be removed from the network
@@ -79,8 +98,7 @@ var zeroSprtValues = types.SPRTPrecomputedValues{
 
 // GetPrecomputedSPRTValues retrieves the precomputed SPRT values from the transient store.
 func (k Keeper) GetPrecomputedSPRTValues(ctx context.Context) types.SPRTPrecomputedValues {
-	transientStore := k.transientStoreService.OpenTransientStore(ctx)
-	bz, err := transientStore.Get(types.TransientSPRTValuesKey)
+	bz, err := k.precomputedSPRTBytes(ctx)
 	if err != nil || len(bz) == 0 {
 		k.LogError("Failed to get SPRT precomputed values from transient store", types.Validation, "error", err)
 		return zeroSprtValues
@@ -117,4 +135,16 @@ func CalculateLogLLR(p1, p0 decimal.Decimal, isFail bool) decimal.Decimal {
 	}
 	res, _ := one.Sub(p1).Div(one.Sub(p0)).Ln(precision)
 	return res
+}
+
+func (k Keeper) precomputedSPRTBytes(ctx context.Context) ([]byte, error) {
+	c := txCacheFrom(ctx)
+	if c != nil && c.sprt != nil {
+		return c.sprt, nil
+	}
+	bz, err := k.transientStoreService.OpenTransientStore(ctx).Get(types.TransientSPRTValuesKey)
+	if c != nil && err == nil && len(bz) > 0 {
+		c.sprt = append([]byte(nil), bz...)
+	}
+	return bz, err
 }

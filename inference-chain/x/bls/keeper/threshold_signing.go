@@ -15,7 +15,7 @@ import (
 
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
-	epochBLSData, err := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, signingData.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", signingData.CurrentEpochId, err)
 	}
@@ -190,6 +190,19 @@ func (k Keeper) validateThresholdSigningEpochPhase(ctx sdk.Context, epochBLSData
 // lets the split take effect immediately after upgrade without a separate
 // migration path for in-flight requests.
 func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.ThresholdSigningRequest, error) {
+	request, err := k.getSigningRequestBase(ctx, requestID)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.rehydratePartialSignatures(ctx, requestID, request); err != nil {
+		return nil, err
+	}
+	return request, nil
+}
+
+// getSigningRequestBase reads the stored request without its partial
+// signature sub-keys; legacy inline entries stay on PartialSignatures.
+func (k Keeper) getSigningRequestBase(ctx sdk.Context, requestID []byte) (*types.ThresholdSigningRequest, error) {
 	key := types.ThresholdSigningRequestKey(requestID)
 	kvStore := k.storeService.OpenKVStore(ctx)
 
@@ -206,7 +219,12 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal threshold signing request: %w", err)
 	}
+	return &request, nil
+}
 
+// rehydratePartialSignatures merges the per-submitter sub-keys over any
+// legacy inline entries of a request read by getSigningRequestBase.
+func (k Keeper) rehydratePartialSignatures(ctx sdk.Context, requestID []byte, request *types.ThresholdSigningRequest) error {
 	// Build baseline from any inline legacy entries, keyed by submitter for
 	// quick lookup when the sub-key iterator overlays. Empty entries
 	// (ParticipantAddress == "") are dropped.
@@ -225,8 +243,9 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	for ; it.Valid(); it.Next() {
 		var ps types.PartialSignature
 		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
-			return nil, fmt.Errorf("unmarshal threshold partial signature: %w", err)
+			return fmt.Errorf("unmarshal threshold partial signature: %w", err)
 		}
+		ps.ParticipantAddress = string(it.Key())
 		if existingIdx, ok := bySubmitter[ps.ParticipantAddress]; ok {
 			merged[existingIdx] = ps
 			continue
@@ -239,7 +258,7 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 		request.PartialSignatures = merged
 	}
 
-	return &request, nil
+	return nil
 }
 
 func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) error {
@@ -405,8 +424,9 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 
 // AddPartialSignature adds a partial signature to a threshold signing request and checks for completion
 func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndices []uint32, partialSignature []byte, submitter string) error {
-	// Get current request
-	request, err := k.GetSigningStatus(ctx, requestID)
+	// Base record only: a late or expired submission is rejected without
+	// reading the partial signatures already collected.
+	request, err := k.getSigningRequestBase(ctx, requestID)
 	if err != nil {
 		return err
 	}
@@ -435,7 +455,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	}
 
 	// Get current epoch BLS data for validation
-	epochBLSData, err := k.GetEpochBLSData(ctx, request.CurrentEpochId)
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, request.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", request.CurrentEpochId, err)
 	}
@@ -465,6 +485,12 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		return fmt.Errorf("participant %s already submitted partial signature", submitter)
 	}
 
+	// Legacy inline partials are dropped from the base record below.
+	hasInlinePartials := len(request.PartialSignatures) > 0
+	if err := k.rehydratePartialSignatures(ctx, requestID, request); err != nil {
+		return err
+	}
+
 	// Persist the new partial signature to its own sub-key. Write cost is
 	// bounded by this submitter's own payload, independent of how many
 	// other signers have already submitted — that is the whole point of
@@ -483,17 +509,16 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	// the new entry without an extra ListThresholdPartialSignatures call.
 	request.PartialSignatures = append(request.PartialSignatures, newPartial)
 
-	// Persist the base request with PartialSignatures nil'd so
-	// storeThresholdSigningRequest's sync loop doesn't redundantly
-	// rewrite every existing signer's sub-key on each submission. The
-	// entry we just added is already in its sub-key, and every other
-	// entry is already in its own sub-key from earlier txs.
-	inMemoryPartials := request.PartialSignatures
-	request.PartialSignatures = nil
-	if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
-		return err
+	// Nothing in the base record changed unless it still carried legacy
+	// inline partials; reaching the threshold rewrites it with the result.
+	if hasInlinePartials {
+		inMemoryPartials := request.PartialSignatures
+		request.PartialSignatures = nil
+		if err := k.storeThresholdSigningRequest(ctx, request); err != nil {
+			return err
+		}
+		request.PartialSignatures = inMemoryPartials
 	}
-	request.PartialSignatures = inMemoryPartials
 
 	// Check if threshold reached and aggregate
 	if err := k.checkThresholdAndAggregate(ctx, request, &epochBLSData); err != nil {
@@ -695,7 +720,10 @@ func (k Keeper) SetThresholdPartialSignature(ctx sdk.Context, requestID []byte, 
 	if ps.ParticipantAddress == "" {
 		return fmt.Errorf("threshold partial signature missing participant address")
 	}
-	value, err := k.cdc.Marshal(ps)
+	// The sub-key is the submitter address; readers restore it from there.
+	stored := *ps
+	stored.ParticipantAddress = ""
+	value, err := k.cdc.Marshal(&stored)
 	if err != nil {
 		return fmt.Errorf("marshal threshold partial signature: %w", err)
 	}
@@ -715,6 +743,7 @@ func (k Keeper) GetThresholdPartialSignature(ctx sdk.Context, requestID []byte, 
 	if err := k.cdc.Unmarshal(value, &ps); err != nil {
 		return nil, err
 	}
+	ps.ParticipantAddress = submitter
 	return &ps, nil
 }
 
@@ -738,6 +767,7 @@ func (k Keeper) ListThresholdPartialSignatures(ctx sdk.Context, requestID []byte
 		if err := k.cdc.Unmarshal(it.Value(), &ps); err != nil {
 			return nil, fmt.Errorf("unmarshal threshold partial signature: %w", err)
 		}
+		ps.ParticipantAddress = string(it.Key())
 		out = append(out, ps)
 	}
 	return out, nil

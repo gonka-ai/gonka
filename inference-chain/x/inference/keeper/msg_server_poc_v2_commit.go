@@ -130,7 +130,7 @@ func (k msgServer) loadExistingPoCV2StoreCommits(
 		if valueErr != nil {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to read existing commit: %v", valueErr))
 		}
-		existingByModel[key.K3()] = value
+		existingByModel[key.K3()] = restoredPoCV2StoreCommit(key, value)
 	}
 
 	return existingByModel, nil
@@ -193,7 +193,7 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	if modelID == "" {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
 	}
-	if _, found := k.GetGovernanceModel(ctx, modelID); !found {
+	if !k.IsValidGovernanceModel(ctx, modelID) {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
 	}
 
@@ -244,7 +244,7 @@ func (k msgServer) persistPoCV2CommitUpdates(
 			TreeDepth:                update.entry.TreeDepth,
 		}
 
-		if err := k.PoCV2StoreCommits.Set(ctx, pk, commit); err != nil {
+		if err := k.PoCV2StoreCommits.Set(ctx, pk, storedPoCV2StoreCommit(commit, addr)); err != nil {
 			return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store commit: %v", err))
 		}
 
@@ -311,21 +311,13 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 			return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight,
 				fmt.Sprintf("confirmation PoC: start block height %d doesn't match event trigger %d", startBlockHeight, activeEvent.TriggerHeight))
 		}
-		confirmParams, err := k.GetParams(ctx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := confirmParams.EpochParams
+		epochParams := params.EpochParams
 		validationEnd := activeEvent.GetValidationEnd(epochParams)
 		if currentBlockHeight > validationEnd {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
 		}
 	} else {
-		regularParams, err := k.Keeper.GetParams(goCtx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := regularParams.EpochParams
+		epochParams := params.EpochParams
 		upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 		if !found {
 			return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
@@ -357,7 +349,7 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 		if modelID == "" {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
 		}
-		if _, found := k.GetGovernanceModel(ctx, modelID); !found {
+		if !k.IsValidGovernanceModel(ctx, modelID) {
 			return nil, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
 		}
 
@@ -383,7 +375,7 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 			ModelId:                  modelID,
 		}
 
-		if err := k.MLNodeWeightDistributions.Set(ctx, pk, distribution); err != nil {
+		if err := k.MLNodeWeightDistributions.Set(ctx, pk, storedMLNodeWeightDistribution(distribution, addr)); err != nil {
 			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to store distribution: %v", err))
 		}
 

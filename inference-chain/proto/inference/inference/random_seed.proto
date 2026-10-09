@@ -8,4 +8,7 @@ message RandomSeed {
   uint64 epoch_index = 2;
   string signature = 3;
   // epoch group id?
+
+  // Storage form of signature (decoded hex); reads restore the string.
+  bytes signature_raw = 4;
 }

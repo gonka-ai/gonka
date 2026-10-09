@@ -363,6 +363,8 @@ message GenesisGuardianParams {
   int64 network_maturity_min_height = 2;
   // guardian_addresses are the validator operator addresses treated as genesis guardians.
   repeated string guardian_addresses = 3;
+  // Storage only: guardian_addresses as validator address bytes.
+  repeated bytes guardian_addrs = 4;
 }
 
 message DeveloperAccessParams {
@@ -372,6 +374,8 @@ message DeveloperAccessParams {
   int64 until_block_height = 1;
   // allowed_developer_addresses are the bech32 account addresses allowed to request inferences before until_block_height.
   repeated string allowed_developer_addresses = 2;
+  // Storage only: allowed_developer_addresses as address bytes.
+  repeated bytes allowed_developer_addrs = 3;
 }
 
 // ParticipantAccessParams controls participant access via blocklist and allowlist mechanisms.
@@ -406,6 +410,8 @@ message TransferAgentAccessParams {
   // allowed_transfer_addresses are bech32 account addresses allowed to act as Transfer Agents.
   // If empty, all TAs are allowed.
   repeated string allowed_transfer_addresses = 1;
+  // Storage only: allowed_transfer_addresses as address bytes.
+  repeated bytes allowed_transfer_addrs = 2;
 }
 
 // DelegationParams defines parameters for PoC delegation in the multi-model system.
@@ -461,6 +467,8 @@ message DevshardEscrowParams {
   uint32 validation_rate = 16;
   uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
   uint32 default_auto_seal_every_n_nonces = 18;
+  // Storage only: allowed_creator_addresses as address bytes.
+  repeated bytes allowed_creator_addrs = 20;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level
