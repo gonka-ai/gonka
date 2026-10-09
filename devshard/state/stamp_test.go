@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -80,10 +81,10 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 	}
 	_, err := plain.ApplyDiff(testutil.SignDiff(t, userP, "escrow-1", 1, []*types.DevshardTx{txStart(start)}))
 	require.NoError(t, err)
-	stampedStart := *start
+	stampedStart := proto.Clone(start).(*types.MsgStartInference)
 	stampedStart.ObservedHeight = 100
 	stampedStart.ObservedBlockHash = hash
-	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 1, []*types.DevshardTx{txStart(&stampedStart)}))
+	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 1, []*types.DevshardTx{txStart(stampedStart)}))
 	require.NoError(t, err)
 
 	plainSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
@@ -111,11 +112,7 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 }
 
 func protoCloneFinish(msg *types.MsgFinishInference) *types.MsgFinishInference {
-	cp := *msg
-	cp.ResponseHash = append([]byte(nil), msg.ResponseHash...)
-	cp.ObservedBlockHash = append([]byte(nil), msg.ObservedBlockHash...)
-	cp.ProposerSig = append([]byte(nil), msg.ProposerSig...)
-	return &cp
+	return proto.Clone(msg).(*types.MsgFinishInference)
 }
 
 func applyFinish(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, nonce uint64, msg *types.MsgFinishInference) error {

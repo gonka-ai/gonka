@@ -635,6 +635,13 @@ func zeroReceiptTimeout(t *testing.T) {
 	t.Cleanup(func() { ReceiptTimeout = saved })
 }
 
+func allowSpeculativeAttemptsOnWholeGroup(t *testing.T) {
+	t.Helper()
+	saved := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(0)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(saved) })
+}
+
 func raceCleanupFinished(redundancy *Redundancy) <-chan struct{} {
 	finished := make(chan struct{})
 	redundancy.onRaceCleanupDone = sync.OnceFunc(func() { close(finished) })
@@ -1722,6 +1729,7 @@ func TestRunInference_OnlyADeterministicRejectionStaysOnOneHost(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+			allowSpeculativeAttemptsOnWholeGroup(t)
 			shortRefusalWindow(t)
 			rejectingHost := &errorStreamWithoutFinishClient{errorEvent: testCase.errorEvent}
 			env := setupTestProxyWithClients(t, []user.HostClient{rejectingHost, rejectingHost, rejectingHost})
@@ -2084,6 +2092,7 @@ func TestRunInference_SpeculativeOnKill(t *testing.T) {
 
 func TestRunInference_SpeculativeFallsThroughMultipleDeadHosts(t *testing.T) {
 	zeroReceiptTimeout(t)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	env := setupTestProxy(t, 4, nil, true)
 
 	// nonce 1 -> host 1, nonce 2 -> host 2, nonce 3 -> host 3.

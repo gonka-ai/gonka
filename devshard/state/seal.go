@@ -2,7 +2,6 @@ package state
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -559,7 +558,7 @@ func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 }
 
 // autoSealCandidate is one seal-eligible live inference and how the grace gates
-// evaluated at this seal nonce. Emitted in auto-seal info logs on host/user.
+// evaluated at this seal nonce.
 type autoSealCandidate struct {
 	ID               uint64 `json:"id"`
 	Status           uint8  `json:"status"`
@@ -584,10 +583,6 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if len(candidates) == 0 && len(sealed) == 0 {
 		return
 	}
-	candidatesJSON, err := json.Marshal(candidates)
-	if err != nil {
-		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
-	}
 	executionTimeout := sm.state.Config.ExecutionTimeout
 	args := []any{
 		"subsystem", side,
@@ -600,8 +595,7 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"execution_timeout", executionTimeout,
 		"finished_clock_required_seconds", FinishedClockRequiredSeconds(graceSeconds, executionTimeout),
 		"state_clock_confirmed_at", stateClock,
-		"candidates", string(candidatesJSON),
-		"sealed_ids", sealed,
+		"candidates_count", len(candidates),
 		"sealed_count", len(sealed),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
@@ -816,6 +810,19 @@ func cloneInferenceRecord(rec *types.InferenceRecord) *types.InferenceRecord {
 func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	_, err := sm.FillSealedInferenceIndexGaps()
 	return err
+}
+
+// SealedAtOrBefore returns which of ids were sealed at or before nonce.
+func (sm *StateMachine) SealedAtOrBefore(ids []uint64, nonce uint64) map[uint64]struct{} {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	sealed := make(map[uint64]struct{})
+	for _, id := range ids {
+		if sealNonce, ok := sm.sealedNonces[id]; ok && sealNonce <= nonce {
+			sealed[id] = struct{}{}
+		}
+	}
+	return sealed
 }
 
 // SealedNonceCount returns the size of the seal set. Callers that only need the

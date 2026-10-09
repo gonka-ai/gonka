@@ -171,7 +171,7 @@ func TestPanickingFinalizeReopensAdmission(t *testing.T) {
 }
 
 // TestConcurrentFinalizeIsRefused pins the double-finalize case: the second
-// finalize must be refused outright, not queued on finalizeMu. A queued one
+// finalize must be refused outright, not queued on the escrow finalize lock. A queued one
 // would run after the first finalize's defer reopened the gate, so it would
 // forward with admission open again -- the very window this change closes.
 func TestConcurrentFinalizeIsRefused(t *testing.T) {

@@ -153,7 +153,9 @@ func newRegisteredInactiveDevshardGateway(t *testing.T) (*Gateway, *devshardRunt
 	t.Helper()
 	gateway := newInactiveDevshardGateway(t)
 	escrowRuntime := &devshardRuntime{id: "77"}
+	gateway.mu.Lock()
 	gateway.runtimes["77"] = escrowRuntime
 	gateway.runtimeOrder = append(gateway.runtimeOrder, escrowRuntime)
+	gateway.mu.Unlock()
 	return gateway, escrowRuntime
 }

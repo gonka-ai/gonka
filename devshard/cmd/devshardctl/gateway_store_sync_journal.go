@@ -342,8 +342,8 @@ func applyGatewayDevshardToPG(ctx context.Context, tx pgx.Tx, devshard GatewayDe
 	_, err := tx.Exec(ctx, `
 		INSERT INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			protocol_version, rotation_role, rotation_epoch, settlement_pending
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (id) DO UPDATE SET
 			private_key_hex = EXCLUDED.private_key_hex,
 			private_key_env = EXCLUDED.private_key_env,
@@ -356,7 +356,8 @@ func applyGatewayDevshardToPG(ctx context.Context, tx pgx.Tx, devshard GatewayDe
 			protocol_version = EXCLUDED.protocol_version,
 			rotation_role = EXCLUDED.rotation_role,
 			rotation_epoch = EXCLUDED.rotation_epoch,
-			settlement_pending = EXCLUDED.settlement_pending`,
+			settlement_pending = EXCLUDED.settlement_pending,
+			on_hold_since = EXCLUDED.on_hold_since`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -370,6 +371,7 @@ func applyGatewayDevshardToPG(ctx context.Context, tx pgx.Tx, devshard GatewayDe
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		gatewayBoolToInt(devshard.SettlementPending),
+		strings.TrimSpace(devshard.OnHoldSince),
 	)
 	if err != nil {
 		return fmt.Errorf("apply gateway devshard %s to postgres: %w", devshard.ID, err)
@@ -530,12 +532,12 @@ func (s *SQLiteGatewayStore) loadGatewayDevshardRow(id string) (GatewayDevshardS
 	var active, settlementPending int
 	err := s.db.QueryRow(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		WHERE id = ?`, strings.TrimSpace(id)).Scan(
 		&devshard.ID, &devshard.PrivateKeyHex, &devshard.PrivateKeyEnv, &devshard.Model, &devshard.StoragePath,
 		&active, &devshard.CreatedAt, &devshard.UpdatedAt, &devshard.RoutePrefix, &devshard.ProtocolVersion,
-		&devshard.RotationRole, &devshard.RotationEpoch, &settlementPending,
+		&devshard.RotationRole, &devshard.RotationEpoch, &settlementPending, &devshard.OnHoldSince,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayDevshardState{}, false, nil
