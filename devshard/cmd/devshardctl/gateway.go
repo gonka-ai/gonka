@@ -409,23 +409,26 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 	noteRetiredCompressRequestBodies()
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:           keyHex,
-		EscrowID:                cfg.ID,
-		Bridge:                  br,
-		StoragePath:             cfg.StoragePath,
-		RoutePrefix:             routePrefix,
-		RequestAdmission:        sharedParticipantRequestLimiter,
-		RequireHeightSeed:       requireHeightSeedFromEnv(),
-		Escrow:                  escrow,
-		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
-		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
-		ExtraClientConfig:       extraClient,
-		Heartbeat:               heartbeatFromDeps(deps),
+		PrivateKeyHex:              keyHex,
+		EscrowID:                   cfg.ID,
+		Bridge:                     br,
+		StoragePath:                cfg.StoragePath,
+		RoutePrefix:                routePrefix,
+		RequestAdmission:           sharedParticipantRequestLimiter,
+		RequireHeightSeed:          requireHeightSeedFromEnv(),
+		DisableHeightSyncHeartbeat: !heightSyncHeartbeatFromEnv(),
+		Escrow:                     escrow,
+		RefusalTimeoutSeconds:      timeoutOverrides.RefusalTimeoutSeconds,
+		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
+		ExtraClientConfig:          extraClient,
+		Heartbeat:                  heartbeatFromDeps(deps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
-	// Quiet-session cadence (§10.3). Close() cancels the loop. Not started
+	// Quiet-session cadence (§10.3). Off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
+	// is true/1/on. StartHeartbeatLoop still starts the height-seed loop when
+	// that gate is on. Close() cancels whichever loops started. Not started
 	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
 	// inference. The loop waits for router catalog admission before the
 	// first heartbeat/seed so a cold router cannot 503 those into quarantine.

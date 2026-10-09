@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
@@ -322,6 +324,65 @@ func heightAcksInDiffs(diffs []types.Diff) []*types.MsgHeightAck {
 		}
 	}
 	return out
+}
+
+type infoLog struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *infoLog) Info(msg string, _ ...any) {
+	l.mu.Lock()
+	l.msgs = append(l.msgs, msg)
+	l.mu.Unlock()
+}
+
+func (l *infoLog) Error(string, ...any) {}
+func (l *infoLog) Warn(string, ...any)  {}
+func (l *infoLog) Debug(string, ...any) {}
+
+func (l *infoLog) contains(msg string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for _, m := range l.msgs {
+		if m == msg {
+			return true
+		}
+	}
+	return false
+}
+
+type slogLog struct{}
+
+func (slogLog) Info(msg string, kv ...any)  { slog.Info(msg, kv...) }
+func (slogLog) Error(msg string, kv ...any) { slog.Error(msg, kv...) }
+func (slogLog) Warn(msg string, kv ...any)  { slog.Warn(msg, kv...) }
+func (slogLog) Debug(msg string, kv ...any) { slog.Debug(msg, kv...) }
+
+func captureInfoLog(t *testing.T) *infoLog {
+	t.Helper()
+	got := &infoLog{}
+	logging.SetLogger(got)
+	t.Cleanup(func() { logging.SetLogger(slogLog{}) })
+	return got
+}
+
+func TestHeartbeat_DisabledSkipsSpan(t *testing.T) {
+	var height uint64 = 100
+	session := setupBlindHeartbeatSession(t, &height, WithDisableHeightSyncHeartbeat(true))
+	t.Cleanup(func() { _ = session.Close() })
+	base := session.Nonce()
+	logs := captureInfoLog(t)
+
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	require.Empty(t, heartbeatDiffsAfter(seenDiffs(session), base))
+
+	session.StartHeartbeatLoop()
+	require.True(t, logs.contains("heartbeat loop disabled"))
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, base, session.Nonce())
+	require.Nil(t, session.heartbeatStop)
+	require.Empty(t, heartbeatDiffsAfter(seenDiffs(session), base))
 }
 
 func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {

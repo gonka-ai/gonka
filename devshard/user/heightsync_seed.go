@@ -769,3 +769,12 @@ func (s *Session) SetRequireHeightSeed(on bool) {
 	}
 	s.requireHeightSeed = on
 }
+
+// SetDisableHeightSyncHeartbeat is the recover-path equivalent of
+// WithDisableHeightSyncHeartbeat.
+func (s *Session) SetDisableHeightSyncHeartbeat(on bool) {
+	if s == nil {
+		return
+	}
+	s.disableHeightSyncHeartbeat = on
+}
