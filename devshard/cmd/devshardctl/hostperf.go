@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
 	"iter"
@@ -274,7 +275,7 @@ type PerfTracker struct {
 	toolRefusals      map[servedModel]uint64
 	contextRefusals   map[servedModel]uint64
 	pairwise          *PairwiseTracker
-	store             *PerfStore
+	store             PerfStore
 }
 
 type servedModel struct {
@@ -289,7 +290,7 @@ func servedModelLabel(served servedModel) string {
 	return served.participant + "|" + served.model
 }
 
-func NewPerfTracker(store *PerfStore) *PerfTracker {
+func NewPerfTracker(store PerfStore) *PerfTracker {
 	pt := &PerfTracker{
 		hosts:             make(map[string]*hostRing),
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
@@ -307,7 +308,7 @@ func NewPerfTracker(store *PerfStore) *PerfTracker {
 }
 
 func (t *PerfTracker) loadFromStore() {
-	samples, err := t.store.LoadSamples()
+	samples, err := t.store.LoadSamples(context.Background())
 	if err != nil {
 		log.Printf("perf: failed to load samples: %v", err)
 		return
@@ -325,7 +326,7 @@ func (t *PerfTracker) loadFromStore() {
 		ring.add(s)
 	}
 
-	records, err := t.store.LoadRequests()
+	records, err := t.store.LoadRequests(context.Background())
 	if err != nil {
 		log.Printf("perf: failed to load requests: %v", err)
 		return
@@ -364,7 +365,7 @@ func (t *PerfTracker) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath strin
 	if t == nil || t.store == nil {
 		return nil
 	}
-	samples, err := t.store.BackfillLegacyEscrowSamples(sourceEscrow, sourcePath, participantKeys)
+	samples, err := t.store.BackfillLegacyEscrowSamples(context.Background(), sourceEscrow, sourcePath, participantKeys)
 	if err != nil {
 		return err
 	}
@@ -401,7 +402,7 @@ func (t *PerfTracker) Record(s RequestSample) {
 	t.mu.Unlock()
 
 	if t.store != nil {
-		if err := t.store.InsertSample(s); err != nil {
+		if err := t.store.InsertSample(context.Background(), s); err != nil {
 			log.Printf("perf: persist sample: %v", err)
 		}
 	}
@@ -483,7 +484,7 @@ func (t *PerfTracker) RecordRequest(rec RequestRecord) {
 	}
 
 	if t.store != nil {
-		if err := t.store.InsertRequest(rec); err != nil {
+		if err := t.store.InsertRequest(context.Background(), rec); err != nil {
 			log.Printf("perf: persist request: %v", err)
 		}
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -137,9 +138,9 @@ func TestPerfTrackerFirstTokenFallbackBucketsByModelAndInputSize(t *testing.T) {
 
 func TestPerfStoreBackfillsLegacyEscrowSamples(t *testing.T) {
 	dir := t.TempDir()
-	legacy, err := NewPerfStore(filepath.Join(dir, "escrow-12-state.db"))
+	legacy, err := newSQLitePerfStore(filepath.Join(dir, "escrow-12-state.db"))
 	require.NoError(t, err)
-	require.NoError(t, legacy.InsertSample(RequestSample{
+	require.NoError(t, legacy.InsertSample(context.Background(), RequestSample{
 		HostIdx:     1,
 		Responsive:  false,
 		SendTime:    time.Now(),
@@ -148,7 +149,7 @@ func TestPerfStoreBackfillsLegacyEscrowSamples(t *testing.T) {
 	}))
 	require.NoError(t, legacy.Close())
 
-	globalStore, err := NewPerfStore(filepath.Join(dir, "perf.db"))
+	globalStore, err := newSQLitePerfStore(filepath.Join(dir, "perf.db"))
 	require.NoError(t, err)
 	defer globalStore.Close()
 

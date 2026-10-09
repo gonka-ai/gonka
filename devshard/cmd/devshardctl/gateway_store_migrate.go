@@ -120,7 +120,11 @@ func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *
 }
 
 func (s *PostgresGatewayStore) ensureMigrationTable(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `
+	return ensureGatewayMigrationTable(ctx, s.pool)
+}
+
+func ensureGatewayMigrationTable(ctx context.Context, exec gatewayMigrationExecer) error {
+	_, err := exec.Exec(ctx, `
 		CREATE TABLE IF NOT EXISTS gateway_migration (
 			name TEXT PRIMARY KEY,
 			completed_at TEXT NOT NULL

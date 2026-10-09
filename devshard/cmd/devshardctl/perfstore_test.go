@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -8,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func insertPerfSampleRow(t *testing.T, store *PerfStore, participant string, sentAt time.Time, sourceEscrow string, sourceSampleID int64) {
+func insertPerfSampleRow(t *testing.T, store *sqlitePerfStore, participant string, sentAt time.Time, sourceEscrow string, sourceSampleID int64) {
 	t.Helper()
 	var sourceID any
 	if sourceEscrow != "" {
@@ -25,7 +26,7 @@ func insertPerfSampleRow(t *testing.T, store *PerfStore, participant string, sen
 //  2. Load the samples.
 //  3. Require exactly the samples inside the window, oldest first, so neither the late finisher nor a backfilled old sample cuts the load short.
 func TestLoadSamplesReturnsTheWindowAcrossLateFinishersAndBackfilledRows(t *testing.T) {
-	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	store, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	now := time.Now()
@@ -39,7 +40,7 @@ func TestLoadSamplesReturnsTheWindowAcrossLateFinishersAndBackfilledRows(t *test
 	insertPerfSampleRow(t, store, "backfilled-old", now.Add(-30*time.Hour), "legacy-escrow", 2)
 	insertPerfSampleRow(t, store, "fresh", now.Add(-time.Minute), "", 0)
 
-	samples, err := store.LoadSamples()
+	samples, err := store.LoadSamples(context.Background())
 	require.NoError(t, err)
 
 	participants := make([]string, 0, len(samples))

@@ -214,14 +214,14 @@ func newLoadSimulationGateway(t *testing.T, fleet *inProcessFleet, storageDir st
 	}.WithTuningDefaults()
 	gateway := NewGateway(fleet.runtimes, NewGatewayLimiter(0, 0), loadSimulationModel)
 	gateway.settings = settings
-	gatewayStore, err := NewGatewayStore(filepath.Join(storageDir, "gateway.db"))
+	gatewayStore, err := NewSQLiteGatewayStore(filepath.Join(storageDir, "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = gatewayStore.Close() })
 	states := make([]GatewayDevshardState, 0, len(fleet.runtimes))
 	for _, escrowRuntime := range fleet.runtimes {
 		states = append(states, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: escrowRuntime.id, Model: escrowRuntime.model}, Active: true})
 	}
-	require.NoError(t, gatewayStore.Initialize(settings, states))
+	require.NoError(t, gatewayStore.Initialize(context.Background(), settings, states))
 	gateway.store = gatewayStore
 	return buildGatewayHandler(gateway, runtimeOptions{adminAPIKey: "loadsim-admin-api-key"})
 }

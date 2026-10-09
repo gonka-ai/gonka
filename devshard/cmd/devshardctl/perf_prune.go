@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"math"
 	"sync"
@@ -30,9 +31,10 @@ type perfPruneResult struct {
 	accounting int64
 }
 
-// perfPruner deletes what perf.db keeps but nothing reads. See devshard/docs/host-health.md, "perf.db: what startup reads and what is pruned".
+// perfPruner deletes what perf.db keeps but nothing reads; accounting is nil on a store several gateways share. See devshard/docs/host-health.md, "perf.db: what startup reads and what is pruned".
 type perfPruner struct {
-	store                 *PerfStore
+	store                 perfPruneStore
+	accounting            accountingPruneStore
 	retainsEscrow         func(escrowID string) bool
 	currentEpoch          func() uint64
 	timing                perfPrunerTiming
@@ -42,9 +44,10 @@ type perfPruner struct {
 	accountingWalkedEpoch uint64
 }
 
-func newPerfPruner(store *PerfStore, retainsEscrow func(string) bool, currentEpoch func() uint64, timing perfPrunerTiming) *perfPruner {
+func newPerfPruner(store perfPruneStore, accounting accountingPruneStore, retainsEscrow func(string) bool, currentEpoch func() uint64, timing perfPrunerTiming) *perfPruner {
 	return &perfPruner{
 		store:         store,
+		accounting:    accounting,
 		retainsEscrow: retainsEscrow,
 		currentEpoch:  currentEpoch,
 		timing:        timing,
@@ -64,6 +67,15 @@ func (p *perfPruner) stopAndWait() {
 
 func (p *perfPruner) run() {
 	defer close(p.done)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-p.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	timer := time.NewTimer(p.timing.startDelay)
 	defer timer.Stop()
 	for {
@@ -73,7 +85,7 @@ func (p *perfPruner) run() {
 		case <-timer.C:
 		}
 		started := time.Now()
-		result := p.runOnce()
+		result := p.runOnce(ctx)
 		if result.samples+result.requestLog+result.accounting > 0 {
 			log.Printf("perf_prune samples_deleted=%d request_log_deleted=%d accounting_deleted=%d elapsed_ms=%d",
 				result.samples, result.requestLog, result.accounting, time.Since(started).Milliseconds())
@@ -82,24 +94,24 @@ func (p *perfPruner) run() {
 	}
 }
 
-func (p *perfPruner) runOnce() perfPruneResult {
+func (p *perfPruner) runOnce(ctx context.Context) perfPruneResult {
 	var result perfPruneResult
-	if boundary, found := p.hostSampleBoundary(); found {
-		result.samples = p.deleteOldestRows("perf_host_samples", boundary)
+	if boundary, found := p.hostSampleBoundary(ctx); found {
+		result.samples = p.deleteOldestRows(ctx, "perf_host_samples", p.store.deleteHostSamplesUpTo, boundary)
 	}
-	if boundary, err := p.store.requestLogRetentionBoundary(); err != nil {
+	if boundary, err := p.store.requestLogRetentionBoundary(ctx); err != nil {
 		log.Printf("perf_prune request log boundary: %v", err)
 	} else {
-		result.requestLog = p.deleteOldestRows("perf_request_log", boundary)
+		result.requestLog = p.deleteOldestRows(ctx, "perf_request_log", p.store.deleteRequestLogUpTo, boundary)
 	}
-	if p.retainsEscrow == nil || p.currentEpoch == nil {
+	if p.accounting == nil || p.retainsEscrow == nil || p.currentEpoch == nil {
 		return result
 	}
 	epoch := p.currentEpoch()
 	if epoch == 0 || epoch == p.accountingWalkedEpoch {
 		return result
 	}
-	deleted, complete := p.walkAccounting()
+	deleted, complete := p.walkAccounting(ctx)
 	result.accounting = deleted
 	if complete {
 		p.accountingWalkedEpoch = epoch
@@ -107,32 +119,40 @@ func (p *perfPruner) runOnce() perfPruneResult {
 	return result
 }
 
-func (p *perfPruner) hostSampleBoundary() (int64, bool) {
-	_, stopBefore := sampleWindow(time.Now())
+func (p *perfPruner) hostSampleBoundary(ctx context.Context) (int64, bool) {
+	boundary, found, err := findHostSampleBoundary(ctx, p.store, time.Now(), p.pause)
+	if err != nil {
+		log.Printf("perf_prune samples boundary: %v", err)
+	}
+	return boundary, found
+}
+
+// findHostSampleBoundary pages LoadSamples' newest-first walk until the live sample that ends it; pause between pages returns false to give up.
+func findHostSampleBoundary(ctx context.Context, store perfPruneStore, now time.Time, pause func() bool) (int64, bool, error) {
+	_, stopBefore := sampleWindow(now)
 	if stopBefore.IsZero() {
-		return 0, false
+		return 0, false, nil
 	}
 	beforeID := int64(math.MaxInt64)
 	for {
-		boundary, lastScannedID, scanned, err := p.store.hostSampleBoundaryBatch(stopBefore, beforeID, perfPruneBatchSize)
+		boundary, lastScannedID, scanned, err := store.hostSampleBoundaryBatch(ctx, stopBefore, beforeID, perfPruneBatchSize)
 		if err != nil {
-			log.Printf("perf_prune samples boundary: %v", err)
-			return 0, false
+			return 0, false, err
 		}
 		if boundary > 0 {
-			return boundary, true
+			return boundary, true, nil
 		}
-		if scanned < perfPruneBatchSize || !p.pause() {
-			return 0, false
+		if scanned < perfPruneBatchSize || !pause() {
+			return 0, false, nil
 		}
 		beforeID = lastScannedID
 	}
 }
 
-func (p *perfPruner) deleteOldestRows(table string, boundaryID int64) int64 {
+func (p *perfPruner) deleteOldestRows(ctx context.Context, table string, deleteUpTo func(ctx context.Context, boundaryID int64, limit int) (int64, error), boundaryID int64) int64 {
 	var total int64
 	for boundaryID > 0 {
-		deleted, err := p.store.deleteOldestRowsUpTo(table, boundaryID, perfPruneBatchSize)
+		deleted, err := deleteUpTo(ctx, boundaryID, perfPruneBatchSize)
 		if err != nil {
 			log.Printf("perf_prune %s: %v", table, err)
 			return total
@@ -145,14 +165,22 @@ func (p *perfPruner) deleteOldestRows(table string, boundaryID int64) int64 {
 	return total
 }
 
-func (p *perfPruner) walkAccounting() (int64, bool) {
+func (p *perfPruner) walkAccounting(ctx context.Context) (int64, bool) {
 	var total int64
-	for _, table := range accountingTables {
+	tables := []struct {
+		name          string
+		deleteBatchOf func(ctx context.Context, afterRowID int64, limit int, retainsEscrow func(string) bool) (int64, int, int64, error)
+	}{
+		{"request_accounting", p.accounting.deleteUnretainedAccountingRequests},
+		{"request_accounting_attempts", p.accounting.deleteUnretainedAccountingAttempts},
+		{"request_accounting_aliases", p.accounting.deleteUnretainedAccountingAliases},
+	}
+	for _, table := range tables {
 		var afterRowID int64
 		for {
-			lastRowID, scanned, deleted, err := p.store.deleteUnretainedAccountingBatch(table, afterRowID, perfPruneBatchSize, p.retainsEscrow)
+			lastRowID, scanned, deleted, err := table.deleteBatchOf(ctx, afterRowID, perfPruneBatchSize, p.retainsEscrow)
 			if err != nil {
-				log.Printf("perf_prune %s: %v", table, err)
+				log.Printf("perf_prune %s: %v", table.name, err)
 				return total, false
 			}
 			total += deleted
@@ -213,7 +241,11 @@ func (g *Gateway) startPerfPruner(tracker *accounting.Tracker, retentionEpochs u
 		}
 		return phaseGate.Snapshot().EpochIndex
 	}
-	g.perfPruner = newPerfPruner(g.perfStore, retainsEscrow, currentEpoch, perfPrunerTiming{
+	accountingStore, ownsAccounting := g.perfStore.(accountingPruneStore)
+	if !ownsAccounting && retainsEscrow != nil {
+		log.Printf("perf_prune request accounting is kept: the perf store is shared between gateways")
+	}
+	g.perfPruner = newPerfPruner(g.perfStore, accountingStore, retainsEscrow, currentEpoch, perfPrunerTiming{
 		startDelay: perfPruneStartDelay, interval: perfPruneInterval, pause: perfPrunePause,
 	})
 	g.perfPruner.start()

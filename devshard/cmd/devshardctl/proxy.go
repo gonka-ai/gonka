@@ -962,7 +962,7 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":{"message":"request accounting unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	rec, ok, err := p.perf.FindAccountingRequest(requestID, p.escrowID)
+	rec, ok, err := p.perf.FindAccountingRequest(r.Context(), requestID, p.escrowID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
