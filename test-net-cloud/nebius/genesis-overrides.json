@@ -82,8 +82,8 @@
         "set_new_validators_delay": "30",
         "inference_validation_cutoff": "20",
         "default_unit_of_compute_price": "100",
-          "inference_pruning_max": "0",
-          "poc_pruning_max": "0"
+          "inference_pruning_max": "1000",
+          "poc_pruning_max": "1000"
         },
         "validation_params": {
           "binom_test_p0": {

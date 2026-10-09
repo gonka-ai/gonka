@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -141,6 +142,8 @@ func TestPruningEpochThreshold(t *testing.T) {
 func TestPruningStatusPreservation(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 4))
 
 	// Create inferences with different statuses
 	inferences := []types.Inference{
@@ -163,7 +166,7 @@ func TestPruningStatusPreservation(t *testing.T) {
 
 	// Add inferences to the store
 	for _, inf := range inferences {
-		k.SetInference(ctx, inf)
+		require.NoError(t, k.SetInference(ctx, inf))
 	}
 
 	// Run pruning with threshold that should prune old inferences
@@ -181,6 +184,114 @@ func TestPruningStatusPreservation(t *testing.T) {
 	// Verify FINISHED inference was pruned
 	_, found = k.GetInference(ctx, "inference-finished")
 	require.False(t, found, "Inference with FINISHED status should be pruned")
+
+	// Active records are moved to the current epoch rather than dropped from
+	// the index, so they can be reconsidered after their status changes.
+	for _, id := range []string{"inference-voting", "inference-started"} {
+		hasOriginal, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(1), id))
+		require.NoError(t, err)
+		require.False(t, hasOriginal)
+		hasRetry, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(4), id))
+		require.NoError(t, err)
+		require.True(t, hasRetry)
+	}
+
+	// A normal status update may recreate the original-epoch index. The later
+	// retry must remove both indexes and the now-terminal inference.
+	for _, inf := range inferences[:2] {
+		inf.Status = types.InferenceStatus_FINISHED
+		require.NoError(t, k.SetInference(ctx, inf))
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
+	require.NoError(t, k.Prune(ctx, 7))
+
+	for _, id := range []string{"inference-voting", "inference-started"} {
+		_, found := k.GetInference(ctx, id)
+		require.False(t, found, "terminal inference %q should be pruned on retry", id)
+		for _, epoch := range []int64{1, 4} {
+			hasIndex, err := k.InferencesToPrune.Has(ctx, collections.Join(epoch, id))
+			require.NoError(t, err)
+			require.False(t, hasIndex, "stale pruning index for %q at epoch %d", id, epoch)
+		}
+	}
+}
+
+func TestPruningNonPositiveLimitDoesNotMutateState(t *testing.T) {
+	for _, limit := range []int64{0, -1} {
+		t.Run(fmt.Sprintf("limit_%d", limit), func(t *testing.T) {
+			k, ctx := keepertest.InferenceKeeper(t)
+			require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+			inference := types.Inference{
+				Index:   "inference-finished",
+				EpochId: 1,
+				Status:  types.InferenceStatus_FINISHED,
+			}
+			require.NoError(t, k.SetInference(ctx, inference))
+
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			params.EpochParams.InferencePruningMax = limit
+			require.NoError(t, k.GetInferencePruner(params).Prune(ctx, k, 4))
+
+			_, found := k.GetInference(ctx, inference.Index)
+			require.True(t, found)
+			hasIndex, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(inference.EpochId), inference.Index))
+			require.NoError(t, err)
+			require.True(t, hasIndex)
+		})
+	}
+}
+
+func TestPrunerStopsAfterPartialFailure(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	for _, key := range []collections.Pair[int64, string]{
+		collections.Join(int64(1), "a"),
+		collections.Join(int64(1), "b"),
+		collections.Join(int64(1), "c"),
+		collections.Join(int64(2), "later-epoch"),
+	} {
+		require.NoError(t, k.InferencesToPrune.Set(ctx, key, collections.NoValue{}))
+	}
+
+	errInjected := errors.New("injected removal failure")
+	removeCalls := 0
+	pruner := keeper.Pruner[collections.Pair[int64, string], collections.NoValue]{
+		Threshold:  1,
+		PruningMax: 3,
+		List:       k.InferencesToPrune,
+		Ranger: func(_ context.Context, epoch int64) collections.Ranger[collections.Pair[int64, string]] {
+			return collections.NewPrefixedPairRange[int64, string](epoch)
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.InferencePrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.InferencePrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[int64, string]) error {
+			removeCalls++
+			if removeCalls == 3 {
+				return errInjected
+			}
+			return k.InferencesToPrune.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+
+	err := pruner.Prune(ctx, k, 3)
+	require.ErrorIs(t, err, errInjected)
+	require.Equal(t, 3, removeCalls)
+
+	// The failed epoch is not marked complete and no later epoch is touched.
+	state, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), state.InferencePrunedEpoch)
+	hasLater, err := k.InferencesToPrune.Has(ctx, collections.Join(int64(2), "later-epoch"))
+	require.NoError(t, err)
+	require.True(t, hasLater)
 }
 
 func TestPruningMultipleEpochs(t *testing.T) {
@@ -501,4 +612,236 @@ func TestDevshardPruningPostPruneHook(t *testing.T) {
 	}
 	iter.Close()
 	require.False(t, statsFound, "DevshardHostEpochStats should be cleared")
+}
+
+// TestPrunerMultiEpochBacklogBudget tests that prunedCount accumulates across epochs
+// and respects the per-block PruningMax budget, based on bonujel's 2026-07-30 reproduction case.
+//
+// Scenario: 6 eligible epochs with varying counts, PruningMax=1000.
+// Expected behavior:
+//   - Each EndBlock call deletes at most 1000 items total across all epochs
+//   - Eventually all epochs are completely cleared (no items orphaned)
+//   - Marker advances only after an epoch is fully cleared
+func TestPrunerMultiEpochBacklogBudget(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	err := k.PruningState.Set(ctx, types.PruningState{})
+	require.NoError(t, err)
+
+	// Setup: 6 epochs with counts [5000, 300, 4000, 200, 3000, 100]
+	// Total: 12,600 items
+	epochCounts := []struct {
+		epoch int64
+		count int
+	}{
+		{1, 5000},
+		{2, 300},
+		{3, 4000},
+		{4, 200},
+		{5, 3000},
+		{6, 100},
+	}
+
+	inferenceIndex := 0
+	for _, ec := range epochCounts {
+		for i := 0; i < ec.count; i++ {
+			inf := types.Inference{
+				Index:   fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i),
+				EpochId: uint64(ec.epoch),
+				Status:  types.InferenceStatus_FINISHED,
+			}
+			k.SetInference(ctx, inf)
+			inferenceIndex++
+		}
+	}
+
+	// Configure pruning: threshold=2 (keep latest 2 epochs), max=1000
+	setPruningConfig(ctx, k, PruningSettings{
+		InferenceThreshold: 2,
+		InferenceMaxPrune:  1000,
+	})
+
+	// Current epoch = 8, so eligible epochs are 1-6
+	currentEpoch := int64(8)
+
+	// Track deletions per block
+	type blockDeletion struct {
+		blockNum int
+		deleted  int
+	}
+	var deletions []blockDeletion
+	blockNum := 0
+
+	// Run pruning until all eligible epochs are cleared
+	maxIterations := 20 // Safety limit
+	allCleared := false
+	for iter := 0; iter < maxIterations; iter++ {
+		blockNum++
+
+		// Count items before pruning
+		countBefore := 0
+		for _, ec := range epochCounts {
+			for i := 0; i < ec.count; i++ {
+				if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+					countBefore++
+				}
+			}
+		}
+
+		if countBefore == 0 && allCleared {
+			// All cleared and marker advanced
+			break
+		}
+
+		if countBefore == 0 {
+			allCleared = true
+		}
+
+		err = k.Prune(ctx, currentEpoch)
+		require.NoError(t, err)
+
+		// Count items after pruning
+		countAfter := 0
+		for _, ec := range epochCounts {
+			for i := 0; i < ec.count; i++ {
+				if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+					countAfter++
+				}
+			}
+		}
+
+		deleted := countBefore - countAfter
+		if deleted > 0 {
+			deletions = append(deletions, blockDeletion{blockNum, deleted})
+		}
+
+		// Assertion (a): Each block deletes at most PruningMax items
+		require.LessOrEqual(t, deleted, 1000,
+			"Block %d deleted %d items, exceeding PruningMax=1000", blockNum, deleted)
+	}
+
+	// Assertion (b): All items eventually deleted (no orphaned data)
+	finalCount := 0
+	for _, ec := range epochCounts {
+		for i := 0; i < ec.count; i++ {
+			if _, found := k.GetInference(ctx, fmt.Sprintf("inf-epoch%d-%d", ec.epoch, i)); found {
+				finalCount++
+			}
+		}
+	}
+	require.Equal(t, 0, finalCount,
+		"Expected all items to be pruned, but %d items remain. Deletions per block: %+v",
+		finalCount, deletions)
+
+	// Verify marker advanced to epoch 6
+	pruningState, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(6), pruningState.InferencePrunedEpoch,
+		"Expected marker to advance to epoch 6 after all epochs cleared")
+
+	t.Logf("Successfully pruned 12,600 items across 6 epochs in %d blocks. Deletions: %+v",
+		blockNum, deletions)
+}
+
+// setValidationDetails is a helper to seed InferenceValidationDetails for an epoch.
+func setValidationDetails(ctx context.Context, k keeper.Keeper, epochId uint64, count int) {
+	for i := 0; i < count; i++ {
+		k.SetInferenceValidationDetails(ctx, types.InferenceValidationDetails{
+			EpochId:     epochId,
+			InferenceId: fmt.Sprintf("epoch%d-inf-%d", epochId, i),
+		})
+	}
+}
+
+func countValidationDetails(ctx context.Context, k keeper.Keeper, epochId uint64) int {
+	return len(k.GetInferenceValidationDetailsForEpoch(ctx, epochId))
+}
+
+// TestInferenceValidationDetailsPruningThreshold verifies only epochs older than the
+// fixed threshold (5) are pruned, and epochs within the claim window are kept.
+func TestInferenceValidationDetailsPruningThreshold(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// Seed several epochs. With current epoch 10 and threshold 5, endEpoch = 5,
+	// so epochs 1..5 are eligible and 6..10 must be kept.
+	for e := uint64(1); e <= 10; e++ {
+		setValidationDetails(ctx, k, e, 3)
+	}
+
+	// First call drains epochs 1..5; the marker only advances on a later call
+	// once each epoch is confirmed empty (same behavior as the InferencePruner).
+	require.NoError(t, k.Prune(ctx, 10))
+
+	for e := uint64(1); e <= 5; e++ {
+		require.Equal(t, 0, countValidationDetails(ctx, k, e),
+			"epoch %d should be pruned", e)
+	}
+	for e := uint64(6); e <= 10; e++ {
+		require.Equal(t, 3, countValidationDetails(ctx, k, e),
+			"epoch %d is within the claim window and must be kept", e)
+	}
+
+	// Second call finds epochs 1..5 empty and advances the pruned marker.
+	require.NoError(t, k.Prune(ctx, 10))
+	st, err := k.PruningState.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), st.InferenceValidationDetailsPrunedEpoch,
+		"pruned marker should advance to endEpoch once epochs are empty")
+}
+
+// TestInferenceValidationDetailsPruningMaxLimit ensures the per-block max is respected
+// and the pruned-epoch marker only advances once the epoch is fully drained.
+func TestInferenceValidationDetailsPruningMaxLimit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	// All entries in epoch 1; with current epoch 6 and threshold 5, endEpoch = 1.
+	total := int(keeper.InferenceValidationDetailsPruningMaxPerBlock) + 250
+	setValidationDetails(ctx, k, 1, total)
+	current := int64(6)
+
+	// 1st prune: removes exactly PruningMax, marker not yet advanced.
+	require.NoError(t, k.Prune(ctx, current))
+	remaining := countValidationDetails(ctx, k, 1)
+	require.Equal(t, total-int(keeper.InferenceValidationDetailsPruningMaxPerBlock), remaining)
+	st, _ := k.PruningState.Get(ctx)
+	require.Equal(t, int64(0), st.InferenceValidationDetailsPrunedEpoch,
+		"marker should not advance while items remain")
+
+	// 2nd prune: removes the rest (still < max), marker still not advanced in same call.
+	require.NoError(t, k.Prune(ctx, current))
+	require.Equal(t, 0, countValidationDetails(ctx, k, 1))
+	st, _ = k.PruningState.Get(ctx)
+	require.Equal(t, int64(0), st.InferenceValidationDetailsPrunedEpoch)
+
+	// 3rd prune: epoch 1 empty, marker advances.
+	require.NoError(t, k.Prune(ctx, current))
+	st, _ = k.PruningState.Get(ctx)
+	require.Equal(t, int64(1), st.InferenceValidationDetailsPrunedEpoch,
+		"marker should advance after verifying epoch is empty")
+}
+
+// TestInferenceValidationDetailsPruningIdempotent verifies repeated Prune calls with
+// nothing new to prune are safe and keep the current-window data intact.
+func TestInferenceValidationDetailsPruningIdempotent(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	for e := uint64(1); e <= 8; e++ {
+		setValidationDetails(ctx, k, e, 2)
+	}
+
+	// current 8, threshold 5 => endEpoch 3, so epochs 1..3 pruned, 4..8 kept.
+	require.NoError(t, k.Prune(ctx, 8))
+	require.NoError(t, k.Prune(ctx, 8))
+	require.NoError(t, k.Prune(ctx, 8))
+
+	for e := uint64(1); e <= 3; e++ {
+		require.Equal(t, 0, countValidationDetails(ctx, k, e))
+	}
+	for e := uint64(4); e <= 8; e++ {
+		require.Equal(t, 2, countValidationDetails(ctx, k, e))
+	}
+	st, _ := k.PruningState.Get(ctx)
+	require.Equal(t, int64(3), st.InferenceValidationDetailsPrunedEpoch)
 }
