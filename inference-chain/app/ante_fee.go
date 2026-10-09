@@ -198,13 +198,15 @@ type dutyAuthorization struct {
 func dutyAuthorizationFor(msg sdk.Msg) (dutyAuthorization, bool) {
 	switch m := msg.(type) {
 	// Participant-gated duties. Handlers require ParticipantPermission
-	// (PoC batch / seed), ActiveParticipantPermission OR
+	// (PoC batch / seed / challenge validations), ActiveParticipantPermission OR
 	// PreviousActiveParticipantPermission (claim rewards), or a blocklist
 	// check on Creator (PoC V2 validations, weight distribution — declared
 	// NoPermission). Registration is a superset of all of these.
 	case *inferencetypes.MsgSubmitPocBatch:
 		return dutyAuthorization{actor: m.Creator}, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitPoCChallengeValidations:
 		return dutyAuthorization{actor: m.Creator}, true
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		return dutyAuthorization{actor: m.Creator}, true

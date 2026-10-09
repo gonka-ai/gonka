@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -12,8 +13,11 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	gogoproto "github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/require"
 	protov2 "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
 	testkeeper "github.com/productscience/inference/testutil/keeper"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
@@ -54,6 +58,7 @@ func exemptDutyMsgs(actor string) map[string]sdk.Msg {
 		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{Creator: actor},
 		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{Creator: actor},
 		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{Creator: actor},
+		"MsgSubmitPoCChallengeValidations":     &inferencetypes.MsgSubmitPoCChallengeValidations{Creator: actor},
 		"MsgClaimRewards":                      &inferencetypes.MsgClaimRewards{Creator: actor},
 		"MsgSettleDevshardEscrow":              &inferencetypes.MsgSettleDevshardEscrow{Settler: actor},
 		"MsgSubmitDealerPart":                  &blstypes.MsgSubmitDealerPart{Creator: actor},
@@ -128,6 +133,100 @@ func TestDutyAuthorizationFor(t *testing.T) {
 		_, exempt := dutyAuthorizationFor(msg)
 		require.False(t, exempt, "%T must not be a duty", msg)
 	}
+}
+
+// gonkaMsgTypes returns every message type defined by the gonka modules
+// (inference.inference and inference.bls), freshly allocated, keyed by proto full
+// name.
+//
+// The candidate universe is enumerated from the compiled-in protobuf
+// descriptors rather than from a hand-written list. That is the whole point:
+// exemptDutyMsgs is itself a list, so asserting the two against each other can
+// only confirm that the list agrees with itself — it stayed green while
+// MsgSubmitPoCChallengeValidations sat in inferencetypes.IsNetworkDuty with no
+// case in dutyAuthorizationFor. Walking the descriptors means a newly added
+// message type is checked the moment it is registered, with no list to update.
+//
+// Descriptor names are resolved to Go types through cosmos/gogoproto's registry,
+// not google.golang.org/protobuf: these are gogo-generated messages, so they have
+// no ProtoReflect and are absent from the protobuf-go type registry. gogoproto
+// exposes no enumeration of its own, so GlobalFiles provides the names and
+// gogoproto.MessageType does the lookup — each package needs exactly one.
+func gonkaMsgTypes(t *testing.T) map[string]sdk.Msg {
+	t.Helper()
+
+	// gonka's proto packages. Anything outside these is another module's
+	// message and cannot be a gonka network duty.
+	const inferencePkg = "inference.inference"
+	const blsPkg = "inference.bls"
+
+	types := make(map[string]sdk.Msg)
+	protoregistry.GlobalFiles.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		pkg := string(fd.Package())
+		if pkg != inferencePkg && pkg != blsPkg {
+			return true
+		}
+		msgs := fd.Messages()
+		for i := 0; i < msgs.Len(); i++ {
+			name := string(msgs.Get(i).FullName())
+			rt := gogoproto.MessageType(name)
+			if rt == nil || rt.Kind() != reflect.Ptr {
+				continue
+			}
+			msg, ok := reflect.New(rt.Elem()).Interface().(sdk.Msg)
+			if !ok {
+				continue
+			}
+			types[name] = msg
+		}
+		return true
+	})
+
+	// A guard against the enumeration silently collapsing (e.g. descriptors no
+	// longer registered): the assertion below is only meaningful over the real
+	// universe, and an empty map would pass vacuously.
+	require.Greater(t, len(types), 50,
+		"expected to enumerate gonka's message types from the protobuf descriptors")
+	require.Contains(t, types, "inference.inference.MsgSubmitPoCChallengeValidations",
+		"enumeration must reach the inference module's duty messages")
+
+	return types
+}
+
+// TestDutyAuthorizationForMatchesIsNetworkDuty is the drift guard for the fee
+// waiver. dutyAuthorizationFor and inferencetypes.IsNetworkDuty are two halves
+// of one rule — the second says which types are exempt duties, the first says who
+// may claim the exemption — and a type present in the first but missing from the
+// second falls into a middle zone: it gets no waiver and no rejection, and
+// GonkaFeeChecker's EnabledPayingPrice still skips it as exempt, which is the
+// free-unsigned-block-space hole of #1539 reopened.
+//
+// This iterates every gonka message type, so a duty added to IsNetworkDuty
+// without a matching case in dutyAuthorizationFor fails here.
+func TestDutyAuthorizationForMatchesIsNetworkDuty(t *testing.T) {
+	types := gonkaMsgTypes(t)
+
+	duties := 0
+	for name, msg := range types {
+		_, authorized := dutyAuthorizationFor(msg)
+		exempt := inferencetypes.IsNetworkDuty(msg)
+
+		require.Equal(t, exempt, authorized,
+			"%s: inferencetypes.IsNetworkDuty=%v but dutyAuthorizationFor=%v — "+
+				"a type exempt from fees must have a dutyAuthorizationFor case, and "+
+				"a non-exempt type must not", name, exempt, authorized)
+
+		if exempt {
+			duties++
+		}
+	}
+
+	// Pin the size of the duty set as well. Without this the test would still
+	// pass if IsNetworkDuty were emptied of every duty and dutyAuthorizationFor
+	// emptied to match — agreement is what matters, but silently losing the
+	// whole exemption list is a different bug.
+	require.GreaterOrEqual(t, duties, 11,
+		"the exempt duty set should cover the PoC, BLS and escrow duties")
 }
 
 func TestNetworkDutyBypass_NonExemptMessages(t *testing.T) {
