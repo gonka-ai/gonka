@@ -449,10 +449,10 @@ func writeEpochSessionFiles(t *testing.T, dir string, epochs ...uint64) {
 // newStorageRetentionTestGateway builds a gateway at epoch 10 (cutoff 8) with devshards in its registry and runtimes registered.
 func newStorageRetentionTestGateway(t *testing.T, baseDir string, devshards []GatewayDevshardState, runtimes ...*devshardRuntime) *Gateway {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(baseDir, "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(baseDir, "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "m"}, devshards))
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "m"}, devshards))
 
 	g := &Gateway{
 		runtimes:         make(map[string]*devshardRuntime, len(runtimes)),

@@ -132,7 +132,7 @@ func (g *Gateway) holdOrReplaceDepletedEscrow(runtime *devshardRuntime, reason s
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, reason)
 		return
 	}
-	since, isHeld, err := g.store.HoldDevshardIfActive(runtime.id, time.Now().UTC())
+	since, isHeld, err := g.store.HoldDevshardIfActive(context.Background(), runtime.id, time.Now().UTC())
 	if err != nil {
 		log.Printf("escrow_hold_persist_failed escrow=%s error=%v", runtime.id, err)
 		return
@@ -174,7 +174,7 @@ func (g *Gateway) resolveHeldEscrow(runtime *devshardRuntime, now time.Time) {
 }
 
 func (g *Gateway) releaseEscrowHold(runtime *devshardRuntime, reason string) {
-	if err := g.store.ReleaseDevshardHold(runtime.id); err != nil {
+	if err := g.store.ReleaseDevshardHold(context.Background(), runtime.id); err != nil {
 		log.Printf("escrow_hold_release_persist_failed escrow=%s error=%v", runtime.id, err)
 		return
 	}

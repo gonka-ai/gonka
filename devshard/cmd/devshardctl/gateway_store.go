@@ -323,6 +323,8 @@ type GatewayStore interface {
 	GetDevshard(ctx context.Context, id string) (GatewayDevshardState, bool, error)
 	SetDevshardActive(ctx context.Context, id string, active bool) error
 	DeactivateDevshardIfActive(ctx context.Context, id string, settlementPending bool) (bool, error)
+	HoldDevshardIfActive(ctx context.Context, id string, since time.Time) (time.Time, bool, error)
+	ReleaseDevshardHold(ctx context.Context, id string) error
 	SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error
 	DeleteDevshard(ctx context.Context, id string) error
 	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
@@ -683,4 +685,12 @@ func mustMarshalGatewayModelLimits(limits []GatewayModelLimitSettings) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+func parseDevshardHoldSince(id, storedSince string) (time.Time, bool, error) {
+	heldSince, err := time.Parse(time.RFC3339Nano, storedSince)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse devshard %s on_hold_since %q: %w", id, storedSince, err)
+	}
+	return heldSince, true, nil
 }

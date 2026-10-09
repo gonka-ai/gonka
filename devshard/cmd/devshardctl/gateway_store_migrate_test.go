@@ -50,6 +50,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 			RotationRole:      rotationRoleRegular,
 			RotationEpoch:     5,
 			SettlementPending: false,
+			OnHoldSince:       "2026-01-02T12:00:00Z",
 			CreatedAt:         "2026-01-01T00:00:00Z",
 			UpdatedAt:         "2026-01-02T00:00:00Z",
 		},

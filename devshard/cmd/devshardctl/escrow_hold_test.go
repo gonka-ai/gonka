@@ -23,7 +23,7 @@ func setEscrowBalanceAndReservation(t *testing.T, runtime *devshardRuntime, bala
 		now := time.Now().Unix()
 		state.Inferences[1] = &types.InferenceRecord{Status: types.StatusStarted, ReservedCost: reserved, StartedAt: now, ConfirmedAt: now}
 	}
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, runtime.proxy.sm, state)
 }
 
 // newHeldEscrowGateway returns a gateway whose escrow "12" is below the balance threshold while a started inference still reserves enough to bring it back.
@@ -68,14 +68,14 @@ func newHoldTopUpGateway(t *testing.T, heldCount, servingCount, targetCount int,
 	}
 	gateway.mu.Unlock()
 	for index, runtime := range runtimes {
-		require.NoError(t, gateway.store.UpsertDevshard(GatewayDevshardState{
+		require.NoError(t, gateway.store.UpsertDevshard(context.Background(), GatewayDevshardState{
 			RuntimeConfig: RuntimeConfig{ID: runtime.id, PrivateKeyHex: "secret", Model: "m"},
 			Active:        true,
 			RotationRole:  rotationRoleRegular,
 			RotationEpoch: snapshot.EpochIndex,
 		}))
 		if index < heldCount {
-			heldSince, isHeld, err := gateway.store.HoldDevshardIfActive(runtime.id, time.Now())
+			heldSince, isHeld, err := gateway.store.HoldDevshardIfActive(context.Background(), runtime.id, time.Now())
 			require.NoError(t, err)
 			require.True(t, isHeld)
 			runtime.holdSince.Store(heldSince.UnixNano())
@@ -162,12 +162,12 @@ func TestGatewayCheckBalancesReplacesADepletedEscrowWhenTheOthersAreOnlyHeld(t *
 	gateway, created, settled := gatewayTestDepletionGateway(t, runtime, func(settings *GatewaySettings) {
 		settings.EscrowRotation.Models[0].TargetCount = 1
 	})
-	require.NoError(t, gateway.store.UpsertDevshard(GatewayDevshardState{
+	require.NoError(t, gateway.store.UpsertDevshard(context.Background(), GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
 	}))
-	_, isHeld, err := gateway.store.HoldDevshardIfActive("13", time.Now())
+	_, isHeld, err := gateway.store.HoldDevshardIfActive(context.Background(), "13", time.Now())
 	require.NoError(t, err)
 	require.True(t, isHeld)
 
@@ -182,7 +182,7 @@ func TestGatewayCheckBalancesHoldsAnEscrowWhoseMoneyIsInDisputes(t *testing.T) {
 	state := runtime.proxy.sm.ExportState()
 	state.Balance = balanceMinimumThreshold - 1
 	state.Inferences = map[uint64]*types.InferenceRecord{1: {Status: types.StatusChallenged, ActualCost: balanceMinimumThreshold}}
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, runtime.proxy.sm, state)
 	gateway, created, _ := gatewayTestDepletionGateway(t, runtime)
 
 	runBalanceTick(t, gateway, runtime.id)
@@ -265,7 +265,7 @@ func moveOnlyReservation(t *testing.T, runtime *devshardRuntime, status types.In
 	state.Inferences[1].Status = status
 	state.Inferences[1].StartedAt = startedAt
 	state.Inferences[1].ConfirmedAt = confirmedAt
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, runtime.proxy.sm, state)
 }
 
 func aDayAgo() int64 {
@@ -394,7 +394,7 @@ func TestGatewayCheckBalancesKeepsAHeldEscrowWithADisputeForAsLongAsItLasts(t *t
 	state := runtime.proxy.sm.ExportState()
 	state.Balance = balanceMinimumThreshold - 1
 	state.Inferences = map[uint64]*types.InferenceRecord{1: {Status: types.StatusChallenged, ActualCost: balanceMinimumThreshold}}
-	require.NoError(t, runtime.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, runtime.proxy.sm, state)
 	gateway, created, _ := gatewayTestDepletionGateway(t, runtime)
 	runBalanceTick(t, gateway, runtime.id)
 
@@ -409,7 +409,7 @@ func TestGatewayCheckBalancesKeepsAHeldEscrowWithADisputeForAsLongAsItLasts(t *t
 
 func TestGatewayRestoreEscrowHoldsReopensASavedHold(t *testing.T) {
 	gateway, runtime, _, _ := newHeldEscrowGateway(t)
-	_, isHeld, err := gateway.store.HoldDevshardIfActive(runtime.id, time.Now())
+	_, isHeld, err := gateway.store.HoldDevshardIfActive(context.Background(), runtime.id, time.Now())
 	require.NoError(t, err)
 	require.True(t, isHeld)
 
@@ -420,31 +420,45 @@ func TestGatewayRestoreEscrowHoldsReopensASavedHold(t *testing.T) {
 	require.Equal(t, "on_hold", reason)
 }
 
+// Test flow:
+//  1. Register an active escrow on the SQLite store and on a Postgres store.
+//  2. Hold it twice: the second hold keeps the first start time; an unrelated upsert keeps the hold.
+//  3. Deactivate it: the hold clears, and an inactive escrow cannot be held again.
 func TestGatewayStoreKeepsAHoldAcrossUpsertAndClearsItOnDeactivation(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	t.Run("sqlite", func(t *testing.T) {
+		store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+		requireGatewayStoreHoldContract(t, store)
+	})
+	t.Run("postgres", func(t *testing.T) {
+		requireGatewayStoreHoldContract(t, newTestPostgresGatewayStore(t))
+	})
+}
+
+func requireGatewayStoreHoldContract(t *testing.T, store GatewayStore) {
+	t.Helper()
 	escrow := GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"}, Active: true}
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "m"}, []GatewayDevshardState{escrow}))
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "m"}, []GatewayDevshardState{escrow}))
 	firstHold := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
-	_, isHeld, err := store.HoldDevshardIfActive("12", firstHold)
+	_, isHeld, err := store.HoldDevshardIfActive(context.Background(), "12", firstHold)
 	require.NoError(t, err)
 	require.True(t, isHeld)
 
-	heldSince, isHeld, err := store.HoldDevshardIfActive("12", firstHold.Add(time.Hour))
+	heldSince, isHeld, err := store.HoldDevshardIfActive(context.Background(), "12", firstHold.Add(time.Hour))
 	require.NoError(t, err)
 	require.True(t, isHeld)
 	require.True(t, firstHold.Equal(heldSince), "a second hold must keep the first start time, not extend the hold")
 
-	require.NoError(t, store.UpsertDevshard(escrow))
+	require.NoError(t, store.UpsertDevshard(context.Background(), escrow))
 	require.Equal(t, "2026-09-23T00:00:00Z", devshardIDs(t, store)["12"].OnHoldSince, "an unrelated upsert must not clear a hold")
 
-	deactivated, err := store.DeactivateDevshardIfActive("12", false)
+	deactivated, err := store.DeactivateDevshardIfActive(context.Background(), "12", false)
 	require.NoError(t, err)
 	require.True(t, deactivated)
 	require.Empty(t, devshardIDs(t, store)["12"].OnHoldSince, "a deactivated escrow is never on hold")
 
-	_, isHeld, err = store.HoldDevshardIfActive("12", time.Now())
+	_, isHeld, err = store.HoldDevshardIfActive(context.Background(), "12", time.Now())
 	require.NoError(t, err)
 	require.False(t, isHeld, "an inactive escrow must not be put on hold")
 	require.Empty(t, devshardIDs(t, store)["12"].OnHoldSince)

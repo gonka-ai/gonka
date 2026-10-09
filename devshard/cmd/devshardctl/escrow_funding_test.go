@@ -296,7 +296,7 @@ func TestEnsureCanFundEscrowRequiresTheAmountPlusTheFee(t *testing.T) {
 }
 
 func TestPrepareBridgeEscrowsSharesTheFundsAcrossModelsRoundRobin(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	settings := GatewaySettings{
@@ -315,7 +315,7 @@ func TestPrepareBridgeEscrowsSharesTheFundsAcrossModelsRoundRobin(t *testing.T) 
 			},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, nil))
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 
 	var createdMutex sync.Mutex
 	createdByModel := map[string]int{}

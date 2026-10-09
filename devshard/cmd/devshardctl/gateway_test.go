@@ -79,6 +79,15 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	return sm
 }
 
+// restoreGatewayTestState restores a faked state; the store holds no journal through its nonce, so the live floor
+// stands in for the snapshot floor a real restore would carry.
+func restoreGatewayTestState(t *testing.T, sm *state.StateMachine, escrowState *types.EscrowState) {
+	t.Helper()
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
+	require.NoError(t, err)
+	require.NoError(t, sm.RestoreStateWithFloor(escrowState, floor))
+}
+
 func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64) *devshardRuntime {
 	t.Helper()
 
@@ -86,11 +95,7 @@ func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64)
 	st := sm.ExportState()
 	st.Balance = balance
 	st.LatestNonce = nonce
-	// The store holds no journal through the faked nonce; the live floor
-	// stands in for the snapshot floor a real restore would carry.
-	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
-	require.NoError(t, err)
-	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
+	restoreGatewayTestState(t, sm, st)
 
 	return &devshardRuntime{
 		id:    id,
@@ -227,7 +232,7 @@ func TestGatewayCheckBalancesSkipsReplacementWhenModelAlreadyAtTarget(t *testing
 	g, created, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
 		settings.EscrowRotation.Models[0].TargetCount = 1
 	})
-	require.NoError(t, g.store.UpsertDevshard(GatewayDevshardState{
+	require.NoError(t, g.store.UpsertDevshard(context.Background(), GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{ID: "13", PrivateKeyHex: "secret", Model: "m"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -1679,7 +1684,7 @@ func blockingFinalizeHandler(entered chan<- string, release <-chan struct{}, esc
 
 func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -1688,7 +1693,7 @@ func newFinalizeTestGateway(t *testing.T, runtimes ...*devshardRuntime) *Gateway
 	for _, rt := range runtimes {
 		devshards = append(devshards, GatewayDevshardState{RuntimeConfig: RuntimeConfig{ID: rt.id, PrivateKeyHex: "secret", Model: rt.model}, Active: true})
 	}
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -2436,7 +2441,7 @@ func gatewayTestRuntimeFundingCharges(t *testing.T, id string, startCharges, sho
 	require.NoError(t, err)
 	state := rt.proxy.sm.ExportState()
 	state.Balance = startCharges*charge - shortBy
-	require.NoError(t, rt.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, rt.proxy.sm, state)
 	return rt
 }
 
@@ -2445,7 +2450,7 @@ func gatewayTestRuntimeWithBalanceAndPrice(t *testing.T, id string, balance, tok
 	rt := gatewayTestRuntimeForLimits(t, id, balance, nonceDeactivationLimit-1)
 	state := rt.proxy.sm.ExportState()
 	state.Config.TokenPrice = tokenPrice
-	require.NoError(t, rt.proxy.sm.RestoreState(state))
+	restoreGatewayTestState(t, rt.proxy.sm, state)
 	return rt
 }
 
