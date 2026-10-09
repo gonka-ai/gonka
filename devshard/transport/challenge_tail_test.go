@@ -52,19 +52,21 @@ func TestChallengeReceiptMissingDiffs(t *testing.T) {
 		queryStatus int
 		firstStatus int
 		empty       bool
+		accept      bool
+		queries     int
 		sizes       []int
 		ranges      [][2]uint64
 	}{
-		{"one missing", 1, root, 200, 200, false, []int{1}, [][2]uint64{{1, 1}, {2, 2}}},
-		{"caught up", 2, root, 200, 200, false, []int{0}, [][2]uint64{{2, 2}}},
-		{"unknown nonce", 3, root, 200, 200, false, []int{2}, [][2]uint64{{1, 2}}},
-		{"wrong root", 1, bytes.Repeat([]byte{2}, 32), 200, 200, false, []int{2}, [][2]uint64{{1, 1}, {1, 2}}},
-		{"missing root", 1, nil, 200, 200, false, []int{2}, [][2]uint64{{1, 2}}},
-		{"old endpoint", 1, root, 404, 200, false, []int{2}, [][2]uint64{{1, 2}}},
-		{"query error", 1, root, 500, 200, false, []int{2}, [][2]uint64{{1, 2}}},
-		{"stale instance", 1, root, 200, 409, false, []int{1, 2}, [][2]uint64{{1, 1}, {2, 2}, {1, 2}}},
-		{"server error", 1, root, 200, 500, false, []int{1, 2}, [][2]uint64{{1, 1}, {2, 2}, {1, 2}}},
-		{"empty receipt", 2, root, 200, 200, true, []int{0, 2}, [][2]uint64{{2, 2}, {1, 2}}},
+		{"one missing", 1, root, 200, 200, false, false, 1, []int{1}, [][2]uint64{{1, 1}, {2, 2}}},
+		{"caught up", 2, root, 200, 200, false, false, 1, []int{0}, [][2]uint64{{2, 2}}},
+		{"unknown nonce", 3, root, 200, 200, false, false, 1, []int{2}, [][2]uint64{{1, 2}}},
+		{"wrong root", 1, bytes.Repeat([]byte{2}, 32), 200, 200, false, false, 1, []int{2}, [][2]uint64{{1, 1}, {1, 2}}},
+		{"missing root", 1, nil, 200, 200, false, false, 1, []int{2}, [][2]uint64{{1, 2}}},
+		{"old endpoint", 1, root, 404, 200, false, false, 1, []int{2}, [][2]uint64{{1, 2}}},
+		{"query error", 1, root, 500, 200, false, false, 1, []int{2}, [][2]uint64{{1, 2}}},
+		{"stale instance", 1, root, 200, 409, false, true, 2, []int{1}, [][2]uint64{{1, 1}, {2, 2}}},
+		{"server error", 1, root, 200, 500, false, true, 2, []int{1}, [][2]uint64{{1, 1}, {2, 2}}},
+		{"empty receipt", 2, root, 200, 200, true, true, 2, []int{0}, [][2]uint64{{2, 2}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var sizes []int
@@ -97,9 +99,9 @@ func TestChallengeReceiptMissingDiffs(t *testing.T) {
 			st, payload := refusalTestState()
 			accept, err := env.server.verifyRefusedTimeout(context.Background(), st, 1, payload, nil, client, 2000)
 			require.NoError(t, err)
-			require.False(t, accept)
+			require.Equal(t, tc.accept, accept)
 			require.Equal(t, tc.sizes, sizes)
-			require.Equal(t, 1, queries)
+			require.Equal(t, tc.queries, queries)
 			require.Equal(t, tc.ranges, store.ranges)
 		})
 	}
@@ -150,18 +152,93 @@ func TestRefusalRetryDeadline(t *testing.T) {
 			env.server.store = &refusalDiffStore{diffs: []types.Diff{{Nonce: 1, PostStateRoot: root}, {Nonce: 2}}}
 			st, payload := refusalTestState()
 			accept, err := env.server.verifyRefusedTimeout(ctx, st, 1, payload, nil, client, 2000)
-			require.False(t, accept)
 			mu.Lock()
 			defer mu.Unlock()
 			if cancelRequest {
 				require.ErrorIs(t, err, context.Canceled)
+				require.False(t, accept)
 				require.Equal(t, []int{1}, sizes)
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, []int{1, 2}, sizes)
+				require.True(t, accept, "a challenge that never answers must vote without the full history")
+				require.Equal(t, []int{1}, sizes)
 			}
 		})
 	}
+}
+
+func TestRefusalRecheckRetriesAdvancedNonce(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	for _, match := range []bool{true, false} {
+		name := "root mismatch"
+		if match {
+			name = "matching root"
+		}
+		t.Run(name, func(t *testing.T) {
+			var gets int
+			var sizes []int
+			remote := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					gets++
+					nonce := uint64(1)
+					stateRoot := root
+					if gets > 1 {
+						nonce = 2
+						if !match {
+							stateRoot = bytes.Repeat([]byte{9}, 32)
+						}
+					}
+					_ = json.NewEncoder(w).Encode(StateResponse{Nonce: nonce, StateRoot: stateRoot})
+					return
+				}
+				var req ChallengeReceiptRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				sizes = append(sizes, len(req.Diffs))
+				if len(sizes) == 1 {
+					w.WriteHeader(http.StatusConflict)
+					return
+				}
+				_ = json.NewEncoder(w).Encode(ChallengeReceiptResponse{Receipt: []byte("receipt")})
+			}))
+			defer remote.Close()
+			env := setupServerEnv(t)
+			store := &refusalDiffStore{diffs: []types.Diff{
+				{Nonce: 1, PostStateRoot: root},
+				{Nonce: 2, PostStateRoot: root},
+				{Nonce: 3, PostStateRoot: root},
+			}}
+			env.server.store = store
+			st, payload := refusalTestState()
+			st.LatestNonce = 3
+			client := NewHTTPClient(remote.URL, "escrow-1", env.hostSigner)
+			accept, err := env.server.verifyRefusedTimeout(context.Background(), st, 1, payload, nil, client, 2000)
+			require.NoError(t, err)
+			require.Equal(t, 2, gets)
+			if match {
+				require.False(t, accept)
+				require.Equal(t, []int{2, 1}, sizes)
+				require.Equal(t, [][2]uint64{{1, 1}, {2, 3}, {2, 2}, {3, 3}}, store.ranges)
+			} else {
+				require.True(t, accept)
+				require.Equal(t, []int{2}, sizes)
+				require.Equal(t, [][2]uint64{{1, 1}, {2, 3}, {2, 2}}, store.ranges)
+			}
+		})
+	}
+}
+
+func TestRefusalUnreachableSkipsFullDiffs(t *testing.T) {
+	env := setupServerEnv(t)
+	store := &refusalDiffStore{diffs: []types.Diff{{Nonce: 1}, {Nonce: 2}}}
+	env.server.store = store
+	remote := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	client := NewHTTPClient(remote.URL, "escrow-1", env.hostSigner)
+	remote.Close()
+	st, payload := refusalTestState()
+	accept, err := env.server.verifyRefusedTimeout(context.Background(), st, 1, payload, nil, client, 2000)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Empty(t, store.ranges)
 }
 
 func TestRefusalStorageFailure(t *testing.T) {
