@@ -9,58 +9,6 @@ import (
 	"versioned/internal/config"
 )
 
-func TestNextReadyWindowDoublesUpToMax(t *testing.T) {
-	max := 32 * time.Minute
-	got := time.Minute
-	want := []time.Duration{
-		2 * time.Minute,
-		4 * time.Minute,
-		8 * time.Minute,
-		16 * time.Minute,
-		32 * time.Minute,
-		32 * time.Minute,
-		32 * time.Minute,
-	}
-	for i, expect := range want {
-		got = nextReadyWindow(got, max)
-		if got != expect {
-			t.Fatalf("step %d: nextReadyWindow = %v, want %v", i+1, got, expect)
-		}
-	}
-}
-
-func TestNextReadyWindowCapsWhenAlreadyAboveMax(t *testing.T) {
-	if got := nextReadyWindow(60*time.Minute, 32*time.Minute); got != 32*time.Minute {
-		t.Fatalf("nextReadyWindow = %v, want %v", got, 32*time.Minute)
-	}
-}
-
-func TestNextReadyWindowHandlesOverflow(t *testing.T) {
-	max := 32 * time.Minute
-	if got := nextReadyWindow(time.Duration(1)<<62, max); got != max {
-		t.Fatalf("nextReadyWindow on overflow = %v, want %v", got, max)
-	}
-}
-
-func TestReadyWindowEventuallyReachesCeiling(t *testing.T) {
-	max := 32 * time.Minute
-	w := 60 * time.Second
-	attempts := 0
-	for w < max {
-		w = nextReadyWindow(w, max)
-		attempts++
-		if attempts > 10 {
-			t.Fatalf("window did not reach ceiling: stuck at %v", w)
-		}
-	}
-	if w != max {
-		t.Fatalf("final window = %v, want %v", w, max)
-	}
-	if attempts != 5 {
-		t.Fatalf("attempts to reach ceiling = %d, want 5 (60s->2m->4m->8m->16m->32m)", attempts)
-	}
-}
-
 func TestManagerDefaultsReadyMaxWait(t *testing.T) {
 	m := NewManager(config.Config{BinDir: t.TempDir(), DataDir: t.TempDir()})
 	if m.cfg.ReadyMaxWait != 32*time.Minute {
@@ -234,7 +182,7 @@ func TestWaitForChildServingReadyExtendsWhenReadyPathAbsent(t *testing.T) {
 	start := time.Now()
 	ready, last := waitForChildServingReadyUntil(context.Background(), c, "/ready", 80*time.Millisecond, time.Second, nil)
 	if !ready {
-		t.Fatalf("404 on /ready should keep waiting like the legacy growing window, last probe = %s", last)
+		t.Fatalf("404 on /ready should keep waiting up to maxWait, last probe = %s", last)
 	}
 	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
 		t.Fatalf("became ready too fast (%s); expected to wait through missing /ready", elapsed)

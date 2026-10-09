@@ -1776,12 +1776,6 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	backoff := time.Second
 	lastStart := time.Now()
 
-	// Grows with each failed initializing or legacy-missing-/ready attempt,
-	// capped at ReadyMaxWait. Unreachable/hung children keep the short window
-	// so they restart promptly. Reset to ReadyTimeout when the child reaches
-	// statusRunning.
-	readyWindow := m.cfg.ReadyTimeout
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -1838,21 +1832,17 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		ready, lastProbe := waitForChildServingReadyUntil(ctx, c, m.cfg.ReadyPath, readyWindow, m.cfg.ReadyMaxWait, proc.Done())
+		// ReadyTimeout is the floor on every attempt. An initializing or
+		// absent /ready already waits up to ReadyMaxWait; raising the floor
+		// after a slow timeout would only hold a later hung child longer.
+		ready, lastProbe := waitForChildServingReadyUntil(
+			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, m.cfg.ReadyMaxWait, proc.Done(),
+		)
 		if !ready {
-			if probeAllowsReadyWaitExtension(lastProbe) {
-				next := nextReadyWindow(readyWindow, m.cfg.ReadyMaxWait)
-				slog.Warn("child did not become ready in time; restarting with a longer window",
-					"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
-					"ready_path", m.cfg.ReadyPath, "ready_window", readyWindow,
-					"next_ready_window", next, "probe", lastProbe.String())
-				readyWindow = next
-			} else {
-				slog.Warn("child did not become ready in time",
-					"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
-					"ready_path", m.cfg.ReadyPath, "ready_window", readyWindow,
-					"probe", lastProbe.String())
-			}
+			slog.Warn("child did not become ready in time",
+				"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
+				"ready_path", m.cfg.ReadyPath, "ready_timeout", m.cfg.ReadyTimeout,
+				"ready_max_wait", m.cfg.ReadyMaxWait, "probe", lastProbe.String())
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
@@ -1886,9 +1876,6 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.nextProofGeneration++
 		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
-		// A later crash-restart must detect a hung child on the short window
-		// again; a grown window is only for a start that is still initializing.
-		readyWindow = m.cfg.ReadyTimeout
 		c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
@@ -2201,15 +2188,6 @@ func (c *child) adminAddr() string {
 	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
-// nextReadyWindow doubles the readiness window, capped at max.
-func nextReadyWindow(current, max time.Duration) time.Duration {
-	next := current * 2
-	if next > max || next <= 0 {
-		return max
-	}
-	return next
-}
-
 type readyProbeResult int
 
 const (
@@ -2238,10 +2216,10 @@ func (r readyProbeResult) String() string {
 }
 
 // probeAllowsReadyWaitExtension reports whether a not-yet-ready probe should
-// stretch the window instead of failing at ReadyTimeout. Initializing is the
-// modern /ready body. ready_absent is older binaries (v3/v4): Echo returns
+// keep waiting up to maxWait instead of failing at minWait. Initializing is
+// the modern /ready body. ready_absent is older binaries (v3/v4): Echo returns
 // 404/405/501 for an unregistered /ready, so there is no body to inspect and
-// the original growing window is the compatibility path.
+// the wait still runs to ReadyMaxWait.
 func probeAllowsReadyWaitExtension(r readyProbeResult) bool {
 	return r == readyProbeInitializing || r == readyProbeReadyAbsent
 }
