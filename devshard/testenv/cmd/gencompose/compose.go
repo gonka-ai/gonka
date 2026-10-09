@@ -303,6 +303,7 @@ services:
     entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
+      DEVSHARD_STATS_PORT: "{{ .Devshardctl.StatsPort }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
       DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
@@ -340,6 +341,7 @@ services:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
       - "{{ .Devshardctl.Port }}:{{ .Devshardctl.Port }}"
+      - "{{ .Devshardctl.StatsPort }}:{{ .Devshardctl.StatsPort }}"
     networks:
       testenv:
         ipv4_address: {{ .Devshardctl.IP }}

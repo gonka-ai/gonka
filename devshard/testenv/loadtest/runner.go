@@ -45,6 +45,7 @@ type RunResult struct {
 	HostFaults       []HostFaultResult
 	CPUProfiles      []CPUProfileResult
 	ProfileSnapshots []ProfileSnapshotResult
+	Accounting       *AccountingReport
 }
 
 type MLNodeStats struct {
@@ -219,6 +220,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
+	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
 	stateGatewayURL := result.GatewayURL
 	if replaySelector != nil {
 		// Replay stacks configure Gateway through DEVSHARDS_JSON, so even a
@@ -235,6 +237,15 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
+	}
+	var accountingInitial accountingAPIResponse
+	if accountingEnabled(scenario.Assertions.Accounting) {
+		log.Printf("loadtest: stage=accounting_baseline")
+		accountingInitial, err = waitForAccountingSnapshot(ctx, accountingURL, "baseline")
+		if err != nil {
+			_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+			return result, fmt.Errorf("collect accounting baseline: %w", err)
+		}
 	}
 	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
 	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
@@ -310,6 +321,44 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 			Actual:   fmt.Sprintf("paused=%s resumed=%s", fault.PausedAt, fault.ResumedAt),
 			Details:  fault.Error,
 		})
+	}
+	if accountingEnabled(scenario.Assertions.Accounting) {
+		log.Printf("loadtest: stage=accounting_collection")
+		accountingFinal, accountingErr := waitForAccountingSnapshot(ctx, accountingURL, "final")
+		if accountingErr != nil {
+			check := AssertionResult{
+				Name:     "accounting.snapshot",
+				Expected: "final accounting snapshot available",
+				Actual:   "unavailable",
+				Details:  accountingErr.Error(),
+			}
+			assertions = append(assertions, check)
+			assertionErr = appendAssertionFailure(assertionErr, check)
+		} else {
+			report, reportErr := buildAccountingReport(cfg, scenario.Assertions.Accounting.TargetHost, accountingInitial, accountingFinal)
+			if reportErr != nil {
+				check := AssertionResult{
+					Name:     "accounting.snapshot",
+					Expected: "target participant resolvable",
+					Actual:   "unavailable",
+					Details:  reportErr.Error(),
+				}
+				assertions = append(assertions, check)
+				assertionErr = appendAssertionFailure(assertionErr, check)
+			} else {
+				result.Accounting = &report
+				accountingChecks := accountingAssertions(scenario.Assertions.Accounting, report)
+				assertions = append(assertions, accountingChecks...)
+				for _, check := range accountingChecks {
+					if !check.Passed {
+						assertionErr = appendAssertionFailure(assertionErr, check)
+					}
+				}
+				if err := writeAccountingReport(opts.OutputDir, report); err != nil && assertionErr == nil {
+					return RunResult{}, err
+				}
+			}
+		}
 	}
 	result.Assertions = assertions
 	if faultErr != nil {
@@ -482,6 +531,18 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
 	configureParticipants(cfg, scenario.Topology.Participants)
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
+	if scenario.Protocol.RefusalTimeout != "" {
+		refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
+		if err != nil {
+			return err
+		}
+		execution, err := protocolTimeoutSeconds(scenario.Protocol.ExecutionTimeout)
+		if err != nil {
+			return err
+		}
+		cfg.Params.RefusalTimeout = refusal
+		cfg.Params.ExecutionTimeout = execution
+	}
 	if replayEnabled {
 		if err := configureReplayModels(cfg, replayModels); err != nil {
 			return err
@@ -592,7 +653,7 @@ func configureParticipants(cfg *config.File, participants int) {
 func randomizeTestenv(cfg *config.File) error {
 	ports := []*int{
 		&cfg.MockChain.GRPCPort, &cfg.MockChain.RPCPort, &cfg.MockChain.TestenvPort,
-		&cfg.MockDapi.GRPCPort, &cfg.MockDapi.HTTPPort, &cfg.Devshardctl.Port,
+		&cfg.MockDapi.GRPCPort, &cfg.MockDapi.HTTPPort, &cfg.Devshardctl.Port, &cfg.Devshardctl.StatsPort,
 		&cfg.VersiondRouter.Port,
 	}
 	for _, port := range ports {

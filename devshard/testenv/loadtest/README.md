@@ -139,6 +139,48 @@ log collection on error paths. Logs stream directly to files. `catch-up` uses
 `all` to retain quarantine and recovery events from the beginning of the run.
 Full collection still depends on logs retained by Docker's logging driver.
 
+## Miss-rate and catch-up scenario
+
+`missrate-catch-up` pauses `versiond-2` for 30 seconds during a 90-second,
+4 RPS workload. It uses short refusal and execution timeouts so that the
+outage can produce protocol-level miss and timeout outcomes during the run:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=missrate-catch-up
+```
+
+The scenario checks both recovery and accounting results. In addition to the
+client error rate and DevShard orphan/ghost checks, it requires at least one
+protocol miss, at least one applied timeout outcome, and consistent accounting
+cross-checks for the paused participant:
+
+```yaml
+protocol:
+  refusal_timeout: 2s
+  execution_timeout: 5s
+
+workload:
+  host_faults:
+    - host: versiond-2
+      mode: pause
+      start_after: 10s
+      duration: 30s
+
+assertions:
+  accounting:
+    target_host: versiond-2
+    min_protocol_misses: 1
+    min_timeouts_applied: 1
+    require_cross_checks: true
+```
+
+The runner reads protocol accounting from the DevShard stats endpoint and
+writes `accounting.json` in the result directory. The final summary includes
+assigned nonces, protocol misses, miss rate, applied timeouts, host-missed
+counts, and cross-check errors. CPU, heap, and goroutine profiles cover the
+healthy period, the pause/backlog period, and the recovery period so the
+performance impact of catch-up can be compared with the protocol outcome.
+
 ## Memory and CPU comparison
 
 `long-escrow` runs ten minutes at 8 RPS without escrow rotation. Use unique

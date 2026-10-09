@@ -64,6 +64,18 @@ func TestLoadScenario_SingleSlowMLNode(t *testing.T) {
 	require.Equal(t, "60s", scenario.DrainTimeout)
 }
 
+func TestLoadScenario_MissrateCatchUp(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "missrate-catch-up.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "missrate-catch-up", scenario.Scenario)
+	require.Equal(t, "2s", scenario.Protocol.RefusalTimeout)
+	require.Equal(t, "5s", scenario.Protocol.ExecutionTimeout)
+	require.Len(t, scenario.Workload.HostFaults, 1)
+	require.Equal(t, "versiond-2", scenario.Workload.HostFaults[0].Host)
+	require.Equal(t, uint64(1), scenario.Assertions.Accounting.MinProtocolMisses)
+	require.Equal(t, uint64(1), scenario.Assertions.Accounting.MinTimeoutsApplied)
+}
+
 func TestLoadScenario_SpikeLoad(t *testing.T) {
 	scenario, err := LoadScenario(filepath.Join("scenarios", "spike-load.yaml"))
 	require.NoError(t, err)

@@ -137,6 +137,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintln(os.Stdout)
 	printGatewayStateSizes(result.GatewayState)
 	fmt.Fprintln(os.Stdout)
+	printAccounting(result.Accounting)
 	printMetricsSummary(result.Metrics, summary.Completed)
 	if len(result.CPUProfiles) > 0 {
 		fmt.Fprintln(os.Stdout, "CPU profiles")
@@ -167,6 +168,23 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
 	fmt.Fprintln(os.Stdout)
 	printAssertions(result.Assertions)
+}
+
+func printAccounting(report *loadtest.AccountingReport) {
+	if report == nil {
+		return
+	}
+	fmt.Fprintln(os.Stdout, "Protocol accounting")
+	fmt.Fprintln(os.Stdout, "------------------")
+	fmt.Fprintf(os.Stdout, "  target host:       %s\n", report.TargetHost)
+	fmt.Fprintf(os.Stdout, "  participant:       %s\n", report.TargetParticipant)
+	fmt.Fprintf(os.Stdout, "  assigned delta:    %d\n", report.Delta.AssignedNonces)
+	fmt.Fprintf(os.Stdout, "  protocol misses:   %d\n", report.Delta.ProtocolMisses)
+	fmt.Fprintf(os.Stdout, "  miss rate:         %.2f%%\n", report.MissRate*100)
+	fmt.Fprintf(os.Stdout, "  timeouts applied:  %d\n", report.Delta.TimeoutApplied)
+	fmt.Fprintf(os.Stdout, "  host missed delta: %d\n", report.Delta.HostMissed)
+	fmt.Fprintf(os.Stdout, "  cross-check errors: %d\n", report.Delta.CrossCheckErrors)
+	fmt.Fprintln(os.Stdout)
 }
 
 func printAssertions(assertions []loadtest.AssertionResult) {

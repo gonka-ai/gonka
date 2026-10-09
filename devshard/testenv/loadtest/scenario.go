@@ -17,11 +17,19 @@ type Scenario struct {
 	Scenario      string      `yaml:"scenario"`
 	Seed          int64       `yaml:"seed"`
 	Topology      Topology    `yaml:"topology"`
+	Protocol      Protocol    `yaml:"protocol"`
 	Workload      Workload    `yaml:"workload"`
 	Gateway       Gateway     `yaml:"gateway"`
 	Assertions    Assertions  `yaml:"assertions"`
 	DrainTimeout  string      `yaml:"drain_timeout"`
 	Diagnostics   Diagnostics `yaml:"diagnostics"`
+}
+
+// Protocol contains optional chain timeout overrides for short deterministic
+// lifecycle tests. Values are written to the mock-chain seed in seconds.
+type Protocol struct {
+	RefusalTimeout   string `yaml:"refusal_timeout"`
+	ExecutionTimeout string `yaml:"execution_timeout"`
 }
 
 type Diagnostics struct {
@@ -176,6 +184,14 @@ type Assertions struct {
 	MockML struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
 	} `yaml:"mock_ml"`
+	Accounting AccountingAssertions `yaml:"accounting"`
+}
+
+type AccountingAssertions struct {
+	TargetHost         string `yaml:"target_host"`
+	MinProtocolMisses  uint64 `yaml:"min_protocol_misses"`
+	MinTimeoutsApplied uint64 `yaml:"min_timeouts_applied"`
+	RequireCrossChecks bool   `yaml:"require_cross_checks"`
 }
 
 type Profile struct {
@@ -229,6 +245,14 @@ func LoadProfile(dir, name string) (Profile, error) {
 	return profile, nil
 }
 
+func protocolTimeoutSeconds(value string) (int64, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration < time.Second || duration%time.Second != 0 {
+		return 0, fmt.Errorf("protocol timeout %q must be a whole number of seconds >= 1s", value)
+	}
+	return int64(duration / time.Second), nil
+}
+
 func (s Scenario) Validate() error {
 	if s.SchemaVersion != "v1" || strings.TrimSpace(s.Scenario) == "" {
 		return fmt.Errorf("schema_version must be v1 and scenario must be set")
@@ -270,6 +294,22 @@ func (s Scenario) Validate() error {
 	}
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
 		return err
+	}
+	protocolTimeouts := map[string]string{
+		"refusal_timeout":   s.Protocol.RefusalTimeout,
+		"execution_timeout": s.Protocol.ExecutionTimeout,
+	}
+	for name, value := range protocolTimeouts {
+		if value == "" {
+			continue
+		}
+		timeout, parseErr := time.ParseDuration(value)
+		if parseErr != nil || timeout < time.Second || timeout%time.Second != 0 {
+			return fmt.Errorf("protocol.%s must be a whole number of seconds >= 1s", name)
+		}
+	}
+	if (s.Protocol.RefusalTimeout == "") != (s.Protocol.ExecutionTimeout == "") {
+		return fmt.Errorf("protocol.refusal_timeout and protocol.execution_timeout must be configured together")
 	}
 	if err := s.Workload.Traffic.Validate(duration); err != nil {
 		return fmt.Errorf("workload traffic: %w", err)
@@ -332,6 +372,18 @@ func (s Scenario) Validate() error {
 	}
 	if s.Assertions.Devshard.MaxGhostRate < 0 || s.Assertions.Devshard.MaxGhostRate > 1 {
 		return fmt.Errorf("devshard max_ghost_rate must be between 0 and 1")
+	}
+	if s.Assertions.Accounting.TargetHost != "" {
+		validHost := false
+		for index := 0; index <= s.Topology.Participants; index++ {
+			if s.Assertions.Accounting.TargetHost == fmt.Sprintf("versiond-%d", index) {
+				validHost = true
+				break
+			}
+		}
+		if !validHost {
+			return fmt.Errorf("assertions.accounting.target_host must be a configured versiond host")
+		}
 	}
 	if s.Gateway.Redundancy.SecondaryWaitAfterWinner != "" {
 		duration, err := time.ParseDuration(s.Gateway.Redundancy.SecondaryWaitAfterWinner)

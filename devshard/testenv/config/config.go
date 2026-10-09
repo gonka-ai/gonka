@@ -159,9 +159,10 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	IP   string `yaml:"ip"`
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	StatsPort int    `yaml:"stats_port"`
+	IP        string `yaml:"ip"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
@@ -265,6 +266,7 @@ const (
 	DefaultEscrowAmount  = uint64(1_000_000)
 	DefaultTokenPrice    = uint64(100)
 	DefaultUserPort      = 8081
+	DefaultStatsPort     = 9091
 	DefaultHostPort      = 8080
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
@@ -405,6 +407,9 @@ func (c *File) ApplyDefaults() {
 	}
 	if c.Devshardctl.Port == 0 {
 		c.Devshardctl.Port = DefaultUserPort
+	}
+	if c.Devshardctl.StatsPort == 0 {
+		c.Devshardctl.StatsPort = DefaultStatsPort
 	}
 
 	if c.Postgres.Host == "" {
