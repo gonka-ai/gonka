@@ -626,6 +626,17 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 	defer tx.Rollback()
 
+	if _, err = tx.Exec(`UPDATE sessions SET latest_nonce=latest_nonce WHERE escrow_id=?`, escrowID); err != nil {
+		return err
+	}
+	var imported uint64
+	if err = tx.QueryRow(`SELECT imported_nonce FROM sessions WHERE escrow_id=?`, escrowID).Scan(&imported); err != nil {
+		return err
+	}
+	if imported > 0 && rec.Nonce <= imported {
+		return ErrSnapshotAdvanced
+	}
+
 	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -801,7 +812,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	}
 
 	row := p.readDB.QueryRow(
-		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status
+		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status, imported_nonce
 		 FROM sessions WHERE escrow_id = ?`,
 		escrowID,
 	)
@@ -811,7 +822,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.ImportedNonce,
 	)
 	if scanErr != nil {
 		if scanErr == sql.ErrNoRows {
@@ -968,7 +979,7 @@ func (s *SQLite) SaveSnapshot(escrowID string, nonce uint64, data []byte) error 
 		`INSERT INTO snapshots (escrow_id, nonce, state_data, created_at)
 		 VALUES (?, ?, ?, strftime('%s','now'))
 		 ON CONFLICT(escrow_id) DO UPDATE SET nonce = excluded.nonce, state_data = excluded.state_data, created_at = excluded.created_at
-		 WHERE snapshots.nonce <= excluded.nonce`,
+		 WHERE snapshots.nonce <= excluded.nonce AND excluded.nonce > (SELECT imported_nonce FROM sessions WHERE escrow_id=excluded.escrow_id)`,
 		escrowID, nonce, data,
 	)
 	return err

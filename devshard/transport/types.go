@@ -47,10 +47,11 @@ type InferenceResponse struct {
 
 // VerifyTimeoutRequest is the JSON body for POST /sessions/:id/verify-timeout.
 type VerifyTimeoutRequest struct {
-	InferenceID uint64       `json:"inference_id"`
-	Reason      string       `json:"reason"` // "refused" or "execution"
-	Payload     *PayloadJSON `json:"payload,omitempty"`
-	Diffs       []DiffJSON   `json:"diffs,omitempty"` // catch-up diffs so verifier knows about the inference
+	Refusal     *RefusalPackageJSON `json:"refusal,omitempty"`
+	InferenceID uint64              `json:"inference_id"`
+	Reason      string              `json:"reason"` // "refused" or "execution"
+	Payload     *PayloadJSON        `json:"payload,omitempty"`
+	Diffs       []DiffJSON          `json:"diffs,omitempty"` // catch-up diffs so verifier knows about the inference
 }
 
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
@@ -62,9 +63,9 @@ type VerifyTimeoutResponse struct {
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
 type ChallengeReceiptRequest struct {
-	InferenceID uint64       `json:"inference_id"`
-	Payload     *PayloadJSON `json:"payload"`
-	Diffs       []DiffJSON   `json:"diffs"`
+	Refusal     *RefusalPackageJSON `json:"refusal"`
+	InferenceID uint64              `json:"inference_id"`
+	Payload     *PayloadJSON        `json:"payload"`
 }
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
@@ -289,4 +290,10 @@ type DevshardReceiptEvent struct {
 // DevshardMetaEvent is the final SSE event, sent after execution completes.
 type DevshardMetaEvent struct {
 	Mempool [][]byte `json:"mempool,omitempty"`
+}
+
+// StateResponse describes the host's current local state.
+type StateResponse struct {
+	Nonce     uint64 `json:"nonce"`
+	StateRoot []byte `json:"state_root"`
 }

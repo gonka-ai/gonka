@@ -350,3 +350,7 @@ func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, 
 }
 
 var _ Storage = (*ManagedStorage)(nil)
+
+func (m *ManagedStorage) ImportSnapshot(id string, n uint64, data []byte) error {
+	return m.inner.ImportSnapshot(id, n, data)
+}

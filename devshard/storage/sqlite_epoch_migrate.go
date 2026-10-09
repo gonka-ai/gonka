@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS session_state (
     PRIMARY KEY (escrow_id, inference_id)
 )`},
 	},
+	{ID: 9, Name: "snapshot_import_watermark", Statements: []string{`ALTER TABLE sessions ADD COLUMN imported_nonce BIGINT NOT NULL DEFAULT 0`}},
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

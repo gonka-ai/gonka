@@ -140,7 +140,29 @@ func migrateOneSQLiteSession(src *SQLite, dest Storage, escrowID string) error {
 		return fmt.Errorf("read dest meta: %w", destErr)
 	}
 
-	if err := migrateDiffsChunked(src, dest, escrowID, meta.LatestNonce, copiedThrough); err != nil {
+	floor := uint64(0)
+	if meta.ImportedNonce > 0 {
+		n, data, err := src.LoadSnapshot(escrowID)
+		if err != nil {
+			return err
+		}
+		if n < meta.ImportedNonce {
+			return fmt.Errorf("imported snapshot missing during migration")
+		}
+		if copiedThrough < n {
+			if err := dest.ImportSnapshot(escrowID, n, data); err != nil {
+				return err
+			}
+			copiedThrough = n
+		} else {
+			dn, dd, err := dest.LoadSnapshot(escrowID)
+			if err != nil || dn != n || string(dd) != string(data) {
+				return fmt.Errorf("imported snapshot conflict during migration")
+			}
+		}
+		floor = n
+	}
+	if err := migrateDiffsChunked(src, dest, escrowID, meta.LatestNonce, copiedThrough, floor); err != nil {
 		return err
 	}
 
@@ -195,7 +217,7 @@ func migrateOneSQLiteSession(src *SQLite, dest Storage, escrowID string) error {
 	return nil
 }
 
-func migrateDiffsChunked(src *SQLite, dest Storage, escrowID string, latestNonce, copiedThrough uint64) error {
+func migrateDiffsChunked(src *SQLite, dest Storage, escrowID string, latestNonce, copiedThrough uint64, floor ...uint64) error {
 	if latestNonce == 0 {
 		return nil
 	}
@@ -204,8 +226,12 @@ func migrateDiffsChunked(src *SQLite, dest Storage, escrowID string, latestNonce
 		chunk = defaultMigrateDiffChunk
 	}
 
-	// Verify already-copied prefix in chunks.
-	for from := uint64(1); from <= copiedThrough && from <= latestNonce; from += chunk {
+	// Verify only the journal after an imported checkpoint.
+	first := uint64(1)
+	if len(floor) > 0 {
+		first = floor[0] + 1
+	}
+	for from := first; from <= copiedThrough && from <= latestNonce; from += chunk {
 		to := from + chunk - 1
 		if to > copiedThrough {
 			to = copiedThrough

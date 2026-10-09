@@ -282,14 +282,17 @@ services:
     image: devshard-versiond-router:latest
     logging: *loadtest-logging
     environment:
+      # This image's entrypoint still requires the explicit host list. It exits
+      # before nginx binds when VERSIOND_HOSTS is empty, so the published :8080
+      # never appears. VERSIOND_POOL_HOST is unused by that entrypoint.
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
-      # Pin only versions that actually have a child. A fictional v1 makes
-      # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
-      # Tests that need a SQLite pin set this to VersionName (see
-      # TestLegacyVersionPinnedToSingleHost).
+      # Pin only explicitly non-HA paths to the SQLite host. This nginx image
+      # maps the list onto versiond_legacy; it does not health-check those
+      # paths. VersionName and later versions sticky-hash across VERSIOND_HOSTS.
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
-      VERSIOND_NON_HA_VERSIONS: ""
+      VERSIOND_NON_HA_VERSIONS: "v1"
       # Keep the current test version out of the static bootstrap floor: this
       # stack is the end-to-end proof that governance can admit a dynamic slot.
       VERSIOND_VERSIONS: ""

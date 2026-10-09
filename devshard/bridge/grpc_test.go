@@ -7,6 +7,7 @@ import (
 	"devshard/bridge"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,8 +59,14 @@ func TestGRPCBridge_GetValidationThreshold(t *testing.T) {
 	b := startGRPCBridge(t)
 	threshold, err := b.GetValidationThreshold(1, "test-model")
 	require.NoError(t, err)
+	seeded := seed.Defaults().EpochGroupData[store.EpochGroupKey{EpochIndex: 1, ModelID: "test-model"}]
+	require.NotNil(t, seeded)
+	require.NotNil(t, seeded.ModelSnapshot)
+	want := seeded.ModelSnapshot.GetValidationThreshold()
+	require.NotNil(t, want)
 	require.NotNil(t, threshold)
-	assert.Equal(t, int64(50), threshold.Value)
+	assert.Equal(t, want.Value, threshold.Value)
+	assert.Equal(t, want.Exponent, threshold.Exponent)
 }
 
 func TestGRPCBridge_GetValidationThreshold_MissingReturnsError(t *testing.T) {

@@ -42,6 +42,7 @@ func TestRefusalDeadline_UnreachableDeadlineSkipsTheRoundInsteadOfLosingIt(t *te
 // The guard must not stand in the way of a deadline that has genuinely run.
 func TestRefusalDeadline_APassedDeadlineStillCollectsVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
+	certifyRefusalSnapshot(t, env)
 	env.proxy.redundancy.picker.stop()
 	params := defaultParams()
 	prepared, err := env.session.PrepareInference(params)

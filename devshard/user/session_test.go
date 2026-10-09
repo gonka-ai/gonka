@@ -410,7 +410,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: slotSigner, group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -437,7 +437,7 @@ type mockTimeoutVerifier struct {
 	escrowID string // defaults to "escrow-1" when empty
 }
 
-func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ *types.RefusalPackage) (bool, []byte, uint32, error) {
 	if !m.accept {
 		return false, nil, 0, nil
 	}
@@ -480,7 +480,7 @@ type concurrencyMockVerifier struct {
 	release       <-chan struct{}       // VerifyTimeout returns when this is closed
 }
 
-func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ *types.RefusalPackage) (bool, []byte, uint32, error) {
 	cur := m.perSlotActive[m.slotIdx].Add(1)
 	defer m.perSlotActive[m.slotIdx].Add(-1)
 	if m.totalEntered != nil {
@@ -603,7 +603,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		go func() {
-			votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, buildVerifiers(), nil)
 			resultsCh <- collectResult{votes: votes, err: err}
 		}()
 	}
@@ -702,7 +702,7 @@ func TestCollectTimeoutVotes_DifferentVerifiersRunInParallel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+		_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
 		done <- err
 	}()
 
@@ -808,7 +808,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Launch the blocking first call so all verifier slots are occupied.
 	firstDone := make(chan struct{})
 	go func() {
-		_, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, firstVerifiers, nil)
+		_, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, firstVerifiers, nil)
 		close(firstDone)
 	}()
 
@@ -821,7 +821,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Now fire the second call. Its goroutines should all time out on the
 	// queue (50ms) and return without calling VerifyTimeout.
 	start := time.Now()
-	votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, secondVerifiers, nil)
+	votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, secondVerifiers, nil)
 	elapsed := time.Since(start)
 	require.NoError(t, err)
 	require.Empty(t, votes, "stale goroutines must not produce votes")
@@ -897,7 +897,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, buildVerifiers(), nil)
 			require.NoError(t, err)
 		}()
 	}

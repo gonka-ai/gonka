@@ -232,6 +232,9 @@ type Session struct {
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
 	snapshotInFlight atomic.Bool
+	refusalUsable    *refusalSnapshot
+	refusalCandidate *refusalSnapshot
+	refusalCapturing bool
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -702,6 +705,7 @@ func (s *Session) processResponseAfterDiffs(hostIdx int, resp *host.HostResponse
 		}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[resp.Nonce][slot] = resp.StateSig
+			s.retainRefusalSignatureLocked(resp.Nonce, slot, resp.StateSig)
 			if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
 					logging.Warn("failed to persist signature",
@@ -858,6 +862,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.trimDiffsLocked()
 	s.nonce = nonce
+	s.retainRefusalDiffLocked(diff)
 	if s.nonce%sessionHistoryRetention == 0 {
 		s.pruneSessionHistoryLocked()
 	}
@@ -2485,7 +2490,7 @@ func (s *Session) Close() error {
 
 // TimeoutVerifier contacts a host for timeout verification votes.
 type TimeoutVerifier interface {
-	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (accept bool, sig []byte, voterSlot uint32, err error)
+	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, refusal *types.RefusalPackage) (accept bool, sig []byte, voterSlot uint32, err error)
 }
 
 func timeoutReasonLogLabel(reason types.TimeoutReason) string {
@@ -2555,6 +2560,15 @@ func (s *Session) collectTimeoutVotes(
 	verifiers map[int]TimeoutVerifier,
 	diffs []types.Diff,
 ) ([]*types.TimeoutVote, string, error) {
+	var refusal *types.RefusalPackage
+	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED {
+		var err error
+		refusal, err = s.BuildRefusalPackage(inferenceID)
+		if err != nil {
+			return nil, "refusal_proof_unavailable", err
+		}
+	}
+
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2671,12 +2685,12 @@ func (s *Session) collectTimeoutVotes(
 				logFields(av.verifierAddr, "sent_at_ms", rec.SentAt.UnixMilli())...,
 			)
 			catchUp := mergeTimeoutCatchUpDiffs(s.catchUpDiffsForVerifier(ctx, av.idx), diffs)
-			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp)
+			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, refusal)
 			// The slot is held and a vote is idempotent, so an unanswered request is asked once more.
 			if transport.IsTransientWriteError(err) && ctx.Err() == nil {
 				logging.Debug("retrying a vote the peer never answered", "subsystem", "session",
 					"inference_id", inferenceID, "verifier", av.verifierAddr, "error", err)
-				accept, sig, voterSlot, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp)
+				accept, sig, voterSlot, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, catchUp, refusal)
 			}
 			logVoteRPC(ctx, logFields, av.verifierAddr, err, accept, time.Since(rec.SentAt))
 			if err != nil {

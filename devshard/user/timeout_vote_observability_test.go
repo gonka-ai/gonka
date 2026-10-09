@@ -61,7 +61,7 @@ type delayedTimeoutVerifier struct {
 	err   error
 }
 
-func (d *delayedTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (d *delayedTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, refusal *types.RefusalPackage) (bool, []byte, uint32, error) {
 	if d.delay > 0 {
 		select {
 		case <-time.After(d.delay):
@@ -72,14 +72,14 @@ func (d *delayedTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID 
 	if d.err != nil {
 		return false, nil, 0, d.err
 	}
-	return d.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+	return d.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs, refusal)
 }
 
 type errTimeoutVerifier struct {
 	err error
 }
 
-func (m *errTimeoutVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
+func (m *errTimeoutVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, *types.RefusalPackage) (bool, []byte, uint32, error) {
 	return false, nil, 0, m.err
 }
 

@@ -546,7 +546,7 @@ func (c *delayedResultClient) Send(ctx context.Context, _ host.HostRequest, _ io
 	}
 }
 
-func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ *types.RefusalPackage) (bool, []byte, uint32, error) {
 	if c.voteGate != nil {
 		select {
 		case <-c.voteGate:
@@ -576,6 +576,7 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 }
 
 type testProxyEnv struct {
+	signers   []*signing.Secp256k1Signer
 	proxy     *Proxy
 	session   *user.Session
 	sm        *state.StateMachine
@@ -725,6 +726,7 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 	}
 
 	return &testProxyEnv{
+		signers:   hostSigners,
 		proxy:     p,
 		session:   session,
 		sm:        userSM,
@@ -768,6 +770,7 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	}
 
 	return &testProxyEnv{
+		signers: hostSigners,
 		proxy:   p,
 		session: session,
 		sm:      userSM,
@@ -1563,6 +1566,7 @@ func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) 
 
 func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
+	certifyRefusalSnapshot(t, env)
 	voteGate := make(chan struct{})
 	releaseVote := sync.OnceFunc(func() { close(voteGate) })
 	t.Cleanup(releaseVote)
@@ -1725,6 +1729,12 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	shortRefusalWindow(t)
 	env := setupTestProxy(t, 3, nil, true)
+	certifyRefusalSnapshot(t, env)
+	// Keep the next executor at slot 1 after the checkpoint.
+	for i := 0; i < 2; i++ {
+		_, err := env.session.PrepareInference(defaultParams())
+		require.NoError(t, err)
+	}
 	env.killables[1].inner = &errorStreamWithoutFinishClient{errorEvent: contextLengthErrorEvent}
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 
@@ -2420,6 +2430,7 @@ func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 // it through the settled path rather than by calling the request a failure.
 func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
+	certifyRefusalSnapshot(t, env)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
 	prepared, err := env.session.PrepareInference(params)
@@ -2448,4 +2459,34 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
 	}, 10*time.Second, 25*time.Millisecond, "the open nonce never reached a timeout vote")
+}
+
+// Sign the checkpoint so refusal tests reach verifier fan-out.
+func certifyRefusalSnapshot(t *testing.T, env *testProxyEnv) {
+	t.Helper()
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	nonce := prepared.Nonce()
+	root, err := env.sm.ComputeStateRoot()
+	require.NoError(t, err)
+	data, err := proto.Marshal(&types.StateSignatureContent{EscrowId: "escrow-proxy", Nonce: nonce, StateRoot: root})
+	require.NoError(t, err)
+	for slot, signer := range env.signers {
+		sig, err := signer.Sign(data)
+		require.NoError(t, err)
+		require.NoError(t, env.session.ProcessResponse(slot, &host.HostResponse{Nonce: nonce, StateHash: root, StateSig: sig}, nonce))
+	}
+	require.Eventually(t, func() bool {
+		_, err := env.session.BuildRefusalPackage(nonce)
+		return err == nil
+	}, testWaitLimit, time.Millisecond)
+}
+
+func TestMissingCheckpointDefersTimeoutVote(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	_, err = env.session.CollectTimeoutVotes(context.Background(), prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, env.session.TimeoutVerifiers(), nil)
+	require.ErrorContains(t, err, "no certified refusal snapshot")
+	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[prepared.Nonce()].Status)
 }

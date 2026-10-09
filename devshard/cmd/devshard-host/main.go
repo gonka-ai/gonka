@@ -111,6 +111,7 @@ func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatu
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
 	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
+	g.GET("/sessions/:id/state", srv.HandleGetState)
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
@@ -297,7 +298,14 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	}
 
 	replayFrom := uint64(1)
-	if snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID); snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
+	if meta.ImportedNonce > 0 {
+		_, root, err := types.SnapshotData(snapData)
+		if snapErr != nil || err != nil || len(root) != 32 || snapNonce < meta.ImportedNonce || snapNonce > meta.LatestNonce {
+			return fmt.Errorf("imported snapshot missing root or unavailable")
+		}
+	}
+	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
 		snapState, err := host.UnmarshalStateSnapshot(snapData)
 		if err != nil {
 			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)

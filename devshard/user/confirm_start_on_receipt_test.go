@@ -36,7 +36,7 @@ func (c *holdingClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer,
 	return response, nil
 }
 
-func (c *holdingClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
+func (c *holdingClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, *types.RefusalPackage) (bool, []byte, uint32, error) {
 	return false, nil, 0, nil
 }
 
@@ -235,7 +235,7 @@ func TestAnOrdinaryVoteFailureLeavesTheCursorAlone(t *testing.T) {
 
 type lostSessionVerifier struct{}
 
-func (lostSessionVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
+func (lostSessionVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, *types.RefusalPackage) (bool, []byte, uint32, error) {
 	return false, nil, 0, sessionNotFound()
 }
 
@@ -246,7 +246,7 @@ func TestAVerifierThatLostTheEscrowRewindsItsCursorDuringCollection(t *testing.T
 	session.mu.Unlock()
 
 	_, err := session.CollectTimeoutVotes(context.Background(), 1,
-		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,

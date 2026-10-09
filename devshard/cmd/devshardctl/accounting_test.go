@@ -53,6 +53,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("insufficient votes", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
+		certifyRefusalSnapshot(t, env)
 		prepared, err := env.session.PrepareInference(defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
@@ -72,6 +73,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 			timeoutErrorClient{},
 		}
 		env := setupTestProxyWithClients(t, clients)
+		certifyRefusalSnapshot(t, env)
 		prepared, err := env.session.PrepareInference(defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
@@ -121,6 +123,7 @@ func (timeoutErrorClient) VerifyTimeout(
 	types.TimeoutReason,
 	*host.InferencePayload,
 	[]types.Diff,
+	*types.RefusalPackage,
 ) (bool, []byte, uint32, error) {
 	return false, nil, 0, errors.New("verifier unavailable")
 }
@@ -154,6 +157,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 
 func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
+	certifyRefusalSnapshot(t, env)
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })

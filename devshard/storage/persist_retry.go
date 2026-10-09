@@ -58,7 +58,7 @@ func AppendDiffWithRetryUnlocked(ctx context.Context, store Storage, escrowID st
 			}
 			return nil
 		}
-		if errors.Is(last, ErrDiffFork) {
+		if errors.Is(last, ErrDiffFork) || errors.Is(last, ErrSnapshotAdvanced) {
 			return last
 		}
 		if attempt == DefaultPersistMaxAttempts {
