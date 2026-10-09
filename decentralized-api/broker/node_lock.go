@@ -12,11 +12,12 @@ import (
 
 var ErrLockNotFound = errors.New("lock not found")
 
-func (b *Broker) queueReleaseNode(nodeId string, outcome InferenceResult) {
+func (b *Broker) queueReleaseNode(nodeId string, registrationSeq uint64, outcome InferenceResult) {
 	queueErr := b.QueueMessage(ReleaseNode{
-		NodeId:   nodeId,
-		Outcome:  outcome,
-		Response: make(chan bool, 1),
+		NodeId:          nodeId,
+		RegistrationSeq: registrationSeq,
+		Outcome:         outcome,
+		Response:        make(chan bool, 1),
 	})
 	// QueueMessage can only fail if the response channel has capacity 0 (broker.go line 449-452)
 	if queueErr != nil {
@@ -41,7 +42,7 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 	case <-ctx.Done():
 		go func() {
 			if node := <-ch; node != nil {
-				b.queueReleaseNode(node.Id, InferenceError{Message: "context cancelled"})
+				b.queueReleaseNode(node.Id, node.RegistrationSeq, InferenceError{Message: "context cancelled"})
 			}
 		}()
 		return "", "", "", ctx.Err()
@@ -51,7 +52,7 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 		}
 		lockID := uuid.New().String()
 		b.lockMapMu.Lock()
-		b.lockMap[lockID] = lockEntry{nodeID: node.Id, createdAt: time.Now()}
+		b.lockMap[lockID] = lockEntry{nodeID: node.Id, registrationSeq: node.RegistrationSeq, createdAt: time.Now()}
 		b.lockMapMu.Unlock()
 		version := b.configManager.GetCurrentNodeVersion()
 		return lockID, node.InferenceUrlWithVersion(version), node.Id, nil
@@ -68,7 +69,7 @@ func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
 	if !ok {
 		return ErrLockNotFound
 	}
-	b.queueReleaseNode(entry.nodeID, outcome)
+	b.queueReleaseNode(entry.nodeID, entry.registrationSeq, outcome)
 	return nil
 }
 
@@ -94,6 +95,6 @@ func (b *Broker) evictExpiredLocks() {
 	b.lockMapMu.Unlock()
 
 	for _, entry := range expired {
-		b.queueReleaseNode(entry.nodeID, InferenceError{Message: "lock TTL expired"})
+		b.queueReleaseNode(entry.nodeID, entry.registrationSeq, InferenceError{Message: "lock TTL expired"})
 	}
 }

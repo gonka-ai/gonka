@@ -2,6 +2,7 @@ package queryapitest
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -19,7 +20,9 @@ func (s *stubEpochServer) EpochInfo(_ context.Context, _ *inferencetypes.QueryEp
 	return &inferencetypes.QueryEpochInfoResponse{
 		BlockHeight: 500,
 		LatestEpoch: inferencetypes.Epoch{Index: 5, PocStartBlockHeight: 100},
-		Params:      inferencetypes.Params{EpochParams: &inferencetypes.EpochParams{}},
+		Params: inferencetypes.Params{EpochParams: &inferencetypes.EpochParams{
+			EpochLength: 50,
+		}},
 	}, nil
 }
 
@@ -43,6 +46,25 @@ func TestGetEpoch_Returns200(t *testing.T) {
 	body := rec.Body.String()
 	assert.Contains(t, body, `"block_height"`)
 	assert.Contains(t, body, `"index"`)
+}
+
+func TestGetEpoch_EpochParamsLegacyShape(t *testing.T) {
+	s := handlersWithInference(t, &stubEpochServer{})
+	ctx, rec := echoContext(t, http.MethodGet, "/epochs/latest")
+	require.NoError(t, s.GetEpoch(ctx, "latest"))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	ep, ok := body["epoch_params"].(map[string]any)
+	require.True(t, ok, "epoch_params must be an object")
+	_, nested := ep["epoch_params"]
+	require.False(t, nested, "must encode EpochParams only, not full Params")
+	require.Equal(t, float64(50), ep["epoch_length"], "epoch_length must be a JSON number")
+
+	// Omitted (not null) when there is no active confirmation PoC event.
+	require.NotContains(t, body, "active_confirmation_poc_event")
 }
 
 type errEpochServer struct{ inferencetypes.UnimplementedQueryServer }

@@ -24,7 +24,7 @@
 services:
   versiond:
     container_name: versiond
-    image: ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
+    image: ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
     environment:
       - VERSIOND_ORACLE_URL=http://${NETWORK_NODE_PRIVATE_IP:?set NETWORK_NODE_PRIVATE_IP in config.env}:9100/versions
       - VERSIOND_BINARY_NAME=devshardd

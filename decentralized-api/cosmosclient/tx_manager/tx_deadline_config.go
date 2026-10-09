@@ -5,7 +5,8 @@ const defaultMaxBlocks int64 = 30
 
 // deadlineByMsgType defines message-specific deadlines based on chain epoch parameters
 var deadlineByMsgType = map[string]int64{
-	"/inference.inference.MsgSubmitPocValidationsV2": 240,
+	"/inference.inference.MsgSubmitPocValidationsV2":        240,
+	"/inference.inference.MsgSubmitPoCChallengeValidations": 240,
 }
 
 // getMaxBlocksForType returns the maximum blocks a transaction type can wait before expiring.

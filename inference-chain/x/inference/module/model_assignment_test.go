@@ -51,7 +51,8 @@ type mockKeeperForModelAssigner struct {
 	// Test bodies should populate this with valoper-bech32 strings; the production
 	// code converts them to acc-bech32 before checking membership against subgroup
 	// member addresses.
-	guardianAddresses []string
+	guardianAddresses  []string
+	activeParticipants map[uint64]types.ActiveParticipants
 }
 
 func (m *mockKeeperForModelAssigner) GetGovernanceModelsSorted(ctx context.Context) ([]*types.Model, error) {
@@ -64,7 +65,10 @@ func (m *mockKeeperForModelAssigner) GetHardwareNodes(ctx context.Context, parti
 }
 
 func (m *mockKeeperForModelAssigner) GetActiveParticipants(ctx context.Context, epochId uint64) (val types.ActiveParticipants, found bool) {
-	// Not implemented for this mock
+	if m.activeParticipants != nil {
+		val, found = m.activeParticipants[epochId]
+		return val, found
+	}
 	return types.ActiveParticipants{}, false
 }
 
@@ -491,7 +495,25 @@ func TestSumLiveRootTotalWeight_ExcludesRemovedMembers(t *testing.T) {
 		},
 	}
 	liveSet := map[string]bool{"live": true}
-	require.Equal(t, int64(40), sumLiveRootTotalWeight(rootData, liveSet))
+	require.Equal(t, int64(40), sumLiveRootTotalWeight(rootData, liveSet, nil))
+}
+
+func TestSumLiveRootTotalWeight_UsesCapWeightWhenPresent(t *testing.T) {
+	rootData := types.EpochGroupData{
+		EpochIndex: 3,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "live-a", Weight: 100},
+			{MemberAddress: "live-b", Weight: 200},
+		},
+	}
+	activeParticipants := types.ActiveParticipants{
+		Participants: []*types.ActiveParticipant{
+			{Index: "live-a", Weight: 100, CapWeight: 40},
+			{Index: "live-b", Weight: 200, CapWeight: 60},
+		},
+	}
+	liveSet := map[string]bool{"live-a": true, "live-b": true}
+	require.Equal(t, int64(100), sumLiveRootTotalWeight(rootData, liveSet, resolveTrustWeights(activeParticipants.Participants, false)))
 }
 
 func TestCalculateParticipantWeightThreshold75Percent_UsesLiveRootTotal(t *testing.T) {
@@ -974,7 +996,8 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 	// Model Assigner
 	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
 
-	// Participant data setup with legacy MLNodes list (pre-assignment state)
+	// Participant data setup with per-model buckets as produced by PoC validation:
+	// mlnode1/2/4 proved modelA, mlnode3 proved modelB (matches epochGroupData above).
 	participants := []*types.ActiveParticipant{
 		{
 			Index:  participantAddress,
@@ -984,8 +1007,12 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 					MlNodes: []*types.MLNodeInfo{
 						{NodeId: "mlnode1", PocWeight: 30},
 						{NodeId: "mlnode2", PocWeight: 25},
-						{NodeId: "mlnode3", PocWeight: 20},
 						{NodeId: "mlnode4", PocWeight: 25},
+					},
+				},
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "mlnode3", PocWeight: 20},
 					},
 				},
 			},

@@ -24,8 +24,10 @@ type Config struct {
 	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64
-	// OmitBlockRoutes skips /block/* (0.2.15 / pre-mount dapi). /healthz and
-	// /versions remain so versiond still boots.
+	// OmitBlockRoutes emulates 0.2.15 / pre-#1738 dapi: no HTTP /block/* and
+	// GetBlockHeader / ProveBlockPath answer Unimplemented so host failover
+	// takes the 15-minute skip. /healthz and /versions remain so versiond
+	// still boots.
 	OmitBlockRoutes bool
 }
 

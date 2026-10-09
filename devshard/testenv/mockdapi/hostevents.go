@@ -98,19 +98,26 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 // long-poll warm scenario. Other RPCs are inherited from the embedded params server.
 type nodeManagerServer struct {
 	*params.Server
-	ring   *hostEventRing
-	blocks blocks.BlockOracle
+	ring       *hostEventRing
+	blocks     blocks.BlockOracle
+	omitBlocks bool
 }
 
-func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle) *nodeManagerServer {
-	return &nodeManagerServer{Server: paramsSrv, ring: ring, blocks: oracle}
+func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle, omitBlocks bool) *nodeManagerServer {
+	return &nodeManagerServer{Server: paramsSrv, ring: ring, blocks: oracle, omitBlocks: omitBlocks}
 }
 
 func (s *nodeManagerServer) GetBlockHeader(ctx context.Context, req *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {
+	if s.omitBlocks {
+		return nil, status.Error(codes.Unimplemented, "method GetBlockHeader not implemented")
+	}
 	return nmrpc.GetBlockHeader(ctx, s.blocks, req)
 }
 
 func (s *nodeManagerServer) ProveBlockPath(ctx context.Context, req *gen.ProveBlockPathRequest) (*gen.ProveBlockPathResponse, error) {
+	if s.omitBlocks {
+		return nil, status.Error(codes.Unimplemented, "method ProveBlockPath not implemented")
+	}
 	return nmrpc.ProveBlockPath(ctx, s.blocks, req)
 }
 
