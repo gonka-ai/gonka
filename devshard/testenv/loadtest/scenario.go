@@ -25,9 +25,16 @@ type Scenario struct {
 }
 
 type Diagnostics struct {
+	HeapProfiles             []ProfileSnapshot  `yaml:"heap_profiles"`
+	GoroutineProfiles        []ProfileSnapshot  `yaml:"goroutine_profiles"`
 	Logs                     LogDiagnostics     `yaml:"logs"`
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
+}
+
+type ProfileSnapshot struct {
+	StartAfter string   `yaml:"start_after"`
+	Targets    []string `yaml:"targets"`
 }
 
 type LogDiagnostics struct {
@@ -277,6 +284,26 @@ func (s Scenario) Validate() error {
 		lines, err := strconv.Atoi(tail)
 		if err != nil || lines <= 0 {
 			return fmt.Errorf("diagnostics.logs.tail must be a positive integer or all")
+		}
+	}
+	for kind, snapshots := range map[string][]ProfileSnapshot{
+		"heap_profiles":      s.Diagnostics.HeapProfiles,
+		"goroutine_profiles": s.Diagnostics.GoroutineProfiles,
+	} {
+		var previous time.Duration
+		for i, snapshot := range snapshots {
+			after, err := time.ParseDuration(snapshot.StartAfter)
+			if err != nil || after < 0 || after >= duration || (i > 0 && after <= previous) {
+				return fmt.Errorf("diagnostics.%s snapshots must have ordered, distinct non-negative start_after within workload", kind)
+			}
+			previous = after
+			seen := map[string]bool{}
+			for _, target := range snapshot.Targets {
+				if seen[target] || (target != "gateway" && !validSnapshotHost(target, s.Topology.Participants)) {
+					return fmt.Errorf("diagnostics.%s invalid or duplicate target %q", kind, target)
+				}
+				seen[target] = true
+			}
 		}
 	}
 	var previousEnd time.Duration

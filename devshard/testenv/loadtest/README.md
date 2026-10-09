@@ -34,7 +34,7 @@ post-run inspection.
 
 ## Catch-up scenario
 
-`catch-up` runs three participants at 4 RPS for five minutes. At 90 seconds
+`catch-up` runs three participants at 16 RPS for five minutes. At 90 seconds
 it freezes `versiond-2` for 60 seconds, then resumes it:
 
 ```bash
@@ -78,17 +78,51 @@ hit the frozen participant. Adjust this assertion separately from the
 fault schedule when testing stricter availability requirements.
 
 The catch-up scenario collects concurrent CPU profiles of gateway and every
-host at 45–75s (baseline), 85–165s (pause and resume), and 240–270s (later
+host at 45–75s (baseline), 85–205s (pause and resume), and 240–270s (later
 steady state). The middle profile starts before the 90s pause so the target's
 profiler is already running when it freezes and can capture work immediately
 after unpause at approximately 150s. A frozen process produces no CPU samples;
-its middle profile combines roughly five seconds before pause and fifteen
+its middle profile combines roughly five seconds before pause and fifty-five
 seconds after resume. Other targets remain active throughout that window.
 Compare hot functions and sample proportions across windows; total CPU sample
 counts cover different amounts of active time. The middle window includes
 both the pause and resumed activity rather than isolating catch-up alone.
 
 ## Container logs
+
+Heap profiles and goroutine stack dumps can be scheduled independently of CPU
+windows, with offsets measured from workload start:
+
+```yaml
+diagnostics:
+  heap_profiles:
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+  goroutine_profiles:
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+```
+
+Omitting `targets` captures Gateway and all configured hosts. Each list must
+have distinct increasing offsets within the workload. Hosts use their child's
+private admin listener. A paused container cannot be sampled; errors are saved
+in `profile-snapshots.json` along with actual start/finish times and file paths.
+Each snapshot request has a 15-second deadline and runs independently of other
+scheduled snapshots. Collection errors are diagnostic and do not fail workload
+assertions.
+
+Heap files in `profiles/` use binary pprof format; goroutine files are text
+stacks (`debug=2`). Heap capture does not force GC or change the allocation
+sampling rate. Use `go tool pprof -sample_index=inuse_space FILE` for retained
+memory, or `-sample_index=alloc_space -base BASELINE FILE` for allocation
+differences. Heap data is sampled and may lag the live memory counters until
+GC. Goroutine dumps reveal active and waiting stacks at the snapshot time.
+
+`catch-up` captures heap at 75s (baseline), 152s and 160s (resumed backlog),
+180s (after burst), 225s (after quarantine), and 270s (steady workload). Stacks
+are captured at 152s and 160s. Targets are Gateway, `versiond-2`, and healthy
+`versiond-1`. These offsets assume the configured pause at 90–150s; quarantine
+expiration is error-driven and may shift between runs.
 
 Container log collection is configured separately from CPU profiling:
 

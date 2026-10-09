@@ -150,6 +150,18 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		}
 	}
 	fmt.Fprintln(os.Stdout)
+	if len(result.ProfileSnapshots) > 0 {
+		fmt.Fprintln(os.Stdout, "Heap and goroutine snapshots")
+		fmt.Fprintln(os.Stdout, "----------------------------")
+		for _, profile := range result.ProfileSnapshots {
+			if profile.Error != "" {
+				fmt.Fprintf(os.Stdout, "  %s %s snapshot=%d ERROR: %s\n", profile.Kind, profile.Target, profile.Snapshot, profile.Error)
+			} else {
+				fmt.Fprintf(os.Stdout, "  %s %s start=%s file=%s\n", profile.Kind, profile.Target, profile.StartAfter, profile.File)
+			}
+		}
+		fmt.Fprintln(os.Stdout)
+	}
 	fmt.Fprintln(os.Stdout, "Artifacts")
 	fmt.Fprintln(os.Stdout, "---------")
 	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)

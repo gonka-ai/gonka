@@ -76,3 +76,22 @@ diagnostics:
     # Compare steady-state CPU after the host has resumed at roughly 150s.
     - start_after: 240s
       duration: 30s
+  # Heap snapshots use the default pprof sampling rate, without forced GC.
+  heap_profiles:
+    - start_after: 75s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 160s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 180s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 225s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 270s
+      targets: [gateway, versiond-2, versiond-1]
+  goroutine_profiles:
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 160s
+      targets: [gateway, versiond-2, versiond-1]

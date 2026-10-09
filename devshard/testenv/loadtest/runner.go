@@ -32,18 +32,19 @@ type RunnerConfig struct {
 }
 
 type RunResult struct {
-	Summary      Summary
-	Terminal     TerminalSummary
-	Assertions   []AssertionResult
-	OutputDir    string
-	WorkDir      string
-	GatewayURL   string
-	Allocations  map[string]uint64
-	MLStats      map[string]MLNodeStats
-	GatewayState GatewayStateSizes
-	Metrics      MetricsSummary
-	HostFaults   []HostFaultResult
-	CPUProfiles  []CPUProfileResult
+	Summary          Summary
+	Terminal         TerminalSummary
+	Assertions       []AssertionResult
+	OutputDir        string
+	WorkDir          string
+	GatewayURL       string
+	Allocations      map[string]uint64
+	MLStats          map[string]MLNodeStats
+	GatewayState     GatewayStateSizes
+	Metrics          MetricsSummary
+	HostFaults       []HostFaultResult
+	CPUProfiles      []CPUProfileResult
+	ProfileSnapshots []ProfileSnapshotResult
 }
 
 type MLNodeStats struct {
@@ -252,6 +253,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return result, fmt.Errorf("start CPU profiler: %w", err)
 	}
 	defer func() { result.CPUProfiles = profiler.stop() }()
+	snapshots, err := startSnapshotProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics)
+	if err != nil {
+		return result, fmt.Errorf("start snapshot profiler: %w", err)
+	}
+	defer func() { result.ProfileSnapshots = snapshots.stop() }()
 
 	faultRunner, err := startHostFaults(ctx, opts, cfg, project, composePath, scenario.Workload.HostFaults)
 	if err != nil {
