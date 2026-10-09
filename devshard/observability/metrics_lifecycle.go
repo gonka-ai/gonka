@@ -32,6 +32,7 @@ var (
 	httpConnections          *prometheus.GaugeVec
 	httpConnectionsTotal     *prometheus.CounterVec
 	validationQueueDepth     *prometheus.GaugeVec
+	validationOwed           *prometheus.GaugeVec
 	mempoolSize              *prometheus.GaugeVec
 	buildInfo                *prometheus.GaugeVec
 	lifecycleInflight        prometheus.Gauge
@@ -159,6 +160,10 @@ func initRegistry() {
 	validationQueueDepth = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_validation_queue_depth",
 		Help: "Current validation queue depth per devshard session.",
+	}, []string{"escrow_id"})
+	validationOwed = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshard_validation_owed",
+		Help: "Live inferences this host still owes a validation for.",
 	}, []string{"escrow_id"})
 	mempoolSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_mempool_size",
@@ -300,6 +305,7 @@ func initRegistry() {
 		httpConnections,
 		httpConnectionsTotal,
 		validationQueueDepth,
+		validationOwed,
 		mempoolSize,
 		buildInfo,
 		lifecycleInflight,
@@ -501,6 +507,17 @@ func SetValidationQueueDepth(escrowID string, depth int) {
 	validationQueueDepth.WithLabelValues(escrowID).Set(float64(depth))
 }
 
+// SetValidationOwed records how many live inferences this host still owes a
+// validation for. A series that grows for the whole escrow lifetime is a leak
+// in the owed set.
+func SetValidationOwed(escrowID string, n int) {
+	ensureMetrics()
+	if escrowID == "" {
+		return
+	}
+	validationOwed.WithLabelValues(escrowID).Set(float64(n))
+}
+
 func SetMempoolSize(escrowID string, size int) {
 	ensureMetrics()
 	mempoolSize.WithLabelValues(escrowID).Set(float64(size))
@@ -514,6 +531,7 @@ func DeleteEscrowMetrics(escrowID string) {
 		return
 	}
 	validationQueueDepth.DeleteLabelValues(escrowID)
+	validationOwed.DeleteLabelValues(escrowID)
 	mempoolSize.DeleteLabelValues(escrowID)
 }
 

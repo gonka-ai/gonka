@@ -295,7 +295,25 @@ func NewHost(
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
+	h.installOwedValidations()
 	return h, nil
+}
+
+// installOwedValidations registers this host's obligation rule on its state
+// machine and fills the set from inferences already live (recovery). Later
+// diffs maintain the set at each record write.
+func (h *Host) installOwedValidations() {
+	mySlots := h.slotIDs
+	mySlotCount := uint32(len(mySlots))
+	totalSlots := h.sm.TotalSlots()
+	seed := h.ownSeed
+	h.sm.SetOwedValidationPredicate(func(id uint64, rec *types.InferenceRecord, rate uint32) bool {
+		if rec == nil {
+			return false
+		}
+		executorSlots := h.sm.AddressSlotCount(h.slotToAddr[rec.ExecutorSlot])
+		return state.OwedValidation(seed, id, rec, mySlots, mySlotCount, executorSlots, totalSlots, rate)
+	})
 }
 
 // Start launches background workers owned by this host. Callers should invoke
@@ -1370,8 +1388,11 @@ const (
 	validationFlowChallenged     validationFlow = "challenged"
 )
 
-// collectValidationJobs finds finished inferences that this host should validate.
-// Caller must hold h.mu.
+// collectValidationJobs finds inferences this host still owes a validation for.
+// Membership (status, sampling, self-execution, prior participation) lives in
+// the state machine's owed set, maintained as records are written. This walk
+// only applies host-local filters: model support, in-flight work, cooldown,
+// and mempool. Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
@@ -1384,84 +1405,72 @@ func (h *Host) collectValidationJobs() []validateJob {
 		return nil
 	}
 
-	st := h.sm.SnapshotState()
 	available := cap(q) - len(q)
 	if available <= 0 {
 		return nil
 	}
-	for id := range h.validationCooldown {
-		rec, live := st.Inferences[id]
-		if !live || !h.inferenceValidatable(rec) {
-			delete(h.validationCooldown, id)
+	owed := h.sm.OwedValidationIDs()
+	if len(h.validationCooldown) > 0 {
+		owedSet := make(map[uint64]struct{}, len(owed))
+		for _, id := range owed {
+			owedSet[id] = struct{}{}
 		}
-	}
-	var jobs []validateJob
-
-	for infID, rec := range st.Inferences {
-		if !devshard.CanValidate(h.validator, rec.Model) {
-			continue
-		}
-		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
-			continue
-		}
-		if h.slotIDs[rec.ExecutorSlot] {
-			continue
-		}
-
-		alreadyValidated := false
-		for slot := range h.slotIDs {
-			if rec.ValidatedBy.IsSet(slot) {
-				alreadyValidated = true
-				break
+		for id := range h.validationCooldown {
+			if _, ok := owedSet[id]; !ok {
+				delete(h.validationCooldown, id)
 			}
 		}
-		if alreadyValidated {
+	}
+	var (
+		jobs    []validateJob
+		queued  map[uint64]struct{}
+		scanned bool
+		now     = time.Now()
+	)
+
+	for _, infID := range owed {
+		if _, inFlight := h.validating[infID]; inFlight {
 			continue
 		}
-		if _, ok := h.validating[infID]; ok {
-			continue
-		}
-		if until, ok := h.validationCooldown[infID]; ok {
+		if until, cooling := h.validationCooldown[infID]; cooling {
 			// A zero time is a hold, not an expiry. A skipped lease is never
-			// reclaimed, so it stays out until the inference leaves this set.
-			if until.IsZero() || time.Now().Before(until) {
+			// reclaimed, so it stays out until the inference leaves the owed set.
+			if until.IsZero() || now.Before(until) {
 				continue
 			}
 			delete(h.validationCooldown, infID)
 		}
-		if h.hasMempoolValidationOrVote(infID) {
+		if !scanned {
+			queued, scanned = h.ownMempoolValidationIDs(), true
+		}
+		if _, ok := queued[infID]; ok {
+			continue
+		}
+		rec, ok := h.sm.GetInference(infID)
+		if !ok || !h.inferenceValidatable(&rec) {
+			continue
+		}
+		if !devshard.CanValidate(h.validator, rec.Model) {
 			continue
 		}
 
-		executorAddr := h.slotToAddr[rec.ExecutorSlot]
-
-		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
 		flow := validationFlowChallenged
 		if rec.Status == types.StatusFinished {
-			mySlotCount := uint32(len(h.slotIDs))
-			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
-			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
-				continue
-			}
 			flow = validationFlowShouldValidate
 		}
-
-		validatorSlot := h.sortedSlots[0]
-
 		h.validating[infID] = struct{}{}
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
-			validatorSlot:   validatorSlot,
+			validatorSlot:   h.sortedSlots[0],
 			flow:            flow,
 			model:           rec.Model,
-			promptHash:      rec.PromptHash,
-			responseHash:    rec.ResponseHash,
-			servedHash:      rec.ServedHash,
+			promptHash:      append([]byte(nil), rec.PromptHash...),
+			responseHash:    append([]byte(nil), rec.ResponseHash...),
+			servedHash:      append([]byte(nil), rec.ServedHash...),
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
-			executorAddress: executorAddr,
+			executorAddress: h.slotToAddr[rec.ExecutorSlot],
 			epochID:         h.epochID,
 		})
 		available--
@@ -1559,6 +1568,27 @@ func (h *Host) enqueueValidation(job validateJob) {
 // hasMempoolValidationOrVote returns true if a MsgValidation or
 // MsgValidationVote for infID from this host is already in the mempool.
 // Caller must hold h.mu.
+// ownMempoolValidationIDs is hasMempoolValidationOrVote for every inference at
+// once: the ids this host already has a validation or vote queued for.
+func (h *Host) ownMempoolValidationIDs() map[uint64]struct{} {
+	var ids map[uint64]struct{}
+	for _, tx := range h.mempool.Txs() {
+		var id uint64
+		if v := tx.GetValidation(); v != nil && h.slotIDs[v.ValidatorSlot] {
+			id = v.InferenceId
+		} else if v := tx.GetValidationVote(); v != nil && h.slotIDs[v.VoterSlot] {
+			id = v.InferenceId
+		} else {
+			continue
+		}
+		if ids == nil {
+			ids = make(map[uint64]struct{})
+		}
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 	for _, tx := range h.mempool.Txs() {
 		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {

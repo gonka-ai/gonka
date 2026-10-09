@@ -2,6 +2,7 @@ package state
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -116,9 +117,9 @@ func TestCommittedEntriesHashMatchesMarshalPath(t *testing.T) {
 	require.Contains(t, sm.ExportSealedNonces(), uint64(22))
 
 	exported := sm.ExportCommittedEntries()
-	sm.RestoreCommittedEntries(exported)
+	require.NoError(t, sm.RestoreCommittedEntries(exported))
 	assertCommittedMatchesMarshalPath(t, sm)
-	sm.RestoreCommittedEntries(nil)
+	require.NoError(t, sm.RestoreCommittedEntries(nil))
 	assertCommittedMatchesMarshalPath(t, sm)
 
 	sm.mu.Lock()
@@ -130,7 +131,7 @@ func TestCommittedEntriesHashMatchesMarshalPath(t *testing.T) {
 	require.Equal(t, []uint64{1, 4}, liveIDs(sm))
 	require.NotContains(t, sm.ExportCommittedEntries(), uint64(1))
 
-	sm.RestoreCommittedEntries(nil)
+	require.NoError(t, sm.RestoreCommittedEntries(nil))
 	assertCommittedMatchesMarshalPath(t, sm)
 
 	apply(29, txFinalize())
@@ -161,8 +162,9 @@ func assertCommittedMatchesMarshalPath(t *testing.T, sm *StateMachine) {
 	}
 	fromStructs, err := computeInferencesHash(st.Inferences)
 	require.NoError(t, err)
-	folded := xorInferencesHashFromEntries(entries)
-	require.Equal(t, fromStructs, folded[:])
+	folded := sumLivePointsFromEntries(entries)
+	encoded := encodeLivePoint(&folded)
+	require.Equal(t, fromStructs, encoded[:])
 
 	hs := types.HeightSyncEscrowCommitFromState(&st)
 	rest := restHashFromV2Parts(st.Balance, sealedAccBytes32(st.SealedAcc), fromStructs,
@@ -262,38 +264,40 @@ func timeoutTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string, 
 	})
 }
 
-func TestLiveXORFoldsOnlyChangedEntries(t *testing.T) {
+func TestLiveSumFoldsOnlyChangedEntries(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, _ := newTestSM(t, hosts, 10000)
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{startTx(1)})
 	require.NoError(t, err)
 
 	sm.mu.Lock()
-	before := sm.liveEntryXOR
+	before := sm.liveEntrySum
 	require.NoError(t, sm.updateCommittedEntryLocked(1, sm.state.Inferences[1]))
-	require.Equal(t, before, sm.liveEntryXOR, "rewriting the same bytes must not fold")
+	require.Equal(t, before, sm.liveEntrySum, "rewriting the same bytes must not fold")
 
 	j, err := sm.beginJournalLocked()
 	require.NoError(t, err)
 	changed := *sm.state.Inferences[1]
 	changed.Model = "other-model"
 	require.NoError(t, sm.updateCommittedEntryLocked(1, &changed))
-	require.NotEqual(t, before, sm.liveEntryXOR)
+	require.NotEqual(t, before, sm.liveEntrySum)
 	sm.closeJournalLocked(j)
-	require.Equal(t, before, sm.liveEntryXOR)
-	require.Equal(t, before, xorInferencesHashFromEntries(sm.committedEntries))
+	require.Equal(t, before, sm.liveEntrySum)
+	fresh := sumLivePointsFromEntries(sm.committedEntries)
+	require.Equal(t, 1, before.Equal(&fresh))
 	sm.mu.Unlock()
 
 	require.NoError(t, sm.SealInference(1))
 	sm.mu.Lock()
-	require.Equal(t, [32]byte{}, sm.liveEntryXOR)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&sm.liveEntrySum))
 	require.Empty(t, sm.committedEntries)
 	sm.mu.Unlock()
 }
 
-// An equal-size swap of ids passes the length check. The per-id check must
-// still fail the root and roll the diff back.
-func TestLiveHashRejectsSwappedCommittedIDs(t *testing.T) {
+// An equal-size swap made outside an apply is invisible to the nonce path.
+// The full audit still sees it. A later diff that does not touch the swapped
+// id is kept: the root does not walk every live id to find the poke.
+func TestLiveHashIgnoresOutOfBandSwap(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, _ := newTestSM(t, hosts, 10000)
 	for nonce := uint64(1); nonce <= 2; nonce++ {
@@ -304,20 +308,128 @@ func TestLiveHashRejectsSwappedCommittedIDs(t *testing.T) {
 	sm.mu.Lock()
 	sm.committedEntries[99] = sm.committedEntries[1]
 	delete(sm.committedEntries, 1)
+	require.ErrorContains(t, sm.auditLiveCommittedLocked(), "missing live inference 1")
 	sm.mu.Unlock()
 
 	_, err := sm.ComputeStateRoot()
-	require.ErrorContains(t, err, "missing live inference 1")
-	_, err = sm.ApplyLocal(3, []*types.DevshardTx{startTx(3)})
-	require.ErrorContains(t, err, "missing live inference 1")
-	require.Equal(t, uint64(2), sm.LatestNonce())
+	require.NoError(t, err)
 
-	sm.RestoreCommittedEntries(nil)
-	assertCommittedMatchesMarshalPath(t, sm)
+	_, err = sm.ApplyLocal(3, []*types.DevshardTx{startTx(3)})
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), sm.LatestNonce())
+	entries := sm.ExportCommittedEntries()
+	require.NotContains(t, entries, uint64(1))
+	require.Contains(t, entries, uint64(99))
+}
+
+// Deleting one committed id and inserting another keeps the counts equal, so
+// only the journal membership check can reject it. Closing the journal puts
+// the maps back.
+func TestLiveHashJournalRejectsEqualSizeCommittedSwap(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	for nonce := uint64(1); nonce <= 2; nonce++ {
+		_, err := sm.ApplyLocal(nonce, []*types.DevshardTx{startTx(nonce)})
+		require.NoError(t, err)
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	j, err := sm.beginJournalLocked()
+	require.NoError(t, err)
+
+	sm.deleteCommittedEntryLocked(1)
+	require.NoError(t, sm.updateCommittedEntryLocked(99, sm.state.Inferences[2]))
+	require.Equal(t, len(sm.state.Inferences), len(sm.committedEntries))
+
+	_, err = sm.liveInferencesHashLocked()
+	require.Error(t, err)
+	msg := err.Error()
+	require.NotContains(t, msg, " != ")
+	require.Truef(t,
+		strings.Contains(msg, "missing live inference 1") || strings.Contains(msg, "orphan inference 99"),
+		"got %q", msg)
+
+	sm.closeJournalLocked(j)
+	require.Contains(t, sm.committedEntries, uint64(1))
+	require.NotContains(t, sm.committedEntries, uint64(99))
+	_, err = sm.liveInferencesHashLocked()
+	require.NoError(t, err)
+}
+
+// A restored blob whose keys are not the live set is refused before the
+// running sum is folded.
+func TestRestoreCommittedEntriesRejectsKeyMismatch(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	for nonce := uint64(1); nonce <= 2; nonce++ {
+		_, err := sm.ApplyLocal(nonce, []*types.DevshardTx{startTx(nonce)})
+		require.NoError(t, err)
+	}
+	before := sm.ExportCommittedEntries()
+
+	swapped := sm.ExportCommittedEntries()
+	swapped[99] = append([]byte(nil), swapped[1]...)
+	delete(swapped, 1)
+	err := sm.RestoreCommittedEntries(swapped)
+	require.ErrorContains(t, err, "committed inference entries")
+	require.Equal(t, before, sm.ExportCommittedEntries())
+}
+
+// A journaled record edit that does not refresh the committed blob fails the
+// root even though both maps still contain the id.
+func TestLiveHashRejectsStaleCommittedBytes(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{startTx(1)})
+	require.NoError(t, err)
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	j, err := sm.beginJournalLocked()
+	require.NoError(t, err)
+	defer sm.closeJournalLocked(j)
+
+	rec, ok := sm.inferenceForWriteLocked(1)
+	require.True(t, ok)
+	rec.Model = "other-model"
+	_, err = sm.liveInferencesHashLocked()
+	require.ErrorContains(t, err, "does not match live record")
+}
+
+// A journaled write that inserts a live record without a committed blob fails
+// the root even when the lengths are forced equal by an orphan committed id.
+func TestLiveHashRejectsJournaledMembershipMismatch(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{startTx(1)})
+	require.NoError(t, err)
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	j, err := sm.beginJournalLocked()
+	require.NoError(t, err)
+	defer sm.closeJournalLocked(j)
+
+	orphan := append([]byte(nil), sm.committedEntries[1]...)
+	sm.committedEntries[99] = orphan
+	sm.putInferenceLocked(2, &types.InferenceRecord{
+		Status:       types.StatusPending,
+		ExecutorSlot: 0,
+		Model:        "llama",
+		PromptHash:   []byte("prompt"),
+		InputLength:  100,
+		MaxTokens:    testutil.TestMaxTokens,
+		ReservedCost: 100 + testutil.TestMaxTokens,
+		StartedAt:    1000,
+	})
+	require.Equal(t, len(sm.state.Inferences), len(sm.committedEntries))
+	_, err = sm.liveInferencesHashLocked()
+	require.ErrorContains(t, err, "missing live inference 2")
 }
 
 // A failed observability write happens after the seal is complete, so the
-// record, its committed entry, and its XOR digest are all gone together.
+// record, its committed entry, and its point in the live sum are all gone together.
 func TestSealInferenceObsFailureKeepsLiveSetConsistent(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -334,7 +446,7 @@ func TestSealInferenceObsFailureKeepsLiveSetConsistent(t *testing.T) {
 	require.Empty(t, liveIDs(sm))
 	require.Empty(t, sm.ExportCommittedEntries())
 	sm.mu.RLock()
-	require.Equal(t, [32]byte{}, sm.liveEntryXOR)
+	require.Equal(t, [32]byte{}, encodeLivePoint(&sm.liveEntrySum))
 	sm.mu.RUnlock()
 
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{startTx(2)})

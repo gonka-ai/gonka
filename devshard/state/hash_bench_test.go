@@ -10,8 +10,8 @@ import (
 // benchHashSink keeps the hasher result alive so the compiler cannot drop the call.
 var benchHashSink []byte
 
-// BenchmarkLiveInferenceHash compares recomputing the XOR from marshaled
-// records with the hot path, which checks the id sets and returns the
+// BenchmarkLiveInferenceHash compares recomputing the point sum from marshaled
+// records with the hot path, which checks equal map lengths and returns the
 // running total.
 //
 // Sizes are 10^3, 10^4, and the 30-minute shape: 32 RPS for 30 minutes,
@@ -22,7 +22,7 @@ func BenchmarkLiveInferenceHash(b *testing.B) {
 		sm := &StateMachine{
 			state:            &types.EscrowState{Inferences: inferences},
 			committedEntries: entries,
-			liveEntryXOR:     xorInferencesHashFromEntries(entries),
+			liveEntrySum:     sumLivePointsFromEntries(entries),
 		}
 		fromStructs, err := computeInferencesHash(inferences)
 		if err != nil {
@@ -33,7 +33,7 @@ func BenchmarkLiveInferenceHash(b *testing.B) {
 			b.Fatal(err)
 		}
 		if string(fromStructs) != string(fromEntries) {
-			b.Fatal("running XOR diverged from struct marshal")
+			b.Fatal("running point sum diverged from struct marshal")
 		}
 
 		b.Run(fmt.Sprintf("recompute/n=%d", n), func(b *testing.B) {

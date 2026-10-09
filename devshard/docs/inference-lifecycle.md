@@ -133,6 +133,16 @@ authenticity.
   chain-side allowlist) and pins composition per-binary, not
   per-session.
 
+### Live-set commitment
+
+The live records that remain in the state root are committed as a sum, not as a list. `liveEntrySum` is the 32-byte encoding of one Ristretto255 point per framed record. Insert adds the point, delete subtracts it, and a replace does both. The same bytes are left alone. The total does not depend on order, so a diff updates one record in constant time.
+
+XOR of `sha256(frame)` is the same commutative shape and a weak commitment. Those digests form a vector space with a public basis. A participant who can choose two variants of each record solves, with about 257 records, which variant to keep so two different sequences share the state root. The work is linear algebra, not a 2^85 search. The point sum keeps the update rule and moves it into a prime-order group, where that subset is a discrete-log problem rather than a linear system.
+
+The commitment is a checksum wherever hosts replay signed diffs. The diffs are the source of truth on those paths, so a weak checksum would not let them accept a different sequence.
+
+It is load-bearing for catch-up from a snapshot. The snapshot carries the records and not the running total. Restore recomputes the sum and accepts the snapshot when it matches the root being caught up to. A malware feeder can supply a snapshot whose inference sequence was fabricated to match that root. Settlement funds do not move: the honest majority still has the signed diffs. The participant who restored the snapshot is bricked, excluded from the devshard, until they catch up again from an honest party.
+
 ## 3. Payload retention is epoch-scoped, not per-inference
 
 ### What changes
@@ -279,3 +289,40 @@ governance defaults only affects newly created sessions.
   version tag that the chain allowlists; v1 and v2 share the same
   opaque-`rest_hash` settlement shape, so chain code does not branch
   on the tag.
+
+## 6. Streamed inference errors become a miss (`MsgErrorMiss`)
+
+A host that returns HTTP 200 `text/event-stream` whose body is an
+OpenAI-style error envelope still signs `MsgFinishInference` (usage
+0, payload hash of the serialized events). Without a follow-up, that
+record stays `StatusFinished`: not served as a success, not charged
+as a miss, and eligible for validation.
+
+`MsgErrorMiss` is the follow-up. Apply order in one diff is
+Finish then ErrorMiss:
+
+```
+StatusStarted
+  → applyFinishInference → StatusFinished (Cost += ActualCost; surplus of ReservedCost returned)
+  → applyErrorMiss       → StatusTimedOut (Cost -= ActualCost; Balance += ActualCost; Missed++)
+```
+
+Net ledger: the client is made whole for the full `ReservedCost`, the
+executor earns nothing and takes one `Missed`. `StatusTimedOut` is
+not sampled for validation (the owed-validation set that
+`collectValidationJobs` walks holds only `StatusFinished` and
+`StatusChallenged` records) and is already seal-eligible.
+
+Gateway emit is always on for a terminal error stream (`errorTerminal`),
+including when content preceded the error. Apply and verify are
+unconditional. The served client response is still today's
+`hostApplicationError`; only accounting changes.
+
+Observability: stage `error_miss` (`inference_id`/`nonce`, `host`,
+`error_type`, `error_code`, `response_hash`, `votes`, `accepted`)
+and `devshard_inference_timeouts_total{reason="error"}`. Rejected
+verifier votes increment
+`devshard_gateway_error_miss_verify_rejects_total{cause,completeness}`
+(`cause` is `no_finish_tx` / `no_payload` / `sig` / `hash_mismatch` /
+`not_error_body`; `completeness` is `cancelled` / `drift` /
+`truncated`). Alert only on `{cause=hash_mismatch,completeness=drift}`.
