@@ -104,8 +104,8 @@ func TestPruneEpochRecordsBacklogBoundedPerBlock(t *testing.T) {
 
 // Seed and CPoC event pruners run in the Prune rotation and draw on the shared
 // PruneWorkPerBlock budget: a block where the inference backlog goes first and takes
-// the whole budget removes no seeds; a block where the seed pruner goes first removes
-// its PruningMax and leaves the rest of the budget to the others.
+// the whole budget removes no seeds or events; a block where the rotation reaches
+// them before the inference pruner removes PruningMax of each and leaves the rest.
 func TestPruneEpochRecordsShareBudget(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
@@ -120,18 +120,26 @@ func TestPruneEpochRecordsShareBudget(t *testing.T) {
 	const seeds = 3000
 	for i := 0; i < seeds; i++ {
 		require.NoError(t, k.SetRandomSeed(ctx, types.RandomSeed{Participant: seqAddr(i).String(), EpochIndex: 1, Signature: "abcd"}))
+		require.NoError(t, k.SetConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{EpochIndex: 1, EventSequence: uint64(i)}))
+	}
+	cpocEvents := func() int {
+		events, err := k.GetAllConfirmationPoCEventsForEpoch(ctx, 1)
+		require.NoError(t, err)
+		return len(events)
 	}
 
-	// Rotation order in Prune: the inference pruner is at index 0, the seed pruner at 11.
-	const pruners = 13
+	// The inference pruner is first in the Prune list, so it goes first at height 0
+	// and last at height 1, whatever the length of the list.
 	inf := countInferencesToPrune(t, k, ctx, 5)
-	require.NoError(t, k.Prune(ctx.WithBlockHeight(pruners*7), current))
+	require.NoError(t, k.Prune(ctx.WithBlockHeight(0), current))
 	inf2 := countInferencesToPrune(t, k, ctx, 5)
 	require.Equal(t, int(keeper.PruneWorkPerBlock), inf-inf2)
 	require.Equal(t, seeds, countPrefixed(t, ctx, k.RandomSeeds, 1))
+	require.Equal(t, seeds, cpocEvents())
 
-	require.NoError(t, k.Prune(ctx.WithBlockHeight(pruners*7+11), current))
+	require.NoError(t, k.Prune(ctx.WithBlockHeight(1), current))
 	inf3 := countInferencesToPrune(t, k, ctx, 5)
 	require.Equal(t, seeds-int(keeper.EpochRecordPruningMaxPerBlock), countPrefixed(t, ctx, k.RandomSeeds, 1))
-	require.Equal(t, int(keeper.PruneWorkPerBlock-keeper.EpochRecordPruningMaxPerBlock), inf2-inf3)
+	require.Equal(t, seeds-int(keeper.EpochRecordPruningMaxPerBlock), cpocEvents())
+	require.Equal(t, int(keeper.PruneWorkPerBlock-2*keeper.EpochRecordPruningMaxPerBlock), inf2-inf3)
 }
