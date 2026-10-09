@@ -1455,15 +1455,15 @@ func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	}, nil))
 
 	sourcePerfPath := filepath.Join(t.TempDir(), "perf.db")
-	sourcePerf, err := NewPerfStore(sourcePerfPath)
+	sourcePerf, err := newSQLitePerfStore(sourcePerfPath)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, sourcePerf.Close())
 	})
 	startedAt := time.Now().Add(-time.Minute)
 	completedAt := time.Now()
-	require.NoError(t, sourcePerf.UpsertAccountingRequest("req-1", "44", "Kimi/Test", startedAt))
-	require.NoError(t, sourcePerf.UpsertAccountingAttempt(RequestAccountingAttempt{
+	require.NoError(t, sourcePerf.UpsertAccountingRequest(context.Background(), "req-1", "44", "Kimi/Test", startedAt))
+	require.NoError(t, sourcePerf.UpsertAccountingAttempt(context.Background(), RequestAccountingAttempt{
 		RequestID:      "req-1",
 		EscrowID:       "44",
 		Nonce:          7,
@@ -1472,9 +1472,9 @@ func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 		Probe:          true,
 		CreatedAt:      startedAt,
 	}))
-	require.NoError(t, sourcePerf.CompleteAccountingRequest("req-1", "44", 7, "winner", "settled", completedAt))
+	require.NoError(t, sourcePerf.CompleteAccountingRequest(context.Background(), "req-1", "44", 7, "winner", "settled", completedAt))
 
-	destPerf, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	destPerf, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, destPerf.Close())
@@ -1542,7 +1542,7 @@ func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	require.False(t, state.Devshards[0].Active)
 	require.Equal(t, storagePath, state.Devshards[0].StoragePath)
 
-	imported, found, err := destPerf.FindAccountingRequest("req-1", "44")
+	imported, found, err := destPerf.FindAccountingRequest(context.Background(), "req-1", "44")
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "Kimi/Test", imported.Model)
@@ -1826,7 +1826,7 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 
 func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testing.T) {
 	var calls atomic.Int32
-	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	store, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	perf := NewPerfTracker(store)
@@ -1881,7 +1881,7 @@ func TestGatewayPooledChatCachesNonStreamingResponseWithFreshRequestID(t *testin
 	require.NotEqual(t, firstRequestID, cachedRequestID)
 	require.EqualValues(t, 1, calls.Load())
 
-	accounting, ok, err := perf.FindAccountingRequest(cachedRequestID, "12")
+	accounting, ok, err := perf.FindAccountingRequest(context.Background(), cachedRequestID, "12")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, cachedRequestID, accounting.RequestID)

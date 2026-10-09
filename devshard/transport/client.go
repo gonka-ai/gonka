@@ -1094,6 +1094,22 @@ func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, di
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
+// RefusalQueryBudget is the tip-read budget a refused-timeout verifier uses.
+func (c *HTTPClient) RefusalQueryBudget() time.Duration {
+	if c == nil || c.config.QueryTimeout <= 0 {
+		return 30 * time.Second
+	}
+	return c.config.QueryTimeout
+}
+
+// RefusalVerifyBudget bounds one refused-timeout check, including tip rechecks.
+func (c *HTTPClient) RefusalVerifyBudget() time.Duration {
+	if c == nil || c.config.VerifyTimeout <= 0 {
+		return 3 * time.Minute
+	}
+	return c.config.VerifyTimeout
+}
+
 // GetDiffs fetches one page of stored diffs. A range wider than one page
 // returns ErrDiffPageLimit. Walk a longer journal with GetDiffPages.
 func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error) {

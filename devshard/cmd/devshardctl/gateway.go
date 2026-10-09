@@ -68,7 +68,7 @@ type Gateway struct {
 	settings                     GatewaySettings
 	store                        GatewayStore
 	perf                         *PerfTracker
-	perfStore                    *PerfStore
+	perfStore                    PerfStore
 	perfPruner                   *perfPruner
 	accounting                   *accounting.Recorder
 	chatCache                    *chatResponseCache
@@ -4085,7 +4085,7 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 	accountingAttemptsImported := int64(0)
 	perfPath := strings.TrimSpace(req.PerfPath)
 	if perfPath != "" && g.perfStore != nil {
-		accountingImported, accountingAttemptsImported, err = g.perfStore.ImportRequestAccounting(perfPath, record.ID)
+		accountingImported, accountingAttemptsImported, err = g.perfStore.ImportRequestAccounting(context.WithoutCancel(r.Context()), perfPath, record.ID)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q,"id":%q,"active":%t}}`, err.Error(), record.ID, active), http.StatusInternalServerError)
 			return

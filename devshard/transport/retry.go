@@ -186,6 +186,8 @@ func connectAdmissionPath(escrowID, procedure string) string {
 		return "/sessions/" + escrowID + "/diffs"
 	case rpcpbconnect.SessionServiceGetMempoolProcedure:
 		return "/sessions/" + escrowID + "/mempool"
+	case rpcpbconnect.SessionServiceGetStateProcedure:
+		return "/sessions/" + escrowID + "/state"
 	case rpcpbconnect.SessionServiceGetSignaturesProcedure:
 		return "/sessions/" + escrowID + "/signatures"
 	case rpcpbconnect.SessionServiceVerifyTimeoutProcedure:

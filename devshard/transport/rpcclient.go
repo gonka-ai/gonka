@@ -448,6 +448,40 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	return diffs, nil
 }
 
+// SessionHead is the executor tip read for a refused-timeout retry. It calls
+// SessionService.GetState on the peer session, using the gRPC codec when the
+// connection has it. The session token and AllowsSender gate that RPC.
+func (c *RPCClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
+	if c == nil || !c.Uses(EndpointState) {
+		return 0, nil, fmt.Errorf("session head requires the state rpc")
+	}
+	timeout := c.config.QueryTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var nonce uint64
+	var root []byte
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetStateProcedure, func() error {
+		req, err := tokenRequest(c, &rpcpb.GetStateRequest{})
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionClient().GetState(ctx, req)
+		if err != nil {
+			return err
+		}
+		nonce = resp.Msg.GetNonce()
+		root = append([]byte(nil), resp.Msg.GetStateRoot()...)
+		return nil
+	})
+	if err != nil {
+		return 0, nil, fmt.Errorf("get state: %w", err)
+	}
+	return nonce, root, nil
+}
+
 func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error) {
 	if !c.Uses(EndpointMempool) {
 		return c.HTTPClient.GetMempool(ctx)

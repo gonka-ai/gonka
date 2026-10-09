@@ -474,6 +474,15 @@ func (h *Host) StateRoot() ([]byte, error) {
 	return h.sm.ComputeStateRoot()
 }
 
+// StateHead is the applied nonce and the state root a verifier checks before
+// sending the diffs the executor does not have yet.
+func (h *Host) StateHead() (uint64, []byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	root, err := h.sm.ComputeStateRoot()
+	return h.sm.LatestNonce(), root, err
+}
+
 func (h *Host) MempoolTxs() []*types.DevshardTx {
 	h.mu.Lock()
 	defer h.mu.Unlock()

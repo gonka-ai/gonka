@@ -125,14 +125,29 @@ type ExecutorClient interface {
 	// it verifies the payload, returns a signed receipt, and triggers
 	// execution. A nil payload only binds and catches up: no receipt, no
 	// execution. mempool is the executor pool after that (ConfirmStart and
-	// FinishInference for this inference). A refused vote challenges once,
-	// with the payload and no diffs, and copies a ConfirmStart only after
-	// the receipt verifies for this escrow, this inference, and this executor.
-	// An execution vote challenges once, with a nil payload and no diffs, and
-	// rejects only when the returned pool contains a MsgFinishInference for
-	// this escrow and inference that would apply to the started record. That
-	// finish is copied into the caller's sink so the user can sequence it.
+	// FinishInference for this inference). A refused vote copies a ConfirmStart
+	// only after the receipt verifies for this escrow, this inference, and
+	// this executor. VerifyRefusedProgress sends the diffs after a verified
+	// executor tip and retries a matching advance; VerifyRefusedTimeout
+	// challenges once with no diffs. An execution vote challenges once, with
+	// a nil payload and no diffs, and rejects only when the returned pool
+	// contains a MsgFinishInference for this escrow and inference that would
+	// apply to the started record. That finish is copied into the caller's
+	// sink so the user can sequence it.
 	ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) (receipt []byte, mempool []*types.DevshardTx, err error)
+}
+
+// SessionTip is an executor client that can report its applied nonce and state root.
+type SessionTip interface {
+	SessionHead(ctx context.Context) (nonce uint64, stateRoot []byte, err error)
+}
+
+// RefusalJournal is the verifier's stored diff history for one escrow.
+type RefusalJournal interface {
+	// Anchor reports whether nonce is stored and its state hash equals root.
+	Anchor(nonce uint64, root []byte) (bool, error)
+	// Diffs returns the contiguous diffs in [from, to]. from > to is empty.
+	Diffs(from, to uint64) ([]types.Diff, error)
 }
 
 // TxSink receives mempool txs copied from a challenge-receipt response.
@@ -167,7 +182,7 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 //  2. Check deadline has passed.
 //  3. Check local mempool for a verified MsgConfirmStart -- if found, reject.
 //  4. Validate payload against on-chain record (same checks executor does).
-//  5. Challenge the executor once, with the payload and no diffs.
+//  5. Challenge the executor once, with the payload and the supplied diffs.
 //  6. If the executor produces a receipt signed for this escrow and this
 //     inference by the executor -> reject (it has the inference and will compute).
 //  7. If the executor is unreachable, or the receipt does not verify -> accept.
@@ -183,7 +198,7 @@ func VerifyRefusedTimeout(
 	config types.SessionConfig,
 	nowUnix int64,
 ) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, ev, config, nowUnix)
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, executorClient, ingest, ev, config, nowUnix)
 }
 
 type refusedChallenge int
@@ -200,6 +215,7 @@ func verifyRefusedTimeout(
 	inferenceID uint64,
 	payload *InferencePayload,
 	localMempool []*types.DevshardTx,
+	diffs []types.Diff,
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
@@ -238,10 +254,13 @@ func verifyRefusedTimeout(
 	if executorClient == nil {
 		return true, nil
 	}
-	return finishRefusedChallenge(challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev))
+	return finishRefusedChallenge(challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, diffs, executorClient, ingest, ev))
 }
 
-func finishRefusedChallenge(outcome refusedChallenge) (bool, error) {
+func finishRefusedChallenge(outcome refusedChallenge, callErr error) (bool, error) {
+	if callErr != nil {
+		return true, nil
+	}
 	return outcome != refusedReceipt, nil
 }
 
@@ -255,20 +274,20 @@ func challengeRefused(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-) refusedChallenge {
+) (refusedChallenge, error) {
 	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	if err != nil {
-		// Executor unreachable or internal error -> accept timeout.
-		return refusedUnreachable
+		// The caller decides whether this error is an answer or no HTTP response.
+		return refusedUnreachable, err
 	}
 	if len(receipt) == 0 {
-		return refusedNoReceipt
+		return refusedNoReceipt, nil
 	}
 	// The receipt counts only as the ExecutorSig of a queued ConfirmStart
 	// that verifies for this escrow and this inference.
 	confirmTx := verifiedConfirm(ev, inferenceID, rec, receipt, mempool)
 	if confirmTx == nil {
-		return refusedNoReceipt
+		return refusedNoReceipt, nil
 	}
 	// Copy the verified txs. Same bytes the executor queued — do not mint a
 	// new ConfirmStart from the receipt, and do not copy anything unverified.
@@ -278,7 +297,7 @@ func challengeRefused(
 			ingest.AddTx(finishTx)
 		}
 	}
-	return refusedReceipt
+	return refusedReceipt, nil
 }
 
 // VerifyExecutionTimeout checks if an execution timeout is valid.
