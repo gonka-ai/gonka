@@ -1287,7 +1287,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
 	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
 
-	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now()}
+	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now(), done: make(chan struct{})}
 	// A role chunk: forwarded as an SSE event, but carrying no content.
 	inf.lastChunkAt.Store(time.Now().Add(-time.Minute).UnixNano())
 
@@ -1301,7 +1301,7 @@ func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
 
 	// Before any event at all the attempt is still the receipt / first-token
 	// escalations' business, and nothing is armed here.
-	fresh := &inflight{hostIdx: 0, nonce: 2, sendTime: time.Now()}
+	fresh := &inflight{hostIdx: 0, nonce: 2, sendTime: time.Now(), done: make(chan struct{})}
 	_, _, ok = interChunkStallDeadline(fresh)
 	require.False(t, ok)
 	require.False(t, fresh.stallCancelExpired(time.Now()))
@@ -1316,7 +1316,7 @@ func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
 func TestInterChunkStallCanceledAfterDoneMetaTail(t *testing.T) {
 	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
 
-	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now()}
+	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now(), done: make(chan struct{})}
 	inf.lastChunkAt.Store(time.Now().Add(-time.Minute).UnixNano())
 	inf.streamTerminated.Store(true)
 
@@ -1417,8 +1417,14 @@ func (c delayedRoleChunkThenStallClient) Send(ctx context.Context, req host.Host
 // lastChunkAt + InterChunkStallTimeout.
 //
 // The escalation fallback is deliberately set far beyond the cancel threshold
-// (4s vs 100ms) so that the old code cannot cancel early by accident: the only way
-// to land near the threshold is for the chunk itself to wake the loop.
+// (5s vs 100ms) so that the old code cannot cancel early by accident: the only way
+// to land near the threshold is for the chunk itself to wake the loop. The timer
+// that actually rescues the old code is the receipt escalation, not the
+// first-token one -- the role-only delta sets hasFirstToken(), which disarms the
+// first-token trigger, leaving the receipt escalation at ReceiptTimeoutMS as the
+// next wake (the pre-fix run logs decision=receipt_timeout delay_ms=5000, then
+// attempt_stall_canceled with since_last_chunk_ms=4994 because the deadline it
+// re-derives against is already long past).
 func TestRunInference_PendingRoleChunkStallCancelledAtDeadline(t *testing.T) {
 	applyRedundancySettingsForTest(t, RedundancySettings{
 		ReceiptTimeoutMS:              5000,
