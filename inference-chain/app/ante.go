@@ -1,9 +1,14 @@
 package app
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math/big"
+	"strings"
 
 	ibcante "github.com/cosmos/ibc-go/v8/modules/core/ante"
 	"github.com/cosmos/ibc-go/v8/modules/core/keeper"
@@ -50,11 +55,130 @@ type LiquidityPoolFeeBypassDecorator struct {
 	Priority        int64  // optional priority boost so zero-fee txs aren't starved
 }
 
-// minimal struct to decode {"send":{"contract":"..."}} from cw20 base
-type cw20SendEnvelope struct {
-	Send struct {
-		Contract string `json:"contract"`
-	} `json:"send"`
+const maxBypassMsgBytes = 4096
+
+const maxUint256Digits = 78
+
+var maxUint256 = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+
+func strictObject(raw []byte) (map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, false
+	}
+	fields := make(map[string]json.RawMessage)
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, false
+		}
+		if _, dup := fields[key]; dup {
+			return nil, false
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, false
+		}
+		fields[key] = value
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, false
+	}
+	return fields, true
+}
+
+func singleVariant(raw []byte) (string, json.RawMessage, bool) {
+	if len(raw) > maxBypassMsgBytes {
+		return "", nil, false
+	}
+	obj, ok := strictObject(raw)
+	if !ok || len(obj) != 1 {
+		return "", nil, false
+	}
+	for k, v := range obj {
+		return k, v, true
+	}
+	return "", nil, false
+}
+
+func jsonString(raw json.RawMessage) (string, bool) {
+	var s string
+	if len(raw) == 0 || raw[0] != '"' {
+		return "", false
+	}
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+func isPositiveUint256(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	s = strings.TrimLeft(s, "0")
+	if s == "" || len(s) > maxUint256Digits {
+		return false
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	return ok && n.Cmp(maxUint256) <= 0
+}
+
+func isPoolPurchaseWithNative(exec *wasmtypes.MsgExecuteContract) bool {
+	variant, body, ok := singleVariant(exec.Msg)
+	if !ok || variant != "purchase_with_native" {
+		return false
+	}
+	fields, ok := strictObject(body)
+	if !ok || len(fields) != 0 {
+		return false
+	}
+	if len(exec.Funds) != 1 {
+		return false
+	}
+	coin := exec.Funds[0]
+	return strings.HasPrefix(coin.Denom, "ibc/") && coin.Amount.IsPositive()
+}
+
+func cw20SendTarget(raw []byte) (string, bool) {
+	variant, body, ok := singleVariant(raw)
+	if !ok || variant != "send" {
+		return "", false
+	}
+	fields, ok := strictObject(body)
+	if !ok || len(fields) != 3 {
+		return "", false
+	}
+	contract, ok := jsonString(fields["contract"])
+	if !ok || contract == "" {
+		return "", false
+	}
+	amount, ok := jsonString(fields["amount"])
+	if !ok || !isPositiveUint256(amount) {
+		return "", false
+	}
+	msg, ok := jsonString(fields["msg"])
+	if !ok {
+		return "", false
+	}
+	if _, err := base64.StdEncoding.DecodeString(msg); err != nil {
+		if _, err := base64.RawStdEncoding.DecodeString(msg); err != nil {
+			return "", false
+		}
+	}
+	return contract, true
 }
 
 func isAllWasmExec(tx sdk.Tx) bool {
@@ -93,18 +217,13 @@ func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg
 
 	// Path A: direct execute to pool
 	if exec.Contract == poolAddress {
-		return true
+		return isPoolPurchaseWithNative(exec)
 	}
 
 	// Path B: cw20::Send to pool (exec is sent to cw20)
-	var env cw20SendEnvelope
-	if err := json.Unmarshal(exec.Msg, &env); err == nil {
-		if env.Send.Contract != "" && env.Send.Contract == poolAddress {
-			// Only allow if the caller contract is a wrapped token (by code id)
-			if isWrappedByCodeID(exec.Contract) {
-				return true
-			}
-		}
+	if target, ok := cw20SendTarget(exec.Msg); ok && target == poolAddress {
+		// Only allow if the caller contract is a wrapped token (by code id)
+		return isWrappedByCodeID(exec.Contract)
 	}
 	return false
 }
