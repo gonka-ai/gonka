@@ -126,8 +126,8 @@ Confirmed in `versioned/internal/config/config.go` and `versiond-router/`:
 - `VERSIOND_ORACLE_URL` (**required**), `VERSIOND_BINARY_NAME` (default `devshard`),
   `VERSIOND_OVERRIDE_<v2>` (local binary), `VERSIOND_FORCE`, `VERSIOND_BIN_DIR`,
   `VERSIOND_DATA_DIR`, `VERSIOND_POLL_INTERVAL`. versiond listens on `:8080`.
-- versiond-router renders `VERSIOND_HOSTS` + `VERSIOND_PORT`, sticky `hash $sticky_key
-  consistent` on escrow id from `/<version>/sessions/<id>/…`.
+- versiond-router resolves `VERSIOND_POOL_HOST`, health-checks each address and
+  consistently hashes the escrow id from `/<version>/sessions/<id>/…`.
 - versiond polls `VERSIOND_ORACLE_URL` for the **approved-versions list** (which devshard
   versions to spawn). In testenv this oracle can be served by **mock-dapi** (`/versions`)
   or a tiny static stub. Note: this is a *separate* surface from the gRPC
@@ -860,7 +860,8 @@ injection via env and `/testenv/fault`.
 3. ✅ **Phase 6b keyring provisioning:** `testenv/keyring/materialize.go` — `gencompose` writes
    `./keyring/<host-id>/` Cosmos file keyrings from `hosts[].private_key_hex`; address checked
    against `hosts[].address`.
-4. ✅ `versiond-router`: `VERSIOND_HOSTS` from `hosts[].id`, `VERSIOND_PORT=8080`, sticky nginx image.
+4. ✅ `versiond-router`: pool aliases from `hosts[].id`, `VERSIOND_POOL_HOST=versiond-pool`,
+   `VERSIOND_PORT=8080`, sticky HAProxy image.
 5. ✅ Separate per-host `./data/<id>` dirs; router + versiond patterns from `local-test-net` /
    `deploy/join` overlays. **No `api` (dapi) service.**
 
@@ -1002,14 +1003,17 @@ never on a Host seam.
 | A2 | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | ✅ **DONE** |
 | A3 | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | ✅ **DONE** |
 | A4 | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | ✅ **DONE** |
+| A5 | Error-finish miss | `mock-openai` `stream_error_envelope` (HTTP 200 SSE error; companion to A2) → client `hostApplicationError`; executor `Missed++`; no validation job; client refunded; `HostStats.Cost` unchanged | ✅ **DONE** |
 
 Helpers: `citest/harness/adversarial.go`. Fault APIs: `POST /testenv/escrow`, `/testenv/grantees`
 on mock-chain (proxied by mock-dapi); `POST /testenv/fault` on mock-openai.
 
-Run: `make citest-adversarial` or
-`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_'`.
+A5 is specified as step 10 of [`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md). It boots a **3-host** stack (`BootErrorMissAdversarialStack`) so two non-executor verifiers can exceed `VoteThreshold`. Settlement is asserted via live `HostStats.Missed` (what the settlement tx copies), not a chain settlement tx.
 
-**Exit:** ≥1 multi-host adversarial scenario in Go citest ✅ (A1–A4 on 2× versiond stack).
+Run: `make citest-adversarial` or
+`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_'`.
+
+**Exit:** ≥1 multi-host adversarial scenario in Go citest ✅ (A1–A4 on 2× versiond stack; A5 on 3-host stack).
 
 ---
 
@@ -1129,7 +1133,7 @@ wired in Phase 11 (`.github/workflows/devshard-testenv.yml`); integration on dis
 | mock-chain CometBFT RPC / devshardd events (3b) ✅ | `go test ./devshard/testenv/mockchain/rpcface/... -count=1`; `make citest-stack` |
 | mock-chain LCD REST / gateway escrow tx (3c) ✅ | `go test ./devshard/testenv/mockchain/restface/... -count=1`; `TestGatewayChat` |
 | stack citest (Phase 8) ✅ | `make citest-stack` |
-| adversarial citest (Phase 9) ✅ | `make citest-adversarial` (A1–A4) |
+| adversarial citest (Phase 9) ✅ | `make citest-adversarial` (A1–A5) |
 | observability smoke (Phase 10) ✅ | `make citest-observability` (O1) |
 | common runtimeconfig client (Phase 12) ✅ | `go test ./common/runtimeconfig/client/... -count=1` |
 | CI unit (Phase 11) ✅ | `make -C devshard ci-testenv-unit` |
@@ -1170,7 +1174,7 @@ Phase 5   mock-dapi + mock-openai (mounts chainoracle)  ✅ DONE
 Phase 6   gencompose versiond×N + router + devshardctl + keyrings  ✅ DONE
 Phase 7   devshardctl gateway in compose             ✅ DONE
 Phase 8   Go citest harness + named stack behavior tests          ✅ DONE
-Phase 9   adversarial scenarios (A1–A4 ✅)
+Phase 9   adversarial scenarios (A1–A5 ✅)
 Phase 10  observability overlay (optional)              ✅ DONE
 Phase 11  CI / Makefile / runbook                       ✅ DONE
 Phase 12  client long-poll → common (remainder tracked) ✅ client DONE

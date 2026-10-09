@@ -77,7 +77,7 @@ func ComputeStatus(
 		return types.ParticipantStatus_ACTIVE, AlgorithmError, newStats
 	}
 
-	failedConfirmationPoCDecision := getConfirmationPoCStatus(&newStats, confirmationPocParams)
+	failedConfirmationPoCDecision := ConfirmationPoCStatus(&newStats, confirmationPocParams)
 	if failedConfirmationPoCDecision == Fail {
 		return types.ParticipantStatus_INACTIVE, FailedConfirmationPoC, newStats
 	} else if failedConfirmationPoCDecision == Error {
@@ -135,11 +135,13 @@ func getInvalidationStatus(newStats *types.CurrentEpochStats, oldStats types.Cur
 	return invalidationSprt.Decision()
 }
 
-func getConfirmationPoCStatus(newStats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) Decision {
+// ConfirmationPoCStatus is the alpha test used by ComputeStatus and PoCChallenge.
+// Nil or zero alpha, and a missing ratio, are Pass. ratio < alpha is Fail.
+func ConfirmationPoCStatus(newStats *types.CurrentEpochStats, parameters *types.ConfirmationPoCParams) Decision {
 	if parameters == nil || parameters.AlphaThreshold == nil || parameters.AlphaThreshold.ToDecimal().Equal(decimal.Zero) {
 		return Pass
 	}
-	if newStats.ConfirmationPoCRatio == nil {
+	if newStats == nil || newStats.ConfirmationPoCRatio == nil {
 		return Pass
 	}
 	if newStats.ConfirmationPoCRatio.ToDecimal().LessThan(parameters.AlphaThreshold.ToDecimal()) {

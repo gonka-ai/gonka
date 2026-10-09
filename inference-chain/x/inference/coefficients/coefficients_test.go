@@ -294,3 +294,41 @@ func TestEncodeDecimalPreservesMaximumPrecision(t *testing.T) {
 	require.Equal(t, &types.Decimal{Value: 1212345678901234567, Exponent: -17}, encoded)
 	require.Equal(t, "12.123456789012345670", value.String())
 }
+
+func TestGovernanceBoundsCarryAndClampPreviousBase(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		min, max     *types.Decimal
+		rawA, rawB   int64
+		expectedBase *types.Decimal
+		expectedStep *types.Decimal
+		expectedSign int32
+		clamped      bool
+	}{
+		{"wider bounds carry base and step", dec(1, -1), dec(9, -1), 10, 90, dec(6324, -4), dec(2, -2), 1, false},
+		{"raised floor clamps inside deadband", dec(7, -1), dec(9, -1), 50, 50, dec(7, -1), dec(25, -3), 0, true},
+		{"lowered ceiling clamps inside deadband", dec(1, -1), dec(6, -1), 50, 50, dec(6, -1), dec(25, -3), 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			config := params(
+				model("a", tc.min, tc.max, dec(1, 0), 5000),
+				model("b", dec(1, 0), dec(1, 0), dec(1, 0), 5000),
+			)
+			require.NoError(t, config.Validate())
+			previous := state("a", dec(62, -2), dec(1, -2), 1)
+			previous.EffectiveCoefficient = dec(55, -2)
+			totals := map[string]int64{"a": tc.rawA, "b": tc.rawB}
+			result, err := calculateForTest(config, []*types.ConfirmationWeightScale{previous}, totals, totals, nil, true)
+			require.NoError(t, err)
+			got := stateMap(result.Scales)["a"]
+			require.Equal(t, tc.expectedBase, got.BaseCoefficient)
+			require.Equal(t, tc.expectedStep, got.AdaptiveStep)
+			require.Equal(t, tc.expectedSign, got.PrevSign)
+			if tc.clamped {
+				require.Equal(t, []string{"a"}, result.ClampedModels)
+			} else {
+				require.Empty(t, result.ClampedModels)
+			}
+		})
+	}
+}

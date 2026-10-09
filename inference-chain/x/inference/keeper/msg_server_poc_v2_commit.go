@@ -12,6 +12,10 @@ import (
 
 const PocFailureTag = "[PoC Failure]"
 
+// pocV2MaxTreeDepth is the maximum SMST depth a PoC v2 commit may bind.
+// Matches decentralized-api/poc/artifacts.smstMaxDepth.
+const pocV2MaxTreeDepth uint32 = 32
+
 type pocV2CommitUpdate struct {
 	modelID    string
 	entry      *types.PoCV2CommitEntry
@@ -178,6 +182,12 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	if len(entry.RootHash) != 32 {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("root_hash must be 32 bytes, got %d", len(entry.RootHash)))
 	}
+	if entry.TreeDepth < 1 || entry.TreeDepth > pocV2MaxTreeDepth {
+		return pocV2CommitUpdate{}, sdkerrors.Wrap(
+			types.ErrIllegalState,
+			fmt.Sprintf("tree_depth must be in 1..%d, got %d", pocV2MaxTreeDepth, entry.TreeDepth),
+		)
+	}
 
 	modelID := entry.ModelId
 	if modelID == "" {
@@ -196,6 +206,12 @@ func (k msgServer) buildPoCV2CommitUpdate(
 			return pocV2CommitUpdate{}, sdkerrors.Wrap(
 				types.ErrIllegalState,
 				fmt.Sprintf("count must increase: got %d, last recorded %d", entry.Count, existing.Count),
+			)
+		}
+		if entry.TreeDepth != existing.TreeDepth {
+			return pocV2CommitUpdate{}, sdkerrors.Wrap(
+				types.ErrIllegalState,
+				fmt.Sprintf("tree_depth must stay %d, got %d", existing.TreeDepth, entry.TreeDepth),
 			)
 		}
 		countDelta = uint64(entry.Count - existing.Count)
@@ -225,6 +241,7 @@ func (k msgServer) persistPoCV2CommitUpdates(
 			RootHash:                 update.entry.RootHash,
 			CommitBlockHeight:        currentBlockHeight,
 			ModelId:                  update.modelID,
+			TreeDepth:                update.entry.TreeDepth,
 		}
 
 		if err := k.PoCV2StoreCommits.Set(ctx, pk, commit); err != nil {

@@ -112,6 +112,15 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgDeclarePoCIntent{},
 	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgCreatePoCChallenge{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgPoCChallengeStoreCommit{},
+	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgSubmitPoCChallengeValidations{},
+	)
 
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgUpdateParams{},

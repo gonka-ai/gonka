@@ -65,7 +65,6 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	}
 
 	// this line is used by starport scaffolding # genesis/module/init
-	// FeeParams ship with an empty enabled_fee_groups list (no group charges).
 	importDevshardApprovedVersions(ctx, k, &genState)
 	if err := k.SetParams(ctx, genState.Params); err != nil {
 		//nolint:forbidigo // genesis code

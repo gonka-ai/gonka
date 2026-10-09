@@ -337,7 +337,6 @@ func TestIsExemptMessageType(t *testing.T) {
 
 	// Not exempt
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitHardwareDiff{}))
-	require.False(t, inferencetypes.IsNetworkDuty(&blstypes.MsgRequestThresholdSignature{}))  // open to anyone, no rate limit
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgPoCV2StoreCommit{}))     // intentional sybil-defense fee via chargePoCV2StoreCommitGas
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
 	require.False(t, inferencetypes.IsNetworkDuty(&inferencetypes.MsgSubmitNewParticipant{}))
@@ -545,7 +544,7 @@ func TestDefaultFeeParams(t *testing.T) {
 	require.Equal(t, uint64(0), fp.MinGasPriceNgonka)
 	require.Equal(t, uint64(500_000), fp.BaseValidationGas)
 	require.Equal(t, uint64(100), fp.GasPerPocCount)
-	require.Empty(t, fp.EnabledFeeGroups)
+	require.Equal(t, []string{inferencetypes.FeeGroupEpoch, inferencetypes.FeeGroupCosmos}, fp.EnabledFeeGroups)
 	require.NoError(t, fp.Validate())
 	require.NotNil(t, fp.GroupByName(inferencetypes.FeeGroupEpoch))
 }
@@ -568,8 +567,8 @@ func TestFeeParamsMarshalRoundtrip(t *testing.T) {
 func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 	exempt := inferencetypes.IsNetworkDuty
 	fp := inferencetypes.DefaultFeeParams()
-	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
-	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
+	require.Equal(t, uint64(1), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
+	require.Equal(t, uint64(1), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
 
 	epoch := fp.GroupByName(inferencetypes.FeeGroupEpoch)
 	require.NotNil(t, epoch)
@@ -578,6 +577,9 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}, exempt))
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSetClaimRecipients{}}, exempt))
+	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitUnitOfComputePriceProposal{}}, exempt))
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgUpdateParams{}}, exempt), "governance stays free while disabled")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSubmitSeed{}}, exempt), "seed stays ante-exempt")
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt), "cosmos off")
 	require.Equal(t, uint64(10), fp.EnabledPayingPrice([]sdk.Msg{
@@ -587,12 +589,16 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 
 	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupCosmos}
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}, exempt))
-	cosmos := &inferencetypes.FeeGroup{Name: inferencetypes.FeeGroupCosmos, MinGasPrice: 7}
-	fp.Groups = append(fp.Groups, cosmos)
+	fp.GroupByName(inferencetypes.FeeGroupCosmos).MinGasPrice = 7
 	require.Equal(t, uint64(7), fp.EnabledPayingPrice([]sdk.Msg{&banktypes.MsgSend{}}, exempt))
 
 	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupBLS}
 	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&blstypes.MsgSubmitDealerPart{}}, exempt), "bls duties still exempt")
+
+	fp.Groups = append(fp.Groups, &inferencetypes.FeeGroup{Name: inferencetypes.FeeGroupGovernance, MinGasPrice: 3})
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupGovernance}
+	require.Equal(t, uint64(3), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgUpdateParams{}}, exempt), "direct governance msg pays only when the group is enabled")
+	require.Equal(t, uint64(0), fp.EnabledPayingPrice([]sdk.Msg{&inferencetypes.MsgSetClaimRecipients{}}, exempt), "epoch msg does not pay the governance price")
 }
 
 func TestGonkaFeeChecker_MsgExecWithoutCodecRejected(t *testing.T) {
@@ -782,4 +788,29 @@ func TestFeeGroupRepeatedLenDecorator_SkipsStoreCommit(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, storetypes.Gas(0), rec.extra, "stored_delta still belongs to the StoreCommit handler")
+}
+
+func TestMaxTxFeeDecorator(t *testing.T) {
+	for _, simulate := range []bool{false, true} {
+		for _, checkTx := range []bool{false, true} {
+			for _, amount := range []int64{0, 1_000_000_000, MaxTxFeeNgonka, MaxTxFeeNgonka + 1, 10_000_000_000_000} {
+				tx := testFeeTx{
+					msgs: []sdk.Msg{&banktypes.MsgSend{Amount: sdk.NewCoins(sdk.NewInt64Coin("ngonka", 1_000_000_000_000))}},
+					fee:  sdk.NewCoins(sdk.NewInt64Coin("ngonka", amount)), gas: 1_000_000_000,
+				}
+				called := false
+				_, err := (MaxTxFeeDecorator{}).AnteHandle(newTestContext().WithIsCheckTx(checkTx), tx, simulate, func(ctx sdk.Context, tx sdk.Tx, sim bool) (sdk.Context, error) {
+					called = true
+					return ctx, nil
+				})
+				if amount > MaxTxFeeNgonka {
+					require.ErrorContains(t, err, "transaction fee exceeds maximum")
+					require.False(t, called, "must reject before fee deduction")
+				} else {
+					require.NoError(t, err)
+					require.True(t, called)
+				}
+			}
+		}
+	}
 }

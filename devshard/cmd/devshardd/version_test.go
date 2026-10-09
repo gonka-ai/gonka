@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ func TestMaybePrintStorageMode(t *testing.T) {
 		name     string
 		envMode  string
 		pgHost   string
+		envHA    string
 		want     string
 		wantCode int
 		wantErr  string
@@ -20,6 +22,7 @@ func TestMaybePrintStorageMode(t *testing.T) {
 		{name: "postgres", envMode: "postgres", pgHost: "postgres", want: "postgres"},
 		{name: "auto with PGHOST resolves hybrid", pgHost: "postgres", want: "hybrid"},
 		{name: "empty resolves sqlite", want: "sqlite"},
+		{name: "HA declaration remains read only", envMode: "sqlite", envHA: "on", want: "sqlite"},
 		{name: "invalid fails", envMode: "bad", wantCode: 1, wantErr: mode.EnvStorageMode},
 	}
 
@@ -27,6 +30,7 @@ func TestMaybePrintStorageMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv(mode.EnvStorageMode, tt.envMode)
 			t.Setenv("PGHOST", tt.pgHost)
+			t.Setenv(mode.EnvHADeployment, tt.envHA)
 
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
@@ -44,6 +48,28 @@ func TestMaybePrintStorageMode(t *testing.T) {
 				t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestMaybeInitializePostgresRecognizesOnlyExplicitCommand(t *testing.T) {
+	var stderr bytes.Buffer
+	if code, handled := maybeInitializePostgres(context.Background(), []string{"--unknown"}, &stderr); handled || code != 0 {
+		t.Fatalf("unknown command handled=%v code=%d", handled, code)
+	}
+}
+
+func TestMaybePrintFleetCompat(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code, handled := maybePrintVersion([]string{printFleetCompatFlag}, &stdout, &stderr)
+	if !handled {
+		t.Fatal("expected fleet compat flag to be handled")
+	}
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if strings.TrimSpace(stdout.String()) != "d_ack=73,f=120000ms,lease=instance_id" {
+		t.Fatalf("stdout = %q", strings.TrimSpace(stdout.String()))
 	}
 }
 

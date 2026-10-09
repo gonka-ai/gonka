@@ -3,6 +3,7 @@ package keeper
 import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -27,4 +28,8 @@ func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeigh
 		return err
 	}
 	return k.storeService.OpenKVStore(ctx).Set(keyBz, bz)
+}
+
+func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
+	return k.removeFromEpochGroups(ctx, participant, reason)
 }

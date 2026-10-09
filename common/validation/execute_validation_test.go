@@ -9,10 +9,136 @@ import (
 	"net/http"
 	"testing"
 
+	"common/completionapi"
+
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestExecuteValidation_ReplayRequestCarriesMinTokensFloor proves the validator's replay request
+// still carries the min_tokens floor via ModifyRequestBodyWithLogprobsMode, so the standalone
+// EnforceTokenBudgetFloor call is redundant.
+func TestExecuteValidation_ReplayRequestCarriesMinTokensFloor(t *testing.T) {
+	promptPayload := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+	responsePayload := responsePayloadJSON("42", -0.1)
+
+	var captured map[string]interface{}
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		require.NoError(t, json.Unmarshal(body, &captured))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(responsePayload))}, nil
+	}
+
+	_, err := ExecuteValidation(context.Background(), "inf-1", promptPayload, responsePayload, execute, 0, 0, "")
+	require.NoError(t, err)
+	require.EqualValues(t, completionapi.MinTokensFloor, captured["min_tokens"])
+	require.EqualValues(t, completionapi.MinTokensFloor, captured["max_tokens"])
+}
+
+// responsePayloadTokens builds a completion response with `count` output tokens and the given
+// finish_reason / stop_reason, for exercising the min_tokens output-length check.
+func responsePayloadTokens(count int, finishReason, stopReason string) []byte {
+	type topLP struct {
+		Token   string  `json:"token"`
+		Logprob float64 `json:"logprob"`
+	}
+	type lp struct {
+		Token       string  `json:"token"`
+		Logprob     float64 `json:"logprob"`
+		TopLogprobs []topLP `json:"top_logprobs"`
+	}
+	content := make([]lp, 0, count)
+	for i := 0; i < count; i++ {
+		content = append(content, lp{Token: "42", Logprob: -0.1, TopLogprobs: []topLP{{Token: "42", Logprob: -0.1}, {Token: "99", Logprob: -1.1}}})
+	}
+	r := map[string]interface{}{
+		"id":     "test",
+		"object": "chat.completion",
+		"choices": []map[string]interface{}{{
+			"index":         0,
+			"finish_reason": finishReason,
+			"stop_reason":   stopReason,
+			"logprobs":      map[string]interface{}{"content": content},
+		}},
+	}
+	b, _ := json.Marshal(r)
+	return b
+}
+
+// responsePayloadTokensWithUsage is responsePayloadTokens plus a usage block, for the token-count
+// (inflation) checks that read usage.completion_tokens.
+func responsePayloadTokensWithUsage(count int, promptTokens, completionTokens uint64) []byte {
+	type topLP struct {
+		Token   string  `json:"token"`
+		Logprob float64 `json:"logprob"`
+	}
+	type lp struct {
+		Token       string  `json:"token"`
+		Logprob     float64 `json:"logprob"`
+		TopLogprobs []topLP `json:"top_logprobs"`
+	}
+	content := make([]lp, 0, count)
+	for i := 0; i < count; i++ {
+		content = append(content, lp{Token: "42", Logprob: -0.1, TopLogprobs: []topLP{{Token: "42", Logprob: -0.1}, {Token: "99", Logprob: -1.1}}})
+	}
+	r := map[string]interface{}{
+		"id":      "test",
+		"object":  "chat.completion",
+		"choices": []map[string]interface{}{{"index": 0, "logprobs": map[string]interface{}{"content": content}}},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     promptTokens,
+			"completion_tokens": completionTokens,
+			"total_tokens":      promptTokens + completionTokens,
+		},
+	}
+	b, _ := json.Marshal(r)
+	return b
+}
+
+// An executor that ignored min_tokens and emitted an early natural EOS (short output,
+// finish_reason=stop, empty stop_reason) must be rejected.
+func TestExecuteValidation_RejectsShortOutputThatIgnoredMinTokens(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+	stored := responsePayloadTokens(10, "stop", "")
+
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
+	}
+	res, err := ExecuteValidation(context.Background(), "inf-short", prompt, stored, execute, 0, 0, "")
+	require.NoError(t, err)
+	_, invalid := res.(*InvalidInferenceResult)
+	require.True(t, invalid, "short natural-EOS output below min_tokens must be invalid")
+}
+
+// A natural EOS at/above the floor is the normal case: the stop token can only fire after
+// min_tokens, so a full-length response ending on a natural stop must NOT be flagged.
+func TestExecuteValidation_AllowsFullLengthNaturalStop(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+	stored := responsePayloadTokens(int(completionapi.MinTokensFloor), "stop", "") // exactly the floor
+
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
+	}
+	res, err := ExecuteValidation(context.Background(), "inf-full", prompt, stored, execute, 0, 0, "")
+	require.NoError(t, err)
+	_, invalid := res.(*InvalidInferenceResult)
+	require.False(t, invalid, "a response of exactly min_tokens ending on natural EOS is valid")
+}
+
+// min_tokens masks stop-strings too, so an honest node cannot produce a short response even with a
+// stop-string. A short output with stop_reason set is therefore still a floor violation.
+func TestExecuteValidation_RejectsShortOutputEvenWithStopReason(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+	stored := responsePayloadTokens(10, "stop", "\n\n") // stop-string set, but 10 < MinTokensFloor
+
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
+	}
+	res, err := ExecuteValidation(context.Background(), "inf-stopstr", prompt, stored, execute, 0, 0, "")
+	require.NoError(t, err)
+	_, invalid := res.(*InvalidInferenceResult)
+	require.True(t, invalid, "short output is a floor violation even with a stop_reason")
+}
 
 // responsePayloadJSON builds a minimal completion response JSON suitable for use as
 // a responsePayload argument to ExecuteValidation.
@@ -232,15 +358,16 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 }
 
 func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) {
+	n := int(completionapi.MinTokensFloor)
 	var capturedBody []byte
 	exec := func(_ context.Context, body []byte) (*http.Response, error) {
 		capturedBody = body
-		return fakeHTTPResponse(http.StatusOK, responsePayloadJSON("42", -0.5)), nil
+		return fakeHTTPResponse(http.StatusOK, responsePayloadTokens(n, "stop", "")), nil
 	}
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
-		responsePayloadJSON("42", -0.5),
+		responsePayloadTokens(n, "stop", ""),
 		exec,
 		0, 0, "processed_logprobs",
 	)
@@ -261,7 +388,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 }
 
 func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T) {
-	payload := responsePayloadJSON("42", -0.5)
+	payload := responsePayloadTokens(int(completionapi.MinTokensFloor), "stop", "")
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -333,8 +460,10 @@ func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
 
 func TestExecuteValidation_TokenInflationWithinTolerance_Passes(t *testing.T) {
 	// Claimed output is 3 tokens above validation replay — within ±3 tolerance.
-	validatorResponse := responsePayloadJSONWithUsage("42", -0.5, 100, 100)
-	original := responsePayloadJSON("42", -0.5)
+	// Floor-length responses keep the original at the min_tokens floor.
+	n := int(completionapi.MinTokensFloor)
+	validatorResponse := responsePayloadTokensWithUsage(n, 100, 100)
+	original := responsePayloadTokens(n, "stop", "")
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,

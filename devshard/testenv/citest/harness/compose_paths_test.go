@@ -26,7 +26,8 @@ func TestFixComposePaths_AbsoluteContexts(t *testing.T) {
       - ../../build/devshardd:/opt/devshard/devshardd:ro
   versiond-router:
     build:
-      context: ../../versiond-router
+      context: ../..
+      dockerfile: versiond-router/Dockerfile
 `
 	require.NoError(t, os.WriteFile(composePath, []byte(original), 0o644))
 
@@ -35,9 +36,12 @@ func TestFixComposePaths_AbsoluteContexts(t *testing.T) {
 	body, err := os.ReadFile(composePath)
 	require.NoError(t, err)
 	text := string(body)
-	require.Contains(t, text, "context: "+filepath.Join(repoRoot, "versiond-router"))
+	require.Contains(t, text, "versiond-router:\n    build:\n      context: "+repoRoot+
+		"\n      dockerfile: versiond-router/Dockerfile")
 	require.Contains(t, text, "context: "+filepath.Join(repoRoot, "versioned"))
 	require.Contains(t, text, "context: "+repoRoot)
 	require.Contains(t, text, "- "+filepath.Join(repoRoot, "build", "devshardd")+":")
 	require.NotContains(t, text, "context: ../..")
+	require.NotContains(t, text, "context: ../../versiond-router")
+	require.NotContains(t, text, "dockerfile: Dockerfile")
 }

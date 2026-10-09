@@ -33,6 +33,22 @@ func HeaderFromResultHeader(res *ctypes.ResultHeader) (*blocks.Header, error) {
 	return blocks.HashOnlyHeader(h.Height, h.Time, h.ChainID, h.Hash().Bytes()), nil
 }
 
+// AsEventDataNewBlock unwraps amino JSON into EventDataNewBlock. The
+// Comet decoder may store either the value or a pointer behind TMEventData.
+func AsEventDataNewBlock(v any) (cmttypes.EventDataNewBlock, bool) {
+	switch d := v.(type) {
+	case cmttypes.EventDataNewBlock:
+		return d, true
+	case *cmttypes.EventDataNewBlock:
+		if d == nil {
+			return cmttypes.EventDataNewBlock{}, false
+		}
+		return *d, true
+	default:
+		return cmttypes.EventDataNewBlock{}, false
+	}
+}
+
 // HeaderFromNewBlock maps a Comet EventDataNewBlock to a hash-only Header.
 func HeaderFromNewBlock(data cmttypes.EventDataNewBlock) (*blocks.Header, bool) {
 	if data.Block == nil {

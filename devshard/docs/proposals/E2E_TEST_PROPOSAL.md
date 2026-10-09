@@ -359,8 +359,14 @@ Smoke scenarios should be reliable and fast enough for every CI run.
 
 4. **Gossip convergence**
 
-   Submit work while all hosts are running. Assert nonce, mempool, and
-   signature data propagate between participants and converge.
+   Submit work while all hosts are running. Assert every participant observes
+   the same signed nonce and state hash through gossip. The first scenario uses
+   an E2E-only gossip diagnostic on `devshard-host` for this assertion.
+
+   Mempool broadcast is exercised separately with a partial/failure flow: a
+   successful inference gossips its signed nonce, while transaction broadcast
+   is only emitted when the host returns mempool work without a state
+   signature.
 
 5. **Host catch-up**
 

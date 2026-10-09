@@ -8,7 +8,7 @@ import (
 
 func TestReasoningEffortValidatorAccepts(t *testing.T) {
 	v := ReasoningEffortValidator{}
-	for _, value := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
+	for _, value := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"} {
 		t.Run(value, func(t *testing.T) {
 			doc := parseDocument(t, `{"reasoning_effort":"`+value+`"}`)
 			require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
@@ -34,7 +34,7 @@ func TestReasoningEffortValidatorRejects(t *testing.T) {
 		{name: "not a string (bool)", body: `{"reasoning_effort":true}`, wantErr: ErrReasoningEffortShape},
 		{name: "not a string (null)", body: `{"reasoning_effort":null}`, wantErr: ErrReasoningEffortShape},
 		{name: "not a string (object)", body: `{"reasoning_effort":{"effort":"high"}}`, wantErr: ErrReasoningEffortShape},
-		{name: "unknown enum value", body: `{"reasoning_effort":"max"}`, wantErr: ErrReasoningEffortValue},
+		{name: "unknown enum value", body: `{"reasoning_effort":"maximum"}`, wantErr: ErrReasoningEffortValue},
 		{name: "wrong case", body: `{"reasoning_effort":"High"}`, wantErr: ErrReasoningEffortValue},
 		{name: "empty string", body: `{"reasoning_effort":""}`, wantErr: ErrReasoningEffortValue},
 	}

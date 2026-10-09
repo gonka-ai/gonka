@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 
 	"common/storage/mode"
+	"devshard/heightsync"
+	"devshard/storage"
 )
 
 const (
@@ -12,7 +15,20 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	printFleetCompatFlag     = "--print-fleet-compat"
+	initializePostgresFlag   = "--initialize-postgres-schema"
 )
+
+func maybeInitializePostgres(ctx context.Context, args []string, stderr io.Writer) (int, bool) {
+	if len(args) != 1 || args[0] != initializePostgresFlag {
+		return 0, false
+	}
+	if err := storage.InitializePostgresSchema(ctx); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1, true
+	}
+	return 0, true
+}
 
 func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 	if len(args) != 1 {
@@ -35,6 +51,9 @@ func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 			return 1, true
 		}
 		fmt.Fprintln(stdout, storageMode)
+		return 0, true
+	case printFleetCompatFlag:
+		fmt.Fprintln(stdout, heightsync.FleetCompat())
 		return 0, true
 	default:
 		return 0, false

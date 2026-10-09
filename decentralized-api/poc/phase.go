@@ -12,6 +12,9 @@ func ShouldAcceptGeneratedArtifacts(epochState *chainphase.EpochState) bool {
 	if epochState.IsNilOrNotSynced() {
 		return false
 	}
+	if ch := GeneratingChallengeWork(epochState); ch != nil {
+		return epochState.CurrentBlock.Height < ch.Finish
+	}
 	if epochState.CurrentPhase == types.PoCGeneratePhase {
 		return true
 	}
@@ -56,6 +59,10 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 		return 0
 	}
 
+	if ch := GeneratingChallengeWork(epochState); ch != nil {
+		return ch.StartHeight()
+	}
+
 	// Confirmation PoC uses event's trigger height
 	if epochState.ActiveConfirmationPoCEvent != nil &&
 		epochState.CurrentPhase == types.InferencePhase {
@@ -71,6 +78,12 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 // currentHeight >= exchange deadline, the next block is already late.
 func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHeight int64) bool {
 	if epochState.IsNilOrNotSynced() {
+		return false
+	}
+	// Challenge commits use MsgPoCChallengeStoreCommit. A cPoC TriggerHeight
+	// can equal challenge StartHeight; do not publish the challenge SMST as a
+	// regular StoreCommit.
+	if GeneratingChallengeWork(epochState) != nil {
 		return false
 	}
 
@@ -105,8 +118,9 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
 }
 
-// StoreCommitTimeoutHeight is the tx timeout_height for StoreCommit: last
-// legal inclusion block. 0 means leave unset.
+// StoreCommitTimeoutHeight is the last legal inclusion block for StoreCommit,
+// the upper bound on its tx timeout_height (see storeCommitTimeoutHeight).
+// 0 means leave unset.
 func StoreCommitTimeoutHeight(epochState *chainphase.EpochState, pocStageStartHeight int64) uint64 {
 	if epochState.IsNilOrNotSynced() {
 		return 0

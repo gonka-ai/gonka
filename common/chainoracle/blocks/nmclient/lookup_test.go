@@ -118,10 +118,10 @@ func TestLookup_OldServerUnimplemented(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = lookup.At(context.Background(), 1)
-	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
+	require.ErrorIs(t, err, blocks.ErrHeaderRPCUnimplemented)
 
 	_, err = lookup.Latest(context.Background())
-	require.ErrorIs(t, err, blocks.ErrHeaderNotFound)
+	require.ErrorIs(t, err, blocks.ErrHeaderRPCUnimplemented)
 
 	_, err = lookup.Prove(context.Background(), "/escrow/1", 1)
 	require.ErrorIs(t, err, blocks.ErrProveNotImplemented)

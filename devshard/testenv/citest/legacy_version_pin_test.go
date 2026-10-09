@@ -4,6 +4,7 @@ package citest
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,14 +16,12 @@ import (
 const (
 	versiondBackendHeader = "X-Versiond-Backend"
 	backendLegacy         = "versiond_legacy"
-	backendHA             = "versiond_ha_pool"
-	// legacyVersionPath is listed in VERSIOND_NON_HA_VERSIONS (gencompose: "v1").
-	legacyVersionPath = "v1"
+	backendDynamicPrefix  = "versiond_dynamic_"
 )
 
-// TestLegacyVersionPinnedToSingleHost asserts versiond-router sends
-// VERSIOND_NON_HA_VERSIONS prefixes only to VERSIOND_LEGACY_HOST, while other
-// versions sticky-hash across the pool (see pr-1366-deploy-test-plan.md §3.2).
+// TestLegacyVersionPinnedToSingleHost first proves that the governance catalog
+// admits the running version into a dynamic pool, then pins that same version
+// to VERSIOND_LEGACY_HOST and verifies the single-host contract.
 func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -39,15 +38,31 @@ func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 
 	legacyHostID := cfg.Hosts[0].ID
 	haVersion := cfg.Versiond.VersionName
-	require.NotEqual(t, legacyVersionPath, haVersion,
-		"legacy probe path must differ from HA VersionName (%s)", haVersion)
 
-	harness.Step(t, "legacy version %q must always pin to %s (versiond_legacy)", legacyVersionPath, legacyHostID)
+	harness.Step(t, "governance version %q must be admitted into a dynamic pool", haVersion)
+	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+haVersion+"/healthz", 5*time.Minute,
+		"catalog-admitted devshardd route", stack)
+	_, upstreamA, _, upstreamB := harness.FindDistinctStickySessions(t, client, eps.RouterHTTP, haVersion)
+	require.NotEqual(t, upstreamA, upstreamB)
+
+	urlHA := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "citest-catalog-admission", "/healthz")
+	haBackend := harness.RequireResponseHeader(t, client, urlHA, versiondBackendHeader)
+	require.True(t, strings.HasPrefix(haBackend, backendDynamicPrefix),
+		"HA path X-Versiond-Backend = %q, want a catalog-admitted dynamic pool", haBackend)
+
+	harness.Step(t, "pin running version %q to the legacy host", haVersion)
+	harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", fmt.Sprintf("%q", haVersion))
+	stack.RecreateServices(t, "versiond-router")
+	eps = stack.Endpoints(t, cfg)
+	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+haVersion+"/healthz", 5*time.Minute,
+		"legacy-pinned devshardd route", stack)
+
+	harness.Step(t, "legacy version %q must always pin to %s (versiond_legacy)", haVersion, legacyHostID)
 	var legacyUpstream string
 	const legacyProbes = 16
 	for i := 0; i < legacyProbes; i++ {
 		sessionID := fmt.Sprintf("citest-legacy-%d", i)
-		url := harness.RouterSessionURL(eps.RouterHTTP, legacyVersionPath, sessionID, "/healthz")
+		url := harness.RouterSessionURL(eps.RouterHTTP, haVersion, sessionID, "/healthz")
 
 		backend := harness.RequireResponseHeader(t, client, url, versiondBackendHeader)
 		require.Equal(t, backendLegacy, backend,
@@ -66,14 +81,6 @@ func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 		}
 	}
 
-	harness.Step(t, "HA version %q still sticky-hashes across VERSIOND_HOSTS", haVersion)
-	_, upstreamA, _, upstreamB := harness.FindDistinctStickySessions(t, client, eps.RouterHTTP, haVersion)
-	require.NotEqual(t, upstreamA, upstreamB)
-
-	urlHA := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "citest-legacy-version-pin-ha-check", "/healthz")
-	haBackend := harness.RequireResponseHeader(t, client, urlHA, versiondBackendHeader)
-	require.Equal(t, backendHA, haBackend, "HA path X-Versiond-Backend")
-
 	nonLegacyHost := ""
 	for _, h := range cfg.Hosts {
 		if h.ID != legacyHostID {
@@ -88,7 +95,7 @@ func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 
 	for i := 0; i < 8; i++ {
 		sessionID := fmt.Sprintf("citest-legacy-after-stop-%d", i)
-		url := harness.RouterSessionURL(eps.RouterHTTP, legacyVersionPath, sessionID, "/healthz")
+		url := harness.RouterSessionURL(eps.RouterHTTP, haVersion, sessionID, "/healthz")
 		backend := harness.RequireResponseHeader(t, client, url, versiondBackendHeader)
 		require.Equal(t, backendLegacy, backend)
 		upstream := harness.RequireResponseHeader(t, client, url, harness.StickyUpstreamHeader)

@@ -89,6 +89,72 @@ func (h *Host) applyAndPersistReconciling(ctx context.Context, diff types.Diff) 
 	}
 }
 
+// CatchUpFromStore fast-forwards in-memory state to the durable tip. An HA
+// replica that bound the session at an earlier nonce otherwise stays stale
+// until the next incoming diff; GET /mempool catch-up plus EnqueueDueValidations
+// lets the survivor re-acquire work the owner Released on graceful stop.
+func (h *Host) CatchUpFromStore(ctx context.Context) error {
+	if h == nil || h.store == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	meta, err := h.store.GetSessionMeta(h.escrowID)
+	if err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	current := h.sm.LatestNonce()
+	if meta.LatestNonce <= current {
+		return nil
+	}
+	from := current + 1
+	to := meta.LatestNonce
+	escrowID := h.escrowID
+	store := h.store
+
+	h.mu.Unlock()
+	records, err := store.GetDiffs(escrowID, from, to)
+	h.mu.Lock()
+	if err != nil {
+		return fmt.Errorf("catch-up get diffs %d..%d: %w", from, to, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	current = h.sm.LatestNonce()
+	if meta.LatestNonce <= current {
+		return nil
+	}
+	from = current + 1
+	to = meta.LatestNonce
+	records = filterDiffRecordsFrom(records, from)
+	if !durableRangeComplete(records, from, to) {
+		return fmt.Errorf("%w: catch-up escrow %s need %d..%d have %d record(s)",
+			ErrReconcileGap, h.escrowID, from, to, len(records))
+	}
+
+	logging.Info("reconcile_catch_up",
+		"subsystem", "host",
+		"escrow_id", h.escrowID,
+		"from", from,
+		"to", to,
+	)
+	observability.IncReconcileFastForward()
+	for _, rec := range records {
+		if err := h.applyDurableRecordLocked(rec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // applyDurableRecordLocked applies a diff that is already durable in the store.
 // It must not AppendDiff. Caller must hold h.mu.
 func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
@@ -121,6 +187,9 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 		}
 		if ti := tx.GetTimeoutInference(); ti != nil {
 			delete(h.completedResponses, ti.InferenceId)
+		}
+		if em := tx.GetErrorMiss(); em != nil {
+			delete(h.completedResponses, em.InferenceId)
 		}
 	}
 	h.recordValidationObsFromAppliedDiff(rec.Txs)

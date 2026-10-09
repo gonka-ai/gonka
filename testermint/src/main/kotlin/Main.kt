@@ -463,6 +463,9 @@ fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = s
     }
     this[AppState::inference] = spec<InferenceState> {
         this[InferenceState::params] = spec<InferenceParams> {
+            this[InferenceParams::feeParams] = spec<FeeParamsData> {
+                this[FeeParamsData::enabledFeeGroups] = emptyList<String>()
+            }
             this[InferenceParams::epochParams] = spec<EpochParams> {
                 this[EpochParams::epochLength] = epochLength
                 this[EpochParams::pocStageDuration] = 2L

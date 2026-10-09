@@ -9,6 +9,8 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/stretchr/testify/require"
 
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -30,6 +32,7 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 		// PoC duty.
 		{"MsgSubmitPocBatch", &inferencetypes.MsgSubmitPocBatch{}, gasSubmitPocBatch},
 		{"MsgSubmitPocValidationsV2", &inferencetypes.MsgSubmitPocValidationsV2{}, gasSubmitPocValidationsV2},
+		{"MsgSubmitPoCChallengeValidations", &inferencetypes.MsgSubmitPoCChallengeValidations{}, gasSubmitPocValidationsV2},
 
 		// Routine host duties (now bypass-exempt).
 		{"MsgSubmitHardwareDiff", &inferencetypes.MsgSubmitHardwareDiff{}, gasSubmitHardwareDiff},
@@ -37,6 +40,7 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 
 		// Other host operations.
 		{"MsgSubmitSeed", &inferencetypes.MsgSubmitSeed{}, gasSubmitSeed},
+		{"MsgDeclarePoCIntent", &inferencetypes.MsgDeclarePoCIntent{}, gasDeclarePoCIntent},
 		{"MsgSubmitNewParticipant", &inferencetypes.MsgSubmitNewParticipant{}, gasSubmitNewParticipant},
 		{"MsgSubmitNewUnfundedParticipant", &inferencetypes.MsgSubmitNewUnfundedParticipant{}, gasSubmitNewUnfundedParticipant},
 		{"MsgBridgeExchange", &inferencetypes.MsgBridgeExchange{}, gasBridgeExchange},
@@ -649,4 +653,26 @@ func TestIsStoreCommitOnly(t *testing.T) {
 	require.True(t, isStoreCommitOnly([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
 	require.False(t, isStoreCommitOnly(nil))
 	require.False(t, isStoreCommitOnly([]sdk.Msg{&inferencetypes.MsgSubmitHardwareDiff{}}))
+}
+
+func TestApplyGasAndFee_DefaultGroupsStayBelowFeeCap(t *testing.T) {
+	cache := newFeeTreeCache()
+	cache.Load(inferencetypes.DefaultFeeParams())
+	for _, tc := range []struct {
+		msg   sdk.Msg
+		price int64
+	}{
+		{&inferencetypes.MsgPoCV2StoreCommit{}, 1},
+		{&inferencetypes.MsgSubmitHardwareDiff{}, 1},
+		{&banktypes.MsgSend{}, 1},
+		{&inferencetypes.MsgSubmitSeed{}, 0},
+		{&govtypes.MsgVote{}, 0},
+	} {
+		price := cache.PriceForMsgs([]sdk.Msg{tc.msg})
+		require.Equal(t, tc.price, price)
+		builder := newTestTxBuilder(t)
+		applyGasAndFee(builder, BatchGasLimit*2, price)
+		require.Equal(t, uint64(BatchGasLimit), builder.GetTx().GetGas())
+		require.True(t, builder.GetTx().GetFee().AmountOf("ngonka").LTE(math.NewInt(1_000_000_000)))
+	}
 }

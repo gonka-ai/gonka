@@ -99,4 +99,8 @@ var (
 	ErrInvalidDecimalExponent                = sdkerrors.Register(ModuleName, 1197, "decimal exponent must be between -18 and 18")
 	ErrApprovedVersionNotFound               = sdkerrors.Register(ModuleName, 1198, "approved devshard version not found")
 	ErrApprovedVersionsLimit                 = sdkerrors.Register(ModuleName, 1199, "approved devshard versions limit reached")
+	ErrPoCChallengeNotAllowed  = sdkerrors.Register(ModuleName, 1200, "address is not allowed to create a PoC challenge")
+	ErrPoCChallengeAlreadyOpen = sdkerrors.Register(ModuleName, 1201, "target already has an open PoC challenge")
+	ErrPoCChallengeCapExceeded = sdkerrors.Register(ModuleName, 1202, "network PoC challenge cap exceeded")
+	ErrPoCChallengeWindow      = sdkerrors.Register(ModuleName, 1204, "PoC challenge cannot be created in this window")
 )

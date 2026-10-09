@@ -32,6 +32,22 @@ func TestBootstrapEscrowRotationSettlementDefaultsDisabled(t *testing.T) {
 	require.False(t, opts.bootstrapSettings.EscrowRotation.SettlementEnabled)
 }
 
+func TestReadBoolEnvUsesDevshardBooleanGrammar(t *testing.T) {
+	const key = "TEST_DEVSHARDCTL_BOOL"
+
+	t.Setenv(key, "t")
+	require.True(t, readBoolEnv(key, false))
+
+	t.Setenv(key, "off")
+	require.False(t, readBoolEnv(key, true))
+
+	t.Setenv(key, "")
+	require.True(t, readBoolEnv(key, true), "empty value must preserve the caller fallback")
+
+	t.Setenv(key, "invalid")
+	require.True(t, readBoolEnv(key, true), "invalid value must preserve the caller fallback")
+}
+
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// stampEscrowCache sets the write time so readers can bound how long a row may
+// stand in for the chain. Stores call this on every Put.
+func stampEscrowCache(info EscrowCacheInfo) EscrowCacheInfo {
+	info.CachedAt = escrowCacheNowUnix()
+	return info
+}
+
 func marshalEscrowCache(info EscrowCacheInfo) (string, error) {
 	if info.EscrowID == "" {
 		return "", fmt.Errorf("escrow cache: empty escrow_id")

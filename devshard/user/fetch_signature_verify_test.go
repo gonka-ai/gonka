@@ -20,7 +20,7 @@ type fakeFetcher struct {
 	sigs map[uint32][]byte
 }
 
-func (f *fakeFetcher) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func()) (*host.HostResponse, error) {
+func (f *fakeFetcher) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	return &host.HostResponse{}, nil
 }
 
@@ -43,7 +43,7 @@ func TestFetchSignature_RejectsUnverifiedGarbage(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	_, err := session.SendInference(ctx, params)
@@ -78,7 +78,7 @@ func TestFetchSignature_LiveStateRootWhenDiffsEmpty(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestFetchSignature_NoFallbackForNonCurrentNonce(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
