@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,17 +25,37 @@ type Scenario struct {
 }
 
 type Diagnostics struct {
+	Logs                     LogDiagnostics     `yaml:"logs"`
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
 }
+
+type LogDiagnostics struct {
+	// Tail is a positive line count per container, or "all" for complete logs.
+	Tail string `yaml:"tail"`
+}
+
+func (d Diagnostics) LogTail() string {
+	if d.Logs.Tail == "" {
+		return "5000"
+	}
+	return d.Logs.Tail
+}
+
 type CPUProfileWindow struct {
 	StartAfter string `yaml:"start_after"`
 	Duration   string `yaml:"duration"`
 }
 
 type Gateway struct {
-	Redundancy     GatewayRedundancy     `yaml:"redundancy"`
-	EscrowRotation GatewayEscrowRotation `yaml:"escrow_rotation"`
+	Redundancy          GatewayRedundancy          `yaml:"redundancy"`
+	EscrowRotation      GatewayEscrowRotation      `yaml:"escrow_rotation"`
+	ParticipantThrottle GatewayParticipantThrottle `yaml:"participant_throttle"`
+}
+
+type GatewayParticipantThrottle struct {
+	TransportFailureQuarantine string `yaml:"transport_failure_quarantine"`
+	HTTPQuarantine             string `yaml:"http_quarantine"`
 }
 
 type GatewayRedundancy struct {
@@ -64,6 +85,14 @@ type Topology struct {
 	MockML       MockMLTopology `yaml:"mock_ml"`
 }
 
+// HostFault freezes a whole versiond container, including its devshardd child.
+type HostFault struct {
+	Host       string `yaml:"host" json:"host"`
+	Mode       string `yaml:"mode" json:"mode"`
+	StartAfter string `yaml:"start_after" json:"start_after"`
+	Duration   string `yaml:"duration" json:"duration"`
+}
+
 // ChainTopology is the deterministic test-only chain state needed to keep a
 // load scenario from terminating because of fixture defaults.
 type ChainTopology struct {
@@ -82,6 +111,7 @@ type MockMLNode struct {
 }
 
 type Workload struct {
+	HostFaults     []HostFault    `yaml:"host_faults"`
 	ReportInterval string         `yaml:"report_interval"`
 	MaxInFlight    int            `yaml:"max_in_flight"`
 	Duration       string         `yaml:"duration"`
@@ -231,6 +261,9 @@ func (s Scenario) Validate() error {
 	if err != nil {
 		return fmt.Errorf("workload duration: %w", err)
 	}
+	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
+		return err
+	}
 	if err := s.Workload.Traffic.Validate(duration); err != nil {
 		return fmt.Errorf("workload traffic: %w", err)
 	}
@@ -238,6 +271,12 @@ func (s Scenario) Validate() error {
 		interval, err := time.ParseDuration(s.Workload.ReportInterval)
 		if err != nil || interval <= 0 {
 			return fmt.Errorf("workload.report_interval must be a positive duration")
+		}
+	}
+	if tail := s.Diagnostics.LogTail(); tail != "all" {
+		lines, err := strconv.Atoi(tail)
+		if err != nil || lines <= 0 {
+			return fmt.Errorf("diagnostics.logs.tail must be a positive integer or all")
 		}
 	}
 	var previousEnd time.Duration
@@ -274,6 +313,21 @@ func (s Scenario) Validate() error {
 				return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner: %w", err)
 			}
 			return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner must be positive")
+		}
+	}
+	for name, value := range map[string]string{
+		"transport_failure_quarantine": s.Gateway.ParticipantThrottle.TransportFailureQuarantine,
+		"http_quarantine":              s.Gateway.ParticipantThrottle.HTTPQuarantine,
+	} {
+		if value == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			return fmt.Errorf("gateway.participant_throttle.%s: %w", name, err)
+		}
+		if duration < time.Millisecond {
+			return fmt.Errorf("gateway.participant_throttle.%s must be at least 1ms", name)
 		}
 	}
 	rotation := s.Gateway.EscrowRotation

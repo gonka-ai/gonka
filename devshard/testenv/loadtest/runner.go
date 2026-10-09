@@ -3,6 +3,7 @@ package loadtest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -41,6 +42,7 @@ type RunResult struct {
 	MLStats      map[string]MLNodeStats
 	GatewayState GatewayStateSizes
 	Metrics      MetricsSummary
+	HostFaults   []HostFaultResult
 	CPUProfiles  []CPUProfileResult
 }
 
@@ -196,7 +198,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 			break
 		}
 		log.Printf("loadtest: Docker stack start failed: %v", err)
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		_ = runCommand(context.Background(), opts.TestenvDir, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
 		if !isAddressInUse(err) || attempt == maxStartAttempts {
 			return RunResult{}, err
@@ -230,12 +232,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	log.Printf("loadtest: waiting for gateway at %s", result.GatewayURL)
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
 	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
 	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
 	log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
@@ -251,6 +253,18 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	defer func() { result.CPUProfiles = profiler.stop() }()
 
+	faultRunner, err := startHostFaults(ctx, opts, cfg, project, composePath, scenario.Workload.HostFaults)
+	if err != nil {
+		return result, err
+	}
+	defer func() {
+		results, faultErr := faultRunner.finish(true)
+		result.HostFaults = results
+		if err != nil {
+			err = errors.Join(err, faultErr)
+		}
+	}()
+
 	log.Printf("loadtest: stage=workload_start scenario=%s", scenario.Scenario)
 	summary, err := RunGenerator(ctx, GeneratorConfig{
 		GatewayURL: result.GatewayURL,
@@ -260,18 +274,20 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		Replay:     replaySelector,
 	})
 	if err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
 	result.Summary = summary
+	result.HostFaults, err = faultRunner.finish(false)
+	faultErr := err
 	collector.phase.Store("drain")
 	allocations, err := fetchAllocations(ctx, cfg.MockDapi.HTTPPort)
 	if err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath)
+		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
 	result.Allocations = allocations
-	if err := writeComposeLogsTo(opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log"); err != nil {
+	if err := writeComposeLogsTo(opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log", scenario.Diagnostics.LogTail()); err != nil {
 		return RunResult{}, err
 	}
 	ghostIDs, err := readGhostInferenceIDs(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
@@ -280,9 +296,31 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, ghostIDs)
 	result.Terminal = terminal
+	for index, fault := range result.HostFaults {
+		assertions = append(assertions, AssertionResult{
+			Name:     fmt.Sprintf("host_faults.%d.%s.applied", index+1, fault.Host),
+			Passed:   fault.Error == "" && !fault.PausedAt.IsZero() && !fault.ResumedAt.IsZero(),
+			Expected: "host paused and resumed successfully",
+			Actual:   fmt.Sprintf("paused=%s resumed=%s", fault.PausedAt, fault.ResumedAt),
+			Details:  fault.Error,
+		})
+	}
 	result.Assertions = assertions
+	if faultErr != nil {
+		failures := []AssertionResult{}
+		for _, check := range assertions {
+			if !check.Passed {
+				failures = append(failures, check)
+			}
+		}
+		if len(failures) > 0 {
+			assertionErr = &assertionFailures{Checks: failures}
+		} else {
+			assertionErr = errors.Join(assertionErr, faultErr)
+		}
+	}
 	log.Printf("loadtest: stage=artifacts_collection")
-	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath); err != nil {
+	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail()); err != nil {
 		if assertionErr == nil {
 			return RunResult{}, err
 		}
@@ -323,6 +361,23 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 		"redundancy": map[string]any{
 			"secondary_wait_after_winner_ms": duration.Milliseconds(),
 		},
+	}
+	throttle := map[string]any{}
+	for name, value := range map[string]string{
+		"transport_failure_quarantine": scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine,
+		"http_quarantine":              scenario.Gateway.ParticipantThrottle.HTTPQuarantine,
+	} {
+		if value == "" {
+			continue
+		}
+		quarantine, err := time.ParseDuration(value)
+		if err != nil || quarantine < time.Millisecond {
+			return fmt.Errorf("invalid gateway.participant_throttle.%s: %q", name, value)
+		}
+		throttle[name+"_ms"] = quarantine.Milliseconds()
+	}
+	if len(throttle) > 0 {
+		settings["participant_throttle"] = throttle
 	}
 	if scenario.Gateway.EscrowRotation.Enabled {
 		rotation := scenario.Gateway.EscrowRotation
@@ -1135,20 +1190,26 @@ func writeGatewayInferences(ctx context.Context, gatewayURL, apiKey, outputDir s
 	return os.WriteFile(filepath.Join(outputDir, "gateway-inferences.json"), append(body, '\n'), 0o644)
 }
 
-func writeComposeLogs(outputDir, testenvDir, project, composePath string) error {
-	return writeComposeLogsTo(outputDir, testenvDir, project, composePath, "compose.log")
+func writeComposeLogs(outputDir, testenvDir, project, composePath, tail string) error {
+	return writeComposeLogsTo(outputDir, testenvDir, project, composePath, "compose.log", tail)
 }
 
-func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename string) error {
-	// Long load tests can produce millions of container log lines. The tail is
-	// enough for post-run diagnosis and keeps artifact collection bounded.
-	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", "5000")
-	cmd.Dir = testenvDir
-	body, err := cmd.CombinedOutput()
+func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename, tail string) error {
+	file, err := os.Create(filepath.Join(outputDir, filename))
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outputDir, filename), body, 0o644)
+	// Stream complete logs to disk instead of buffering them in memory.
+	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", tail)
+	cmd.Dir = testenvDir
+	cmd.Stdout = file
+	cmd.Stderr = file
+	runErr := cmd.Run()
+	closeErr := file.Close()
+	if runErr != nil {
+		return runErr
+	}
+	return closeErr
 }
 
 func envValue(path, key string) (string, error) {

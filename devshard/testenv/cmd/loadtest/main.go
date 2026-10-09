@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"devshard/testenv/loadtest"
@@ -50,7 +52,9 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *runTimeout)
+	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	ctx, cancel := context.WithTimeout(signalCtx, *runTimeout)
 	defer cancel()
 	result, err := loadtest.RunScenario(ctx, loadtest.RunnerConfig{
 		ScenarioPath:    *scenarioPath,

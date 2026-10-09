@@ -254,6 +254,7 @@ services:
     image: devshard-versiond-router:latest
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_PORT: "8080"
       # Pin only versions that actually have a child. A fictional v1 makes
       # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.

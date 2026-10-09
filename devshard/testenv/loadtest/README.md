@@ -32,6 +32,79 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+## Catch-up scenario
+
+`catch-up` runs three participants at 4 RPS for five minutes. At 90 seconds
+it freezes `versiond-2` for 60 seconds, then resumes it:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=catch-up
+```
+
+```yaml
+topology:
+  participants: 3
+
+workload:
+  host_faults:
+    - host: versiond-2
+      mode: pause
+      start_after: 90s
+      duration: 60s
+```
+
+Put this configuration alongside the other topology and workload fields in a
+complete scenario. Three participants create four containers: `versiond-0/1` share one
+identity and database; `versiond-2/3` are independent participants. The target
+must be a generated versiond service and `participants` must be explicit.
+
+The runner uses Compose `pause`/`unpause`, freezing every process in the target
+container while traffic and the mock chain continue. This retains memory,
+connections, and storage; it models a stalled host. Start times are relative to
+the workload start. Pauses must finish within the workload. Faults for one host
+must be ordered and not overlap; different hosts run independently.
+
+Host faults only inject the scheduled pause and resume. Each fault produces a
+`host_faults.<index>.<host>.applied` assertion checking that both commands
+succeeded. Host catch-up validation is separate from fault injection and is not
+performed here.
+
+`host-faults.json` records configured windows, pause/resume timestamps, and
+command failures. Cancellation and error paths attempt unpause with a separate
+cleanup context, including when `-keep-stack` is set.
+
+The trial scenario permits a 5% client error rate to account for requests that
+hit the frozen participant. Adjust this assertion separately from the
+fault schedule when testing stricter availability requirements.
+
+The catch-up scenario collects concurrent CPU profiles of gateway and every
+host at 45–75s (baseline), 85–165s (pause and resume), and 240–270s (later
+steady state). The middle profile starts before the 90s pause so the target's
+profiler is already running when it freezes and can capture work immediately
+after unpause at approximately 150s. A frozen process produces no CPU samples;
+its middle profile combines roughly five seconds before pause and fifteen
+seconds after resume. Other targets remain active throughout that window.
+Compare hot functions and sample proportions across windows; total CPU sample
+counts cover different amounts of active time. The middle window includes
+both the pause and resumed activity rather than isolating catch-up alone.
+
+## Container logs
+
+Container log collection is configured separately from CPU profiling:
+
+```yaml
+diagnostics:
+  logs:
+    tail: all
+```
+
+`diagnostics.logs.tail` defaults to `5000` lines **per container**. Set a positive
+integer to choose another limit, or `all` to collect all available container
+logs. The setting applies to `compose-pre-drain.log`, final `compose.log`, and
+log collection on error paths. Logs stream directly to files. `catch-up` uses
+`all` to retain quarantine and recovery events from the beginning of the run.
+Full collection still depends on logs retained by Docker's logging driver.
+
 ## Memory and CPU comparison
 
 `long-escrow` runs ten minutes at 8 RPS without escrow rotation. Use unique
@@ -152,7 +225,7 @@ Each scenario is a self-contained YAML file. The main sections are:
 | --- | --- |
 | `schema_version`, `scenario`, `seed` | Scenario identity and reproducible random selection. |
 | `topology` | Participants, storage mode, chain limits, and Mock ML nodes. |
-| `workload` | Duration, concurrency, traffic model, and request template. |
+| `workload` | Duration, concurrency, traffic model, host faults, and request template. |
 | `gateway` | Gateway redundancy and optional escrow rotation settings. |
 | `assertions` | Checks that determine whether the run passes. |
 | `drain_timeout` | Deadline for post-workload DevShard cleanup checks. |
@@ -345,6 +418,26 @@ Gateway lets speculative losers finish after a winner is selected.
 should be long enough for the configured Gateway grace period when cleanup is
 part of the scenario.
 
+Participant quarantine durations can be shortened for recovery tests:
+
+```yaml
+gateway:
+  participant_throttle:
+    transport_failure_quarantine: 70s
+    http_quarantine: 70s
+```
+
+When omitted, the runner leaves each Gateway setting unchanged. Defaults are
+`30m` for `transport_failure_quarantine` and `60m` for `http_quarantine` (HTTP
+429/503). Each duration must be at least `1ms`; the runner sends them to the
+existing admin settings `participant_throttle.transport_failure_quarantine_ms`
+and `participant_throttle.http_quarantine_ms` respectively.
+`catch-up` uses `70s` for both so the host can become eligible during the run.
+The timer starts when an error triggers quarantine, not when the
+container resumes. Further failures can quarantine the host again. Expiration
+does not validate that the host has caught up. Empty-stream and stalled-winner
+quarantine durations are configured separately in the Gateway.
+
 For escrow rotation, configure the Gateway explicitly:
 
 ```yaml
@@ -408,6 +501,7 @@ records, summaries, state snapshots, and logs:
 | `summary.json` | Client workload counts, latency, duration, and per-minute windows. |
 | `metrics.jsonl` | Process memory/CPU/GC and per-escrow state time series. |
 | `metrics-summary.json` | Sampled peaks, counter deltas, initial/final state, and collection errors. |
+| `host-faults.json` | Optional host pause/resume timings and command errors. |
 | `cpu-profiles.json`, `profiles/` | Optional CPU profile manifest and binary pprof captures. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |

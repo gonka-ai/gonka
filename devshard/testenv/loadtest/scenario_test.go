@@ -6,7 +6,35 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
+
+func TestScenario_LogTail(t *testing.T) {
+	for _, value := range []string{"", "5000", "100", "all", "0", "-1", "full", "1.5"} {
+		t.Run(value, func(t *testing.T) {
+			scenario := testScenario()
+			// Numeric YAML scalars should work without quotes as well.
+			if value != "" {
+				require.NoError(t, yaml.Unmarshal([]byte("logs:\n  tail: "+value+"\n"), &scenario.Diagnostics))
+			}
+			err := scenario.Validate()
+			switch value {
+			case "", "5000", "100", "all":
+				require.NoError(t, err)
+				if value == "" {
+					require.Equal(t, "5000", scenario.Diagnostics.LogTail())
+				} else {
+					require.Equal(t, value, scenario.Diagnostics.LogTail())
+				}
+			default:
+				require.ErrorContains(t, err, "diagnostics.logs.tail")
+			}
+		})
+	}
+	scenario, err := LoadScenario(filepath.Join("scenarios", "catch-up.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "all", scenario.Diagnostics.LogTail())
+}
 
 func TestLoadScenario_NormalLoad(t *testing.T) {
 	scenario, err := LoadScenario(filepath.Join("scenarios", "normal-load.yaml"))
@@ -77,6 +105,42 @@ func TestScenario_DefaultSecondaryWaitAfterWinner(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, scenario.Gateway.Redundancy.SecondaryWaitAfterWinner)
 	require.Equal(t, DefaultSecondaryWaitAfterWinner, scenario.SecondaryWaitAfterWinner())
+}
+
+func TestScenario_TransportFailureQuarantine(t *testing.T) {
+	for _, value := range []string{"", "30m", "30s", "1ms", "invalid", "0s", "-1s", "500us"} {
+		t.Run(value, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine = value
+			err := scenario.Validate()
+			switch value {
+			case "", "30m", "30s", "1ms":
+				require.NoError(t, err)
+			default:
+				require.ErrorContains(t, err, "gateway.participant_throttle.transport_failure_quarantine")
+			}
+		})
+	}
+	scenario, err := LoadScenario(filepath.Join("scenarios", "catch-up.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "70s", scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine)
+	require.Equal(t, "70s", scenario.Gateway.ParticipantThrottle.HTTPQuarantine)
+}
+
+func TestScenario_HTTPQuarantine(t *testing.T) {
+	for _, value := range []string{"", "60m", "70s", "1ms", "invalid", "0s", "-1s", "500us"} {
+		t.Run(value, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Gateway.ParticipantThrottle.HTTPQuarantine = value
+			err := scenario.Validate()
+			switch value {
+			case "", "60m", "70s", "1ms":
+				require.NoError(t, err)
+			default:
+				require.ErrorContains(t, err, "gateway.participant_throttle.http_quarantine")
+			}
+		})
+	}
 }
 
 func TestLoadScenario_EscrowRotation(t *testing.T) {

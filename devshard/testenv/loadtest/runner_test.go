@@ -16,6 +16,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWriteComposeLogsTail(t *testing.T) {
+	binDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "docker"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'stderr line\\n' >&2\n"), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, tail := range []string{"5000", "100", "all"} {
+		t.Run(tail, func(t *testing.T) {
+			outputDir := t.TempDir()
+			require.NoError(t, writeComposeLogs(outputDir, outputDir, "project", "compose.yaml", tail))
+			require.NoError(t, writeComposeLogsTo(outputDir, outputDir, "project", "compose.yaml", "compose-pre-drain.log", tail))
+			for _, filename := range []string{"compose.log", "compose-pre-drain.log"} {
+				body, err := os.ReadFile(filepath.Join(outputDir, filename))
+				require.NoError(t, err)
+				require.Equal(t, "compose\n-p\nproject\n-f\ncompose.yaml\nlogs\n--no-color\n--tail\n"+tail+"\nstderr line\n", string(body))
+			}
+		})
+	}
+}
+
 func TestConfigureParticipants_ThreeParticipants(t *testing.T) {
 	cfg := &config.File{Hosts: []config.HostCfg{
 		{ID: "versiond-0"},
@@ -273,4 +291,37 @@ func TestDisabledRotationStillConfiguresAdmissionLimit(t *testing.T) {
 	}))
 	defer server.Close()
 	require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
+}
+
+func TestApplyGatewayParticipantQuarantine(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		settings GatewayParticipantThrottle
+		want     map[string]int64
+	}{
+		{name: "defaults"},
+		{name: "transport only", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "30s"}, want: map[string]int64{"transport_failure_quarantine_ms": 30000}},
+		{name: "http only", settings: GatewayParticipantThrottle{HTTPQuarantine: "45s"}, want: map[string]int64{"http_quarantine_ms": 45000}},
+		{name: "both", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "70s", HTTPQuarantine: "70s"}, want: map[string]int64{"transport_failure_quarantine_ms": 70000, "http_quarantine_ms": 70000}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Gateway.ParticipantThrottle = tc.settings
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(t, "/v1/admin/settings", r.URL.Path)
+				var body map[string]json.RawMessage
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				if tc.want == nil {
+					require.NotContains(t, body, "participant_throttle")
+				} else {
+					var throttle map[string]int64
+					require.NoError(t, json.Unmarshal(body["participant_throttle"], &throttle))
+					require.Equal(t, tc.want, throttle)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
+		})
+	}
 }
