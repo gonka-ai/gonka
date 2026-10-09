@@ -1,0 +1,21 @@
+# Managed PostgreSQL: keeps the bundled database out of ordinary `up`
+# operations while preserving any operator-defined dependencies. Add it after
+# docker-compose.versiond.yml together with an override that sets PGHOST,
+# PGPORT, PGDATABASE, PGUSER and PGPASSWORD on every versiond service. With
+# extra local replicas (docker-compose.versiond3.yml) repeat the depends_on
+# override below for each of them.
+services:
+  versiond:
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+        required: false
+
+  versiond2:
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+        required: false
+
+  devshard-postgres:
+    profiles: [gonka-local-postgres-disabled]

@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -41,4 +42,8 @@ func PruneEpochZeroInferencesForTesting(k Keeper, ctx sdk.Context, currentEpochI
 	p := k.GetEpochZeroInferencePruner(params)
 	p.remove = remove
 	return p.prune(ctx, k, currentEpochIndex, nil)
+}
+
+func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
+	return k.removeFromEpochGroups(ctx, participant, reason)
 }

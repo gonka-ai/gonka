@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,13 +22,16 @@ import (
 
 // ObservabilityEndpoints are host-published URLs for the testenv observability overlay.
 type ObservabilityEndpoints struct {
-	Jaeger     string
-	Loki       string
-	Prometheus string
-	Grafana    string
+	Jaeger         string
+	Loki           string
+	Prometheus     string
+	Grafana        string
+	ComposeProject string
+	StartedAt      time.Time
 }
 
-// DefaultObservabilityEndpoints matches docker-compose.observability.yml host bindings.
+// DefaultObservabilityEndpoints matches docker-compose.observability.yml host bindings
+// for `make obs-up` (fixed ports, named volumes). Citest discovers ports instead.
 func DefaultObservabilityEndpoints() ObservabilityEndpoints {
 	return ObservabilityEndpoints{
 		Jaeger:     "http://127.0.0.1:11686",
@@ -48,6 +52,9 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	cmd := exec.Command("cp", "-R", src, dst)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "copy observability configs: %s", out)
+
+	writeIsolatedObservabilityCompose(t, s)
+	pinPromtailToComposeProject(t, filepath.Join(dst, "promtail-config.yaml"), s.ComposeProject)
 
 	promPath := filepath.Join(dst, "prometheus.yml")
 	body, err := os.ReadFile(promPath)
@@ -129,6 +136,79 @@ services:
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 }
 
+func writeIsolatedObservabilityCompose(t *testing.T, s *Stack) {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
+	require.NoError(t, err)
+	dashboards, err := filepath.Abs(grafanaDashboardsDir(s.TestenvDir))
+	require.NoError(t, err)
+	require.DirExists(t, dashboards)
+	for _, dir := range []string{"jaeger", "loki", "prometheus", "grafana", "promtail"} {
+		require.NoError(t, os.MkdirAll(filepath.Join(s.WorkDir, "data", dir), 0o755))
+	}
+	rewritten := rewriteObservabilityCompose(string(src), filepath.ToSlash(dashboards))
+	require.NoError(t, os.WriteFile(filepath.Join(s.WorkDir, "docker-compose.observability.yml"), []byte(rewritten), 0o644))
+}
+
+func rewriteObservabilityCompose(src, dashboardsAbs string) string {
+	repls := [][2]string{
+		{"testenv_jaeger_data:/var/lib/jaeger", "./data/jaeger:/var/lib/jaeger"},
+		{"testenv_prometheus_data:/prometheus", "./data/prometheus:/prometheus"},
+		{"testenv_loki_data:/loki", "./data/loki:/loki"},
+		{"testenv_promtail_data:/tmp", "./data/promtail:/tmp"},
+		{"testenv_grafana_data:/var/lib/grafana", "./data/grafana:/var/lib/grafana"},
+		{"../../../deploy/join/observability/grafana/dashboards", dashboardsAbs},
+	}
+	out := src
+	for _, r := range repls {
+		out = strings.ReplaceAll(out, r[0], r[1])
+	}
+	portRe := regexp.MustCompile(`(?m)^(\s*-\s*")127\.0\.0\.1:[0-9]+:([0-9]+)(".*)$`)
+	out = portRe.ReplaceAllString(out, `${1}127.0.0.1::${2}${3}`)
+	volRe := regexp.MustCompile(`(?s)\nvolumes:\n(?:  testenv_\w+:\n)+`)
+	return volRe.ReplaceAllString(out, "\n")
+}
+
+func pinPromtailToComposeProject(t *testing.T, promtailPath, project string) {
+	t.Helper()
+	require.NotEmpty(t, project)
+	body, err := os.ReadFile(promtailPath)
+	require.NoError(t, err)
+	updated, ok := insertPromtailProjectKeep(string(body), project)
+	require.True(t, ok, "promtail-config.yaml: compose_service keep rule not found")
+	require.NoError(t, os.WriteFile(promtailPath, []byte(updated), 0o644))
+}
+
+func grafanaDashboardsDir(testenvDir string) string {
+	return filepath.Join(testenvDir, "../../deploy/join/observability/grafana/dashboards")
+}
+
+func insertPromtailProjectKeep(cfg, project string) (string, bool) {
+	re := regexp.MustCompile(`(?m)^(\s+- source_labels: \[__meta_docker_container_label_com_docker_compose_service\]\n(?:.*\n)*?\s+action: keep\n)`)
+	loc := re.FindStringIndex(cfg)
+	if loc == nil {
+		return cfg, false
+	}
+	insert := `      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        regex: "` + regexp.QuoteMeta(project) + `"
+        action: keep
+`
+	return cfg[:loc[1]] + insert + cfg[loc[1]:], true
+}
+
+// ObservabilityHostEndpoints reads Docker-assigned observability ports for this stack.
+func (s *Stack) ObservabilityHostEndpoints(t *testing.T) ObservabilityEndpoints {
+	t.Helper()
+	return ObservabilityEndpoints{
+		Jaeger:         "http://" + s.composePublishedAddr(t, "jaeger", 16686),
+		Loki:           "http://" + s.composePublishedAddr(t, "loki", 3100),
+		Prometheus:     "http://" + s.composePublishedAddr(t, "prometheus", 9090),
+		Grafana:        "http://" + s.composePublishedAddr(t, "grafana", 3000),
+		ComposeProject: s.ComposeProject,
+		StartedAt:      time.Now().Add(-30 * time.Second),
+	}
+}
+
 // WaitObservabilityReady polls Jaeger and Loki readiness endpoints on the host.
 func WaitObservabilityReady(t *testing.T, obs ObservabilityEndpoints, timeout time.Duration) {
 	t.Helper()
@@ -169,9 +249,13 @@ func WaitLokiSubstring(t *testing.T, obs ObservabilityEndpoints, substring strin
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	query := `{compose_service=~"versiond.*"} |~ "` + strings.ReplaceAll(substring, `"`, `\"`) + `"`
-	t.Logf("citest: waiting for Loki log match %q", substring)
+	if obs.ComposeProject != "" {
+		query = `{compose_project="` + obs.ComposeProject + `",compose_service=~"versiond.*"} |~ "` +
+			strings.ReplaceAll(substring, `"`, `\"`) + `"`
+	}
+	t.Logf("citest: waiting for Loki log match %q query=%s", substring, query)
 	ok := assertEventually(t, timeout, 3*time.Second, func() bool {
-		return lokiQueryContains(client, obs.Loki, query, substring)
+		return lokiQueryContains(client, obs.Loki, query, substring, obs.StartedAt)
 	})
 	require.True(t, ok, "Loki logs missing %q within %s (Explore: %s/explore, datasource Loki)",
 		substring, timeout, obs.Grafana)
@@ -190,6 +274,36 @@ func RequireMetricsBody(t *testing.T, client *http.Client, metricsURL, contains 
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "GET %s: %s", metricsURL, string(body))
 	require.Contains(t, string(body), contains, "GET %s metrics body", metricsURL)
+}
+
+// RequireDevsharddMetricSample scrapes each versiond host's /{version}/metrics
+// (not the sticky router path, which can land on the idle replica). HistogramVec
+// names only appear after Observe, so _count means this process handled work.
+func RequireDevsharddMetricSample(t *testing.T, stack *Stack, cfg *config.File, metric string) {
+	t.Helper()
+	require.NotNil(t, cfg)
+	version := cfg.Versiond.VersionName
+	if version == "" {
+		version = "v2"
+	}
+	var last string
+	ok := AssertEventually(t, 30*time.Second, time.Second, func() bool {
+		for _, h := range cfg.Hosts {
+			out, err := stack.ComposeExecOutput(h.ID, "wget", "-qO-", "http://127.0.0.1:8080/"+version+"/metrics")
+			if err != nil {
+				last = h.ID + ": " + err.Error()
+				continue
+			}
+			if strings.Contains(out, metric+"_count") || strings.Contains(out, metric+"_bucket") {
+				t.Logf("citest: observed %s on %s", metric, h.ID)
+				return true
+			}
+			last = h.ID + ": metric name missing"
+		}
+		return false
+	})
+	require.True(t, ok, "no versiond host exported %s after chat (last=%s); sticky /%s/metrics can miss the serving replica",
+		metric, last, version)
 }
 
 func httpReady(client *http.Client, url string) bool {
@@ -211,7 +325,7 @@ func jaegerHasOperation(client *http.Client, baseURL, service, operation string)
 	q.Set("service", service)
 	q.Set("operation", operation)
 	q.Set("limit", "20")
-	q.Set("lookback", "1h")
+	q.Set("lookback", "15m")
 	u.RawQuery = q.Encode()
 
 	resp, err := client.Get(u.String())
@@ -249,9 +363,12 @@ func jaegerHasOperation(client *http.Client, baseURL, service, operation string)
 	return false
 }
 
-func lokiQueryContains(client *http.Client, baseURL, query, substring string) bool {
+func lokiQueryContains(client *http.Client, baseURL, query, substring string, startedAt time.Time) bool {
 	end := time.Now()
 	start := end.Add(-15 * time.Minute)
+	if !startedAt.IsZero() && startedAt.Before(end) {
+		start = startedAt
+	}
 	u, err := url.Parse(baseURL + "/loki/api/v1/query_range")
 	if err != nil {
 		return false

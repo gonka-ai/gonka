@@ -1,20 +1,18 @@
 package server_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
-	"devshard/chainoracle/blocks/server"
 	"devshard/signing"
 
 	"github.com/labstack/echo/v4"
@@ -58,14 +56,14 @@ func TestServer_Healthz(t *testing.T) {
 	require.Equal(t, "ok", string(body))
 }
 
-func TestServer_BlockLatest_RoundTripByteIdentical(t *testing.T) {
+func TestServer_BlockAt_RoundTripByteIdentical(t *testing.T) {
 	ts, mock, cleanup := newTestStack(t)
 	defer cleanup()
 
 	source, err := mock.AdvanceOne()
 	require.NoError(t, err)
 
-	resp, err := http.Get(ts.URL + "/block/latest")
+	resp, err := http.Get(fmt.Sprintf("%s/block/%d", ts.URL, source.Height))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -76,12 +74,9 @@ func TestServer_BlockLatest_RoundTripByteIdentical(t *testing.T) {
 	var decoded blocks.Header
 	require.NoError(t, json.Unmarshal(body, &decoded))
 
-	// Re-marshal the decoded header: bytes must match the server payload.
 	reencoded, err := json.Marshal(&decoded)
 	require.NoError(t, err)
 	require.Equal(t, string(body), string(reencoded))
-
-	// Canonical bytes across source and decoded must also match.
 	require.Equal(t,
 		blocks.CanonicalHeaderBytes(source),
 		blocks.CanonicalHeaderBytes(&decoded),
@@ -118,77 +113,6 @@ func TestServer_Prove_ReturnsStableBytes(t *testing.T) {
 	require.Equal(t, b1, b2)
 }
 
-func TestServer_Stream_Ordering(t *testing.T) {
-	ts, mock, cleanup := newTestStack(t)
-	defer cleanup()
-	// Seed two headers so /block/stream?from=1 replays immediately.
-	_, err := mock.AdvanceOne()
-	require.NoError(t, err)
-	_, err = mock.AdvanceOne()
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/block/stream?from=1", nil)
-	require.NoError(t, err)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	// Read first two SSE frames; assert heights 1 and 2 in order.
-	heights := make([]int64, 0, 2)
-	reader := bufio.NewReader(resp.Body)
-	var data strings.Builder
-	for len(heights) < 2 {
-		line, err := reader.ReadString('\n')
-		require.NoError(t, err)
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if data.Len() == 0 {
-				continue
-			}
-			var h blocks.Header
-			require.NoError(t, json.Unmarshal([]byte(data.String()), &h))
-			heights = append(heights, h.Height)
-			data.Reset()
-			continue
-		}
-		if strings.HasPrefix(line, "data:") {
-			d := strings.TrimPrefix(line, "data:")
-			d = strings.TrimPrefix(d, " ")
-			data.WriteString(d)
-		}
-	}
-	require.Equal(t, []int64{1, 2}, heights)
-
-	// Advance one more and confirm the next frame arrives in order.
-	_, err = mock.AdvanceOne()
-	require.NoError(t, err)
-
-	for {
-		line, err := reader.ReadString('\n')
-		require.NoError(t, err)
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			if data.Len() == 0 {
-				continue
-			}
-			var h blocks.Header
-			require.NoError(t, json.Unmarshal([]byte(data.String()), &h))
-			require.Equal(t, int64(3), h.Height)
-			return
-		}
-		if strings.HasPrefix(line, "data:") {
-			d := strings.TrimPrefix(line, "data:")
-			d = strings.TrimPrefix(d, " ")
-			data.WriteString(d)
-		}
-	}
-}
-
-// Sanity check for the bad-height route.
 func TestServer_BadHeight(t *testing.T) {
 	ts, _, cleanup := newTestStack(t)
 	defer cleanup()
@@ -196,4 +120,33 @@ func TestServer_BadHeight(t *testing.T) {
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+type hashOnlyOracle struct{}
+
+func (hashOnlyOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(1, time.Unix(1, 0).UTC(), "gonka-test", []byte{1}), nil
+}
+func (hashOnlyOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
+	return hashOnlyOracle{}.Latest(ctx)
+}
+func (hashOnlyOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+func (hashOnlyOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
+
+func TestServer_Prove_NotImplemented(t *testing.T) {
+	e := echo.New()
+	server.Mount(e.Group(""), hashOnlyOracle{})
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/block/1/prove?path=/escrow/1")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotImplemented, resp.StatusCode)
 }

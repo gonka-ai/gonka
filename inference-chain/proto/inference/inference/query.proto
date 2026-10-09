@@ -37,6 +37,7 @@ import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/poc_challenge.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -497,6 +498,10 @@ service Query {
 
   rpc DevshardApprovedVersions (QueryDevshardApprovedVersionsRequest) returns (QueryDevshardApprovedVersionsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_approved_versions";
+  }
+
+  rpc OpenPoCChallenges (QueryOpenPoCChallengesRequest) returns (QueryOpenPoCChallengesResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/open_poc_challenges";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1339,4 +1344,10 @@ message QueryDevshardApprovedVersionsRequest {}
 
 message QueryDevshardApprovedVersionsResponse {
   repeated DevshardApprovedVersion versions = 1;
+}
+
+message QueryOpenPoCChallengesRequest {}
+
+message QueryOpenPoCChallengesResponse {
+  repeated OpenPoCChallenge challenges = 1;
 }

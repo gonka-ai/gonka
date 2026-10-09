@@ -71,7 +71,7 @@ func TestHandleRequestAccountingReturnsJoinedInferenceCosts(t *testing.T) {
 			ConfirmedAt:  102,
 		},
 	}
-	sm.RestoreState(state)
+	require.NoError(t, sm.RestoreState(state))
 
 	proxy := &Proxy{sm: sm, escrowID: escrowID, perf: perf}
 	req := httptest.NewRequest(http.MethodGet, "/v1/requests/"+requestID, nil)
@@ -176,7 +176,7 @@ func TestHandleRequestAccountingResolvesCachedRequestAliasCosts(t *testing.T) {
 			ConfirmedAt:  102,
 		},
 	}
-	sm.RestoreState(state)
+	require.NoError(t, sm.RestoreState(state))
 
 	proxy := &Proxy{sm: sm, escrowID: escrowID, perf: perf}
 	req := httptest.NewRequest(http.MethodGet, "/v1/requests/"+cachedRequestID, nil)

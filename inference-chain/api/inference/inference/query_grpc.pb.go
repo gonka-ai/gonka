@@ -106,6 +106,7 @@ const (
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
 	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 	Query_DevshardApprovedVersions_FullMethodName                  = "/inference.inference.Query/DevshardApprovedVersions"
+	Query_OpenPoCChallenges_FullMethodName                         = "/inference.inference.Query/OpenPoCChallenges"
 )
 
 // QueryClient is the client API for Query service.
@@ -259,6 +260,7 @@ type QueryClient interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error)
+	OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error)
 }
 
 type queryClient struct {
@@ -1052,6 +1054,15 @@ func (c *queryClient) DevshardApprovedVersions(ctx context.Context, in *QueryDev
 	return out, nil
 }
 
+func (c *queryClient) OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error) {
+	out := new(QueryOpenPoCChallengesResponse)
+	err := c.cc.Invoke(ctx, Query_OpenPoCChallenges_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -1203,6 +1214,7 @@ type QueryServer interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error)
+	OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1470,6 +1482,9 @@ func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListC
 }
 func (UnimplementedQueryServer) DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardApprovedVersions not implemented")
+}
+func (UnimplementedQueryServer) OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method OpenPoCChallenges not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -3050,6 +3065,24 @@ func _Query_DevshardApprovedVersions_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_OpenPoCChallenges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryOpenPoCChallengesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).OpenPoCChallenges(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_OpenPoCChallenges_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).OpenPoCChallenges(ctx, req.(*QueryOpenPoCChallengesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3404,6 +3437,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DevshardApprovedVersions",
 			Handler:    _Query_DevshardApprovedVersions_Handler,
+		},
+		{
+			MethodName: "OpenPoCChallenges",
+			Handler:    _Query_OpenPoCChallenges_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

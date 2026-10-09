@@ -133,7 +133,11 @@ func TestFeeGroupOf(t *testing.T) {
 	require.Equal(t, types.FeeGroupEpoch, types.FeeGroupOf(&collateraltypes.MsgDepositCollateral{}))
 	require.Equal(t, types.FeeGroupOnboarding, types.FeeGroupOf(&types.MsgSubmitNewParticipant{}))
 	require.Equal(t, types.FeeGroupCosmos, types.FeeGroupOf(&banktypes.MsgSend{}))
-	require.Equal(t, "", types.FeeGroupOf(&types.MsgUpdateParams{}))
+	require.Equal(t, types.FeeGroupGovernance, types.FeeGroupOf(&types.MsgUpdateParams{}))
+	require.Equal(t, types.FeeGroupEpoch, types.FeeGroupOf(&types.MsgSetClaimRecipients{}))
+	require.Equal(t, types.FeeGroupEpoch, types.FeeGroupOf(&types.MsgSubmitUnitOfComputePriceProposal{}))
+	require.Equal(t, types.FeeGroupGovernance, types.CompiledFeeGroupForTypeURL("/cosmos.gov.v1.MsgVote"))
+	require.Equal(t, types.FeeGroupCosmos, types.CompiledFeeGroupForTypeURL("/cosmos.bank.v1beta1.MsgSend"))
 	require.Equal(t, "", types.FeeGroupOf(&types.MsgSubmitPocBatch{}))
 }
 
@@ -148,7 +152,7 @@ func TestIsNetworkDuty(t *testing.T) {
 
 func TestDefaultFeeParamsTree(t *testing.T) {
 	fp := types.DefaultFeeParams()
-	require.Empty(t, fp.EnabledFeeGroups)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, fp.EnabledFeeGroups)
 	g, rule := fp.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
 	require.NotNil(t, g)
 	require.Equal(t, types.FeeGroupEpoch, g.Name)

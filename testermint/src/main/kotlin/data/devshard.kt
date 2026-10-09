@@ -35,7 +35,15 @@ data class DevshardProxyStatus(
     val nonce: Long,
     val phase: String,
     val balance: Long,
-    val config: DevshardSessionConfig
+    val config: DevshardSessionConfig,
+    @SerializedName("height_seed")
+    val heightSeed: DevshardHeightSeedStatus? = null,
+)
+
+data class DevshardHeightSeedStatus(
+    val state: String? = null,
+    val seeded: Int? = null,
+    val slots: Int? = null,
 )
 
 data class DevshardSessionConfig(

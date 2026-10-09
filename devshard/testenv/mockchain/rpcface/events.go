@@ -1,6 +1,7 @@
 package rpcface
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 
@@ -47,8 +48,14 @@ func txResult(height int64, events ...abci.Event) cmttypes.EventDataTx {
 func newBlockEvent(chainID string, height int64) cmttypes.EventDataNewBlock {
 	block := cmttypes.MakeBlock(height, nil, nil, nil)
 	block.Header.ChainID = chainID
+	if len(block.Header.ValidatorsHash) == 0 {
+		block.Header.ValidatorsHash = bytes.Repeat([]byte{1}, 32)
+	}
+	if len(block.Header.NextValidatorsHash) == 0 {
+		block.Header.NextValidatorsHash = append([]byte(nil), block.Header.ValidatorsHash...)
+	}
 	return cmttypes.EventDataNewBlock{
 		Block:   block,
-		BlockID: cmttypes.BlockID{Hash: block.Hash()},
+		BlockID: cmttypes.BlockID{Hash: block.Header.Hash()},
 	}
 }

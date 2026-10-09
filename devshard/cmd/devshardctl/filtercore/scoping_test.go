@@ -4,10 +4,10 @@ import "testing"
 
 func TestMatchesModel(t *testing.T) {
 	cases := []struct {
-		name        string
-		routed      string
-		models      []string
-		want        bool
+		name   string
+		routed string
+		models []string
+		want   bool
 	}{
 		{name: "empty list", routed: "model-a", models: nil, want: false},
 		{name: "single match", routed: "model-a", models: []string{"model-a"}, want: true},

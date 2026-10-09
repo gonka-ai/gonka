@@ -90,9 +90,9 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	// then finalize and empty ticks through settlement drain).
 	applyDiffPersist(t, leader, leaderStore, user, escrowID, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
-	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], escrowID, 1, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	applyDiffPersist(t, leader, leaderStore, user, escrowID, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
 	})})

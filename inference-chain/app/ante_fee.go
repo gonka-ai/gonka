@@ -14,6 +14,23 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
+const MaxTxFeeNgonka = int64(100_000_000_000) // 100 GNK
+
+// MaxTxFeeDecorator rejects fees above MaxTxFeeNgonka before fee deduction.
+type MaxTxFeeDecorator struct{}
+
+func (MaxTxFeeDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	feeTx, ok := tx.(sdk.FeeTx)
+	if !ok {
+		return ctx, errorsmod.Wrap(sdkerrors.ErrTxDecode, "Tx must implement FeeTx")
+	}
+	if feeTx.GetFee().AmountOf(inferencetypes.BaseCoin).GT(math.NewInt(MaxTxFeeNgonka)) {
+		return ctx, errorsmod.Wrapf(sdkerrors.ErrInvalidRequest,
+			"transaction fee exceeds maximum of %dngonka (100 GNK)", MaxTxFeeNgonka)
+	}
+	return next(ctx, tx, simulate)
+}
+
 // --- Context key for fee bypass flag ---
 
 type networkDutyFeeBypassKey struct{}

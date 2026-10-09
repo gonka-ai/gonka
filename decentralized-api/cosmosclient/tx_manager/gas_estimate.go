@@ -77,6 +77,7 @@ const (
 
 	// Other host operations.
 	gasSubmitSeed                   = uint64(80_000)
+	gasDeclarePoCIntent             = uint64(100_000) // small KV write + last-write-wins clears
 	gasSubmitNewParticipant         = uint64(150_000)
 	gasSubmitNewUnfundedParticipant = uint64(150_000)
 	gasBridgeExchange               = uint64(500_000)
@@ -190,8 +191,12 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:
 		return gasSubmitPocValidationsV2, true
+	case *inferencetypes.MsgSubmitPoCChallengeValidations:
+		return gasSubmitPocValidationsV2, true
 	case *inferencetypes.MsgPoCV2StoreCommit:
 		return estimateStoreCommitGas(m, hints), true
+	case *inferencetypes.MsgPoCChallengeStoreCommit:
+		return gasPoCV2Base, true
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		var totalNodes uint64
 		for _, e := range m.Entries {
@@ -204,6 +209,8 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 		return gasClaimRewards, true
 	case *inferencetypes.MsgSubmitSeed:
 		return gasSubmitSeed, true
+	case *inferencetypes.MsgDeclarePoCIntent:
+		return gasDeclarePoCIntent, true
 	case *inferencetypes.MsgSubmitNewParticipant:
 		return gasSubmitNewParticipant, true
 	case *inferencetypes.MsgSubmitNewUnfundedParticipant:

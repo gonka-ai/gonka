@@ -96,6 +96,7 @@ const (
 	ReasonReceiptSignErr              Reason = "receipt_sign_err"
 	ReasonQueueFull                   Reason = "queue_full"
 	ReasonValidateErr                 Reason = "validate_err"
+	ReasonValidationLeased            Reason = "validation_leased"
 	ReasonInferenceDisappeared        Reason = "inference_disappeared"
 	ReasonSignValidationErr           Reason = "sign_validation_err"
 	ReasonSignVoteErr                 Reason = "sign_vote_err"
@@ -128,12 +129,15 @@ const (
 	ReasonEpochConflict               Reason = "epoch_conflict"
 	ReasonBuildGroupErr               Reason = "build_group_err"
 	ReasonGetEscrowErr                Reason = "get_escrow_err"
+	ReasonEscrowSettled               Reason = "escrow_settled"
 	ReasonStorageErr                  Reason = "storage_err"
 	ReasonSessionResolveErr           Reason = "session_resolve_err"
+	ReasonInvalidEscrowID             Reason = "invalid_escrow_id"
 	ReasonModifyRequestErr            Reason = "modify_request_err"
 	ReasonCanonicalizePromptErr       Reason = "canonicalize_prompt_err"
 	ReasonPayloadStoreErr             Reason = "payload_store_err"
 	ReasonPayloadFetchErr             Reason = "payload_fetch_err"
+	ReasonPayloadTooLarge             Reason = "payload_too_large"
 	ReasonProcessResponseErr          Reason = "process_response_err"
 	ReasonValidationBuildErr          Reason = "validation_build_err"
 	ReasonValidationParseErr          Reason = "validation_parse_err"
@@ -151,6 +155,10 @@ const (
 	MetricStatusError  MetricStatus = "error"
 	MetricStatusQueued MetricStatus = "queued"
 	MetricStatusCached MetricStatus = "cached"
+	// MetricStatusLeased marks an attempt that stopped because a lease row was
+	// already in place. Distinct from error: most of these are the dedup guard
+	// working as intended.
+	MetricStatusLeased MetricStatus = "leased"
 )
 
 const (

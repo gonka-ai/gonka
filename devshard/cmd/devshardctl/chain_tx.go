@@ -4,8 +4,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
+
+	devshardpkg "devshard"
 
 	chaintx "common/chain/tx"
 
@@ -115,8 +116,8 @@ func parseEscrowIDString(raw string) (uint64, error) {
 	if raw == "" {
 		return 0, fmt.Errorf("escrow_id is required")
 	}
-	id, err := strconv.ParseUint(raw, 10, 64)
-	if err != nil || id == 0 {
+	id, err := devshardpkg.ParseEscrowID(raw)
+	if err != nil {
 		return 0, fmt.Errorf("invalid escrow_id %q", raw)
 	}
 	return id, nil

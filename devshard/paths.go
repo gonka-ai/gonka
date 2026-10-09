@@ -107,3 +107,13 @@ func VersionlessMetricsPath() string {
 func VersionlessHealthzPath() string {
 	return VersionlessRoutePrefix + "/healthz"
 }
+
+// RouterCatalogHealthzPath is GET /{version}/healthz on the versiond router.
+// That is catalog admission, not a host inference request.
+func RouterCatalogHealthzPath(version string) string {
+	version = strings.Trim(strings.TrimSpace(version), "/")
+	if version == "" {
+		return ""
+	}
+	return "/" + version + "/healthz"
+}

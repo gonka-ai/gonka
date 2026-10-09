@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -59,5 +62,55 @@ func TestVersionsCache_StaleFailsClosed(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	if c.IsNodeValidationCapable("m", "n1") {
 		t.Fatal("stale entry must fail closed")
+	}
+}
+
+func TestVersionsCache_OversizedResponseFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write([]byte(`{"mlnodes":[{"node_id":"n1","poc_validation_inference":true}`))
+		entry := []byte(`,{"node_id":"n1","poc_validation_inference":true}`)
+		for written := 0; written <= maxVersionsResponseBytes; written += len(entry) {
+			gz.Write(entry)
+		}
+		gz.Write([]byte(`]}`))
+		gz.Close()
+	}))
+	defer srv.Close()
+
+	c := NewVersionsCache(&http.Client{Timeout: 2 * time.Second}, time.Minute)
+	c.SetCandidates(map[string]string{"m": srv.URL})
+	c.Poll(context.Background())
+	if c.IsNodeValidationCapable("m", "n1") {
+		t.Fatal("oversized response must fail closed")
+	}
+}
+
+func TestVersionsCache_OversizedErrorResponseNotDrained(t *testing.T) {
+	const offered = 64 << 20
+	var written int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		chunk := bytes.Repeat([]byte("e"), 64<<10)
+		for int(atomic.LoadInt64(&written)) < offered {
+			n, err := w.Write(chunk)
+			atomic.AddInt64(&written, int64(n))
+			if err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c := NewVersionsCache(&http.Client{Timeout: 10 * time.Second}, time.Minute)
+	c.SetCandidates(map[string]string{"m": srv.URL})
+	c.Poll(context.Background())
+
+	if c.IsNodeValidationCapable("m", "n1") {
+		t.Fatal("error response must fail closed")
+	}
+	if got := atomic.LoadInt64(&written); got >= offered {
+		t.Fatalf("error body was drained without limit: %d bytes consumed", got)
 	}
 }

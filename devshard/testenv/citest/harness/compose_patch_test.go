@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,17 +17,188 @@ services:
   versiond-0:
     environment:
       DEVSHARD_STORAGE_MODE: postgres
-      VERSIOND_HOSTS: "versiond-0 versiond-1"
+  versiond-router:
+    environment:
+      VERSIOND_POOL_HOST: "versiond-pool"
+      GONKA_HA: "true"
 `), 0o644))
 
 	PatchVersiondStorageMode(t, path, "sqlite")
-	PatchRouterVersiondHosts(t, path, "versiond-0")
+	PatchRouterHADeployment(t, path, false)
 
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	text := string(body)
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE: postgres")
-	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0"`)
-	require.NotContains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Contains(t, text, `GONKA_HA: ""`)
+	require.NotContains(t, text, `GONKA_HA: "true"`)
+}
+
+func TestPatchComposeInsertEnvAfterAll(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
+  versiond-1:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
+  devshardctl:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:12345
+`), 0o644))
+
+	EnableHeightSyncCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:12345"))
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
+}
+
+func TestEnableLegacyDapiCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  mock-dapi:
+    environment:
+      MOCK_DAPI_HTTP_ADDR: ":9100"
+      MOCK_DAPI_GRPC_ADDR: ":9400"
+`), 0o644))
+
+	EnableLegacyDapiCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`)
+}
+
+func TestEnableHeightSyncPeerMatrixCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  devshardctl:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+`), 0o644))
+
+	EnableHeightSyncPeerMatrixCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`)
+}
+
+// The same host is a separate server in every backend, with its own state, so
+// the parse has to keep them apart or a wait would settle on whichever backend
+// happened to be printed last.
+func TestParseRouterPool(t *testing.T) {
+	slots := parseRouterPool("versiond_ha_pool\n" +
+		"  versiond1\t172.30.0.10\tUP\n" +
+		"  versiond2\t172.30.0.11\tUP\n" +
+		"  2 server(s) taking traffic\n" +
+		"versiond_pool_v2\n" +
+		"  versiond1\t172.30.0.10\tDOWN\n" +
+		"  versiond2\t172.30.0.11\tDRAIN\n" +
+		"  1 server(s) taking traffic\n")
+	require.Equal(t, []RouterSlot{
+		{Backend: "versiond_ha_pool", Name: "versiond1", Address: "172.30.0.10", State: RouterSlotUp},
+		{Backend: "versiond_ha_pool", Name: "versiond2", Address: "172.30.0.11", State: RouterSlotUp},
+		{Backend: "versiond_pool_v2", Name: "versiond1", Address: "172.30.0.10", State: RouterSlotDown},
+		{Backend: "versiond_pool_v2", Name: "versiond2", Address: "172.30.0.11", State: RouterSlotDrain},
+	}, slots)
+}
+
+func TestParseRouterVersionBackend(t *testing.T) {
+	out := "# id (file) description\n" +
+		"0x1 v2 versiond_dynamic_1\n" +
+		"0x2 version=v2 versiond_dynamic_1\n" +
+		"0x3 v4 versiond_pool_v4\n"
+
+	backend, err := parseRouterVersionBackend(out, "v2")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_dynamic_1", backend)
+
+	backend, err = parseRouterVersionBackend(out, "v4")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_pool_v4", backend)
+
+	_, err = parseRouterVersionBackend(out, "v9")
+	require.ErrorContains(t, err, `version "v9" is not present`)
+}
+
+func TestParseRouterVersionBackendRejectsConflictingEntries(t *testing.T) {
+	_, err := parseRouterVersionBackend(
+		"0x1 v2 versiond_dynamic_1\n0x2 v2 versiond_dynamic_2\n",
+		"v2",
+	)
+	require.ErrorContains(t, err, `version "v2" maps to multiple backends`)
+}
+
+func TestPatchComposeServiceEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-0
+  versiond-1:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-0
+volumes:
+  VERSIOND_ORACLE_URL: not-an-env-entry
+`), 0o644))
+
+	previous := PatchComposeServiceEnv(t, path, "versiond-1", "VERSIOND_ORACLE_URL", "http://127.0.0.1:1/versions")
+	require.Equal(t, "http://mock-dapi:9100/versions", previous)
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+
+	// Exactly one host moved; the sibling and the unrelated block are untouched,
+	// which is the whole point of scoping the patch to one service.
+	require.Equal(t, 1, strings.Count(text, "VERSIOND_ORACLE_URL: http://127.0.0.1:1/versions"))
+	require.Equal(t, 1, strings.Count(text, "VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions"))
+	require.Contains(t, text, "VERSIOND_ORACLE_URL: not-an-env-entry")
+
+	restored := PatchComposeServiceEnv(t, path, "versiond-1", "VERSIOND_ORACLE_URL", previous)
+	require.Equal(t, "http://127.0.0.1:1/versions", restored)
+	body, err = os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(string(body), "VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions"))
+}
+
+func TestPatchComposeServiceInsertEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-0
+  versiond-2:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-2
+`), 0o644))
+
+	PatchComposeServiceInsertEnv(t, path, "versiond-2", "VERSIOND_ORACLE_URL",
+		`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`,
+		`DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`,
+	)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Equal(t, 1, strings.Count(text, `DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`))
+	require.Contains(t, text, `DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`)
+	require.NotContains(t, text[strings.Index(text, "versiond-0:"):strings.Index(text, "versiond-2:")],
+		"DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA")
 }

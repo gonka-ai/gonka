@@ -6,16 +6,30 @@ import (
 
 	"common/chain"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 )
 
 // preservedSnapshotStub implements chain.InferenceClient for phase_gate tests.
 type preservedSnapshotStub struct {
-	snapshotResp *inferencetypes.QueryPreservedNodesSnapshotResponse
+	snapshotResp     *inferencetypes.QueryPreservedNodesSnapshotResponse
+	epochInfoResp    *inferencetypes.QueryEpochInfoResponse
+	currentEpochResp *inferencetypes.QueryGetCurrentEpochResponse
 }
 
 var _ chain.InferenceClient = (*preservedSnapshotStub)(nil)
+
+type phaseGateStoreQueryStub struct {
+	resp *cmtservice.ABCIQueryResponse
+	err  error
+	req  *cmtservice.ABCIQueryRequest
+}
+
+func (s *phaseGateStoreQueryStub) ABCIQuery(_ context.Context, req *cmtservice.ABCIQueryRequest, _ ...grpc.CallOption) (*cmtservice.ABCIQueryResponse, error) {
+	s.req = req
+	return s.resp, s.err
+}
 
 func (s *preservedSnapshotStub) PreservedNodesSnapshot(context.Context, *inferencetypes.QueryPreservedNodesSnapshotRequest, ...grpc.CallOption) (*inferencetypes.QueryPreservedNodesSnapshotResponse, error) {
 	if s.snapshotResp != nil {
@@ -28,9 +42,15 @@ func (s *preservedSnapshotStub) Params(context.Context, *inferencetypes.QueryPar
 	return nil, fmt.Errorf("not implemented")
 }
 func (s *preservedSnapshotStub) EpochInfo(context.Context, *inferencetypes.QueryEpochInfoRequest, ...grpc.CallOption) (*inferencetypes.QueryEpochInfoResponse, error) {
+	if s.epochInfoResp != nil {
+		return s.epochInfoResp, nil
+	}
 	return nil, fmt.Errorf("not implemented")
 }
 func (s *preservedSnapshotStub) GetCurrentEpoch(context.Context, *inferencetypes.QueryGetCurrentEpochRequest, ...grpc.CallOption) (*inferencetypes.QueryGetCurrentEpochResponse, error) {
+	if s.currentEpochResp != nil {
+		return s.currentEpochResp, nil
+	}
 	return nil, fmt.Errorf("not implemented")
 }
 func (s *preservedSnapshotStub) ParticipantsWithBalances(context.Context, *inferencetypes.QueryParticipantsWithBalancesRequest, ...grpc.CallOption) (*inferencetypes.QueryParticipantsWithBalancesResponse, error) {

@@ -39,7 +39,7 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 
 	// RestHash should match independently computed value.
 	acc := sealedAccBytes32(st.SealedAcc)
-	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, types.HeightSyncEscrowCommitFromState(&st))
 	require.NoError(t, err)
 	require.Equal(t, restHash, payload.RestHash)
 }

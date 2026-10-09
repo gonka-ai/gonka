@@ -140,6 +140,8 @@ func buildEscrowFromTemplate(st *store.Store, id uint64, creator string, amount 
 		escrow.AutoSealEveryNNonces = tmpl.AutoSealEveryNNonces
 		escrow.ValidationRate = tmpl.ValidationRate
 		escrow.VoteThresholdFactor = tmpl.VoteThresholdFactor
+		escrow.RefusalTimeout = tmpl.RefusalTimeout
+		escrow.ExecutionTimeout = tmpl.ExecutionTimeout
 	}
 	// Live /testenv/params patches update DevshardEscrowParams; prefer those for
 	// new escrows so validation_rate=10000 (etc.) applies after seed template load.
@@ -149,6 +151,12 @@ func buildEscrowFromTemplate(st *store.Store, id uint64, creator string, amount 
 		}
 		if p.VoteThresholdFactor != 0 {
 			escrow.VoteThresholdFactor = p.VoteThresholdFactor
+		}
+		if p.RefusalTimeout > 0 {
+			escrow.RefusalTimeout = p.RefusalTimeout
+		}
+		if p.ExecutionTimeout > 0 {
+			escrow.ExecutionTimeout = p.ExecutionTimeout
 		}
 	}
 	return escrow

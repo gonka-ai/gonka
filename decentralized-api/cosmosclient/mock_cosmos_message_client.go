@@ -114,12 +114,22 @@ func (m *MockCosmosMessageClient) SubmitPocValidationsV2(transaction *inferencet
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) SubmitPoCChallengeValidations(transaction *inferencetypes.MsgSubmitPoCChallengeValidations) error {
+	args := m.Called(transaction)
+	return args.Error(0)
+}
+
 func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error {
 	args := m.Called(transaction)
 	return args.Error(0)
 }
 
 func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
+	args := m.Called(transaction, timeoutHeight)
+	return args.Error(0)
+}
+
+func (m *MockCosmosMessageClient) SubmitPoCChallengeStoreCommitWithTimeout(transaction *inferencetypes.MsgPoCChallengeStoreCommit, timeoutHeight uint64) error {
 	args := m.Called(transaction, timeoutHeight)
 	return args.Error(0)
 }

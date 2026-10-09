@@ -46,6 +46,7 @@ services:
       - DAPI_API__ML_GRPC_SERVER_PORT=9300
       - DAPI_API__NODE_MANAGER_GRPC_PORT=9400
       - DAPI_API__TEST_MODE=true
+      - DAPI_API__MLNODE_PING_DISABLED=${DAPI_API__MLNODE_PING_DISABLED:-false}
       - DAPI_TX_BATCHING__FLUSH_TIMEOUT_SECONDS=1
       - DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE=${DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE:-10}
       - DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_TIMEOUT_SECONDS=${DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_TIMEOUT_SECONDS:-30}
@@ -54,6 +55,10 @@ services:
       - DEBUG=true
       - IS_TEST_NET=true
       - ENFORCED_MODEL_ID=disabled
+      # Participants register docker-internal hostnames that resolve to private
+      # IPs, so the dial-time SSRF guard must be off here. Production leaves this
+      # unset (default false = private targets blocked).
+      - DAPI_ALLOW_PRIVATE_ADDRESSES=true
       - DAPI_STATS_FILE_STORAGE_ENABLED=true
       # Empty PGHOST falls back to SQLite/file storage in dapi.
       - PGHOST=${PGHOST:-${KEY_NAME}-postgres}
