@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -32,7 +33,7 @@ func TestAdminSettingsCarryTheLogprobsOptimizationChoice(t *testing.T) {
 			require.Equal(t, http.StatusOK, resp.Code, "admin settings rejected the choice: %s", resp.Body)
 			require.Equal(t, testCase.want, env.gateway.logprobsOptimizationOverride())
 
-			stored, ok, err := env.gateway.store.LoadState()
+			stored, ok, err := env.gateway.store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, testCase.want, stored.Settings.LogprobsOptimizationOverride,

@@ -75,10 +75,10 @@ func newGatewayMockEnv(t *testing.T, runtimes []*gatewayMockRuntime, opts ...gat
 
 	g := NewGateway(devshards, cfg.limiter, cfg.settings.DefaultModel)
 	g.settings = cfg.settings
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(cfg.settings, gatewayMockStates(runtimes, devshards)))
+	require.NoError(t, store.Initialize(context.Background(), cfg.settings, gatewayMockStates(runtimes, devshards)))
 	g.store = store
 	handler := buildGatewayHandler(g, runtimeOptions{
 		adminAPIKey: cfg.adminKey,
@@ -241,14 +241,14 @@ func mockenvChatBody(model, prompt string) string {
 func writeMockenvChatJSON(w http.ResponseWriter, id, model string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, `{"id":"chatcmpl-%s","model":%q,"choices":[{"message":{"role":"assistant","content":"from %s"}}]}`, id, model, id)
+	_, _ = fmt.Fprintf(w, `{"id":"chatcmpl-%s","model":%q,"choices":[{"index":0,"message":{"role":"assistant","content":"from %s"},"finish_reason":"stop"}]}`, id, model, id)
 }
 
 func writeMockenvChatSSE(w http.ResponseWriter, id, model string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-%s\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"delta\":{\"content\":\"from %s\"},\"finish_reason\":null}]}\n\n", id, model, id)
+	_, _ = fmt.Fprintf(w, "data: {\"id\":\"chatcmpl-%s\",\"object\":\"chat.completion.chunk\",\"model\":%q,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"from %s\"},\"finish_reason\":\"stop\"}]}\n\n", id, model, id)
 	_, _ = io.WriteString(w, "data: [DONE]\n\n")
 }
 

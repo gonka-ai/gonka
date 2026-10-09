@@ -3,6 +3,7 @@ package mockopenai_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -391,4 +392,63 @@ func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "non-stream Validate must honor latency_ms")
+}
+
+// Test flow:
+//  1. Send a gateway-shaped prompt (max_tokens and min_tokens at the floor) through the executor's request rewrite to the mock.
+//  2. Store the reply the way the executor does, streamed or JSON, with the logprobs optimization on and off.
+//  3. Validate it by replaying against the same mock, with the vocab unknown and with MockVocabularySize resolved.
+//  4. Every case must reach the mock and pass similarity, so citest validations exercise the replay path.
+func TestValidationReplayOfMockResponsePasses(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	floor := completionapi.MinTokensFloor
+	for _, stream := range []bool{true, false} {
+		for _, optimize := range []bool{true, false} {
+			for _, vocabularySize := range []int{0, mockopenai.MockVocabularySize} {
+				name := fmt.Sprintf("stream=%t/optimize=%t/vocab=%d", stream, optimize, vocabularySize)
+				t.Run(name, func(t *testing.T) {
+					prompt := []byte(fmt.Sprintf(`{"model":"test-model","stream":%t,"max_tokens":%d,"min_tokens":%d,"messages":[{"role":"user","content":"citest validation replay"}]}`, stream, floor, floor))
+					stored, usage := executeAgainstMock(t, srv.URL, prompt, optimize)
+
+					replays := 0
+					execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+						replays++
+						req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/chat/completions", bytes.NewReader(body))
+						if err != nil {
+							return nil, err
+						}
+						req.Header.Set("Content-Type", "application/json")
+						return http.DefaultClient.Do(req)
+					}
+					result, err := validation.ExecuteValidation(context.Background(), "7", prompt, stored, execute,
+						usage.PromptTokens, usage.CompletionTokens, "", vocabularySize)
+					require.NoError(t, err)
+					require.Equal(t, 1, replays, "validation must replay against the mock: %#v", result)
+					require.IsType(t, &validation.SimilarityValidationResult{}, result)
+					require.True(t, result.IsSuccessful(), "similarity %v", result.(*validation.SimilarityValidationResult).Value)
+				})
+			}
+		}
+	}
+}
+
+func executeAgainstMock(t *testing.T, mockURL string, prompt []byte, optimize bool) ([]byte, *completionapi.Usage) {
+	t.Helper()
+	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(prompt, 7, "")
+	require.NoError(t, err)
+	resp, err := http.Post(mockURL+"/v1/chat/completions", "application/json", bytes.NewReader(modified.NewBody))
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	processor := completionapi.NewExecutorResponseProcessor("devshard-1-7", modified.AsksForLogprobs)
+	processor.SetLogprobsOptimization(nil, optimize)
+	require.NoError(t, completionapi.ProcessHTTPResponse(resp, processor))
+	stored, err := processor.GetResponseBytes()
+	require.NoError(t, err)
+	usage, err := processor.GetUsage()
+	require.NoError(t, err)
+	return stored, usage
 }

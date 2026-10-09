@@ -39,7 +39,7 @@ func validateDevshardSettlementVersionApproved(approved []*types.DevshardApprove
 			return nil
 		}
 	}
-	return fmt.Errorf("settlement version %q is not listed in devshard_escrow_params.approved_versions", version)
+	return fmt.Errorf("settlement version %q is not listed in approved devshard versions", version)
 }
 
 // DevshardQuorumFor returns the minimum slot votes required for a given group size.
@@ -78,8 +78,9 @@ type WarmKeyChecker func(granter, grantee string) bool
 
 // VerifyDevshardSettlement verifies settlement proof: state root, signatures, quorum, cost.
 // If isWarmKey is non-nil, mismatched signatures are checked against authz grants.
-// params must be non-nil (includes MaxNonce and ApprovedVersions for settlement tag checks).
-func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, isWarmKey WarmKeyChecker) error {
+// params must be non-nil (includes MaxNonce). approved is the store allowlist;
+// empty is permissive (tests / dev).
+func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleDevshardEscrow, params *types.DevshardEscrowParams, approved []*types.DevshardApprovedVersion, isWarmKey WarmKeyChecker) error {
 	if params == nil {
 		return fmt.Errorf("devshard escrow params is required")
 	}
@@ -100,7 +101,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		return fmt.Errorf("version exceeds maximum length of %d", maxVersionLength)
 	}
 
-	if err := validateDevshardSettlementVersionApproved(params.ApprovedVersions, msg.StateRootAndProtocolVersion); err != nil {
+	if err := validateDevshardSettlementVersionApproved(approved, msg.StateRootAndProtocolVersion); err != nil {
 		return err
 	}
 

@@ -256,7 +256,7 @@ func (g *Gateway) topUpServingEscrows(ctx context.Context, modelID string) error
 	unlockTarget := g.rotationTargetLocks.lock(rotationTargetKey(modelID, role, epoch))
 	defer unlockTarget()
 	servingCount, heldCount := g.escrowHoldCounts(modelID)
-	unheldCount, err := g.activeRotationEscrowCount(role, epoch, modelID)
+	unheldCount, err := g.activeRotationEscrowCount(ctx, role, epoch, modelID)
 	if err != nil {
 		return fmt.Errorf("count escrows for held model: %w", err)
 	}
@@ -284,7 +284,7 @@ func (g *Gateway) restoreEscrowHolds() {
 	if g == nil || g.store == nil {
 		return
 	}
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(context.Background())
 	if err != nil || !ok {
 		if err != nil {
 			log.Printf("escrow_hold_restore_load_failed error=%v", err)

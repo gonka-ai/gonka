@@ -5,14 +5,36 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"common/storage/mode"
 	"devshard/cmd/devshardd/session"
+	devshardserver "devshard/server"
+	"devshard/storage"
+	"devshard/transport"
 )
+
+func TestAdminPeerReleaseStopsIdentityWithoutDraining(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	var released atomic.Bool
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, func() {
+		released.Store(true)
+	})
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/rpc/release", nil))
+	require.Equal(t, http.StatusNoContent, rec.Code)
+	require.True(t, released.Load())
+	status := lifecycle.Status()
+	require.True(t, status.Ready)
+	require.False(t, status.Draining)
+}
 
 func TestLifecycleTransitionTableInvariants(t *testing.T) {
 	states := []lifecyclePhase{
@@ -175,7 +197,7 @@ func recoveryDone() session.RecoveryProgress {
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -223,7 +245,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -256,7 +278,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	storageReady := false
-	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil, recoveryDone, nil)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -280,7 +302,7 @@ func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 	}
 	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, func() session.RecoveryProgress {
 		return progress
-	})
+	}, nil)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -309,7 +331,7 @@ func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 func TestAdminExposesPprofNotPublic(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
@@ -324,4 +346,39 @@ func TestAdminExposesPprofNotPublic(t *testing.T) {
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.NotEmpty(t, rec.Body.Bytes())
+}
+
+type missingSessionResolver struct{}
+
+func (missingSessionResolver) SessionServerExisting(string) (*transport.Server, error) {
+	return nil, storage.ErrSessionNotFound
+}
+
+func TestDrainAndHAGuardAnswerRetiredRoutes410(t *testing.T) {
+	t.Setenv(mode.EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "db.example")
+
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	e := buildServer(lifecycle)
+	devshardserver.RegisterLazySessionRoutes(e.Group(""), missingSessionResolver{}, nil, nil)
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/drain", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	chat := httptest.NewRequest(http.MethodPost, "/sessions/not-an-id/chat/completions", nil)
+	chat.Header.Set(mode.HeaderDevshardHA, "true")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, chat)
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+
+	diffs := httptest.NewRequest(http.MethodGet, "/sessions/1/diffs", nil)
+	diffs.Header.Set(mode.HeaderDevshardHA, "true")
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, diffs)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Empty(t, rec.Header().Get(transport.HeaderDevshardError))
 }

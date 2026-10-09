@@ -202,6 +202,54 @@ func drivePayloadWithholdingChats(t *testing.T, client *http.Client, gatewayURL,
 	}
 }
 
+func drivePayloadWithholdingUntil(t *testing.T, client *http.Client, gatewayURL, model, label string, stop <-chan struct{}) {
+	t.Helper()
+	var lastLogged string
+	repeats := 0
+	for i := 0; ; i++ {
+		select {
+		case <-stop:
+			if repeats > 1 {
+				t.Logf("citest: payload withholding %s last error repeated %d times", label, repeats)
+			}
+			return
+		default:
+		}
+		err := postPayloadWithholdingChat(t, client, gatewayURL, model, label, i)
+		if err == nil {
+			continue
+		}
+		if harness.GatewayCapacityGone(err) {
+			t.Logf("citest: payload withholding %s stopping at %d: %v", label, i, err)
+			return
+		}
+		msg := err.Error()
+		if msg != lastLogged {
+			if repeats > 1 {
+				t.Logf("citest: payload withholding %s last error repeated %d times", label, repeats)
+			}
+			t.Logf("citest: payload withholding %s %d: %v", label, i, err)
+			lastLogged = msg
+			repeats = 1
+			continue
+		}
+		repeats++
+	}
+}
+
+func postPayloadWithholdingChat(t *testing.T, client *http.Client, gatewayURL, model, label string, i int) error {
+	t.Helper()
+	req := harness.ChatCompletionRequest{
+		Model: model,
+		Messages: []harness.ChatMessage{
+			{Role: "user", Content: fmt.Sprintf("citest payload withholding %s %d", label, i)},
+		},
+		MaxTokens: 16,
+	}
+	_, err := harness.TryPostGatewayChatCompletion(client, gatewayURL, harness.TestenvAdminAPIKey, req)
+	return err
+}
+
 func driveUntilInferenceStatus(t *testing.T, client *http.Client, gatewayURL, model, status string, timeout time.Duration, extra ...string) map[string]harness.GatewayInference {
 	t.Helper()
 	want := append([]string{status}, extra...)

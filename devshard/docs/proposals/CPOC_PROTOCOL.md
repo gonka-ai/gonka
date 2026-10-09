@@ -9,7 +9,7 @@ The core idea that hosts know mainnet heights and there is (out of scope) concen
 **Out of scope for this document:**
 
 - **How each host obtains / agrees on mainnet height.** That is solved by **[HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)** (Omit / Anchor / Strong, deferred checks, etc.). Here we **assume** each host has a scalar `**H(host)**` equal to the **height known to the majority of validators / devshard hosts** (its own follower + height-sync rules have converged on that value). Discrepancies at the level handled by the height-sync spec are **that spec’s problem**; this document only distinguishes the cases where such a discrepancy **affects a cPoC verdict** and defers the discrepancy itself to height sync.
-- **Mainnet settlement / slashing math** — out of scope; this doc emits **verdicts** (`Valid` / `Invalid` / `Inconclusive`) and hands evidence to [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md).
+- **Mainnet settlement / slashing math** — out of scope; this doc emits **verdicts** (`Valid` / `Invalid` / `Inconclusive`) and hands evidence to [finalization.md](./finalization.md).
 
 It may be easier to understand this proposal through worked examples; see [Cases to handle (case / dataflow)](#cases-to-handle-case--dataflow).
 
@@ -75,7 +75,7 @@ A developer could **hold** a host's cPoC skip response and later attach it via `
 Under high inference rate, if most hosts skip during cPoC, per-skip gossip is unacceptable:
 
 - **No** gossip inside a normal round if diffs already propagate the evidence.
-- **Dispute-grade** evidence rides on **[finalization / state sharing](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)** rather than a parallel flood channel.
+- **Dispute-grade** evidence rides on **[finalization / state sharing](./finalization.md)** rather than a parallel flood channel.
 
 It is important that each host can participate in a lot of devshards, so gossip traffic is highly unwanted and is limited to disputes and settlement cases.
 
@@ -142,7 +142,7 @@ Because of **asynchronous developer traffic** (Shared assumptions, item **5**), 
 
 1. **Round-based elision (high load):** If within `timeout_skip_gossip` after `N_carry` the session advances to `N_carry + N_slots` (one full round), every honest verifier has seen the evidence via the diff. No dedicated gossip is emitted.
 2. **Timeout-based gossip (low load):** Otherwise, any `V` with a non-`Valid` verdict **MAY** emit a compact `SkipEvidenceGossip` pointing into `Diff`. Peers re-run the verdict predicate locally.
-3. **Finalization alignment:** Global, dispute-grade evidence rides with [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) rather than a parallel flood channel.
+3. **Finalization alignment:** Global, dispute-grade evidence rides with [finalization.md](./finalization.md) rather than a parallel flood channel.
 
 Parameter `**timeout_skip_gossip`** (proposal: **≈ 2** mainnet blocks) is **chain-parametrized**; its exact value is out of scope here.
 
@@ -282,7 +282,7 @@ Names in `subnet/proto/subnet/v1/{tx,diff}.proto` unless marked **(new)**. The *
 5. **Height freshness at ingest.** If the endpoints of `I` (`h_X` and `h_carry`) are covered by **this verifier's local block oracle** and that oracle is not stale, commit to the candidate from (4). If either endpoint is not yet covered (or the oracle is stale), and the schedule verdict is adversarial (`Invalid`), V **MUST** hold the verdict as `Inconclusive` until the local oracle covers `I` — then re-run step (4). Do **not** wait on a withdrawn envelope-originator `(C-quorum)` / `IsStrictlyConfirmed` API ([height-sync §17](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md#17-height-readiness)). Slash only via the usual **verifier vote quorum**.
 6. **Signature / binding.** `CPoCSkipResponse` must be validly signed by `H_i` and reference `R_req` as it appears in `Diff`.
 
-Outputs feed **Gossip minimization** (below) and, for disputes, **[FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)**.
+Outputs feed **Gossip minimization** (below) and, for disputes, **[finalization.md](./finalization.md)**.
 
 ---
 
@@ -471,7 +471,7 @@ V on Diff[N_carry]:
 
 **Setup:** `H_i` returns nothing (neither inference nor skip).
 
-**Expected action:** Out of scope of cPoC-skip verdict. Governed by `**USER_TIMEOUT`** in [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md). cPoC protocol contributes **no** verdict in this case.
+**Expected action:** Out of scope of cPoC-skip verdict. Governed by `**USER_TIMEOUT`** in [finalization.md](./finalization.md). cPoC protocol contributes **no** verdict in this case.
 
 ### C9 — Low-load vote collection (explicit gossip)
 
@@ -498,7 +498,7 @@ collector aggregates votes (`D` for host-fault cases this release; finalization 
 
 **Setup:** A verdict is `Invalid` (C2, **C2'**, C4, C6-confirmed-invalid, C3', or C13).
 
-**Flow:** Once `quorum_invalid` is reached, the collector assembles an **evidence bundle** consisting of: (i) the refs into `Diff` for `MsgStartInference` / `MsgSkipProbe`, `CarrySkip`, and (for C13) the `H_i`-slot window; (ii) the set of `CPoCVote` messages achieving quorum; (iii) the relevant schedule inputs (`PoC_slot_set`, `Schedule` at heights in `I`). This bundle is handed to [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) for inclusion in the finalization bundle for mainnet — the bundle is the input to slashing.
+**Flow:** Once `quorum_invalid` is reached, the collector assembles an **evidence bundle** consisting of: (i) the refs into `Diff` for `MsgStartInference` / `MsgSkipProbe`, `CarrySkip`, and (for C13) the `H_i`-slot window; (ii) the set of `CPoCVote` messages achieving quorum; (iii) the relevant schedule inputs (`PoC_slot_set`, `Schedule` at heights in `I`). This bundle is handed to [finalization.md](./finalization.md) for inclusion in the finalization bundle for mainnet — the bundle is the input to slashing.
 
 ### C12 — Executor / schedule desync (verifier bug)
 
@@ -652,7 +652,7 @@ Collection procedure:
 
 1. Each `V` with a non-`Valid` verdict sends `CPoCVote` to `D` via p2p (optionally piggy-backed on the same channel that carries `SkipEvidenceGossip`).
 2. `D` aggregates distinct signatures until `|votes(Invalid)| ≥ quorum_invalid`.
-3. `D` attaches the bundle to finalization per [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md). The vote bundle is the input to slashing.
+3. `D` attaches the bundle to finalization per [finalization.md](./finalization.md). The vote bundle is the input to slashing.
 
 **Developer-target cases (`target` names `D` — C3′ forged carry, C13 withholding).** `D` cannot be the trusted aggregator of votes that would slash or dispute `D`. **Normative intent:** once **self-finalization** is implemented, **`CPoCVote`s for these targets MUST be collected and aggregated in the finalization round** (the same developer-independent path as other settlement), not by `D`.
 
@@ -666,7 +666,7 @@ Collection procedure:
 
 ### Quorum, weighting, tie-breaks
 
-Exact values — `quorum_invalid` (e.g. simple-majority vs. 2/3 stake-weighted), tie-break rules, stake weighting, and the mapping from votes to mainnet slashing amounts — must match the finalization / slashing layer. These are **chain-parametrized** and **deferred** to [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) and the mainnet slashing spec. This doc only guarantees:
+Exact values — `quorum_invalid` (e.g. simple-majority vs. 2/3 stake-weighted), tie-break rules, stake weighting, and the mapping from votes to mainnet slashing amounts — must match the finalization / slashing layer. These are **chain-parametrized** and **deferred** to [finalization.md](./finalization.md) and the mainnet slashing spec. This doc only guarantees:
 
 - Every honest `V` reaches the **same** verdict from the **same** `Diff` + strictly-confirmed height slice (by construction of the Verdict predicate).
 - Dishonest minority votes cannot flip a correct quorum, because `CPoCVote` includes the `schedule_witness` and is auditable at finalization time (a dishonest vote is itself slashable).
@@ -678,7 +678,7 @@ Exact values — `quorum_invalid` (e.g. simple-majority vs. 2/3 stake-weighted),
 1. `**PoC_slot_set` provenance:** set at escrow init (immutable) vs queried post-init and cached. Different failure modes.
 2. `**prepare` policy:** is skip allowed while `Schedule = prepare` (treat like `active`) or forbidden (treat like `idle`)? Chain-spec flag `skip_allowed_during_prepare`.
 3. **Signing input** domain separators: `cPoCRefusalContent` (host signature on `CPoCSkipResponse`, binds `inference_id` + `reference_nonce` + reason), `cPoCProbeResponseContent` (host signature on `CPoCProbeResponse`, binds `probe_nonce` + `reference_nonce` + outcome), `CarrySkipContent` (developer signature on `CarrySkip`, binds `N_carry` + `referenced_nonce` + `payload_kind` + `host_response` bytes), and the signing input for `MsgSkipProbe` (binds `probe_nonce = N_SP` + `target_host_id`).
-4. **Evidence-object layout** for finalization (list of `Diff`-refs, signatures, schedule-witness); shared with [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md).
+4. **Evidence-object layout** for finalization (list of `Diff`-refs, signatures, schedule-witness); shared with [finalization.md](./finalization.md).
 5. **C13 thresholds `(W_fair, θ_fair, θ_min_inf)`** for the developer-withholding predicate: how many `H_i`-slot nonces of probes / empty slots vs. real inferences, over how many rounds, qualify as misbehavior? Must be tuned so that legitimate brief probing (e.g. a single confirmation probe right after `ready` before resuming inference) does not trigger alerts.
 6. `**ready_at` lifecycle.** When exactly does a `ready` receipt for `H_i` expire? Candidates: (a) on the first strictly-confirmed `Schedule(H_i, H) ∈ {active, prepare}` after the receipt; (b) on any subsequent non-`ready` `CPoCProbeResponse` / `CPoCSkipResponse` for `H_i` carried in `Diff`; (c) a hard TTL in mainnet heights. Likely all three with `(a) ∨ (b) ∨ (c)`.
 7. `**RouteFairnessRefusal` surface.** Is this purely a p2p refusal signal between hosts, or must it also land in `Diff` as a signed artefact so mainnet can slash `D`? If the latter, it becomes another `SubnetTx` variant and needs its own signing domain.
@@ -694,6 +694,6 @@ Exact values — `quorum_invalid` (e.g. simple-majority vs. 2/3 stake-weighted),
 ## Related documents
 
 - [HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) — **out of scope** for this doc; supplies `H(V)` as a black-box oracle.
-- [FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) — consumes `Invalid` verdicts, decides inclusion in finalization bundles.
+- [finalization.md](./finalization.md) — consumes `Invalid` verdicts, decides inclusion in finalization bundles.
 
 ---

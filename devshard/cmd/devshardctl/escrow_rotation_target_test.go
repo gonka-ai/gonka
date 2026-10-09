@@ -39,7 +39,7 @@ func TestGatewayActiveRotationEscrowCountReadsTheStore(t *testing.T) {
 	}))
 	g := &Gateway{store: store}
 
-	count, err := g.activeRotationEscrowCount(rotationRoleRegular, 1, "m")
+	count, err := g.activeRotationEscrowCount(context.Background(), rotationRoleRegular, 1, "m")
 
 	require.NoError(t, err)
 	require.Equal(t, 1, count)

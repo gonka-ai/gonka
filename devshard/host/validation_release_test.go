@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/signing"
@@ -57,11 +58,15 @@ func (r *recordingLeaseRecorder) counts() (allow, mark, release int) {
 }
 
 type scriptedValidationEngine struct {
-	result *devshard.ValidateResult
-	err    error
+	beforeReturn func()
+	result       *devshard.ValidateResult
+	err          error
 }
 
 func (e *scriptedValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	if e.beforeReturn != nil {
+		e.beforeReturn()
+	}
 	if e.err != nil {
 		return nil, e.err
 	}
@@ -220,29 +225,36 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	}{
 		{
 			name:         "validate error",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: errors.New("local ml 503")},
 			wantRelease:  1,
 			wantCooldown: true,
 		},
 		{
+			name:         "validation deferred",
+			status:       types.StatusFinished,
+			validator:    scriptedValidationEngine{err: devshard.ErrValidationDeferred},
+			wantRelease:  1,
+			wantCooldown: true,
+		},
+		{
 			name:         "validation skipped",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: devshard.ErrValidationSkipped},
 			wantRelease:  1,
 			wantCooldown: true,
 		},
 		{
 			name:         "already leased",
-			skipApply:    true,
+			status:       types.StatusFinished,
 			validator:    scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
 			wantCooldown: true,
 		},
 		{
 			// Releasing here would free a row this attempt never acquired.
 			// The row is still there, so the next request waits out the cooldown.
-			name:      "lease conflict",
-			skipApply: true,
+			name:   "lease conflict",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusPending,
 				Owner:  "gonka1owner",
@@ -250,16 +262,16 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict submitted",
-			skipApply: true,
+			name:   "lease conflict submitted",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusSubmitted,
 			}},
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict skipped",
-			skipApply: true,
+			name:   "lease conflict skipped",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusSkipped,
 			}},
@@ -267,8 +279,8 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldownHold: true,
 		},
 		{
-			name:      "lease conflict stale pending",
-			skipApply: true,
+			name:   "lease conflict stale pending",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Status: devshard.LeaseStatusPending,
 				Stale:  true,
@@ -276,16 +288,16 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict read failed",
-			skipApply: true,
+			name:   "lease conflict read failed",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Detail: "lease read failed: db down",
 			}},
 			wantCooldown: true,
 		},
 		{
-			name:      "lease conflict already released",
-			skipApply: true,
+			name:   "lease conflict already released",
+			status: types.StatusFinished,
 			validator: scriptedValidationEngine{err: &devshard.LeaseConflict{
 				Detail: devshard.LeaseRowAbsentDetail,
 			}},
@@ -353,9 +365,21 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			rec := &recordingLeaseRecorder{allowErr: tt.allowErr, markErr: tt.markErr}
 			validator := tt.validator
 			h, hosts, user := newLeaseReleaseHost(t, &validator, rec)
-			if !tt.skipApply {
-				applyInferenceTo(t, h, hosts, user, tt.status)
+			initialStatus := tt.status
+			if tt.skipApply || tt.status == types.StatusStarted {
+				initialStatus = types.StatusFinished
+				// Keep exercising state changes after the new preflight check.
+				validator.beforeReturn = func() {
+					snapshot := h.sm.SnapshotState()
+					if tt.skipApply {
+						delete(snapshot.Inferences, 1)
+					} else {
+						snapshot.Inferences[1].Status = tt.status
+					}
+					restoreWithLiveFloor(t, h.sm, &snapshot)
+				}
 			}
+			applyInferenceTo(t, h, hosts, user, initialStatus)
 			if tt.failSign {
 				h.signer = errorSigner{addr: hosts[0].Address(), err: signFail}
 			}
@@ -382,7 +406,8 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 
 func TestHost_ValidateAsync_CanceledReleases(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
-	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -410,7 +435,8 @@ func (e *releaseOnErrorEngine) Validate(ctx context.Context, req devshard.Valida
 func TestHost_CloseWaitsForInFlightLeaseRelease(t *testing.T) {
 	inner := newBlockingValidationEngine(1)
 	engine := &releaseOnErrorEngine{inner: inner}
-	h, _, _ := newLeaseReleaseHost(t, engine, nil)
+	h, hosts, user := newLeaseReleaseHost(t, engine, nil)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 	h.Start()
 	t.Cleanup(h.Close)
 
@@ -508,7 +534,8 @@ func TestLeaseConflictSeverity(t *testing.T) {
 
 func TestHost_ValidateAsync_ClosedDoesNotRelease(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
-	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 	h.Close()
 	h.validateAsync(context.Background(), testValidateJob())
 
@@ -649,6 +676,86 @@ func TestHost_ChallengedInferencePublishesValidationVote(t *testing.T) {
 	require.False(t, onCooldown)
 }
 
+type gateValidationEngine struct {
+	entered chan struct{}
+	release chan struct{}
+	result  *devshard.ValidateResult
+	calls   atomic.Int32
+}
+
+func (e *gateValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	e.calls.Add(1)
+	if e.entered != nil {
+		close(e.entered)
+	}
+	if e.release != nil {
+		<-e.release
+	}
+	if e.result != nil {
+		return e.result, nil
+	}
+	return &devshard.ValidateResult{Valid: true}, nil
+}
+
+func TestHost_StopValidationEnqueue_SkipsNewWork(t *testing.T) {
+	t.Cleanup(resetValidationEnqueueForTest)
+	engine := &gateValidationEngine{}
+	h, hosts, user := newTwoHostValidationHost(t, engine)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	StopValidationEnqueue()
+	require.Empty(t, collectValidationJobsLocked(h))
+	h.validateAsync(context.Background(), testValidateJob())
+	require.Equal(t, int32(0), engine.calls.Load())
+
+	resetValidationEnqueueForTest()
+	require.NotEmpty(t, collectValidationJobsLocked(h))
+}
+
+func TestHost_InFlightValidationVotesAfterEnqueueStop(t *testing.T) {
+	t.Cleanup(resetValidationEnqueueForTest)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	engine := &gateValidationEngine{
+		entered: entered,
+		release: release,
+		result:  &devshard.ValidateResult{Valid: true},
+	}
+	h, hosts, user := newTwoHostValidationHost(t, engine)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	done := make(chan struct{})
+	go func() {
+		h.validateAsync(context.Background(), testValidateJob())
+		close(done)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not enter Validate")
+	}
+	StopValidationEnqueue()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not finish")
+	}
+	require.Equal(t, int32(1), engine.calls.Load())
+	var valid bool
+	var found bool
+	for _, tx := range h.MempoolTxs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			valid = v.Valid
+			found = true
+		}
+	}
+	require.True(t, found)
+	require.True(t, valid)
+}
+
 func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
 	val := &scriptedValidationEngine{result: &devshard.ValidateResult{
@@ -672,6 +779,16 @@ func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {
 	_, mark, release := rec.counts()
 	require.Equal(t, 1, mark, "false verdict is submitted, not released")
 	require.Equal(t, 0, release)
+}
+
+// restoreWithLiveFloor swaps in an edited snapshot. These hosts run without a
+// store, so the state machine's store holds no journal to fold; the live
+// floor is the snapshot floor a real restore would carry.
+func restoreWithLiveFloor(t *testing.T, sm *state.StateMachine, st *types.EscrowState) {
+	t.Helper()
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
+	require.NoError(t, err)
+	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 }
 
 func newTwoHostValidationHost(t *testing.T, validator devshard.ValidationEngine) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
@@ -787,4 +904,62 @@ func TestHost_CollectValidationJobs_QueueFullDoesNotAcquireOrCooldown(t *testing
 	h.mu.Unlock()
 	require.False(t, validating, "queue-full collection must not reserve the inference")
 	require.False(t, onCooldown, "queue-full collection must not stamp cooldown")
+}
+
+func TestHostDeferredValidationRecordsFinished(t *testing.T) {
+	deferredCount := func() float64 {
+		families, err := observability.Registry().Gather()
+		require.NoError(t, err)
+		for _, family := range families {
+			if family.GetName() != "devshard_validation_total" {
+				continue
+			}
+			for _, metric := range family.Metric {
+				labels := map[string]string{}
+				for _, label := range metric.Label {
+					labels[label.GetName()] = label.GetValue()
+				}
+				if labels["stage"] == "validation_finished" && labels["status"] == "deferred" {
+					return metric.GetCounter().GetValue()
+				}
+			}
+		}
+		return 0
+	}
+	rec := &recordingLeaseRecorder{}
+	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{err: devshard.ErrValidationDeferred}, rec)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	before := deferredCount()
+	h.validateAsync(context.Background(), testValidateJob())
+	require.Equal(t, before+1, deferredCount())
+}
+
+type creditGatedValidator struct {
+	available bool
+	calls     int
+}
+
+func (v *creditGatedValidator) CanValidate(string) bool { return v.available }
+func (v *creditGatedValidator) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	v.calls++
+	return nil, devshard.ErrValidationDeferred
+}
+func TestHostValidationCreditScheduling(t *testing.T) {
+	v := &creditGatedValidator{}
+	h, hosts, user := newTwoHostValidationHost(t, v)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+	require.Empty(t, collectValidationJobsLocked(h))
+	require.Empty(t, h.validating)
+	require.Empty(t, h.validationCooldown)
+	v.available = true
+	jobs := collectValidationJobsLocked(h)
+	require.Len(t, jobs, 1, "earning credit makes the obligation schedulable")
+	v.available = false
+	h.validateAsync(context.Background(), jobs[0])
+	require.Zero(t, v.calls, "queued work must recheck before validation or leases")
+	require.Empty(t, h.validating)
+	require.Empty(t, h.validationCooldown)
+	v.available = true
+	require.Len(t, collectValidationJobsLocked(h), 1, "deferral keeps the obligation")
 }

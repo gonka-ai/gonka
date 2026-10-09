@@ -120,9 +120,24 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod: "DynamicCoefficients",
+					Use:       "dynamic-coefficients [epoch-index]",
+					Short:     "Query computed dynamic coefficients (0 = current epoch)",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "epoch_index"},
+					},
+				},
+
+				{
 					RpcMethod:      "ModelsAll",
 					Use:            "models-all",
 					Short:          "Query modelsAll",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "DevshardApprovedVersions",
+					Use:            "devshard-approved-versions",
+					Short:          "Query approved devshard versions",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
 				},
 
@@ -348,6 +363,11 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "List the scheduled per-epoch claim recipient overrides for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
+				{
+					RpcMethod: "OpenPoCChallenges",
+					Use:       "open-poc-challenges",
+					Short:     "List live PoC challenges",
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},
@@ -357,6 +377,14 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 			RpcCommandOptions: []*autocliv1.RpcCommandOptions{
 				{
 					RpcMethod: "UpdateParams",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "PutDevshardApprovedVersion",
+					Skip:      true, // skipped because authority gated
+				},
+				{
+					RpcMethod: "DeleteDevshardApprovedVersion",
 					Skip:      true, // skipped because authority gated
 				},
 				{
@@ -460,6 +488,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Use:            "declare-poc-intent [model-id]",
 					Short:          "Declare intent to deploy for a model",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "model_id"}},
+				},
+				{
+					RpcMethod:      "CreatePoCChallenge",
+					Use:            "create-poc-challenge [target]",
+					Short:          "Create a PoC challenge against a target",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "target"}},
 				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},

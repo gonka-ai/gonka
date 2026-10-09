@@ -87,7 +87,15 @@ func (s *Stack) ComposeExec(t *testing.T, service string, cmdArgs ...string) str
 
 // ComposeExecOutput runs `docker compose exec -T service cmd...` and returns stdout+stderr.
 func (s *Stack) ComposeExecOutput(service string, cmdArgs ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	return s.ComposeExecOutputTimeout(2*time.Minute, service, cmdArgs...)
+}
+
+// ComposeExecOutputTimeout is ComposeExecOutput with a caller-chosen bound.
+func (s *Stack) ComposeExecOutputTimeout(timeout time.Duration, service string, cmdArgs ...string) (string, error) {
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "exec", "-T", service)

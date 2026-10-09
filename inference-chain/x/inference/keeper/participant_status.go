@@ -124,6 +124,11 @@ func multiply(completed uint32, preserve *types.Decimal) uint32 {
 }
 
 func (k Keeper) removeFromEpochGroups(ctx context.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
+	if participant != nil {
+		if err := k.MarkChallengeAborted(ctx, participant.Address, "unrelated_leave"); err != nil {
+			k.LogError("Failed to mark PoC challenge unrelated leave", types.Validation, "error", err, "address", participant.Address)
+		}
+	}
 	parentGroup, err := k.GetCurrentEpochGroup(ctx)
 	if err != nil {
 		k.LogError("Failed to get current epoch group", types.Validation, "error", err)

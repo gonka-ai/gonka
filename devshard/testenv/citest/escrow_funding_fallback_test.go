@@ -57,7 +57,7 @@ type fundingRuntimeStatus struct {
 //  1. Boot the stack with escrow 1 too small for an oversized request, then register escrow 2 that can pay for it.
 //  2. Wait until both escrows are idle and snapshot escrow 1's nonce and balance.
 //  3. Send a streaming request whose reservation only escrow 2 covers.
-//  4. Assert escrow 2 answered it and the gateway log shows escrow 1 refused to fund it first.
+//  4. Assert escrow 2 answered it. The picker skips escrow 1, which cannot fund the reservation.
 //  5. Assert escrow 1 kept its nonce, its balance and its place in service.
 //  6. Send a small request straight to escrow 1 and assert it is still served.
 func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *testing.T) {
@@ -69,7 +69,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 	firstBefore := requireFundingRuntime(t, before, env.firstEscrowID)
 	require.NotZero(t, firstBefore.Balance, "the status carries no balance, so comparing it would prove nothing")
 
-	harness.Step(t, "an oversized request must move from escrow %s to escrow %s", env.firstEscrowID, env.secondEscrowID)
+	harness.Step(t, "an oversized request must be served by escrow %s", env.secondEscrowID)
 	result := harness.PostGatewayChatHTTP(t, env.client, env.gatewayURL, harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
 		Model:     env.model,
 		Messages:  []harness.ChatMessage{{Role: "user", Content: "funding fallback streaming request"}},
@@ -81,7 +81,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 	chunks, sawDone := harness.ParseSSEDataChunks(result.Body)
 	require.True(t, sawDone, "fallback stream did not finish: %s", string(result.Body))
 	require.NotEmpty(t, harness.AssembleSSEContent(chunks))
-	requireEscrowRefusedFunding(t, env, env.firstEscrowID)
+	requirePickerSkippedUnfundableEscrow(t, env, result.Header.Get("X-Request-Id"), env.firstEscrowID, env.secondEscrowID)
 
 	afterFallback := waitForSettledEscrows(t, env, 2)
 	requireEscrowUntouched(t, firstBefore, requireFundingRuntime(t, afterFallback, env.firstEscrowID))
@@ -148,6 +148,7 @@ func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
 
 func bootFundingFallbackEnv(t *testing.T, prefix string, firstBalance, secondBalance uint64) fundingFallbackEnv {
 	t.Helper()
+	requireNoProxyGRPC(t)
 	stack := harness.NewStack(t, prefix)
 	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
 	harness.WriteMultiConfig(t, stack.WorkDir, harness.MultiConfigOpts{
@@ -227,13 +228,19 @@ func requireEscrowUntouched(t *testing.T, before, after fundingRuntimeStatus) {
 	require.Equal(t, before.Balance, after.Balance, "escrow %s consumed balance for a refused reservation", after.ID)
 }
 
-// Only the log proves the escrow was asked: every other post-condition also holds for one never offered the request.
-func requireEscrowRefusedFunding(t *testing.T, env fundingFallbackEnv, escrowID string) {
+// requirePickerSkippedUnfundableEscrow checks the gateway log for one request.
+// An escrow that fails escrowCanFund is not selected, so it has no
+// gateway_escrow_refused_funding line. That line is only for an escrow the
+// picker already reserved and that later returns ErrInsufficientBalance.
+func requirePickerSkippedUnfundableEscrow(t *testing.T, env fundingFallbackEnv, requestID, skipped, chosen string) {
 	t.Helper()
+	require.NotEmpty(t, requestID, "gateway response did not carry X-Request-Id")
 	logs, err := env.stack.ComposeLogsTail(400, "devshardctl")
 	require.NoError(t, err)
-	require.Contains(t, logs, "stage=gateway_escrow_refused_funding escrow="+escrowID,
-		"the gateway never offered the oversized request to escrow %s", escrowID)
+	require.Contains(t, logs, "request="+requestID+" stage=gateway_runtime_selected escrow="+chosen,
+		"the picker did not select escrow %s for %s", chosen, requestID)
+	require.NotContains(t, logs, "request="+requestID+" stage=gateway_runtime_selected escrow="+skipped)
+	require.NotContains(t, logs, "request="+requestID+" stage=gateway_escrow_refused_funding escrow="+skipped)
 }
 
 func requireFundingRuntime(t *testing.T, status fundingFallbackStatus, escrowID string) fundingRuntimeStatus {

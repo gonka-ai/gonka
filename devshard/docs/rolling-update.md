@@ -14,15 +14,18 @@ Operator requirement:
 This document describes:
 
 1. **Part 1 — versiond (implemented).** Blue/green + drain for governance
-   binary swaps inside `versioned/` + `devshardd` (Track A), plus a separate
-   **`versiond-router` host-evacuation** track for HA (§1.7–§1.8, Track B —
-   not shipped).
+   binary swaps inside `versioned/` + `devshardd` (Track A), plus
+   **`versiond-router` host-evacuation** for HA (§1.7–§1.8, Track B —
+   [versiond-host-evacuation.md](./versiond-host-evacuation.md)).
 2. **Part 2 — Kubernetes (sketch).** How the same guarantees map onto a future
    K8s deployment.
 
 Related: [release-0.2.14-v4.md](./release-0.2.14-v4.md),
 [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7,
-[testenv/docs/scenarios.md](../testenv/docs/scenarios.md).
+[testenv/docs/scenarios.md](../testenv/docs/scenarios.md),
+[versiond-host-evacuation.md](./versiond-host-evacuation.md),
+[high-availability-architecture.md](./high-availability-architecture.md),
+[grpc-transport-connection.md](./grpc-transport-connection.md).
 
 ---
 
@@ -62,7 +65,9 @@ start NEW child on a NEW port            ← old keeps serving
         │
         ▼
 wait NEW admin /ready == 200 and public /healthz == 2xx
-        │                               (VERSIOND_READY_TIMEOUT; abort keeps old)
+        │                               (VERSIOND_READY_TIMEOUT; initializing
+        │                                may extend to VERSIOND_READY_MAX_WAIT;
+        │                                abort keeps old)
         ▼
 atomic route swap → NEW Target           ← retire OLD Target
         │
@@ -78,9 +83,10 @@ SIGTERM OLD → process FSM grace → SIGKILL backstop → reap
 
 The proxy route value is a generation-specific `proxy.Target`, not just an
 address. Each forwarded request `acquire`s a lease and `release`s it after the
-full response (including SSE). A stale lookup that loses the race with
-retirement retries against the new route; an already acquired request stays on
-the old generation until it completes.
+full response (including SSE and, after phase 6, HTTP/2 streams on `/rpc/`).
+A stale lookup that loses the race with retirement retries against the new
+route; an already acquired request stays on the old generation until it
+completes.
 
 ```52:85:versioned/internal/proxy/proxy.go
 func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
@@ -224,12 +230,29 @@ Admin-capable children also allocate a second loopback admin port.
 `waitForChildServingReady` replaces TCP-only accept:
 
 - **Admin-capable:** admin `VERSIOND_READY_PATH` must return `200` **and**
-  public `/healthz` must return `2xx`, within `VERSIOND_READY_TIMEOUT`.
+  public `/healthz` must return `2xx`. The probe always waits at least
+  `VERSIOND_READY_TIMEOUT`. After that the wait extends up to
+  `VERSIOND_READY_MAX_WAIT` when:
+  - `/ready` is reachable and the body reports initializing (`ready: false`
+    and/or `storage_ready: false`, not draining), or
+  - `/ready` is absent (`404`/`405`/`501`) — older v3/v4 binaries never
+    registered the route (Echo's default for a missing path is `404`), so
+    there is no body to inspect and the wait still runs to
+    `VERSIOND_READY_MAX_WAIT`.
+  An unreachable or draining endpoint fails at `VERSIOND_READY_TIMEOUT` so a
+  hung child is restarted promptly. Every attempt uses those same bounds.
+  The short timeout stays the floor: it does not double after an initializing
+  timeout, which would only hold a later hung child for the long cap.
 - **Legacy (no admin API):** readiness probe on the public port with the
   documented `/ready` → `/healthz` → TCP fallback for the default path only.
+  A public `404` on `/ready` still uses that fallback; if fallback is not
+  ready either, the wait still runs to `VERSIOND_READY_MAX_WAIT`.
 
-Failure aborts the swap: new child is stopped; old keeps serving; next reconcile
-retries.
+The same gate is used for crash-restarts (`restart=true`) and for the
+rolling-swap path (`restart=false`). Failure aborts the swap: new child is
+stopped; old keeps serving; next reconcile retries. A later crash still
+fails a hung child at `VERSIOND_READY_TIMEOUT`; a slow start still waits up
+to `VERSIOND_READY_MAX_WAIT`.
 
 #### d) `downloadAndSwap` (blue/green + drain)
 
@@ -302,7 +325,8 @@ children but still waits for reap.
 | Env var | Default | Meaning |
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | Admin readiness path; public `/healthz` must also pass for admin children |
-| `VERSIOND_READY_TIMEOUT` | `60s` | Max wait for incoming child before aborting swap |
+| `VERSIOND_READY_TIMEOUT` | `60s` | Floor for every attempt; unreachable/hung children fail here on restart and on swap |
+| `VERSIOND_READY_MAX_WAIT` | `32m` | Cap while `/ready` reports initializing, or is absent (`404`) on older binaries; used on both the restart path and the rolling-swap path |
 | `VERSIOND_RECOVERY_TIMEOUT` | `30m` | Max wait for the new child's `recovery_complete` before aborting an overlap swap (old keeps serving). Not the 60s ready timeout — recovery of a long journal is minutes to hours |
 | `VERSIOND_DRAIN_PATH` | `/drain` | POST path to put old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | Poll path for lifecycle inflight |
@@ -348,10 +372,11 @@ Part 1 (§1.1–§1.6) and `versiond-router` drain solve **different events** at
 | Same version **name**, new **sha256** (governance binary update) | **versiond** blue/green + devshardd child drain (§1.1) | **No** — versiond stays up on `:8080`; only the devshardd child swaps |
 | **versiond host** removal, replacement, or supervisor upgrade | **`versiond-router`** (or K8s Service — Part 2) | **Yes** — whole process/container leaves the pool |
 
-During a devshardd binary swap, sticky routing is unchanged:
+During a devshardd binary swap, sticky routing is unchanged on **both** public
+hops (JSON via nginx, and phase 6 `/rpc/` on `proxy`'s h2 listen):
 
 ```text
-versiond-router → versiond-2:8080   (same upstream throughout)
+proxy / versiond-router → versiond-2:8080   (same upstream throughout)
                       └─ versiond proxy: old devshardd :9001 → new :9002
 ```
 
@@ -363,66 +388,76 @@ for binary rollout.
 Router drain is only needed when the **versiond process itself** must stop
 (restart, replace, scale-down, host maintenance, versiond binary upgrade). Killing
 versiond kills its in-process proxy and all devshardd children regardless of
-§1.1 drain logic.
+§1.1 drain logic. The same is true of JSON and `/rpc/`: they share versiond
+placement.
 
 ### 1.8 versiond-router: draining versiond hosts (HA)
 
-When N versiond instances sit behind `versiond-router` (nginx consistent hash on
-escrow ID — see `versiond-router/nginx.conf.template`), **removal or replacement
-of a versiond host** must be managed at the router layer. This is a separate
-operational track from §1.1; it does not replace and is not required for
-devshardd binary swaps.
+When N versiond instances sit behind `versiond-router` (HAProxy consistent hash on
+escrow ID — see [high-availability-architecture.md](./high-availability-architecture.md)),
+**removal or replacement of a versiond host** must be managed at the router layer.
+This is a separate operational track from §1.1; it does not replace and is not
+required for devshardd binary swaps.
 
-Today `versiond-router` only renders a static upstream list from `VERSIOND_HOSTS`
-(`versiond-router/entrypoint.sh`). It has **no drain support** — that must be
-added (or handled by an operator runbook until automated).
+The shipped contract is observation, not nginx reload: membership from DNS or
+the endpoint file, health from `/readyz`. **Use
+[versiond-host-evacuation.md](./versiond-host-evacuation.md)** for the operator
+commands and FSM. The v4 nginx `VERSIOND_HOSTS` + `nginx -s reload` design is
+historical; do not treat it as current join behavior.
+
+JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` **share
+placement**. `proxy`'s h2 frontend uses the same version + escrow hash as
+`versiond_router_in`. Failing `/readyz` withdraws the host from both hops. Do not
+add a second evacuation procedure for `/rpc/`. That check is the versiond
+listen. It does not prove the router's HTTP/2 bind matches the proxy dial
+port, and the placement contract does not include that bind. Both are known
+limitations in
+[grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations).
 
 #### Target flow (evacuate one versiond host)
 
 Applies when taking `versiond-N` out of service: container replace, supervisor
-upgrade, scale-down, or decommission.
+upgrade, scale-down, or decommission. Current join: `docker compose stop` / `up`
+as in [versiond-host-evacuation.md](./versiond-host-evacuation.md). The steps
+below are the same invariants, not a second control plane:
 
 ```text
-1. Mark versiond-N down in router upstream (reload nginx config)
-        │  → no NEW requests hashed to versiond-N
-        │  → in-flight connections to versiond-N keep running
+1. Host announces unready (`VERSIOND_DRAIN_ANNOUNCE`); routers fail `/readyz`
+        │  → no NEW requests hashed to versiond-N (JSON or /rpc/)
+        │  → in-flight connections (SSE and HTTP/2 streams) keep running
         ▼
-2. Poll versiond-N until idle:
-        GET versiond-N:8080/healthz  (child status visibility)
-        and aggregate devshardd GET /drain/status on that host
-        loop until inflight == 0  OR  ROUTER_DRAIN_TIMEOUT
+2. Host drains: proxy admission leases (full response, including SSE / h2) → 0
         ▼
-3. Graceful stop versiond-N:
-        SIGTERM versiond  →  versiond.Shutdown waits on children (§1.4f)
-        wait up to ROUTER_DRAIN_KILL_GRACE  →  SIGKILL only as backstop
+3. Graceful stop versiond-N (children SIGTERM, then reap)
         ▼
-4. Kill process / free machine:
-        stop container or release VM; remove from VERSIOND_HOSTS; reload router
-        (or leave marked down if host is gone permanently)
+4. Membership: DNS / endpoint file no longer lists the host
         ▼
-5. (Replacement only) Start new versiond-N, wait until healthy, re-add upstream
+5. (Replacement only) Start new versiond-N; it rejoins only after `/readyz` 200
 ```
 
 Key invariants:
 
-- **Stop new traffic first:** router marks the upstream `down` (or removes it)
-  before any `SIGTERM` to versiond. Consistent hash means escrows already on
-  `versiond-N` cannot fail over to another replica — that instance must drain
-  its pinned escrows before exit.
-- **Drain before kill:** do not free the machine until step 2 reports idle (or
-  the safety timeout fires with an operator-visible warning).
+- **Stop new traffic first:** the host reports unready before it stops accepting.
+  Consistent hash means escrows already on `versiond-N` cannot fail over to
+  another replica — that instance must drain its pinned escrows before exit.
+  JSON and `/rpc/` are the same pin.
+- **Drain before kill:** do not free the machine until admission leases are idle
+  (or the safety timeout fires with an operator-visible warning).
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
   keep serving while one host evacuates.
 
 #### What to build (router track)
 
+Shipped on join as HAProxy observation — see
+[versiond-host-evacuation.md](./versiond-host-evacuation.md). Do not add nginx
+reload or a static `VERSIOND_HOSTS` rewrite for this.
+
 | Piece | Meaning |
 |---|---|
-| Upstream `down` / removal + `nginx -s reload` | Stop routing new escrows to the host being evacuated |
-| `ROUTER_DRAIN_TIMEOUT` | Max wait for a host to go idle before forced stop |
-| `ROUTER_DRAIN_POLL_INTERVAL` | How often to poll versiond `/healthz`; direct devshardd `/drain/status` polling requires access to the admin listener |
-| `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` to versiond before `SIGKILL` / container kill |
-| Operator script or sidecar | Orchestrate steps 1–4; re-render `VERSIOND_HOSTS` and reload |
+| Fail `/readyz` / DNS membership | Stop routing new escrows (JSON and `/rpc/`) to the host being evacuated |
+| `VERSIOND_DRAIN_ANNOUNCE` | Window for routers to notice unready while the host still accepts |
+| Host shutdown budget | `SIGTERM` then `SIGKILL` backstop; must cover SSE and HTTP/2 streams |
+| Operator command | `docker compose stop` / `up --wait`; fleet `apply` for remote membership |
 
 Re-use versiond `/healthz` draining visibility from §1.4a for public host
 evacuation. The devshardd endpoints from §1.3 (`/ready`, `/drain/status`,
@@ -433,15 +468,16 @@ access.
 #### When to use which layer
 
 - **Governance publishes new sha256 for an existing name** → §1.1 only (every
-  versiond reconciles independently; router unchanged).
-- **Replace or remove a versiond host** → §1.8 only (router drain, then kill).
+  versiond reconciles independently; router unchanged; `/rpc/` still hits `:8080`).
+- **Replace or remove a versiond host** → §1.8 / [versiond-host-evacuation.md](./versiond-host-evacuation.md)
+  (both JSON and `/rpc/`).
 - **Both at once** (e.g. new devshardd binary *and* new versiond supervisor on
   the same machine) → §1.1 swap first while the host stays in the pool, *then*
   §1.8 if the host itself must leave; or evacuate via §1.8 and start fresh on
   a new host (coarser, acceptable for maintenance windows).
 
 Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
-`preStop` instead of nginx reload; it is the same layer as §1.8, not §1.1.
+`preStop` instead of `/readyz` observation; it is the same layer as §1.8, not §1.1.
 
 ### 1.9 Test coverage
 
@@ -482,9 +518,9 @@ rolling-update line. Overlap is enabled automatically when both children report
 `postgres` via `--print-storage-mode`; otherwise versiond uses exclusive
 stop/start. No feature flag.
 
-**Track B — versiond host removal/replacement (§1.8): not implemented** —
-operator / future router automation. See also draft host-evacuation work
-(e.g. PR discussion for whole-`versiond` evacuation).
+**Track B — versiond host removal/replacement (§1.8):** shipped as HAProxy
+`/readyz` observation — [versiond-host-evacuation.md](./versiond-host-evacuation.md).
+JSON and phase 6 `/rpc/` use the same placement.
 
 
 ---
@@ -500,8 +536,10 @@ enough to be rescheduled.
 - Run `devshardd` (or `versiond`+`devshardd`) as a `Deployment` behind a
   `Service`. Shared Postgres stays external (multi-writer, as today).
 - Put a **sticky** layer in front for escrow affinity: either the existing
-  `versiond-router` pattern (nginx consistent hash on escrow ID) or an
-  ingress / service mesh with consistent hashing on the escrow path segment.
+  `versiond-router` pattern (HAProxy consistent hash on escrow ID, including
+  `/rpc/`) or an ingress / service mesh with consistent hashing on the escrow
+  path segment. Phase 6 also needs a **second published port** on that sticky
+  hop (`DEVSHARD_RPC_H2_PORT`, HTTP/2, skip nginx). JSON stays on InferenceUrl.
 - **Pod/host evacuation** (Part 1 §1.8) maps to Service endpoint removal +
   `preStop` below — not to the in-versiond devshardd binary swap in §1.1.
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -41,8 +42,8 @@ func countActiveRotationEscrows(devshards []GatewayDevshardState, role string, e
 	return count
 }
 
-func (g *Gateway) activeRotationEscrowCount(role string, epoch uint64, modelID string) (int, error) {
-	state, ok, err := g.store.LoadState()
+func (g *Gateway) activeRotationEscrowCount(ctx context.Context, role string, epoch uint64, modelID string) (int, error) {
+	state, ok, err := g.store.LoadState(ctx)
 	if err != nil {
 		return 0, err
 	}

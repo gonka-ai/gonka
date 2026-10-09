@@ -25,8 +25,8 @@ func GrantMLOpsPermissionsCmd() *cobra.Command {
 This single transaction does TWO things:
 
   1. Grants authz permissions for all ML ops message types — the warm key can
-     submit start/finish inference, validations, PoC commits, BLS DKG messages,
-     reward claims, etc. on behalf of the cold account.
+     submit start/finish inference, validations, PoC commits, bootstrap-model
+     intents, BLS DKG messages, reward claims, etc. on behalf of the cold account.
 
   2. Grants a feegrant fee allowance from cold to warm — when the warm key
      signs a transaction, it sets the cold account as the fee_granter so fees

@@ -90,8 +90,12 @@ services:
       - chain-node
     networks:
       - chain-public
+    # Outer Docker backstop for the internal request-drain budget.
+    stop_grace_period: 3m
     restart: unless-stopped
 
+  # nginx (proxy/ image). JSON and chain /chain-grpc/ only. Peer /rpc/ HTTP/2
+  # is join proxy-router's DEVSHARD_RPC_H2_PORT; do not grpc_pass that path here.
   proxy:
     container_name: ${KEY_NAME}-proxy
     image: ghcr.io/product-science/proxy:latest

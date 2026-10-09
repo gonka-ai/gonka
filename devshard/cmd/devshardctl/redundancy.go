@@ -3823,7 +3823,8 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		e.maybeRecordCapabilityError(inf)
 		return
 	}
-	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
+	if inf != nil && (errors.Is(inf.processErr, types.ErrStateHashMismatch) ||
+		errors.Is(inf.processErr, user.ErrLocalRootUnavailable)) {
 		return
 	}
 	if e.longResponseFailureExempt(inf) {
@@ -3940,9 +3941,7 @@ func isStateRootDivergenceError(err error) bool {
 	if err == nil {
 		return false
 	}
-	msg := err.Error()
-	return strings.Contains(msg, "apply diff nonce") &&
-		strings.Contains(msg, "post_state_root does not match computed state root")
+	return strings.Contains(err.Error(), "post_state_root does not match computed state root")
 }
 
 func isRetriableCapabilityErrorMessage(msg string) bool {

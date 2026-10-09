@@ -114,6 +114,7 @@ func TestSingleOnlyFinalizeRequiresNoActiveRequests(t *testing.T) {
 	rec := httptest.NewRecorder()
 	g.handleSingleOnly(rec, httptest.NewRequest(http.MethodPost, "/v1/finalize", nil))
 	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "active_requests=1 pending_race_cleanup=0")
 	require.False(t, forwarded)
 	require.False(t, rt.finalizing.Load(), "a refused finalize must leave the gate open")
 

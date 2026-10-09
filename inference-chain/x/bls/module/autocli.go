@@ -46,18 +46,6 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					RpcMethod: "UpdateParams",
 					Skip:      true, // skipped because authority gated
 				},
-				{
-					RpcMethod: "RequestThresholdSignature",
-					Use:       "request-threshold-signature [current_epoch_id] [chain_id] [request_id] [data...]",
-					Short:     "Request a threshold signature from the BLS module",
-					Long:      "Request a threshold signature from the BLS module for the given data. The request_id must be a unique identifier for this request.",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
-						{ProtoField: "current_epoch_id"},
-						{ProtoField: "chain_id"},
-						{ProtoField: "request_id"},
-						{ProtoField: "data", Varargs: true},
-					},
-				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

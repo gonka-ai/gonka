@@ -487,9 +487,12 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 		return nil
 	}
 
-	s.mu.Lock()
-	catchUp := s.diffsForHost(item.hostIdx)
-	s.mu.Unlock()
+	catchUp, err := s.catchUpForSend(ctx, item.hostIdx, item.diff.Nonce)
+	if err != nil {
+		logging.Warn("heartbeat catch-up failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+		return nil
+	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, heartbeatSendTimeout)
 	resp, err := s.clients[item.hostIdx].Send(sendCtx, host.HostRequest{
