@@ -1360,8 +1360,14 @@ func (c delayedRoleChunkThenStallClient) Send(ctx context.Context, req host.Host
 // lastChunkAt + InterChunkStallTimeout.
 //
 // The escalation fallback is deliberately set far beyond the cancel threshold
-// (4s vs 100ms) so that the old code cannot cancel early by accident: the only way
-// to land near the threshold is for the chunk itself to wake the loop.
+// (5s vs 100ms) so that the old code cannot cancel early by accident: the only way
+// to land near the threshold is for the chunk itself to wake the loop. The timer
+// that actually rescues the old code is the receipt escalation, not the
+// first-token one -- the role-only delta sets hasFirstToken(), which disarms the
+// first-token trigger, leaving the receipt escalation at ReceiptTimeoutMS as the
+// next wake (the pre-fix run logs decision=receipt_timeout delay_ms=5000, then
+// attempt_stall_canceled with since_last_chunk_ms=4994 because the deadline it
+// re-derives against is already long past).
 func TestRunInference_PendingRoleChunkStallCancelledAtDeadline(t *testing.T) {
 	applyRedundancySettingsForTest(t, RedundancySettings{
 		ReceiptTimeoutMS:              5000,
