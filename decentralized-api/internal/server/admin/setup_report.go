@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient/tx_manager"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"cosmossdk.io/x/feegrant"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference"
 	"github.com/productscience/inference/x/inference/types"
@@ -323,6 +325,87 @@ func (s *Server) checkPermissions(ctx context.Context) Check {
 func (s *Server) checkFeegrant(ctx context.Context) Check {
 	coldKeyAddr := s.recorder.GetAccountAddress()
 	warmKeyAddr := s.recorder.GetSignerAddress()
+	check := Check{
+		ID:      "feegrant_allowance",
+		Status:  PASS,
+		Message: "Cold account signs transactions; no fee allowance required",
+		Details: map[string]interface{}{
+			"cold_key_address": coldKeyAddr,
+			"warm_key_address": warmKeyAddr,
+		},
+	}
+	if coldKeyAddr != warmKeyAddr {
+		check = s.checkFeegrantAllowance(ctx)
+		if check.Status != PASS {
+			return check
+		}
+	}
+	details := check.Details.(map[string]interface{})
+	unavailable := func(message string) Check {
+		check.Status = UNAVAILABLE
+		check.Message = message
+		return check
+	}
+	queryClient := s.recorder.NewInferenceQueryClient()
+	epochInfo, err := queryClient.EpochInfo(ctx, &types.QueryEpochInfoRequest{})
+	if err != nil {
+		return unavailable(fmt.Sprintf("Unable to query epoch fee parameters: %s", err))
+	}
+	if epochInfo == nil || epochInfo.GetParams().FeeParams == nil {
+		return unavailable("Epoch fee parameters are unavailable")
+	}
+	params := epochInfo.GetParams()
+	details["fees_enabled"] = epochPrice(params.FeeParams) > 0
+	if epochPrice(params.FeeParams) <= 0 {
+		return check
+	}
+
+	count, countSource, err := resolveStoreCommitCount(ctx, queryClient, epochInfo)
+	if err != nil {
+		return unavailable(fmt.Sprintf("Unable to query StoreCommits for the epoch fee budget: %s", err))
+	}
+	budget := epochFeeBudgetNgonka(params.FeeParams, params.EpochParams, params.ConfirmationPocParams, count)
+	known := epochBudgetKnown(params.FeeParams, countSource)
+	details["count"] = count
+	details["count_source"] = countSource
+	details["budget_known"] = known
+	details["budget_balance"] = budget.String()
+	details["denom"] = types.BaseCoin
+
+	clientCtx := s.recorder.GetClientContext()
+	spendable, err := tx_manager.FeePayerSpendable(ctx, clientCtx, coldKeyAddr, warmKeyAddr, time.Now(),
+		func(ctx context.Context, address string) ([]sdk.Coin, error) {
+			// Also support RPC-only client contexts. Never fall back to total
+			// BankBalances: vesting funds cannot pay this epoch's fees.
+			resp, err := banktypes.NewQueryClient(clientCtx).SpendableBalances(ctx, &banktypes.QuerySpendableBalancesRequest{Address: address})
+			if err != nil {
+				return nil, err
+			}
+			if resp == nil {
+				return nil, fmt.Errorf("empty spendable balances response")
+			}
+			return resp.Balances, nil
+		})
+	if err != nil {
+		return unavailable(fmt.Sprintf("Unable to query usable cold balance: %s", err))
+	}
+	details["spendable_balance"] = spendable.String()
+	details["spendable_covers_budget"] = known && spendable.GTE(budget)
+	if spendable.IsZero() {
+		check.Status = FAIL
+		check.Message = "No usable cold balance for epoch fees; fund the cold account and, when using a warm key, check its remaining fee allowance"
+	} else if known && spendable.LT(budget) {
+		check.Status = FAIL
+		check.Message = fmt.Sprintf("Usable cold balance (%s %s) is below the one-epoch fee budget (%s %s)", spendable, types.BaseCoin, budget, types.BaseCoin)
+	} else if !known {
+		check.Message += ". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count."
+	}
+	return check
+}
+
+func (s *Server) checkFeegrantAllowance(ctx context.Context) Check {
+	coldKeyAddr := s.recorder.GetAccountAddress()
+	warmKeyAddr := s.recorder.GetSignerAddress()
 
 	details := map[string]interface{}{
 		"cold_key_address": coldKeyAddr,
@@ -359,6 +442,14 @@ func (s *Server) checkFeegrant(ctx context.Context) Check {
 			Details: details,
 		}
 	}
+	if resp.Allowance.Allowance == nil {
+		return Check{
+			ID:      "feegrant_allowance",
+			Status:  UNAVAILABLE,
+			Message: "Fee allowance response has no allowance value",
+			Details: details,
+		}
+	}
 
 	var allowance feegrant.FeeAllowanceI
 	if err := s.cdc.UnpackAny(resp.Allowance.Allowance, &allowance); err != nil {
@@ -369,16 +460,30 @@ func (s *Server) checkFeegrant(ctx context.Context) Check {
 			Details: details,
 		}
 	}
+	if allowance == nil {
+		return Check{
+			ID:      "feegrant_allowance",
+			Status:  UNAVAILABLE,
+			Message: "Fee allowance response could not be decoded",
+			Details: details,
+		}
+	}
 
-	var expiration *time.Time
+	expiration, err := allowance.ExpiresAt()
+	if err != nil {
+		return Check{
+			ID:      "feegrant_allowance",
+			Status:  UNAVAILABLE,
+			Message: fmt.Sprintf("Unable to read fee allowance expiration: %s", err),
+			Details: details,
+		}
+	}
 	var spendLimit sdk.Coins
 	switch a := allowance.(type) {
 	case *feegrant.BasicAllowance:
-		expiration = a.Expiration
 		spendLimit = a.SpendLimit
 		details["allowance_type"] = "BasicAllowance"
 	case *feegrant.PeriodicAllowance:
-		expiration = a.Basic.Expiration
 		spendLimit = a.Basic.SpendLimit
 		details["allowance_type"] = "PeriodicAllowance"
 		details["period_spend_limit"] = a.PeriodSpendLimit.String()
@@ -871,7 +976,7 @@ func buildRecommendationMap() map[string]string {
 		"warm_key_in_keyring":       "Ensure warm key exists in keyring at configured location",
 		"warm_key_address_match":    "Check KEY_NAME environment variable matches keyring key name",
 		"permissions_granted":       "Run authz grant commands. See inference-chain/x/inference/permissions.go",
-		"feegrant_allowance":        "Run `inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address>` to (re)grant the fee allowance",
+		"feegrant_allowance":        "Ensure the cold account has spendable funds for one epoch; when using a warm key, check its remaining fee allowance and run `inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address>` to (re)grant it if needed",
 		"consensus_key_match":       "Verify validator node is running and consensus key matches participant registration",
 		"active_in_epoch":           "Check PoC participation and ensure node is properly registered",
 		"validator_not_jailed":      "Unjail validator or investigate validator status issues",
