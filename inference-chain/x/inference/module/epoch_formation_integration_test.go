@@ -181,6 +181,56 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 	}, trustWeights)
 }
 
+func TestAddEpochMembers_SkipsWeightlessModellessParticipant(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	const (
+		upcomingEpoch = uint64(2)
+		modelID       = "model-a"
+	)
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          upcomingEpoch,
+		EpochGroupId:        77,
+		PocStartBlockHeight: 200,
+	})
+	upcomingEg, err := k.GetEpochGroupForEpoch(ctx, types.Epoch{Index: upcomingEpoch, PocStartBlockHeight: 200})
+	require.NoError(t, err)
+
+	normal := &types.ActiveParticipant{
+		Index:        testutil.Validator,
+		ValidatorKey: "validator-key-" + testutil.Validator,
+		Weight:       400,
+		InferenceUrl: "http://" + testutil.Validator,
+		Models:       []string{modelID},
+		MlNodes: []*types.ModelMLNodes{
+			{MlNodes: []*types.MLNodeInfo{{NodeId: "node-a", PocWeight: 400}}},
+		},
+		Seed: &types.RandomSeed{Participant: testutil.Validator, EpochIndex: upcomingEpoch, Signature: "seed-normal"},
+	}
+	weightless := &types.ActiveParticipant{
+		Index:        testutil.Executor,
+		ValidatorKey: "validator-key-" + testutil.Executor,
+		Weight:       0,
+		InferenceUrl: "http://" + testutil.Executor,
+		Models:       nil,
+		MlNodes:      nil,
+		Seed:         &types.RandomSeed{Participant: testutil.Executor, EpochIndex: upcomingEpoch, Signature: "seed-weightless"},
+	}
+
+	am.addEpochMembers(ctx, upcomingEg, []*types.ActiveParticipant{normal, weightless})
+
+	root, found := k.GetEpochGroupData(ctx, upcomingEpoch, "")
+	require.True(t, found)
+	members := make(map[string]int64, len(root.ValidationWeights))
+	for _, vw := range root.ValidationWeights {
+		members[vw.MemberAddress] = vw.Weight
+	}
+	require.Contains(t, members, testutil.Validator)
+	require.NotContains(t, members, testutil.Executor)
+}
+
 func TestMissRateResetFallbackPolicy(t *testing.T) {
 	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
