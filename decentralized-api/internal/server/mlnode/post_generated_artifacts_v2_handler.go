@@ -72,16 +72,20 @@ func (s *Server) postGeneratedArtifacts(ctx echo.Context, scheme types.PocScheme
 	}
 	s.artifactStore.ActivateStage(stageHeight)
 
-	// Look up node_id string from node number
-	node, found := s.broker.GetNodeByNodeNum(uint64(body.NodeId))
-	if !found {
-		logging.Error("ArtifactBatchV2-callback. Unknown NodeNum", types.PoC, "node_num", body.NodeId)
-		return echo.NewHTTPError(http.StatusBadRequest, "unknown node_num")
+	var nodeId string
+	if ctx.Path() == "/v2/poc-batches/:model_id/m/generated" {
+		nodeId, err = s.broker.PoCNodeID(ctx.Request().Context(), stageHeight, modelID, body.NodeId)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+	} else {
+		// Generators started before the hotfix still return global node numbers.
+		node, found := s.broker.GetNodeByNodeNum(uint64(body.NodeId))
+		if !found {
+			return echo.NewHTTPError(http.StatusBadRequest, "unknown node_num")
+		}
+		nodeId = node.Id
 	}
-	nodeId := node.Id
-	logging.Debug("ArtifactBatchV2-callback. Found node by node num", types.PoC,
-		"nodeId", nodeId,
-		"nodeNum", body.NodeId)
 
 	recipe, err := s.callbackRecipe(body.BlockHeight, poc.GeneratingChallengeWork(epochState))
 	if err != nil {
