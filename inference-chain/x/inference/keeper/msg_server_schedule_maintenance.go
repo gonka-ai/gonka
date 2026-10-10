@@ -81,6 +81,11 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 		return nil, err
 	}
 
+	// Check overlap with a confirmation PoC that has already been triggered
+	if err := k.checkConfirmationPoCOverlap(goCtx, msg.StartHeight); err != nil {
+		return nil, err
+	}
+
 	// Check concurrency limits
 	if err := k.checkConcurrencyLimits(goCtx, msg.StartHeight, msg.DurationBlocks, participantAddr, mp); err != nil {
 		return nil, err

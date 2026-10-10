@@ -92,6 +92,7 @@ var (
 	ErrMaintenanceInvalidParticipant         = sdkerrors.Register(ModuleName, 1190, "invalid participant address")
 	ErrMaintenanceZeroDuration               = sdkerrors.Register(ModuleName, 1191, "duration_blocks must be positive")
 	ErrMaintenanceCompletionHeightOverflow   = sdkerrors.Register(ModuleName, 1192, "maintenance completion height overflows int64")
+	ErrMaintenanceOverlapsConfirmationPoC    = sdkerrors.Register(ModuleName, 1205, "maintenance window overlaps an in-progress confirmation PoC")
 	ErrBridgeValidatorNotInTxEpochGroup      = sdkerrors.Register(ModuleName, 1193, "validator not in transaction's epoch group")
 	ErrBridgeAlreadyValidated                = sdkerrors.Register(ModuleName, 1194, "validator has already validated this transaction")
 	ErrBridgeValidatorNotInActiveGroup       = sdkerrors.Register(ModuleName, 1195, "validator not in active participants")

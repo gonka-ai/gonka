@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	errorsmod "cosmossdk.io/errors"
 	cosmossdk_math "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -99,6 +100,38 @@ func (k Keeper) checkEpochPhaseOverlap(ctx context.Context, startHeight int64, d
 		}
 		ec = next
 	}
+}
+
+// checkConfirmationPoCOverlap rejects a window that starts at or before the
+// evaluation block of an already-triggered confirmation PoC, including one that
+// would end before that block (as checkEpochPhaseOverlap does for PoC
+// validation). evaluateConfirmation skips participants in active maintenance
+// at the evaluation block (ValidationEnd+1), and trigger -> evaluation is
+// longer than the minimum scheduling lead, so without this check a participant
+// that sees the trigger can schedule a short window on the evaluation block and
+// skip the confirmation PoC that would otherwise measure it. Windows scheduled
+// before the trigger keep their exemption.
+func (k Keeper) checkConfirmationPoCOverlap(ctx context.Context, startHeight int64) error {
+	event, found, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		return err
+	}
+	if !found || event == nil || event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
+		return nil
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.EpochParams == nil {
+		return nil
+	}
+	evaluationHeight := event.GetValidationEnd(params.EpochParams) + 1
+	if startHeight <= evaluationHeight {
+		return errorsmod.Wrapf(types.ErrMaintenanceOverlapsConfirmationPoC,
+			"window starts at %d, in-progress confirmation PoC is evaluated at %d", startHeight, evaluationHeight)
+	}
+	return nil
 }
 
 // checkConcurrencyLimits verifies that adding a new reservation does not exceed
