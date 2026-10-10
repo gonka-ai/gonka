@@ -107,7 +107,7 @@ func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId
 	if err := s.ensurePartition(ctx, epochId); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`INSERT INTO payload_storage (escrow_id, inference_id, epoch_id, prompt_payload, response_payload)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (escrow_id, inference_id, epoch_id) DO NOTHING`,
@@ -115,6 +115,9 @@ func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId
 	)
 	if err != nil {
 		return fmt.Errorf("payloads: store: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyStored
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package payloads
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -112,7 +113,7 @@ func migrateEpochPayloads(ctx context.Context, dest Storage, epochPath string, e
 			if err := json.Unmarshal(data, &payload); err != nil {
 				return copied, fmt.Errorf("unmarshal %s: %w", path, err)
 			}
-			if err := dest.Store(ctx, escrowID, inferenceID, epochID, payload.PromptPayload, payload.ResponsePayload); err != nil {
+			if err := dest.Store(ctx, escrowID, inferenceID, epochID, payload.PromptPayload, payload.ResponsePayload); err != nil && !errors.Is(err, ErrAlreadyStored) {
 				return copied, fmt.Errorf("store %s/%d/%d: %w", escrowID, inferenceID, epochID, err)
 			}
 			copied++
