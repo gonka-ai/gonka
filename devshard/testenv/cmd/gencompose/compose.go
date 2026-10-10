@@ -183,9 +183,16 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
-      # Solo hosts omit GONKA_HA.
-      # Solo executor: local sqlite so it does not multi-write shared PG diffs.
-      DEVSHARD_STORAGE_MODE: sqlite
+      # Solo hosts omit GONKA_HA (not in the sticky shared-writer pair).
+      # Hybrid+PG still shares session meta and validation leases so HA can
+      # warm/catch up after a solo executor, and citest can observe pending
+      # leases when the solo validates (sqlite Acquire never writes PG rows).
+      DEVSHARD_STORAGE_MODE: hybrid
+      PGHOST: {{ $.Postgres.Host }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
 {{ end }}
     volumes:
       - {{ $.Versiond.HostBinaryMount }}:{{ $.Versiond.OverridePath }}:ro
@@ -210,10 +217,8 @@ services:
       {{ . }}:
         condition: service_started
 {{ end }}
-{{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
-{{ end }}
 {{ if ne .ID "versiond-0" }}
       versiond-0:
         condition: service_started

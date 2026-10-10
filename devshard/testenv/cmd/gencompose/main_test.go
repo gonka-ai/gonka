@@ -407,7 +407,11 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "- versiond-pool"),
 		"only the sticky pair should resolve through the router pool")
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
-	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
+	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: hybrid",
+		"solo shares PG sessions/leases so HA can warm and citest can observe pending")
+	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
+	require.Equal(t, 3, strings.Count(text, "PGHOST:"),
+		"HA pair + solo all get PGHOST")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
