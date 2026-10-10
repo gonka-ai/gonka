@@ -128,6 +128,7 @@ type Broker struct {
 	nodes                map[string]*NodeWithState
 	mu                   sync.RWMutex
 	curMaxNodesNum       atomic.Uint64
+	pocNodeNumbers       *pocNodeNumbers
 	nextRegistrationSeq  atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
@@ -1160,7 +1161,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			continue
 		}
 
-		// TODO: we should make reindexing as some indexes might be skipped
+		// Retain global numbering for the first stage after installing the hotfix.
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command from the node that passed the seq check,
 		// not the pre-recheck snapshot (that snapshot can be a deleted registration).
@@ -1173,6 +1174,15 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			int(totalNumNodes),
 			epochState.ActiveConfirmationPoCEvent,
 		)
+		if start, ok := cmd.(StartPoCNodeCommandV2); ok && !start.WindDown {
+			if err := b.assignPoCNodeNumber(ctx, id, currentPoCParams, &start); err != nil {
+				logging.Error("Cannot allocate PoC node number", types.PoC, "node_id", id, "error", err)
+				cancel()
+				b.clearReconcileIfSeq(id, capturedSeq)
+				continue
+			}
+			cmd = start
+		}
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", stateForCmd.IntendedStatus, "target_poc_status", stateForCmd.PocIntendedStatus, "blockHeight", blockHeight)
