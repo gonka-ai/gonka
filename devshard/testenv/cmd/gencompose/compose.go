@@ -282,6 +282,10 @@ services:
     image: devshard-versiond-router:latest
     logging: *loadtest-logging
     environment:
+      # nginx renders one upstream server per name and exits when this is empty.
+      # VERSIOND_POOL_HOST is the same membership as a DNS alias; this image
+      # does not discover the pool that way.
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
       # Pin only versions that actually have a child. A fictional v1 makes
