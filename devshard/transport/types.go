@@ -58,10 +58,11 @@ type VerifyTimeoutRequest struct {
 
 // VerifyErrorMissRequest is the JSON body for POST /sessions/:id/verify-error-miss.
 type VerifyErrorMissRequest struct {
-	InferenceID     uint64     `json:"inference_id"`
-	Diffs           []DiffJSON `json:"diffs,omitempty"`
-	FinishTx        []byte     `json:"finish_tx"`
-	ResponsePayload []byte     `json:"response_payload"`
+	InferenceID        uint64     `json:"inference_id"`
+	Diffs              []DiffJSON `json:"diffs,omitempty"`
+	FinishTx           []byte     `json:"finish_tx"`
+	ResponsePayload    []byte     `json:"response_payload"`
+	SiblingInferenceID uint64     `json:"sibling_inference_id,omitempty"`
 }
 
 // VerifyErrorMissResponse is returned by the error-miss verification endpoint.

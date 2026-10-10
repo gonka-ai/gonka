@@ -339,11 +339,29 @@ func ExecuteValidation(
 	logprobsMode string,
 	vocabularySize int,
 ) (ValidationResult, error) {
+	clientFault := completionapi.IsClientFaultErrorResponse(responsePayload)
+	if clientFault {
+		if claimedInputTokens > 0 || claimedOutputTokens > 0 {
+			logging.Warn("validation failed: client fault response billed tokens", types.Validation,
+				"inferenceId", inferenceID, "claimedInput", claimedInputTokens, "claimedOutput", claimedOutputTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Client fault response billed tokens."}, nil
+		}
+	}
+
+	if vocabularySize <= 0 && completionapi.RequestNeedsVocabulary(promptPayload) {
+		return nil, completionapi.ErrVocabularyUnknown
+	}
+
+	if clientFault {
+		return replayClientFault(ctx, inferenceID, promptPayload, execute, logprobsMode, vocabularySize)
+	}
+
 	var requestMap map[string]interface{}
-	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
+	modifiedRequest, err := completionapi.ModifyRequestBodyForVocabulary(
 		promptPayload,
 		validationReplaySeed(inferenceID),
 		logprobsMode,
+		vocabularySize,
 	)
 	if err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
@@ -518,6 +536,93 @@ func ExecuteValidation(
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+}
+
+var errClientFaultReplayServed = errors.New("client fault replay served output")
+
+type clientFaultReplayProcessor struct {
+	completionapi.ResponseProcessor
+}
+
+func (p clientFaultReplayProcessor) ProcessStreamedResponse(line string) (string, error) {
+	processed, err := p.ResponseProcessor.ProcessStreamedResponse(line)
+	if err == nil && completionapi.StreamedLineProvesOutput(line) {
+		return processed, errClientFaultReplayServed
+	}
+	return processed, err
+}
+
+func replayClientFault(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	logprobsMode string,
+	vocabularySize int,
+) (ValidationResult, error) {
+	modifiedRequest, err := completionapi.ModifyRequestBodyForVocabulary(
+		promptPayload,
+		validationReplaySeed(inferenceID),
+		logprobsMode,
+		vocabularySize,
+	)
+	if err != nil {
+		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+	}
+	resp, err := execute(ctx, modifiedRequest.NewBody)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	served := &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Executor reported a client fault but the prompt is servable."}
+	switch {
+	case resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity:
+		_, _ = io.Copy(io.Discard, completionapi.NewCappedResponseReader(resp.Body))
+		return confirmedClientFault(inferenceID, resp.StatusCode), nil
+	case resp.StatusCode == http.StatusOK && completionapi.IsEventStream(resp):
+		processor := completionapi.NewExecutorResponseProcessor(inferenceID, true)
+		err := completionapi.ProcessHTTPResponse(resp, clientFaultReplayProcessor{ResponseProcessor: processor})
+		if errors.Is(err, errClientFaultReplayServed) {
+			logging.Warn("validation failed: executor reported a client fault but the validator served the prompt", types.Validation,
+				"inferenceId", inferenceID)
+			return served, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read client fault replay: %w", err)
+		}
+		payload, err := processor.GetResponseBytes()
+		if err != nil {
+			return nil, fmt.Errorf("read client fault replay: %w", err)
+		}
+		if completionapi.IsClientFaultErrorResponse(payload) {
+			return confirmedClientFault(inferenceID, resp.StatusCode), nil
+		}
+		return nil, fmt.Errorf("client fault replay: validator stream carried no output")
+	case resp.StatusCode == http.StatusOK:
+		body, err := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+		if err != nil {
+			return nil, fmt.Errorf("read client fault replay: %w", err)
+		}
+		if completionapi.ResponseProvesOutput(body) {
+			logging.Warn("validation failed: executor reported a client fault but the validator served the prompt", types.Validation,
+				"inferenceId", inferenceID)
+			return served, nil
+		}
+		return nil, fmt.Errorf("client fault replay: validator response carried no output")
+	default:
+		_, _ = io.Copy(io.Discard, completionapi.NewCappedResponseReader(resp.Body))
+		return nil, fmt.Errorf("client fault replay: validator node returned status %d", resp.StatusCode)
+	}
+}
+
+func confirmedClientFault(inferenceID string, status int) ValidationResult {
+	logging.Info("executor client fault confirmed by validator replay", types.Validation,
+		"inferenceId", inferenceID, "status", status)
+	return &SimilarityValidationResult{
+		BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
+		Value:                1.0,
+	}
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {

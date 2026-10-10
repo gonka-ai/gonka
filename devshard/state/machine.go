@@ -1380,6 +1380,11 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	// the asymmetry is benign, but the unified bitmap would be more
 	// consistent. Changing it shifts state-machine output, so it requires a
 	// coordinated upgrade.
+	if rec.Status == types.StatusChallenged {
+		sm.addChallengeVoteLocked(msg.InferenceId, rec, sm.slotToAddress[msg.ValidatorSlot], msg.Valid)
+		return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	}
+
 	rec.ValidatedBy.Set(msg.ValidatorSlot)
 
 	// Count vote weight for Finished state (tallies accumulate before any challenge).
@@ -1456,12 +1461,18 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
 	}
 
+	sm.addChallengeVoteLocked(msg.InferenceId, rec, voterAddr, msg.VoteValid)
+
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+func (sm *StateMachine) addChallengeVoteLocked(inferenceID uint64, rec *types.InferenceRecord, voterAddr string, valid bool) {
 	// Mark ALL slots owned by this address in ValidatedBy (unified bitmap).
 	weight := sm.addressToSlotCount[voterAddr]
 	for _, slot := range sm.addressToSlots[voterAddr] {
 		rec.ValidatedBy.Set(slot)
 	}
-	if msg.VoteValid {
+	if valid {
 		rec.VotesValid += weight
 	} else {
 		rec.VotesInvalid += weight
@@ -1481,14 +1492,14 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		}
 		sm.state.Balance += rec.ActualCost
 		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
+			"inference_id", inferenceID,
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
 		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
 		logging.Debug("inference challenged -> validated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
+			"inference_id", inferenceID,
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
 		)
@@ -1496,10 +1507,8 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 
 	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
 		// Same as challenge path: obs is observability-only, never consensus.
-		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
+		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
 	}
-
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {

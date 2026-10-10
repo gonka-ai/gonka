@@ -255,7 +255,7 @@ func TestOnlyFreshSuccessfulExecutionEarnsCredit(t *testing.T) {
 	store := &memoryPayloads{}
 	phase := new(chain.Phase)
 	phase.SetEpoch(5)
-	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, true)
+	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, nil, true)
 	req := recoveryRequest(t, devshard.RecoveryNone, 5)
 	_, err := e.Execute(context.Background(), req)
 	require.NoError(t, err)

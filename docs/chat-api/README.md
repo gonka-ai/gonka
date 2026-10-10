@@ -37,7 +37,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `frequency_penalty` | float | 0.0 | clamp `[-2, 2]`; see [Kimi override](kimi-k2.6.md#parameter-overrides) for force-rewrite | [[OpenAI-1]](references.md#openai) |
 | `presence_penalty` | float | 0.0 | clamp `[-2, 2]`; see [Kimi override](kimi-k2.6.md#parameter-overrides) for force-rewrite | [[OpenAI-1]](references.md#openai) |
 | `repetition_penalty` | float | 1.0 | clamp `>2` → `2`; reject `≤0` (must be `>0` — [why](troubleshooting.md#reject-out-of-range-sampling)); vLLM extension | [[vLLM-1]](references.md#vllm) |
-| `logit_bias` | object | — | ≤1024 entries; value range `[-100, 100]` | [[OpenAI-1]](references.md#openai) |
+| `logit_bias` | object | — | ≤1024 entries; value range `[-100, 100]`; keys that are not token ids inside the vocabulary are dropped | [[OpenAI-1]](references.md#openai) |
 | `max_tokens` | int | — | clamp; silently raised to 64 when below, so the `min_tokens` floor always fits | [[OpenAI-1]](references.md#openai) |
 | `max_completion_tokens` | int | — | alias for max_tokens | [[OpenAI-1]](references.md#openai) |
 | `stream` | bool | false | pass-through | [[OpenAI-1]](references.md#openai) |
