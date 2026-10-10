@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/bits"
 
 	"cosmossdk.io/log"
@@ -17,6 +18,23 @@ import (
 type SettleParameters struct {
 	TotalSubsidyPaid   int64 `json:"total_subsidy_paid"`
 	TotalSubsidySupply int64 `json:"total_subsidy_supply"`
+}
+
+func totalForfeitedWorkCoins(participants []types.Participant) (int64, error) {
+	var total int64
+	for _, participant := range participants {
+		if participant.Status != types.ParticipantStatus_INVALID && participant.Status != types.ParticipantStatus_INACTIVE {
+			continue
+		}
+		if participant.CoinBalance <= 0 {
+			continue
+		}
+		if participant.CoinBalance > math.MaxInt64-total {
+			return 0, fmt.Errorf("forfeited work coin total exceeds int64")
+		}
+		total += participant.CoinBalance
+	}
+	return total, nil
 }
 
 func (k *Keeper) GetSettleParameters(ctx context.Context) (*SettleParameters, error) {
@@ -234,6 +252,10 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("Bitcoin reward amount", types.Settle, "amount", bitcoinResult.Amount)
 	rewardAmount = bitcoinResult.Amount
 	governanceRewardAmount = bitcoinResult.GovernanceAmount
+	governanceWorkCoins, err := totalForfeitedWorkCoins(allParticipants)
+	if err != nil {
+		return nil, err
+	}
 
 	// Use CacheContext so all current-epoch state mutations are atomic.
 	// If any step fails (minting, balance resets, settle writes),
@@ -264,6 +286,21 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return nil, err
 		}
 		k.LogInfo("Transferred undistributed bitcoin rewards to governance", types.Settle, "amount", governanceRewardAmount)
+	}
+
+	// Work coins are user fees already held by the inference module. Invalid and inactive participants
+	// cannot claim them, so transfer them separately from minted reward remainders.
+	if governanceWorkCoins > 0 {
+		coins, err := types.GetCoins(governanceWorkCoins)
+		if err != nil {
+			return nil, err
+		}
+		memo := fmt.Sprintf("forfeited_work_coins_to_governance:epoch=%d", currentEpochIndex)
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(cacheCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+			k.LogError("Error transferring forfeited work coins to governance", types.Settle, "error", err, "amount", governanceWorkCoins)
+			return nil, err
+		}
+		k.LogInfo("Transferred forfeited work coins to governance", types.Settle, "amount", governanceWorkCoins)
 	}
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
