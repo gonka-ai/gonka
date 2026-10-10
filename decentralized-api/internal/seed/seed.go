@@ -1,8 +1,10 @@
 package seed
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"time"
 
 	"common/logging"
 	"decentralized-api/apiconfig"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // RandomSeedManager manages random seeds for rewards/claims.
@@ -91,6 +95,10 @@ func (rsm *RandomSeedManagerImpl) RequestMoney(epochIndex uint64) {
 		return
 	}
 
+	if !rsm.hasSettleForEpoch(epochIndex) {
+		return
+	}
+
 	logging.Info("IsSetNewValidatorsStage: sending ClaimRewards transaction", types.Claims, "seed", seed)
 	err := rsm.transactionRecorder.ClaimRewards(&inference.MsgClaimRewards{
 		Seed:       seed.Seed,
@@ -99,6 +107,30 @@ func (rsm *RandomSeedManagerImpl) RequestMoney(epochIndex uint64) {
 	if err != nil {
 		logging.Error("Failed to send ClaimRewards transaction", types.Claims, "error", err)
 	}
+}
+
+// hasSettleForEpoch reports whether the chain holds a settle for this epoch; without one the
+// claim can only fail or no-op. Query errors other than NotFound keep the claim.
+func (rsm *RandomSeedManagerImpl) hasSettleForEpoch(epochIndex uint64) bool {
+	ctx, cancel := context.WithTimeout(rsm.transactionRecorder.GetContext(), 30*time.Second)
+	defer cancel()
+	resp, err := rsm.transactionRecorder.NewInferenceQueryClient().SettleAmount(ctx, &types.QueryGetSettleAmountRequest{
+		Participant: rsm.transactionRecorder.GetAddress(),
+	})
+	if status.Code(err) == codes.NotFound {
+		logging.Info("No settle amount, skipping ClaimRewards", types.Claims, "epochIndex", epochIndex)
+		return false
+	}
+	if err != nil || resp == nil {
+		logging.Warn("Settle amount query failed, claiming anyway", types.Claims, "epochIndex", epochIndex, "error", err)
+		return true
+	}
+	if resp.SettleAmount.EpochIndex != epochIndex {
+		logging.Info("Settle amount is for another epoch, skipping ClaimRewards", types.Claims,
+			"epochIndex", epochIndex, "settleEpoch", resp.SettleAmount.EpochIndex)
+		return false
+	}
+	return true
 }
 
 func (rsm *RandomSeedManagerImpl) CreateNewSeed(epochIndex uint64) (*apiconfig.SeedInfo, error) {

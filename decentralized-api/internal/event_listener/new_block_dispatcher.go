@@ -91,13 +91,28 @@ type OnNewBlockDispatcher struct {
 
 	seedSubmissionMu   sync.Mutex
 	seedAttemptHeight  int64
+	seedAttemptEpoch   uint64
+	seedAttempts       int
 	seedConfirmedEpoch uint64
 	seedEnsureInFlight atomic.Bool
 
 	applyFeeTree func(*types.FeeParams)
 }
 
-const seedRetryCooldownBlocks int64 = 2
+const (
+	seedRetryCooldownBlocks    int64 = 2
+	seedRetryMaxCooldownBlocks int64 = 32
+)
+
+// seedRetryCooldown doubles with each attempt that did not land: a missing
+// authz grant fails on-chain every time, so a fixed 2-block retry spams the PoC window.
+func seedRetryCooldown(attempts int) int64 {
+	cooldown := seedRetryCooldownBlocks
+	for i := 1; i < attempts && cooldown < seedRetryMaxCooldownBlocks; i++ {
+		cooldown *= 2
+	}
+	return min(cooldown, seedRetryMaxCooldownBlocks)
+}
 
 // StatusResponse matches the structure expected by getStatus function
 type StatusResponse struct {
@@ -204,90 +219,87 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	minPunishable := int64(0)
 	// Fetch validation parameters - skip in tests
 	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") { // Skip in tests where hash has format "hash-N"
-		params, err := d.queryClient.Params(ctx, &types.QueryParamsRequest{})
+		// EpochInfo above already returned Params at this height; reuse it instead of a second RPC.
+		params := &networkInfo.Params
+		minPunishable = types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams)
+		// Update validation parameters in config
+		validationParams := apiconfig.ValidationParamsCache{
+			TimestampExpiration: params.ValidationParams.TimestampExpiration,
+			TimestampAdvance:    params.ValidationParams.TimestampAdvance,
+			ExpirationBlocks:    params.ValidationParams.ExpirationBlocks,
+			LogprobsMode:        params.ValidationParams.LogprobsMode,
+		}
+
+		logging.Debug("Updating validation parameters", types.Validation,
+			"timestampExpiration", validationParams.TimestampExpiration,
+			"timestampAdvance", validationParams.TimestampAdvance,
+			"expirationBlocks", validationParams.ExpirationBlocks,
+			"logprobsMode", validationParams.LogprobsMode)
+
+		err = d.configManager.SetValidationParams(validationParams)
 		if err != nil {
-			logging.Error("Failed to get params", types.Validation, "error", err)
-		} else {
-			minPunishable = types.EffectiveMinPunishableSegmentBlocks(params.Params.PocChallengeParams)
-			// Update validation parameters in config
-			validationParams := apiconfig.ValidationParamsCache{
-				TimestampExpiration: params.Params.ValidationParams.TimestampExpiration,
-				TimestampAdvance:    params.Params.ValidationParams.TimestampAdvance,
-				ExpirationBlocks:    params.Params.ValidationParams.ExpirationBlocks,
-				LogprobsMode:        params.Params.ValidationParams.LogprobsMode,
+			logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+		}
+
+		if params.BandwidthLimitsParams != nil {
+			bandwidthParams := apiconfig.BandwidthParamsCache{
+				EstimatedLimitsPerBlockKb: params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
+				KbPerInputToken:           params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
+				KbPerOutputToken:          params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
+				MaxInferencesPerBlock:     params.BandwidthLimitsParams.MaxInferencesPerBlock,
 			}
 
-			logging.Debug("Updating validation parameters", types.Validation,
-				"timestampExpiration", validationParams.TimestampExpiration,
-				"timestampAdvance", validationParams.TimestampAdvance,
-				"expirationBlocks", validationParams.ExpirationBlocks,
-				"logprobsMode", validationParams.LogprobsMode)
+			logging.Debug("Updated bandwidth parameters from chain", types.Config,
+				"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
+				"kbPerInputToken", bandwidthParams.KbPerInputToken,
+				"kbPerOutputToken", bandwidthParams.KbPerOutputToken,
+				"maxInferencesPerBlock", bandwidthParams.MaxInferencesPerBlock)
 
-			err = d.configManager.SetValidationParams(validationParams)
+			err = d.configManager.SetBandwidthParams(bandwidthParams)
 			if err != nil {
-				logging.Warn("Failed to update validation parameters", types.Config, "error", err)
+				logging.Warn("Failed to update bandwidth parameters", types.Config, "error", err)
 			}
+		}
 
-			if params.Params.BandwidthLimitsParams != nil {
-				bandwidthParams := apiconfig.BandwidthParamsCache{
-					EstimatedLimitsPerBlockKb: params.Params.BandwidthLimitsParams.EstimatedLimitsPerBlockKb,
-					KbPerInputToken:           params.Params.BandwidthLimitsParams.KbPerInputToken.ToFloat(),
-					KbPerOutputToken:          params.Params.BandwidthLimitsParams.KbPerOutputToken.ToFloat(),
-					MaxInferencesPerBlock:     params.Params.BandwidthLimitsParams.MaxInferencesPerBlock,
-				}
-
-				logging.Debug("Updated bandwidth parameters from chain", types.Config,
-					"estimatedLimitsPerBlockKb", bandwidthParams.EstimatedLimitsPerBlockKb,
-					"kbPerInputToken", bandwidthParams.KbPerInputToken,
-					"kbPerOutputToken", bandwidthParams.KbPerOutputToken,
-					"maxInferencesPerBlock", bandwidthParams.MaxInferencesPerBlock)
-
-				err = d.configManager.SetBandwidthParams(bandwidthParams)
-				if err != nil {
-					logging.Warn("Failed to update bandwidth parameters", types.Config, "error", err)
-				}
+		// Update Transfer Agent access cache from chain params
+		if params.TransferAgentAccessParams != nil {
+			addresses := params.TransferAgentAccessParams.AllowedTransferAddresses
+			cache := apiconfig.TransferAgentAccessCache{
+				AllowedAddresses: make(map[string]struct{}, len(addresses)),
+				IsEnabled:        len(addresses) > 0,
 			}
-
-			// Update Transfer Agent access cache from chain params
-			if params.Params.TransferAgentAccessParams != nil {
-				addresses := params.Params.TransferAgentAccessParams.AllowedTransferAddresses
-				cache := apiconfig.TransferAgentAccessCache{
-					AllowedAddresses: make(map[string]struct{}, len(addresses)),
-					IsEnabled:        len(addresses) > 0,
-				}
-				for _, addr := range addresses {
-					cache.AllowedAddresses[addr] = struct{}{}
-				}
-				d.configManager.SetTransferAgentAccessCache(cache)
-
-				logging.Debug("Updated transfer agent access cache from chain", types.Config,
-					"enabled", cache.IsEnabled, "count", len(addresses))
+			for _, addr := range addresses {
+				cache.AllowedAddresses[addr] = struct{}{}
 			}
+			d.configManager.SetTransferAgentAccessCache(cache)
 
-			// Update PoC params cache for multi-model support
-			if params.Params.PocParams != nil {
-				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
-			}
+			logging.Debug("Updated transfer agent access cache from chain", types.Config,
+				"enabled", cache.IsEnabled, "count", len(addresses))
+		}
 
-			if params.Params.DevshardEscrowParams != nil {
-				cache := apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, nil)
-				devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
-				if verr != nil || devshardVersions == nil {
-					logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
-					cache.Versions = d.configManager.GetDevshardVersions().Versions
-				} else {
-					cache = apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams, devshardVersions.Versions)
-				}
-				d.configManager.SetDevshardVersions(cache)
-			}
+		// Update PoC params cache for multi-model support
+		if params.PocParams != nil {
+			_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.PocParams.GetModelConfigs()))
+		}
 
-			// Reuse this Params response for the fee-tree cache. Do not issue a
-			// second RPC (and never context.Background()): a failed query leaves
-			// the last known-good cache in place. A successful response with
-			// nil FeeParams must still apply so Load(nil) clears stale pricing.
-			if d.applyFeeTree != nil {
-				d.applyFeeTree(params.Params.FeeParams)
+		if params.DevshardEscrowParams != nil {
+			cache := apiconfig.DevshardVersionsCacheFromParams(params.DevshardEscrowParams, nil)
+			devshardVersions, verr := d.queryClient.DevshardApprovedVersions(ctx, &types.QueryDevshardApprovedVersionsRequest{})
+			if verr != nil || devshardVersions == nil {
+				logging.Error("Failed to get approved devshard versions, keeping last known list", types.Config, "error", verr)
+				cache.Versions = d.configManager.GetDevshardVersions().Versions
+			} else {
+				cache = apiconfig.DevshardVersionsCacheFromParams(params.DevshardEscrowParams, devshardVersions.Versions)
 			}
+			d.configManager.SetDevshardVersions(cache)
+		}
+
+		// Reuse the same Params for the fee-tree cache. A failed EpochInfo
+		// returns above and leaves the last known-good cache in place. A
+		// successful response with nil FeeParams must still apply so
+		// Load(nil) clears stale pricing.
+		if d.applyFeeTree != nil {
+			d.applyFeeTree(params.FeeParams)
 		}
 	}
 
@@ -363,6 +375,7 @@ type NetworkInfo struct {
 	LatestEpoch                types.Epoch
 	BlockHeight                int64
 	ActiveConfirmationPoCEvent *types.ConfirmationPoCEvent
+	Params                     types.Params
 }
 
 // queryNetworkInfo queries the network for sync status and epoch parameters
@@ -392,6 +405,7 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (NetworkInf
 		LatestEpoch:                epochInfo.LatestEpoch,
 		BlockHeight:                epochInfo.BlockHeight,
 		ActiveConfirmationPoCEvent: confirmationEvent,
+		Params:                     epochInfo.Params,
 	}, nil
 }
 
@@ -636,8 +650,12 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 	if d.seedConfirmedEpoch >= epochIndex {
 		return
 	}
+	if d.seedAttemptEpoch != epochIndex {
+		d.seedAttemptEpoch = epochIndex
+		d.seedAttempts = 0
+	}
 	// Avoid resubmitting while the previous async SubmitSeed may still be in flight.
-	if d.seedAttemptHeight > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
+	if d.seedAttempts > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldown(d.seedAttempts) {
 		return
 	}
 
@@ -659,8 +677,9 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 		"epochIndex", epochIndex,
 		"participant", participantAddress,
 		"blockHeight", blockHeight,
-		"retry", d.seedAttemptHeight > 0)
+		"retry", d.seedAttempts > 0)
 	d.seedAttemptHeight = blockHeight
+	d.seedAttempts++
 	d.randomSeedManager.GenerateSeedInfo(epochIndex)
 }
 
