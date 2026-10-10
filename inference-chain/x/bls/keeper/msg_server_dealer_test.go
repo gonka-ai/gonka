@@ -2,12 +2,15 @@ package keeper_test
 
 import (
 	"context"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/math"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/bls/keeper"
@@ -70,8 +73,8 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 		Creator: dealerAddr,
 		EpochId: epochID,
 		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
+			g2CommitmentFromScalar(5),
+			g2CommitmentFromScalar(7),
 		},
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
@@ -471,8 +474,8 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 		Creator: dealerAddr,
 		EpochId: epochID,
 		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
+			g2CommitmentFromScalar(5),
+			g2CommitmentFromScalar(7),
 		},
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
@@ -512,4 +515,72 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	}
 	assert.True(t, epochAttr, "Event should contain epoch_id")
 	assert.True(t, dealerAttr, "Event should contain dealer_address")
+}
+
+// g2CommitmentsForCoefficients returns the G2 commitments g2^a_i for the given
+// polynomial coefficients.
+func g2CommitmentsForCoefficients(coefficients []fr.Element) [][]byte {
+	_, _, _, g2Gen := bls12381.Generators()
+	commitments := make([][]byte, len(coefficients))
+	for i := range coefficients {
+		var scalar big.Int
+		coefficients[i].BigInt(&scalar)
+		var point bls12381.G2Affine
+		point.ScalarMultiplication(&g2Gen, &scalar)
+		bytes := point.Bytes()
+		commitments[i] = bytes[:]
+	}
+	return commitments
+}
+
+func TestSubmitDealerPart_RejectsRootAtSlot(t *testing.T) {
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(1)
+	dealerAddr := "dealer1"
+
+	epochBLSData := types.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               3,
+		TSlotsDegree:              1,
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		Participants: []types.BLSParticipantInfo{
+			{Address: dealerAddr, Secp256K1PublicKey: []byte("pubkey1"), PercentageWeight: math.LegacyNewDec(33), SlotStartIndex: 0, SlotEndIndex: 0},
+			{Address: "participant1", Secp256K1PublicKey: []byte("pubkey2"), PercentageWeight: math.LegacyNewDec(33), SlotStartIndex: 1, SlotEndIndex: 1},
+			{Address: "participant2", Secp256K1PublicKey: []byte("pubkey3"), PercentageWeight: math.LegacyNewDec(34), SlotStartIndex: 2, SlotEndIndex: 2},
+		},
+		DealerParts: []*types.DealerPartStorage{
+			{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+		},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	// f(x) = a0 + a1*x with a1 = 1 and a0 = -2, so f(0) != 0 but f(2) = 0:
+	// victim slot 1 (evaluated at x = slot+1 = 2) would receive a zero share.
+	coefficients := make([]fr.Element, 2)
+	coefficients[1].SetOne()
+	coefficients[0].SetUint64(2)
+	coefficients[0].Neg(&coefficients[0])
+
+	msg := &types.MsgSubmitDealerPart{
+		Creator:     dealerAddr,
+		EpochId:     epochID,
+		Commitments: g2CommitmentsForCoefficients(coefficients),
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(2)}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(3)}},
+		},
+	}
+
+	_, err := ms.SubmitDealerPart(goCtx, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "polynomial evaluates to zero at slot 1")
+
+	// The dealer part must not have been stored.
+	updatedEpochBLSData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	assert.Empty(t, updatedEpochBLSData.DealerParts[0].DealerAddress)
 }
