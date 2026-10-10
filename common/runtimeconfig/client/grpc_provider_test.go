@@ -426,6 +426,7 @@ func TestGRPCProvider_BackCompat_SendsMaxWaitSeconds(t *testing.T) {
 	for len(srv.Calls()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
+	require.NotEmpty(t, srv.Calls(), "server recorded no call within 1s")
 	require.Equal(t, int32(37), srv.Calls()[0].GetMaxWaitSeconds())
 }
 
