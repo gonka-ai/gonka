@@ -26,6 +26,11 @@ summing that participant's counts across models, just as for
 unknown count, not an explicit zero. A budget can still be known without a count
 when the per-count rate is zero.
 
+Using the top participant is intentional: the setup check uses the same
+conservative network-wide estimate as the budget endpoint, rather than switching
+to this node's own count. Smaller nodes can therefore fail this readiness check
+even if their balance would cover their own observed workload.
+
 When available, `details` includes `denom`, `spendable_balance`, `budget_balance`,
 `budget_known`, `count`, `count_source`, and `spendable_covers_budget`.
 `spendable_covers_budget: false` alone is not a failure when `budget_known` is

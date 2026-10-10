@@ -398,7 +398,7 @@ func (s *Server) checkFeegrant(ctx context.Context) Check {
 		check.Status = FAIL
 		check.Message = fmt.Sprintf("Usable cold balance (%s %s) is below the one-epoch fee budget (%s %s)", spendable, types.BaseCoin, budget, types.BaseCoin)
 	} else if !known {
-		check.Message += "; usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count"
+		check.Message += ". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count."
 	}
 	return check
 }

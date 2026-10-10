@@ -131,6 +131,7 @@ func TestCheckFeegrant_EpochAffordability(t *testing.T) {
 		{"cold signer without grant empty", math.ZeroInt(), nil, true, false, false, FAIL},
 		{"cold signer without grant funded", budget, nil, true, false, false, PASS},
 		{"unknown count positive funds", math.OneInt(), &feegrant.BasicAllowance{}, false, true, false, PASS},
+		{"unknown count preserves expiry warning", math.OneInt(), &feegrant.BasicAllowance{Expiration: &soon}, false, true, false, PASS},
 		{"unknown count zero funds", math.ZeroInt(), &feegrant.BasicAllowance{}, false, true, false, FAIL},
 		{"fees disabled", math.ZeroInt(), &feegrant.BasicAllowance{}, false, false, true, PASS},
 		{"cold signer fees disabled", math.ZeroInt(), nil, true, false, true, PASS},
@@ -157,6 +158,9 @@ func TestCheckFeegrant_EpochAffordability(t *testing.T) {
 			check := s.checkFeegrant(context.Background())
 			require.Equal(t, "feegrant_allowance", check.ID)
 			require.Equal(t, tc.want, check.Status, check.Message)
+			if tc.name == "unknown count preserves expiry warning" {
+				require.Equal(t, "Fee allowance present, expiring soon at "+soon.Format(time.RFC3339)+". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count.", check.Message)
+			}
 			if !tc.feesOff {
 				details := check.Details.(map[string]interface{})
 				require.Equal(t, !tc.unknown, details["budget_known"])
@@ -177,6 +181,37 @@ func TestCheckFeegrant_EpochAffordability(t *testing.T) {
 				require.Equal(t, budget.String(), endpoint.BudgetBalance)
 				require.True(t, endpoint.SpendableCoversBudget)
 			}
+		})
+	}
+}
+
+func TestCheckFeegrant_DenominationsAndWrappedCap(t *testing.T) {
+	params := setupFeeParams()
+	budget := epochFeeBudgetNgonka(params.FeeParams, params.EpochParams, params.ConfirmationPocParams, 10)
+	coins := func(denom string, amount math.Int) sdk.Coins {
+		return sdk.NewCoins(sdk.NewCoin(denom, amount))
+	}
+	capped := setupTestGrant(t, &feegrant.BasicAllowance{SpendLimit: coins(types.BaseCoin, budget.SubRaw(1))}).Allowance
+	for _, tc := range []struct {
+		name      string
+		spendable sdk.Coins
+		allowance feegrant.FeeAllowanceI
+		usable    math.Int
+	}{
+		{"foreign allowance denomination", coins(types.BaseCoin, budget.MulRaw(2)), &feegrant.BasicAllowance{SpendLimit: coins("other", budget.MulRaw(2))}, math.ZeroInt()},
+		{"foreign balance denomination", coins("other", budget.MulRaw(2)), &feegrant.BasicAllowance{}, math.ZeroInt()},
+		{"wrapped allowance cap", coins(types.BaseCoin, budget.MulRaw(2)), &feegrant.AllowedMsgAllowance{Allowance: capped, AllowedMessages: []string{sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{})}}, budget.SubRaw(1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, qc := setupFeegrantServer(t, &setupBankQuery{spendable: tc.spendable}, &setupAllowanceQuery{grant: setupTestGrant(t, tc.allowance)}, false)
+			qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{Params: params, LatestEpoch: types.Epoch{PocStartBlockHeight: 123}}, nil)
+			qc.On("AllPoCV2StoreCommitsForStage", mock.Anything, mock.Anything).Return(&types.QueryAllPoCV2StoreCommitsForStageResponse{Commits: []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "a", Count: 10}}}, nil)
+			check := s.checkFeegrant(context.Background())
+			require.Equal(t, FAIL, check.Status, check.Message)
+			details := check.Details.(map[string]interface{})
+			require.Equal(t, tc.usable.String(), details["spendable_balance"])
+			require.Equal(t, true, details["budget_known"])
+			require.Equal(t, false, details["spendable_covers_budget"])
 		})
 	}
 }
