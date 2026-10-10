@@ -26,6 +26,30 @@ func TestMemoryLease_Acquire_FirstWins(t *testing.T) {
 	require.False(t, won)
 }
 
+func TestMemoryLease_Acquire_ReclaimsSubmittedFromOtherAddress(t *testing.T) {
+	store := NewMemory()
+	ctx := context.Background()
+	won, err := store.Acquire(ctx, "escrow-phase-b", 1, 10, testOwner("challenger"))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-phase-b", 1, 10, LeaseStatusSubmitted, testOwner("challenger")))
+
+	won, err = store.Acquire(ctx, "escrow-phase-b", 1, 10, testOwner("phase-b-voter"))
+	require.NoError(t, err)
+	require.True(t, won, "different participant must reclaim submitted lease for Phase B")
+
+	// Same participant address must not reclaim its own submitted row via a
+	// sibling instance (HA duplicate suppression).
+	same := LeaseOwner{Address: "challenger", InstanceID: "sibling", Hostname: "ha"}
+	won, err = store.Acquire(ctx, "escrow-phase-b", 2, 10, testOwner("challenger"))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-phase-b", 2, 10, LeaseStatusSubmitted, testOwner("challenger")))
+	won, err = store.Acquire(ctx, "escrow-phase-b", 2, 10, same)
+	require.NoError(t, err)
+	require.False(t, won)
+}
+
 func TestMemoryLease_Acquire_ConcurrentSingleWinner(t *testing.T) {
 	store := NewMemory()
 	ctx := context.Background()
@@ -356,7 +380,7 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 		require.False(t, won)
 	})
 
-	t.Run("submitted is no-op", func(t *testing.T) {
+	t.Run("submitted release is no-op but other address can reclaim", func(t *testing.T) {
 		won, err := store.Acquire(ctx, "escrow-sub", 1, 10, testOwner("instance-1"))
 		require.NoError(t, err)
 		require.True(t, won)
@@ -364,9 +388,11 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 
 		require.NoError(t, store.Release(ctx, "escrow-sub", 1, 10, testOwner("instance-1")))
 
+		// Release does not delete submitted rows; Phase B still needs a
+		// different participant to reclaim that submitted lease.
 		won, err = store.Acquire(ctx, "escrow-sub", 1, 10, testOwner("instance-2"))
 		require.NoError(t, err)
-		require.False(t, won)
+		require.True(t, won, "Phase B voter must reclaim submitted lease from another address")
 	})
 
 	t.Run("wrong epoch is no-op", func(t *testing.T) {

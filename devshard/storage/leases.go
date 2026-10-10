@@ -107,8 +107,13 @@ func (m *Memory) Acquire(_ context.Context, escrowID string, inferenceID, epochI
 		m.validationLeases[escrowID] = byInference
 	}
 	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
-	if _, exists := byInference[key]; exists {
-		return false, nil
+	if existing, exists := byInference[key]; exists {
+		// Phase B: a submitted lease from a different participant must not
+		// block other validators from acquiring. Same-address submitted rows
+		// still block (HA duplicate suppression). Pending always blocks.
+		if existing.status != LeaseStatusSubmitted || existing.instanceAddr == owner.Address {
+			return false, nil
+		}
 	}
 	byInference[key] = memoryLease{
 		instanceAddr: owner.Address,
@@ -289,6 +294,22 @@ func (s *Postgres) Acquire(ctx context.Context, escrowID string, inferenceID, ep
 	)
 	if err != nil {
 		return false, fmt.Errorf("validation leases: acquire %s/%d: %w", escrowID, inferenceID, err)
+	}
+	if tag.RowsAffected() == 1 {
+		return true, nil
+	}
+	// Phase B: reclaim a submitted row owned by a different participant so
+	// VoteThreshold remains reachable after the challenger marked submitted.
+	tag, err = s.pool.Exec(ctx,
+		`UPDATE devshard_validation_leases
+		 SET instance_address = $4, instance_id = $5, hostname = $6,
+		     claimed_at = now(), status = 'pending'
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
+		   AND status = 'submitted' AND instance_address <> $4`,
+		epochID, escrowID, inferenceID, owner.Address, owner.InstanceID, owner.Hostname,
+	)
+	if err != nil {
+		return false, fmt.Errorf("validation leases: reclaim submitted %s/%d: %w", escrowID, inferenceID, err)
 	}
 	return tag.RowsAffected() == 1, nil
 }
