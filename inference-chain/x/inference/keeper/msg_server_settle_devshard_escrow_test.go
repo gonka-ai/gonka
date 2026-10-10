@@ -629,7 +629,7 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementDoesNotRollIntoCurrentEpoch
 	}
 }
 
-func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediatelyWithoutParticipantStateChange(t *testing.T) {
+func TestSettleDevshardEscrow_CurrentEpochParticipantOutsideActiveSetPaidImmediatelyWithoutParticipantStateChange(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 

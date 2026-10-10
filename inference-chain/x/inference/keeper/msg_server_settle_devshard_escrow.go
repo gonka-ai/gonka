@@ -9,6 +9,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -71,12 +72,22 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 
 	participantByAddr := make(map[string]*types.Participant, len(uniqueAddrs))
 	treatAsCurrentEpochSettle := make(map[string]bool, len(uniqueAddrs))
+	forfeitPayout := make(map[string]bool, len(uniqueAddrs))
 	for _, addr := range uniqueAddrs {
 		participant, found := k.GetParticipant(goCtx, addr)
 		if !found {
 			return nil, fmt.Errorf("participant %s not found", addr)
 		}
 		participantByAddr[addr] = &participant
+		participantAddr, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
+		}
+		excluded, err := k.ExcludedParticipantsMap.Has(ctx, collections.Join(escrow.EpochIndex, participantAddr))
+		if err != nil {
+			return nil, fmt.Errorf("failed to check participant exclusion for %s in epoch %d: %w", addr, escrow.EpochIndex, err)
+		}
+		forfeitPayout[addr] = excluded
 		if escrow.EpochIndex != currentEpochIndex {
 			treatAsCurrentEpochSettle[addr] = false
 			continue
@@ -84,10 +95,6 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		if _, accountsSettled := k.GetEpochPerformanceSummary(goCtx, currentEpochIndex, addr); accountsSettled {
 			treatAsCurrentEpochSettle[addr] = false
 			continue
-		}
-		participantAddr, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
 		}
 		active, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
 		if err != nil {
@@ -151,6 +158,31 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		return nil, fmt.Errorf("total payout %d exceeds escrow amount %d", totalPayout, escrow.Amount)
 	}
 
+	var governancePayout uint64
+	for _, addr := range uniqueAddrs {
+		if !forfeitPayout[addr] {
+			continue
+		}
+		nextGovernancePayout, carry := bits.Add64(governancePayout, validatorPayouts[addr], 0)
+		if carry != 0 {
+			return nil, fmt.Errorf("forfeited validator payout overflow")
+		}
+		governancePayout = nextGovernancePayout
+	}
+	if governancePayout > 0 {
+		if governancePayout > math.MaxInt64 {
+			return nil, fmt.Errorf("governance payout amount %d exceeds max int64", governancePayout)
+		}
+		coins, err := types.GetCoins(int64(governancePayout))
+		if err != nil {
+			return nil, fmt.Errorf("invalid governance payout amount: %w", err)
+		}
+		memo := fmt.Sprintf("forfeited_work_coins_to_governance:epoch=%d", escrow.EpochIndex)
+		if err := k.BankKeeper.SendCoinsFromModuleToModule(goCtx, types.ModuleName, govtypes.ModuleName, coins, memo); err != nil {
+			return nil, fmt.Errorf("failed to transfer forfeited work coins to governance: %w", err)
+		}
+	}
+
 	// Pay validators in slot order (deterministic iteration over escrow.Slots).
 	// Each validator receives total accumulated slot costs and fee shares.
 	paidValidators := make(map[string]bool)
@@ -163,6 +195,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			continue
 		}
 		paidValidators[addr] = true
+		if forfeitPayout[addr] {
+			continue
+		}
 
 		inCurrentEpoch := treatAsCurrentEpochSettle[addr]
 		if inCurrentEpoch {

@@ -65,9 +65,11 @@ This system is designed to incentivize participation, especially in the early st
 
 Both **Work Coins** and **Reward Coins** are distributed to participants at the end of each epoch. However, they are distributed differently:
 
-*   **Work Coins Distribution**: The distribution of Work Coins is straightforward. Each participant receives the exact amount of fees that they have accumulated for the inference tasks they processed during the epoch. These are the funds that were held in escrow.
+*   **Work Coins Distribution**: Active participants receive the fees accumulated for inference tasks they processed during the epoch. These are funds held in escrow. From v0.2.18, a participant marked `INVALID` or `INACTIVE` forfeits unpaid Work Coins for the epoch to governance. This includes a positive `CoinBalance` at account settlement and the participant's full share of a devshard escrow settled after its exclusion was recorded for that epoch, even if settlement occurs in a later epoch. A payment completed before the exclusion was recorded is not reclaimed.
 
 *   **Reward Coins Distribution**: Reward Coins are distributed proportionally among all contributing participants. The system first calculates the total amount of work done by all participants in an epoch. Then, each participant receives a share of the total Reward Coins that is directly proportional to their contribution to the total work.
+
+`INVALID` and `INACTIVE` participants do not receive their unpaid Reward Coins for the affected epoch; the undistributed minted rewards go to governance. This is separate from the transfer of Work Coins, which are user fees already held by the inference module. Consensus jailing alone does not change a Host's inference participation status.
 
 This dual reward system ensures that participants are compensated directly for the tasks they perform (Work Coins) and also receive a share of the network's growth and success (Reward Coins). The logic for calculating these amounts for each participant is in the `getSettleAmount` function within `inference-chain/x/inference/keeper/accountsettle.go`.
 
