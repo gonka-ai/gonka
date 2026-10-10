@@ -22,8 +22,9 @@ type GatewaySessionSnapshot struct {
 	Balance        uint64
 	Phase          string
 	LiveInferences int
-	// OpenHolds counts live inferences that can still move the ledger:
-	// pending/started (reservation held) and challenged (may invalidate+refund).
+	// OpenHolds counts live inferences that still hold a reservation:
+	// pending/started only. Challenged may invalidate+refund later, but that
+	// path is Phase B and must not gate restart settle the same way.
 	OpenHolds int
 }
 
@@ -71,14 +72,16 @@ func GetGatewaySessionSnapshot(t *testing.T, client *http.Client, gatewayURL, ad
 	}
 }
 
-// gatewaySessionOpenHolds counts statuses that can still credit the escrow
-// balance (reservation release or invalidation refund). Finished/validated/
-// timed_out/invalidated rows may stay live until auto-seal and are ignored.
+// gatewaySessionOpenHolds counts statuses that still hold a reservation.
+// Finished/validated/timed_out/invalidated stay live until auto-seal and are
+// ignored. Challenged is ignored too: ActualCost is already charged, and a
+// later invalidation refund must not block WaitGatewaySessionSettled across a
+// host restart while Phase B is still running.
 func gatewaySessionOpenHolds(statusCounts map[string]int) int {
 	if len(statusCounts) == 0 {
 		return 0
 	}
-	return statusCounts["pending"] + statusCounts["started"] + statusCounts["challenged"]
+	return statusCounts["pending"] + statusCounts["started"]
 }
 
 func getGatewayJSON(t *testing.T, client *http.Client, url, adminAPIKey string, dest any) error {
@@ -296,9 +299,9 @@ func WaitVersiondSessionHealthy(t *testing.T, stack *Stack, cfg *config.File, ep
 // RequireGatewaySessionAdvanced too early makes a later chat look like it
 // increased the balance.
 //
-// Finished/validated/timed_out rows stay in the live map until auto-seal
-// (default every 150 nonces), so live_inferences is not a settle signal.
-// pending/started/challenged are: they still hold or may refund cost.
+// Finished/validated/timed_out/challenged rows stay in the live map until
+// auto-seal (default every 150 nonces), so live_inferences is not a settle
+// signal. Only pending/started gate settle: those still hold a reservation.
 func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewaySessionSnapshot {
 	t.Helper()
 	// Cover escrow refusal_timeout (60s in testenv) plus vote round-trip after

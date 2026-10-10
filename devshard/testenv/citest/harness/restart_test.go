@@ -54,13 +54,13 @@ func TestGatewaySessionOpenHolds(t *testing.T) {
 		t.Fatalf("nil counts: got %d", got)
 	}
 	if got := gatewaySessionOpenHolds(map[string]int{
-		"finished": 2, "validated": 1, "timed_out": 1, "invalidated": 1,
+		"finished": 2, "validated": 1, "timed_out": 1, "invalidated": 1, "challenged": 4,
 	}); got != 0 {
-		t.Fatalf("terminal-only counts must be 0 open holds, got %d", got)
+		t.Fatalf("non-reservation statuses must be 0 open holds, got %d", got)
 	}
 	if got := gatewaySessionOpenHolds(map[string]int{
 		"pending": 1, "started": 2, "challenged": 3, "finished": 9,
-	}); got != 6 {
-		t.Fatalf("pending+started+challenged: got %d want 6", got)
+	}); got != 3 {
+		t.Fatalf("pending+started only: got %d want 3", got)
 	}
 }
