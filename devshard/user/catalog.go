@@ -6,10 +6,22 @@ import (
 	"strings"
 	"time"
 
+	"common/httpguard"
 	"devshard/logging"
 )
 
 const catalogWaitTick = time.Second
+
+// catalogProbeClient dials each host's public base URL, which the host sets
+// on chain (InferenceUrl), so it carries the dial-time SSRF guard like the
+// signed transport. The guard re-checks every redirect hop's dial.
+var catalogProbeClient = newCatalogProbeClient()
+
+func newCatalogProbeClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DialContext = httpguard.NewDialer().DialContext
+	return &http.Client{Timeout: 5 * time.Second, Transport: transport}
+}
 
 type catalogHealthzSource interface {
 	CatalogHealthzURL() string
@@ -33,7 +45,7 @@ func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := catalogProbeClient
 	if probeRouterCatalog(client, urls) == catalogProbeAdmitted {
 		return nil
 	}

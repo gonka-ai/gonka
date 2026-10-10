@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"common/completionapi"
+	"common/httpguard"
 	commonvalidation "common/validation"
 
 	"connectrpc.com/connect"
@@ -189,9 +190,13 @@ func newPayloadFetchClient() *http.Client {
 	transport := cloneHTTPTransport()
 	transport.ResponseHeaderTimeout = payloadFetchHeaderTimeout
 	transport.TLSHandshakeTimeout = payloadFetchHeaderTimeout
+	// The URL is the executor's on-chain InferenceUrl, which the executor
+	// controls: carry the dial-time SSRF guard like the dapi payload client
+	// (common/validation.PayloadRetrievalClient). See common/httpguard.
 	transport.DialContext = (&net.Dialer{
 		Timeout:   payloadFetchHeaderTimeout,
 		KeepAlive: 30 * time.Second,
+		Control:   httpguard.DialControl,
 	}).DialContext
 
 	// net/http ignores ResponseHeaderTimeout on HTTP/2, which would silently
