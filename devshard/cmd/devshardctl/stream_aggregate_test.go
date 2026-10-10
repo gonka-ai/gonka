@@ -927,3 +927,54 @@ func TestAggregateSSEStream_KeepsContentBesideANonFiniteLogprob(t *testing.T) {
 		require.Equal(t, "Hi", resp["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"], lit)
 	}
 }
+
+// The fold output goes to the client as is (proxy.go no longer re-decodes it),
+// so internal keys must be gone at every depth, including inside the raw
+// logprobs entries the fold never expands.
+func TestAggregateSSEStream_StripsNestedInternalFields(t *testing.T) {
+	raw := sseData(
+		`{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","token_ids":[1],"ext":{"prompt_token_ids":[2],"keep":1},"choices":[{"index":0,"delta":{"content":"x","token_ids":[3],"tool_calls":[{"index":0,"id":"t","type":"function","token_ids":[4],"function":{"name":"f","arguments":"{}"}}]},"logprobs":{"content":[{"token":"x","logprob":-0.1,"token_ids":[5],"top_logprobs":[{"token":"x","logprob":-0.1,"prompt_logprobs":[6]}]}]},"meta":{"token_ids":[7]},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,"prompt_token_ids":[8]}}`,
+	)
+	intent := clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true, keepUsage: true}
+	got := aggregateSSEStream(raw, intent)
+	for _, k := range internalStrippedFields {
+		require.NotContains(t, string(got), `"`+k+`"`, "fold output leaks %s: %s", k, got)
+	}
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(got, &resp))
+	ch := resp["choices"].([]any)[0].(map[string]any)
+	lp := ch["logprobs"].(map[string]any)["content"].([]any)
+	require.Len(t, lp, 1)
+	require.Equal(t, "x", lp[0].(map[string]any)["token"])
+	require.Equal(t, float64(1), resp["ext"].(map[string]any)["keep"])
+	// Same bytes the old whole-body pass produced, minus nothing a client may see.
+	require.Equal(t, string(filterClientInternalFields(got, intent)), string(got))
+}
+
+func TestAggregateSSEStream_StripsInternalFieldsFromHostError(t *testing.T) {
+	raw := sseData(`{"error":{"message":"boom","token_ids":[1]}}`)
+	got := aggregateSSEStream(raw, clientResponseIntent{})
+	require.NotContains(t, string(got), `"token_ids"`)
+	require.Contains(t, string(got), `"boom"`)
+}
+
+// Clean entries are stored byte for byte; only an entry that names a stripped
+// key is re-encoded.
+func TestStripInternalFieldsRaw_CleanEntryUntouched(t *testing.T) {
+	entry := json.RawMessage(`{"token":"token_idsX","logprob":-0.1234567890123,"top_logprobs":[]}`)
+	got, err := stripInternalFieldsRaw(entry, internalStrippedFields)
+	require.NoError(t, err)
+	require.Equal(t, string(entry), string(got))
+}
+
+// A client that did not ask for logprobs gets F10's null and no nested
+// logprob keys from extension values.
+func TestAggregateSSEStream_NoLogprobClientNestedLogprobKeysStripped(t *testing.T) {
+	raw := sseData(
+		`{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","ext":{"logprobs":[1],"keep":1},"choices":[{"index":0,"delta":{"content":"x"},"meta":{"logprob":-1,"keep":2},"finish_reason":"stop"}]}`,
+	)
+	got := aggregateSSEStream(raw, clientResponseIntent{})
+	require.Equal(t, 1, strings.Count(string(got), `"logprob`), "only F10's null may remain: %s", got)
+	require.Contains(t, string(got), `"logprobs":null`)
+	require.Contains(t, string(got), `"keep":2`)
+}
