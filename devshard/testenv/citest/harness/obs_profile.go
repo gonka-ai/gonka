@@ -9,12 +9,12 @@ import (
 type ObsProfile string
 
 const (
-	ObsProfileTempoAlloy      ObsProfile = "tempo-alloy"
-	ObsProfileTempoPromtail   ObsProfile = "tempo-promtail"
-	ObsProfileJaegerAlloy     ObsProfile = "jaeger-alloy"
-	ObsProfileJaegerPromtail  ObsProfile = "jaeger-promtail"
-	DefaultObsProfile                    = ObsProfileTempoAlloy
-	envObsProfile                        = "TESTENV_OBS_PROFILE"
+	ObsProfileTempoAlloy     ObsProfile = "tempo-alloy"
+	ObsProfileTempoPromtail  ObsProfile = "tempo-promtail"
+	ObsProfileJaegerAlloy    ObsProfile = "jaeger-alloy"
+	ObsProfileJaegerPromtail ObsProfile = "jaeger-promtail"
+	DefaultObsProfile                   = ObsProfileTempoAlloy
+	envObsProfile                       = "TESTENV_OBS_PROFILE"
 )
 
 // ResolveObsProfile reads TESTENV_OBS_PROFILE (default tempo-alloy).
@@ -46,13 +46,14 @@ func (p ObsProfile) OTELEndpoint() string {
 	}
 }
 
-// TraceBackend is "tempo" or "jaeger" (query API).
+// TraceBackend is "tempo" or "jaeger" (query API). An unset profile follows
+// the tempo-alloy default so boot does not look for a Jaeger that is not running.
 func (p ObsProfile) TraceBackend() string {
 	switch p {
-	case ObsProfileTempoAlloy, ObsProfileTempoPromtail:
-		return "tempo"
-	default:
+	case ObsProfileJaegerAlloy, ObsProfileJaegerPromtail:
 		return "jaeger"
+	default:
+		return "tempo"
 	}
 }
 
@@ -116,4 +117,28 @@ func (p ObsProfile) IPServices() []string {
 		services = append(services, "promtail")
 	}
 	return services
+}
+
+// hostPublishedPort is a compose service whose container port is published to the host.
+// Promtail has no host port, so it is not listed.
+type hostPublishedPort struct {
+	service string
+	port    int
+}
+
+func (p ObsProfile) hostPublishedPorts() []hostPublishedPort {
+	ports := []hostPublishedPort{
+		{service: "loki", port: 3100},
+		{service: "prometheus", port: 9090},
+		{service: "grafana", port: 3000},
+	}
+	if p.TraceBackend() == "tempo" {
+		ports = append(ports, hostPublishedPort{service: "tempo", port: 3200})
+	} else {
+		ports = append(ports, hostPublishedPort{service: "jaeger", port: 16686})
+	}
+	if p.UsesAlloy() {
+		ports = append(ports, hostPublishedPort{service: "alloy", port: 12345})
+	}
+	return ports
 }

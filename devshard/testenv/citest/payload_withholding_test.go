@@ -121,7 +121,8 @@ func TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired(t *testing.T) {
 	require.Equal(t, 0, settled.Total, "released retry must not leave a parked lease (pending=%d skipped=%d)", settled.Pending, settled.Skipped)
 }
 
-var payloadFetchErrInference = regexp.MustCompile(`inference_id=(\d+)`)
+// Typed JSON is "inference_id":8. Text logs still use inference_id=8.
+var payloadFetchErrInference = regexp.MustCompile(`(?:"inference_id":|inference_id=)(\d+)`)
 
 func payloadWithholdingHosts() []string {
 	return []string{"versiond-0", "versiond-1", "versiond-2", "versiond-3"}

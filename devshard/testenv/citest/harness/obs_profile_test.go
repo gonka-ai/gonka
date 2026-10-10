@@ -19,49 +19,106 @@ func TestObsProfile_OTELEndpointMatrix(t *testing.T) {
 }
 
 func TestObsProfile_ComposeFragments(t *testing.T) {
-	tempoAlloy := ObsProfileTempoAlloy.ComposeFragmentNames()
-	require.Equal(t, []string{
-		"docker-compose.observability.tempo.yml",
-		"docker-compose.observability.alloy.yml",
-	}, tempoAlloy)
-
-	jaegerPT := ObsProfileJaegerPromtail.ComposeFragmentNames()
-	require.Equal(t, []string{
-		"docker-compose.observability.jaeger.yml",
-		"docker-compose.observability.promtail.yml",
-	}, jaegerPT)
-
-	require.Equal(t, "tempo", ObsProfileTempoAlloy.TraceBackend())
-	require.Equal(t, "jaeger", ObsProfileJaegerPromtail.TraceBackend())
-	require.True(t, ObsProfileTempoAlloy.UsesAlloy())
-	require.False(t, ObsProfileTempoAlloy.UsesPromtail())
-	require.True(t, ObsProfileJaegerPromtail.UsesPromtail())
+	cases := []struct {
+		profile  ObsProfile
+		backend  string
+		alloy    bool
+		promtail bool
+		frags    []string
+	}{
+		{ObsProfileTempoAlloy, "tempo", true, false, []string{
+			"docker-compose.observability.tempo.yml",
+			"docker-compose.observability.alloy.yml",
+		}},
+		{ObsProfileTempoPromtail, "tempo", false, true, []string{
+			"docker-compose.observability.tempo.yml",
+			"docker-compose.observability.promtail.yml",
+		}},
+		{ObsProfileJaegerAlloy, "jaeger", true, false, []string{
+			"docker-compose.observability.jaeger.yml",
+			"docker-compose.observability.alloy.yml",
+		}},
+		{ObsProfileJaegerPromtail, "jaeger", false, true, []string{
+			"docker-compose.observability.jaeger.yml",
+			"docker-compose.observability.promtail.yml",
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.profile), func(t *testing.T) {
+			require.Equal(t, tc.frags, tc.profile.ComposeFragmentNames())
+			require.Equal(t, tc.backend, tc.profile.TraceBackend())
+			require.Equal(t, tc.alloy, tc.profile.UsesAlloy())
+			require.Equal(t, tc.promtail, tc.profile.UsesPromtail())
+		})
+	}
+	require.Equal(t, "tempo", ObsProfile("").TraceBackend())
 }
 
 func TestObsProfile_IPServices(t *testing.T) {
-	have := map[string]struct{}{}
-	for _, s := range ObsProfileTempoAlloy.IPServices() {
-		have[s] = struct{}{}
+	cases := []struct {
+		profile ObsProfile
+		have    []string
+		absent  []string
+	}{
+		{ObsProfileTempoAlloy, []string{"prometheus", "loki", "grafana", "tempo", "alloy"}, []string{"jaeger", "promtail"}},
+		{ObsProfileTempoPromtail, []string{"prometheus", "loki", "grafana", "tempo", "promtail"}, []string{"jaeger", "alloy"}},
+		{ObsProfileJaegerAlloy, []string{"prometheus", "loki", "grafana", "jaeger", "alloy"}, []string{"tempo", "promtail"}},
+		{ObsProfileJaegerPromtail, []string{"prometheus", "loki", "grafana", "jaeger", "promtail"}, []string{"tempo", "alloy"}},
 	}
-	for _, want := range []string{"prometheus", "loki", "grafana", "tempo", "alloy"} {
-		_, ok := have[want]
-		require.True(t, ok, "missing %s", want)
+	for _, tc := range cases {
+		t.Run(string(tc.profile), func(t *testing.T) {
+			got := map[string]struct{}{}
+			for _, s := range tc.profile.IPServices() {
+				got[s] = struct{}{}
+			}
+			for _, want := range tc.have {
+				_, ok := got[want]
+				require.True(t, ok, "missing %s", want)
+			}
+			for _, ban := range tc.absent {
+				_, ok := got[ban]
+				require.False(t, ok, "profile %s must not start %s", tc.profile, ban)
+			}
+		})
 	}
-	_, hasJaeger := have["jaeger"]
-	_, hasPromtail := have["promtail"]
-	require.False(t, hasJaeger)
-	require.False(t, hasPromtail)
+}
 
-	haveJP := map[string]struct{}{}
-	for _, s := range ObsProfileJaegerPromtail.IPServices() {
-		haveJP[s] = struct{}{}
+func TestObsProfile_HostPublishedPorts(t *testing.T) {
+	cases := []struct {
+		profile ObsProfile
+		have    []string
+		absent  []string
+	}{
+		{ObsProfileTempoAlloy, []string{"loki", "prometheus", "grafana", "tempo", "alloy"}, []string{"jaeger", "promtail"}},
+		{ObsProfileTempoPromtail, []string{"loki", "prometheus", "grafana", "tempo"}, []string{"jaeger", "alloy", "promtail"}},
+		{ObsProfileJaegerAlloy, []string{"loki", "prometheus", "grafana", "jaeger", "alloy"}, []string{"tempo", "promtail"}},
+		{ObsProfileJaegerPromtail, []string{"loki", "prometheus", "grafana", "jaeger"}, []string{"tempo", "alloy", "promtail"}},
 	}
-	_, ok := haveJP["jaeger"]
-	require.True(t, ok)
-	_, ok = haveJP["promtail"]
-	require.True(t, ok)
-	_, hasTempo := haveJP["tempo"]
-	require.False(t, hasTempo)
+	for _, tc := range cases {
+		t.Run(string(tc.profile), func(t *testing.T) {
+			got := map[string]int{}
+			for _, pub := range tc.profile.hostPublishedPorts() {
+				got[pub.service] = pub.port
+			}
+			for _, want := range tc.have {
+				_, ok := got[want]
+				require.True(t, ok, "missing published port for %s", want)
+			}
+			for _, ban := range tc.absent {
+				_, ok := got[ban]
+				require.False(t, ok, "must not publish %s", ban)
+			}
+			if _, ok := got["tempo"]; ok {
+				require.Equal(t, 3200, got["tempo"])
+			}
+			if _, ok := got["jaeger"]; ok {
+				require.Equal(t, 16686, got["jaeger"])
+			}
+			if _, ok := got["alloy"]; ok {
+				require.Equal(t, 12345, got["alloy"])
+			}
+		})
+	}
 }
 
 func TestResolveObsProfile_DefaultAndEnv(t *testing.T) {

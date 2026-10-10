@@ -61,23 +61,55 @@ func TestRewriteObservabilityComposeIsolatesCitest(t *testing.T) {
 func TestComposeFileArgsObservabilityKeepsProfileFragments(t *testing.T) {
 	dir := t.TempDir()
 	overlay := filepath.Join(dir, "docker-compose.observability.yml")
-	jaeger := filepath.Join(dir, "docker-compose.observability.jaeger.yml")
-	promtail := filepath.Join(dir, "docker-compose.observability.promtail.yml")
-	for _, path := range []string{overlay, jaeger, promtail} {
-		require.NoError(t, os.WriteFile(path, []byte("services: {}\n"), 0o644))
+	names := []string{
+		"docker-compose.observability.jaeger.yml",
+		"docker-compose.observability.tempo.yml",
+		"docker-compose.observability.alloy.yml",
+		"docker-compose.observability.promtail.yml",
 	}
-	s := &Stack{
-		WorkDir:       dir,
-		ComposePath:   filepath.Join(dir, "docker-compose.yml"),
-		Observability: true,
-		ObsProfile:    ObsProfileJaegerPromtail,
+	require.NoError(t, os.WriteFile(overlay, []byte("services: {}\n"), 0o644))
+	for _, name := range names {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("services: {}\n"), 0o644))
 	}
-	require.Equal(t, []string{
-		"-f", s.ComposePath,
-		"-f", overlay,
-		"-f", jaeger,
-		"-f", promtail,
-	}, s.composeFileArgs())
+	cases := []struct {
+		profile ObsProfile
+		frags   []string
+	}{
+		{ObsProfileTempoAlloy, []string{"docker-compose.observability.tempo.yml", "docker-compose.observability.alloy.yml"}},
+		{ObsProfileTempoPromtail, []string{"docker-compose.observability.tempo.yml", "docker-compose.observability.promtail.yml"}},
+		{ObsProfileJaegerAlloy, []string{"docker-compose.observability.jaeger.yml", "docker-compose.observability.alloy.yml"}},
+		{ObsProfileJaegerPromtail, []string{"docker-compose.observability.jaeger.yml", "docker-compose.observability.promtail.yml"}},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.profile), func(t *testing.T) {
+			s := &Stack{
+				WorkDir:       dir,
+				ComposePath:   filepath.Join(dir, "docker-compose.yml"),
+				Observability: true,
+				ObsProfile:    tc.profile,
+			}
+			want := []string{"-f", s.ComposePath, "-f", overlay}
+			for _, frag := range tc.frags {
+				want = append(want, "-f", filepath.Join(dir, frag))
+			}
+			got := s.composeFileArgs()
+			require.Equal(t, want, got)
+			for _, name := range names {
+				path := filepath.Join(dir, name)
+				needed := false
+				for _, frag := range tc.frags {
+					if frag == name {
+						needed = true
+					}
+				}
+				if needed {
+					require.Contains(t, got, path)
+				} else {
+					require.NotContains(t, got, path)
+				}
+			}
+		})
+	}
 }
 
 func TestInsertPromtailProjectKeep(t *testing.T) {

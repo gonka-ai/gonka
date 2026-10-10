@@ -268,17 +268,38 @@ func insertPromtailProjectKeep(cfg, project string) (string, bool) {
 	return cfg[:loc[1]] + insert + cfg[loc[1]:], true
 }
 
-// ObservabilityHostEndpoints reads Docker-assigned observability ports for this stack.
+// ObservabilityHostEndpoints reads Docker-assigned ports for the services this
+// profile actually started. A tempo profile has no jaeger container, and a
+// promtail profile has no alloy container.
 func (s *Stack) ObservabilityHostEndpoints(t *testing.T) ObservabilityEndpoints {
 	t.Helper()
-	return ObservabilityEndpoints{
-		Jaeger:         "http://" + s.composePublishedAddr(t, "jaeger", 16686),
-		Loki:           "http://" + s.composePublishedAddr(t, "loki", 3100),
-		Prometheus:     "http://" + s.composePublishedAddr(t, "prometheus", 9090),
-		Grafana:        "http://" + s.composePublishedAddr(t, "grafana", 3000),
+	profile := s.ObsProfile
+	if profile == "" {
+		profile = ResolveObsProfile()
+	}
+	obs := ObservabilityEndpoints{
+		Profile:        profile,
 		ComposeProject: s.ComposeProject,
 		StartedAt:      time.Now().Add(-30 * time.Second),
 	}
+	for _, pub := range profile.hostPublishedPorts() {
+		addr := "http://" + s.composePublishedAddr(t, pub.service, pub.port)
+		switch pub.service {
+		case "loki":
+			obs.Loki = addr
+		case "prometheus":
+			obs.Prometheus = addr
+		case "grafana":
+			obs.Grafana = addr
+		case "tempo":
+			obs.Tempo = addr
+		case "jaeger":
+			obs.Jaeger = addr
+		case "alloy":
+			obs.Alloy = addr
+		}
+	}
+	return obs
 }
 
 func WaitObservabilityReady(t *testing.T, obs ObservabilityEndpoints, timeout time.Duration) {
