@@ -70,7 +70,25 @@ func WaitTraceCoveringServices(t *testing.T, obs ObservabilityEndpoints, service
 	})
 	require.True(t, ok, "%s trace covering %v not found within %s", backend, services, timeout)
 	require.NotEmpty(t, traceID)
-	return traceID
+	// Tempo search often strips leading zeros; slog emits TraceID.String() (32 hex).
+	return NormalizeTraceID(traceID)
+}
+
+// NormalizeTraceID pads a hex trace id to 32 lowercase chars (W3C / slog).
+// Tempo's /api/search returns unpadded ids; Loki JSON lines use the full width.
+func NormalizeTraceID(id string) string {
+	id = strings.TrimSpace(strings.ToLower(id))
+	id = strings.TrimPrefix(id, "0x")
+	if id == "" {
+		return ""
+	}
+	if len(id) > 32 {
+		id = id[len(id)-32:]
+	}
+	if len(id) < 32 {
+		id = strings.Repeat("0", 32-len(id)) + id
+	}
+	return id
 }
 
 // WaitJaegerTraceWithServices is a compatibility alias for WaitTraceCoveringServices.

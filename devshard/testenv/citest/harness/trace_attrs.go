@@ -55,6 +55,9 @@ func TryWaitTraceByAttr(t *testing.T, obs ObservabilityEndpoints, tagQuery strin
 		}
 		return false
 	})
+	for i := range ids {
+		ids[i] = NormalizeTraceID(ids[i])
+	}
 	return ids
 }
 
@@ -65,6 +68,7 @@ func RequireSpanAttrs(t *testing.T, obs ObservabilityEndpoints, traceID string, 
 	t.Helper()
 	require.NotEmpty(t, traceID)
 	require.NotEmpty(t, want)
+	traceID = NormalizeTraceID(traceID)
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	var attrs []map[string]string

@@ -39,6 +39,7 @@ func RequireLogsForTrace(t *testing.T, obs ObservabilityEndpoints, traceID strin
 	}
 	require.NotEmpty(t, traceID)
 	require.NotEmpty(t, composeServices)
+	traceID = NormalizeTraceID(traceID)
 	client := &http.Client{Timeout: 10 * time.Second}
 
 	for _, svc := range composeServices {

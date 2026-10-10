@@ -30,6 +30,34 @@ func EnablePayloadCapture(t *testing.T, stack *Stack, level string) {
 	stack.payloadEnv["DEVSHARD_LOG_PAYLOADS_MAX_BYTES"] = "16384"
 }
 
+// RequireNoPayloadCapturedLog asserts Loki has no payload_captured line with
+// needle for the whole window (settle check for intentional non-capture paths).
+func RequireNoPayloadCapturedLog(t *testing.T, obs ObservabilityEndpoints, needle string, window time.Duration) {
+	t.Helper()
+	if window == 0 {
+		window = 20 * time.Second
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	query := `{compose_service="devshardctl"} | json | stage="payload_captured"`
+	t.Logf("citest: asserting no payload_captured containing %q for %s", needle, window)
+	deadline := time.Now().Add(window)
+	for time.Now().Before(deadline) {
+		for _, line := range lokiQueryLines(client, obs.Loki, query) {
+			if needle != "" && !strings.Contains(line, needle) {
+				continue
+			}
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err != nil {
+				continue
+			}
+			if stage, _ := m["stage"].(string); stage == "payload_captured" {
+				t.Fatalf("citest: unexpected payload_captured for %q: %s", needle, truncateForLog(line, 400))
+			}
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
 // WaitPayloadCapturedLog polls Loki for a payload_captured line containing needle.
 func WaitPayloadCapturedLog(t *testing.T, obs ObservabilityEndpoints, needle string, timeout time.Duration) map[string]any {
 	t.Helper()

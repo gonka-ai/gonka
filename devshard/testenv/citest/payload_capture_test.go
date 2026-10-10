@@ -80,6 +80,11 @@ func TestPayloadCaptureHTTP503(t *testing.T) {
 	}
 }
 
+// TestPayloadCapturePartialStream documents intentional non-capture when the
+// upstream SSE ends mid-stream after content but without [DONE]. Transport
+// logs sse_content_without_done and still finishes the request as ok (see
+// TestParseSSE_ContentWithoutDoneLogsButDoesNotMiss); payload_captured only
+// emits on host_response failures, so this path must not produce one.
 func TestPayloadCapturePartialStream(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -115,14 +120,11 @@ func TestPayloadCapturePartialStream(t *testing.T) {
 	harness.Step(t, "stream chat with partial_stream (no EOS)")
 	_, _, _ = harness.PostGatewayChatStreamResult(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req)
 
-	line := harness.WaitPayloadCapturedLog(t, obs, needle, 3*time.Minute)
-	require.NotEmpty(t, line["devshard.prompt.sha256"])
-	require.NotNil(t, line["response_ms"])
-	require.NotEmpty(t, line["failed_at"])
-	rb, _ := line["response_bytes"].(float64)
-	require.Greater(t, rb, float64(0), "partial stream must log a non-empty response body sample: %v", line)
-	respField, hasResp := line["response"].(string)
-	require.True(t, hasResp && respField != "", "full level must include response body text for partial stream")
+	harness.WaitLokiLogQL(t, obs,
+		`{compose_service="devshardctl"} |= "sse_content_without_done"`,
+		3*time.Minute,
+	)
+	harness.RequireNoPayloadCapturedLog(t, obs, needle, 20*time.Second)
 }
 
 func TestPayloadCaptureSSEError(t *testing.T) {
