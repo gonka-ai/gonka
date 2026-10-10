@@ -242,6 +242,85 @@ func TestGatewayMockEnvUnsupportedModelRejectedBeforeRuntime(t *testing.T) {
 }
 
 // Steps:
+// - Keep the default model listed in model_limits, as the mock environment does, while only another model has a runtime.
+// - Send pooled chat for the listed model.
+// - Assert 503 with Retry-After instead of an unsupported-model 400.
+func TestGatewayMockEnvListedModelWithoutRuntimeAnswersTemporarilyUnavailable(t *testing.T) {
+	other := &gatewayMockRuntime{id: "other", model: "Kimi/Test", active: true}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{other})
+
+	rec := env.postChat(mockenvChatBody(mockenvDefaultModel, "hello"))
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, "10", rec.Header().Get("Retry-After"))
+	require.Contains(t, rec.Body.String(), `model \"Qwen/Test\" is temporarily unavailable`)
+	require.EqualValues(t, 0, other.calls.Load())
+}
+
+// Steps:
+// - Keep the default model listed in model_limits while its only runtime is inactive and another model keeps serving.
+// - Send pooled chat for the listed model.
+// - Assert 503 with Retry-After instead of an unsupported-model 400.
+func TestGatewayMockEnvListedModelWithInactiveRuntimeAnswersTemporarilyUnavailable(t *testing.T) {
+	inactive := &gatewayMockRuntime{
+		id:     "cold",
+		model:  mockenvDefaultModel,
+		active: false,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("pooled chat should not reach an inactive runtime")
+		},
+	}
+	other := &gatewayMockRuntime{id: "other", model: "Kimi/Test", active: true}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{inactive, other})
+
+	rec := env.postChat(mockenvChatBody(mockenvDefaultModel, "hello"))
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, "10", rec.Header().Get("Retry-After"))
+	require.Contains(t, rec.Body.String(), `model \"Qwen/Test\" is temporarily unavailable`)
+	require.EqualValues(t, 0, other.calls.Load())
+}
+
+// Steps:
+// - Leave a model out of model_limits while its only runtime is inactive and another model keeps serving.
+// - Send pooled chat for that model with the admin key, which a model outside model_limits requires.
+// - Assert unsupported model 400 without Retry-After.
+func TestGatewayMockEnvUnlistedModelWithInactiveRuntimeStaysUnsupported(t *testing.T) {
+	inactive := &gatewayMockRuntime{
+		id:     "cold",
+		model:  "Kimi/Test",
+		active: false,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("pooled chat should not reach an inactive runtime")
+		},
+	}
+	serving := &gatewayMockRuntime{id: "hot", model: mockenvDefaultModel, active: true}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{inactive, serving})
+
+	rec := env.postChat(mockenvChatBody("Kimi/Test", "hello"), withBearer(mockenvAdminKey))
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Empty(t, rec.Header().Get("Retry-After"))
+	require.Contains(t, rec.Body.String(), `unsupported model \"Kimi/Test\"`)
+}
+
+// Steps:
+// - List the default model in model_limits as admin-only while only another model has a runtime.
+// - Send pooled chat for the listed model with a user API key.
+// - Assert the access check answers 401 without revealing that the model waits for a runtime.
+func TestGatewayMockEnvListedModelWithoutRuntimeStillChecksAccessFirst(t *testing.T) {
+	other := &gatewayMockRuntime{id: "other", model: "Kimi/Test", active: true}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{other}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: mockenvDefaultModel, AccessMode: string(gatewayAccessModeAdminOnly)}}
+	}))
+
+	rec := env.postChat(mockenvChatBody(mockenvDefaultModel, "hello"), withBearer(mockenvUserKey))
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Empty(t, rec.Header().Get("Retry-After"))
+}
+
+// Steps:
 // - Create an active runtime for the gateway default model.
 // - Send pooled chat without a model field.
 // - Assert the gateway routes by default model without injecting one into the body.
@@ -296,6 +375,33 @@ func TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess(t *testi
 	require.Equal(t, http.StatusOK, allowed.Code)
 	require.Equal(t, "12", allowed.Header().Get("X-Devshard-ID"))
 	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
+// - List an open default model and a stricter admin-only model, but keep only the admin-only runtime active.
+// - Send pooled chat that omits `model` and carries no credentials, so access resolves to the open default.
+// - Assert runtime selection does not fall through to the admin-only runtime, which the caller may not use.
+func TestGatewayMockEnvPooledChatMissingModelDoesNotReachStricterRuntime(t *testing.T) {
+	adminOnly := &gatewayMockRuntime{
+		id:     "admin",
+		model:  "Kimi/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			writeMockenvChatJSON(w, "admin", "Kimi/Test")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{adminOnly}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{
+			{ModelID: mockenvDefaultModel, AccessMode: string(gatewayAccessModeOpen)},
+			{ModelID: "Kimi/Test", AccessMode: string(gatewayAccessModeAdminOnly)},
+		}
+	}))
+
+	rec := env.postChat(`{"messages":[{"role":"user","content":"omit model"}]}`)
+
+	require.EqualValues(t, 0, adminOnly.calls.Load(), "unauthenticated empty-model request must not reach the admin-only runtime")
+	require.NotEqual(t, http.StatusOK, rec.Code)
+	require.Empty(t, rec.Header().Get("X-Devshard-ID"))
 }
 
 // Steps:

@@ -293,6 +293,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
+      - name: Check h2 backends with an HTTP/1.1 health check
+        run: make -C versiond-router test-h2-backend-h1-check
       - name: Exercise isolated versiond-router fleet rollouts
         run: make -C versiond-router test-fleet
       - name: Gate router fleet failure scenarios
@@ -341,6 +343,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Render public proxy configuration
         run: make -C proxy-router test-render
+      - name: Check peer RPC health in a live show stat
+        run: make -C proxy-router test-h2-upstream-check
       - name: Render join Compose routing topologies
         run: make -C proxy-router test-compose
       - name: Exercise route-aware failover
@@ -479,6 +483,9 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      - name: Check signed proto preimages are not interchangeable
+        run: go test ./types/ -run 'TestAllDevshardProtoMessagesClassified|TestSignedProtoPreimagesAreNotInterchangeable|TestCanonicalSignedBytesRejects|TestSignedPreimageDomainsAreUnique' -count=1 -v
 
       - name: Run devshardd lifecycle tests with race detector
         run: go test -race ./cmd/devshardd

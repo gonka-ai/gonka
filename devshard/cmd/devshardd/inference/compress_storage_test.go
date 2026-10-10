@@ -50,7 +50,7 @@ func TestTheStoredPayloadIsSlimAndItsHashCoversTheSlimBytes(t *testing.T) {
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{})
+		fixedChainParams{}, true)
 	if err != nil {
 		t.Fatalf("executeInference: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestTheGatewayGetsStreamedLogprobsOnlyWhenItAsked(t *testing.T) {
 					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(request)
 				},
-				fixedChainParams{})
+				fixedChainParams{}, true)
 			if err != nil {
 				t.Fatalf("executeInference: %v", err)
 			}
@@ -168,8 +168,12 @@ func TestTheGatewayGetsStreamedLogprobsOnlyWhenItAsked(t *testing.T) {
 
 			// The keys live inside JSON strings in the envelope, where a search of the raw blob never
 			// matches them, so each stored event is decoded and inspected as the object it is.
+			droppedFields := []string{"token_ids", "prompt_token_ids", "prompt_logprobs"}
+			if !testCase.wantForwarded {
+				droppedFields = append(droppedFields, "bytes")
+			}
 			for _, storedChunk := range storedChunks(t, store.responsePayload) {
-				for _, dropped := range []string{"bytes", "token_ids", "prompt_token_ids", "prompt_logprobs"} {
+				for _, dropped := range droppedFields {
 					if bytes.Contains(mustMarshal(t, storedChunk), []byte(`"`+dropped+`"`)) {
 						t.Fatalf("the stored payload kept %q: %v", dropped, storedChunk)
 					}
@@ -274,7 +278,7 @@ func TestAJSONHostRelayedToAStreamingClientCarriesLogprobsOnlyWhenAsked(t *testi
 					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(request)
 				},
-				fixedChainParams{})
+				fixedChainParams{}, true)
 			if err != nil {
 				t.Fatalf("executeInference: %v", err)
 			}
@@ -291,8 +295,8 @@ func TestAJSONHostRelayedToAStreamingClientCarriesLogprobsOnlyWhenAsked(t *testi
 					t.Fatalf("%q reached the gateway: %s", dropped, relayed)
 				}
 			}
-			if strings.Contains(string(store.responsePayload), `"bytes"`) {
-				t.Fatalf("the stored payload kept what no validator reads: %s", store.responsePayload)
+			if kept := strings.Contains(string(store.responsePayload), `"bytes"`); kept != testCase.wantForwarded {
+				t.Fatalf("the stored payload kept the positions' bytes = %t, want %t (only an asking gateway's): %s", kept, testCase.wantForwarded, store.responsePayload)
 			}
 			if !strings.Contains(string(store.responsePayload), "logprobs") {
 				t.Fatalf("the stored payload lost what the validator replays against: %s", store.responsePayload)

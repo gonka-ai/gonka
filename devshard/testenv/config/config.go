@@ -222,13 +222,21 @@ const (
 	DefaultKeyringPassword      = "testenv1"
 	DefaultVersiondRouterHost   = "versiond-router"
 	DefaultVersiondRouterPort   = 8080
-	DefaultDevshardctlHost      = "devshardctl"
-	DefaultPostgresHost         = "devshard-postgres"
-	DefaultPostgresPort         = 5432
-	DefaultPostgresDB           = "devshardd"
-	DefaultPostgresUser         = "devshardd"
-	DefaultPostgresPassword     = "devshardd"
-	DefaultEscrowSlots          = 4
+	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
+	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
+	// on DefaultVersiondRouterPort.
+	DefaultVersiondRouterH2Port = 8081
+	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
+	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
+	DefaultProxyService     = "proxy"
+	DefaultRPCH2Port        = 8443
+	DefaultDevshardctlHost  = "devshardctl"
+	DefaultPostgresHost     = "devshard-postgres"
+	DefaultPostgresPort     = 5432
+	DefaultPostgresDB       = "devshardd"
+	DefaultPostgresUser     = "devshardd"
+	DefaultPostgresPassword = "devshardd"
+	DefaultEscrowSlots      = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
 	DefaultEscrowSlotURL = "http://versiond-router:8080"
@@ -239,8 +247,12 @@ const (
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
 	DefaultModelID       = "test-model"
-	DefaultAdminAPIKey   = "testenv-citest-admin"
-	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	// The chain stores the similarity pass bar as value * 10^exponent, like
+	// production's 958e-3; 50e-2 is a 0.50 bar.
+	DefaultValidationThresholdValue    = int64(50)
+	DefaultValidationThresholdExponent = int32(-2)
+	DefaultAdminAPIKey                 = "testenv-citest-admin"
+	DefaultAppHash                     = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.

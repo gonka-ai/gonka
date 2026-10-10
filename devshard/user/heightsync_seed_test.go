@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
@@ -48,6 +50,12 @@ func TestHeightSeedQuorum(t *testing.T) {
 }
 
 const seedTestRoutePrefix = "/devshard/v2"
+
+func seedHTTPConfig() transport.ClientConfig {
+	cfg := transport.DefaultClientConfig()
+	cfg.AllowRetiredHTTPSession = true
+	return cfg
+}
 
 type seedSlot struct {
 	server *httptest.Server
@@ -118,7 +126,7 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 		ts := httptest.NewServer(e)
 		t.Cleanup(ts.Close)
 
-		cfg := transport.DefaultClientConfig()
+		cfg := seedHTTPConfig()
 		cfg.RoutePrefix = seedTestRoutePrefix
 		cfg.QueryTimeout = 2 * time.Second
 		cfg.HeightSync = clientSched
@@ -177,9 +185,10 @@ func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 	require.NoError(t, env.session.SendPendingDiff(ctx))
 	base := env.session.Nonce()
 
+	rememberJournal(env.session)
 	require.NoError(t, env.session.MaybeHeartbeat(ctx))
 	var hb *types.MsgHeartbeat
-	for _, d := range env.session.Diffs() {
+	for _, d := range seenDiffs(env.session) {
 		if d.Nonce <= base {
 			continue
 		}
@@ -284,7 +293,7 @@ func TestSeed_DeclinedSlotsAreReprobed(t *testing.T) {
 		inner.ServeHTTP(w, r)
 	}))
 	t.Cleanup(proxy.Close)
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = seedTestRoutePrefix
 	cfg.QueryTimeout = 2 * time.Second
 	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
@@ -315,7 +324,7 @@ func TestSeed_Catalog503RetriesUntilCallerCtxThenDoesNotMiss(t *testing.T) {
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostKey})
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = "/"
 	cfg.QueryTimeout = 80 * time.Millisecond
 	cfg.HeightSyncPeerTips = transport.NewHeightSyncPeerTips()
@@ -346,7 +355,7 @@ func TestSeed_PrepareInferenceDoesNotSeed(t *testing.T) {
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostKey})
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = "/"
 	cfg.QueryTimeout = 80 * time.Millisecond
 	cfg.HeightSyncPeerTips = transport.NewHeightSyncPeerTips()
@@ -384,7 +393,7 @@ func TestSeed_Catalog503ThenServingSucceeds(t *testing.T) {
 	t.Cleanup(proxy.Close)
 
 	user := env.session.signer
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = seedTestRoutePrefix
 	cfg.QueryTimeout = 5 * time.Second
 	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
@@ -433,7 +442,7 @@ func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
 			}
 		}))
 		t.Cleanup(proxy.Close)
-		cfg := transport.DefaultClientConfig()
+		cfg := seedHTTPConfig()
 		cfg.RoutePrefix = seedTestRoutePrefix
 		cfg.QueryTimeout = 2 * time.Second
 		cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 3, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
@@ -486,7 +495,7 @@ func TestSeed_HungSlotDoesNotWaitQueryTimeout(t *testing.T) {
 	t.Cleanup(hang.Close)
 	t.Cleanup(func() { close(release) })
 
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = seedTestRoutePrefix
 	cfg.QueryTimeout = 30 * time.Second
 	cfg.HeightSeedTimeout = 80 * time.Millisecond
@@ -528,6 +537,15 @@ func TestClassifySeedVerdict(t *testing.T) {
 	})
 	require.Equal(t, seedDeclined, v)
 
+	v, _ = classifySeedVerdict(false, transport.ErrHTTPSessionRetired)
+	require.Equal(t, seedDeclined, v)
+
+	v, _ = classifySeedVerdict(false, &transport.UpstreamStatusError{
+		StatusCode:    http.StatusGone,
+		DevshardError: transport.DevshardErrorHTTPSessionRetired,
+	})
+	require.Equal(t, seedDeclined, v)
+
 	v, _ = classifySeedVerdict(false, &transport.UpstreamStatusError{StatusCode: http.StatusServiceUnavailable})
 	require.Equal(t, seedRetryLater, v)
 
@@ -538,6 +556,17 @@ func TestClassifySeedVerdict(t *testing.T) {
 	require.Equal(t, seedRetryLater, v)
 
 	v, _ = classifySeedVerdict(false, fmt.Errorf("participant request budget exhausted"))
+	require.Equal(t, seedRetryLater, v)
+
+	v, _ = classifySeedVerdict(false, connect.NewError(connect.CodeNotFound, transport.ErrHeightSyncSeedDisabled))
+	require.Equal(t, seedDeclined, v)
+
+	v, _ = classifySeedVerdict(false, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented")))
+	require.Equal(t, seedDeclined, v)
+
+	unavailable := connect.NewError(connect.CodeUnavailable, errors.New("requests disabled"))
+	unavailable.Meta().Set(transport.HeaderDevshardError, transport.DevshardErrorRequestsDisabled)
+	v, _ = classifySeedVerdict(false, unavailable)
 	require.Equal(t, seedRetryLater, v)
 }
 
@@ -568,7 +597,7 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 			inner.ServeHTTP(w, r)
 		}))
 		t.Cleanup(proxy.Close)
-		cfg := transport.DefaultClientConfig()
+		cfg := seedHTTPConfig()
 		cfg.RoutePrefix = seedTestRoutePrefix
 		cfg.QueryTimeout = 2 * time.Second
 		cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 3, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
@@ -600,6 +629,48 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 	require.Greater(t, hits[1].Load(), int32(1))
 }
 
+func TestHeartbeatDisabled_SeedGateStillBlocks(t *testing.T) {
+	env := setupSeedSession(t, []bool{true}, WithRequireHeightSeed(true), WithDisableHeightSyncHeartbeat(true))
+	inner := env.slots[0].server.Config.Handler
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/devshard/v2/healthz" {
+			http.Error(w, "undeclared", http.StatusServiceUnavailable)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	t.Cleanup(proxy.Close)
+	cfg := seedHTTPConfig()
+	cfg.RoutePrefix = seedTestRoutePrefix
+	cfg.QueryTimeout = 2 * time.Second
+	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+	cfg.HeightSyncPeerTips = env.peerTips
+	env.session.clients = []HostClient{
+		transport.NewHTTPClient(proxy.URL, "escrow-1", env.session.signer, cfg),
+	}
+
+	logs := captureInfoLog(t)
+	base := env.session.Nonce()
+	env.session.StartHeartbeatLoop()
+	require.True(t, logs.contains("heartbeat loop disabled"))
+	require.Nil(t, env.session.heartbeatStop)
+	require.NotNil(t, env.session.heightSeedStop, "disabling the cadence must still start the seed loop")
+
+	waitCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	err := env.session.WaitHeightSeed(waitCtx)
+	cancel()
+	var se *HeightSeedError
+	require.ErrorAs(t, err, &se)
+	require.Equal(t, transport.DevshardErrorCatalogPending, se.Code)
+	require.Equal(t, base, env.session.Nonce())
+
+	// captureInfoLog restores logging.current in a cleanup, and cleanups run
+	// LIFO, so that write happens before setupSeedSession closes the session.
+	// The seed loop is still in WaitRouterCatalog calling logging.Debug until
+	// Close. Stop it here so the restore does not race that read.
+	require.NoError(t, env.session.Close())
+}
+
 func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 	env := setupSeedSession(t, []bool{true}, WithRequireHeightSeed(true))
 	var catalogReady atomic.Bool
@@ -618,7 +689,7 @@ func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 		inner.ServeHTTP(w, r)
 	}))
 	t.Cleanup(proxy.Close)
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = seedTestRoutePrefix
 	cfg.QueryTimeout = 2 * time.Second
 	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
@@ -659,7 +730,7 @@ func TestSeed_Gap4AdmissionErrorIsRetryLater(t *testing.T) {
 		inner.ServeHTTP(w, r)
 	}))
 	t.Cleanup(proxy.Close)
-	cfg := transport.DefaultClientConfig()
+	cfg := seedHTTPConfig()
 	cfg.RoutePrefix = seedTestRoutePrefix
 	cfg.QueryTimeout = 2 * time.Second
 	cfg.ParticipantKey = "shared-host"
@@ -704,7 +775,7 @@ func rebuildSeedClientsWithLogOracle(t *testing.T, env *seedEnv, logOracle block
 	sched := heightsync.MustNewAnchorScheduler(10, uint64(n), src)
 	clients := make([]HostClient, n)
 	for i := range env.slots {
-		cfg := transport.DefaultClientConfig()
+		cfg := seedHTTPConfig()
 		cfg.RoutePrefix = seedTestRoutePrefix
 		cfg.QueryTimeout = 2 * time.Second
 		cfg.HeightSync = sched

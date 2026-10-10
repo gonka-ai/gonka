@@ -54,7 +54,7 @@ func TestAStreamShapedLikeProductionIsStoredHashedAndParseable(t *testing.T) {
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{})
+		fixedChainParams{}, true)
 	if err != nil {
 		t.Fatalf("executeInference: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestAnAnswerlessStreamFailsTheInference(t *testing.T) {
 					request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(request)
 				},
-				fixedChainParams{})
+				fixedChainParams{}, true)
 
 			if err == nil {
 				t.Fatal("an answerless stream was accepted as a finished inference")

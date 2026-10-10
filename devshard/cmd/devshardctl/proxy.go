@@ -189,15 +189,16 @@ var inferenceStatusName = map[types.InferenceStatus]string{
 
 // Proxy is the OpenAI-compatible HTTP proxy backed by a devshard session.
 type Proxy struct {
-	session                 *user.Session
-	sm                      *state.StateMachine
-	escrowID                string
-	model                   string
-	redundancy              *Redundancy
-	perf                    *PerfTracker
-	phaseGate               *ChainPhaseGate
-	defaultRequestMaxTokens uint64
-	requestMaxTokensCap     uint64
+	session                      *user.Session
+	sm                           *state.StateMachine
+	escrowID                     string
+	model                        string
+	redundancy                   *Redundancy
+	perf                         *PerfTracker
+	phaseGate                    *ChainPhaseGate
+	defaultRequestMaxTokens      uint64
+	requestMaxTokensCap          uint64
+	logprobsOptimizationOverride func() *bool
 }
 
 // detachedInferenceContext drops the client's cancellation but keeps its request id, so the
@@ -231,12 +232,17 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
+	var logprobsOptimizationOverride *bool
+	if p.logprobsOptimizationOverride != nil {
+		logprobsOptimizationOverride = p.logprobsOptimizationOverride()
+	}
 	params := user.InferenceParams{
-		Model:       model,
-		Prompt:      body,
-		InputLength: uint64(len(body)),
-		MaxTokens:   req.MaxTokens,
-		StartedAt:   time.Now().Unix(),
+		Model:                        model,
+		Prompt:                       body,
+		InputLength:                  uint64(len(body)),
+		MaxTokens:                    req.MaxTokens,
+		StartedAt:                    time.Now().Unix(),
+		LogprobsOptimizationOverride: logprobsOptimizationOverride,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
@@ -447,6 +453,9 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		if !dw.started {
+			if p.handBackToGateway(r.Context(), err) {
+				return
+			}
 			writeGatewayError(w, err)
 			return
 		}
@@ -600,6 +609,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}
+		if buf.Len() == 0 && p.handBackToGateway(r.Context(), err) {
+			return
+		}
 		writeGatewayError(w, err)
 		return
 	}
@@ -614,7 +626,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		defer closer.Close()
 	}
 	intent, _ := clientResponseIntentFromContext(r.Context())
-	assembled := filterClientInternalFields(aggregateSSEStreamReader(src, intent), intent)
+	// The reader strips internal fields itself; decoding its output again here
+	// would rebuild the whole logprobs tree the fold keeps out of RAM (R4).
+	assembled := aggregateSSEStreamReader(src, intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
@@ -632,6 +646,18 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	writeJSONPayload(w, http.StatusOK, assembled)
 	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID,
 		"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
+}
+
+// handBackToGateway asks the pooled route to take this request to another escrow when this one
+// cannot pay for it. The caller must have written nothing to the client yet.
+func (p *Proxy) handBackToGateway(ctx context.Context, err error) bool {
+	verdict, recorded := escrowFundingVerdictFromContext(ctx)
+	if !recorded || !errors.Is(err, types.ErrInsufficientBalance) {
+		return false
+	}
+	verdict.refused = true
+	logRequestStage(ctx, "proxy_escrow_refused_funding", "escrow", p.escrowID, "error", err)
+	return true
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {
@@ -938,7 +964,7 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":{"message":"request accounting unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	rec, ok, err := p.perf.FindAccountingRequest(requestID, p.escrowID)
+	rec, ok, err := p.perf.FindAccountingRequest(r.Context(), requestID, p.escrowID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return

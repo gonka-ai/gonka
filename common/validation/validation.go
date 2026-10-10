@@ -19,6 +19,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const (
+	// replayTokenIDLimit is the exclusive token id bound used when the model's vocab size is unknown; it sits above any real vocab.
+	replayTokenIDLimit = 9_999_999
+	// maxReplayTopTokensPerPosition is the vLLM plugin's per-position top_tokens limit; wider positions are rejected before replay.
+	maxReplayTopTokensPerPosition = 64
+)
+
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
@@ -135,6 +142,27 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 		}
 	}
 	return false
+}
+
+// hasUnreplayableTokens reports whether replaying the enforced tokens would crash or be refused by the validator node.
+func hasUnreplayableTokens(enforcedTokens completionapi.EnforcedTokens, tokenIDLimit int) bool {
+	for _, enforcedToken := range enforcedTokens.Tokens {
+		tokenID, err := strconv.Atoi(enforcedToken.Token)
+		if err != nil || tokenID >= tokenIDLimit || len(enforcedToken.TopTokens) > maxReplayTopTokensPerPosition {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectsEnforcedTokens reports whether a vLLM error body blames exactly the enforced_tokens field (the plugin's vocab check).
+func rejectsEnforcedTokens(body []byte) bool {
+	var errorBody struct {
+		Error struct {
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &errorBody) == nil && errorBody.Error.Param == "enforced_tokens"
 }
 
 func validationReplaySeed(inferenceID string) int32 {
@@ -297,8 +325,10 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // then compares logits. execute receives the constructed JSON body and should POST
 // it to the validator's ML node; the response is compared against the original.
 // claimedInputTokens and claimedOutputTokens are what the executor reported; if
-// the validator's re-execution uses fewer tokens, validation fails to catch inflation.
+// the validator's re-execution uses fewer tokens, validation checks for inflation.
+// DeepSeek V4 Flash 0731 permits the known 78/79-token input prefix difference.
 // Pass 0 for both to skip the token count check.
+// vocabularySize bounds enforced token ids before replay; pass 0 when unknown to use replayTokenIDLimit.
 func ExecuteValidation(
 	ctx context.Context,
 	inferenceID string,
@@ -307,6 +337,7 @@ func ExecuteValidation(
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
+	vocabularySize int,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
@@ -339,6 +370,24 @@ func ExecuteValidation(
 		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
 	}
 
+	tokenIDLimit := replayTokenIDLimit
+	if vocabularySize > 0 {
+		tokenIDLimit = vocabularySize
+	}
+	if !isEmptySentinel && hasUnreplayableTokens(enforcedTokens, tokenIDLimit) {
+		logging.Warn("validation failed: enforced tokens exceed the replay limits, not sent to the validator node", types.Validation,
+			"inferenceId", inferenceID)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens exceed the replay limits."}, nil
+	}
+
+	if !isEmptySentinel {
+		if maxTokens, err := completionapi.EffectiveMaxTokens(modifiedRequest.NewBody); err == nil && uint64(len(enforcedTokens.Tokens)) > maxTokens {
+			logging.Warn("validation failed: more output positions than max_tokens, not sent to the validator node", types.Validation,
+				"inferenceId", inferenceID, "positions", len(enforcedTokens.Tokens), "maxTokens", maxTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "More output positions than max_tokens."}, nil
+		}
+	}
+
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
 			"inferenceId", inferenceID)
@@ -364,6 +413,12 @@ func ExecuteValidation(
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
+		logging.Warn("validation failed: validator node rejected the executor's enforced tokens", types.Validation,
+			"inferenceId", inferenceID, "status", resp.StatusCode)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens rejected by validator node."}, nil
 	}
 
 	// A 4xx (400/422) from the validator's own re-execution means the validator
@@ -396,12 +451,19 @@ func ExecuteValidation(
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
-		if TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens) ||
-			TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
+		inputInflated := TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens)
+		suspectedCause := ""
+		if inputInflated {
+			var exempt bool
+			exempt, suspectedCause = handleDeepSeekFormatterException(inferenceID, requestMap, claimedInputTokens, claimedOutputTokens, validationUsage)
+			inputInflated = !exempt
+		}
+		if inputInflated || TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn("validation failed: inflated token counts", types.Validation,
 				"inferenceId", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
-				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
+				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
+				"suspected_cause", suspectedCause, "resolution", "invalid")
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 		}
 	}
@@ -472,4 +534,58 @@ func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
 	}
 	return resp, err
+}
+
+// handleDeepSeekFormatterException checks two known DeepSeek V4 Flash 0731 issues.
+// We expect these to be rare and caused by an old MLNode on either the executor
+// or validator. These checks do not confirm which MLNode version is running.
+//
+//   - Extra instruction: old and new formatters can differ by 78 or 79 input tokens.
+//     We allow this difference and log the exception. Output counts and logits
+//     still go through the normal checks.
+//   - Missing history: old formatters can leave out reasoning from earlier messages.
+//     We suspect this when the input difference is larger, output counts match,
+//     and the request contains earlier assistant reasoning. We log the suspected
+//     cause but still reject the inference because the input histories are too
+//     different to reliably compare model outputs.
+func handleDeepSeekFormatterException(
+	inferenceID string,
+	request map[string]interface{},
+	claimedInput, claimedOutput uint64,
+	usage *completionapi.Usage,
+) (exempt bool, suspectedCause string) {
+	model, _ := request["model"].(string)
+	if model != "deepseek-ai/DeepSeek-V4-Flash-0731" || claimedInput <= usage.PromptTokens {
+		return false, ""
+	}
+	delta := claimedInput - usage.PromptTokens
+	if delta == 78 || delta == 79 {
+		logging.Warn("validation input usage exception applied", types.Validation,
+			"inferenceId", inferenceID, "model", model,
+			"exception", "deepseek_formatter_prefix", "input_delta", delta,
+			"claimedInput", claimedInput, "validationInput", usage.PromptTokens,
+			"resolution", "continue_validation")
+		return true, ""
+	}
+	// A heuristic only: different thinking defaults can omit historical reasoning.
+	if delta > 79 && claimedOutput == usage.CompletionTokens && hasAssistantReasoning(request) {
+		return false, "deepseek_formatter_history"
+	}
+	return false, ""
+}
+
+// hasAssistantReasoning checks for history that thinking and chat modes may render differently.
+func hasAssistantReasoning(request map[string]interface{}) bool {
+	messages, _ := request["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] != "assistant" {
+			continue
+		}
+		reasoning, _ := message["reasoning_content"].(string)
+		if reasoning != "" {
+			return true
+		}
+	}
+	return false
 }

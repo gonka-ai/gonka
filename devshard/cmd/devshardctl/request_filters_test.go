@@ -19,6 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	singleFunctionToolJSON = `[{"type":"function","function":{"name":"x"}}]`
+)
+
 func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	oldDefault := DefaultRequestMaxTokens
 	oldCap := RequestMaxTokensCap
@@ -369,11 +373,11 @@ func TestNormalizeChatRequestKimiMaxCompletionTokensZeroMirrorsToMaxTokens(t *te
 
 func TestNormalizeChatRequestRejectsNonBoolFlags(t *testing.T) {
 	for _, field := range []string{"skip_special_tokens", "detokenize", "parallel_tool_calls"} {
-		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"` + field + `":"yes"}`))
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"tools":` + singleFunctionToolJSON + `,"` + field + `":"yes"}`))
 		require.Error(t, err, field)
 		require.Contains(t, err.Error(), field)
 	}
-	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"skip_special_tokens":true,"parallel_tool_calls":false}`))
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"tools":` + singleFunctionToolJSON + `,"skip_special_tokens":true,"parallel_tool_calls":false}`))
 	require.NoError(t, err)
 }
 
@@ -678,18 +682,49 @@ func TestNormalizedBodyMaxTokensMatchesDeclaredForAccounting(t *testing.T) {
 	require.EqualValues(t, req.MaxTokens, effective)
 }
 
-func TestNormalizeChatRequestStripsEmptyTools(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"tool_choice": "auto",
-		"tools": [],
-		"messages": [{"role": "user", "content": "hello"}]
-	}`))
-	require.NoError(t, err)
+func TestNormalizeChatRequestStripsToolControlsWithoutTools(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "tools absent", body: `{"tool_choice":"auto","parallel_tool_calls":true,"messages":[{"role":"user","content":"hello"}]}`},
+		{name: "tools empty", body: `{"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"messages":[{"role":"user","content":"hello"}]}`},
+		{name: "malformed values are dropped rather than rejected", body: `{"tool_choice":42,"parallel_tool_calls":"yes","messages":[{"role":"user","content":"hello"}]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, _, err := normalizeChatRequest([]byte(testCase.body))
+			require.NoError(t, err)
 
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.NotContains(t, raw, "tools")
-	require.NotContains(t, raw, "tool_choice")
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(body, &raw))
+			require.NotContains(t, raw, "tools")
+			require.NotContains(t, raw, "tool_choice")
+			require.NotContains(t, raw, "parallel_tool_calls")
+		})
+	}
+}
+
+func TestNormalizeChatRequestAcceptsToolParametersOfExactly64KiB(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(chatRequestWithToolParametersOfSize(64 * 1024)))
+
+	require.NoError(t, err, "a tool schema grown by long descriptions must pass while it stays within 64 KiB")
+}
+
+func TestNormalizeChatRequestRejectsToolParametersOneByteOver64KiB(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(chatRequestWithToolParametersOfSize(64*1024 + 1)))
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
+	require.Contains(t, err.Error(), "tools[0].function.parameters: serialized size exceeded")
+}
+
+// chatRequestWithToolParametersOfSize returns a chat request whose only tool's parameters serialize to exactly parametersBytes bytes.
+func chatRequestWithToolParametersOfSize(parametersBytes int) string {
+	const emptyDescriptionParameters = `{"properties":{"query":{"description":"","type":"string"}},"type":"object"}`
+	description := strings.Repeat("a", parametersBytes-len(emptyDescriptionParameters))
+	parameters := strings.Replace(emptyDescriptionParameters, `"description":""`, `"description":"`+description+`"`, 1)
+	return `{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"x","parameters":` + parameters + `}}]}`
 }
 
 func TestNormalizeChatRequestKeepsToolChoiceAutoWithTools(t *testing.T) {
@@ -736,18 +771,19 @@ func TestNormalizeChatRequestCoercesRequiredToAuto(t *testing.T) {
 }
 
 func TestNormalizeChatRequestRejectsMalformedToolChoice(t *testing.T) {
-	tests := []string{
-		`{"tool_choice":"force","messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":42,"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":true,"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":["auto"],"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"plugin","function":{"name":"x"}},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function"},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function","function":{}},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function","function":{"name":""}},"messages":[{"role":"user","content":"hi"}]}`,
+	toolChoices := []string{
+		`"force"`,
+		`42`,
+		`true`,
+		`["auto"]`,
+		`{"type":"plugin","function":{"name":"x"}}`,
+		`{"type":"function"}`,
+		`{"type":"function","function":{}}`,
+		`{"type":"function","function":{"name":""}}`,
 	}
-	for _, body := range tests {
-		t.Run(body, func(t *testing.T) {
+	for _, toolChoice := range toolChoices {
+		t.Run(toolChoice, func(t *testing.T) {
+			body := `{"tools":` + singleFunctionToolJSON + `,"tool_choice":` + toolChoice + `,"messages":[{"role":"user","content":"hi"}]}`
 			_, _, err := normalizeChatRequest([]byte(body))
 			require.Error(t, err)
 			require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
@@ -2147,6 +2183,7 @@ func TestNormalizeChatRequestAcceptsOpenAIObservabilityFields(t *testing.T) {
 		"messages":[{"role":"user","content":"hi"}],
 		"user":"alice",
 		"metadata":{"trace_id":"abc","span_id":"def"},
+		"tools":` + singleFunctionToolJSON + `,
 		"parallel_tool_calls":false,
 		"stream":true,
 		"stream_options":{"include_usage":true}
@@ -3136,4 +3173,52 @@ func TestNormalizeForMinimaxStripsToolsFunctionStrict(t *testing.T) {
 	require.Len(t, tools, 1)
 	fn := tools[0].(map[string]any)["function"].(map[string]any)
 	require.NotContains(t, fn, "strict")
+}
+
+// ====================================================================
+// GLM-5.3-Flash route — see docs/chat-api/glm-5.3-flash.md
+// ====================================================================
+
+// Every way a caller says "no thinking" must reach vLLM as thinking on: the template opens <think> anyway, and a false kwarg only switches the parser off (vLLM #54744).
+func TestNormalizeForGLM53KeepsTheReasoningParserOn(t *testing.T) {
+	cases := []struct {
+		name               string
+		body               string
+		chatTemplateKwargs map[string]any
+	}{
+		{name: "chat_template_kwargs enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "chat_template_kwargs thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"thinking":false}}`, chatTemplateKwargs: map[string]any{"thinking": false, "enable_thinking": true}},
+		{name: "top-level enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning_effort none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning enabled false", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			out, _, err := normalizeChatRequestForModel([]byte(testCase.body), glm53FlashModelID)
+			require.NoError(t, err)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(out, &raw))
+			require.Equal(t, testCase.chatTemplateKwargs, raw["chat_template_kwargs"], "vLLM would switch the GLM-5.3 reasoning parser off and leave the scratchpad in content")
+		})
+	}
+}
+
+// Only the thinking switches are overruled; the caller's other template variables reach the template as sent.
+func TestNormalizeForGLM53KeepsOtherTemplateKwargs(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false,"clear_thinking":true}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), glm53FlashModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": true, "clear_thinking": true}, raw["chat_template_kwargs"])
+}
+
+// GLM-5.2-FP8's template does read enable_thinking and renders an empty <think></think> for false, so the caller's switch reaches it unchanged.
+func TestNormalizeForGLM52KeepsEnableThinkingFalse(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), "zai-org/GLM-5.2-FP8")
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": false}, raw["chat_template_kwargs"])
 }

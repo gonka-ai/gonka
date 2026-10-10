@@ -47,6 +47,10 @@ x-versiond: &versiond
     - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+    # Children inherit this. The overlay replaces versiond's environment, so
+    # the HTTP/2 dial has to be repeated here.
+    - DEVSHARD_RPC_H2_UPGRADE=true
+    - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
     - PGHOST=devshard-postgres
     - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
     - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
@@ -168,6 +172,8 @@ services:
     environment:
       - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}
       - VERSIOND_ROUTER_PORT=8080
+      # Peer RPC is the router's proto h2 listen, not JSON :8080.
+      - DEVSHARD_RPC_H2_ROUTER_PORT=${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}
       - VERSIOND_ROUTER_ADMIN_PORT=8404
       - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}

@@ -2,18 +2,24 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	devshardpkg "devshard"
 	"devshard/host"
@@ -24,6 +30,11 @@ import (
 	"devshard/stub"
 	"devshard/types"
 )
+
+func allowRetiredHTTP(cfg ClientConfig) ClientConfig {
+	cfg.AllowRetiredHTTPSession = true
+	return cfg
+}
 
 func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host) {
 	t.Helper()
@@ -58,14 +69,14 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.RoutePrefix = testRoutePrefix
 	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
 	// Single-host groups map inference 1 to executor slot 0. Wire the user
 	// client as that peer so /verify-timeout can challenge-receipt itself
 	// (owner is allowed on challenge-receipt). Without this, executorClient
 	// is nil and a refused timeout is accepted.
-	srv.SetPeerClients(map[int]*HTTPClient{0: client})
+	srv.SetPeerClients(map[int]HostPeerClient{0: client})
 	return client, ts, userSigner, group, h
 }
 
@@ -81,7 +92,7 @@ func TestHTTPClient_CatalogHealthzURL(t *testing.T) {
 		{"invalid prefix", "https://host.example", "/other/v2", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := DefaultClientConfig()
+			cfg := allowRetiredHTTP(DefaultClientConfig())
 			cfg.RoutePrefix = tc.prefix
 			c := NewHTTPClient(tc.base, "1", nil, cfg)
 			require.Equal(t, tc.want, c.CatalogHealthzURL())
@@ -187,6 +198,59 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 	requireRecoveryOnlyFor(t, mempool, 1)
 }
 
+func TestHTTPClient_VerifyTimeout_ExecutionOmitsPrompt(t *testing.T) {
+	user := testutil.MustGenerateKey(t)
+	prompt := []byte(`{"messages":[{"role":"user","content":"execution-timeout-prompt-must-stay-off-the-wire"}]}`)
+	payload := &host.InferencePayload{
+		Prompt:      prompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	promptB64 := base64.StdEncoding.EncodeToString(prompt)
+
+	var body []byte
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		body, err = io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accept":true,"voter_slot":1}`))
+	}))
+	t.Cleanup(ts.Close)
+	client := NewHTTPClient(ts.URL, "escrow-1", user, allowRetiredHTTP(DefaultClientConfig()))
+
+	_, _, _, _, _, err := client.VerifyTimeout(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
+	require.NoError(t, err)
+	var execution VerifyTimeoutRequest
+	require.NoError(t, json.Unmarshal(body, &execution))
+	require.Equal(t, "execution", execution.Reason)
+	require.Nil(t, execution.Payload)
+	require.Len(t, execution.Diffs, 1)
+	require.NotContains(t, body, []byte(promptB64))
+	wire := VerifyTimeoutRequestToProto(VerifyTimeoutRequest{
+		InferenceID: 1,
+		Reason:      "execution",
+		Payload:     timeoutVotePayload(types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload),
+		Diffs:       execution.Diffs,
+	})
+	raw, err := proto.Marshal(wire)
+	require.NoError(t, err)
+	require.NotContains(t, raw, prompt)
+
+	body = nil
+	_, _, _, _, _, err = client.VerifyTimeout(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
+	require.NoError(t, err)
+	var refused VerifyTimeoutRequest
+	require.NoError(t, json.Unmarshal(body, &refused))
+	require.Equal(t, "refused", refused.Reason)
+	require.NotNil(t, refused.Payload)
+	require.Equal(t, prompt, refused.Payload.Prompt)
+	require.Len(t, refused.Diffs, 1)
+}
+
 func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	userSigner := testutil.MustGenerateKey(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -194,7 +258,7 @@ func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, allowRetiredHTTP(DefaultClientConfig()))
 	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
 	require.Error(t, err)
 
@@ -213,7 +277,7 @@ func TestHTTPClient_Send_CapturesDevshardErrorHeader(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, allowRetiredHTTP(DefaultClientConfig()))
 	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
 	require.Error(t, err)
 
@@ -231,7 +295,7 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.InferenceTimeout = time.Second
 	cfg.QueryTimeout = 25 * time.Millisecond
 	client := NewHTTPClient(srv.URL, "escrow-1", signer, cfg)
@@ -263,10 +327,214 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Fetch diffs.
-	diffs, err := client.GetDiffs(ctx, 1, 1)
+	pages := collectDiffPages(t, client, 1, 1)
+	require.Len(t, pages, 1)
+	require.Len(t, pages[0], 1)
+	require.Equal(t, uint64(1), pages[0][0].Nonce)
+}
+
+// diffWindowServer serves GET /diffs for the stored nonces. A window wider
+// than maxNonces gets the byte-budget 400 the real server sends.
+func diffWindowServer(t *testing.T, stored func(uint64) bool, maxNonces uint64) (*HTTPClient, func() [][2]uint64) {
+	t.Helper()
+	var mu sync.Mutex
+	var calls [][2]uint64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		from, _ := strconv.ParseUint(r.URL.Query().Get("from"), 10, 64)
+		to, _ := strconv.ParseUint(r.URL.Query().Get("to"), 10, 64)
+		mu.Lock()
+		calls = append(calls, [2]uint64{from, to})
+		mu.Unlock()
+		if to < from || to-from >= uint64(storage.DiffPageMaxNonces) || to-from >= maxNonces {
+			http.Error(w, storage.ErrDiffPageLimit.Error(), http.StatusBadRequest)
+			return
+		}
+		type wire struct {
+			Diff DiffJSON `json:"diff"`
+		}
+		out := make([]wire, 0, to-from+1)
+		for nonce := from; nonce <= to; nonce++ {
+			if !stored(nonce) {
+				continue
+			}
+			txs, err := proto.Marshal(&types.DiffContent{Nonce: nonce})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			out = append(out, wire{Diff: DiffJSON{Nonce: nonce, Txs: txs}})
+		}
+		body, err := json.Marshal(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = ""
+	client := NewHTTPClient(srv.URL, "escrow-1", testutil.MustGenerateKey(t), cfg)
+	return client, func() [][2]uint64 {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([][2]uint64(nil), calls...)
+	}
+}
+
+func collectDiffPages(t *testing.T, client *HTTPClient, from, to uint64) [][]types.Diff {
+	t.Helper()
+	var pages [][]types.Diff
+	require.NoError(t, client.GetDiffPages(context.Background(), from, to, func(page []types.Diff) error {
+		pages = append(pages, page)
+		return nil
+	}))
+	return pages
+}
+
+func pageNonces(pages [][]types.Diff) [][2]uint64 {
+	out := make([][2]uint64, len(pages))
+	for i, page := range pages {
+		out[i] = [2]uint64{page[0].Nonce, page[len(page)-1].Nonce}
+	}
+	return out
+}
+
+func TestHTTPClient_GetDiffPages_PagesAWideRange(t *testing.T) {
+	const n = storage.DiffPageMaxNonces + 1
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, storage.DiffPageMaxNonces)
+
+	pages := collectDiffPages(t, client, 1, n)
+	require.Equal(t, [][2]uint64{{1, storage.DiffPageMaxNonces}, {n, n}}, pageNonces(pages),
+		"each request window reaches the caller as its own page")
+	require.Equal(t, [][2]uint64{{1, storage.DiffPageMaxNonces}, {n, n}}, calls())
+}
+
+func TestHTTPClient_GetDiffPages_HalvesAShortWindowOverBudget(t *testing.T) {
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, 4)
+
+	pages := collectDiffPages(t, client, 1, 10)
+	require.Equal(t, [][2]uint64{{1, 3}, {4, 7}, {8, 10}}, pageNonces(pages))
+	require.Equal(t, [][2]uint64{{1, 10}, {1, 5}, {1, 3}, {4, 10}, {4, 7}, {8, 10}}, calls(),
+		"a window under one nonce page still halves on the byte budget")
+}
+
+func TestHTTPClient_GetDiffPages_SkipsAnEmptyWindow(t *testing.T) {
+	const tail = 2*storage.DiffPageMaxNonces + 3
+	client, calls := diffWindowServer(t, func(n uint64) bool { return n <= 3 || n >= tail-1 }, storage.DiffPageMaxNonces)
+
+	pages := collectDiffPages(t, client, 1, tail)
+	require.Equal(t, [][2]uint64{{1, 3}, {tail - 1, tail}}, pageNonces(pages))
+	require.Equal(t, [][2]uint64{
+		{1, storage.DiffPageMaxNonces},
+		{storage.DiffPageMaxNonces + 1, 2 * storage.DiffPageMaxNonces},
+		{2*storage.DiffPageMaxNonces + 1, tail},
+	}, calls())
+}
+
+func TestHTTPClient_GetDiffPages_CallbackErrorStopsTheWalk(t *testing.T) {
+	client, calls := diffWindowServer(t, func(uint64) bool { return true }, storage.DiffPageMaxNonces)
+	stop := errors.New("stop")
+
+	err := client.GetDiffPages(context.Background(), 1, 3*storage.DiffPageMaxNonces, func([]types.Diff) error {
+		return stop
+	})
+	require.ErrorIs(t, err, stop)
+	require.Len(t, calls(), 1)
+}
+
+// rawDiffsServer answers every GET /diffs with records, whatever was asked.
+func rawDiffsServer(t *testing.T, records []DiffJSON) *HTTPClient {
+	t.Helper()
+	type wire struct {
+		Diff DiffJSON `json:"diff"`
+	}
+	out := make([]wire, len(records))
+	for i, d := range records {
+		out[i] = wire{Diff: d}
+	}
+	body, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.Equal(t, uint64(1), diffs[0].Nonce)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = ""
+	return NewHTTPClient(srv.URL, "escrow-1", testutil.MustGenerateKey(t), cfg)
+}
+
+func requireNoDiffPage(t *testing.T, client *HTTPClient, target error) {
+	t.Helper()
+	err := client.GetDiffPages(context.Background(), 1, storage.DiffPageMaxNonces, func([]types.Diff) error {
+		t.Fatal("a page that breaks the page rule must not reach the caller")
+		return nil
+	})
+	require.ErrorIs(t, err, target)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsMoreRecordsThanOnePage(t *testing.T) {
+	records := make([]DiffJSON, storage.DiffPageMaxNonces+1)
+	for i := range records {
+		records[i] = DiffJSON{Nonce: uint64(i + 1)}
+	}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrDiffPageOversized)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsAMultiRecordPageOverTheByteBudget(t *testing.T) {
+	half := make([]byte, storage.DiffPageMaxBytes/2+diffWireNonceBytes+1)
+	records := []DiffJSON{{Nonce: 1, Txs: half}, {Nonce: 2, Txs: half}}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrDiffPageOversized)
+}
+
+func TestHTTPClient_GetDiffPages_RejectsABodyOverOnePage(t *testing.T) {
+	records := []DiffJSON{{Nonce: 1, Txs: make([]byte, maxDiffPageBodyBytes)}}
+	requireNoDiffPage(t, rawDiffsServer(t, records), ErrResponseBodyTooLarge)
+}
+
+func TestHTTPClient_GetDiffPages_AcceptsAPageAtTheByteBudget(t *testing.T) {
+	promptTx := func(n int) []*types.DevshardTx {
+		return []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 1,
+			PromptHash:  make([]byte, n),
+		}}}}
+	}
+	half := storage.DiffPageMaxBytes / 2
+	overhead := proto.Size(&types.DiffContent{Txs: promptTx(half)}) - half
+	txs := promptTx(half - overhead)
+	require.Equal(t, half, proto.Size(&types.DiffContent{Txs: txs}), "stored txs_proto as DiffSizes measures it")
+
+	const base = uint64(1) << 62
+	var records []DiffJSON
+	for nonce := base; nonce <= base+1; nonce++ {
+		dj, err := DiffToJSON(types.Diff{Nonce: nonce, Txs: txs})
+		require.NoError(t, err)
+		records = append(records, dj)
+	}
+	require.Greater(t, len(records[0].Txs)+len(records[1].Txs), storage.DiffPageMaxBytes,
+		"the wire txs carry the nonce on top of the stored bytes")
+
+	pages := collectDiffPages(t, rawDiffsServer(t, records), base, base+1)
+	require.Equal(t, [][2]uint64{{base, base + 1}}, pageNonces(pages))
+}
+
+func TestHTTPClient_GetDiffPages_AcceptsASingleDiffOverTheByteBudget(t *testing.T) {
+	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  make([]byte, storage.DiffPageMaxBytes+1),
+	}}}}
+	dj, err := DiffToJSON(types.Diff{Nonce: 1, Txs: txs})
+	require.NoError(t, err)
+	require.Greater(t, len(dj.Txs), storage.DiffPageMaxBytes)
+
+	pages := collectDiffPages(t, rawDiffsServer(t, []DiffJSON{dj}), 1, 1)
+	require.Len(t, pages, 1)
+	require.Len(t, pages[0], 1, "a diff larger than the byte budget is a page by itself")
+	require.Equal(t, uint64(1), pages[0][0].Nonce)
 }
 
 func TestHTTPClient_GetMempool(t *testing.T) {
@@ -297,7 +565,7 @@ func TestHTTPClient_GetMempool(t *testing.T) {
 func TestParseSSE_PartialResult(t *testing.T) {
 	// Simulate a server that sends devshard_receipt then closes the connection.
 	// parseSSEResponse should return the partial result with receipt alongside the error.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 
 	sseData := "data: {\"devshard_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\n"
 	// Use a reader that returns the data then an error (simulating connection drop).
@@ -311,7 +579,7 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	require.Equal(t, int64(1000), result.ConfirmedAt)
 }
 
-// truncatedReader returns data followed by an io.ErrUnexpectedEOF to simulate a broken connection.
+// truncatedReader returns data and then io.ErrUnexpectedEOF.
 type truncatedReader struct {
 	data []byte
 	pos  int
@@ -320,11 +588,11 @@ type truncatedReader struct {
 
 func (r *truncatedReader) Read(p []byte) (int, error) {
 	if r.done {
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	if r.pos >= len(r.data) {
 		r.done = true
-		return 0, fmt.Errorf("connection reset")
+		return 0, io.ErrUnexpectedEOF
 	}
 	n := copy(p, r.data[r.pos:])
 	r.pos += n
@@ -425,12 +693,13 @@ func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
-		InferenceTimeout: DefaultClientConfig().InferenceTimeout,
-		GossipTimeout:    DefaultClientConfig().GossipTimeout,
-		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
-		QueryTimeout:     DefaultClientConfig().QueryTimeout,
-		ParticipantKey:   "shared-host",
-		Admission:        admission,
+		AllowRetiredHTTPSession: true,
+		InferenceTimeout:        DefaultClientConfig().InferenceTimeout,
+		GossipTimeout:           DefaultClientConfig().GossipTimeout,
+		VerifyTimeout:           DefaultClientConfig().VerifyTimeout,
+		QueryTimeout:            DefaultClientConfig().QueryTimeout,
+		ParticipantKey:          "shared-host",
+		Admission:               admission,
 	})
 
 	_, err := client.Send(context.Background(), host.HostRequest{
@@ -465,7 +734,7 @@ const engineCoreErrorSSE = "data: {\"error\":{\"code\":500,\"message\":\"EngineC
 
 func sseMetaWithFinish(t *testing.T, inferenceID uint64) string {
 	t.Helper()
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: inferenceID}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: inferenceID}}}
 	b, err := DevshardTxsToBytes([]*types.DevshardTx{tx})
 	require.NoError(t, err)
 	raw, err := json.Marshal(map[string]any{"devshard_meta": DevshardMetaEvent{Mempool: b}})
@@ -481,7 +750,7 @@ func TestParseSSE_ReadsMetaAfterErrorAndDone(t *testing.T) {
 	// Host order is receipt, OpenAI error envelope, [DONE], then
 	// devshard_meta with MsgFinishInference. The reader must not stop at
 	// [DONE] or a stream-write error: Finish is the signed miss artifact.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n" + sseMetaWithFinish(t, 1)
 
 	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(body), failAllWrites{err: errors.New("client gone")}, nil)
@@ -494,7 +763,7 @@ func TestParseSSE_ReadsMetaAfterErrorAndDone(t *testing.T) {
 func TestParseSSE_ErrorDoneEOFWithoutMetaHasNoFinish(t *testing.T) {
 	// Stream ended after the error envelope with no meta. There is no signed
 	// artifact; the gateway must not treat this as an error-miss.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n"
 
 	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(body), nil, nil)
@@ -509,7 +778,7 @@ func TestParseSSE_CancelledContextKeepsMetaTail(t *testing.T) {
 	// If the attempt context is cancelled as the body closes, a complete
 	// devshard_meta tail is still a successful response. Dropping it would
 	// lose MsgFinishInference and produce no_finish_tx votes.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n" + sseMetaWithFinish(t, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -538,7 +807,7 @@ func TestParseSSE_CancelledContextReportsCancellation(t *testing.T) {
 	// sets the terminator, so without a context check this would read as a
 	// successful empty response and be scored against the host. It must instead
 	// surface as the cancellation it is.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -554,7 +823,7 @@ func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
 	// Without cancellation, a receipt-terminated stream that closes cleanly is a
 	// successful completion, even when it carried no content. This guards against
 	// the context check regressing the normal empty-but-complete path.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 
 	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(receiptOnlySSE), nil, nil)
 	require.NoError(t, err)
@@ -565,7 +834,7 @@ func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
 
 func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {
 	admission := &stubAdmissionController{}
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	client.config.ParticipantKey = "shared-host"
 	client.config.Admission = admission
 
@@ -600,8 +869,9 @@ func (r *endlessReader) Read(p []byte) (int, error) {
 }
 
 func TestMaxSSEEventBytes_DefaultsToHardCap(t *testing.T) {
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	require.Equal(t, DefaultMaxSSEEventBytes, client.maxSSEEventBytes())
+	require.Equal(t, MaxJSONResponseBytes, DefaultMaxSSEEventBytes, "a host that does not stream sends its whole response as one event")
 
 	client.config.MaxSSEEventBytes = 4096
 	require.Equal(t, 4096, client.maxSSEEventBytes())
@@ -611,7 +881,7 @@ func TestParseSSE_OversizeEventAbortsNearTheLimit(t *testing.T) {
 	// A selected executor can answer 200 + text/event-stream, start a data line
 	// and then stream forever without a newline, [DONE] or a receipt. The read
 	// must abort at the cap instead of growing for the whole inference deadline.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	client.config.MaxSSEEventBytes = 128 << 10
 
 	endless := &endlessReader{fill: 'x'}
@@ -627,7 +897,7 @@ func TestParseSSE_OversizeEventAbortsNearTheLimit(t *testing.T) {
 func TestParseSSE_OversizeAfterReceiptStillFailsTheSend(t *testing.T) {
 	// No silent success: a valid receipt earlier in the stream must not turn an
 	// oversize event into a completed attempt.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	client.config.MaxSSEEventBytes = 32 << 10
 
 	endless := &endlessReader{fill: 'z'}
@@ -643,7 +913,7 @@ func TestParseSSE_EventAtTheLimitStillParses(t *testing.T) {
 	// The cap must not clip legitimate traffic: an event sized exactly at the
 	// limit is forwarded whole (spanning many bufio buffer refills) and the
 	// terminator after it is still seen.
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 
 	const prefix = `data: {"choices":[{"delta":{"content":"`
 	const suffix = `"}}]}`
@@ -679,9 +949,9 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 		strings.Repeat("a", 29), strings.Join(top, ","))
 
 	require.Less(t, len(chunk), DefaultMaxSSEEventBytes/4,
-		"a real widest-shape chunk must sit far below the 1 MiB event cap")
+		"a real widest-shape chunk must sit far below the event cap")
 
-	client := &HTTPClient{config: DefaultClientConfig()}
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
 	var forwarded []string
 	sink := lineCollector(func(line string) {
 		forwarded = append(forwarded, line)
@@ -696,6 +966,27 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 	require.Contains(t, forwarded[0], "top_logprobs")
 }
 
+// A host that does not stream writes its whole response as one data line, and the gateway always asks for logprobs, so a few thousand tokens already pass 1 MiB.
+func TestParseSSE_WholeResponseWithLogprobsParsesAsOneEvent(t *testing.T) {
+	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
+	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")
+	response := `{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"answer"},"logprobs":{"content":[` + logprobEntries + `]},"finish_reason":"stop"}]}`
+	require.Greater(t, len(response), 1<<20, "the response must be larger than the old 1 MiB cap")
+	client := &HTTPClient{config: DefaultClientConfig()}
+	var forwarded []string
+	sink := lineCollector(func(line string) {
+		forwarded = append(forwarded, line)
+	})
+
+	result, err := client.parseSSEResponse(context.Background(),
+		strings.NewReader("data: "+response+"\n\n"+receiptOnlySSE), sink, nil)
+
+	require.NoError(t, err, "a whole response with forced logprobs was rejected as an oversize event")
+	require.NotNil(t, result.Receipt)
+	require.Len(t, forwarded, 1)
+	require.Contains(t, forwarded[0], `"finish_reason":"stop"`, "the response line was not forwarded whole")
+}
+
 func TestReadBoundedResponseBody_RejectsOversizeInsteadOfTruncating(t *testing.T) {
 	// The legacy non-stream JSON path is the way around the SSE event cap: a host
 	// answering application/json can stream forever into one ReadAll.
@@ -708,6 +999,45 @@ func TestReadBoundedResponseBody_RejectsOversizeInsteadOfTruncating(t *testing.T
 	body, err = readBoundedResponseBody(strings.NewReader(legal), 4096)
 	require.NoError(t, err)
 	require.Equal(t, legal, string(body))
+}
+
+func TestHTTPClient_DoesNotFollowRedirect(t *testing.T) {
+	var hitDest atomic.Bool
+	dest := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		hitDest.Store(true)
+	}))
+	t.Cleanup(dest.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, dest.URL+"/stolen", http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	c := NewHTTPClient(origin.URL, "escrow-1", testutil.MustGenerateKey(t))
+	resp, err := c.http.Get(origin.URL + "/")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, http.StatusFound, resp.StatusCode)
+	require.False(t, hitDest.Load(), "session/signature headers must not follow a 302")
+}
+
+func TestClassifiersReadConnectApplicationStatus(t *testing.T) {
+	notFound := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))
+	notFound.Meta().Set(HeaderDevshardError, DevshardErrorEscrowNotFound)
+	require.True(t, IsUpstreamEscrowNotFound(fmt.Errorf("chat: %w", notFound)))
+	require.False(t, IsUpstreamEscrowSettled(notFound))
+
+	settled := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow settled"))
+	settled.Meta().Set(HeaderDevshardError, DevshardErrorEscrowSettled)
+	require.True(t, IsUpstreamEscrowSettled(fmt.Errorf("chat: %w", settled)))
+	require.False(t, IsUpstreamEscrowNotFound(settled))
+
+	missing := connect.NewError(connect.CodeNotFound, errors.New("session not found"))
+	require.True(t, IsSessionNotFound(fmt.Errorf("diffs: %w", missing)))
+	require.False(t, IsSessionNotFound(connect.NewError(connect.CodeNotFound, errors.New("unknown turn"))))
+
+	open := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))
+	require.False(t, IsUpstreamEscrowNotFound(open))
+	require.False(t, IsUpstreamEscrowSettled(open))
 }
 
 // newInfiniteDataLineReader opens an SSE data line that never terminates.

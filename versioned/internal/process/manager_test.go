@@ -511,6 +511,51 @@ esac
 	if preflight.binaryLogVersion != "v2" {
 		t.Fatalf("binaryLogVersion = %q, want slot name fallback %q", preflight.binaryLogVersion, "v2")
 	}
+	if preflight.childH2C {
+		t.Fatal("missing --print-child-h2c must dial HTTP/1.1")
+	}
+}
+
+func TestPreflightChild_ChildH2CAdvertised(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "h2c-child")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "devshardd" ;;
+--print-protocol-version) echo "v2" ;;
+--print-child-h2c) echo "h2c" ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	preflight, err := preflightChildWithAdminProbeContext(context.Background(), binPath, "v2", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preflight.childH2C {
+		t.Fatal("h2c advertisement must dial HTTP/2")
+	}
+}
+
+func TestPreflightChild_ChildH2CGarbageFails(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "bad-h2c")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "devshardd" ;;
+--print-protocol-version) echo "v2" ;;
+--print-child-h2c) echo "yes" ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := preflightChildWithAdminProbeContext(context.Background(), binPath, "v2", false)
+	if err == nil {
+		t.Fatal("non-h2c advertisement must fail preflight")
+	}
 }
 
 func TestPreflightChild_ProtocolMismatch(t *testing.T) {
@@ -792,6 +837,41 @@ func TestRebuildRoutes(t *testing.T) {
 	}
 }
 
+func TestServesPeerRPCRequiresChildH2C(t *testing.T) {
+	m := NewManager(config.Config{BinDir: "/tmp/bin", DataDir: "/tmp/data", BinaryName: "testapp", BasePort: 5000})
+	now := time.Now().UnixNano()
+	h2c := &child{version: oracle.Version{Name: "v-h2"}, port: 9001, done: make(chan struct{}), status: statusRunning, childH2C: true}
+	plain := &child{version: oracle.Version{Name: "v-h1"}, port: 9002, done: make(chan struct{}), status: statusRunning}
+	h2c.serving.Store(true)
+	h2c.servingAt.Store(now)
+	plain.serving.Store(true)
+	plain.servingAt.Store(now)
+
+	m.mu.Lock()
+	m.processes["v-h2"] = h2c
+	m.processes["v-h1"] = plain
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if !m.ServesPeerRPC("v-h2") {
+		t.Fatal("h2c child is not a peer-RPC target")
+	}
+	if m.ServesPeerRPC("v-h1") {
+		t.Fatal("HTTP/1.1 child is a peer-RPC target")
+	}
+	if m.PeerRPCHostReady() {
+		t.Fatal("a host with one HTTP/1.1 child is peer-RPC ready")
+	}
+
+	m.mu.Lock()
+	delete(m.processes, "v-h1")
+	m.rebuildRoutes()
+	m.mu.Unlock()
+	if !m.PeerRPCHostReady() {
+		t.Fatal("a host whose only child advertised h2c is not peer-RPC ready")
+	}
+}
+
 func TestRebuildRoutes_ExcludesNonRunning(t *testing.T) {
 	cfg := config.Config{
 		BinDir:     "/tmp/bin",
@@ -972,17 +1052,28 @@ func TestBeginHostDrainRejectsReconcileAndDisablesRestart(t *testing.T) {
 
 func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000})
+	var releaseCalled atomic.Bool
 	var drainCalled atomic.Bool
 	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/drain" {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/rpc/release":
+			if drainCalled.Load() {
+				t.Error("peer release ran after lifecycle drain")
+			}
+			releaseCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodPost && r.URL.Path == "/drain":
+			if !releaseCalled.Load() {
+				t.Error("lifecycle drain ran before peer release")
+			}
+			if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
+				t.Error("child route was still published during lifecycle drain request")
+			}
+			drainCalled.Store(true)
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
-			t.Error("child route was still published during lifecycle drain request")
-		}
-		drainCalled.Store(true)
-		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer shutdown()
 
@@ -1003,6 +1094,9 @@ func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 
 	if err := m.RequestChildrenDrain(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if !releaseCalled.Load() {
+		t.Fatal("peer release endpoint was not called")
 	}
 	if !drainCalled.Load() {
 		t.Fatal("child drain endpoint was not called")
@@ -1135,6 +1229,7 @@ case "$1" in
 --print-protocol-version) echo "v2" ;;
 --print-admin-api-version) echo "1" ;;
 --print-storage-mode) echo "postgres" ;;
+--print-child-h2c) echo "unknown flag: $1" >&2; exit 2 ;;
 *) exit 99 ;;
 esac
 `
@@ -2087,16 +2182,43 @@ func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 	}
 }
 
+func TestRequestPeerReleasePostsToLifecyclePort(t *testing.T) {
+	var hits atomic.Int32
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/rpc/release" {
+			hits.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{version: oracle.Version{Name: "v1"}, port: 1}
+	setTestAdminPort(c, port)
+	if err := m.requestPeerRelease(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("release hits = %d, want 1", hits.Load())
+	}
+}
+
 func TestStopStartWithdrawsRouteAndWaitsForProxyLease(t *testing.T) {
 	requestStarted := make(chan struct{})
 	releaseRequest := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseRequest) }) }
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	backend := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		close(requestStarted)
 		<-releaseRequest
 		w.WriteHeader(http.StatusNoContent)
 	}))
+	if err := proxy.ConfigureCleartextHTTP2(backend.Config); err != nil {
+		t.Fatal(err)
+	}
+	backend.Start()
 	t.Cleanup(func() {
 		release()
 		backend.Close()
@@ -3485,6 +3607,7 @@ func TestRunChildDoesNotForkARetiredGeneration(t *testing.T) {
 		"case \"$1\" in\n" +
 		"--print-binary-version) echo test-1; exit 0 ;;\n" +
 		"--print-protocol-version) echo v4; exit 0 ;;\n" +
+		"--print-child-h2c) echo \"unknown flag: $1\" >&2; exit 2 ;;\n" +
 		"--print-*) echo test-1; exit 0 ;;\n" +
 		"esac\n" +
 		"touch " + marker + "\n" +
@@ -3547,6 +3670,7 @@ func TestRunChildDoesNotForkAfterBeginHostDrain(t *testing.T) {
 		"case \"$1\" in\n" +
 		"--print-binary-version) sleep 1; echo test-1; exit 0 ;;\n" +
 		"--print-protocol-version) sleep 1; echo v4; exit 0 ;;\n" +
+		"--print-child-h2c) echo \"unknown flag: $1\" >&2; exit 2 ;;\n" +
 		"--print-*) echo test-1; exit 0 ;;\n" +
 		"esac\n" +
 		"touch " + marker + "\n" +

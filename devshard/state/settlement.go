@@ -12,9 +12,9 @@ import (
 // HostStats + Fees + RestHash + VersionHash + phase byte.
 // The state root itself is not included in the payload.
 type SettlementPayload struct {
-	EscrowID string
+	EscrowID                    string
 	StateRootAndProtocolVersion string
-	Nonce    uint64
+	Nonce                       uint64
 	// Fees is the cumulative amount deducted from escrow balance as protocol fees.
 	Fees       uint64
 	RestHash   []byte
@@ -33,11 +33,11 @@ func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint3
 	return &SettlementPayload{
 		EscrowID:                    escrowID,
 		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
-		Nonce:      nonce,
-		Fees:       st.Fees,
-		RestHash:   restHash,
-		HostStats:  st.HostStats,
-		Signatures: signatures,
+		Nonce:                       nonce,
+		Fees:                        st.Fees,
+		RestHash:                    restHash,
+		HostStats:                   st.HostStats,
+		Signatures:                  signatures,
 	}, nil
 }
 
@@ -99,11 +99,10 @@ func VerifySettlement(
 			return nil, fmt.Errorf("slot %d not in group", slotID)
 		}
 
-		// Accept if recovered address matches cold key or warm key for this slot.
-		if addr != coldAddr {
-			if warmKeys == nil || warmKeys[slotID] != addr {
-				return nil, fmt.Errorf("signer %s not in group", addr)
-			}
+		// Accept if recovered address matches cold key, this slot's bound warm
+		// key, or a sibling slot's binding for the same validator.
+		if !(signing.SlotActors{SlotKeys: slotToAddr, WarmKeys: warmKeys}).Allows(slotID, addr) {
+			return nil, fmt.Errorf("signer %s not in group", addr)
 		}
 
 		// Track by cold address for multi-slot dedup.

@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -11,7 +12,13 @@ import (
 	"devshard/types"
 )
 
-const heartbeatForceReason = "heartbeat"
+const (
+	heartbeatForceReason = "heartbeat"
+	// heartbeatBackoffMaxIntervals caps how many heartbeat intervals a failing host is skipped for.
+	heartbeatBackoffMaxIntervals = 8
+	// heartbeatSendTimeout bounds one heartbeat send well under the heartbeat interval.
+	heartbeatSendTimeout = 5 * time.Second
+)
 
 type composedDiff struct {
 	diff    types.Diff
@@ -25,6 +32,9 @@ type composedDiff struct {
 // remaining slots on a single send failure. After MsgFinalizeRound the
 // session is no longer Active, so this is a no-op.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
+	if s == nil || s.disableHeightSyncHeartbeat {
+		return nil
+	}
 	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return nil
 	}
@@ -48,13 +58,19 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 // turnover, or turnOpenedAt+TurnTimeout while a turn is still open — not a
 // free-running ticker, which opens a full Interval late. Idempotent. A Close
 // that races Start does not leave a goroutine behind. In-process clients
-// have no catalog URL and skip the wait.
+// have no catalog URL and skip the wait. When the producer cadence is
+// disabled, the height-seed loop still starts and no heartbeat goroutine does.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
 	}
 	if s.requireHeightSeed {
 		s.startHeightSeedLoop()
+	}
+	if s.disableHeightSyncHeartbeat {
+		logging.Info("heartbeat loop disabled", "subsystem", "heightsync",
+			"escrow", s.escrowID)
+		return
 	}
 	s.heartbeatLoopOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -474,17 +490,32 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 
 func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
 	s.mu.Lock()
-	catchUp := s.diffsForHost(item.hostIdx)
+	backedOff := s.nowLocked().Before(s.heartbeatRetryAt[item.hostIdx])
 	s.mu.Unlock()
+	if backedOff {
+		return nil
+	}
 
-	resp, err := s.clients[item.hostIdx].Send(ctx, host.HostRequest{
+	catchUp, err := s.catchUpForSend(ctx, item.hostIdx, item.diff.Nonce)
+	if err != nil {
+		logging.Warn("heartbeat catch-up failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+		return nil
+	}
+
+	sendCtx, cancel := context.WithTimeout(ctx, heartbeatSendTimeout)
+	resp, err := s.clients[item.hostIdx].Send(sendCtx, host.HostRequest{
 		Diffs:            catchUp,
 		Nonce:            item.diff.Nonce,
 		HeightSyncEscrow: s.heightSyncEscrowHints(),
 	}, nil, nil)
+	cancel()
 	if err != nil {
-		logging.Warn("heartbeat host dead", "subsystem", "heightsync",
-			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+		backoff := s.noteHeartbeatSendFailure(item.hostIdx)
+		logging.Warn("heartbeat send failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx,
+			"catch_up", len(catchUp), "timed_out", errors.Is(err, context.DeadlineExceeded),
+			"backoff", backoff, "error", err)
 		return nil
 	}
 	s.mu.Lock()
@@ -492,4 +523,32 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 	s.mu.Unlock()
 	s.publishHeightSyncView()
 	return err
+}
+
+// noteHeartbeatSendFailure counts a failed heartbeat send and returns how long the host is skipped for.
+func (s *Session) noteHeartbeatSendFailure(hostIdx int) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.heartbeatSendFailures[hostIdx]++
+	backoff := heartbeatBackoff(s.heartbeatSendFailures[hostIdx], s.heartbeat.Config().Interval)
+	s.heartbeatRetryAt[hostIdx] = s.nowLocked().Add(backoff)
+	return backoff
+}
+
+// heartbeatBackoff is zero for a first failure, then doubles per failure from one interval up to the cap.
+func heartbeatBackoff(consecutiveFailures int, interval time.Duration) time.Duration {
+	if consecutiveFailures < 2 {
+		return 0
+	}
+	intervals := min(1<<min(consecutiveFailures-2, 30), heartbeatBackoffMaxIntervals)
+	return time.Duration(intervals) * interval
+}
+
+// clearHeartbeatBackoffLocked lets a host that answered be sent heartbeats again. Caller holds s.mu.
+func (s *Session) clearHeartbeatBackoffLocked(hostIdx int) {
+	if hostIdx < 0 || hostIdx >= len(s.heartbeatSendFailures) {
+		return
+	}
+	s.heartbeatSendFailures[hostIdx] = 0
+	s.heartbeatRetryAt[hostIdx] = time.Time{}
 }

@@ -1,6 +1,9 @@
 package testutil
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -25,6 +28,17 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 // >= floor) pass with the StartTx defaults below.
 var TestPrompt = mustTestPrompt(TestMaxTokens)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+
+// TestResponseHash and TestServedHash are Finish hashes of the length the state machine requires.
+var (
+	TestResponseHash = sha256Of("response")
+	TestServedHash   = sha256Of("served")
+)
+
+func sha256Of(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
 
 func mustTestPrompt(maxTokens uint64) []byte {
 	const total = 100
@@ -110,7 +124,7 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -154,7 +168,7 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 		Reason:      reason,
 		Accept:      accept,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -172,7 +186,7 @@ func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inf
 		Accept:       accept,
 		ResponseHash: responseHash,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -232,4 +246,22 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
+}
+
+// StartTxVersioned is StartTx with protocol_version set (gateway start proof).
+func StartTxVersioned(inferenceID uint64, version string) *types.DevshardTx {
+	tx := StartTx(inferenceID)
+	tx.GetStartInference().ProtocolVersion = version
+	return tx
+}
+
+// MustGzip compresses body the way a sender puts it on the wire.
+func MustGzip(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return compressed.Bytes()
 }

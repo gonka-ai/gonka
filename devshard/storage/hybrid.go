@@ -617,6 +617,14 @@ func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]
 	return b.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
 func (h *HybridStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -855,6 +863,30 @@ func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 		return err
 	}
 	return b.ClearValidationObs(escrowID)
+}
+
+func (h *HybridStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func (h *HybridStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return false, err
+	}
+	return b.ValidationObsRebuildPending(escrowID)
+}
+
+func (h *HybridStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.LockValidationObsRebuild(escrowID)
 }
 
 func (h *HybridStorage) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, owner LeaseOwner) (bool, error) {

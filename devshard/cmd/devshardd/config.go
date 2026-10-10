@@ -12,6 +12,7 @@ import (
 
 	"devshard/cmd/devshardd/session"
 	"devshard/internal/boolvalue"
+	"devshard/signing"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -26,15 +27,16 @@ import (
 var sdkConfigOnce sync.Once
 
 type runtimeConfig struct {
-	Port                 int
-	AdminAddr            string
-	DataDir              string
-	BinaryLogVersion     string
-	RuntimeVersion       string
-	ProtocolVersion      string
-	NodeManagerAddr      string
-	HostEventsEnabled    bool
-	CompressPayloadFiles bool
+	Port                        int
+	AdminAddr                   string
+	DataDir                     string
+	BinaryLogVersion            string
+	RuntimeVersion              string
+	ProtocolVersion             string
+	NodeManagerAddr             string
+	HostEventsEnabled           bool
+	CompressPayloadFiles        bool
+	LogprobsOptimizationEnabled bool
 	// AllowPrivateAddresses disables the dial-time SSRF guard on outbound
 	// connections to participant-controlled URLs (peer devshard hosts, executor
 	// payload endpoints). Default false = secure. Set true only in local dev /
@@ -146,21 +148,22 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 	}
 
 	return runtimeConfig{
-		Port:                    *port,
-		AdminAddr:               strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_ADDR")),
-		DataDir:                 *dataDir,
-		BinaryLogVersion:        binaryLogVersion,
-		RuntimeVersion:          protocolVersion,
-		ProtocolVersion:         protocolVersion,
-		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
-		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
-		CompressPayloadFiles:    envBoolOr("DEVSHARD_PAYLOAD_ZSTD_ENABLED", false),
-		AllowPrivateAddresses:   envBoolOr("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false),
-		ValidationRetryInterval: retryInterval,
-		ValidationLeaseTTL:      leaseTTL,
-		VoteFalseOnFetchFailure: envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
-		ShutdownGrace:           shutdownGrace,
-		Node:                    loadNodeConfigFromEnv(),
+		Port:                        *port,
+		AdminAddr:                   strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_ADDR")),
+		DataDir:                     *dataDir,
+		BinaryLogVersion:            binaryLogVersion,
+		RuntimeVersion:              protocolVersion,
+		ProtocolVersion:             protocolVersion,
+		NodeManagerAddr:             envOr("NODE_MANAGER_ADDR", "localhost:9400"),
+		HostEventsEnabled:           envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
+		CompressPayloadFiles:        envBoolOr("DEVSHARD_PAYLOAD_ZSTD_ENABLED", true),
+		LogprobsOptimizationEnabled: envBoolOr("DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED", true),
+		AllowPrivateAddresses:       envBoolOr("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false),
+		ValidationRetryInterval:     retryInterval,
+		ValidationLeaseTTL:          leaseTTL,
+		VoteFalseOnFetchFailure:     envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
+		ShutdownGrace:               shutdownGrace,
+		Node:                        loadNodeConfigFromEnv(),
 	}, nil
 }
 
@@ -308,6 +311,20 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 		return 0, fmt.Errorf("duration %q must be > 0", v)
 	}
 	return d, nil
+}
+
+// signerInfoPath is the file-keyring record to watch for uid.
+// Non-file backends return an empty path so the signer keeps the key
+// decrypted at startup for the process lifetime.
+func signerInfoPath(nodeConfig ChainNodeConfig, uid string) (string, error) {
+	if nodeConfig.KeyringBackend != keyring.BackendFile {
+		return "", nil
+	}
+	dir, err := expandHome(nodeConfig.KeyringDir)
+	if err != nil {
+		return "", err
+	}
+	return signing.FileKeyringInfoPath(dir, uid), nil
 }
 
 func expandHome(path string) (string, error) {
