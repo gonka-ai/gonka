@@ -1747,9 +1747,6 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	var validationTx string
 	switch rec.Status {
 	case types.StatusFinished:
-		// TODO: if this MsgValidation lands after another host has already
-		// challenged the inference, the state machine records participation
-		// without vote weight. Counting that requires a coordinated upgrade.
 		msg := &types.MsgValidation{
 			InferenceId:   job.inferenceID,
 			ValidatorSlot: job.validatorSlot,

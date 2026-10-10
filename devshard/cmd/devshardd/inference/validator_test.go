@@ -326,6 +326,64 @@ func TestLeaseValidator_Success_DoesNotSetSubmitted(t *testing.T) {
 	require.Empty(t, store.setResultCalls)
 }
 
+// TestLeaseValidator_CachesResult_SkipsInnerOnRetry covers the Phase-B
+// optimization: after a successful Validate, a later acquire of the same
+// (escrow, inference) returns the cached verdict without re-running ML/payload work.
+func TestLeaseValidator_CachesResult_SkipsInnerOnRetry(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	first, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, first.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, first.Reason)
+	require.Equal(t, 1, innerCalls)
+
+	require.NoError(t, c.ReleaseValidationLease(context.Background(), "escrow-1", 42))
+
+	second, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, second.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, second.Reason)
+	require.Equal(t, 1, innerCalls, "cached verdict must skip the inner ValidationEngine")
+	require.Equal(t, 2, len(store.acquireEpochs), "each Validate still acquires a lease")
+}
+
+// TestLeaseValidator_InnerError_NotCached verifies failed attempts do not
+// poison the cache: a later successful Validate still runs the engine.
+func TestLeaseValidator_InnerError_NotCached(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		if innerCalls == 1 {
+			return nil, errors.New("local ml 503")
+		}
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.Error(t, err)
+	require.Equal(t, 1, innerCalls)
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, result.Valid)
+	require.Equal(t, 2, innerCalls, "errors must not be cached")
+}
+
 type stubThresholdResolver struct {
 	threshold float64
 	err       error
