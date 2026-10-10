@@ -378,6 +378,33 @@ func TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess(t *testi
 }
 
 // Steps:
+// - List an open default model and a stricter admin-only model, but keep only the admin-only runtime active.
+// - Send pooled chat that omits `model` and carries no credentials, so access resolves to the open default.
+// - Assert runtime selection does not fall through to the admin-only runtime, which the caller may not use.
+func TestGatewayMockEnvPooledChatMissingModelDoesNotReachStricterRuntime(t *testing.T) {
+	adminOnly := &gatewayMockRuntime{
+		id:     "admin",
+		model:  "Kimi/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			writeMockenvChatJSON(w, "admin", "Kimi/Test")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{adminOnly}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{
+			{ModelID: mockenvDefaultModel, AccessMode: string(gatewayAccessModeOpen)},
+			{ModelID: "Kimi/Test", AccessMode: string(gatewayAccessModeAdminOnly)},
+		}
+	}))
+
+	rec := env.postChat(`{"messages":[{"role":"user","content":"omit model"}]}`)
+
+	require.EqualValues(t, 0, adminOnly.calls.Load(), "unauthenticated empty-model request must not reach the admin-only runtime")
+	require.NotEqual(t, http.StatusOK, rec.Code)
+	require.Empty(t, rec.Header().Get("X-Devshard-ID"))
+}
+
+// Steps:
 // - Create an active runtime for a supported model.
 // - Send malformed JSON to pooled chat.
 // - Assert the gateway rejects before calling the runtime.
