@@ -38,13 +38,20 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 		MaxTokens: 32,
 	}
 	harness.Step(t, "POST %s/v1/chat/completions (observability probe)", eps.GatewayHTTP)
-	resp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, req)
+	resp, hdr := harness.PostGatewayChatCompletionEx(t, client, eps.GatewayHTTP, adminKey, req)
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
+	requestID := hdr.Get("X-Request-Id")
+	t.Logf("citest: gateway X-Request-Id=%q", requestID)
 
 	t.Logf("citest: observability profile=%s", obs.Profile)
 	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 2*time.Minute)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
+	traceID := harness.WaitTraceCoveringServices(t, obs,
+		[]string{"devshardctl", "devshardd"},
+		2*time.Minute,
+	)
+	t.Logf("citest: shared trace_id=%s", traceID)
 	harness.WaitLokiSubstring(t, obs, "devshard request terminal", 2*time.Minute)
 
 	harness.RequireDevsharddMetricSample(t, stack, cfg, "devshardd_request_duration_seconds")
