@@ -15,11 +15,19 @@ scrape_configs:
         refresh_interval: 5s
     pipeline_stages:
       - docker: {}
-      # devshardd logs are slog text (key=value); dapi-style JSON is also parsed when present.
+      # Parse slog JSON (LOG_FORMAT=json). Extract correlation fields for the
+      # pipeline, but promote only low-cardinality keys to Loki stream labels.
+      # High-cardinality ids (trace_id, request_id, nonce, …) stay in the line
+      # body and are queried with `| json` at read time.
       - json:
           expressions:
             level: level
             service: service
+            stage: stage
+            where: where
+            trace_id: trace_id
+            span_id: span_id
+            request_id: request_id
       - match:
           selector: '{service=""}'
           stages:
@@ -34,7 +42,7 @@ scrape_configs:
           stage:
     relabel_configs:
       - source_labels: [__meta_docker_container_label_com_docker_compose_service]
-        regex: "(mock-chain|mock-dapi|mock-openai|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail)"
+        regex: "(mock-chain|mock-dapi|mock-openai.*|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail)"
         action: keep
       - source_labels: [__meta_docker_container_name]
         regex: '/(.*)'

@@ -40,6 +40,7 @@ make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
 make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-ml-nodes              # multi mock-openai pool + per-node fault
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
 make citest-height-sync           # height-sync cadence + host-claim overlays (rebuilds devshardd)
@@ -90,6 +91,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **ML node pool** | N mock-openai instances behind mock-dapi `AcquireMLNode`; a fault on one node leaves the others healthy | `TestMLNodePool_PerNodeFault` |
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
 | **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
 | **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
@@ -758,7 +760,9 @@ alignment (`INVALID(height_regression)`) stays a unit pin.
 | Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
+| Observability | `make citest-observability` | Profile smoke, trace↔log correlation, disposition spans, payload capture, jaeger-promtail regression, mock-dapi hop, and shadow multi-host — see [`gateway-tracing.md`](../../docs/gateway-tracing.md) |
+| Observability (node-selection hop only) | `make citest-dapi-correlation` | Gateway, host, and mock-dapi share one trace; subset of `citest-observability` |
+| ML node pool | `make citest-ml-nodes` | Per-node ML fault targeting |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 | No-proxy baseline versus current | [`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh) | B1 JSON, B1+RPC HTTP/1.1, N0 JSON; no `proxy` |
 
@@ -884,6 +888,25 @@ inference succeeds with the live escrow query faulted.
 
 ---
 
+## ML node pool — per-node fault targeting
+
+**What we test:** the stack can express one ML node broken while the others stay healthy.
+`ml_nodes: N` in the citest config makes `gencompose` emit `mock-openai-0…N-1`, and mock-dapi
+hands them out through real `AcquireMLNode` node ids.
+
+**How:** `TestMLNodePool_PerNodeFault`
+
+1. `harness.BootMLNodePoolStack` with `ml_nodes: 2`; wait for stack health.
+2. Two `AcquireMLNode` calls return distinct `NodeId`s, then both locks are released.
+3. A latency fault applies to `mock-openai-1` only. Chat against node-0 stays fast; node-1 is slow.
+4. Stopping `mock-openai-1` leaves node-0 serving `/healthz`.
+
+**Pass criteria:** distinct node ids per acquire; fault and stop stay on the targeted instance.
+
+**Run:** `make citest-ml-nodes` (or `-run TestMLNodePool_`).
+
+---
+
 ## Chaining vs. parallelism
 
 Every full-stack citest boots a Docker Compose stack that pins a **fixed subnet
@@ -915,11 +938,13 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A5`, `O1`, and **escrow long-poll warm**.
+  `A1–A5`, the observability suite (`O1`, correlation, disposition, payload capture,
+  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
+  long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,

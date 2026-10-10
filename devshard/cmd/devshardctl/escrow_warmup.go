@@ -80,7 +80,7 @@ type unservedProbe struct {
 }
 
 func (s *sessionProbeSender) sendProbe(ctx context.Context, params user.InferenceParams, nonceCommitted func()) (uint64, int, error) {
-	prepared, err := s.session.PrepareInference(params)
+	prepared, err := s.session.PrepareInference(ctx, params)
 	if err != nil {
 		return 0, 0, err
 	}

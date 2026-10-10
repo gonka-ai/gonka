@@ -169,6 +169,7 @@ func applyLoadedEscrow(t *Tracker, blob escrowBlob) error {
 			escrow.Counters[counter.Key] += counter.Count
 		}
 	}
+	escrow.tracker = t
 	t.escrows[meta.EscrowID] = escrow
 	return nil
 }

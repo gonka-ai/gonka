@@ -320,7 +320,7 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 				extra = []*types.DevshardTx{force, hbTx}
 			}
 		}
-		diff, hostIdx, err := s.composeDiffLocked(extra)
+		diff, hostIdx, err := s.composeDiffLocked(context.Background(), extra)
 		if err != nil {
 			return out, err
 		}
@@ -366,7 +366,7 @@ func (s *Session) drainUnpinnedPendingLocked() ([]composedDiff, error) {
 		if len(candidates) == 0 {
 			return out, nil
 		}
-		diff, hostIdx, err := s.composeDiffLocked(nil)
+		diff, hostIdx, err := s.composeDiffLocked(context.Background(), nil)
 		if err != nil {
 			return out, err
 		}
@@ -390,7 +390,7 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 			s.mu.Unlock()
 			return nil
 		}
-		diff, hostIdx, err := s.composeDiffLocked(nil)
+		diff, hostIdx, err := s.composeDiffLocked(ctx, nil)
 		if err != nil {
 			s.mu.Unlock()
 			return err

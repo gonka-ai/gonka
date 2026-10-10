@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -17,8 +18,8 @@ import (
 // session_picker run loop racing with our explicit runGhostProbe call.
 func prepareForGhost(t *testing.T, session *user.Session, model string) *user.PreparedInference {
 	t.Helper()
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return ghostProbeParams(model), true, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return ghostProbeParams(model), true, context.Background(), nil
 	})
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
@@ -43,7 +44,7 @@ func TestRunGhostProbe_KeepsMsgStartInDiffs(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	nonce := prepared.Nonce()
 
-	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
 
 	require.GreaterOrEqual(t, env.session.Nonce(), nonce,
 		"PrepareInferenceFn must have advanced past the burned nonce")
@@ -58,7 +59,7 @@ func TestRunGhostProbe_DoesNotBlockThePicker(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 
 	start := time.Now()
-	env.proxy.redundancy.runGhostProbe(prepared, ghostExclude, ghostExclude.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostExclude, ghostExclude.reason())
 	elapsed := time.Since(start)
 
 	require.Less(t, elapsed, 50*time.Millisecond,
@@ -107,7 +108,7 @@ func TestRunGhostProbe_BurningANonceChargesTheHostNothing(t *testing.T) {
 			slot := prepared.HostIdx()
 			require.Zero(t, missesForSlot(t, env, slot), "precondition: no miss before the burn")
 
-			env.proxy.redundancy.runGhostProbe(prepared, tc.kind, tc.kind.reason())
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, tc.kind, tc.kind.reason())
 
 			require.Never(t, func() bool { return missesForSlot(t, env, slot) > 0 },
 				ghostMissObservationWindow, 20*time.Millisecond,
@@ -130,7 +131,7 @@ func TestRunGhostProbe_RecordsGhostNoSendSlotDecision(t *testing.T) {
 			env.proxy.redundancy.devshardID = "escrow-proxy"
 
 			prepared := prepareForGhost(t, env.session, "llama")
-			env.proxy.redundancy.runGhostProbe(prepared, kind, kind.reason())
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, kind, kind.reason())
 
 			participantKey := env.proxy.redundancy.participantKeyForHost(prepared.HostIdx())
 			families, err := metrics.registry.Gather()
@@ -157,7 +158,7 @@ func TestRunGhostProbe_SkipsAfterRedundancyStop(t *testing.T) {
 	env.proxy.redundancy.Stop()
 
 	prepared := prepareForGhost(t, env.session, "llama")
-	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
 
 	families, err := metrics.registry.Gather()
 	require.NoError(t, err)

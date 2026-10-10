@@ -53,6 +53,9 @@ func faultsFromEnv() mockopenai.FaultConfig {
 	if envTruthy("MOCK_OPENAI_PARTIAL_STREAM") {
 		f.PartialStream = true
 	}
+	if v := os.Getenv("MOCK_OPENAI_SSE_ERROR_MESSAGE"); v != "" {
+		f.SSEErrorMessage = v
+	}
 	if v := os.Getenv("MOCK_OPENAI_STREAM_CHUNK_DELAY_MS"); v != "" {
 		if ms, err := strconv.Atoi(v); err == nil {
 			f.StreamChunkDelay = time.Duration(ms) * time.Millisecond

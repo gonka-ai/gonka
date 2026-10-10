@@ -1,5 +1,7 @@
 .PHONY: all build-docker release
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
@@ -25,8 +27,11 @@ endef
 
 all: build-docker
 
+# Local builds follow scripts/blst-portable.mk, same as inference-chain:
+# Apple Silicon -> linux/arm64, any other host -> linux/amd64.
+# DOCKER_PLATFORM= overrides detection. Release stays multi-arch via PLATFORMS.
 build-docker:
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=$(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/arm64))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/edge-api-router:$(VERSION))
 	$(DOCKER_BUILD)

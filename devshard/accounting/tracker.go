@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"devshard/types"
@@ -30,6 +31,14 @@ type Tracker struct {
 	now            func() time.Time
 	errCount       uint64
 	wrCount        uint64
+
+	// Disposition delivery. Recording enqueues; a single goroutine calls the
+	// sink, so no sink work happens on the caller's goroutine.
+	sink        atomic.Pointer[sinkHolder]
+	dispCh      chan dispositionItem
+	dispDone    chan struct{}
+	dispStopped atomic.Bool
+	dispDropped atomic.Uint64
 }
 
 type escrowState struct {
@@ -63,6 +72,7 @@ type escrowState struct {
 	Live            map[uint64]*nonceState `json:"-"`
 	LiveRequests    map[string]struct{}    `json:"-"`
 	Events          []ProtocolEvent        `json:"-"`
+	tracker         *Tracker               `json:"-"`
 }
 
 // challengeRecord tracks one challenged nonce. Resolved only ever goes false to
@@ -106,6 +116,11 @@ type nonceState struct {
 	GhostTimeoutPending bool
 	RequestID           string
 	Counted             *CounterKey
+	// In-memory only (Live is not persisted). Captured on the first recorder write.
+	TraceID [16]byte
+	SpanID  [8]byte
+	Sampled bool
+	Emitted bool
 }
 
 func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
@@ -114,10 +129,12 @@ func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracke
 		return nil, err
 	}
 	t := &Tracker{
-		store:   store,
-		escrows: make(map[string]*escrowState),
-		updated: time.Now().UTC(),
-		now:     time.Now,
+		store:    store,
+		escrows:  make(map[string]*escrowState),
+		updated:  time.Now().UTC(),
+		now:      time.Now,
+		dispCh:   make(chan dispositionItem, dispositionQueueSize),
+		dispDone: make(chan struct{}),
 	}
 	if err := store.Load(context.Background(), t); err != nil {
 		store.Close()
@@ -130,6 +147,10 @@ func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracke
 	t.stop = cancel
 	t.done = make(chan struct{})
 	go t.snapshotLoop(ctx, interval)
+	go t.dispositionLoop()
+	for _, escrow := range t.escrows {
+		escrow.tracker = t
+	}
 	return t, nil
 }
 
@@ -159,6 +180,7 @@ func (t *Tracker) Close() error {
 			t.stop()
 			<-t.done
 		}
+		t.stopDispositions()
 		if flushErr := t.Flush(context.Background()); flushErr != nil {
 			err = flushErr
 		}
@@ -167,6 +189,104 @@ func (t *Tracker) Close() error {
 		}
 	})
 	return err
+}
+
+// SetDispositionSink registers the sink that receives DispositionEvents. Nil
+// clears it, after which events are dropped without being queued.
+func (t *Tracker) SetDispositionSink(s DispositionSink) {
+	if t == nil {
+		return
+	}
+	if s == nil {
+		t.sink.Store(nil)
+		return
+	}
+	t.sink.Store(&sinkHolder{sink: s})
+}
+
+// FlushDispositions blocks until every event queued so far has been handed to
+// the sink. Used at shutdown and by tests that assert on sink output.
+func (t *Tracker) FlushDispositions() {
+	if t == nil || t.dispCh == nil || t.dispStopped.Load() {
+		return
+	}
+	barrier := make(chan struct{})
+	select {
+	case t.dispCh <- dispositionItem{barrier: barrier}:
+	case <-t.dispDone:
+		return
+	}
+	select {
+	case <-barrier:
+	case <-t.dispDone:
+	}
+}
+
+// DispositionDrops counts events discarded because the delivery queue was full.
+func (t *Tracker) DispositionDrops() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.dispDropped.Load()
+}
+
+func (t *Tracker) dispositionLoop() {
+	defer close(t.dispDone)
+	for item := range t.dispCh {
+		switch {
+		case item.stop:
+			return
+		case item.barrier != nil:
+			close(item.barrier)
+		default:
+			if holder := t.sink.Load(); holder != nil && holder.sink != nil {
+				holder.sink.OnDisposition(item.event)
+			}
+		}
+	}
+}
+
+func (t *Tracker) enqueueDisposition(event DispositionEvent) {
+	select {
+	case t.dispCh <- dispositionItem{event: event}:
+	default:
+		t.dispDropped.Add(1)
+	}
+}
+
+func (t *Tracker) stopDispositions() {
+	if t.dispCh == nil || !t.dispStopped.CompareAndSwap(false, true) {
+		return
+	}
+	select {
+	case t.dispCh <- dispositionItem{stop: true}:
+		<-t.dispDone
+	case <-t.dispDone:
+	}
+}
+
+func (t *Tracker) hasSink() bool {
+	if t == nil || t.dispCh == nil || t.dispStopped.Load() {
+		return false
+	}
+	holder := t.sink.Load()
+	return holder != nil && holder.sink != nil
+}
+
+// AttachTrace stores the span context of the first write for a live nonce.
+func (t *Tracker) AttachTrace(escrowID string, nonce uint64, ref TraceRef) {
+	if t == nil || ref.IsZero() {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	escrow := t.escrows[escrowID]
+	if escrow == nil || escrow.Live == nil {
+		return
+	}
+	if s := escrow.Live[nonce]; s != nil {
+		s.captureTrace(ref)
+	}
 }
 
 func (t *Tracker) Flush(ctx context.Context) error {
@@ -209,7 +329,8 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			t.markDirtyLocked(meta.EscrowID)
 			return nil
 		}
-		t.escrows[meta.EscrowID] = &escrowState{
+		created := &escrowState{
+			tracker:         t,
 			Meta:            meta,
 			HostStats:       make(map[uint32]types.HostStats),
 			Counters:        make(map[CounterKey]uint64),
@@ -221,6 +342,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			Live:            make(map[uint64]*nonceState),
 			LiveRequests:    make(map[string]struct{}),
 		}
+		t.escrows[meta.EscrowID] = created
 		t.markDirtyLocked(meta.EscrowID)
 		return nil
 	})
@@ -382,6 +504,12 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 }
 
 func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
+	return t.RecordGhostTraced(escrowID, nonce, phase, quarantine, reason, detail, timeoutPending, TraceRef{})
+}
+
+// RecordGhostTraced is RecordGhost plus the span that produced the burn, captured
+// under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordGhostTraced(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -393,6 +521,7 @@ func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quaran
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
 		s.DetailReason = normalizeDetailReason(detail)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -415,6 +544,12 @@ func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID strin
 }
 
 func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode) error {
+	return t.RecordRealSendTraced(escrowID, nonce, sentAt, phase, quarantine, TraceRef{})
+}
+
+// RecordRealSendTraced is RecordRealSend plus the span that produced the send,
+// captured under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordRealSendTraced(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -424,6 +559,7 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 		s.SendAt = sentAt.UTC()
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -814,6 +950,7 @@ func (e *escrowState) recordPhase(phase EscrowPhase) error {
 func (e *escrowState) releaseCountedLive() {
 	for nonce, state := range e.Live {
 		if state.Counted != nil {
+			e.emitDisposition(nonce, state, *state.Counted)
 			delete(e.Live, nonce)
 		}
 	}
@@ -832,6 +969,7 @@ func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {
 			e.ProtocolOnly = make(map[uint64]uint32)
 		}
 		e.ProtocolOnly[nonce] = slot
+		e.emitProtocolOnly(nonce, CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly})
 		return
 	}
 	if _, exists := e.Live[nonce]; !exists {
@@ -850,6 +988,7 @@ func (e *escrowState) reclassify(nonce uint64, s *nonceState, now time.Time) {
 	}
 	if s.Counted != nil && classified && *s.Counted == key {
 		if s.terminal() {
+			e.emitDisposition(nonce, s, key)
 			delete(e.Live, nonce)
 		}
 		return
@@ -863,8 +1002,78 @@ func (e *escrowState) reclassify(nonce uint64, s *nonceState, now time.Time) {
 		s.Counted = &key
 	}
 	if s.terminal() {
+		final := key
+		if !classified {
+			final = s.identityKey()
+		}
+		e.emitDisposition(nonce, s, final)
 		delete(e.Live, nonce)
 	}
+}
+
+func (s *nonceState) identityKey() CounterKey {
+	return CounterKey{
+		SlotID:                 s.SlotID,
+		DispatchPhase:          s.DispatchPhase,
+		TimeoutEvaluationPhase: s.TimeoutPhase,
+		QuarantineMode:         s.Quarantine,
+		NoSendReason:           s.NoSendReason,
+		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
+		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
+		TimeoutKind:            s.TimeoutKind,
+		TimeoutOutcome:         s.TimeoutOutcome,
+		TimeoutReason:          s.TimeoutReason,
+	}
+}
+
+func (e *escrowState) emitDisposition(nonce uint64, s *nonceState, key CounterKey) {
+	if s == nil || s.Emitted {
+		return
+	}
+	s.Emitted = true
+	t := e.tracker
+	if t == nil || !t.hasSink() {
+		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
+	}
+	t.enqueueDisposition(DispositionEvent{
+		EscrowID:    e.Meta.EscrowID,
+		Nonce:       nonce,
+		Key:         key,
+		Trace:       s.traceRef(),
+		SendAt:      s.SendAt,
+		ObservedAt:  t.nowUTC(),
+		Participant: participant,
+		Model:       e.Meta.Model,
+	})
+}
+
+func (e *escrowState) emitProtocolOnly(nonce uint64, key CounterKey) {
+	t := e.tracker
+	if t == nil || !t.hasSink() {
+		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
+	}
+	t.enqueueDisposition(DispositionEvent{
+		EscrowID:    e.Meta.EscrowID,
+		Nonce:       nonce,
+		Key:         key,
+		ObservedAt:  t.nowUTC(),
+		Participant: participant,
+		Model:       e.Meta.Model,
+	})
 }
 
 func (e *escrowState) refreshDerived(now time.Time) {

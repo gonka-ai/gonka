@@ -1056,7 +1056,7 @@ func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fou
 		out []sendResult
 	)
 	for n := uint64(1); n < releaseAt; n++ {
-		p, err := st.Session.PrepareInference(params)
+		p, err := st.Session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare nonce=%d", n)
 		require.Equal(t, n, p.Nonce())
 
@@ -1072,7 +1072,7 @@ func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fou
 		}(p, n, hostIdx)
 	}
 
-	pRelease, err := st.Session.PrepareInference(params)
+	pRelease, err := st.Session.PrepareInference(context.Background(), params)
 	require.NoError(t, err, "prepare releaseAt=%d", releaseAt)
 	require.Equal(t, releaseAt, pRelease.Nonce())
 
@@ -1117,7 +1117,7 @@ func courierPipelinedSyncTurn(t *testing.T, ctx context.Context, st *fourHostSta
 
 	prepared := make([]*user.PreparedInference, 0, int(through-from+1))
 	for n := from; n <= through; n++ {
-		p, err := st.Session.PrepareInference(params)
+		p, err := st.Session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare nonce=%d", n)
 		require.Equal(t, n, p.Nonce())
 		prepared = append(prepared, p)
@@ -2288,7 +2288,7 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	}
 	probeClientOracle := staticOracleWith(100, xHash)
 	probe := setupFourHostHTTPHeightSyncWithOracles(t, probeOracles, probeClientOracle)
-	p1, err := probe.Session.PrepareInference(params)
+	p1, err := probe.Session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	firstHostIdx := p1.HostIdx()
 	_ = probe.Session.Close()
@@ -2362,7 +2362,7 @@ func TestHeightSyncAnchor_E2E_LostFirstResponseSelfHealing(t *testing.T) {
 	params := defaultInferenceParams()
 
 	// Prepare nonce=1, then kill the target host before delivery.
-	p1, err := st.Session.PrepareInference(params)
+	p1, err := st.Session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), p1.Nonce())
 	hostForNonce1 := p1.HostIdx()

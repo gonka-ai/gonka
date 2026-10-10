@@ -309,7 +309,7 @@ func TestTokenRequestFailsWithoutReadySession(t *testing.T) {
 	t.Cleanup(pc.Close)
 	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "42", signer), pc, ParseRPCEndpoints(EndpointSignatures))
 	pc.killDoor("42")
-	_, err := tokenRequest(rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
+	_, err := tokenRequest(context.Background(), rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
 	require.ErrorIs(t, err, ErrPeerNotReady)
 }
 

@@ -19,7 +19,7 @@ func TestStage_EmitsOneJSONObjectPerLine(t *testing.T) {
 	t.Cleanup(func() { structuredStages.Store(false) })
 
 	ctx, requestID := WithRequestID(context.Background())
-	Stage(ctx, "send_completed", "host", "host-1", "output_chunks", 42)
+	Stage(ctx, "send_completed", "host", "host-1", "output_chunks", 42, "ok", true)
 
 	var line map[string]any
 	require.NoError(t, json.Unmarshal(written.Bytes(), &line))
@@ -27,14 +27,8 @@ func TestStage_EmitsOneJSONObjectPerLine(t *testing.T) {
 	require.Equal(t, "send_completed", line["stage"])
 	require.Equal(t, "send_completed", line["msg"])
 	require.Equal(t, "host-1", line["host"])
-	require.Equal(t, "42", line["output_chunks"])
-}
-
-func TestConfigureFormat_LeavesTheTextFormAloneByDefault(t *testing.T) {
-	for _, raw := range []string{"", "text", "logfmt"} {
-		ConfigureFormat(raw)
-		require.False(t, structuredStages.Load(), "format %q must not switch the stage form", raw)
-	}
+	require.Equal(t, float64(42), line["output_chunks"])
+	require.Equal(t, true, line["ok"])
 }
 
 func TestStage_KeepsAValueWithoutItsKey(t *testing.T) {

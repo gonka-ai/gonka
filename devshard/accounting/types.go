@@ -68,6 +68,35 @@ const (
 	UsageUnknownValue Usage = "unknown"
 )
 
+// UsageFor classifies an attempt against the race winner. Single definition:
+// the gateway uses it to label the attempt span, the recorder to label the
+// counter, so the two can never disagree.
+func UsageFor(nonce, winnerNonce uint64) Usage {
+	switch {
+	case winnerNonce == 0:
+		return UsageUnknownValue
+	case nonce == winnerNonce:
+		return UsageWinner
+	default:
+		return UsageLoser
+	}
+}
+
+// DispositionForUsage maps a settled Usage onto its finished_* disposition.
+// Returns "" for an unsettled attempt, which is not yet classifiable.
+func DispositionForUsage(usage Usage) Disposition {
+	switch usage {
+	case UsageWinner:
+		return DispositionFinishedUsed
+	case UsageLoser:
+		return DispositionFinishedUnused
+	case UsageUnknownValue:
+		return DispositionFinishedUsageUnknown
+	default:
+		return ""
+	}
+}
+
 type TimeoutKind string
 
 const (

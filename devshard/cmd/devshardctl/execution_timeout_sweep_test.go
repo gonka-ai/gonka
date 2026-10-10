@@ -15,7 +15,7 @@ func startedInferenceConfirmedAt(t *testing.T, env *testProxyEnv, confirmedAt ti
 	t.Helper()
 	params := defaultParams()
 	params.StartedAt = confirmedAt.Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(t.Context(), params)
 	require.NoError(t, err)
 	nonce := prepared.Nonce()
 	record, tracked := env.sm.GetInference(nonce)

@@ -65,7 +65,7 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -101,7 +101,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
 	session.clients[1] = holding
 
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -125,7 +125,7 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 
 func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -142,7 +142,7 @@ func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 
 func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
@@ -263,7 +263,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			session, hosts, _ := setupSession(t, 3, 100000, 10)
-			prepared, err := session.PrepareInference(InferenceParams{
+			prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 				Model: "llama", Prompt: testutil.TestPrompt,
 				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Add(-time.Hour).Unix(),
 			})
@@ -302,7 +302,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 func TestHandleTimeoutStillChallengesAPendingInference(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	startedAt := time.Now().Add(-time.Hour)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: startedAt.Unix(),
 	})
@@ -384,7 +384,7 @@ func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
 
 func TestHandleTimeoutCancelDuringTheRefusalWaitDoesNotChallenge(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Unix(),
 	})
@@ -627,7 +627,7 @@ func TestOneRefusingHostDoesNotStopTheOthersFromSyncing(t *testing.T) {
 func TestRewindMakesTheNextCatchUpCarryTheWholeHistory(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	for range 6 {
-		_, err := session.PrepareInference(InferenceParams{
+		_, err := session.PrepareInference(context.Background(), InferenceParams{
 			Model: "llama", Prompt: testutil.TestPrompt,
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		})

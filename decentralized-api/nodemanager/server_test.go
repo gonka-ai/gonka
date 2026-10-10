@@ -17,14 +17,14 @@ import (
 // mockBroker implements brokerAcquirer for testing.
 type mockBroker struct {
 	acquireFunc  func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
-	releaseFunc  func(lockID string, outcome broker.InferenceResult) error
+	releaseFunc  func(lockID string, outcome broker.InferenceResult) (string, error)
 	getNodesFunc func() ([]broker.NodeResponse, error)
 }
 
 func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error) {
 	return m.acquireFunc(ctx, model, skipNodeIDs)
 }
-func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) error {
+func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) (string, error) {
 	return m.releaseFunc(lockID, outcome)
 }
 func (m *mockBroker) TriggerStatusQuery(_ bool) {}
@@ -71,9 +71,9 @@ func TestAcquireMLNode_QueueFull(t *testing.T) {
 func TestReleaseMLNode_Success(t *testing.T) {
 	var gotOutcome broker.InferenceResult
 	srv := NewServer(&mockBroker{
-		releaseFunc: func(_ string, outcome broker.InferenceResult) error {
+		releaseFunc: func(_ string, outcome broker.InferenceResult) (string, error) {
 			gotOutcome = outcome
-			return nil
+			return "node-1", nil
 		},
 	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{
@@ -87,9 +87,9 @@ func TestReleaseMLNode_Success(t *testing.T) {
 func TestReleaseMLNode_TransportError(t *testing.T) {
 	var gotOutcome broker.InferenceResult
 	srv := NewServer(&mockBroker{
-		releaseFunc: func(_ string, outcome broker.InferenceResult) error {
+		releaseFunc: func(_ string, outcome broker.InferenceResult) (string, error) {
 			gotOutcome = outcome
-			return nil
+			return "node-1", nil
 		},
 	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{
@@ -103,11 +103,24 @@ func TestReleaseMLNode_TransportError(t *testing.T) {
 
 func TestReleaseMLNode_NotFound(t *testing.T) {
 	srv := NewServer(&mockBroker{
-		releaseFunc: func(_ string, _ broker.InferenceResult) error {
-			return broker.ErrLockNotFound
+		releaseFunc: func(_ string, _ broker.InferenceResult) (string, error) {
+			return "", broker.ErrLockNotFound
 		},
 	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: "bad"})
+	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestReleaseMLNode_PaddedLockIDIsNotTrimmed(t *testing.T) {
+	var got string
+	srv := NewServer(&mockBroker{
+		releaseFunc: func(lockID string, _ broker.InferenceResult) (string, error) {
+			got = lockID
+			return "", broker.ErrLockNotFound
+		},
+	}, nil, nil)
+	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: " lock-abc "})
+	require.Equal(t, " lock-abc ", got)
 	require.Equal(t, codes.NotFound, status.Code(err))
 }
 

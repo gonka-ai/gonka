@@ -22,7 +22,7 @@ func TestGatewayChat(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai-0")
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)

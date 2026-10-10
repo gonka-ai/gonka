@@ -1,0 +1,10 @@
+// Default active trace exporter (tempo-alloy). Harness overwrites this copy in
+// the citest workdir when TESTENV_OBS_PROFILE selects a different backend.
+otelcol.exporter.otlp "trace_backend" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

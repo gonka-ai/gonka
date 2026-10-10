@@ -55,7 +55,7 @@ func TestSession_LiveCursorDropsTheDiffPrefix(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Diffs()[0].Nonce, "the slowest cursor is nonce 1, so the suffix starts at 2")
 
-	_, err = session.PrepareInference(params)
+	_, err = session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	diffs := session.Diffs()
 	require.Equal(t, uint64(2), diffs[0].Nonce)

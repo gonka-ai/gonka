@@ -53,7 +53,7 @@ func TestAGossipedFinishMarksItsOwnNonceFinished(t *testing.T) {
 	}
 	var prepared *PreparedInference
 	for range 11 {
-		p, err := session.PrepareInference(params)
+		p, err := session.PrepareInference(context.Background(), params)
 		require.NoError(t, err)
 		prepared = p
 	}
@@ -98,7 +98,7 @@ func TestAGossipedFinishMarksItsOwnNonceFinished(t *testing.T) {
 // an unknown signer from state alone. Such a finish must not count as done.
 func TestUnboundSlotFinishFromUnknownKeyDoesNotMarkFinished(t *testing.T) {
 	session, coldKeys, _ := setupWarmKeySession(t, 3)
-	_, err := session.PrepareInference(defaultParams)
+	_, err := session.PrepareInference(context.Background(), defaultParams)
 	require.NoError(t, err)
 	nonce := session.Nonce()
 	slot, ok := session.StateMachine().InferenceExecutorSlot(nonce)
@@ -126,7 +126,7 @@ func TestUnboundSlotFinishFromUnknownKeyDoesNotMarkFinished(t *testing.T) {
 // The timeout vote is what asks the resolver.
 func TestUnboundWarmKeyFinishDoesNotMarkFinished(t *testing.T) {
 	session, coldKeys, warmKeys := setupWarmKeySession(t, 3)
-	_, err := session.PrepareInference(defaultParams)
+	_, err := session.PrepareInference(context.Background(), defaultParams)
 	require.NoError(t, err)
 	nonce := session.Nonce()
 	slot, ok := session.StateMachine().InferenceExecutorSlot(nonce)
