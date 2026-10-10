@@ -18,7 +18,7 @@ import (
 	"devshard/types"
 )
 
-// TestMaxTokens is the happy-path reservation used by fixtures: it sits at the executor's MinTokensFloor so payloads pass the floor guard (declared max_tokens >= floor).
+// TestMaxTokens is the happy-path reservation used by fixtures.
 const TestMaxTokens = completionapi.MinTokensFloor
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
@@ -46,7 +46,7 @@ func mustTestPrompt(maxTokens uint64) []byte {
 	suffix := fmt.Sprintf(`"}],"max_tokens":%d}`, maxTokens)
 	n := total - len(prefix) - len(suffix)
 	if n < 1 {
-		panic("testutil: TestPrompt cannot stay 100 bytes at this MinTokensFloor")
+		panic("testutil: TestPrompt cannot stay 100 bytes at this TestMaxTokens")
 	}
 	return []byte(prefix + strings.Repeat("x", n) + suffix)
 }

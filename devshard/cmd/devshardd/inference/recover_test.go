@@ -64,7 +64,7 @@ func streamedExecution(t *testing.T, store PayloadStore, epoch uint64) *devshard
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(body)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{}, true)
+		fixedChainParams{}, true, 0)
 	if err != nil {
 		t.Fatalf("executeInference: %v", err)
 	}

@@ -761,26 +761,25 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 	require.Contains(t, err.Error(), "max_tokens")
 }
 
-// An honest gateway floors max_tokens before signing the reservation, so a declared
-// max_tokens below the floor means a dishonest gateway under-reserved: escrow pays for
-// 1 token while the executor is forced to produce the floor. The executor must reject it.
-func TestVerifyPayloadWorkload_RejectsUnderReservedFloor(t *testing.T) {
-	underReserved := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+// A declared max_tokens of 0 reserves nothing, so the executor rejects it; a short reservation
+// of 1 token is a fair one, since the executor is not forced past the declared max_tokens.
+func TestVerifyPayloadWorkload_RejectsZeroReservation(t *testing.T) {
+	zero := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":0}`)
 	err := verifyPayloadWorkload(&InferencePayload{
-		Prompt:      underReserved,
+		Prompt:      zero,
 		Model:       "llama",
-		InputLength: uint64(len(underReserved)),
-		MaxTokens:   1,
+		InputLength: uint64(len(zero)),
+		MaxTokens:   0,
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
 	require.Contains(t, err.Error(), "below floor")
 
-	atFloor := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":%d}`, testutil.TestMaxTokens))
+	short := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 	require.NoError(t, verifyPayloadWorkload(&InferencePayload{
-		Prompt:      atFloor,
+		Prompt:      short,
 		Model:       "llama",
-		InputLength: uint64(len(atFloor)),
-		MaxTokens:   testutil.TestMaxTokens,
+		InputLength: uint64(len(short)),
+		MaxTokens:   1,
 	}))
 }
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -583,4 +584,20 @@ func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
 
 	got := RecoveryTxsFor([]*types.DevshardTx{nil, empty, confirm2, confirm1, finish1}, 1)
 	require.Equal(t, []*types.DevshardTx{confirm1, finish1}, got)
+}
+
+// A refused reservation below 64 tokens has a valid payload, so its refusal timeout can pass.
+func TestVerifyRefused_ShortReservationAccepted(t *testing.T) {
+	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":8}`)
+	promptHash, err := devshard.CanonicalPromptHash(prompt)
+	require.NoError(t, err)
+	payload := &InferencePayload{Prompt: prompt, Model: "llama", InputLength: uint64(len(prompt)), MaxTokens: 8, StartedAt: 1000}
+
+	st := stateWithPendingFull(1, 1)
+	rec := st.Inferences[1]
+	rec.PromptHash, rec.InputLength, rec.MaxTokens = promptHash, uint64(len(prompt)), 8
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, payload, nil, nil, nil, newEvidenceGroup(t).sm, st.Config, deadlinePassedRefused(st, 1))
+	require.NoError(t, err)
+	require.True(t, accept)
 }
