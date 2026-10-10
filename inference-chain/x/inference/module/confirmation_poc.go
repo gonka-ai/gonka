@@ -160,7 +160,8 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	windowBlocks := decimal.NewFromInt(triggerWindowLength)
 	triggerProbability := expectedConfirmations.Div(windowBlocks)
 
-	// Use block hash at H-1 as randomness source
+	// Use the block hash as randomness source. In FinalizeBlock, HeaderInfo().Hash
+	// is the hash of the block being finalized (height H), not of H-1.
 	prevBlockHash := sdkCtx.HeaderInfo().Hash
 	if len(prevBlockHash) < 8 {
 		return fmt.Errorf("block hash too short: %d bytes", len(prevBlockHash))
@@ -257,8 +258,8 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 
 	// GRACE_PERIOD -> GENERATION transition
 	if event.ShouldTransitionToGeneration(blockHeight) {
-		// Capture block hash from (generation_start_height - 1)
-		// At generation_start_height, HeaderInfo().Hash gives us the hash of the previous block
+		// Capture the block hash at generation_start_height. In FinalizeBlock,
+		// HeaderInfo().Hash is the hash of the block being finalized, not of the previous one.
 		prevBlockHash := sdkCtx.HeaderInfo().Hash
 		event.PocSeedBlockHash = hex.EncodeToString(prevBlockHash)
 		event.Phase = types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION
