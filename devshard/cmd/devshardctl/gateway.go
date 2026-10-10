@@ -1711,7 +1711,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := chatCacheKey(requestModel, body, clientIntent)
+	cacheKey := chatCacheKey(g.chatCacheScope(r), requestModel, body, clientIntent)
 	stream := chatRequestStream(body)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 		g.metrics.RecordChatCache(requestModel, "hit")
@@ -1902,7 +1902,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}
-		cacheKey := chatCacheKey(limitModel, body, clientIntent)
+		cacheKey := chatCacheKey(g.chatCacheScope(r), limitModel, body, clientIntent)
 		stream := chatRequestStream(body)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 			g.metrics.RecordChatCache(limitModel, "hit")

@@ -207,7 +207,7 @@ The pipeline is intentionally outside `user.Session`. Request filtering is an HT
 
 ### Response cache and request accounting
 
-The gateway has a short-lived in-memory chat response cache keyed by normalized model + request body.
+The gateway has a short-lived in-memory chat response cache keyed by caller scope + normalized model + request body. The caller scope is `admin`, one configured API key (by hash), or `anon`, so a caller is never served a completion cached for another API key or for the admin.
 
 It is responsible for:
 
@@ -440,7 +440,7 @@ For a pooled request:
 5. `Gateway` uses `CapacityState` plus current runtime load to choose a runtime.
 6. `Gateway` forwards the request to that runtime's `Proxy`.
 7. `Proxy` runs `ChatRequestPipeline` and builds `InferenceParams`.
-8. `Proxy` checks response cache for the normalized model/body.
+8. `Proxy` checks response cache for the caller scope and normalized model/body.
 9. `Proxy` calls `Redundancy.RunInference(ctx, params, clientWriter)` on a cache miss.
 10. `Redundancy` prepares one or more nonces through `Session.PrepareInference`.
 11. For each nonce, `Redundancy` creates a `raceWriter` and calls `Session.SendOnly(ctx, prepared, raceWriter, receiptHandler)`.

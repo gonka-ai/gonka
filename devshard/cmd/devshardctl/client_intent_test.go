@@ -108,7 +108,7 @@ func TestTheCacheKeySeparatesClientsWhoAskedForDifferentFields(t *testing.T) {
 		{keepLogprobs: true, keepTopLogprobs: true},
 		{keepUsage: true},
 	} {
-		key := chatCacheKey("Qwen/Test", body, intent)
+		key := chatCacheKey("anon", "Qwen/Test", body, intent)
 		if previous, clash := keys[key]; clash {
 			t.Fatalf("intent %+v shares a cache key with %s", intent, previous)
 		}
