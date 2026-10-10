@@ -147,41 +147,54 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 
 	// Re-query at CreatedAtBlockHeight with proof so the proof is anchored to the
 	// correct historical state root. Block+1 commits the app hash for that height.
-	proofHeight := activeParticipants.CreatedAtBlockHeight
-	proofCtx, proofOp := observability.Chain.StartStoreQuery(ctx, "inference", true, proofHeight)
-	var proofErr error
-	defer proofOp.FinishErr(&proofErr)
+	//
+	// Both steps need a known creation height. At height <= 0 ABCIQuery serves
+	// the latest state, so the proof would be anchored to the latest root while
+	// block+1 below resolves to block 1 — a pair that can never verify. Skip
+	// both and return the value without a proof bundle rather than with an
+	// inconsistent one.
+	var (
+		result      *cmtservice.ABCIQueryResponse
+		blockP1Resp *cmtservice.GetBlockByHeightResponse
+	)
+	if proofHeight := activeParticipants.CreatedAtBlockHeight; proofHeight > 0 {
+		proofCtx, proofOp := observability.Chain.StartStoreQuery(ctx, "inference", true, proofHeight)
+		var proofErr error
+		defer proofOp.FinishErr(&proofErr)
 
-	result, err := h.chain.CometServiceClient().ABCIQuery(proofCtx, &cmtservice.ABCIQueryRequest{
-		Path:   "store/inference/key",
-		Data:   inferencetypes.ActiveParticipantsFullKey(epoch),
-		Height: proofHeight,
-		Prove:  true,
-	})
-	if err != nil {
-		proofErr = err
-		logging.Error("Failed to query active participants with proof", inferencetypes.Participants, "error", err)
-		return nil, err
-	}
-	if result.Code != 0 {
-		logging.Error("ABCI proof query failed", inferencetypes.Participants, "code", result.Code, "log", result.Log)
-		return nil, echo.NewHTTPError(http.StatusNotFound, "active participants not found for epoch")
-	}
+		result, err = h.chain.CometServiceClient().ABCIQuery(proofCtx, &cmtservice.ABCIQueryRequest{
+			Path:   "store/inference/key",
+			Data:   inferencetypes.ActiveParticipantsFullKey(epoch),
+			Height: proofHeight,
+			Prove:  true,
+		})
+		if err != nil {
+			proofErr = err
+			logging.Error("Failed to query active participants with proof", inferencetypes.Participants, "error", err)
+			return nil, err
+		}
+		if result.Code != 0 {
+			logging.Error("ABCI proof query failed", inferencetypes.Participants, "code", result.Code, "log", result.Log)
+			return nil, echo.NewHTTPError(http.StatusNotFound, "active participants not found for epoch")
+		}
 
-	heightP1 := activeParticipants.CreatedAtBlockHeight + 1
-	blockP1Resp, err := h.chain.CometServiceClient().GetBlockByHeight(ctx, &cmtservice.GetBlockByHeightRequest{
-		Height: heightP1,
-	})
-	if err != nil {
-		// Non-fatal: block+1 may not exist yet for the current epoch.
-		logging.Error("Failed to get block+1", inferencetypes.Participants, "error", err)
+		blockP1Resp, err = h.chain.CometServiceClient().GetBlockByHeight(ctx, &cmtservice.GetBlockByHeightRequest{
+			Height: proofHeight + 1,
+		})
+		if err != nil {
+			// Non-fatal: block+1 may not exist yet for the current epoch.
+			logging.Error("Failed to get block+1", inferencetypes.Participants, "error", err)
+		}
+	} else {
+		logging.Warn("Skipping proof re-query and block+1 lookup for zero/negative creation height",
+			inferencetypes.Participants, "height", activeParticipants.CreatedAtBlockHeight)
 	}
 
 	// Convert gRPC proof ops to the comet crypto type once: it is both what
 	// proof verification needs and the exact type legacy dapi returned in the
 	// response (encoding/json shape).
 	var cryptoProofOps *cryptotypes.ProofOps
-	if result.ProofOps != nil {
+	if result != nil && result.ProofOps != nil {
 		if bz, err := json.Marshal(result.ProofOps); err == nil {
 			var converted cryptotypes.ProofOps
 			if err := json.Unmarshal(bz, &converted); err == nil {
@@ -256,10 +269,17 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		proofOps = &raw
 	}
 
+	// The proof query returns the same value as the first query; fall back to the
+	// first one when the proof re-query was skipped for an unknown creation height.
+	participantsBytes := valueResult.Value
+	if result != nil {
+		participantsBytes = result.Value
+	}
+
 	return &gen.ActiveParticipantWithProof{
 		ActiveParticipants:      activeParticipantsJSON,
 		Addresses:               addresses,
-		ActiveParticipantsBytes: hex.EncodeToString(result.Value),
+		ActiveParticipantsBytes: hex.EncodeToString(participantsBytes),
 		ProofOps:                proofOps,
 		Validators:              validators,
 		Block:                   block,
