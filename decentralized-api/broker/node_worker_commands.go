@@ -259,6 +259,7 @@ type StartPoCNodeCommandV2 struct {
 	PubKey               string
 	CallbackUrl          string
 	TotalNodes           int
+	ModelNodeID          *int
 	Model                string
 	SeqLen               int64
 	PocStrongerRng       bool
@@ -338,6 +339,11 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		},
 		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
 		PocStrongerRng: c.PocStrongerRng,
+	}
+
+	if c.ModelNodeID != nil {
+		req.NodeId = *c.ModelNodeID
+		req.URL += "/m"
 	}
 
 	if err := initGenerateV2Checked(ctx, worker, req); err != nil {
