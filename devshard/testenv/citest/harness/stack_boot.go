@@ -218,8 +218,9 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 
 // BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
 // (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
-// Stopping versiond-2 is the citest-reachable path that produces ghost burns;
-// a 2-host HA-only stack cannot, because both hosts share one participant.
+// Ghost disposition citests probe-quarantine one identity and leave the other
+// healthy; a 2-host HA-only stack cannot, because both hosts share one
+// participant.
 func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)

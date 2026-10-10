@@ -57,3 +57,24 @@ func TestDetachedInferenceContext_DropsCancelAndDeadlineKeepsSpan(t *testing.T) 
 	require.False(t, hasDeadline)
 	require.Equal(t, sc, trace.SpanContextFromContext(inferenceCtx))
 }
+
+func TestSettleInferenceContext_KeepsSpanForPeerInject(t *testing.T) {
+	parent, clientID := logging.WithRequestID(context.Background())
+	parent, cancel := context.WithCancel(parent)
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1},
+		SpanID:     trace.SpanID{8, 7, 6, 5, 4, 3, 2, 1},
+		TraceFlags: trace.FlagsSampled,
+	})
+	parent = trace.ContextWithSpanContext(parent, sc)
+
+	settleCtx := settleInferenceContext(parent)
+	cancel()
+
+	carriedID, carried := logging.RequestID(settleCtx)
+	require.True(t, carried)
+	require.Equal(t, clientID, carriedID)
+	require.NoError(t, settleCtx.Err())
+	require.Equal(t, sc, trace.SpanContextFromContext(settleCtx),
+		"peer Send injects traceparent from settleCtx; span must survive")
+}

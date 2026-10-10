@@ -225,7 +225,7 @@ func TestPeerConn_ReadyGatesOnExpiry(t *testing.T) {
 
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
 	rpc := NewRPCClient(httpClient, pc, ParseRPCEndpoints(EndpointSignatures))
-	_, err := tokenRequest(rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
+	_, err := tokenRequest(context.Background(), rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
 	require.ErrorIs(t, err, ErrPeerNotReady)
 }
 

@@ -14,11 +14,11 @@ import (
 // TestDispositionTraceGhost asserts a ghost-burn disposition reaches both the
 // Prometheus counter and the trace for the request that caused it.
 //
-// A 2-host multi stack is HA-only: both versiond hosts share one on-chain
-// participant behind the router, so StopService("versiond-1") never produces
-// ghosts. Use HA+solo (3 hosts) and stop the solo executor (versiond-2): its
-// InferenceURL is direct, so transport failures quarantine that participant
-// and later slots burn ghostThrottled.
+// Ghosts are picker no-sends (ghostThrottled) after probe quarantine /
+// IsBlocked. Stopping a host alone does not emit them: the multi-host race
+// cancels WaitReady before transport failures are observed. Use HA+solo
+// (3 hosts) so one identity can stay probe-quarantined while the other
+// serves real traffic.
 func TestDispositionTraceGhost(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -37,8 +37,17 @@ func TestDispositionTraceGhost(t *testing.T) {
 
 	model := config.PrimaryModelID(cfg)
 	adminKey := harness.TestenvAdminAPIKey
+	devshardID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
+	soloHost := harness.FirstSoloHostID(t, cfg)
+	soloKey := ""
+	for _, h := range cfg.Hosts {
+		if h.ID == soloHost {
+			soloKey = h.Address
+			break
+		}
+	}
 
-	harness.Step(t, "warm chat before solo host stop")
+	harness.Step(t, "warm chat before probe quarantine")
 	resp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
@@ -48,11 +57,12 @@ func TestDispositionTraceGhost(t *testing.T) {
 	})
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
-	harness.Step(t, "stop versiond-2 solo executor and drive traffic")
-	stack.StopService(t, "versiond-2")
+	harness.Step(t, "force one probe-quarantined participant for ghostThrottled")
+	probeKey := harness.ForceOneProbeQuarantine(t, client, stack, cfg, eps, devshardID, model, soloKey, 3*time.Minute)
+	t.Logf("citest: probe-quarantined participant=%s", probeKey)
 
-	// EscrowSlots=4 with HA+solo identities → enough rounds for the dead
-	// solo participant to take transport quarantine and burn ghosts.
+	// EscrowSlots=4 with HA+solo identities → enough rounds for the probe
+	// participant's nonces to burn ghostThrottled.
 	for i := 0; i < len(cfg.Hosts)*4; i++ {
 		req := harness.ChatCompletionRequest{
 			Model: model,
@@ -111,6 +121,15 @@ func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 
 	model := config.PrimaryModelID(cfg)
 	adminKey := harness.TestenvAdminAPIKey
+	devshardID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
+	soloHost := harness.FirstSoloHostID(t, cfg)
+	soloKey := ""
+	for _, h := range cfg.Hosts {
+		if h.ID == soloHost {
+			soloKey = h.Address
+			break
+		}
+	}
 
 	harness.Step(t, "produce finished_used via happy-path chat")
 	resp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
@@ -122,8 +141,8 @@ func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 	})
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
-	harness.Step(t, "produce ghost via stopped solo host")
-	stack.StopService(t, "versiond-2")
+	harness.Step(t, "produce ghost via probe-quarantined participant")
+	_ = harness.ForceOneProbeQuarantine(t, client, stack, cfg, eps, devshardID, model, soloKey, 3*time.Minute)
 	for i := 0; i < len(cfg.Hosts)*4; i++ {
 		req := harness.ChatCompletionRequest{
 			Model: model,

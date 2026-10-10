@@ -210,6 +210,16 @@ func detachedInferenceContext(clientCtx context.Context) context.Context {
 	return context.WithoutCancel(clientCtx)
 }
 
+// settleInferenceContext is the parent for peer Send and race settlement.
+// It must keep the OTel span: InjectOutboundHeaders reads it for traceparent.
+// Using Background()+request_id only left the host on a new root trace.
+func settleInferenceContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := ensureRequestLogContext(r.Context())
 	ctx, endSpan := bindGatewayRequestSpan(ctx)

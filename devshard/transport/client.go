@@ -1323,6 +1323,9 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
+	// Join the host span to the gateway (or caller) trace. versiond extracts
+	// W3C traceparent via EchoMiddleware on /sessions/:id/rpc and JSON routes.
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -1447,6 +1450,7 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, m
 	if err != nil {
 		return nil, err
 	}
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
