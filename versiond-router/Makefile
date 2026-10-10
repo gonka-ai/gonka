@@ -2005,3 +2005,7 @@ release:
 		-t ghcr.io/product-science/versiond-router:$(VERSION) \
 		--push \
 		..
+
+.PHONY: test-supervisor
+test-supervisor:
+	@../router-runtime/router-supervisor_test.sh

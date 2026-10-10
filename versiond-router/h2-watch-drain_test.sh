@@ -204,6 +204,26 @@ if grep -E '^h2-watch-drain: soft-stop$' <<<"$held_logs"; then
 fi
 docker rm -f "$proxy" >/dev/null
 
+# A supervisor in front of this script forwards HAProxy's reload signal to
+# it. USR2 must reach the master and replace the worker; it must not stop
+# the script (the shell default for USR2 is to terminate).
+launch_proxy "reload-$suffix"
+wait_haproxy || fail "haproxy did not open the runtime socket for the reload check"
+worker_before=$(runtime_show 'show info' | sed -n 's/^Pid: //p')
+[[ -n $worker_before ]] || fail "reload check: worker PID missing"
+docker kill --signal USR2 "$proxy" >/dev/null
+worker_after=$worker_before
+for _ in $(seq 1 50); do
+    worker_after=$(runtime_show 'show info' 2>/dev/null | sed -n 's/^Pid: //p' || true)
+    if [[ -n $worker_after && $worker_after != "$worker_before" ]]; then break; fi
+    sleep 0.2
+done
+[[ $(docker inspect --format '{{.State.Running}}' "$proxy") == true ]] \
+    || fail "USR2 stopped the drain supervisor instead of reloading HAProxy: $(docker logs "$proxy" 2>&1 | tail -n 5)"
+[[ -n $worker_after && $worker_after != "$worker_before" ]] \
+    || fail "USR2 did not reload HAProxy through the drain supervisor (worker $worker_before -> $worker_after)"
+docker rm -f "$proxy" >/dev/null
+
 launch_proxy "$suffix"
 wait_haproxy || fail "haproxy did not open the runtime socket"
 # Sit past stats timeout before any stream exists. A CLI opened at process

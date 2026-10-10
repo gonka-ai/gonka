@@ -1,0 +1,185 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Gonka PostgreSQL HA values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "fullnameOverride": {
+      "type": "string",
+      "maxLength": 50,
+      "pattern": "^$|^[a-z]([-a-z0-9]*[a-z0-9])?$"
+    },
+    "imageName": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^\\S+:16\\.[0-9]+(\\.[0-9]+)?(-[a-zA-Z0-9_.-]+)?(@sha256:[a-f0-9]{64})?$"
+    },
+    "imagePullPolicy": {
+      "type": "string",
+      "enum": [
+        "IfNotPresent",
+        "Always",
+        "Never"
+      ]
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+            "maxLength": 253
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    "instances": {
+      "type": "integer",
+      "minimum": 3
+    },
+    "database": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z_][a-z0-9_]*$"
+    },
+    "owner": {
+      "type": "string",
+      "maxLength": 63,
+      "pattern": "^[a-z_][a-z0-9_]*$"
+    },
+    "credentialsSecret": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+      "maxLength": 253
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$"
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "size"
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "Exists",
+              "Equal"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "NoSchedule",
+              "PreferNoSchedule",
+              "NoExecute"
+            ]
+          },
+          "tolerationSeconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "snapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
+        "schedule": {
+          "type": "string",
+          "pattern": "^(\\S+\\s+){5}\\S+$"
+        },
+        "immediate": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled",
+        "className",
+        "schedule",
+        "immediate"
+      ]
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "volumeSnapshot": {
+          "type": "string",
+          "pattern": "^$|^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
+        }
+      }
+    }
+  },
+  "required": [
+    "imageName",
+    "instances",
+    "database",
+    "owner",
+    "credentialsSecret",
+    "storage",
+    "resources",
+    "snapshots",
+    "recovery"
+  ]
+}

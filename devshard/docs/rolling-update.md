@@ -17,8 +17,8 @@ This document describes:
    binary swaps inside `versioned/` + `devshardd` (Track A), plus
    **`versiond-router` host-evacuation** for HA (§1.7–§1.8, Track B —
    [versiond-host-evacuation.md](./versiond-host-evacuation.md)).
-2. **Part 2 — Kubernetes (sketch).** How the same guarantees map onto a future
-   K8s deployment.
+2. **Part 2 — Kubernetes.** The optional deployment uses the same supervisor
+   lifecycle; see [the Helm deployment guide](../../deploy/kubernetes/README.md).
 
 Related: [release-0.2.14-v4.md](./release-0.2.14-v4.md),
 [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7,
@@ -525,79 +525,36 @@ JSON and phase 6 `/rpc/` use the same placement.
 
 ---
 
-## Part 2 — Kubernetes deployment (non-detailed)
+## Part 2 — Optional Kubernetes deployment
 
-The same three guarantees map cleanly onto native K8s primitives; the goal is to
-let the platform do drain/readiness and keep `devshardd`/`versiond` stateless
-enough to be rescheduled.
+The implementation and operator instructions live in
+[deploy/kubernetes](../../deploy/kubernetes/README.md). It deploys the current HA
+serving tier while DAPI, chain-node and ML nodes remain external. Docker Compose
+HA remains supported with the same runtime lifecycle.
 
-### 2.1 Shape
+- Keep `versiond` as supervisor; governance binary replacement still occurs
+  inside it. A Kubernetes pod rollout is a separate whole-host operation.
+- Stateful versiond replicas have independent persistent volumes and stable
+  per-replica Services. HAProxy owns escrow hashing and per-version readiness.
+  A single balancing Service in front of every supervisor is not equivalent.
+- SIGTERM invokes versiond's existing announce/drain/child-reap state machine.
+  Kubernetes termination grace must exceed the complete host shutdown budget.
+  No devshard admin `/drain` call or new Kubernetes controller is required.
+- Public ingress pairs nginx with a native HAProxy sidecar so nginx can finish
+  requests while its private upstream router is still alive. The minimum
+  Kubernetes version is 1.33. HAProxy uses SIGUSR1; nginx uses SIGQUIT.
+- Shared PostgreSQL remains mandatory. It can be external or run as a separate
+  CloudNativePG release. Database failover can force child replacement and
+  interrupt current streams; its guarantee is recovery with durable state.
 
-- Run `devshardd` (or `versiond`+`devshardd`) as a `Deployment` behind a
-  `Service`. Shared Postgres stays external (multi-writer, as today).
-- Put a **sticky** layer in front for escrow affinity: either the existing
-  `versiond-router` pattern (HAProxy consistent hash on escrow ID, including
-  `/rpc/`) or an ingress / service mesh with consistent hashing on the escrow
-  path segment. Phase 6 also needs a **second published port** on that sticky
-  hop (`DEVSHARD_RPC_H2_PORT`, HTTP/2, skip nginx). JSON stays on InferenceUrl.
-- **Pod/host evacuation** (Part 1 §1.8) maps to Service endpoint removal +
-  `preStop` below — not to the in-versiond devshardd binary swap in §1.1.
+Readiness, PDBs, DNS membership, rollout reserve, storage verification and the
+limits of crash recovery are documented with the chart. The kind smoke test
+covers Kubernetes wiring and graceful proxy replacement using mock application
+backends; it does not replace real inference and PostgreSQL failover acceptance.
 
-### 2.2 Rolling update strategy
-
-```yaml
-strategy:
-  type: RollingUpdate
-  rollingUpdate:
-    maxUnavailable: 0   # never drop capacity
-    maxSurge: 1         # bring new pod up first
-```
-
-- `maxUnavailable: 0` + `maxSurge: 1` → new pod is created and must pass
-  readiness **before** an old pod is removed (new ready before traffic).
-
-### 2.3 Readiness + drain
-
-- **readinessProbe** → `GET /ready` on a private/admin devshardd listener, not
-  through the public inference path. Endpoints only include a pod once it is
-  truly ready; new traffic flows to the new pod automatically.
-- **terminationGracePeriodSeconds**: large (cover max inference, e.g. minutes)
-  so in-flight requests can finish after the pod is told to stop.
-- **preStop hook**: fail readiness / `sleep` so the pod is removed from Service
-  endpoints **before** `SIGTERM`, then let in-flight requests drain. devshardd's
-  configurable shutdown grace (`DEVSHARD_SHUTDOWN_GRACE`) must be ≤
-  `terminationGracePeriodSeconds`.
-
-```text
-new pod created → readinessProbe 200 → added to Service endpoints
-old pod: preStop (drop from endpoints + sleep) → SIGTERM → finish in-flight
-         → exits before terminationGracePeriodSeconds → SIGKILL only as backstop
-```
-
-### 2.4 State considerations
-
-- **Postgres required** for rolling update (same as Part 1 §1.2): session store,
-  payloads, and validation leases must live in shared external Postgres so old
-  and new pods can overlap safely. SQLite is not supported for pod replacement
-  with concurrent overlap.
-- Keep pods otherwise stateless: `cfg.DataDir` holds only routing markers
-  (e.g. `.pg-bound`), not session data.
-
-### 2.5 What carries over from Part 1
-
-- devshardd admin `/ready` + `/drain` + configurable shutdown grace are the
-  **same** building blocks K8s probes and hooks consume — implement them once
-  for both.
-- The drain/idle accounting (`devshardd_lifecycle_inflight_requests` via
-  `/drain/status`) feeds the versiond binary-swap drain loop (§1.1), the
-  versiond-router host-evacuation loop (§1.8), and K8s preStop logic / dashboards.
-  (`devshard_inflight` remains a separate stage-ops gauge.)
-- §1.1 (binary swap inside a live versiond) and §1.8 / this section (whole
-  pod/host removal) remain separate: K8s `RollingUpdate` handles pod lifecycle;
-  versiond `downloadAndSwap` handles governance sha changes without pod restart.
-
-### 2.6 Not in scope here
-
-- Helm/manifests, HPA, PodDisruptionBudget, mesh config — to be detailed when
-  the K8s track is picked up. This section only fixes the rollout **semantics**
-  so they match the versiond behavior.
+Peer RPC (phase 6) adds a second published port on the sticky hop: the
+ingress pod's proxy-router listens on `DEVSHARD_RPC_H2_PORT` (9443, HTTP/2)
+beside :80/:443, and the router pods add the `:8081 proto h2` listen. Both
+hops hash on the same version + escrow key as JSON, so pod evacuation
+withdraws a versiond from JSON and `/rpc/` together; see
+[grpc-transport-connection.md](./grpc-transport-connection.md).

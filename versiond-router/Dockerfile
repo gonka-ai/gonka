@@ -32,13 +32,14 @@ COPY versiond-router/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Runtime API that the citest harness parses, not an operator CLI.
 COPY versiond-router/pool-status /usr/local/lib/versiond-router/pool-status
 COPY versiond-router/h2-watch-drain.sh /usr/local/lib/versiond-router/h2-watch-drain.sh
-COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/version-contract /usr/local/lib/router-runtime/
+COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/router-supervisor router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/versiond-router/pool-status \
     /usr/local/lib/versiond-router/h2-watch-drain.sh \
     /usr/local/lib/router-runtime/catalog-cache \
     /usr/local/lib/router-runtime/catalog-reconciler \
-    /usr/local/lib/router-runtime/catalog-status
+    /usr/local/lib/router-runtime/catalog-status \
+    /usr/local/lib/router-runtime/router-supervisor
 
 USER haproxy
 

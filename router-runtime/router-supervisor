@@ -1,0 +1,105 @@
+#!/bin/sh
+
+# Own every long-lived process. Execing HAProxy after forking the reconciler
+# (or any other helper) makes its master inherit an unrelated child and wait
+# forever after soft-stop. Keep those loops outside HAProxy's process tree and
+# wait for its workers to finish established streams before exiting the
+# container.
+#
+# The catalog reconciler runs when ROUTING_CATALOG_URL is set.
+# ROUTER_SUPERVISOR_JOB is an optional extra helper, run as `sh -c`, stopped
+# with SIGTERM alongside the reconciler (proxy-router's :9443 certificate
+# watcher).
+set -eu
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+component=${ROUTING_CATALOG_COMPONENT:-router}
+haproxy_pid=
+catalog_pid=
+job_pid=
+shutdown_signal=
+wait_interrupted=0
+
+stop_catalog() {
+    [ -z "$catalog_pid" ] || kill -TERM "$catalog_pid" 2>/dev/null || true
+    [ -z "$job_pid" ] || kill -TERM "$job_pid" 2>/dev/null || true
+}
+
+forward_signal() {
+    wait_interrupted=1
+    [ -z "$haproxy_pid" ] || kill -"$1" "$haproxy_pid" 2>/dev/null || true
+}
+
+stop_router() {
+    shutdown_signal=$1
+    forward_signal "$1"
+    stop_catalog
+}
+
+trap 'stop_router USR1' USR1
+trap 'stop_router TERM' TERM
+trap 'stop_router INT' INT
+trap 'stop_router QUIT' QUIT
+# USR2 is HAProxy's master-worker reload signal, not container termination.
+trap 'forward_signal USR2' USR2
+trap 'forward_signal HUP' HUP
+
+run_catalog_loop() {
+    child_pid=
+    # Called by the signal traps below.
+    # shellcheck disable=SC2329
+    stop_loop() {
+        trap '' TERM INT HUP USR1 USR2 QUIT
+        if [ -n "$child_pid" ]; then
+            kill -TERM "$child_pid" 2>/dev/null || true
+            wait "$child_pid" 2>/dev/null || true
+        fi
+        exit 0
+    }
+    trap stop_loop TERM INT HUP USR1 QUIT
+    trap '' USR2
+    while :; do
+        "$script_dir/catalog-reconciler" &
+        child_pid=$!
+        status=0
+        wait "$child_pid" || status=$?
+        child_pid=
+        echo "$component: catalog reconciler exited with status $status; restarting" >&2
+        sleep 1 &
+        child_pid=$!
+        wait "$child_pid" || true
+        child_pid=
+    done
+}
+
+"$@" &
+haproxy_pid=$!
+if [ -n "${ROUTING_CATALOG_URL:-}" ]; then
+    run_catalog_loop &
+    catalog_pid=$!
+fi
+if [ -n "${ROUTER_SUPERVISOR_JOB:-}" ]; then
+    sh -c "$ROUTER_SUPERVISOR_JOB" &
+    job_pid=$!
+fi
+# A signal may arrive between starting a child and recording its PID.
+[ -z "$shutdown_signal" ] || stop_router "$shutdown_signal"
+
+status=0
+while :; do
+    wait_interrupted=0
+    status=0
+    wait "$haproxy_pid" || status=$?
+    # Always collect again after a trapped signal, even if the child has now
+    # exited. Otherwise an idle soft-stop can return wait's signal status
+    # instead of HAProxy's exit code. Alpine ash retains a child's wait status.
+    [ "$wait_interrupted" -eq 0 ] && break
+done
+haproxy_pid=
+stop_catalog
+for helper in "$catalog_pid" "$job_pid"; do
+    [ -n "$helper" ] || continue
+    while kill -0 "$helper" 2>/dev/null; do
+        wait "$helper" || true
+    done
+done
+exit "$status"

@@ -1,0 +1,227 @@
+{{- $root := . -}}
+{{- $name := include "gonka.fullname" . -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-versiond
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: versiond
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "gonka.selector" (dict "root" . "component" "versiond") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- range $ordinal := until (int .Values.versiond.replicas) }}
+---
+# A stable address for exactly one supervisor. A shared balancing Service here
+# would defeat the router's escrow hash by selecting a second, random backend.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-versiond-{{ $ordinal }}
+  labels:
+    {{- include "gonka.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: versiond
+spec:
+  # Keep the pod reachable while versiond announces SIGTERM through /readyz.
+  # HAProxy, including its per-version checks, owns backend admission.
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "gonka.selector" (dict "root" $root "component" "versiond") | nindent 4 }}
+    statefulset.kubernetes.io/pod-name: {{ $name }}-versiond-{{ $ordinal }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $name }}-versiond
+  annotations:
+    gonka.ai/desired-replicas: {{ .Values.versiond.replicas | quote }}
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+    app.kubernetes.io/component: versiond
+spec:
+  serviceName: {{ $name }}-versiond
+  replicas: {{ .Values.versiond.replicas }}
+  podManagementPolicy: OrderedReady
+  minReadySeconds: 10
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "versiond") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "gonka.selector" (dict "root" . "component" "versiond") | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.versiond.terminationGracePeriodSeconds }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      {{- include "gonka.scheduling" (dict "root" . "component" "versiond" "config" .Values.versiond) | nindent 6 }}
+      containers:
+        - name: versiond
+          image: {{ .Values.images.versiond | quote }}
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: VERSIOND_ORACLE_URL
+              value: {{ include "gonka.oracleURL" . | quote }}
+            - name: VERSIOND_BINARY_NAME
+              value: devshardd
+            - name: VERSIOND_BIN_DIR
+              value: /opt/versiond/bin
+            - name: VERSIOND_DATA_DIR
+              value: /opt/versiond/data
+            - name: GONKA_HA
+              value: "true"
+            - name: VERSIOND_NON_HA_VERSIONS
+              value: ""
+            - name: DEVSHARD_STORAGE_MODE
+              value: postgres
+            # Children inherit these and dial every peer's proxy-router HTTP/2
+            # port. HA peers refuse /sessions/.../rpc/ on InferenceUrl :8080.
+            - name: DEVSHARD_RPC_H2_UPGRADE
+              value: "true"
+            - name: DEVSHARD_RPC_H2_PORT
+              value: "9443"
+            - name: VERSIOND_HOST_SHUTDOWN_BUDGET
+              value: {{ printf "%ds" (int .Values.versiond.hostShutdownBudgetSeconds) | quote }}
+            - name: VERSIOND_DRAIN_ANNOUNCE
+              value: {{ printf "%ds" (int .Values.versiond.drainAnnounceSeconds) | quote }}
+            - name: NODE_RPC_URL
+              value: {{ .Values.external.chainRpcUrl | quote }}
+            - name: NODE_GRPC_URL
+              value: {{ .Values.external.chainGrpcUrl | quote }}
+            - name: CHAIN_GRPC_TLS
+              value: {{ .Values.external.chainGrpcTls | default false | quote }}
+            - name: NODE_MANAGER_ADDR
+              value: {{ .Values.external.nodeManagerAddress | quote }}
+            - name: KEY_NAME
+              value: {{ .Values.identity.keyName | quote }}
+            - name: ACCOUNT_PUBKEY
+              value: {{ .Values.identity.accountPubKey | quote }}
+            - name: KEYRING_BACKEND
+              value: file
+            - name: KEYRING_DIR
+              value: /root/.inference
+            - name: KEYRING_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.identity.passwordSecret }}
+                  key: {{ .Values.identity.passwordKey }}
+            - name: PGHOST
+              value: {{ .Values.postgres.host | quote }}
+            - name: PGPORT
+              value: {{ .Values.postgres.port | toString | quote }}
+            - name: PGDATABASE
+              value: {{ .Values.postgres.database | quote }}
+            - name: PGUSER
+              value: {{ .Values.postgres.user | quote }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgres.credentialsSecret }}
+                  key: {{ .Values.postgres.passwordKey }}
+            - name: PGSSLMODE
+              value: {{ .Values.postgres.sslMode | quote }}
+            - name: PG_POOL_MAX_CONNS
+              value: {{ .Values.postgres.poolMaxConns | toString | quote }}
+            {{- if .Values.postgres.caSecret }}
+            - name: PGSSLROOTCERT
+              value: /etc/gonka/postgres/ca.crt
+            {{- end }}
+            {{- with .Values.versiond.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Liveness tests the supervisor only: a shared DB or oracle outage
+          # must not cause Kubernetes to restart every healthy supervisor.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 3
+            failureThreshold: 1
+          # versiond owns announce, request drain, child stop and reap after
+          # SIGTERM. A preStop sleep would only spend its external grace.
+          volumeMounts:
+            - name: state
+              mountPath: /opt/versiond
+            - name: keyring
+              mountPath: /root/.inference/keyring-file
+              readOnly: true
+            {{- if .Values.postgres.caSecret }}
+            - name: postgres-ca
+              mountPath: /etc/gonka/postgres
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.versiond.resources | nindent 12 }}
+      volumes:
+        - name: keyring
+          secret:
+            secretName: {{ .Values.identity.keyringSecret }}
+            defaultMode: 0440
+        {{- if .Values.postgres.caSecret }}
+        - name: postgres-ca
+          secret:
+            secretName: {{ .Values.postgres.caSecret }}
+            items:
+              - key: ca.crt
+                path: ca.crt
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- if .Values.versiond.storage.storageClass }}
+        storageClassName: {{ .Values.versiond.storage.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.versiond.storage.size }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-versiond
+  labels:
+    {{- include "gonka.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ sub (int .Values.versiond.replicas) 1 }}
+  selector:
+    matchLabels:
+      {{- include "gonka.selector" (dict "root" . "component" "versiond") | nindent 6 }}

@@ -18,15 +18,20 @@ COPY proxy-router/rpc-h2-backend.cfg.template /etc/haproxy/rpc-h2-backend.cfg.te
 COPY proxy-router/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY proxy-router/rpc-h2-cert.sh /usr/local/bin/rpc-h2-cert.sh
 COPY proxy-router/route-status /usr/local/lib/proxy-router/route-status
-COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/version-contract /usr/local/lib/router-runtime/
+COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/router-supervisor router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/proxy-router/route-status \
     /usr/local/lib/router-runtime/catalog-cache \
     /usr/local/lib/router-runtime/catalog-reconciler \
-    /usr/local/lib/router-runtime/catalog-status
+    /usr/local/lib/router-runtime/catalog-status \
+    /usr/local/lib/router-runtime/router-supervisor
 
 USER haproxy
 
 EXPOSE 80 443 18081 8404 9443
+
+# Native Kubernetes sidecar ordering stops this after nginx has drained. Keep
+# established public connections alive while the remaining bytes are flushed.
+STOPSIGNAL SIGUSR1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
