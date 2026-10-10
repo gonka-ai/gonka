@@ -1087,16 +1087,36 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 				if found, _ := sm.addressHasValidated(inf, msg.ValidatorSlot); found {
 					continue
 				}
-				inf.ValidatedBy.Set(msg.ValidatorSlot)
-				if inf.Status != types.StatusFinished {
-					continue
-				}
-				weight := sm.addressToSlotCount[sm.slotToAddress[msg.ValidatorSlot]]
-				if msg.Valid {
-					inf.VotesValid += weight
-				} else {
-					inf.VotesInvalid += weight
-					inf.Status = types.StatusChallenged
+				validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
+				weight := sm.addressToSlotCount[validatorAddr]
+				switch inf.Status {
+				case types.StatusFinished:
+					// Phase A: only the emitting slot. A later vote sets every
+					// slot of the address; consumers treat any of them as participation.
+					inf.ValidatedBy.Set(msg.ValidatorSlot)
+					if msg.Valid {
+						inf.VotesValid += weight
+					} else {
+						inf.VotesInvalid += weight
+						inf.Status = types.StatusChallenged
+					}
+				case types.StatusChallenged:
+					// A concurrent Phase-A validation that lands after the
+					// challenge opened still counts toward VoteThreshold,
+					// matching applyValidation. Skipping the weight here leaves
+					// a rebuilt index at Challenged after the session invalidated.
+					for _, slot := range sm.addressToSlots[validatorAddr] {
+						inf.ValidatedBy.Set(slot)
+					}
+					if msg.Valid {
+						inf.VotesValid += weight
+					} else {
+						inf.VotesInvalid += weight
+					}
+					resolveFoldedChallenge(inf, threshold)
+				default:
+					// Already resolved: record participation only.
+					inf.ValidatedBy.Set(msg.ValidatorSlot)
 				}
 			case *types.DevshardTx_ValidationVote:
 				msg := inner.ValidationVote
@@ -1126,13 +1146,22 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 				} else {
 					inf.VotesInvalid += weight
 				}
-				if inf.VotesInvalid > threshold {
-					inf.Status = types.StatusInvalidated
-				} else if inf.VotesValid > threshold {
-					inf.Status = types.StatusValidated
-				}
+				resolveFoldedChallenge(inf, threshold)
 			}
 		}
+	}
+}
+
+// resolveFoldedChallenge applies VoteThreshold to a folded Challenged record.
+// Observability only: host stats and the balance refund stay on the live apply path.
+func resolveFoldedChallenge(inf *types.InferenceRecord, threshold uint32) {
+	if inf == nil || inf.Status != types.StatusChallenged {
+		return
+	}
+	if inf.VotesInvalid > threshold {
+		inf.Status = types.StatusInvalidated
+	} else if inf.VotesValid > threshold {
+		inf.Status = types.StatusValidated
 	}
 }
 

@@ -519,3 +519,97 @@ func TestRebuildSealedInferenceIndexFromDiffs_RestoresRichAndDropsStale(t *testi
 	require.NoError(t, err)
 	require.False(t, ok, "ids absent from replayed history must be dropped")
 }
+
+// TestFoldInferenceRecords_LateValidationOnChallengedMatchesLive replays a
+// second Phase-A MsgValidation that lands on Challenged. The fold must add
+// weight, mark every slot of that address, and resolve the threshold the same
+// way the live apply does, including after a sealed-index rebuild.
+func TestFoldInferenceRecords_LateValidationOnChallengedMatchesLive(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	// Inference 1's executor is slot 1 (signer[1]). signer[2] owns slots 2 and 3
+	// (weight 2) and can still validate. Threshold for 4 slots is 2, so that
+	// late validation crosses it. Start requires inference id == diff nonce.
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2})
+	config := testutil.DefaultConfig(len(group))
+	require.Equal(t, uint32(2), config.VoteThreshold)
+	verifier := signing.NewSecp256k1Verifier()
+	const escrowID = "escrow-1"
+	store := testutil.MustMemoryStore(t, escrowID, user.Address(), config, group, 100_000)
+	sm, err := NewStateMachine(escrowID, config, group, 100_000, user.Address(), verifier, store)
+	require.NoError(t, err)
+
+	var journal []types.DiffRecord
+	apply := func(txs []*types.DevshardTx) {
+		t.Helper()
+		nonce := sm.SnapshotState().LatestNonce + 1
+		diff := testutil.SignDiff(t, user, escrowID, nonce, txs)
+		_, err := sm.ApplyDiff(diff)
+		require.NoError(t, err)
+		journal = append(journal, types.DiffRecord{Diff: diff})
+	}
+
+	const inferenceID uint64 = 1
+	executorSlot := group[inferenceID%uint64(len(group))]
+	require.Equal(t, uint32(1), executorSlot.SlotID)
+	require.Equal(t, signers[1].Address(), executorSlot.ValidatorAddress)
+
+	apply([]*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	execSig := testutil.SignExecutorReceipt(t, signers[1], escrowID, inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	apply([]*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+	})})
+	finishMsg := &types.MsgFinishInference{
+		InferenceId: inferenceID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 80, OutputTokens: 40, ExecutorSlot: executorSlot.SlotID,
+		EscrowId: escrowID,
+	}
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], finishMsg)
+	apply([]*types.DevshardTx{txFinish(finishMsg)})
+
+	phaseA := &types.MsgValidation{InferenceId: inferenceID, ValidatorSlot: 0, Valid: false, EscrowId: escrowID}
+	phaseA.ProposerSig = testutil.SignProposerTx(t, signers[0], phaseA)
+	apply([]*types.DevshardTx{txValidation(phaseA)})
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[inferenceID].Status)
+
+	late := &types.MsgValidation{InferenceId: inferenceID, ValidatorSlot: 2, Valid: false, EscrowId: escrowID}
+	late.ProposerSig = testutil.SignProposerTx(t, signers[2], late)
+	apply([]*types.DevshardTx{txValidation(late)})
+
+	live := *sm.SnapshotState().Inferences[inferenceID]
+	require.Equal(t, types.StatusInvalidated, live.Status)
+	require.Equal(t, uint32(0), live.VotesValid)
+	require.Equal(t, uint32(3), live.VotesInvalid)
+	var wantBits types.Bitmap128
+	wantBits.Set(0)
+	wantBits.Set(2)
+	wantBits.Set(3)
+	require.Equal(t, wantBits, live.ValidatedBy)
+
+	st := sm.SnapshotState()
+	folded := sm.foldInferenceRecordsFromDiffs(st.Group, st.Config.TokenPrice, st.Config.VoteThreshold, journal)
+	got := folded[inferenceID]
+	require.NotNil(t, got)
+	require.Equal(t, live.Status, got.Status)
+	require.Equal(t, live.VotesValid, got.VotesValid)
+	require.Equal(t, live.VotesInvalid, got.VotesInvalid)
+	require.Equal(t, live.ValidatedBy, got.ValidatedBy)
+	require.Equal(t, live.ExecutorSlot, got.ExecutorSlot)
+	require.Equal(t, live.ActualCost, got.ActualCost)
+
+	require.NoError(t, sm.SealInference(inferenceID))
+	require.NoError(t, sm.RebuildSealedInferenceIndexFromDiffs(store, journal))
+	rebuilt, ok := sm.LookupSealedInference(inferenceID)
+	require.True(t, ok)
+	require.Equal(t, live.Status, rebuilt.Status)
+	require.Equal(t, live.VotesValid, rebuilt.VotesValid)
+	require.Equal(t, live.VotesInvalid, rebuilt.VotesInvalid)
+	require.Equal(t, live.ValidatedBy, rebuilt.ValidatedBy)
+}

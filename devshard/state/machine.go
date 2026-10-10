@@ -1372,20 +1372,15 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
 	}
 
-	// Mutation: set bitmap, count vote weight.
-	// TODO: only the validator's emitting slot is set here, while
-	// applyValidationVote sets every slot owned by the voter address.
-	// Consumers (collectValidationJobs and addressHasValidated) both use
-	// "any slot of this address" semantics so
-	// the asymmetry is benign, but the unified bitmap would be more
-	// consistent. Changing it shifts state-machine output, so it requires a
-	// coordinated upgrade.
-	rec.ValidatedBy.Set(msg.ValidatorSlot)
+	validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
+	weight := sm.addressToSlotCount[validatorAddr]
 
-	// Count vote weight for Finished state (tallies accumulate before any challenge).
-	if rec.Status == types.StatusFinished {
-		validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
-		weight := sm.addressToSlotCount[validatorAddr]
+	switch rec.Status {
+	case types.StatusFinished:
+		// Phase A: only the emitting slot is set here (applyValidationVote
+		// sets every slot of the address). Consumers use "any slot of this
+		// address" so the asymmetry is benign.
+		rec.ValidatedBy.Set(msg.ValidatorSlot)
 		if msg.Valid {
 			rec.VotesValid += weight
 		} else {
@@ -1400,9 +1395,60 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 				"validator_slot", msg.ValidatorSlot,
 			)
 		}
+	case types.StatusChallenged:
+		// A concurrent Phase-A MsgValidation that lands after the challenge
+		// opened must still count toward VoteThreshold. Recording ValidatedBy
+		// without weight permanently burns a Phase-B voter and can leave the
+		// inference stuck at Challenged when threshold is 1.
+		for _, slot := range sm.addressToSlots[validatorAddr] {
+			rec.ValidatedBy.Set(slot)
+		}
+		if msg.Valid {
+			rec.VotesValid += weight
+		} else {
+			rec.VotesInvalid += weight
+		}
+		sm.resolveChallengeTalliesLocked(msg.InferenceId, rec)
+	default:
+		// Already resolved: record participation only.
+		rec.ValidatedBy.Set(msg.ValidatorSlot)
 	}
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// resolveChallengeTalliesLocked applies VoteThreshold to a Challenged record
+// after VotesValid / VotesInvalid changed. Caller holds sm.mu.
+func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *types.InferenceRecord) {
+	if rec == nil || rec.Status != types.StatusChallenged {
+		return
+	}
+	threshold := sm.state.Config.VoteThreshold
+	if rec.VotesInvalid > threshold {
+		rec.Status = types.StatusInvalidated
+		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+		hs.Invalid++
+		if hs.Cost < rec.ActualCost {
+			hs.Cost = 0
+		} else {
+			hs.Cost -= rec.ActualCost
+		}
+		sm.state.Balance += rec.ActualCost
+		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
+		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
+			"inference_id", inferenceID,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
+	} else if rec.VotesValid > threshold {
+		rec.Status = types.StatusValidated
+		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
+		logging.Debug("inference challenged -> validated", "subsystem", "state",
+			"inference_id", inferenceID,
+			"votes_valid", rec.VotesValid,
+			"votes_invalid", rec.VotesInvalid,
+		)
+	}
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1466,38 +1512,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	} else {
 		rec.VotesInvalid += weight
 	}
-
-	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
-	threshold := sm.state.Config.VoteThreshold
-	if rec.VotesInvalid > threshold {
-		rec.Status = types.StatusInvalidated
-		// Refund cost.
-		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
-		hs.Invalid++
-		if hs.Cost < rec.ActualCost {
-			hs.Cost = 0
-		} else {
-			hs.Cost -= rec.ActualCost
-		}
-		sm.state.Balance += rec.ActualCost
-		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
-			"votes_valid", rec.VotesValid,
-			"votes_invalid", rec.VotesInvalid,
-		)
-	} else if rec.VotesValid > threshold {
-		rec.Status = types.StatusValidated
-		logging.Debug("inference challenged -> validated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
-			"votes_valid", rec.VotesValid,
-			"votes_invalid", rec.VotesInvalid,
-		)
-	}
-
-	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
-		// Same as challenge path: obs is observability-only, never consensus.
-		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
-	}
+	sm.resolveChallengeTalliesLocked(msg.InferenceId, rec)
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
