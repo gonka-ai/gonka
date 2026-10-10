@@ -23,6 +23,16 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 	}
 
 	oldParticipant, found := k.GetParticipant(ctx, participant.Address)
+	return k.updateParticipantStatus(ctx, participant, oldParticipant.CurrentEpochStats, found)
+}
+
+// updateParticipantStatus is UpdateParticipantStatus with the stored CurrentEpochStats
+// supplied by a caller that has already read the participant in this tx.
+func (k Keeper) updateParticipantStatus(ctx context.Context, participant *types.Participant, storedStats *types.CurrentEpochStats, found bool) error {
+	if participant.CurrentEpochStats == nil {
+		participant.CurrentEpochStats = &types.CurrentEpochStats{}
+	}
+	oldParticipant := types.Participant{CurrentEpochStats: storedStats}
 	if !found {
 		oldParticipant = *participant
 	} else {
@@ -37,7 +47,7 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 		return err
 	}
 
-	precomputed := k.GetPrecomputedSPRTValues(ctx)
+	precomputed := k.sprtValuesFor(params)
 
 	originalStatus := participant.Status
 	newStatus, reason, newStats := calculations.ComputeStatus(

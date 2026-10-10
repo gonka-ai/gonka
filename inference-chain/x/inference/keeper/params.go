@@ -33,7 +33,65 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 	if cached, ok := ctx.Value(paramsKey{}).(*types.Params); ok && cached != nil {
 		return *cached, nil
 	}
+	if c := txCacheFrom(ctx); c != nil {
+		return k.getParamsTxCached(ctx, c)
+	}
 	return k.getParamsFromStore(ctx)
+}
+
+// txParamsCache keeps the params bytes and
+// the effective epoch index for one tx, so repeated reads pay the store once.
+// Turned off for the rest of the tx by SetParams;
+// SetEffectiveEpochIndex stops caching only the epoch index.
+type txParamsCache struct {
+	bz           []byte
+	epoch        uint64
+	epochSet     bool
+	epochWritten bool // the write may sit in a discarded CacheContext
+	off          bool
+	egd          egdTxCache // not turned off with the params part
+}
+
+func txCacheFrom(ctx context.Context) *txParamsCache {
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil && !c.off {
+		return c
+	}
+	return nil
+}
+
+func turnOffTxCache(ctx context.Context) {
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
+		c.bz, c.epochSet, c.off = nil, false, true
+	}
+}
+
+// forgetTxEpochIndex stops caching the effective epoch index for the rest of the tx.
+func forgetTxEpochIndex(ctx context.Context) {
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
+		c.epochSet, c.epochWritten = false, true
+	}
+}
+
+type txParamsCacheKey struct{}
+
+// WithTxParamsCache installs an empty per-tx params cache (set in the ante handler).
+func WithTxParamsCache(ctx sdk.Context) sdk.Context {
+	return ctx.WithValue(txParamsCacheKey{}, &txParamsCache{})
+}
+
+func (k Keeper) getParamsTxCached(ctx context.Context, c *txParamsCache) (params types.Params, err error) {
+	if c.bz == nil {
+		store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+		bz := store.Get(types.ParamsKey)
+		if bz == nil {
+			return params, nil
+		}
+		c.bz = append([]byte(nil), bz...)
+	}
+	if err := k.cdc.Unmarshal(c.bz, &params); err != nil {
+		return types.Params{}, err
+	}
+	return params, nil
 }
 
 // InjectParamsIntoContext returns a new context with the params cached.
@@ -55,6 +113,8 @@ func (k Keeper) SetParams(ctx context.Context, params types.Params) error {
 		return err
 	}
 	store.Set(types.ParamsKey, bz)
+	// A write may be discarded with a CacheContext, so stop trusting the cache.
+	turnOffTxCache(ctx)
 
 	// Auto-set grace epoch when poc_v2_enabled transitions false -> true
 	if params.PocParams != nil && params.PocParams.PocV2Enabled {

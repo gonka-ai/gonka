@@ -13,6 +13,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
 	blstypes "github.com/productscience/inference/x/bls/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 )
 
 // AccountKeeper defines the expected interface for the account module.
@@ -94,6 +95,7 @@ type CollateralKeeper interface {
 // StreamVestingKeeper defines the expected interface for the StreamVesting module.
 type StreamVestingKeeper interface {
 	AddVestedRewards(ctx context.Context, participantAddress string, fundingModule string, amount sdk.Coins, vestingEpochs *uint64, memo string) error
+	AddVestedRewardsBatch(ctx context.Context, participantAddress string, fundingModule string, rewards []streamvestingtypes.VestedReward) error
 	AdvanceEpoch(ctx context.Context, completedEpoch uint64) error
 }
 

@@ -564,7 +564,8 @@ func TestRegularPoCValidationUsesCapWeightElectorate(t *testing.T) {
 	require.NoError(t, k.SetPoCV2StoreCommit(ctx, storeCommit))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	am.captureValidationSnapshot(ctx, triggerHeight, triggerHeight, "regular PoC")
+	am.captureValidationSnapshot(ctx, triggerHeight, triggerHeight, "regular PoC",
+		am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, triggerHeight))
 	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, triggerHeight)
 	require.NoError(t, err)
 	require.True(t, found)

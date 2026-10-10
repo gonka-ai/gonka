@@ -15,7 +15,27 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
 		return err
 	}
+	return k.saveParticipant(ctx, participant)
+}
 
+// SetParticipantFromStored is SetParticipant for a participant read earlier in the same tx
+// or EndBlock and not written since: storedStats is a copy of its CurrentEpochStats as
+// read, so the status check does not read the participant again.
+func (k Keeper) SetParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
+	return k.setParticipantAsRead(ctx, participant, storedStats, true)
+}
+
+// setParticipantAsRead also takes found=false for a participant the caller has just found absent.
+func (k Keeper) setParticipantAsRead(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats, found bool) error {
+	err := k.updateParticipantStatus(ctx, &participant, storedStats, found)
+	if err != nil {
+		k.LogError("Failed to update participant status", types.Validation, "error", err)
+		return err
+	}
+	return k.saveParticipant(ctx, participant)
+}
+
+func (k Keeper) saveParticipant(ctx context.Context, participant types.Participant) error {
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)
 	if err != nil {
 		return err
@@ -55,6 +75,16 @@ func (k Keeper) GetParticipant(
 		return val, false
 	}
 	return val, true
+}
+
+// HasParticipant reports whether index is a stored participant without decoding the record.
+func (k Keeper) HasParticipant(ctx context.Context, index string) bool {
+	address, err := sdk.AccAddressFromBech32(index)
+	if err != nil {
+		return false
+	}
+	found, err := k.Participants.Has(ctx, address)
+	return err == nil && found
 }
 
 // RemoveParticipant removes a participant from the store

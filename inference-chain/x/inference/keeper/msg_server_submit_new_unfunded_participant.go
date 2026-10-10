@@ -53,7 +53,8 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 			WorkerKey:    msg.GetWorkerKey(),
 		})
 	k.LogDebug("Adding new participant", types.Participants, "participant", newParticipant)
-	err = k.SetParticipant(ctx, newParticipant)
+	// Every participant has an account, and this one had none: it is absent too.
+	err = k.setParticipantAsRead(ctx, newParticipant, nil, false)
 	if err != nil {
 		return nil, err
 	}

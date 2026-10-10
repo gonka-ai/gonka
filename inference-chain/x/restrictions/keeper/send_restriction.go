@@ -16,14 +16,14 @@ import (
 func (k Keeper) SendRestrictionFn(ctx context.Context, from, to sdk.AccAddress, amt sdk.Coins) (sdk.AccAddress, error) {
 	// Convert context to SDK context for our internal operations
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	// Check if restrictions are active
-	if !k.IsRestrictionActive(sdkCtx) {
-		// Restrictions are not active, allow all transfers
+	// 1. PERMITTED - Gas Fee Payments. Checked before params: every fee-paying tx lands here.
+	if k.IsGasFeePayment(to) {
 		return to, nil
 	}
 
-	// 1. PERMITTED - Gas Fee Payments
-	if k.IsGasFeePayment(to) {
+	// Check if restrictions are active
+	if !k.IsRestrictionActive(sdkCtx) {
+		// Restrictions are not active, allow all transfers
 		return to, nil
 	}
 

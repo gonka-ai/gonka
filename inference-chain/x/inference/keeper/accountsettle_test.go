@@ -1,8 +1,14 @@
 package keeper_test
 
 import (
+	"bytes"
+	"encoding/base64"
 	"strconv"
+	"strings"
 	"testing"
+
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"cosmossdk.io/log"
 	"github.com/productscience/inference/testutil"
@@ -496,4 +502,53 @@ func TestSettleWithoutGraceEpoch(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, uint64(0), settleAmount.RewardCoins, "Participant should be punished without grace epoch")
 	logger.Info("Verified participant was punished without grace epoch", "rewardCoins", settleAmount.RewardCoins)
+}
+
+// Settlement reads each participant and the delegation reward snapshot once:
+// the final write reuses the stats read for rewards.
+func TestSettleAccountsReadsParticipantsOnce(t *testing.T) {
+	k, ctx, mocks := keeper2.InferenceKeeperReturningMocks(t)
+	var addrs []string
+	var weights []*types.ValidationWeight
+	var active []*types.ActiveParticipant
+	for i := 0; i < 3; i++ {
+		a := testutil.Bech32Addr(i)
+		addrs = append(addrs, a)
+		require.NoError(t, k.SetParticipant(ctx, types.Participant{Index: a, Address: a, CoinBalance: 1000,
+			Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}}))
+		weights = append(weights, &types.ValidationWeight{MemberAddress: a, Weight: 1000, Reputation: 100,
+			ConfirmationWeight: 1000, MlNodes: []*types.MLNodeInfo{{PocWeight: 1000}}})
+		active = append(active, &types.ActiveParticipant{Index: a})
+	}
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 10, ValidationWeights: weights,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)}}})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 10, ModelId: "model-a", ValidationWeights: weights})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{EpochId: 10, Participants: active}))
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{EpochIndex: 10,
+		Transfers: []*types.DelegationRewardTransfer{{ModelId: "model-a", From: addrs[0], To: addrs[1], Share: types.DecimalFromFloat(0.05)}},
+		Penalties: []*types.DelegationRewardPenalty{{Participant: addrs[2], PenaltyFraction: types.DecimalFromFloat(0.1)}}}))
+	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	_, err := k.SettleAccounts(ctx, 10, 0)
+	ctx.MultiStore().SetTracer(nil)
+	require.NoError(t, err)
+
+	snap := base64.StdEncoding.EncodeToString(types.DelegationRewardTransferSnapshotPrefix)
+	require.Equal(t, 1, strings.Count(trace.String(), `"operation":"read","key":"`+snap+`"`))
+
+	m := k.Participants
+	for _, a := range addrs {
+		key, err := collections.EncodeKeyWithPrefix(m.GetPrefix(), m.KeyCodec(), sdk.MustAccAddressFromBech32(a))
+		require.NoError(t, err)
+		enc := base64.StdEncoding.EncodeToString(key)
+		require.Equal(t, 1, strings.Count(trace.String(), `"operation":"read","key":"`+enc+`"`), a)
+		p, found := k.GetParticipant(ctx, a)
+		require.True(t, found)
+		require.Equal(t, uint32(1), p.EpochsCompleted)
+		require.Zero(t, p.CoinBalance)
+	}
 }

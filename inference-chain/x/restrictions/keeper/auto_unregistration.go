@@ -12,15 +12,14 @@ import (
 // CheckAndUnregisterRestriction checks if the restriction deadline has passed
 // and automatically unregisters the SendRestriction if needed
 func (k Keeper) CheckAndUnregisterRestriction(ctx sdk.Context) error {
-	// Check if restrictions are still active
-	if k.IsRestrictionActive(ctx) {
-		// Restrictions are still active, no action needed
+	// Already unregistered: nothing to do, and no params read on every block after expiry.
+	if k.isAlreadyUnregistered(ctx) {
 		return nil
 	}
 
-	// Check if we've already unregistered (to avoid double processing)
-	if k.isAlreadyUnregistered(ctx) {
-		// Already unregistered, no action needed
+	// Check if restrictions are still active
+	if k.IsRestrictionActive(ctx) {
+		// Restrictions are still active, no action needed
 		return nil
 	}
 

@@ -29,7 +29,7 @@ type ValidatedBridgeExchange struct {
 // ActiveParticipantsSet for the current epoch or the previous epoch.
 // Matches MsgBridgeExchange permission OR of Active | PreviousActive.
 func (k Keeper) RequireActiveOrPreviousActiveParticipant(ctx sdk.Context, addr sdk.AccAddress) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
+	currentEpoch, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return err
 	}
@@ -55,7 +55,7 @@ func (k Keeper) RequireActiveOrPreviousActiveParticipant(ctx sdk.Context, addr s
 // RequireActiveParticipantAtOffset returns nil if addr is active in
 // currentEpoch - epochOffset. Used by the permission framework.
 func (k Keeper) RequireActiveParticipantAtOffset(ctx sdk.Context, addr sdk.AccAddress, epochOffset uint64) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
+	currentEpoch, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return err
 	}
@@ -74,6 +74,12 @@ func (k Keeper) RequireActiveParticipantAtOffset(ctx sdk.Context, addr sdk.AccAd
 
 // ValidateBridgeExchange is read-only. No writes to bridge state, balances, or sequences.
 func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExchange) (*ValidatedBridgeExchange, error) {
+	return k.validateBridgeExchange(ctx, msg, true)
+}
+
+// validateBridgeExchange skips the active-set check when the caller's
+// CheckPermission(Active, PreviousActive) already ran it for msg.Validator.
+func (k Keeper) validateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExchange, checkActive bool) (*ValidatedBridgeExchange, error) {
 	addr, err := sdk.AccAddressFromBech32(msg.Validator)
 	if err != nil {
 		k.LogError(
@@ -83,8 +89,10 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		return nil, fmt.Errorf("invalid validator address: %v", err)
 	}
 
-	if err := k.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
-		return nil, err
+	if checkActive {
+		if err := k.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
+			return nil, err
+		}
 	}
 
 	_, ok := new(big.Int).SetString(msg.Amount, 10)
@@ -103,7 +111,7 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		ReceiptsRoot:    msg.ReceiptsRoot,
 	}
 
-	existingTx, found := k.GetBridgeTransactionByContent(ctx, proposedTx)
+	existingTx, found := k.getBridgeTransactionRecord(ctx, proposedTx)
 	if found {
 		if !bridgeTransactionsEqual(existingTx, proposedTx) {
 			k.LogError("Bridge exchange: Content mismatch for existing transaction", types.Messages,

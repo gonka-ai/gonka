@@ -19,43 +19,53 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	if err != nil {
 		return err
 	}
-	err = k.GetInferencePruner(params).Prune(ctx, k, currentEpochIndex)
+	return k.PruneWithParams(ctx, params, currentEpochIndex)
+}
+
+// PruneWithParams reads the pruning state once; each pruner only writes its own field.
+func (k Keeper) PruneWithParams(ctx context.Context, params types.Params, currentEpochIndex int64) error {
+	pruningState, err := k.PruningState.Get(ctx)
+	if err != nil {
+		k.LogError("Failed to get pruning state", types.Pruning, "error", err)
+		return err
+	}
+	err = k.GetInferencePruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCBatchesPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetPoCBatchesPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCValidationsPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetPoCValidationsPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCValidationsV2Pruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetPoCValidationsV2Pruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCV2StoreCommitPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetPoCV2StoreCommitPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetMLNodeWeightDistributionPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetMLNodeWeightDistributionPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCValidationSnapshotPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetPoCValidationSnapshotPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetEpochGroupValidationPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetEpochGroupValidationPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetDevshardPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetDevshardPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
-	err = k.GetClaimRecipientPruner(params).Prune(ctx, k, currentEpochIndex)
+	err = k.GetClaimRecipientPruner(params).pruneFrom(ctx, k, currentEpochIndex, pruningState)
 	if err != nil {
 		return err
 	}
@@ -388,6 +398,10 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 		)
 		return err
 	}
+	return p.pruneFrom(ctx, k, currentEpochIndex, pruningState)
+}
+
+func (p Pruner[K, V]) pruneFrom(ctx context.Context, k Keeper, currentEpochIndex int64, pruningState types.PruningState) error {
 	startEpoch, endEpoch := getEpochsToPrune(p.Threshold, currentEpochIndex, p.GetLastPruned(pruningState))
 	if startEpoch > endEpoch {
 		p.Logger.LogDebug("No epochs to prune", types.Pruning)

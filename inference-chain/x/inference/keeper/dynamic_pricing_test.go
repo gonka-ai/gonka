@@ -1,9 +1,12 @@
 package keeper_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"testing"
 
+	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -282,8 +285,6 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 		[]string{"model-1", "model-2"},
 		map[string]uint64{"model-1": 100},
 		60,
-		map[string]uint64{"model-1": 1},
-		120,
 	)
 	require.NoError(t, err)
 
@@ -299,18 +300,11 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 	avg2Float, _ := avg2.Float64()
 	assert.InDelta(t, 0.0, avg2Float, 1e-6)
 
-	count1, found, err := k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
-	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, uint64(1), count1)
-
 	err = k.UpdateModelRollingWindowsForActiveModels(
 		goCtx,
 		[]string{"model-1"},
 		map[string]uint64{"model-1": 200},
 		60,
-		map[string]uint64{"model-1": 2},
-		120,
 	)
 	require.NoError(t, err)
 
@@ -320,18 +314,39 @@ func TestModelRollingWindows_ReconcileAndUpdate(t *testing.T) {
 	avg1Float, _ = avg1.Float64()
 	assert.InDelta(t, 300.0/12.0, avg1Float, 1e-6)
 
-	count1, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-1", 24)
+	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
 	require.NoError(t, err)
-	require.True(t, found)
-	assert.Equal(t, uint64(3), count1)
+	assert.True(t, found, "the per-block update leaves cleanup to the epoch switch")
 
+	require.NoError(t, k.RemoveInactiveModelRollingStates(goCtx, []string{"model-1"}))
 	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-2", 12)
 	require.NoError(t, err)
 	assert.False(t, found, "non-active model load state should be removed")
-
-	_, found, err = k.GetModelInferenceCountRollingSum(goCtx, "model-2", 24)
+	_, found, err = k.GetModelLoadRollingAveragePerBlock(goCtx, "model-1", 12)
 	require.NoError(t, err)
-	assert.False(t, found, "non-active model inference-count state should be removed")
+	assert.True(t, found)
+}
+
+func TestModelRollingWindows_PerBlockUpdateDoesNotIterate(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+	models := []string{"model-1", "model-2", "model-3"}
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
+	ctx.MultiStore().SetTracer(nil)
+
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+		}
+		if json.Unmarshal(line, &op) != nil {
+			continue
+		}
+		assert.NotEqual(t, "iterKey", op.Operation, "per-block update must not walk the window map")
+	}
 }
 
 func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
@@ -374,8 +389,6 @@ func TestUpdateDynamicPricing_UsesRollingAverageUtilization(t *testing.T) {
 			[]string{"model-high", "model-zero"},
 			map[string]uint64{"model-high": 5000},
 			60,
-			map[string]uint64{"model-high": 1},
-			120,
 		))
 	}
 
@@ -784,4 +797,137 @@ func setupTestKeeperWithDynamicPricing(t *testing.T) (keeper.Keeper, sdk.Context
 	k.SetParams(ctx, params)
 
 	return k, ctx
+}
+
+// Mainnet shape: every model sits at the price floor with no load, so the price never changes.
+func TestUpdateDynamicPricing_SkipsUnchangedPriceWrite(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DynamicPricingParams.MinPerTokenPrice = 1
+	params.DynamicPricingParams.BasePerTokenPrice = 100
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	params.DynamicPricingParams.UtilizationWindowDuration = 60
+	require.NoError(t, k.SetParams(ctx, params))
+
+	effectiveEpoch := types.Epoch{Index: 1, PocStartBlockHeight: ctx.BlockHeight()}
+	require.NoError(t, k.SetEpoch(ctx, &effectiveEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, effectiveEpoch.Index))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          effectiveEpoch.Index,
+		PocStartBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
+		SubGroupModels:      []string{"model-floor", "model-new"},
+	})
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-floor", 1000))
+	require.NoError(t, k.CacheModelCapacity(goCtx, "model-new", 1000))
+	require.NoError(t, k.SetModelCurrentPrice(goCtx, "model-floor", 1))
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateDynamicPricing(goCtx))
+	ctx.MultiStore().SetTracer(nil)
+
+	written := map[string]int{}
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+			Key       []byte `json:"key"`
+		}
+		if json.Unmarshal(line, &op) != nil || op.Operation != "write" {
+			continue
+		}
+		if prefix := types.DynamicPricingCurrentPrefix.Bytes(); bytes.HasPrefix(op.Key, prefix) {
+			written[string(op.Key[len(prefix):])]++
+		}
+	}
+	assert.Equal(t, map[string]int{"model-new": 1}, written, "only the model without a stored price is written")
+
+	price, err := k.GetModelCurrentPrice(goCtx, "model-floor")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), price)
+	price, err = k.GetModelCurrentPrice(goCtx, "model-new")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(98), price, "a model without a price starts from base and still moves")
+}
+
+// Mainnet shape at the default node log level: an unchanged price logs nothing per block.
+func TestUpdateDynamicPricing_QuietAtInfoWhenPriceUnchanged(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DynamicPricingParams.MinPerTokenPrice = 1
+	params.DynamicPricingParams.GracePeriodEndEpoch = 0
+	require.NoError(t, k.SetParams(ctx, params))
+
+	effectiveEpoch := types.Epoch{Index: 1, PocStartBlockHeight: ctx.BlockHeight()}
+	require.NoError(t, k.SetEpoch(ctx, &effectiveEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, effectiveEpoch.Index))
+	models := []string{"model-a", "model-b", "model-c"}
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          effectiveEpoch.Index,
+		PocStartBlockHeight: uint64(effectiveEpoch.PocStartBlockHeight),
+		SubGroupModels:      models,
+	})
+	for _, m := range models {
+		require.NoError(t, k.CacheModelCapacity(goCtx, m, 1000))
+		require.NoError(t, k.SetModelCurrentPrice(goCtx, m, 1))
+	}
+
+	infoFilter, err := log.ParseLogLevel("info")
+	require.NoError(t, err)
+	var out bytes.Buffer
+	keeper.SetLoggerForTesting(&k, log.NewLogger(&out, log.OutputJSONOption(), log.FilterOption(infoFilter)))
+	require.NoError(t, k.UpdateDynamicPricing(goCtx))
+	assert.Empty(t, out.String())
+
+	price, err := k.GetModelCurrentPrice(goCtx, "model-a")
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), price)
+}
+
+// Mainnet shape: no on-chain inferences, so every window is all zeros and the push changes nothing.
+func TestModelRollingWindows_SkipsUnchangedWrite(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.WrapSDKContext(ctx)
+	models := []string{"model-idle", "model-busy"}
+
+	for i := 0; i < 24; i++ {
+		require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(goCtx, models, nil, 60))
+	}
+
+	var trace bytes.Buffer
+	ctx.MultiStore().SetTracer(&trace)
+	require.NoError(t, k.UpdateModelRollingWindowsForActiveModels(
+		goCtx,
+		models,
+		map[string]uint64{"model-busy": 100},
+		60,
+	))
+	ctx.MultiStore().SetTracer(nil)
+
+	written := map[string]int{}
+	for _, line := range bytes.Split(trace.Bytes(), []byte("\n")) {
+		var op struct {
+			Operation string `json:"operation"`
+			Key       []byte `json:"key"`
+		}
+		if json.Unmarshal(line, &op) != nil || op.Operation != "write" {
+			continue
+		}
+		for _, prefix := range [][]byte{types.ModelLoadRollingWindowPrefix.Bytes(), types.ModelInferenceCountRollingWindowPrefix.Bytes()} {
+			if bytes.HasPrefix(op.Key, prefix) {
+				written[string(op.Key[len(prefix):])]++
+			}
+		}
+	}
+	assert.Equal(t, map[string]int{"model-busy": 1}, written, "only the window that moved is written")
+
+	avg, found, err := k.GetModelLoadRollingAveragePerBlock(goCtx, "model-idle", 12)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.True(t, avg.IsZero())
 }

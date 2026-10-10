@@ -1,6 +1,8 @@
 package app
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,12 +14,15 @@ import (
 	storetypes "cosmossdk.io/store/types"
 	circuitante "cosmossdk.io/x/circuit/ante"
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	"cosmossdk.io/x/feegrant"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
@@ -31,14 +36,15 @@ import (
 type HandlerOptions struct {
 	ante.HandlerOptions
 
-	IBCKeeper             *keeper.Keeper
-	NodeConfig            *wasmtypes.NodeConfig
-	WasmKeeper            *wasmkeeper.Keeper
-	TXCounterStoreService corestoretypes.KVStoreService
-	CircuitKeeper         *circuitkeeper.Keeper
-	InferenceKeeper       *inferencemodulekeeper.Keeper
-	Codec                 codec.Codec
-	AuthzKeeper           AuthzAuthorizationKeeper
+	IBCKeeper            *keeper.Keeper
+	NodeConfig           *wasmtypes.NodeConfig
+	WasmKeeper           *wasmkeeper.Keeper
+	TXCounterStoreKey    storetypes.StoreKey
+	FeegrantStoreService corestoretypes.KVStoreService
+	CircuitKeeper        *circuitkeeper.Keeper
+	InferenceKeeper      *inferencemodulekeeper.Keeper
+	Codec                codec.Codec
+	AuthzKeeper          AuthzAuthorizationKeeper
 }
 
 // Gas is still charged against the tx's gas limit; this only bypasses fee checks.
@@ -188,26 +194,27 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.NodeConfig == nil {
 		return nil, errors.New("node config is required for ante builder")
 	}
-	if options.TXCounterStoreService == nil {
-		return nil, errors.New("wasm store service is required for ante builder")
+	if options.TXCounterStoreKey == nil {
+		return nil, errors.New("tx counter store key is required for ante builder")
 	}
 	if options.CircuitKeeper == nil {
 		return nil, errors.New("circuit keeper is required for ante builder")
 	}
 
+	ak := txAuthKeeper{options.AccountKeeper}
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
+		TxParamsCacheDecorator{},        // inference params, auth params and signer accounts read once per tx
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
-		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
-		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
+		NewCountTXDecorator(options.TXCounterStoreKey),                                   // wasm env.transaction.index from a transient counter
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
 		ante.NewValidateBasicDecorator(),
 		MaxTxFeeDecorator{},
 		ante.NewTxTimeoutHeightDecorator(),
-		ante.NewValidateMemoDecorator(options.AccountKeeper),
-		ante.NewConsumeGasForTxSizeDecorator(options.AccountKeeper),
+		ante.NewValidateMemoDecorator(ak),
+		ante.NewConsumeGasForTxSizeDecorator(ak),
 		LiquidityPoolFeeBypassDecorator{
 			WasmKeeper:      options.WasmKeeper,
 			InferenceKeeper: options.InferenceKeeper,
@@ -230,16 +237,16 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			// before discretionary swap traffic.
 			Priority: 10_000_000,
 		},
-		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		ante.NewDeductFeeDecorator(ak, options.BankKeeper, wrapFeegrantKeeper(options.FeegrantKeeper, options.FeegrantStoreService, options.Codec), GonkaFeeChecker(options.InferenceKeeper)),
 		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
 		// state (including fee deduction), so fee-first is not an economic throttle.
 		NewPocPeriodValidationDecorator(options.InferenceKeeper, options.Codec),
-		ante.NewSetPubKeyDecorator(options.AccountKeeper),
-		ante.NewValidateSigCountDecorator(options.AccountKeeper),
-		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
-		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		ante.NewSetPubKeyDecorator(ak),
+		ante.NewValidateSigCountDecorator(ak),
+		ante.NewSigGasConsumeDecorator(ak, options.SigGasConsumer),
+		ante.NewSigVerificationDecorator(ak, options.SignModeHandler),
 		// SDK skips unordered nonce KV in Simulate; this meters it. Remove when the SDK does.
 		NewUnorderedNonceSimGasDecorator(options.AccountKeeper),
 		// Authz grant lookup after signature verification: the outer Grantee has
@@ -249,14 +256,147 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
-		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
+		ante.NewIncrementSequenceDecorator(ak),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
 
 	return sdk.ChainAnteDecorators(anteDecorators...), nil
 }
 
-func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey *storetypes.KVStoreKey) {
+// TxParamsCacheDecorator installs the per-tx inference params cache; the
+// context reaches the msg handlers, so ante and handlers share one KV read.
+type TxParamsCacheDecorator struct{}
+
+func (TxParamsCacheDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	ctx = inferencemodulekeeper.WithTxParamsCache(ctx).WithValue(txAuthCacheKey{}, newTxAuthCache())
+	return next(ctx, tx, simulate)
+}
+
+// txAuthKeeper serves the SDK ante decorators x/auth params and accounts from one read per tx.
+// Within the ante chain accounts are written only through SetAccount below.
+type txAuthKeeper struct {
+	ante.AccountKeeper
+}
+
+type txAuthCacheKey struct{}
+
+type txAuthCache struct {
+	params   authtypes.Params
+	paramsOk bool
+	accounts map[string]sdk.AccountI
+}
+
+func newTxAuthCache() *txAuthCache {
+	return &txAuthCache{accounts: map[string]sdk.AccountI{}}
+}
+
+func txAuthCacheFrom(ctx context.Context) *txAuthCache {
+	c, _ := ctx.Value(txAuthCacheKey{}).(*txAuthCache)
+	return c
+}
+
+func (k txAuthKeeper) GetParams(ctx context.Context) authtypes.Params {
+	c := txAuthCacheFrom(ctx)
+	if c == nil {
+		return k.AccountKeeper.GetParams(ctx)
+	}
+	if !c.paramsOk {
+		c.params, c.paramsOk = k.AccountKeeper.GetParams(ctx), true
+	}
+	return c.params
+}
+
+func (k txAuthKeeper) GetAccount(ctx context.Context, addr sdk.AccAddress) sdk.AccountI {
+	c := txAuthCacheFrom(ctx)
+	if c == nil {
+		return k.AccountKeeper.GetAccount(ctx, addr)
+	}
+	if acc, ok := c.accounts[string(addr)]; ok {
+		return acc
+	}
+	acc := k.AccountKeeper.GetAccount(ctx, addr)
+	if acc != nil {
+		c.accounts[string(addr)] = acc
+	}
+	return acc
+}
+
+func (k txAuthKeeper) SetAccount(ctx context.Context, acc sdk.AccountI) {
+	k.AccountKeeper.SetAccount(ctx, acc)
+	if c := txAuthCacheFrom(ctx); c != nil {
+		c.accounts[string(acc.GetAddress())] = acc
+	}
+}
+
+// txFeegrantKeeper is Keeper.UseGrantedFees with one grant read instead of two (UpdateAllowance re-reads)
+// and no write when Accept leaves the grant unchanged (zero-fee duty txs).
+type txFeegrantKeeper struct {
+	ante.FeegrantKeeper
+	store corestoretypes.KVStoreService
+	cdc   codec.BinaryCodec
+}
+
+func wrapFeegrantKeeper(k ante.FeegrantKeeper, store corestoretypes.KVStoreService, cdc codec.BinaryCodec) ante.FeegrantKeeper {
+	if k == nil || store == nil || cdc == nil {
+		return k
+	}
+	return txFeegrantKeeper{FeegrantKeeper: k, store: store, cdc: cdc}
+}
+
+func (k txFeegrantKeeper) UseGrantedFees(ctx context.Context, granter, grantee sdk.AccAddress, fee sdk.Coins, msgs []sdk.Msg) error {
+	store := k.store.OpenKVStore(ctx)
+	key := feegrant.FeeAllowanceKey(granter, grantee)
+	bz, err := store.Get(key)
+	if err != nil {
+		return err
+	}
+	if len(bz) == 0 {
+		return sdkerrors.ErrNotFound.Wrap("fee-grant not found")
+	}
+	var grant feegrant.Grant
+	if err := k.cdc.Unmarshal(bz, &grant); err != nil {
+		return err
+	}
+	allowance, err := grant.GetGrant()
+	if err != nil {
+		return err
+	}
+	remove, err := allowance.Accept(ctx, fee, msgs)
+	if remove {
+		// revocation (grant and expiry-queue entry) stays with the SDK keeper
+		return k.FeegrantKeeper.UseGrantedFees(ctx, granter, grantee, fee, msgs)
+	}
+	if err != nil {
+		return err
+	}
+
+	updated, err := feegrant.NewGrant(granter, grantee, allowance)
+	if err != nil {
+		return err
+	}
+	out, err := k.cdc.Marshal(&updated)
+	if err != nil {
+		return err
+	}
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// Same events as Keeper.UseGrantedFees: the use event, then UpdateAllowance's.
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(feegrant.EventTypeUseFeeGrant,
+		sdk.NewAttribute(feegrant.AttributeKeyGranter, granter.String()),
+		sdk.NewAttribute(feegrant.AttributeKeyGrantee, grantee.String()),
+	))
+	if !bytes.Equal(out, bz) {
+		if err := store.Set(key, out); err != nil {
+			return err
+		}
+	}
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(feegrant.EventTypeUpdateFeeGrant,
+		sdk.NewAttribute(feegrant.AttributeKeyGranter, updated.Granter),
+		sdk.NewAttribute(feegrant.AttributeKeyGrantee, updated.Grantee),
+	))
+	return nil
+}
+
+func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.NodeConfig, txCounterStoreKey storetypes.StoreKey) {
 	anteHandler, err := NewAnteHandler(
 		HandlerOptions{
 			HandlerOptions: ante.HandlerOptions{
@@ -269,14 +409,15 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 					ante.WithUnorderedTxGasCost(0),
 				},
 			},
-			IBCKeeper:             app.IBCKeeper,
-			NodeConfig:            &nodeConfig,
-			WasmKeeper:            &app.WasmKeeper,
-			InferenceKeeper:       &app.InferenceKeeper,
-			Codec:                 app.appCodec,
-			AuthzKeeper:           &app.AuthzKeeper,
-			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
-			CircuitKeeper:         &app.CircuitBreakerKeeper,
+			IBCKeeper:            app.IBCKeeper,
+			NodeConfig:           &nodeConfig,
+			WasmKeeper:           &app.WasmKeeper,
+			InferenceKeeper:      &app.InferenceKeeper,
+			Codec:                app.appCodec,
+			AuthzKeeper:          &app.AuthzKeeper,
+			TXCounterStoreKey:    txCounterStoreKey,
+			FeegrantStoreService: runtime.NewKVStoreService(app.GetKey(feegrant.StoreKey)),
+			CircuitKeeper:        &app.CircuitBreakerKeeper,
 		},
 	)
 	if err != nil {

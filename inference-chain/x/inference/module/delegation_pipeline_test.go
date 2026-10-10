@@ -160,7 +160,7 @@ func (*stubGroupKeeper) Vote(context.Context, *group.MsgVote) (*group.MsgVoteRes
 	return &group.MsgVoteResponse{}, nil
 }
 func (*stubGroupKeeper) GroupInfo(context.Context, *group.QueryGroupInfoRequest) (*group.QueryGroupInfoResponse, error) {
-	return &group.QueryGroupInfoResponse{}, nil
+	return &group.QueryGroupInfoResponse{Info: &group.GroupInfo{}}, nil
 }
 func (*stubGroupKeeper) ProposalsByGroupPolicy(context.Context, *group.QueryProposalsByGroupPolicyRequest) (*group.QueryProposalsByGroupPolicyResponse, error) {
 	return &group.QueryProposalsByGroupPolicyResponse{}, nil
@@ -444,7 +444,7 @@ func TestBuildDelegationSnapshot_IncludesUpcomingCommittersAndExcludesIntents(t 
 	require.NoError(t, k.SetPoCRefusal(ctx, "new-model", outsider))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	snapshot, err := am.buildDelegationSnapshot(ctx, 197, pocStageStart)
+	snapshot, err := am.buildDelegationSnapshot(ctx, 197, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, pocStageStart))
 	require.NoError(t, err)
 
 	delegators := make([]string, 0, len(snapshot.Delegations))
@@ -636,7 +636,7 @@ func TestCaptureDelegationSnapshot_StoresFrozenState(t *testing.T) {
 	require.NoError(t, k.SetPoCDirectIntent(ctx, "candidate", testutil.Executor))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	am.captureDelegationSnapshot(ctx, 197, 100)
+	am.captureDelegationSnapshot(ctx, 197, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 100))
 
 	snapshot, found := k.GetDelegationSnapshot(ctx)
 	require.True(t, found)
@@ -729,7 +729,7 @@ func TestComputeStoreCommitVotingPowers_UsesExistingVotingPowersAndBootstrapDele
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 180), "test")
 	require.Equal(t, int64(200), totalWeight)
 
 	got := map[string]map[string]int64{}
@@ -828,7 +828,7 @@ func TestComputeStoreCommitVotingPowers_EmptyPlaceholderIsNotAlreadyActive(t *te
 		ModelId: "new-model",
 	})
 
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, base, 180, "test")
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, base, testStageCommits(t, k, ctx, 180), "test")
 	require.Equal(t, int64(200), totalWeight)
 
 	got := map[string]map[string]int64{}
@@ -895,7 +895,7 @@ func TestComputeStoreCommitVotingPowers_EpochZeroBypassesBootstrapPreEligibility
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 180), "test")
 	require.Equal(t, int64(140), totalWeight)
 	require.Len(t, modelWeights, 1)
 	require.Equal(t, "new-model", modelWeights[0].ModelId)
@@ -970,7 +970,7 @@ func TestComputeStoreCommitVotingPowers_UsesFrozenBootstrapDelegationsEvenWhenPr
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 180), "test")
 	require.Equal(t, int64(140), totalWeight)
 	require.Len(t, modelWeights, 1)
 
@@ -1019,7 +1019,7 @@ func TestComputeStoreCommitVotingPowers_DoesNotFallbackToLiveDelegations(t *test
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	modelWeights, _ := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	modelWeights, _ := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 180), "test")
 	require.Len(t, modelWeights, 1)
 
 	got := types.VotingPowerSliceToMap(modelWeights[0].VotingPowers)
@@ -1093,7 +1093,7 @@ func TestComputeStoreCommitVotingPowers_BootstrapModelUsesDirectCommittersAndFro
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), testStageCommits(t, k, ctx, 180), "test")
 	require.Equal(t, int64(120), totalWeight)
 	require.Len(t, modelWeights, 1)
 
@@ -1563,4 +1563,11 @@ func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
 	capPct := sdkmath.LegacyNewDecWithPrec(10, 2) // 10%
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 	require.Equal(t, int64(1000), vp["solo"])
+}
+
+func testStageCommits(t *testing.T, k keeper.Keeper, ctx context.Context, stage int64) map[types.PoCParticipantModelKey]types.PoCV2StoreCommit {
+	t.Helper()
+	commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, stage)
+	require.NoError(t, err)
+	return commits
 }
