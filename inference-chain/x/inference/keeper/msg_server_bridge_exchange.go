@@ -71,10 +71,10 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			"totalEpochPower", totalEpochPower,
 			"status", existingTx.Status)
 
-		// Check if we have majority (50+% of total power)
-		requiredPower := (totalEpochPower / 2) + 1
+		// Majority of the weight still in the group, counting only voters still in it
+		requiredPower := validated.RequiredPower
 
-		if existingTx.TotalValidationPower >= requiredPower {
+		if validated.VotedPower >= requiredPower {
 			// Only process completion once to avoid duplicate mints
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
@@ -97,7 +97,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 					"blockNumber", msg.BlockNumber,
 					"receiptIndex", msg.ReceiptIndex,
 					"powerRequired", requiredPower,
-					"powerReceived", existingTx.TotalValidationPower,
+					"powerReceived", validated.VotedPower,
 					"totalEpochPower", totalEpochPower)
 
 				return &types.MsgBridgeExchangeResponse{
@@ -111,7 +111,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 				"blockNumber", msg.BlockNumber,
 				"receiptIndex", msg.ReceiptIndex,
 				"powerRequired", requiredPower,
-				"powerReceived", existingTx.TotalValidationPower,
+				"powerReceived", validated.VotedPower,
 				"totalEpochPower", totalEpochPower)
 		}
 
