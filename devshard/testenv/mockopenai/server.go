@@ -111,9 +111,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		req.Model = "test-model"
 	}
 
-	// Latency stretches Validate (non-stream JSON). Streaming inference must
-	// still emit a first token immediately so gateway first-token timeout
-	// (1s floor) is not tripped while leases stay pending.
+	// Latency stretches Validate (non-stream JSON). ExecuteValidation always
+	// sets stream=false before the ML call. Streaming inference must still
+	// emit a first token immediately so the gateway 1s floor is not tripped.
 	if f.Latency > 0 && !req.Stream {
 		time.Sleep(f.Latency)
 	}
