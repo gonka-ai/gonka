@@ -3,13 +3,12 @@ package main
 import (
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"log"
 	"math"
 	"sort"
 	"sync"
 	"time"
-
-	"devshard/user"
 )
 
 var (
@@ -44,6 +43,7 @@ type RequestSample struct {
 	SendTime       time.Time
 	ReceiptTime    time.Time // zero if no receipt
 	FirstToken     time.Time // zero if no tokens
+	FirstContent   time.Time // zero if no content; live only, not persisted
 	TotalTime      time.Duration
 	InputTokens    uint64
 }
@@ -108,16 +108,25 @@ func (r *hostRing) all() []RequestSample {
 	if r.count == 0 || len(r.samples) == 0 {
 		return nil
 	}
-	out := make([]RequestSample, r.count)
-	for i := 0; i < r.count; i++ {
-		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
-		out[i] = r.samples[idx]
+	out := make([]RequestSample, 0, r.count)
+	for sample := range r.oldestFirst() {
+		out = append(out, sample)
 	}
 	return out
 }
 
+func (r *hostRing) oldestFirst() iter.Seq[RequestSample] {
+	return func(yield func(RequestSample) bool) {
+		for i := 0; i < r.count; i++ {
+			if !yield(r.samples[(r.pos-r.count+i+len(r.samples))%len(r.samples)]) {
+				return
+			}
+		}
+	}
+}
+
 func (r *hostRing) hasHostIdx(hostIdx int) bool {
-	for _, sample := range r.all() {
+	for sample := range r.oldestFirst() {
 		if sample.HostIdx == hostIdx {
 			return true
 		}
@@ -154,27 +163,27 @@ func (r *hostRing) stats(participantKey string, hostIdx int, windowStart time.Ti
 	var receiptN, cttflN, totalN int
 	var total int
 
-	for _, s := range r.all() {
-		if !windowStart.IsZero() && s.SendTime.Before(windowStart) {
+	for sample := range r.oldestFirst() {
+		if !windowStart.IsZero() && sample.SendTime.Before(windowStart) {
 			continue
 		}
 		total++
-		if s.HostIdx >= 0 {
-			base.HostIdx = s.HostIdx
+		if sample.HostIdx >= 0 {
+			base.HostIdx = sample.HostIdx
 		}
-		if s.Responsive {
+		if sample.Responsive {
 			responsive++
 		}
-		if rm := s.ReceiptMs(); rm > 0 {
-			receiptSum += rm
+		if receiptMs := sample.ReceiptMs(); receiptMs > 0 {
+			receiptSum += receiptMs
 			receiptN++
 		}
-		if c := s.CTTFL(); c > 0 && !math.IsNaN(c) && !math.IsInf(c, 0) {
-			cttflSum += c
+		if cttfl := sample.CTTFL(); cttfl > 0 && !math.IsNaN(cttfl) && !math.IsInf(cttfl, 0) {
+			cttflSum += cttfl
 			cttflN++
 		}
-		if s.TotalTime > 0 {
-			totalSum += float64(s.TotalTime.Milliseconds())
+		if sample.TotalTime > 0 {
+			totalSum += float64(sample.TotalTime.Milliseconds())
 			totalN++
 		}
 	}
@@ -260,18 +269,34 @@ type PerfTracker struct {
 	hosts             map[string]*hostRing
 	requests          requestRing
 	firstTokenBuckets map[string]*firstTokenBucketRing
-	contextLimits     map[string]uint64 // participant_key -> observed max context length
-	toolUnsupported   map[string]bool   // participant_key -> host reported vLLM tool-choice support is disabled
+	contextLimits     map[servedModel]uint64
+	versionRefusals   map[string]uint64
+	toolRefusals      map[servedModel]uint64
+	contextRefusals   map[servedModel]uint64
 	pairwise          *PairwiseTracker
 	store             *PerfStore
+}
+
+type servedModel struct {
+	participant string
+	model       string
+}
+
+func servedModelLabel(served servedModel) string {
+	if served.model == "" {
+		return served.participant
+	}
+	return served.participant + "|" + served.model
 }
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
 	pt := &PerfTracker{
 		hosts:             make(map[string]*hostRing),
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
-		contextLimits:     make(map[string]uint64),
-		toolUnsupported:   make(map[string]bool),
+		contextLimits:     make(map[servedModel]uint64),
+		versionRefusals:   make(map[string]uint64),
+		toolRefusals:      make(map[servedModel]uint64),
+		contextRefusals:   make(map[servedModel]uint64),
 		pairwise:          NewPairwiseTracker(),
 		store:             store,
 	}
@@ -493,29 +518,57 @@ func (t *PerfTracker) FirstTokenFallbackDelay(model string, inputTokens uint64) 
 // RecordContextLimit stores the observed maximum context length for a
 // participant, as reported by the host in a context-length error response.
 // Only updates if the new limit differs from the previously recorded value.
-func (t *PerfTracker) RecordContextLimit(participantKey string, maxTokens uint64) {
+func (t *PerfTracker) RecordContextLimit(participantKey, model string, maxTokens uint64) {
 	if t == nil || participantKey == "" || maxTokens == 0 {
 		return
 	}
+	served := servedModel{participant: participantKey, model: model}
 	t.mu.Lock()
-	prev, exists := t.contextLimits[participantKey]
+	t.contextRefusals[served]++
+	prev, exists := t.contextLimits[served]
 	if !exists || prev != maxTokens {
-		t.contextLimits[participantKey] = maxTokens
-		log.Printf("perf: recorded context_limit participant_key=%s max_tokens=%d prev=%d", participantKey, maxTokens, prev)
+		t.contextLimits[served] = maxTokens
+		log.Printf("perf: recorded context_limit participant_key=%s model=%q max_tokens=%d prev=%d",
+			participantKey, model, maxTokens, prev)
 	}
 	t.mu.Unlock()
 }
 
-func (t *PerfTracker) RecordToolUnsupported(participantKey string) {
+func (t *PerfTracker) RecordVersionUnsupported(participantKey string) {
 	if t == nil || participantKey == "" {
 		return
 	}
 	t.mu.Lock()
-	if !t.toolUnsupported[participantKey] {
-		t.toolUnsupported[participantKey] = true
-		log.Printf("perf: recorded tool_unsupported participant_key=%s", participantKey)
+	t.versionRefusals[participantKey]++
+	if t.versionRefusals[participantKey] == 1 {
+		log.Printf("perf: recorded version_unsupported participant_key=%s", participantKey)
 	}
 	t.mu.Unlock()
+}
+
+func (t *PerfTracker) RecordToolUnsupported(participantKey, model string) {
+	if t == nil || participantKey == "" {
+		return
+	}
+	served := servedModel{participant: participantKey, model: model}
+	t.mu.Lock()
+	t.toolRefusals[served]++
+	if t.toolRefusals[served] == 1 {
+		log.Printf("perf: recorded tool_unsupported participant_key=%s model=%q", participantKey, model)
+	}
+	t.mu.Unlock()
+}
+
+// CapabilityRefusals reports how often a participant's build turned work away, and the context ceiling
+// it last reported. Counts rather than verdicts: nothing here withholds the host from routing.
+func (t *PerfTracker) CapabilityRefusals(participantKey, model string) (version, tool, context, contextLimit uint64) {
+	if t == nil || participantKey == "" {
+		return 0, 0, 0, 0
+	}
+	served := servedModel{participant: participantKey, model: model}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.versionRefusals[participantKey], t.toolRefusals[served], t.contextRefusals[served], t.contextLimits[served]
 }
 
 // ContextLimits returns a snapshot of all observed host context length limits.
@@ -526,8 +579,8 @@ func (t *PerfTracker) ContextLimits() map[string]uint64 {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	result := make(map[string]uint64, len(t.contextLimits))
-	for k, v := range t.contextLimits {
-		result[k] = v
+	for served, limit := range t.contextLimits {
+		result[servedModelLabel(served)] = limit
 	}
 	return result
 }
@@ -538,46 +591,12 @@ func (t *PerfTracker) ToolUnsupported() map[string]bool {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	result := make(map[string]bool, len(t.toolUnsupported))
-	for k, v := range t.toolUnsupported {
-		result[k] = v
+	result := make(map[string]bool, len(t.toolRefusals))
+	for served, refusals := range t.toolRefusals {
+		result[servedModelLabel(served)] = refusals > 0
 	}
 	return result
 }
-
-func (t *PerfTracker) HostCannotServeRequest(participantKey string, params user.InferenceParams) (string, bool) {
-	if t == nil || participantKey == "" {
-		return "", false
-	}
-	requiresTools := requestRequiresTools(params)
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if requiresTools && t.toolUnsupported[participantKey] {
-		return "tool_choice_unsupported", true
-	}
-	if limit := t.contextLimits[participantKey]; limit > 0 && params.ContextTotalHint > limit {
-		return "context_limit_exceeded", true
-	}
-	return "", false
-}
-
-func (t *PerfTracker) AllKnownToolUnsupported(participantKeys []string) bool {
-	if t == nil || len(participantKeys) == 0 {
-		return false
-	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	for _, key := range participantKeys {
-		if key == "" {
-			continue
-		}
-		if !t.toolUnsupported[key] {
-			return false
-		}
-	}
-	return true
-}
-
 func (t *PerfTracker) PairwiseSummaries() []PairwiseSummary {
 	if t == nil || t.pairwise == nil {
 		return nil

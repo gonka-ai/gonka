@@ -12,13 +12,10 @@ import (
 
 	commonvalidation "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
-	"devshard/bridge"
 	"devshard/observability"
 )
 
@@ -37,15 +34,7 @@ func signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	signerAddress, err := sdk.AccAddressFromBech32(recorder.GetSignerAddress())
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: recorder.GetKeyring(),
-	}
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(recorder, components, calculations.Developer)
 }
 
 func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, executorAddress string) ([]string, error) {
@@ -75,18 +64,19 @@ func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, exe
 	return pubkeys, nil
 }
 
-func fetchPayloadsFromExecutor(
+func (v *Validator) fetchPayloadsFromExecutor(
 	ctx context.Context,
-	br bridge.MainnetBridge,
-	recorder PayloadAuthClient,
 	req devshardpkg.ValidateRequest,
 	inferenceID string,
 	epochID uint64,
 	requestPath string,
 ) ([]byte, []byte, error) {
-	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
+	executorInfo, err := v.bridge.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get executor info: %w", err)
+	}
+	if !v.CanValidateEpoch(epochID) {
+		return nil, nil, devshardpkg.ErrValidationEpochUnavailable
 	}
 	if executorInfo.URL == "" {
 		return nil, nil, fmt.Errorf("executor has no URL")
@@ -98,12 +88,15 @@ func fetchPayloadsFromExecutor(
 	}
 
 	timestamp := time.Now().UnixNano()
-	validatorAddress := recorder.GetAccountAddress()
-	signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
+	validatorAddress := v.recorder.GetAccountAddress()
+	signature, err := signPayloadRequest(v.recorder, inferenceID, timestamp, validatorAddress, epochID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
+	if !v.CanValidateEpoch(epochID) {
+		return nil, nil, devshardpkg.ErrValidationEpochUnavailable
+	}
 	payloadResp, err := commonvalidation.FetchPayloadsHTTP(
 		ctx, nil, requestURL, validatorAddress, timestamp, epochID, signature,
 	)
@@ -111,7 +104,7 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, err
 	}
 
-	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
+	encodedPubKeys, err := resolveExecutorPubKeys(ctx, v.recorder, req.ExecutorAddress)
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve executor pubkeys: %w", err)
 	}
@@ -141,6 +134,9 @@ func fetchPayloadsFromExecutor(
 }
 
 func classifyExecuteValidationErr(err error) error {
+	if errors.Is(err, devshardpkg.ErrValidationDeferred) || errors.Is(err, devshardpkg.ErrValidationEpochUnavailable) {
+		return err
+	}
 	if err == nil {
 		return nil
 	}

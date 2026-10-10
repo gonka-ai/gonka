@@ -7,6 +7,27 @@ import (
 	"sync"
 )
 
+const (
+	LimitedByConcurrentRequests = "max_concurrent_requests"
+	LimitedByInputTokens        = "max_input_tokens_in_flight"
+)
+
+// LimiterRejection carries what was already in flight and the cap it met, so a rejection says how
+// full the gateway was rather than only that it was full.
+type LimiterRejection struct {
+	Model    string
+	Kind     string
+	InFlight int64
+	Limit    int64
+}
+
+func (e *LimiterRejection) Error() string {
+	if e.Kind == LimitedByInputTokens {
+		return fmt.Sprintf("rate limit exceeded: too many input tokens in flight (%d/%d)", e.InFlight, e.Limit)
+	}
+	return fmt.Sprintf("rate limit exceeded: too many concurrent requests (%d/%d)", e.InFlight, e.Limit)
+}
+
 // GatewayLimiter caps gateway-wide in-flight requests and input tokens.
 //
 // Two cap pairs are tracked:
@@ -278,10 +299,20 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 	effectiveMaxInputTokens := scaleClampLimit(limits.maxInputTokens, capacity.ScaleFactor)
 	concurrentLimited := limits.maxConcurrent > 0 || dynamicConcurrencyEnabled(capacity)
 	if concurrentLimited && counter.inFlightRequests+1 > effectiveMaxConcurrent {
-		return fmt.Errorf("rate limit exceeded: too many concurrent requests")
+		return &LimiterRejection{
+			Model:    model,
+			Kind:     LimitedByConcurrentRequests,
+			InFlight: counter.inFlightRequests,
+			Limit:    effectiveMaxConcurrent,
+		}
 	}
 	if limits.maxInputTokens > 0 && counter.inFlightInputToks+inputTokens > effectiveMaxInputTokens {
-		return fmt.Errorf("rate limit exceeded: too many input tokens in flight")
+		return &LimiterRejection{
+			Model:    model,
+			Kind:     LimitedByInputTokens,
+			InFlight: counter.inFlightInputToks,
+			Limit:    effectiveMaxInputTokens,
+		}
 	}
 
 	counter.inFlightRequests++

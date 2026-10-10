@@ -11,19 +11,31 @@ Users point any OpenAI client at `localhost:8080` and make chat completion reque
 
 ## Configuration
 
-All settings can be passed as flags or environment variables. Flags take precedence over env vars.
+All settings can be passed as flags or environment variables. Flags take precedence over env vars. Join-stack deploy template:
+`deploy/join/config.devshard.env.template`.
+
+### Chain and phase endpoints
+
+| Env var | Default | Role |
+| ------ | ------ | ------ |
+| `DEVSHARD_CHAIN_GRPC` | `localhost:9090` | Chain gRPC URL for queries and unordered create/settle transactions |
+| `DEVSHARD_CHAIN_RPC` (Optional) | `http://localhost:26657` | CometBFT RPC URL used as a fallback when gRPC is unreachable |
+| `DEVSHARD_PUBLIC_API` (Optional) | `http://localhost:9000` | Public API URL for epoch/PoC phase and participants (cached). Set to `none` or `disabled` to query the chain directly |
+| `DEVSHARD_PARAMS_SOURCE` (Optional) | `adaptive` | Set to `chain` to poll runtime params from the blockchain; otherwise, queries the `api` container (NodeManager gRPC port `:9400`) with chain fallback |
+
+### Other settings
 
 | Flag | Env var | Required | Default | Description |
 | ------ | ------ | ------ | ------ | ------ |
 | `--private-key` | `DEVSHARD_PRIVATE_KEY` | yes | - | Hex-encoded secp256k1 private key |
 | `--escrow-id` | `DEVSHARD_ESCROW_ID` | yes | - | On-chain escrow ID |
-| `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL |
+| `--chain-grpc` | `DEVSHARD_CHAIN_GRPC` | no | `localhost:9090` | See above |
 | `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | Default model (used when request omits `model`) |
 | `--port` | `DEVSHARD_PORT` | no | `8080` | Listen port |
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
-| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs. Known values: `gonka-mainnet` (production), `gonka-testnet` (devnet/testnet), `gonka-test` (testenv mock-chain). |
+| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs (`gonka-mainnet`, `gonka-testnet`, `gonka-test`) |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
 | - | `DEVSHARD_TX_GAS_LIMIT` | no | `500000` | Fallback gas limit for admin-created escrow and settlement transactions |
@@ -34,7 +46,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_ENABLED` | no | `false` | Enable automatic epoch and depletion escrow rotation |
 | - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
-| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
+| - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env`, optional `settlement_enabled` (overrides `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` for that model) |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
 
 ## Quick start
@@ -43,7 +55,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 devshardctl \
   --private-key "deadbeef..." \
   --escrow-id 42 \
-  --chain-rest "http://localhost:1317"
+  --chain-grpc "localhost:9090"
 
 # In another terminal:
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -56,7 +68,7 @@ Or using environment variables:
 ```bash
 export DEVSHARD_PRIVATE_KEY="deadbeef..."
 export DEVSHARD_ESCROW_ID="42"
-export DEVSHARD_CHAIN_REST="http://localhost:1317"
+export DEVSHARD_CHAIN_GRPC="localhost:9090"
 
 devshardctl
 ```
@@ -172,6 +184,8 @@ controls per-model inference access with `access_mode`: `open`, `api_key`, or
 `admin_only`. If a model has no `access_mode` configured, it defaults to
 `admin_only`.
 
+A model listed in `model_limits` stays offered while none of its runtimes can take a request, for example after its escrows ran out of balance: pooled chat answers `503` with `Retry-After: 10` instead of `400 unsupported model`. Remove the model from `model_limits` to retire it.
+
 ```bash
 curl -X POST http://localhost:8080/v1/admin/settings \
   -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
@@ -218,8 +232,8 @@ continue to reflect effective gateway capacity.
 ### POST /v1/admin/escrows
 
 Admin endpoint. Creates a new on-chain devshard escrow by signing
-`MsgCreateDevshardEscrow` locally and broadcasting the signed transaction to
-`DEVSHARD_CHAIN_REST` via `/cosmos/tx/v1beta1/txs`. By default, the returned
+`MsgCreateDevshardEscrow` locally and broadcasting over chain gRPC, with
+CometBFT RPC fallback when gRPC is unreachable. By default, the returned
 escrow ID is also registered as an active local gateway runtime.
 
 ```bash
@@ -231,6 +245,8 @@ curl -X POST http://localhost:8080/v1/admin/escrows \
 
 Set `"register": false` to create the escrow on-chain without adding it to the
 local runtime pool.
+
+Before broadcasting, the gateway checks that the signer's spendable `ngonka` covers `amount` plus the fee (the fee counts only when it is paid in `ngonka`, after any `fee_denom`/`fee_amount` override) and answers `402` when it does not. Escrow rotation runs the same check before every create, and every settlement checks that the settler covers the fee before it finalizes the escrow: a single settle answers `402`, a batch settle reports `reason: "insufficient_funds"`, and the escrow stays deactivated with its settlement still owed. When the balance query itself fails, the check is skipped and the transaction is sent.
 
 ### GET /v1/admin/devshards/{id}/participants
 
@@ -257,7 +273,7 @@ automatic quarantine row; an empty list means legacy/global state.
 
 Admin endpoint. Locally deactivates the devshard, finalizes it if it is not
 already in settlement phase, signs `MsgSettleDevshardEscrow`, and broadcasts the
-signed transaction to `DEVSHARD_CHAIN_REST`.
+signed transaction over chain gRPC (CometBFT RPC fallback).
 
 ```bash
 curl -X POST http://localhost:8080/v1/admin/devshards/42/settle \
@@ -279,23 +295,27 @@ Automatic rotation uses two roles:
   PoC/epoch transition.
 
 When `escrow_rotation.enabled` is true, the gateway watches the chain phase
-snapshot from `DEVSHARD_PUBLIC_API` and also replaces escrows that approach the
-low-balance or high-nonce limits. When it is false, both epoch rotation and
-depletion replacement are disabled.
+snapshot (public API when configured, otherwise chain gRPC/RPC) and also
+replaces escrows that approach the low-balance or high-nonce limits. When it is
+false, both epoch rotation and depletion replacement are disabled.
 
 1. During inference phase, when the chain is within `pre_poc_blocks` of PoC,
    the gateway ensures `temp_count` temp escrows exist for the current epoch.
 2. It then locally deactivates active non-temp escrows, finalizes them, and
-   settles them on-chain through `DEVSHARD_CHAIN_REST`.
+   settles them on-chain through chain gRPC (CometBFT RPC fallback).
 3. After the next epoch leaves PoC, it ensures `target_count` regular escrows
    exist for the new epoch.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
    escrows.
 
+An escrow counts as high-nonce 200 nonces short of the nonce its hosts stop accepting work at (chain `max_nonce` minus `group size + 1`), read live from the runtime params snapshot. Until that snapshot arrives the gateway stops routing to an escrow at `19800` (the chain's default `max_nonce` of `20000` minus the same 200 margin, with no group reserve) but does not retire or replace it for its nonce, because such an escrow is healthy whenever the chain allows more nonces.
+
 Set `escrow_rotation.settlement_enabled` to `false` to keep automatic creation
 and local deactivation while skipping automatic finalization and on-chain
 settlement. Manual settlement through `POST /v1/admin/devshards/{id}/settle`
 remains available.
+
+A model entry's own `settlement_enabled` overrides the global flag for that model's escrows; when the model omits it, the global `settlement_enabled` (seeded from `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED`) applies. An update that sends `models` replaces the whole list, so a model sent without `settlement_enabled` falls back to the global flag.
 
 Rotation settings are persisted in `gateway.db`. After first boot, update them
 through `POST /v1/admin/settings`:
@@ -314,7 +334,8 @@ curl -X POST http://localhost:8080/v1/admin/settings \
         "temp_count": 8,
         "target_count": 16,
         "amount": 5000000000,
-        "private_key_env": "DEVSHARD_PRIVATE_KEY"
+        "private_key_env": "DEVSHARD_PRIVATE_KEY",
+        "settlement_enabled": true
       }]
     },
     "tx_gas_limit": 700000
@@ -381,6 +402,17 @@ The `api_key` is required by the SDK. It is ignored for models with
 `access_mode: "api_key"`. Models with `access_mode: "admin_only"` require
 `DEVSHARD_ADMIN_API_KEY`.
 
+### Standalone deployment
+
+Gateway beside a read-only full node (no edge-api / dapi):
+
+```bash
+export DEVSHARD_PUBLIC_API=none          # phase checks via chain
+export DEVSHARD_PARAMS_SOURCE=chain      # runtime params via chain
+export DEVSHARD_CHAIN_GRPC=node:9090
+# export DEVSHARD_CHAIN_RPC=http://node:26657   # optional; derived if omitted
+```
+
 ## Finalization and settlement
 
 After all inferences are done:
@@ -396,7 +428,7 @@ Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks f
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
 
-If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed.
+If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed, and the request starts no further attempt: no hedge, no escalation after a failed or silent attempt, and no retry after a phase transition, since another nonce would only buy an answer nobody reads.
 
 ## Speculative execution
 

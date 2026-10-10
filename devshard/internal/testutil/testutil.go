@@ -6,17 +6,22 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/signing"
 	"devshard/types"
 )
 
+// TestMaxTokens is the happy-path reservation used by fixtures: it sits at the executor's MinTokensFloor so payloads pass the floor guard (declared max_tokens >= floor).
+const TestMaxTokens = completionapi.MinTokensFloor
+
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
-// TestPrompt is exactly 100 bytes and includes max_tokens:50 so host workload
-// checks (input_length == len(prompt), body max_tokens <= declared) pass with
-// the StartTx defaults below.
-var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":50}`)
+// TestPrompt is exactly 100 bytes and includes max_tokens:64 (the MinTokensFloor)
+// so host workload checks (input_length == len(prompt), body max_tokens <= declared,
+// declared >= floor) pass with the StartTx defaults below.
+var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":64}`)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
 
 func mustCanonicalPromptHash(prompt []byte) [32]byte {
@@ -183,7 +188,7 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		PromptHash:  TestPromptHash[:],
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
 }

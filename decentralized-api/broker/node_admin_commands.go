@@ -2,6 +2,7 @@ package broker
 
 import (
 	"common/logging"
+	"context"
 	"decentralized-api/apiconfig"
 	"fmt"
 	"strings"
@@ -105,7 +106,7 @@ func (c RegisterNode) Execute(b *Broker) {
 
 	models := make(map[string]ModelArgs)
 	for model, config := range c.Node.Models {
-		models[model] = ModelArgs{Args: config.Args}
+		models[model] = modelArgsFromConfig(config)
 	}
 
 	node := Node{
@@ -165,9 +166,11 @@ func (c RegisterNode) Execute(b *Broker) {
 	if err := b.PopulateSingleNodeEpochData(c.Node.Id); err != nil {
 		logging.Warn("RegisterNode. Failed to populate epoch data", types.Nodes, "node_id", c.Node.Id, "error", err)
 	}
+	b.refreshDeploymentUpdatePendingFromApplied(c.Node.Id)
 
 	// Trigger a status check for the newly added node.
 	b.TriggerStatusQuery(true)
+	b.TriggerReconciliation()
 
 	logging.Info("RegisterNode. Registered node", types.Nodes, "node", c.Node)
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
@@ -242,8 +245,9 @@ func (c UpdateNode) Execute(b *Broker) {
 	// Build updated Node struct, preserving node number
 	models := make(map[string]ModelArgs)
 	for model, config := range c.Node.Models {
-		models[model] = ModelArgs{Args: config.Args}
+		models[model] = modelArgsFromConfig(config)
 	}
+	deploymentChanged, assignedModelRemoved := activeDeploymentChanged(existing.State.EpochMLNodes, existing.Node.Models, models)
 
 	updated := Node{
 		Host:             c.Node.Host,
@@ -260,12 +264,34 @@ func (c UpdateNode) Execute(b *Broker) {
 
 	// Apply update
 	existing.Node = updated
+	if deploymentChanged {
+		if shouldCancelForDeploymentChange(existing.State) {
+			existing.State.cancelInFlightTask()
+			existing.State.cancelInFlightTask = nil
+			existing.State.ReconcileInfo = nil
+		}
+		existing.State.DeploymentUpdatePending = true
+		existing.State.DeploymentRetryAfter = time.Time{}
+	}
 
 	// Optionally trigger a status re-check
 	b.TriggerStatusQuery(true)
+	if deploymentChanged {
+		b.TriggerReconciliation()
+	}
+	if assignedModelRemoved {
+		logging.Info("UpdateNode. Assigned model is no longer supported; waiting for chain assignment", types.Nodes,
+			"node_id", c.Node.Id)
+	}
 
 	logging.Info("UpdateNode. Updated node configuration", types.Nodes, "node_id", c.Node.Id)
 	c.Response <- NodeCommandResponse{Node: &c.Node, Error: nil}
+}
+
+func shouldCancelForDeploymentChange(state NodeState) bool {
+	return state.cancelInFlightTask != nil &&
+		state.ReconcileInfo != nil &&
+		state.ReconcileInfo.Status == types.HardwareNodeStatus_INFERENCE
 }
 
 type RemoveNode struct {
@@ -289,6 +315,12 @@ func (command RemoveNode) Execute(b *Broker) {
 		return
 	}
 	delete(b.nodes, command.NodeId)
+	if b.configManager != nil {
+		if err := b.configManager.DeleteAppliedDeploymentsForNode(context.Background(), command.NodeId); err != nil {
+			logging.Warn("Failed to delete applied deployments for removed node", types.Config,
+				"node_id", command.NodeId, "error", err)
+		}
+	}
 	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)
 	command.Response <- true
 }

@@ -9,11 +9,13 @@ Namespaces:
 - `[Moonshot-N]` Moonshot (includes Kimi model line)
 - `[Qwen-N]` Qwen
 - `[MiniMax-N]` MiniMax AI (MiniMax-M2 line)
+- `[DeepSeek-N]` DeepSeek (DeepSeek-V4 line)
+- `[Zai-N]` Z.ai (GLM model line)
 - `[SGLang-N]` SGLang (cross-engine parser bug references)
 - `[OpenRouter-N]` OpenRouter
 - `[CVE-N]` security advisories
 
-Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id. Chain governance changes (model registration, ModelArgs pins) are cited inline by PR number under the appropriate per-model doc, not in this file.
+Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id. Chain governance changes (model registration, ModelArgs pins) are cited inline by PR number under the appropriate per-model doc, not in this file; a model that no pull request registers cites the chain's `models_all` query instead.
 
 ## OpenAI
 
@@ -23,6 +25,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[OpenAI-4]** [Reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) — `reasoning_effort` concept and wire enum values.
 - **[OpenAI-5]** [openai-python README — undocumented request params](https://github.com/openai/openai-python/blob/main/README.md#undocumented-request-params) — SDK convention for `extra_body`/`extra_headers`/`extra_query`; clarifies client-side flatten semantics.
 - **[OpenAI-6]** [Safety identifier help-center article](https://help.openai.com/en/articles/5428082-how-to-incorporate-a-safety-identifier) — `safety_identifier` field guidance; recommends short hashed identifiers for end-user attribution.
+- **[OpenAI-7]** [openai-python `tool_choice` parameter docstring](https://github.com/openai/openai-python/blob/f348ec87b934c98889102668913e0a3ae7fc303d/src/openai/types/chat/completion_create_params.py#L326-L337) — "`none` is the default when no tools are present. `auto` is the default if tools are present."
 
 ## Anthropic
 
@@ -59,6 +62,26 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-26]** [PR #35895 — minimax_m2 tool parser fix for stream_interval > 1](https://github.com/vllm-project/vllm/pull/35895) — covers one streaming malformation class.
 - **[vLLM-27]** [Issue #36632 — MiniMax-M2.5 reasoning missing in chat completions stream](https://github.com/vllm-project/vllm/issues/36632) — `--reasoning-parser minimax_m2_append_think` skips reasoning content in SSE deltas.
 - **[vLLM-28]** [Issue #28963 — MiniMax tool parsing errors](https://github.com/vllm-project/vllm/issues/28963) — error in `_convert_param_value`.
+- **[vLLM-29]** [logits_processor/__init__.py source](https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/v1/sample/logits_processor/__init__.py#L202) — when `speculative_config` is set, vLLM returns only `MinTokensLogitsProcessor` and discards every other built-in processor, `ThinkingTokenBudgetLogitsProcessor` included. The warning names only `min_p` and `logit_bias`, so the loss is silent.
+- **[vLLM-30]** [Issue #39573 — thinking budget not enforced with MTP](https://github.com/vllm-project/vllm/issues/39573) — "Without MTP → thinking budget enforced. With MTP → thinking budget NOT enforced." Confirms vLLM-29 end to end.
+- **[vLLM-31]** [Issue #36969 — Kimi-K2.5 emits a stray `</think>` when `enable_thinking` is false](https://github.com/vllm-project/vllm/issues/36969) — top-level `enable_thinking` leaks the tag into `content`; the maintainer's working answer is `chat_template_kwargs: {"thinking": false}`.
+- **[vLLM-32]** [chat_completion/protocol.py source](https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/entrypoints/openai/chat_completion/protocol.py#L183) — `thinking_token_budget` is a declared top-level request field, forwarded to `SamplingParams`; it belongs at the top level, not inside `chat_template_kwargs`.
+- **[vLLM-33]** [tokenizers/deepseek_v4.py source](https://github.com/vllm-project/vllm/blob/main/vllm/tokenizers/deepseek_v4.py) — the bundled DeepSeek-V4 chat renderer. `apply_chat_template` reads `thinking`/`enable_thinking`/`reasoning_effort`/`drop_thinking` from `**kwargs` and collapses the seven-value wire enum onto three rendered levels (`none`→thinking off, `low|minimal|medium`→`low`, `max`→`max`, anything else→`high`).
+- **[vLLM-34]** [parser/deepseek_v4.py source](https://github.com/vllm-project/vllm/blob/main/vllm/parser/deepseek_v4.py) — DeepSeek-V4 reasoning/tool parser; thinking defaults on when neither `thinking` nor `enable_thinking` is present, and is forced off by `reasoning_effort == "none"`.
+- **[vLLM-35]** [PR #43401 — map reasoning_effort to enable_thinking](https://github.com/vllm-project/vllm/pull/43401) — milestone v0.22.0; establishes the engine version floor for `reasoning_effort` having any effect.
+- **[vLLM-36]** [Reasoning outputs feature docs](https://docs.vllm.ai/en/latest/features/reasoning_outputs/) — `--reasoning-parser` values, the `reasoning` response field and its deprecated `reasoning_content` alias, and the `reasoning_effort` → thinking activation rule.
+- **[vLLM-37]** [parser/abstract_parser.py source](https://github.com/vllm-project/vllm/blob/main/vllm/parser/abstract_parser.py) — `include_reasoning=false` nulls `delta_message.reasoning` and drops the delta entirely when it carried no content and no tool calls; the same suppression is duplicated in `parser/engine/parser_engine.py`. Generation is untouched, so the tokens still land in `usage.completion_tokens`.
+- **[vLLM-38]** [chat_completion/serving.py source](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/chat_completion/serving.py) — `if not request.include_reasoning: reasoning_ended = True`, which makes structured-output grammar engage from the first token instead of after the reasoning block closes.
+- **[vLLM-39]** [tokenizers/deepseek_v4_encoding.py source](https://github.com/vllm-project/vllm/blob/main/vllm/tokenizers/deepseek_v4_encoding.py) — `REASONING_EFFORT_PROMPTS` maps the three rendered levels to literal prompt prefixes (`low` → `""`, `high` and `max` → multi-paragraph instruction blocks), `DEFAULT_REASONING_EFFORT = "low"`, and `render_message` appends the prefix only when `index == 0` and `thinking_mode == "thinking"`.
+- **[vLLM-40]** [Issue #54744 — GLM-5.3 reasoning leaks into content when clients pass enable_thinking/thinking=false](https://github.com/vllm-project/vllm/issues/54744) — the parser gates reasoning extraction on kwargs the GLM-5.3 template never reads, so a false value leaves the scratchpad and a dangling `</think>` in `content`. Open; the maintainer's working answer is to not send `enable_thinking`.
+- **[vLLM-41]** [parser/glm47_moe.py source at v0.25.1](https://github.com/vllm-project/vllm/blob/v0.25.1/vllm/parser/glm47_moe.py#L178-L195) — `thinking_enabled` is on when neither `thinking` nor `enable_thinking` is present in `chat_template_kwargs`, otherwise `bool(thinking) or bool(enable_thinking)`; `--reasoning-parser glm45` resolves to this parser through `make_adapters(Glm47MoeParser)`.
+- **[vLLM-42]** [entrypoints/chat_utils.py source at v0.25.1](https://github.com/vllm-project/vllm/blob/v0.25.1/vllm/entrypoints/chat_utils.py#L1750-L1817) — the per-message parser copies an assistant message's `reasoning` into both `reasoning` and `reasoning_content` for the chat template, and passes a `developer` message on with its role unchanged, attaching only `tools`.
+- **[vLLM-43]** [GLM-5.3-Flash recipe](https://github.com/vllm-project/recipes/blob/main/models/zai-org/GLM-5.3-Flash.yaml) — `min_vllm_version: 0.29.0` with `nightly_required: true` and a dedicated `vllm/vllm-openai:glm53-flash` image; `--tool-call-parser glm47 --enable-auto-tool-choice` and `--reasoning-parser glm45`; 1M-token context; native FP8 weights.
+- **[vLLM-44]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/parser/glm47_moe.py#L185-L191) — the same `thinking`/`enable_thinking` gate as [vLLM-41].
+- **[vLLM-45]** [parser/glm47_moe.py in the gonka-ai fork, release/v0.28.0-glm53](https://github.com/gonka-ai/vllm/blob/release/v0.28.0-glm53/vllm/parser/glm47_moe.py#L185-L191) — the same gate on the fork's GLM-5.3 branch.
+- **[vLLM-46]** [chat_completion/protocol.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/entrypoints/openai/chat_completion/protocol.py#L830-L859) — `check_tool_usage` rejects `tools: []`, lets `tool_choice: "none"` through, and rejects any other `tool_choice` sent without `tools` with a 400 reading "When using tool_choice, tools must be set."; `parallel_tool_calls` (L244) is a plain field defaulting to `true` that nothing checks against `tools`.
+- **[vLLM-47]** [tool_parsers/utils.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/tool_parsers/utils.py#L380-L420) — `get_json_schema_from_tools` returns a schema to enforce only for a named `tool_choice` or `"required"`; `"auto"` and `"none"` return nothing.
+- **[vLLM-48]** [tool_parsers/abstract_tool_parser.py in the gonka-ai fork, release/v0.25.1](https://github.com/gonka-ai/vllm/blob/release/v0.25.1/vllm/tool_parsers/abstract_tool_parser.py#L137-L148) — only a schema returned by `get_json_schema_from_tools` becomes `structured_outputs.json`, the grammar the engine enforces.
 
 ## Moonshot
 
@@ -66,6 +89,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[Moonshot-2]** [Kimi K2.6 quickstart](https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart) — K2.6-specific capabilities including multimodal content parts.
 - **[Moonshot-3]** [Kimi-K2-Thinking tool_call_guidance.md](https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/docs/tool_call_guidance.md) — official guidance on client-side tool-call ID rewrite to canonical `functions.<name>:<global_idx>` form.
 - **[Moonshot-4]** [OpenAI → Kimi API migration guide](https://kimi-ai.chat/guide/openai-to-kimi-api/) — Moonshot's own migration guide; shows `extra_body={"thinking":{"type":"disabled"}}` example that is misinterpreted as a wire field.
+- **[Moonshot-6]** [Kimi-K2.6 chat_template.jinja](https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/chat_template.jinja) — the template reads a boolean `thinking` variable: `{%- if thinking is defined and thinking is false -%}<think></think>`. It never reads `thinking_token_budget` or `enable_thinking`.
 
 ## Qwen
 
@@ -80,6 +104,17 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[MiniMax-3]** [MiniMax-M2.7 vLLM deployment guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/vllm_deploy_guide.md) — exact CLI invocations, GPU sizing (220 GB weights + 240 GB/1M tokens), 196K max context per sequence, parser flags.
 - **[MiniMax-4]** [MiniMax-M2.7 tool calling guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/tool_calling_guide.md) — `<minimax:tool_call><invoke><parameter>` output format; `role:"tool"` with `content:[{name,type,text}]` array (no `tool_call_id`).
 - **[MiniMax-5]** [MiniMax M2 Tool Use & Interleaved Thinking docs](https://platform.minimax.io/docs/guides/text-m2-function-call) — `extra_body.reasoning_split`, `reasoning_details[]` response field, multi-turn history rules.
+
+## DeepSeek
+
+- **[DeepSeek-1]** [DeepSeek-V4-Flash-0731 model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) — states the three supported `reasoning_effort` levels (`low`, `high`, `max`) and the recommended vLLM/SGLang serving invocations, both of which require `--trust-remote-code` and neither of which passes a `--reasoning-parser` flag.
+- **[DeepSeek-2]** [Model discussion #39 — reasoning loops](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731/discussions/39) — community thread, no vendor reply. Reports reasoning loops in long tool-calling sessions traced to accumulating empty `<think></think>` blocks, a ~60-turn degradation threshold, and `{"thinking": true, "reasoning_effort": "max"}` as the reported remedy. Cited as the origin of the request, not as evidence.
+
+## Z.ai
+
+- **[Zai-1]** [GLM-5.3-Flash chat_template.jinja at the chain-pinned commit](https://huggingface.co/zai-org/GLM-5.3-Flash/blob/04c4e9e95c5da8862dced7e5056455116f83a7e0/chat_template.jinja) — the only thinking knobs are `reasoning_effort` (`low`/`high`, anything else renders `max`) and `clear_thinking`; the generation prompt always opens `<think>`, and `enable_thinking` appears nowhere.
+- **[Zai-2]** [GLM-5.2-FP8 chat_template.jinja at the chain-pinned commit](https://huggingface.co/zai-org/GLM-5.2-FP8/blob/70311cfa0158cce7dd2cf5d2e04f68e3fdc3efc1/chat_template.jinja) — reads `enable_thinking` and renders an empty `<think></think>` when it is false.
+- **[Zai-3]** [GLM-5.3-Flash model card at the chain-pinned commit](https://huggingface.co/zai-org/GLM-5.3-Flash/blob/04c4e9e95c5da8862dced7e5056455116f83a7e0/README.md) — 320B total / 18B active parameters; `reasoning_effort` accepts `low`, `high` and `max` and defaults to `max` when omitted or set to anything else; `clear_thinking` defaults to `false` and should be passed as `true` for chat scenarios.
 
 ## SGLang
 
@@ -105,10 +140,11 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[CVE-6]** [CVE-2025-62426 (NVD)](https://nvd.nist.gov/vuln/detail/CVE-2025-62426) — `tokenize=True` stalls the request handler; `tokenize` added to the same forbidden-key denylist.
 - **[CVE-7]** [CVE-2025-9141 / GHSA-79j6-g2m3-jgfw (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-79j6-g2m3-jgfw) — RCE via `eval()` in `qwen3_coder` tool-call parser; keep `hermes` parser on Qwen3-235B.
 - **[CVE-8]** [CVE-2026-25048 / GHSA-7rgv-gqhr-fxg3 (xgrammar)](https://github.com/mlc-ai/xgrammar/security/advisories/GHSA-7rgv-gqhr-fxg3) — `grammar` field: drives ≤8 KiB + bracket-nesting depth ≤200 cap in `structured_outputs` validator.
-- **[CVE-9]** [CVE-2026-34756 / GHSA-3mwp-wvh9-7528 (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-3mwp-wvh9-7528) — unbounded `n` causes OOM; `CapUintParameterHandler` clamps `n ≤ 5`.
+- **[CVE-9]** [CVE-2026-34756 / GHSA-3mwp-wvh9-7528 (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-3mwp-wvh9-7528) — unbounded `n` causes OOM; `ForceLiteralParameter` rewrites any present `n` to `1`.
 - **[CVE-10]** [CVE-2026-44222 / GHSA-hpv8-x276-m59f (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f) — special-token literals crash VL models; requires content sanitizer for Kimi-K2.6 multimodal path.
 - **[CVE-11]** [CVE-2026-44223 / GHSA-83vm-p52w-f9pw (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw) — penalty fields crash EngineCore with `extract_hidden_states` spec decode; pin vLLM ≥ 0.20.0.
 - **[CVE-12]** [CVE-2026-27893 / RAXE-2026-044 (vLLM)](https://raxe.ai/labs/advisories/RAXE-2026-044) — vLLM hardcoded trust_remote_code bypass enables RCE via malicious model repositories; direct mitigation for the MiniMax-M2.7 route is the chain-pinned `HfCommit` SHA in the governance model config.
 - **[CVE-13]** [CVE-2026-22778 (vLLM)](https://www.ox.security/blog/cve-2026-22778-vllm-rce-vulnerability/) — RCE via crafted video link in multimodal content; gateway mitigates by rejecting non-text content parts on all text-only routes (M2.7 included).
 - **[CVE-14]** [CVE-2025-62164 / GHSA-mrw7-hf4f-83pf (vLLM)](https://github.com/advisories/GHSA-mrw7-hf4f-83pf) — tensor deserialization → DoS / potential RCE; pin vLLM ≥ patched release.
+- **[CVE-15]** [CVE-2026-48746 (vLLM)](https://advisories.gitlab.com/pypi/vllm/CVE-2026-48746/) — CVSS 9.1 authentication bypass of the OpenAI-API `AuthenticationMiddleware`: the middleware rebuilt the request path with `URL(scope=scope).path`, which trusts the unsanitized `Host` header, so a crafted header makes the reconstructed path miss the `/v1` prefix check and skip auth entirely. Affects 0.3.0 through 0.21.0, fixed in 0.22.0. An RFC-conforming reverse proxy (nginx) normalizes `Host` and blocks it, so exposure depends on the host's own topology, not ours.
 

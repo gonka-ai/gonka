@@ -8,7 +8,7 @@ DEV_OVERLAY  := -f docker-compose.yml -f docker-compose.dev.yml
 help: ## Show this help.
 	@awk 'BEGIN{FS=":.*##"; printf "Usage:\n"} /^[a-zA-Z0-9_.%-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring
+.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring loadtest
 gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from config.yaml.
 	go run ./cmd/gencompose -config config/config.yaml
 
@@ -23,6 +23,15 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	cd .. && go build -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
+
+ifeq ($(strip $(SCENARIO)),)
+loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
+	@false
+else
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+endif
 
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
@@ -66,7 +75,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -80,7 +89,7 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
-citest-images: ## Pull hub images and build all compose images required for citest.
+citest-images: gen-compose ## Pull hub images and build all compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
@@ -94,11 +103,17 @@ citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference 
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestEscrowLongPollWarm' -count=1 -v -timeout 30m
 
+citest-escrow-funding-fallback: citest-images ## Escrow funding fallback: an oversized request moves to another escrow; 503 only once every escrow refuses.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestGateway(MovesOversizedRequest|ReturnsRetryable503)' -count=1 -v -timeout 30m
+
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
+
+citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
 
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m

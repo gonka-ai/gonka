@@ -86,3 +86,24 @@ func TestSubmitSeed(t *testing.T) {
 		})
 	}
 }
+
+func TestSubmitSeedDuplicateIsStateIdempotent(t *testing.T) {
+	k, ms, ctx, _ := setupKeeperWithMocks(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 10))
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{Index: testutil.Executor}))
+
+	msg := &types.MsgSubmitSeed{
+		Creator:    testutil.Executor,
+		EpochIndex: 11,
+		Signature:  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+	}
+
+	_, err := ms.SubmitSeed(ctx, msg)
+	require.NoError(t, err)
+	_, err = ms.SubmitSeed(ctx, msg)
+	require.NoError(t, err)
+
+	stored, found := k.GetRandomSeed(ctx, msg.EpochIndex, msg.Creator)
+	require.True(t, found)
+	require.Equal(t, msg.Signature, stored.Signature)
+}

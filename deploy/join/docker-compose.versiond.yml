@@ -11,7 +11,7 @@
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: ghcr.io/product-science/versiond:0.2.14-devshard-v4
+  image: ghcr.io/product-science/versiond:0.2.15
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
@@ -76,7 +76,7 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.14-devshard-v4
+    image: ghcr.io/product-science/versiond-router:0.2.15
     environment:
       - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
       - VERSIOND_PORT=8080

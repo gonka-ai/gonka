@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -24,6 +26,15 @@ networks:
       config:
         - subnet: {{ .Network.Subnet }}
 
+volumes:
+  versiond-router-state:
+
+x-loadtest-logging: &loadtest-logging
+  driver: json-file
+  options:
+    max-size: "32m"
+    max-file: "3"
+
 services:
 
   mock-chain:
@@ -31,6 +42,7 @@ services:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mock-chain
     image: devshard-mock-chain:latest
+    logging: *loadtest-logging
     environment:
       CONFIG_PATH: "/app/config.yaml"
       MOCK_CHAIN_GRPC_ADDR: ":{{ .MockChain.GRPCPort }}"
@@ -58,6 +70,7 @@ services:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockdapi
     image: devshard-mock-dapi:latest
+    logging: *loadtest-logging
     environment:
       MOCK_DAPI_GRPC_ADDR: ":{{ .MockDapi.GRPCPort }}"
       MOCK_DAPI_HTTP_ADDR: ":{{ .MockDapi.HTTPPort }}"
@@ -65,6 +78,7 @@ services:
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
     volumes:
@@ -77,26 +91,68 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mockMLNodes . }}
+      - {{ .Name }}
+{{ end }}
     restart: unless-stopped
 
-  mock-openai:
+{{ range mockMLNodes . }}
+  {{ .Name }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
+    logging: *loadtest-logging
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_TTFT: "{{ .TTFT }}"
+      MOCK_OPENAI_TOKEN_INTERVAL: "{{ .TokenInterval }}"
+      MOCK_OPENAI_WORKERS: "{{ .Workers }}"
+      MOCK_OPENAI_QUEUE: "{{ .Queue }}"
+      MOCK_OPENAI_HANG: "{{ .Hang }}"
+      MOCK_OPENAI_FAILURE_RATE: "{{ .FailureRate }}"
+      MOCK_OPENAI_HTTP_STATUS: "{{ .HTTPStatus }}"
+{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ end }}
+{{ if eq (len (mockMLNodes $)) 1 }}
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ $.MockOpenAI.HTTPPort }}:{{ $.MockOpenAI.HTTPPort }}"
+{{ end }}
+{{ if $.MockOpenAI.ReplayFile }}    volumes:
+      - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro
+{{ end }}
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+{{ if eq (len (mockMLNodes $)) 1 }}
+        ipv4_address: {{ $.Network.BaseIP }}.4
+{{ end }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
+{{ if .Postgres.PerParticipant }}
+{{ range participantHosts . }}
+
+  devshard-postgres-{{ .ID }}:
+    image: postgres:16-alpine
+    logging: *loadtest-logging
+    environment:
+      POSTGRES_DB: {{ $.Postgres.Database }}
+      POSTGRES_USER: {{ $.Postgres.User }}
+      POSTGRES_PASSWORD: {{ $.Postgres.Password }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ $.Postgres.User }} -d {{ $.Postgres.Database }}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      testenv: {}
+    restart: unless-stopped
+{{ end }}
+{{ else }}
 
   devshard-postgres:
     image: postgres:16-alpine
+    logging: *loadtest-logging
     environment:
       POSTGRES_DB: {{ .Postgres.Database }}
       POSTGRES_USER: {{ .Postgres.User }}
@@ -111,6 +167,7 @@ services:
         ipv4_address: {{ .Postgres.IP }}
     restart: unless-stopped
 {{ end }}
+{{ end }}
 {{ range .Hosts }}
 
   {{ .ID }}:
@@ -118,9 +175,11 @@ services:
       context: ../../versioned
       dockerfile: Dockerfile
     image: devshard-versiond:latest
+    logging: *loadtest-logging
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
+      VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
@@ -137,11 +196,29 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
-      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
+      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
+      DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
+      DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
+      DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      # Peers/executors here are compose service names resolving to private IPs,
+      # so the dial-time SSRF guard must be off. Production leaves this unset.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
-{{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # GONKA_HA is intentionally omitted from versiond in this fixture. The
+      # SQLite-to-HA scenario first boots children before enabling HA at the
+      # router, where Devshard-Ha exercises the request-time storage guard.
+{{ if and (eq $.Versiond.Mode "multi") $.Postgres.PerParticipant }}
+      # Load-test topology: replicas share their participant's database.
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: {{ participantPostgresHost $ . }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
+{{ else if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -160,15 +237,26 @@ services:
     networks:
       testenv:
         ipv4_address: {{ .IP }}
+{{- if inVersiondPool $ . }}
+        # One DNS name, one A record per running instance: this is the pool the
+        # router resolves. Solo hosts stay out and are reached directly.
+        aliases:
+          - versiond-pool
+{{- end }}
     depends_on:
 {{ if $.Postgres.Enabled }}
       mock-chain:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mockMLNodes $ }}
+      {{ .Name }}:
         condition: service_started
-{{ if isHAReplica $ . }}
+{{ end }}
+{{ if $.Postgres.PerParticipant }}
+      {{ participantPostgresHost $ . }}:
+        condition: service_healthy
+{{ else if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
 {{ end }}
@@ -179,8 +267,11 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mockMLNodes $ }}
+      - {{ .Name }}
 {{ end }}
+{{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
@@ -189,15 +280,34 @@ services:
       context: ../../versiond-router
       dockerfile: Dockerfile
     image: devshard-versiond-router:latest
+    logging: *loadtest-logging
     environment:
+      # nginx renders one upstream server per name and exits when this is empty.
+      # VERSIOND_POOL_HOST is the same membership as a DNS alias; this image
+      # does not discover the pool that way.
       VERSIOND_HOSTS: "{{ versiondHosts . }}"
+      VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
-      # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
-      # future versions sticky-hash across VERSIOND_HOSTS (Devshard-Ha header).
+      # Pin only versions that actually have a child. A fictional v1 makes
+      # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
+      # Tests that need a SQLite pin set this to VersionName (see
+      # TestLegacyVersionPinnedToSingleHost).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
-      VERSIOND_NON_HA_VERSIONS: "v1"
+      VERSIOND_NON_HA_VERSIONS: ""
+      # Keep the current test version out of the static bootstrap floor: this
+      # stack is the end-to-end proof that governance can admit a dynamic slot.
+      VERSIOND_VERSIONS: ""
+      VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
+      VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
+      # Only the router is told this deployment is HA. The versiond containers
+      # are not, so scenarios that deliberately run the pool on sqlite still
+      # boot and fail at request time on the storage guard instead.
+      GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -205,6 +315,10 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    # Compose starts the replacement only after this container exits. Bound the
+    # soft stop so one long stream cannot leave the test stack without a router.
+    stop_signal: SIGUSR1
+    stop_grace_period: 10s
     restart: unless-stopped
 
   devshardctl:
@@ -215,19 +329,33 @@ services:
       args:
         DEVSHARD_VERSION: "{{ .Versiond.VersionName }}"
     image: devshard-runtime:latest
+    logging: *loadtest-logging
     entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
+      DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
+      NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
+{{ if .MockOpenAI.ReplayFile }}      DEVSHARDS_JSON: {{ runtimeConfigsJSON . }}
+{{ else }}
       DEVSHARD_ESCROW_ID: "{{ primaryEscrowID . }}"
       DEVSHARD_MODEL: "{{ primaryModelID . }}"
+{{ end }}
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      # Hosts are compose service names resolving to private IPs; see versiond.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       GATEWAY_MAX_TOKENS_CAP: "4096"
+      # Host ping (gateway → used hosts). On by default; observability only.
+      DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
+      DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
+      DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
+      DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
@@ -253,13 +381,21 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":   versionEnvSuffix,
-		"versiondHosts":      versiondHosts,
-		"versiondKeyName":    versiondKeyName,
-		"isHAReplica":        isHAReplica,
-		"legacyVersiondHost": legacyVersiondHost,
-		"primaryEscrowID":    primaryEscrowID,
-		"primaryModelID":     primaryModelID,
+		"versionEnvSuffix":          versionEnvSuffix,
+		"versiondHosts":             versiondHosts,
+		"inVersiondPool":            inVersiondPool,
+		"haDeployment":              haDeployment,
+		"routingActivationMinReady": routingActivationMinReady,
+		"versiondKeyName":           versiondKeyName,
+		"isHAReplica":               isHAReplica,
+		"participantHosts":          participantHosts,
+		"participantPostgresHost":   participantPostgresHost,
+		"legacyVersiondHost":        legacyVersiondHost,
+		"primaryEscrowID":           primaryEscrowID,
+		"primaryModelID":            primaryModelID,
+		"runtimeConfigsJSON":        runtimeConfigsJSON,
+		"mockMLNodes":               mockMLNodes,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -279,6 +415,25 @@ func writeCompose(cfg *config.File, outPath string) error {
 	return nil
 }
 
+func mockMLNodes(cfg *config.File) []config.MockOpenAINodeCfg {
+	if cfg != nil && len(cfg.MockOpenAI.Nodes) > 0 {
+		return cfg.MockOpenAI.Nodes
+	}
+	return []config.MockOpenAINodeCfg{{Name: "mock-openai"}}
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	nodes := mockMLNodes(cfg)
+	entries := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
+}
+
 func writeEnvFile(cfg *config.File, outPath string) error {
 	var b strings.Builder
 	b.WriteString("# Auto-generated by gencompose — do not edit manually.\n")
@@ -295,54 +450,74 @@ func versionEnvSuffix(versionName string) string {
 	return strings.ReplaceAll(versionName, ".", "_")
 }
 
-func versiondHosts(cfg *config.File) string {
-	if cfg == nil {
-		return ""
-	}
-	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
-	// are reached via direct InferenceURL, not VERSIOND_HOSTS.
-	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
-		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
-	}
-	names := make([]string, len(cfg.Hosts))
-	for i, h := range cfg.Hosts {
-		names[i] = h.ID
-	}
-	return strings.Join(names, " ")
-}
-
-// versiondKeyName is the Cosmos keyring entry each versiond child loads.
-// Multi/HA: hosts[0] and hosts[1] share hosts[0]'s key (join-style). Solo
-// hosts (index ≥ 2) keep their own key. Single mode is per-host.
-func versiondKeyName(cfg *config.File, h config.HostCfg) string {
-	if cfg != nil && cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) > 0 {
-		for i, host := range cfg.Hosts {
-			if host.ID != h.ID {
-				continue
-			}
-			if i <= 1 {
-				return cfg.Hosts[0].ID
-			}
-			return h.ID
-		}
-	}
-	if h.ID != "" {
-		return h.ID
+// haDeployment is "true" when the sticky pool has more than one member, which
+// is exactly when a devshardd child can have a sibling serving the same escrow.
+func haDeployment(cfg *config.File) string {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return "true"
 	}
 	return ""
 }
 
-// isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).
+// routingActivationMinReady keeps catalog admission possible in single mode
+// while requiring both members of the sticky HA pair in multi mode.
+func routingActivationMinReady(cfg *config.File) int {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return 2
+	}
+	return 1
+}
+
+// inVersiondPool reports whether the router should route sticky traffic to this
+// host. It is the membership rule behind the versiond-pool DNS alias, and must
+// stay in step with versiondHosts.
+func inVersiondPool(cfg *config.File, h config.HostCfg) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, name := range strings.Fields(versiondHosts(cfg)) {
+		if name == h.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func versiondHosts(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	// Sticky HA pool is the replicas of one KEY_NAME. Solo participants are
+	// reached via direct InferenceURL, not through the router pool.
+	return strings.Join(config.RouterPoolHostIDs(cfg), " ")
+}
+
+// versiondKeyName is the Cosmos keyring entry each versiond child loads.
+func versiondKeyName(cfg *config.File, h config.HostCfg) string {
+	return config.VersiondKeyName(cfg, h)
+}
+
+// isHAReplica reports whether h shares its KEY_NAME with another container,
+// i.e. it is one replica of a replicated identity.
 func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 	if cfg == nil || cfg.Versiond.Mode != config.VersiondModeMulti {
 		return false
 	}
-	for i, host := range cfg.Hosts {
-		if host.ID == h.ID {
-			return i <= 1
+	return config.KeyNameReplicaCount(cfg, h) > 1
+}
+
+func participantHosts(cfg *config.File) []config.HostCfg {
+	return config.OnChainIdentityHosts(cfg)
+}
+
+func participantPostgresHost(cfg *config.File, h config.HostCfg) string {
+	keyName := config.VersiondKeyName(cfg, h)
+	for _, participant := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, participant) == keyName {
+			return "devshard-postgres-" + participant.ID
 		}
 	}
-	return false
+	return "devshard-postgres-" + h.ID
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.
@@ -359,4 +534,33 @@ func primaryEscrowID(cfg *config.File) string {
 
 func primaryModelID(cfg *config.File) string {
 	return config.PrimaryModelID(cfg)
+}
+
+// runtimeConfigsJSON is used only by replay stacks. A replay dataset may
+// contain several model IDs, so the Gateway needs one runtime per generated
+// escrow instead of the single legacy DEVSHARD_ESCROW_ID path.
+func runtimeConfigsJSON(cfg *config.File) string {
+	type runtimeConfig struct {
+		ID          string `json:"id"`
+		PrivateKey  string `json:"private_key,omitempty"`
+		Model       string `json:"model,omitempty"`
+		StoragePath string `json:"storage_path,omitempty"`
+	}
+	configs := make([]runtimeConfig, 0, len(cfg.Escrows))
+	for _, escrow := range cfg.Escrows {
+		if escrow.ID == 0 || strings.TrimSpace(escrow.ModelID) == "" {
+			continue
+		}
+		configs = append(configs, runtimeConfig{
+			ID:          fmt.Sprintf("%d", escrow.ID),
+			PrivateKey:  cfg.User.PrivateKeyHex,
+			Model:       escrow.ModelID,
+			StoragePath: "/var/lib/devshardctl/escrow-" + fmt.Sprintf("%d", escrow.ID),
+		})
+	}
+	data, err := json.Marshal(configs)
+	if err != nil {
+		return strconv.Quote("[]")
+	}
+	return strconv.Quote(string(data))
 }

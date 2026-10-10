@@ -21,14 +21,20 @@ type stubMainnetBridge struct {
 	delay     time.Duration
 }
 
-func (s *stubMainnetBridge) OnEscrowCreated(bridge.EscrowInfo) error          { return bridge.ErrNotImplemented }
-func (s *stubMainnetBridge) OnSettlementProposed(string, []byte, uint64) error { return bridge.ErrNotImplemented }
-func (s *stubMainnetBridge) OnSettlementFinalized(string) error              { return bridge.ErrNotImplemented }
-func (s *stubMainnetBridge) GetHostInfo(string) (*bridge.HostInfo, error)      { return nil, bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) OnEscrowCreated(bridge.EscrowInfo) error { return bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) OnSettlementProposed(string, []byte, uint64) error {
+	return bridge.ErrNotImplemented
+}
+func (s *stubMainnetBridge) OnSettlementFinalized(string) error { return bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) GetHostInfo(string) (*bridge.HostInfo, error) {
+	return nil, bridge.ErrNotImplemented
+}
 func (s *stubMainnetBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
 	return nil, bridge.ErrNotImplemented
 }
-func (s *stubMainnetBridge) VerifyWarmKey(string, string) (bool, error) { return false, bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) VerifyWarmKey(string, string) (bool, error) {
+	return false, bridge.ErrNotImplemented
+}
 func (s *stubMainnetBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
 	return bridge.ErrNotImplemented
 }

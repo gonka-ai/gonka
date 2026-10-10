@@ -96,6 +96,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	const escrowID = "escrow-metrics-prune"
 
 	SetValidationQueueDepth(escrowID, 3)
+	SetValidationOwed(escrowID, 4)
 	SetMempoolSize(escrowID, 7)
 
 	DeleteEscrowMetrics(escrowID)
@@ -106,7 +107,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	}
 	for _, family := range mf {
 		switch family.GetName() {
-		case "devshard_validation_queue_depth", "devshard_mempool_size":
+		case "devshard_validation_queue_depth", "devshard_validation_owed", "devshard_mempool_size":
 			for _, m := range family.Metric {
 				for _, lp := range m.Label {
 					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {

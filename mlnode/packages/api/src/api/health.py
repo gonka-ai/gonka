@@ -1,3 +1,4 @@
+import asyncio
 import time
 from typing import List, Dict, Any
 
@@ -64,7 +65,7 @@ async def get_health_data(request: Request) -> HealthResponse:
         ),
         inference=ManagerStatus(
             running=inference_manager.is_running(),
-            healthy=inference_manager.is_healthy(),
+            healthy=await asyncio.to_thread(inference_manager.is_healthy),
         ),
         train=ManagerStatus(
             running=train_manager.is_running(), healthy=train_manager.is_healthy()
@@ -125,7 +126,7 @@ async def get_readiness(request: Request, response: Response):
     is_ready = True
     # If inference is the active service, readiness depends on its health
     if request.app.state.service_state == ServiceState.INFERENCE:
-        if not inference_manager.is_healthy():
+        if not await asyncio.to_thread(inference_manager.is_healthy):
             is_ready = False
     
     # Add similar checks for POW and TRAIN if they have specific readiness requirements

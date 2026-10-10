@@ -157,8 +157,7 @@ func (d deprecatedQueryAPI) PostVerifyProof(ctx echo.Context) error {
 }
 
 func (d deprecatedQueryAPI) GetVersions(ctx echo.Context) error {
-	markQueryAPIDeprecated(ctx)
-	return d.inner.GetVersions(ctx)
+	return echo.ErrNotFound
 }
 
 var _ gen.ServerInterface = deprecatedQueryAPI{}

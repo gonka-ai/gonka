@@ -133,6 +133,14 @@ authenticity.
   chain-side allowlist) and pins composition per-binary, not
   per-session.
 
+### Live-set commitment
+
+The live records that remain in the state root are committed as a sum of Ristretto255 points, one per framed record. `liveEntrySum` keeps the sum as a point. The 32-byte encoding is produced when the state root is read. Insert adds the point, delete subtracts it, and a replace does both. The same bytes are left alone. The total does not depend on order, so a diff updates one record without walking the rest.
+
+The point sum replaces XOR, whose collisions can be constructed by linear algebra.
+
+The snapshot carries the records and not the running total. Restore recomputes the sum and checks the root against the diff log. A failed check falls back to full replay. The point sum changes the state root, so it ships as a new protocol version.
+
 ## 3. Payload retention is epoch-scoped, not per-inference
 
 ### What changes
