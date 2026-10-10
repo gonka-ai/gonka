@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -61,18 +62,9 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 	cp := params.ConfirmationPocParams
 
 	if countSource != countSourceParam {
-		stage := epochInfo.GetLatestEpoch().PocStartBlockHeight
-		if stage > 0 {
-			commits, err := queryClient.AllPoCV2StoreCommitsForStage(ctx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
-				PocStageStartBlockHeight: stage,
-			})
-			if err != nil {
-				return echo.NewHTTPError(http.StatusBadGateway, "query StoreCommits: "+err.Error())
-			}
-			if top := topParticipantCount(commits.GetCommits()); top > 0 {
-				count = uint64(top)
-				countSource = countSourceTopParticipant
-			}
+		count, countSource, err = resolveStoreCommitCount(ctx, queryClient, epochInfo)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadGateway, "query StoreCommits: "+err.Error())
 		}
 	}
 
@@ -102,6 +94,24 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 		BudgetKnown:           budgetKnown,
 		SpendableCoversBudget: budgetKnown && spendable.GTE(budget),
 	})
+}
+
+// resolveStoreCommitCount keeps setup/report and epoch-fee-budget on the same
+// observed count. No observation is unknown, not an explicitly supplied zero.
+func resolveStoreCommitCount(ctx context.Context, queryClient types.QueryClient, epochInfo *types.QueryEpochInfoResponse) (uint64, string, error) {
+	stage := epochInfo.GetLatestEpoch().PocStartBlockHeight
+	if stage > 0 {
+		commits, err := queryClient.AllPoCV2StoreCommitsForStage(ctx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
+			PocStageStartBlockHeight: stage,
+		})
+		if err != nil {
+			return 0, countSourceNone, err
+		}
+		if top := topParticipantCount(commits.GetCommits()); top > 0 {
+			return uint64(top), countSourceTopParticipant, nil
+		}
+	}
+	return 0, countSourceNone, nil
 }
 
 func topParticipantCount(commits []*types.PoCV2StoreCommitWithAddress) uint32 {
