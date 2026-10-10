@@ -50,17 +50,28 @@ func (k msgServer) GetAccountPubKeysWithGrantees(ctx context.Context, granterAdd
 	pubkeys = append(pubkeys, granterPubKey)
 
 	nextKey := []byte(nil)
+	scanned := 0
+	capped := false
 	for {
 		resp, err := k.AuthzKeeper.GranterGrants(ctx, &authztypes.QueryGranterGrantsRequest{
 			Granter: granterAddress,
 			Pagination: &query.PageRequest{
 				Key: nextKey,
+				// Nonzero limit keeps the SDK from setting CountTotal=true and
+				// scanning the granter's whole prefix; the scan cap bounds the
+				// number of pages. Same guard as GranteesByMessageType.
+				Limit: grantsPageSize,
 			},
 		})
 		if err != nil {
 			return nil, err
 		}
 		for _, grant := range resp.Grants {
+			if scanned >= maxGrantsScanned {
+				capped = true
+				break
+			}
+			scanned++
 			if grant.Authorization == nil {
 				continue
 			}
@@ -72,7 +83,10 @@ func (k msgServer) GetAccountPubKeysWithGrantees(ctx context.Context, granterAdd
 				pubkeys = append(pubkeys, granteePubKey)
 			}
 		}
-		if resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+		if capped || resp.Pagination == nil || len(resp.Pagination.NextKey) == 0 {
+			break
+		}
+		if scanned >= maxGrantsScanned {
 			break
 		}
 		nextKey = resp.Pagination.NextKey
