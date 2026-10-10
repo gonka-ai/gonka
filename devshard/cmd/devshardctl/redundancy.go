@@ -855,6 +855,7 @@ type inflight struct {
 
 	receiptOnce     sync.Once
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	attemptNanos    atomic.Int64  // send-to-end duration in ns plus one; 0 means the end was not recorded
 	receiptCh       chan struct{} // closed when receipt arrives
 
 	tokenOnce         sync.Once
@@ -980,6 +981,26 @@ func (inf *inflight) setReceiptAt(t time.Time) {
 		return
 	}
 	inf.receiptTimeNano.Store(t.UnixNano())
+}
+
+// markEnded records the duration of the attempt as of the moment its send call returned. The
+// duration is computed here, from t and sendTime, so it keeps the monotonic clock reading that
+// time.Since used before. Only the first call counts.
+func (inf *inflight) markEnded(t time.Time) {
+	d := t.Sub(inf.sendTime)
+	if d < 0 {
+		d = 0
+	}
+	inf.attemptNanos.CompareAndSwap(0, int64(d)+1)
+}
+
+// attemptDuration is the time from send until this attempt ended. An attempt whose end was never
+// recorded falls back to the time elapsed until now.
+func (inf *inflight) attemptDuration(now time.Time) time.Duration {
+	if n := inf.attemptNanos.Load(); n != 0 {
+		return time.Duration(n - 1)
+	}
+	return now.Sub(inf.sendTime)
 }
 
 func (inf *inflight) firstTokenAt() time.Time {
@@ -2145,6 +2166,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		inf.markEnded(time.Now())
 		streamBytes := int64(0)
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
@@ -4068,7 +4090,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			InputTokens:    params.InputLength,
 		}
 		if !inf.sendTime.IsZero() {
-			sample.TotalTime = time.Since(inf.sendTime)
+			sample.TotalTime = inf.attemptDuration(time.Now())
 		}
 		e.recordFailureSample(sample)
 	})
@@ -4162,7 +4184,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		attemptMs := int64(0)
 		if !inf.sendTime.IsZero() {
-			attemptMs = finishedAt.Sub(inf.sendTime).Milliseconds()
+			attemptMs = inf.attemptDuration(finishedAt).Milliseconds()
 		}
 		fields := []any{
 			"host", inf.hostID,
@@ -4485,7 +4507,7 @@ func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params 
 		if inf.hasFirstToken() {
 			hi.FirstTokenMs = float64(inf.firstTokenAt().Sub(inf.sendTime).Milliseconds())
 		}
-		hi.TotalTimeMs = float64(time.Since(inf.sendTime).Milliseconds())
+		hi.TotalTimeMs = float64(inf.attemptDuration(time.Now()).Milliseconds())
 	}
 	return hi
 }
@@ -4527,7 +4549,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		InputTokens:    params.InputLength,
 	}
 	if !inf.sendTime.IsZero() {
-		sample.TotalTime = time.Since(inf.sendTime)
+		sample.TotalTime = inf.attemptDuration(time.Now())
 	}
 	e.perf.Record(sample)
 	if responsive {
