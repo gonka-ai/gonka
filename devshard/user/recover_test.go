@@ -166,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -2838,7 +2838,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			PromptHash:  testutil.TestPromptHash[:],
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   1,
+			MaxTokens:   0,
 			StartedAt:   1000,
 		},
 	}}}

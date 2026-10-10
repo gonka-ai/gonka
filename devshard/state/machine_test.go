@@ -858,7 +858,7 @@ func TestApplyLocalPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
 	subFloor := func(inferenceID uint64) []*types.DevshardTx {
 		return []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+			InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 		})}
 	}
 
@@ -880,7 +880,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 
 	underFloor := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})})
 	_, err := sm.ApplyDiff(underFloor)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor)
@@ -892,7 +892,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 	poor, poorUser := newTestSM(t, hosts, 10)
 	poorDiff := testutil.SignDiff(t, poorUser, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})})
 	_, err = poor.ApplyDiff(poorDiff)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor)
@@ -900,7 +900,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 
 	atFloor := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: MinReservationTokens, StartedAt: 1000,
 	})})
 	_, err = sm.ApplyDiff(atFloor)
 	require.NoError(t, err, "the floor itself is a legal reservation")
@@ -3598,7 +3598,7 @@ func TestApplyPersisted_ReplaysAnInferenceWrittenBeforeTheFloor(t *testing.T) {
 	sm, _ := newTestSM(t, hosts, 10000)
 	belowFloor := []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})}
 
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)
@@ -3616,7 +3616,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 
 	replayed, err := sm.ApplyLocalPersisted(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})})
 	require.NoError(t, err)
 	require.NotEmpty(t, replayed)
@@ -3624,7 +3624,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 	// A peer's diff, arriving after the replay that relaxed the check.
 	fromPeer := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})})
 	_, err = sm.ApplyDiff(fromPeer)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the exemption leaked past the replay that set it")
@@ -3633,7 +3633,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 	// compose fails outright rather than dropping it and signing a diff without the work in it.
 	_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
 	})})
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "a sub-floor reservation must not be composed")
 }

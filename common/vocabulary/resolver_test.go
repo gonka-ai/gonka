@@ -1,4 +1,4 @@
-package inference
+package vocabulary
 
 import (
 	"context"
@@ -24,7 +24,7 @@ func (source stubModelSource) GetModelSource(context.Context, uint64, string) (s
 	return source.hfRepo, source.hfCommit, source.err
 }
 
-func newTestVocabularyResolver(t *testing.T, source modelSourceLookup, configBody string) (*HuggingFaceVocabularyResolver, *atomic.Int32) {
+func newTestVocabularyResolver(t *testing.T, source ModelSource, configBody string) (*HuggingFaceResolver, *atomic.Int32) {
 	t.Helper()
 	var fetches atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -36,7 +36,7 @@ func newTestVocabularyResolver(t *testing.T, source modelSourceLookup, configBod
 		_, _ = writer.Write([]byte(configBody))
 	}))
 	t.Cleanup(server.Close)
-	resolver := NewVocabularyResolver(source)
+	resolver := NewResolver(source)
 	resolver.baseURL = server.URL
 	return resolver, &fetches
 }

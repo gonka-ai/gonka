@@ -2,7 +2,10 @@ package completionapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
+	"strconv"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -18,6 +21,7 @@ type ModifiedRequest struct {
 	AsksForLogprobs bool
 }
 
+// MinTokensFloor is the output budget of the gateway PoC probe.
 const MinTokensFloor = 64
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
@@ -42,7 +46,7 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	requestMap["logprobs"] = true
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
-	EnforceTokenBudgetFloor(requestMap)
+	EnforceTokenBudget(requestMap)
 
 	// Only clamp when the caller asked: injecting n into a request that never
 	// carried it would change the body we sign for a broker that never set it.
@@ -157,16 +161,82 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 	return nil
 }
 
-func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
-	maxTokens := max(getMaxTokens(requestMap), MinTokensFloor)
-	minTokens := min(max(getMinTokens(requestMap), MinTokensFloor), maxTokens)
-
-	requestMap["min_tokens"] = minTokens
+// EnforceTokenBudget pins max_tokens/max_completion_tokens to one value and keeps only a caller
+// min_tokens, clamped to it. stop_token_ids pass through: check them with ValidateStopTokenIDs.
+// See devshard/docs/proposals/short-output-validation.md.
+func EnforceTokenBudget(requestMap map[string]interface{}) {
+	maxTokens := getMaxTokens(requestMap)
 	requestMap["max_tokens"] = maxTokens
 	requestMap["max_completion_tokens"] = maxTokens
+	if minTokens := getMinTokens(requestMap); minTokens > 0 {
+		requestMap["min_tokens"] = min(minTokens, maxTokens)
+	} else {
+		delete(requestMap, "min_tokens")
+	}
+}
 
-	// Unsupported: min_tokens>0 makes vLLM mask stop-token logits, so an out-of-vocab id CUDA-asserts the node; the floor is always on, so drop stop_token_ids.
-	delete(requestMap, "stop_token_ids")
+// ErrStopTokenIDs marks a stop_token_ids field the engine must not be sent.
+var ErrStopTokenIDs = errors.New("invalid stop_token_ids")
+
+// ValidateStopTokenIDs checks every stop_token_ids entry is an integer in [0, vocabularySize).
+// An unknown vocabulary (vocabularySize <= 0) fails closed: with min_tokens > 0 the engine indexes
+// the logits by these ids, so an out-of-range id crashes the node rather than being ignored.
+func ValidateStopTokenIDs(requestMap map[string]interface{}, vocabularySize int) error {
+	raw, present := requestMap["stop_token_ids"]
+	if !present || raw == nil {
+		return nil
+	}
+	ids, isArray := raw.([]interface{})
+	if !isArray {
+		return fmt.Errorf("%w: must be an array of token ids", ErrStopTokenIDs)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if vocabularySize <= 0 {
+		return fmt.Errorf("%w: model vocabulary size unknown", ErrStopTokenIDs)
+	}
+	for index, entry := range ids {
+		id, isID := tokenIDValue(entry)
+		if !isID || id < 0 || id >= int64(vocabularySize) {
+			return fmt.Errorf("%w: entry %d is not a token id in [0, %d)", ErrStopTokenIDs, index, vocabularySize)
+		}
+	}
+	return nil
+}
+
+// StopTokenIDsOf returns the stop ids the request carries, as the decimal strings logprobs use.
+func StopTokenIDsOf(requestMap map[string]interface{}) map[string]struct{} {
+	ids, _ := requestMap["stop_token_ids"].([]interface{})
+	if len(ids) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(ids))
+	for _, entry := range ids {
+		if id, isID := tokenIDValue(entry); isID {
+			set[strconv.FormatInt(id, 10)] = struct{}{}
+		}
+	}
+	return set
+}
+
+func tokenIDValue(entry interface{}) (int64, bool) {
+	switch value := entry.(type) {
+	case float64:
+		if value != math.Trunc(value) || math.Abs(value) > 1<<53 {
+			return 0, false
+		}
+		return int64(value), true
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case json.Number:
+		id, err := value.Int64()
+		return id, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func getMinTokens(requestMap map[string]interface{}) int {

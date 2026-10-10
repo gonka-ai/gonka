@@ -255,7 +255,7 @@ func TestOnlyFreshSuccessfulExecutionEarnsCredit(t *testing.T) {
 	store := &memoryPayloads{}
 	phase := new(chain.Phase)
 	phase.SetEpoch(5)
-	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, true)
+	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, true, nil)
 	req := recoveryRequest(t, devshard.RecoveryNone, 5)
 	_, err := e.Execute(context.Background(), req)
 	require.NoError(t, err)
@@ -488,8 +488,8 @@ func (s *sharedCreditFake) RefundValidationCredit(_ context.Context, h storage.V
 
 func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
 	store := &sharedCreditFake{}
-	earner := NewEngine(nil, nil, nil, nil, nil, nil, false)
-	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	earner := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	earner.UseSharedValidationCredits(store, "gonka1pair")
 	survivor.UseSharedValidationCredits(store, "gonka1pair")
 
@@ -498,7 +498,7 @@ func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
 	require.Empty(t, earner.validationBudget.credits["m"], "the shared store replaces the process-local budget")
 	// A replica that has not probed yet must observe the sibling's earn.
 	// survivor's negative probe is cached for creditProbeFresh.
-	late := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	late := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	late.UseSharedValidationCredits(store, "gonka1pair")
 	require.True(t, late.creditAvailable("m"))
 
@@ -520,7 +520,7 @@ func TestSharedCreditOfADeadReplicaReturnsWhenTheHoldLapses(t *testing.T) {
 	dead, ok, err := store.ReserveValidationCredit(context.Background(), "gonka1pair", "m", 20*time.Millisecond)
 	require.NoError(t, err)
 	require.True(t, ok)
-	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	survivor.UseSharedValidationCredits(store, "gonka1pair")
 	_, err = survivor.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
 	require.ErrorIs(t, err, devshard.ErrValidationDeferred)

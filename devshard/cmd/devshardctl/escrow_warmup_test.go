@@ -103,19 +103,19 @@ func TestAFailedCatchUpDoesNotAbortTheWarmup(t *testing.T) {
 	require.Equal(t, []uint64{1}, recorder.served, "the host that answered still did the work")
 }
 
-func TestWarmupProbeDeclaresTheTokenFloor(t *testing.T) {
+func TestWarmupProbeDeclaresItsTokenBudget(t *testing.T) {
 	sender := &fakeProbeSender{groupSize: 16}
 
 	warmEscrowHosts(context.Background(), warmupTestDeps(sender, nil), 0)
 
 	require.Equal(t, []uint64{completionapi.MinTokensFloor}, sender.maxTokens,
-		"a probe below the floor is rejected by the executor and warms nothing")
+		"the probe declares the PoC probe budget")
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
 	}
 	require.NoError(t, json.Unmarshal(pocProbePromptBody, &body))
 	require.Equal(t, uint64(completionapi.MinTokensFloor), body.MaxTokens,
-		"the prompt the host validates carries the same floor as the declared params")
+		"the prompt the host validates carries the same budget as the declared params")
 }
 
 func TestWarmupSkipsAnEscrowThatAlreadyServed(t *testing.T) {

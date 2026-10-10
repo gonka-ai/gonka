@@ -183,8 +183,21 @@ func TokenCountInflated(claimed, validation uint64) bool {
 	return claimed > validation && claimed-validation > tokenCountTolerance
 }
 
-// CompareLogits compares original and validation logits and returns a ValidationResult.
-func CompareLogits(
+// CompareLogitsWithPolicy compares original and validation logits under a scoring policy and
+// returns a ValidationResult.
+func CompareLogitsWithPolicy(
+	originalLogits, validationLogits []completionapi.Logprob,
+	baseComparisonResult BaseValidationResult,
+	policy ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
+	if mismatch := compareTokens(originalLogits, validationLogits, baseComparisonResult); mismatch != nil {
+		return mismatch
+	}
+	return shortOutputVerdict(originalLogits, validationLogits, policy, logprobsMode, baseComparisonResult)
+}
+
+func compareTokens(
 	originalLogits []completionapi.Logprob,
 	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,
@@ -205,57 +218,7 @@ func CompareLogits(
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 	}
-	similarity := customSimilarity(originalLogits, validationLogits)
-
-	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
-}
-
-func customSimilarity(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) float64 {
-	distance, err := customDistance(originalLogprobs, validationLogprobs)
-	if err != nil {
-		logging.Error("Error calculating custom distance", types.Validation, "error", err)
-		return 0
-	}
-	if math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return 0
-	}
-	similarity := 1 - distance
-	if similarity < 0 {
-		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
-		return 0
-	}
-	return similarity
-}
-
-func customDistance(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) (float64, error) {
-	if len(originalLogprobs) == 0 {
-		return 0.0, nil
-	}
-	distance := 0.0
-	for i := range originalLogprobs {
-		o := originalLogprobs[i]
-		v := validationLogprobs[i]
-		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
-		originalTopLogprobs := o.TopLogprobs
-		if len(originalTopLogprobs) > len(v.TopLogprobs) {
-			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
-		}
-		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
-		if err != nil {
-			logging.Error("Error calculating position distance", types.Validation, "error", err)
-			return math.Inf(1), err
-		}
-		distance += posDistance
-	}
-	totalLogprobs := max(100, len(originalLogprobs))
-
-	return distance / float64(totalLogprobs), nil
+	return nil
 }
 
 // maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
@@ -339,6 +302,22 @@ func ExecuteValidation(
 	logprobsMode string,
 	vocabularySize int,
 ) (ValidationResult, error) {
+	return ExecuteValidationWithPolicy(ctx, inferenceID, promptPayload, responsePayload, execute,
+		claimedInputTokens, claimedOutputTokens, logprobsMode, vocabularySize, DefaultShortOutputScoringPolicy)
+}
+
+// ExecuteValidationWithPolicy is ExecuteValidation under an explicit scoring policy.
+func ExecuteValidationWithPolicy(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	responsePayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
+	vocabularySize int,
+	scoring ScoringPolicy,
+) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
 		promptPayload,
@@ -385,6 +364,18 @@ func ExecuteValidation(
 			logging.Warn("validation failed: more output positions than max_tokens, not sent to the validator node", types.Validation,
 				"inferenceId", inferenceID, "positions", len(enforcedTokens.Tokens), "maxTokens", maxTokens)
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "More output positions than max_tokens."}, nil
+		}
+	}
+
+	stopTokenIDs := completionapi.StopTokenIDsOf(requestMap)
+	if !isEmptySentinel {
+		if err := completionapi.ValidateStopTokenIDs(requestMap, vocabularySize); err != nil {
+			if vocabularySize > 0 {
+				return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "stop_token_ids outside the model vocabulary.", Error: err}, nil
+			}
+			// Unknown vocab on this validator is not the executor's fault: replay without the ids so
+			// the node cannot index out of range, and keep the stop-before-end check below.
+			delete(requestMap, "stop_token_ids")
 		}
 	}
 
@@ -471,7 +462,7 @@ func ExecuteValidation(
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
-	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// CompareLogitsWithPolicy short-circuits to perfect similarity (1.0) when the ORIGINAL
 	// logits are empty, so an executor that stored a response with no logprobs
 	// would always pass. Reject only the asymmetric case (exactly one side empty):
 	// the executor's output cannot be verified against the validator's
@@ -500,24 +491,35 @@ func ExecuteValidation(
 		)
 	}
 
-	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
-	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
-	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
-	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
-	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
-	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
-	// above; empty-sentinel errors are exempt.
+	return shortOutputChecks(inferenceID, requestMap, originalLogits, validationLogits,
+		stopTokenIDs, isEmptySentinel, baseResult, scoring, logprobsMode), nil
+}
+
+// shortOutputChecks enforces a caller min_tokens on the output length and that a requested stop id
+// only ends the output, then scores the output under the short-output rule.
+func shortOutputChecks(
+	inferenceID string,
+	requestMap map[string]interface{},
+	originalLogits, validationLogits []completionapi.Logprob,
+	stopTokenIDs map[string]struct{},
+	isEmptySentinel bool,
+	baseResult BaseValidationResult,
+	scoring ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
 	if !isEmptySentinel && len(originalLogits) > 0 {
-		minTokens := completionapi.MinTokensOf(requestMap)
-		if minTokens > 0 && len(originalLogits) < minTokens {
-			logging.Warn("validation failed: output below min_tokens floor",
-				types.Validation, "inferenceId", inferenceID,
-				"outputTokens", len(originalLogits), "minTokens", minTokens)
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		if minTokens := completionapi.MinTokensOf(requestMap); minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below the requested min_tokens", types.Validation,
+				"inferenceId", inferenceID, "outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than the requested min_tokens."}
+		}
+		if stopTokenBeforeEnd(originalLogits, stopTokenIDs) {
+			logging.Warn("validation failed: output continues past a requested stop token", types.Validation, "inferenceId", inferenceID)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output continues past a requested stop token."}
 		}
 	}
 
-	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+	return CompareLogitsWithPolicy(originalLogits, validationLogits, baseResult, scoring, logprobsMode)
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {

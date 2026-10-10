@@ -59,11 +59,13 @@ type Engine struct {
 	chainParams                 ChainParamsProvider
 	phase                       *chain.Phase
 	logprobsOptimizationEnabled bool
+	vocabularySizes             VocabularyResolver
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
 // passive ML-node cache for dapi-unreachable fallback. capacity may be nil,
 // in which case fallback is unbounded (matches old-dapi/never-observed behavior).
+// vocabularySizes bounds stop_token_ids; nil refuses any.
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	mgr *mlnodeclient.Manager,
@@ -72,6 +74,7 @@ func NewEngine(
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
 	logprobsOptimizationEnabled bool,
+	vocabularySizes VocabularyResolver,
 ) *Engine {
 	reader, _ := payloadStore.(PayloadReader)
 	return &Engine{
@@ -85,6 +88,7 @@ func NewEngine(
 		chainParams:                 chainParams,
 		phase:                       phase,
 		logprobsOptimizationEnabled: logprobsOptimizationEnabled,
+		vocabularySizes:             vocabularySizes,
 	}
 }
 
@@ -102,12 +106,19 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
 		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
-		}, e.chainParams, e.logprobsOptimizationEnabled)
+		}, e.chainParams, e.logprobsOptimizationEnabled, e.vocabularySize(ctx, req.Model))
 		if err == nil && result != nil && !result.PartialResponse {
 			e.earnValidationCredit(ctx, req.Model)
 		}
 		return result, err
 	})
+}
+
+func (e *Engine) vocabularySize(ctx context.Context, model string) int {
+	if e.vocabularySizes == nil {
+		return 0
+	}
+	return e.vocabularySizes.Resolve(ctx, e.phase.EpochID(), model)
 }
 
 func executeWithRecovery(

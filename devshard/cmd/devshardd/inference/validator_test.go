@@ -1,9 +1,11 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -1002,4 +1004,45 @@ func TestTruncateCause(t *testing.T) {
 	got := truncateCause(long)
 	assert.Len(t, got, maxVerdictCauseBytes+len("...(truncated)"))
 	assert.True(t, strings.HasSuffix(got, "...(truncated)"))
+}
+
+// Test flow:
+//  1. The executor's stored output has one position far from the validator's replay, so the
+//     per-position ceiling check would reject it; the mean-distance check alone passes it.
+//  2. On an enforced model the validator votes false.
+//  3. On any other model the ceiling check only logs, and the validator votes true.
+func TestValidator_Validate_ShortOutputChecksPerModel(t *testing.T) {
+	position := func(token string, chosen, alternative float64) string {
+		return fmt.Sprintf(`{"token":%q,"logprob":%g,"top_logprobs":[{"token":%q,"logprob":%g},{"token":"999","logprob":%g}]}`, token, chosen, token, chosen, alternative)
+	}
+	completion := func(outlier bool) []byte {
+		positions := make([]string, 10)
+		for i := range positions {
+			positions[i] = position(fmt.Sprint(i+1), -0.1, -2.5)
+		}
+		if outlier {
+			positions[3] = position("4", -5, -0.01)
+		}
+		return []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"finish_reason":"stop","logprobs":{"content":[` + strings.Join(positions, ",") + `]}}]}`)
+	}
+	fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+		return []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`), completion(true), nil
+	}
+	executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(completion(false)))}, nil
+	}
+	for model, wantValid := range map[string]bool{
+		"deepseek-ai/DeepSeek-V4-Flash-0731": false,
+		"zai-org/GLM-5.3-Flash":              false,
+		"MiniMaxAI/MiniMax-M2.7":             true,
+	} {
+		t.Run(model, func(t *testing.T) {
+			validator := newFaultTestValidator(10, true, fetch, executeML, nil)
+			req := faultReq(10)
+			req.Model = model
+			result, err := validator.Validate(context.Background(), req)
+			require.NoError(t, err)
+			assert.Equal(t, wantValid, result.Valid)
+		})
+	}
 }

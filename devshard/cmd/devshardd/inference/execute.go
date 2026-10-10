@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -29,6 +30,7 @@ func executeInference(
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
 	logprobsOptimizationEnabled bool,
+	vocabularySize int,
 ) (*devshardpkg.ExecuteResult, error) {
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
@@ -36,6 +38,10 @@ func executeInference(
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
+	}
+	// The executor does not trust the gateway's check: an out-of-range stop id crashes the node.
+	if err := checkStopTokenIDs(modified.NewBody, vocabularySize); err != nil {
+		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, err)
 	}
 
 	resp, err := execute(ctx, req.Model, modified.NewBody)
@@ -132,4 +138,12 @@ func processExecutionHTTPResponse(
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,
 	}, nil
+}
+
+func checkStopTokenIDs(body []byte, vocabularySize int) error {
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal(body, &requestMap); err != nil {
+		return fmt.Errorf("modify request body: %w", err)
+	}
+	return completionapi.ValidateStopTokenIDs(requestMap, vocabularySize)
 }
