@@ -111,7 +111,8 @@ func TestCheckFeegrant_EpochAffordability(t *testing.T) {
 	params := setupFeeParams()
 	budget := epochFeeBudgetNgonka(params.FeeParams, params.EpochParams, params.ConfirmationPocParams, 10)
 	coins := func(n math.Int) sdk.Coins { return sdk.NewCoins(sdk.NewCoin(types.BaseCoin, n)) }
-	soon := time.Now().Add(time.Hour)
+	// Keep the grant expiry non-UTC even on CI to exercise protobuf UTC normalization.
+	soon := time.Now().In(time.FixedZone("test-non-UTC", 2*60*60)).Add(time.Hour)
 	for _, tc := range []struct {
 		name       string
 		spendable  math.Int
@@ -159,7 +160,7 @@ func TestCheckFeegrant_EpochAffordability(t *testing.T) {
 			require.Equal(t, "feegrant_allowance", check.ID)
 			require.Equal(t, tc.want, check.Status, check.Message)
 			if tc.name == "unknown count preserves expiry warning" {
-				require.Equal(t, "Fee allowance present, expiring soon at "+soon.Format(time.RFC3339)+". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count.", check.Message)
+				require.Equal(t, "Fee allowance present, expiring soon at "+soon.UTC().Format(time.RFC3339)+". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count.", check.Message)
 			}
 			if !tc.feesOff {
 				details := check.Details.(map[string]interface{})
