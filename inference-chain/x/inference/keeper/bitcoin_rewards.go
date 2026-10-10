@@ -645,6 +645,10 @@ func getDynamicP0(participants []types.Participant, validationParams *types.Vali
 		if participant.CurrentEpochStats == nil {
 			continue
 		}
+		// Excluded hosts earn nothing; their misses must not loosen the test for the rest.
+		if participant.Status == types.ParticipantStatus_INVALID || participant.Status == types.ParticipantStatus_INACTIVE {
+			continue
+		}
 		inferenceCount := participant.CurrentEpochStats.InferenceCount
 		missed := participant.CurrentEpochStats.MissedRequests
 		total, carry := bits.Add64(inferenceCount, missed, 0)
