@@ -22,11 +22,12 @@ import (
 )
 
 const (
-	envHeightSyncK        = "DEVSHARD_HEIGHTSYNC_K"
-	envHeightSyncSlots    = "DEVSHARD_HEIGHTSYNC_SLOTS"
-	envHeightSyncProbe    = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
-	envRequireHeightSeed  = "DEVSHARD_REQUIRE_HEIGHT_SEED"
-	envGatewayChainOracle = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envHeightSyncK         = "DEVSHARD_HEIGHTSYNC_K"
+	envHeightSyncSlots     = "DEVSHARD_HEIGHTSYNC_SLOTS"
+	envHeightSyncProbe     = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
+	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
+	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
+	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
 )
 
 type heightSyncProcessState struct {
@@ -227,11 +228,22 @@ func requireHeightSeedFromEnv() bool {
 	}
 }
 
+// heightSyncHeartbeatFromEnv is the gateway quiet-session cadence. Only
+// true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
+// any other value leave heartbeats off. The height-seed loop is separate.
+func heightSyncHeartbeatFromEnv() bool {
+	return envBoolOptIn(envHeightSyncHeartbeat)
+}
+
 // gatewayChainOracleFromEnv is the optional verification follower. Only
 // true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
 // any other value leave the follower unbuilt.
 func gatewayChainOracleFromEnv() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envGatewayChainOracle)))
+	return envBoolOptIn(envGatewayChainOracle)
+}
+
+func envBoolOptIn(name string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	switch raw {
 	case "true", "1", "on":
 		return true

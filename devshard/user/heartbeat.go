@@ -32,6 +32,9 @@ type composedDiff struct {
 // remaining slots on a single send failure. After MsgFinalizeRound the
 // session is no longer Active, so this is a no-op.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
+	if s == nil || s.disableHeightSyncHeartbeat {
+		return nil
+	}
 	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return nil
 	}
@@ -55,13 +58,19 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 // turnover, or turnOpenedAt+TurnTimeout while a turn is still open — not a
 // free-running ticker, which opens a full Interval late. Idempotent. A Close
 // that races Start does not leave a goroutine behind. In-process clients
-// have no catalog URL and skip the wait.
+// have no catalog URL and skip the wait. When the producer cadence is
+// disabled, the height-seed loop still starts and no heartbeat goroutine does.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
 	}
 	if s.requireHeightSeed {
 		s.startHeightSeedLoop()
+	}
+	if s.disableHeightSyncHeartbeat {
+		logging.Info("heartbeat loop disabled", "subsystem", "heightsync",
+			"escrow", s.escrowID)
+		return
 	}
 	s.heartbeatLoopOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
