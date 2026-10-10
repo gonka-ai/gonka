@@ -2386,6 +2386,26 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
 
+	t.Run("Excluded hosts do not loosen the baseline", func(t *testing.T) {
+		active := func(addr string, inf, missed uint64) types.Participant {
+			return types.Participant{Address: addr, Status: types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: inf, MissedRequests: missed}}
+		}
+		participants := []types.Participant{
+			active("p1", 990, 10), active("p2", 990, 10), active("p3", 990, 10),
+			active("p4", 990, 10), active("p5", 990, 10),
+			{Address: "x1", Status: types.ParticipantStatus_INACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 2000, MissedRequests: 3000}},
+			{Address: "x2", Status: types.ParticipantStatus_INVALID,
+				CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 2000, MissedRequests: 3000}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(100), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
 	t.Run("Small sample falls back to governance", func(t *testing.T) {
 		participants := []types.Participant{
 			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 50, MissedRequests: 50}},
