@@ -30,6 +30,11 @@ on:
         type: boolean
         default: true
         description: 'Whether to use matrix strategy for parallel execution'
+    secrets:
+      GCP_SERVICE_ACCOUNT_KEY:
+        required: false
+      GCP_PROJECT_ID:
+        required: false
 
 jobs:
   # This job dynamically scans for test classes and sets up the matrix for parallel test execution
@@ -60,6 +65,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+          persist-credentials: false
 
       - name: Set up Java
         uses: actions/setup-java@v3
@@ -126,6 +132,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+          persist-credentials: false
 
       - name: Set up Docker (Latest Version)
         uses: docker/setup-docker-action@v4
@@ -242,6 +249,7 @@ jobs:
         uses: actions/checkout@v3
         with:
           ref: ${{ inputs.is_pr_comment && format('refs/pull/{0}/head', inputs.pr_number) || github.ref }}
+          persist-credentials: false
 
       - name: Set up Docker (Latest Version)
         uses: docker/setup-docker-action@v4
@@ -384,26 +392,6 @@ jobs:
           reporter: java-junit
           fail-on-error: false
 
-      - name: Upload Results to BigQuery
-        if: always()
-        continue-on-error: true
-        env:
-          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GITHUB_RUN_ID: ${{ github.run_id }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_REF: ${{ github.ref }}
-          GITHUB_HEAD_REF: ${{ github.head_ref }}
-          GITHUB_BASE_REF: ${{ github.base_ref }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          MATRIX_TEST_GROUP: ${{ matrix.test_group }}
-          PR_NUMBER: ${{ inputs.pr_number }}
-          TEST_REPORT_URL: ${{ steps.test-reporter.outputs.url_html }}
-          LOGS_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts/${{ steps.archive-logs.outputs.artifact-id || 'N/A' }}
-        run: |
-          pip install google-cloud-bigquery
-          python .github/scripts/upload_test_results.py
-
       - name: Save Test Counts
         if: always()
         run: |
@@ -492,6 +480,76 @@ jobs:
           name: test-counts-${{ matrix.test_group }}
           path: test-counts-${{ matrix.test_group }}.txt
           retention-days: 1
+
+  # BigQuery upload runs the script from this workflow's commit, never from a
+  # pull-request head. The jobs above may check out refs/pull/<N>/head; this
+  # one does not, and it is the only job that receives the GCP key.
+  upload-results:
+    needs: run-tests
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout workflow ref
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download test results
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-results-xml-*
+          path: ${{ runner.temp }}/bq-results
+
+      - name: Download test count metadata
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-counts-*
+          path: ${{ runner.temp }}/bq-counts
+
+      - name: Upload results to BigQuery
+        if: always()
+        continue-on-error: true
+        env:
+          GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          pip install google-cloud-bigquery
+          shopt -s nullglob
+          found=0
+          for dir in "$RUNNER_TEMP"/bq-results/test-results-xml-*; do
+            [ -d "$dir" ] || continue
+            found=1
+            group="${dir##*/}"
+            group="${group#test-results-xml-}"
+            report_url=""
+            logs_url=""
+            counts="$RUNNER_TEMP/bq-counts/test-counts-${group}/test-counts-${group}.txt"
+            if [ -f "$counts" ]; then
+              report_url="$(sed -n 's/^TEST_REPORT_URL: *//p' "$counts" | head -n1)"
+              logs_url="$(sed -n 's/^LOGS_URL: *//p' "$counts" | head -n1)"
+            fi
+            echo "Uploading group: ${group}"
+            MATRIX_TEST_GROUP="$group" \
+              TEST_REPORT_URL="$report_url" \
+              LOGS_URL="$logs_url" \
+              python .github/scripts/upload_test_results.py --test-results-dir "$dir" \
+              || echo "BigQuery upload failed for ${group}"
+          done
+          if [ "$found" -eq 0 ]; then
+            echo "No test-result artifacts to upload"
+          fi
 
   # Simple summary job
   test-summary:
