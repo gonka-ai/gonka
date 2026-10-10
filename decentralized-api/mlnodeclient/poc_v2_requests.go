@@ -106,8 +106,39 @@ type PoCStatusResponseV2 struct {
 
 // BackendStatusV2 represents the status of a single vLLM backend.
 type BackendStatusV2 struct {
-	Port   int    `json:"port"`
-	Status string `json:"status"`
+	Port   int                 `json:"port"`
+	Status string              `json:"status"`
+	Config *BackendPoCConfigV2 `json:"config,omitempty"`
+}
+
+// BackendPoCConfigV2 is the stage a GENERATING backend was initialised with.
+// The vLLM plugin reports it in /api/v1/pow/status; older builds omit it.
+type BackendPoCConfigV2 struct {
+	BlockHeight int64  `json:"block_height"`
+	BlockHash   string `json:"block_hash"`
+}
+
+// GeneratingStage returns the stage every GENERATING backend is generating for;
+// idle backends (MIXED) are ignored. ok is false when no backend is generating,
+// one of them does not report its stage, or they disagree.
+func (r *PoCStatusResponseV2) GeneratingStage() (height int64, hash string, ok bool) {
+	if r == nil {
+		return 0, "", false
+	}
+	for _, b := range r.Backends {
+		if b.Status != "GENERATING" {
+			continue
+		}
+		if b.Config == nil || b.Config.BlockHeight <= 0 {
+			return 0, "", false
+		}
+		if !ok {
+			height, hash, ok = b.Config.BlockHeight, b.Config.BlockHash, true
+		} else if b.Config.BlockHeight != height || b.Config.BlockHash != hash {
+			return 0, "", false
+		}
+	}
+	return height, hash, ok
 }
 
 // PoCInitGenerateResponseV2 represents the response from /api/v1/inference/pow/init/generate.
