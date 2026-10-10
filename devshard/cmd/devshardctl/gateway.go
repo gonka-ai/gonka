@@ -1592,7 +1592,10 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		logRequestStage(ctx, "gateway_limiter_bypassed_during_poc", "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 	}
 
-	rt, capture, err := g.serveChatAcrossEscrows(model, body, req.MaxTokens, inputTokens, w, r)
+	// Select a runtime for the resolved model, not the raw request value: an omitted
+	// model must route to the authorized default, never fall through the empty-selector
+	// filter onto a runtime whose stricter access policy the caller never cleared.
+	rt, capture, err := g.serveChatAcrossEscrows(requestModel, body, req.MaxTokens, inputTokens, w, r)
 	if err != nil {
 		var unavailableModelErr *ModelTemporarilyUnavailableError
 		var cannotFundErr *EscrowsCannotFundRequestError
