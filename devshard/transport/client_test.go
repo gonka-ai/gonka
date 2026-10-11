@@ -24,6 +24,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -830,6 +831,39 @@ func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, uint64(1), result.Nonce)
 	require.NotNil(t, result.Receipt)
+}
+
+type sseErrorLog struct {
+	errs []string
+}
+
+func (l *sseErrorLog) Info(string, ...any)  {}
+func (l *sseErrorLog) Warn(string, ...any)  {}
+func (l *sseErrorLog) Debug(string, ...any) {}
+func (l *sseErrorLog) Error(msg string, _ ...any) {
+	l.errs = append(l.errs, msg)
+}
+
+func TestParseSSE_ContentWithoutDoneLogsButDoesNotMiss(t *testing.T) {
+	client := &HTTPClient{config: allowRetiredHTTP(DefaultClientConfig())}
+	body := receiptOnlySSE + "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+	log := &sseErrorLog{}
+	logging.SetLogger(log)
+	t.Cleanup(func() { logging.SetLogger(logging.NewSlogAdapter()) })
+
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(body), nil, nil)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, uint64(1), result.Nonce)
+	require.Contains(t, log.errs, "sse_content_without_done")
+
+	log.errs = nil
+	withDone := body + "data: [DONE]\n\n"
+	result, err = client.parseSSEResponse(context.Background(), strings.NewReader(withDone), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result.Receipt)
+	require.NotContains(t, log.errs, "sse_content_without_done")
 }
 
 func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {

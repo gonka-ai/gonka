@@ -169,6 +169,12 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
 				s.recordEnvelopeBindingResponse(req.Nonce, sec)
 				receiptWrapper["height_sync"] = sec
+				if resp.ExecutionJob != nil {
+					if h, hash, ok := heightsync.SectionObserved(sec); ok {
+						resp.ExecutionJob.ResponseEnvelopeHeight = h
+						resp.ExecutionJob.ResponseEnvelopeHash = hash
+					}
+				}
 				s.logOutboundHeightSync(sec, req.Nonce)
 				s.recordOutboundAnchorIfAnchor(sec, call.Source)
 			} else {

@@ -127,7 +127,7 @@ func TestHTTP_RefusedTimeout_HonestReceiptRecovers(t *testing.T) {
 			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
 			ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(defaultParams())
+			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			diffs := env.session.Diffs()
@@ -150,7 +150,7 @@ func TestHTTP_ExecutionTimeout_HonestFinishRejects(t *testing.T) {
 			env := setupHTTPEnvWiring(t, 3, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(defaultParams())
+			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			receipt, _, err := env.clients[executorIdx].ChallengeReceipt(ctx, prepared.Nonce(), refusedPayload(), env.session.Diffs())
@@ -188,7 +188,7 @@ func TestHTTP_RefusedTimeout_ForgedReceiptTimesOut(t *testing.T) {
 			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
 			ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(defaultParams())
+			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			forger := &forgingExecutor{}
@@ -217,7 +217,7 @@ func TestHTTP_ExecutionTimeout_ForgedFinishTimesOut(t *testing.T) {
 			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(defaultParams())
+			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
@@ -254,7 +254,7 @@ func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(defaultParams())
+			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]

@@ -45,6 +45,13 @@ type ExecuteRequest struct {
 	ResponseWriter http.ResponseWriter
 
 	LogprobsOptimizationOverride *bool
+
+	// ResponseEnvelopeHeight and ResponseEnvelopeHash are the response-leg
+	// HeightSyncSection already attached to this hop. When the hash is
+	// present, RunExecution stamps MsgFinishInference from this pair instead
+	// of a later oracle read.
+	ResponseEnvelopeHeight uint64
+	ResponseEnvelopeHash   []byte
 }
 
 // ExecuteResult contains the outcome of an inference execution.

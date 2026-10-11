@@ -32,6 +32,12 @@ const (
 	gatewayComposeService = "devshardctl"
 )
 
+const (
+	hostAddrEnv       = "TESTENV_HOST_ADDR"
+	keepStackEnv      = "TESTENV_CITEST_KEEP_STACK"
+	dumpLogsOnExitEnv = "TESTENV_CITEST_DUMP_LOGS"
+)
+
 // Stack is a generated compose workdir for Docker citest.
 type Stack struct {
 	WorkDir       string
@@ -40,6 +46,8 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	ObsProfile    ObsProfile
+	payloadEnv    map[string]string // merged into .env by PrepareObservabilityOverlay
 	// ProxyOverlay appends docker-compose.proxy.yml. Default citest must
 	// leave this false so existing suites stay on versiond-router:8080.
 	ProxyOverlay bool
@@ -71,7 +79,13 @@ func NewStack(t *testing.T, prefix string) *Stack {
 
 	workDir, err := os.MkdirTemp(testenvDir, prefix)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
+	t.Cleanup(func() {
+		if keepStackEnabled() {
+			t.Logf("citest: keeping stack workdir %s because %s=1", workDir, keepStackEnv)
+			return
+		}
+		_ = os.RemoveAll(workDir)
+	})
 
 	return &Stack{
 		WorkDir:        workDir,
@@ -125,13 +139,13 @@ func (s *Stack) LoadConfig(t *testing.T) *config.File {
 	return cfg
 }
 
-// Endpoints reads Docker-assigned localhost ports from a running compose stack.
+// Endpoints reads Docker-assigned host-published ports from a running compose stack.
 func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	t.Helper()
 	eps := s.MockChainEndpoints(t, cfg)
 	eps.MockDapiHTTP = "http://" + s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.HTTPPort)
 	eps.MockDapiGRPC = s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.GRPCPort)
-	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, "mock-openai", cfg.MockOpenAI.HTTPPort)
+	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, cfg.PrimaryMLNodeID(), cfg.MockOpenAI.HTTPPort)
 	eps.RouterHTTP = "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
 	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, "devshardctl", cfg.Devshardctl.Port)
 	return eps
@@ -168,21 +182,34 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 	raw := strings.TrimSpace(string(out))
 	host, port, err := net.SplitHostPort(raw)
 	require.NoError(t, err, "parse docker compose port output %q", raw)
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
+	host = hostPublishedAddr(host)
 	return net.JoinHostPort(host, port)
 }
 
+func hostPublishedAddr(composeHost string) string {
+	override := strings.TrimSpace(os.Getenv(hostAddrEnv))
+	if override != "" {
+		return override
+	}
+	switch composeHost {
+	case "", "0.0.0.0", "::":
+		return "127.0.0.1"
+	default:
+		return composeHost
+	}
+}
+
+// Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
+// Set TESTENV_CITEST_BUILD=1 to pass --build (local iteration); CI should reuse images from citest-images.
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
 // The gateway starts only after GET /{version}/healthz succeeds so heartbeats
 // are not 503 undeclared_version.
 func (s *Stack) Up(t *testing.T) {
 	t.Helper()
-	s.upAfterCatalog(t, false)
+	s.upAfterCatalog(t, ComposeBuildEnabled())
 }
 
-// UpBuild starts the stack and rebuilds images first.
+// UpBuild starts the stack and always rebuilds images first.
 func (s *Stack) UpBuild(t *testing.T) {
 	t.Helper()
 	s.upAfterCatalog(t, true)
@@ -195,10 +222,26 @@ func (s *Stack) UpServices(t *testing.T, build bool, services ...string) {
 }
 
 // UpWithObservability starts the stack and observability overlay (see PrepareObservabilityOverlay).
+// Same image policy as Up: reuse by default; TESTENV_CITEST_BUILD=1 adds --build.
+// (devshardd is volume-mounted; gateway is baked into devshard-runtime — rebuild when that code changes.)
 func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 	t.Helper()
 	s.PrepareObservabilityOverlay(t, cfg)
-	s.upAfterCatalog(t, false)
+	s.upAfterCatalog(t, ComposeBuildEnabled())
+}
+
+// ComposeBuildEnabled reports whether compose up should pass --build.
+// Opt-in via TESTENV_CITEST_BUILD=1; Makefile citest-* targets build images separately.
+func ComposeBuildEnabled() bool {
+	return os.Getenv("TESTENV_CITEST_BUILD") == "1"
+}
+
+func keepStackEnabled() bool {
+	return os.Getenv(keepStackEnv) == "1"
+}
+
+func dumpLogsOnExitEnabled() bool {
+	return os.Getenv(dumpLogsOnExitEnv) == "1"
 }
 
 // UpInfra starts every compose service except the gateway. Compatibility tests
@@ -270,17 +313,40 @@ func composeStopArgs(fileArgs []string, service string, timeout time.Duration) [
 	return append(args, "stop", "--timeout", strconv.Itoa(seconds), service)
 }
 
+// observabilityFragmentArgs prefers the isolated copies written next to the
+// stack. Those copies bind-mount ./data and publish a random host port.
+func (s *Stack) observabilityFragmentArgs(profile ObsProfile) []string {
+	args := make([]string, 0, len(profile.ComposeFragmentNames())*2)
+	for _, frag := range profile.ComposeFragmentNames() {
+		path := filepath.Join(s.WorkDir, frag)
+		if _, err := os.Stat(path); err != nil {
+			path = filepath.Join(s.TestenvDir, frag)
+		}
+		args = append(args, "-f", path)
+	}
+	return args
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.ProxyOverlay {
 		args = append(args, "-f", proxyOverlayPath(s))
 	}
 	if s.Observability {
-		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
-		if _, err := os.Stat(overlay); err != nil {
-			overlay = filepath.Join(s.TestenvDir, "docker-compose.observability.yml")
+		profile := s.ObsProfile
+		if profile == "" {
+			profile = ResolveObsProfile()
 		}
-		args = append(args, "-f", overlay)
+		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
+		if _, err := os.Stat(overlay); err == nil {
+			args = append(args, "-f", overlay)
+			args = append(args, s.observabilityFragmentArgs(profile)...)
+		} else {
+			args = append(args, "-f", filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
+			for _, frag := range profile.ComposeFragmentNames() {
+				args = append(args, "-f", filepath.Join(s.TestenvDir, frag))
+			}
+		}
 		ipOverride := filepath.Join(s.WorkDir, "docker-compose.observability.ip.yml")
 		if _, err := os.Stat(ipOverride); err == nil {
 			args = append(args, "-f", ipOverride)
@@ -294,6 +360,9 @@ func (s *Stack) composeEnv() []string {
 	if s.ComposeProject != "" {
 		env = append(env, "COMPOSE_PROJECT_NAME="+s.ComposeProject)
 	}
+	if s.Observability {
+		env = append(env, "TESTENV_OBS_CONFIG_DIR="+s.WorkDir)
+	}
 	return env
 }
 
@@ -302,7 +371,16 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
 	defer cancel()
 
-	t.Cleanup(func() { s.Down(t) })
+	t.Cleanup(func() {
+		if dumpLogsOnExitEnabled() {
+			DumpComposeLogs(t, s)
+		}
+		if keepStackEnabled() {
+			t.Logf("citest: keeping compose stack %s because %s=1", filepath.Base(s.WorkDir), keepStackEnv)
+			return
+		}
+		s.Down(t)
+	})
 
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "up", "-d", "--wait", "--pull", "missing")

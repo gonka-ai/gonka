@@ -26,7 +26,6 @@ const (
 	envHeightSyncSlots     = "DEVSHARD_HEIGHTSYNC_SLOTS"
 	envHeightSyncProbe     = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
 	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
-	envLogLevel            = "DEVSHARD_LOG_LEVEL"
 	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
 	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
 )
@@ -41,25 +40,6 @@ var (
 	hsSt   *heightSyncProcessState
 	hsErr  error
 )
-
-// initGatewaySlog raises slog when DEVSHARD_LOG_LEVEL is set.
-// Unset leaves the Go default (Info), matching today's gateway logs.
-func initGatewaySlog() {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLogLevel)))
-	if raw == "" {
-		return
-	}
-	level := slog.LevelInfo
-	switch raw {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-}
 
 func parseUintEnv(name string) (uint64, error) {
 	raw := strings.TrimSpace(os.Getenv(name))

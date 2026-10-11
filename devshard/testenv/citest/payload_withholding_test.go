@@ -84,7 +84,7 @@ func TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired(t *testing.T) {
 	model := config.PrimaryModelID(cfg)
 
 	harness.Step(t, "drive chat so HA validators acquire while D7 keeps fetch failure as an error")
-	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, 6)
+	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, "first", 6)
 
 	// Acquire inserts a pending row and Release deletes it before Validate
 	// returns, so the row often never overlaps a poll. payload_fetch_err is
@@ -103,7 +103,10 @@ func TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired(t *testing.T) {
 	// and only a later fetch of one of those inferences counts as a re-acquire.
 	before := payloadFetchErrCounts(t, stack)
 	require.NotEmpty(t, before)
-	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, 6)
+	// New prompts miss the gateway response cache (TTL is an hour). A cache
+	// hit never reaches a host, and the owed inference is re-fetched only
+	// when a later host request runs collectValidationJobs.
+	drivePayloadWithholdingChats(t, client, eps.GatewayHTTP, model, "again", 6)
 
 	var again string
 	ok := harness.AssertEventually(t, 90*time.Second, time.Second, func() bool {
@@ -121,7 +124,8 @@ func TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired(t *testing.T) {
 	require.Equal(t, 0, settled.Total, "released retry must not leave a parked lease (pending=%d skipped=%d)", settled.Pending, settled.Skipped)
 }
 
-var payloadFetchErrInference = regexp.MustCompile(`inference_id=(\d+)`)
+// Typed JSON is "inference_id":8. Text logs still use inference_id=8.
+var payloadFetchErrInference = regexp.MustCompile(`(?:"inference_id":|inference_id=)(\d+)`)
 
 func payloadWithholdingHosts() []string {
 	return []string{"versiond-0", "versiond-1", "versiond-2", "versiond-3"}
@@ -186,13 +190,13 @@ func bootPayloadWithholdingReady(t *testing.T, stack *harness.Stack, cfg *config
 	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
 }
 
-func drivePayloadWithholdingChats(t *testing.T, client *http.Client, gatewayURL, model string, n int) {
+func drivePayloadWithholdingChats(t *testing.T, client *http.Client, gatewayURL, model, wave string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		req := harness.ChatCompletionRequest{
 			Model: model,
 			Messages: []harness.ChatMessage{
-				{Role: "user", Content: fmt.Sprintf("citest payload withholding chat %d", i)},
+				{Role: "user", Content: fmt.Sprintf("citest payload withholding %s chat %d", wave, i)},
 			},
 			MaxTokens: 16,
 		}

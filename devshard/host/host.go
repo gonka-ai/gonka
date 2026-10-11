@@ -1333,6 +1333,9 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 
 	obsH, obsHash := h.observedTip(ctx)
+	if job != nil {
+		obsH, obsHash = heightsync.FinishObserved(job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash, obsH, obsHash)
+	}
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,

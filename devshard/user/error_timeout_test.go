@@ -33,7 +33,7 @@ func errorMissPayload(t *testing.T) []byte {
 
 func startPendingConfirmForErrorMiss(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, params InferenceParams) (nonce uint64, execIdx int) {
 	t.Helper()
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce = prepared.diff.Nonce
 	execIdx = int(nonce % uint64(len(session.clients)))
@@ -259,7 +259,7 @@ func TestPinPendingFinish_ConcurrentComposeLeavesFinish(t *testing.T) {
 
 	next := params
 	next.Prompt = bytes.ReplaceAll(testutil.TestPrompt, []byte("xxxxxxxxxxxxxxxxxxxxxxxxx"), []byte("other concurrent prompt xx"))
-	_, err := session.PrepareInference(next)
+	_, err := session.PrepareInference(context.Background(), next)
 	require.NoError(t, err)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce), "pinned Finish must survive PrepareInference")
 }
@@ -287,7 +287,7 @@ func TestPinnedNonce_HoldsTimeoutUntilIncluded(t *testing.T) {
 
 	next := params
 	next.Prompt = bytes.ReplaceAll(testutil.TestPrompt, []byte("xxxxxxxxxxxxxxxxxxxxxxxxx"), []byte("other concurrent prompt xx"))
-	_, err := session.PrepareInference(next)
+	_, err := session.PrepareInference(context.Background(), next)
 	require.NoError(t, err)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce))
 	require.NotNil(t, findPendingErrorMiss(session.PendingTxs(), nonce), "pinned ErrorMiss must survive PrepareInference")

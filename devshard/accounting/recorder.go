@@ -179,6 +179,15 @@ func (r *Recorder) appendHostStats(
 // Ghost records a burned nonce. timeoutPending says the caller will raise a timeout on it, which keeps
 // the nonce live long enough to receive that outcome instead of retiring on the burn alone.
 func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
+	r.ghost(context.Background(), escrowID, nonce, reason, quarantine, timeoutPending)
+}
+
+// GhostCtx is Ghost with the span on ctx stored in the same lock as the burn.
+func (r *Recorder) GhostCtx(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
+	r.ghost(ctx, escrowID, nonce, reason, quarantine, timeoutPending)
+}
+
+func (r *Recorder) ghost(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -187,7 +196,7 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 	if noSend == NoSendUnknown {
 		detail = reason
 	}
-	if err := r.tracker.RecordGhost(
+	if err := r.tracker.RecordGhostTraced(
 		escrowID,
 		nonce,
 		r.currentPhase(),
@@ -195,9 +204,19 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 		noSend,
 		detail,
 		timeoutPending,
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
+}
+
+// NoteTrace copies the span on ctx onto the live nonce so a later disposition
+// event can be joined to the attempt that produced it.
+func (r *Recorder) NoteTrace(ctx context.Context, escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil || ctx == nil {
+		return
+	}
+	r.tracker.AttachTrace(escrowID, nonce, TraceRefFromContext(ctx))
 }
 
 // RequestID names the client request a nonce came from, so a later miss or invalid can point at it.
@@ -229,15 +248,25 @@ func (r *Recorder) RequestFinished(escrowID, requestID string) {
 }
 
 func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+	r.realSend(context.Background(), escrowID, nonce, sentAt, quarantine)
+}
+
+// RealSendCtx is RealSend with the span on ctx stored in the same lock as the send.
+func (r *Recorder) RealSendCtx(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+	r.realSend(ctx, escrowID, nonce, sentAt, quarantine)
+}
+
+func (r *Recorder) realSend(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
-	if err := r.tracker.RecordRealSend(
+	if err := r.tracker.RecordRealSendTraced(
 		escrowID,
 		nonce,
 		sentAt,
 		r.currentPhase(),
 		QuarantineFromString(quarantine),
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting real send escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
@@ -377,6 +406,24 @@ func (r *Recorder) Close() error {
 	return r.tracker.Close()
 }
 
+// TimeoutActionRecorded reports whether a gateway timeout action becomes an
+// accounting fact. Callers that mirror the outcome onto a span consult it too,
+// so the span never claims a dimension the counter does not carry.
+func TimeoutActionRecorded(action, reason string) bool {
+	if action == "started" {
+		return false
+	}
+	if action != "skipped" {
+		return true
+	}
+	switch reason {
+	case "nonce_already_finished", "empty_stream_without_non_empty_winner":
+		return false
+	default:
+		return true
+	}
+}
+
 func (r *Recorder) Tracker() *Tracker {
 	if r == nil {
 		return nil
@@ -418,6 +465,14 @@ func (r *Recorder) syncAndFlush(escrowID string, phase EscrowPhase, action strin
 	if err := r.tracker.Flush(context.Background()); err != nil {
 		log.Printf("gateway accounting %s flush escrow=%s: %v", action, escrowID, err)
 	}
+}
+
+// DispatchPhase is the phase stamped on the next accounting fact.
+func (r *Recorder) DispatchPhase() Phase {
+	if r == nil {
+		return PhaseNormal
+	}
+	return r.currentPhase()
 }
 
 func (r *Recorder) currentPhase() Phase {

@@ -67,9 +67,13 @@ services:
       MOCK_CHAIN_GRPC_ADDR: "{{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}"
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
-      MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_ENDPOINT: "{{ primaryMLEndpoint . }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - ./binaries:/testenv-binaries:ro
     ports:
@@ -80,22 +84,26 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mlNodeIDs . }}
+      - {{ . }}
+{{ end }}
     restart: unless-stopped
+{{ range $i, $id := mlNodeIDs . }}
 
-  mock-openai:
+  {{ $id }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ mlNodeHostPort $ $i }}:{{ $.MockOpenAI.HTTPPort }}"
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+        ipv4_address: {{ $.Network.BaseIP }}.{{ mlNodeIPOffset $i }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
 
   devshard-postgres:
@@ -162,6 +170,7 @@ services:
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA replicas declare GONKA_HA for the shared-storage guard.
       # The sqlite migration clears this before booting these hosts on sqlite.
@@ -174,9 +183,16 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
-      # Solo hosts omit GONKA_HA.
-      # Solo executor: local sqlite so it does not multi-write shared PG diffs.
-      DEVSHARD_STORAGE_MODE: sqlite
+      # Solo hosts omit GONKA_HA (not in the sticky shared-writer pair).
+      # Hybrid+PG still shares session meta and validation leases so HA can
+      # warm/catch up after a solo executor, and citest can observe pending
+      # leases when the solo validates (sqlite Acquire never writes PG rows).
+      DEVSHARD_STORAGE_MODE: hybrid
+      PGHOST: {{ $.Postgres.Host }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
 {{ end }}
     volumes:
       - {{ $.Versiond.HostBinaryMount }}:{{ $.Versiond.OverridePath }}:ro
@@ -197,12 +213,12 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mlNodeIDs $ }}
+      {{ . }}:
         condition: service_started
-{{ if isHAReplica $ . }}
+{{ end }}
       devshard-postgres:
         condition: service_healthy
-{{ end }}
 {{ if ne .ID "versiond-0" }}
       versiond-0:
         condition: service_started
@@ -210,7 +226,9 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mlNodeIDs $ }}
+      - {{ . }}
+{{ end }}
 {{ end }}
     stop_grace_period: 30m
     restart: unless-stopped
@@ -291,6 +309,13 @@ services:
       DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}
+      DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}
+      DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}
+      DEVSHARD_LOG_PAYLOADS_MAX_BYTES: ${DEVSHARD_LOG_PAYLOADS_MAX_BYTES:-16384}
       # Host ping (gateway → used hosts). On by default; observability only.
       DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
       DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
@@ -331,6 +356,11 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost":        legacyVersiondHost,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
+		"mlNodeIDs":                 mlNodeIDs,
+		"mlNodeIPOffset":            config.MLNodeIPOffset,
+		"mlNodeHostPort":            mlNodeHostPort,
+		"primaryMLEndpoint":         primaryMLEndpoint,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -359,6 +389,7 @@ func writeEnvFile(cfg *config.File, outPath string) error {
 	b.WriteString(fmt.Sprintf("TESTENV_KEYRING_PASSWORD=%s\n", cfg.Versiond.KeyringPassword))
 	b.WriteString("TESTENV_OTEL_ENABLED=false\n")
 	b.WriteString("TESTENV_OTEL_ENDPOINT=\n")
+	b.WriteString("LOG_FORMAT=json\n")
 	return os.WriteFile(outPath, []byte(b.String()), 0o600)
 }
 
@@ -436,4 +467,34 @@ func primaryEscrowID(cfg *config.File) string {
 
 func primaryModelID(cfg *config.File) string {
 	return config.PrimaryModelID(cfg)
+}
+
+func mlNodeIDs(cfg *config.File) []string {
+	if cfg == nil {
+		return []string{config.MLNodeID(0)}
+	}
+	return cfg.MLNodeIDs()
+}
+
+func primaryMLEndpoint(cfg *config.File) string {
+	if cfg == nil {
+		return "http://mock-openai-0:8088"
+	}
+	return cfg.PrimaryMLEndpoint()
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	if cfg == nil {
+		return "mock-openai-0=http://mock-openai-0:8088"
+	}
+	return cfg.MockMLNodesEnv()
+}
+
+// mlNodeHostPort publishes a distinct host port per pool member (container port unchanged).
+func mlNodeHostPort(cfg *config.File, i int) int {
+	port := config.DefaultMockOpenAIHTTPPort
+	if cfg != nil && cfg.MockOpenAI.HTTPPort > 0 {
+		port = cfg.MockOpenAI.HTTPPort
+	}
+	return port + i
 }

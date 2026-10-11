@@ -366,7 +366,7 @@ func TestSeed_PrepareInferenceDoesNotSeed(t *testing.T) {
 	t.Cleanup(func() { _ = session.Close() })
 
 	start := time.Now()
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})

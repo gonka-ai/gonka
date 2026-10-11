@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"gopkg.in/yaml.v3"
 )
 
 func TestIsPlaceholderKey(t *testing.T) {
@@ -362,8 +364,10 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "Dockerfile.mock-chain")
 	require.Contains(t, text, "CONFIG_PATH")
 	require.Contains(t, text, "mock-dapi:")
-	require.Contains(t, text, "mock-openai:")
+	require.Contains(t, text, "mock-openai-0:")
 	require.Contains(t, text, "Dockerfile.mockopenai")
+	require.Contains(t, text, "MOCK_ML_NODES:")
+	require.Contains(t, text, "mock-openai-0=http://mock-openai-0:")
 	require.Contains(t, text, "versiond-0:")
 	require.Contains(t, text, "versiond-1:")
 	require.Contains(t, text, "versiond-2:")
@@ -403,7 +407,11 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "- versiond-pool"),
 		"only the sticky pair should resolve through the router pool")
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
-	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
+	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: hybrid",
+		"solo shares PG sessions/leases so HA can warm and citest can observe pending")
+	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
+	require.Equal(t, 3, strings.Count(text, "PGHOST:"),
+		"HA pair + solo all get PGHOST")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
@@ -417,6 +425,12 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_CHAIN_RPC")
 	require.Contains(t, text, "NODE_RPC_URL")
 	require.Contains(t, text, "DEVSHARD_NODE_MANAGER_ADDR")
+	require.Contains(t, text, "LOG_FORMAT: ${LOG_FORMAT:-json}")
+	require.Contains(t, text, "DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}")
+	require.Contains(t, text, "OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")
 	require.NotContains(t, text, "MOCK_CHAIN_REST")
@@ -428,6 +442,57 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_TIMEOUT")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY")
 	require.Contains(t, text, "/v1/status")
+}
+
+func TestWriteCompose_MLNodesPool(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+	require.Equal(t, 2, cfg.ResolvedMLNodes())
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1:")
+	require.Contains(t, text, "MOCK_ML_NODES:")
+	require.Contains(t, text, "mock-openai-0=http://mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1=http://mock-openai-1:")
+	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort, cfg.MockOpenAI.HTTPPort))
+	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort+1, cfg.MockOpenAI.HTTPPort))
+	require.NotContains(t, text, "\n  mock-openai:\n")
+}
+
+// TestWriteCompose_MockDapiObservabilityEnv pins the T5 knobs on mock-dapi:
+// without them the dapi hop never exports spans or JSON logs, and C8 cannot
+// see a third service on the trace.
+func TestWriteCompose_MockDapiObservabilityEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+
+	env := compose.Services["mock-dapi"].Environment
+	require.NotEmpty(t, env, "mock-dapi service missing from generated compose")
+	require.Equal(t, "${TESTENV_OTEL_ENABLED:-false}", env["DEVSHARD_OTEL_ENABLED"])
+	require.Equal(t, "${TESTENV_OTEL_ENDPOINT:-}", env["OTEL_ENDPOINT"])
+	require.Equal(t, "${LOG_FORMAT:-json}", env["LOG_FORMAT"])
 }
 
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
@@ -469,6 +534,7 @@ func TestWriteCompose_EnvFile(t *testing.T) {
 	text := string(body)
 	require.Contains(t, text, "TESTENV_USER_PRIVATE_KEY="+cfg.User.PrivateKeyHex)
 	require.Contains(t, text, "TESTENV_CHAIN_ID="+cfg.ChainID)
+	require.Contains(t, text, "LOG_FORMAT=json")
 }
 
 func TestFillConfig_MaterializesKeyrings(t *testing.T) {

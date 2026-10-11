@@ -7,6 +7,23 @@ import (
 	"devshard/types"
 )
 
+func TestFinishObserved_EnvelopeWinsOverLaterTip(t *testing.T) {
+	env := []byte{0x11}
+	tip := []byte{0x22}
+	h, hash := FinishObserved(170, env, 171, tip)
+	if h != 170 || string(hash) != string(env) {
+		t.Fatalf("envelope stamp = %d %x", h, hash)
+	}
+	h, hash = FinishObserved(0, nil, 171, tip)
+	if h != 171 || string(hash) != string(tip) {
+		t.Fatalf("tip stamp = %d %x", h, hash)
+	}
+	secH, secHash, ok := SectionObserved(&HeightSyncSection{MainnetHeight: 170, MainnetBlockHashHex: "11"})
+	if !ok || secH != 170 || string(secHash) != string(env) {
+		t.Fatalf("section stamp = %d %x ok=%v", secH, secHash, ok)
+	}
+}
+
 func TestStampPresent_EmptyHashIsAbsent(t *testing.T) {
 	if StampPresent(nil) {
 		t.Fatal("nil hash must be absent")

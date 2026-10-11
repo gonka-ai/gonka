@@ -6,15 +6,22 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/logging"
+	"devshard/observability"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -139,13 +146,52 @@ func TestObserveChat_ApplicationStatusNotTransportFault(t *testing.T) {
 
 type chatStatusHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
-	err   error
-	calls int
+	err     error
+	calls   int
+	headers http.Header
 }
 
-func (h *chatStatusHandler) Chat(context.Context, *connect.Request[rpcpb.SignedEnvelope], *connect.ServerStream[rpcpb.ChatFrame]) error {
+func (h *chatStatusHandler) Chat(_ context.Context, req *connect.Request[rpcpb.SignedEnvelope], _ *connect.ServerStream[rpcpb.ChatFrame]) error {
 	h.calls++
+	if req != nil {
+		h.headers = req.Header().Clone()
+	}
 	return h.err
+}
+
+func TestRPCClient_Send_InjectsTraceparentAndRequestID(t *testing.T) {
+	prevTP := otel.GetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	handler := &chatStatusHandler{
+		err: connect.NewError(connect.CodeUnavailable, errors.New("requests disabled")),
+	}
+	handler.err.(*connect.Error).Meta().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
+	_, h := rpcpbconnect.NewSessionServiceHandler(handler)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	rpc := readyChatClient(t, srv.URL, &bodyAdmission{})
+	ctx, reqID := logging.WithRequestID(context.Background(), "req-peer-trace-1")
+	ctx, span := observability.StartGatewayRequest(ctx)
+	defer span.End()
+	wantTrace := trace.SpanContextFromContext(ctx).TraceID().String()
+
+	_, err := rpc.Send(ctx, chatRequest(), nil, nil)
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	require.Equal(t, 1, handler.calls)
+	require.Equal(t, reqID, handler.headers.Get(observability.RequestIDHeader))
+	tpHeader := handler.headers.Get("traceparent")
+	require.NotEmpty(t, tpHeader, "Connect Chat must carry W3C traceparent")
+	require.Contains(t, tpHeader, wantTrace)
 }
 
 func readyChatClient(t *testing.T, base string, admission RequestAdmissionController) *RPCClient {

@@ -25,6 +25,7 @@ import (
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/types"
@@ -221,6 +222,8 @@ type UpstreamStatusError struct {
 	Body          string
 	DevshardError string
 	RouterError   string
+	// Headers are allowlisted response headers retained for empty-body diagnostics.
+	Headers map[string]string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -648,7 +651,9 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
-	var sawMeta bool       // true once we observe a devshard_meta tail
+	var sawDone bool
+	var forwardedInference bool
+	var sawMeta bool // true once we observe a devshard_meta tail
 	received := completionapi.NewReceivedResponseHasher()
 	defer func() { result.ReceivedResponseHashes = received.Sums() }()
 
@@ -658,7 +663,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 			streamBytes += int64(len(raw))
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			// Handled before the bound: the line arrived whole.
-			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
+			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawDone, &forwardedInference, &sawMeta)
 			if streamBytes > maxStream {
 				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
 				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
@@ -693,6 +698,16 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				}
 				if !sawTerminator {
 					return &result, ErrSSEStreamTruncated
+				}
+				// Receipt (or [DONE]) still completes the read. A content-bearing
+				// body that never emitted [DONE] is logged and is not an extra miss.
+				if forwardedInference && !sawDone {
+					logging.Error("sse_content_without_done",
+						"subsystem", "transport",
+						"escrow", c.escrowID,
+						"nonce", result.Nonce,
+						"has_receipt", len(result.Receipt) > 0,
+					)
 				}
 				return &result, nil
 			}
@@ -767,9 +782,12 @@ func (c *HTTPClient) handleSSELine(
 	received *completionapi.ReceivedResponseHasher,
 	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
-	writeErrLogged, unexpectedLineLogged, sawTerminator, sawMeta *bool,
+	writeErrLogged, unexpectedLineLogged, sawTerminator, sawDone, forwardedInference, sawMeta *bool,
 ) {
 	forward := func(event string) {
+		if event == "data" && forwardedInference != nil {
+			*forwardedInference = true
+		}
 		received.Add(line)
 		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
 			*writeErrLogged = true
@@ -794,6 +812,9 @@ func (c *HTTPClient) handleSSELine(
 	data := strings.TrimPrefix(line, "data: ")
 	if data == "[DONE]" {
 		*sawTerminator = true
+		if sawDone != nil {
+			*sawDone = true
+		}
 		forward("[DONE]")
 		return
 	}
@@ -1302,6 +1323,9 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
+	// Join the host span to the gateway (or caller) trace. versiond extracts
+	// W3C traceparent via EchoMiddleware on /sessions/:id/rpc and JSON routes.
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -1325,6 +1349,7 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 			Body:          respBody,
 			DevshardError: devshardError,
 			RouterError:   routerError,
+			Headers:       observability.FilterResponseHeaders(resp.Header),
 		}
 	}
 	if observe {
@@ -1425,6 +1450,7 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, m
 	if err != nil {
 		return nil, err
 	}
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -1448,6 +1474,7 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool, m
 			Body:          respBody,
 			DevshardError: devshardError,
 			RouterError:   routerError,
+			Headers:       observability.FilterResponseHeaders(resp.Header),
 		}
 	}
 	if observe {

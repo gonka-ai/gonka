@@ -19,7 +19,7 @@ import (
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
-	"devshard/logging"
+	"devshard/observability"
 	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
@@ -131,8 +131,27 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
-	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
-	initGatewaySlog()
+	logFormat := os.Getenv("LOG_FORMAT")
+	if logFormat == "" {
+		logFormat = os.Getenv("DEVSHARD_LOG_FORMAT")
+	}
+	installGatewayLogger(logFormat)
+	// Init degrades in-process on exporter/resource failure (Ready=false);
+	// never couple gateway availability to OTel config.
+	shutdownObs, err := observability.Init(context.Background(), observability.Config{
+		ServiceName: observability.GatewayServiceName,
+	})
+	if err != nil {
+		log.Printf("otel init: %v", err)
+	}
+	defer func() {
+		if shutdownObs == nil {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = shutdownObs(shutdownCtx)
+	}()
 	ctx := context.Background()
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
@@ -467,6 +486,9 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		gatewayState.Settings.ModelLimits,
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
+	if accountingTracker != nil {
+		accountingTracker.SetDispositionSink(dispositionSink{})
+	}
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {

@@ -393,6 +393,14 @@ type Session struct {
 	// heightSyncMinPublishNs is the min gap between publishes. 0 uses
 	// heightSyncDefaultMinPublish. Tests may override via TestingOnly*.
 	heightSyncMinPublishNs atomic.Int64
+
+	// quietSettle publishes a leftover receipt and Finish once the session
+	// has had no PrepareInference for quietSettleDelay. A following chat
+	// carries those txs in its Start diff, so this timer must not be the
+	// per-inference composer: that would be a second FeePerNonce.
+	quietSettleDelay  time.Duration
+	quietSettle       *time.Timer
+	quietSettleClosed bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -439,6 +447,13 @@ func (s *Session) heightSyncForceSlotsLocked() uint64 {
 // seed loop is unchanged. Zero leaves MaybeHeartbeat available.
 func WithDisableHeightSyncHeartbeat(on bool) SessionOption {
 	return func(sess *Session) { sess.disableHeightSyncHeartbeat = on }
+}
+
+// WithQuietSettleDelay overrides how long a leftover receipt waits for the
+// next Start diff before it is composed on its own nonce. Tests use a short
+// delay. Zero keeps defaultQuietSettleDelay.
+func WithQuietSettleDelay(d time.Duration) SessionOption {
+	return func(sess *Session) { sess.quietSettleDelay = d }
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
@@ -540,6 +555,9 @@ func NewSession(
 	}
 	if sess.clock == nil {
 		sess.clock = time.Now
+	}
+	if sess.quietSettleDelay <= 0 {
+		sess.quietSettleDelay = defaultQuietSettleDelay
 	}
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
 	sess.heartbeatPoke = make(chan struct{}, 1)
@@ -1030,12 +1048,16 @@ type HostBinding struct {
 // decide, then call PrepareInference" pattern where the host could change
 // between peek and commit.
 //
+// persistCtx, when non-nil, is attached to the durable AppendDiff path so
+// storage/retry logs carry request_id/trace_id. Cancel is stripped before
+// persist (see persistDiffRetryLocked).
+//
 // If the chooser returns a non-nil error, PrepareInferenceFn aborts
 // without consuming the nonce and propagates the error to the caller.
 // This lets policy callers (queue picker, exclude lists) decline a
 // binding that is no longer useful (e.g. the queued request was canceled
 // in the gap between wakeup and lock acquisition).
-type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err error)
+type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, persistCtx context.Context, err error)
 
 // composeDiffLocked builds, persists, commits, and returns a new diff
 // (persist-first when a store is configured). extraTxs are appended after
@@ -1045,11 +1067,11 @@ type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err 
 // so this path does not race another writer on the same nonce. With a store,
 // PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
 // so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
-func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, int, error) {
-	return s.composeDiffLockedInclude(extraTxs, nil)
+func (s *Session) composeDiffLocked(ctx context.Context, extraTxs []*types.DevshardTx) (types.Diff, int, error) {
+	return s.composeDiffLockedInclude(ctx, extraTxs, nil)
 }
 
-func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, int, error) {
+func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
 
@@ -1074,7 +1096,7 @@ func (s *Session) composeDiffLockedInclude(extraTxs []*types.DevshardTx, include
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(types.DiffRecord{
+		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
@@ -1298,8 +1320,15 @@ func (s *Session) noteResponseClaimLocked(hostIdx int, resp *host.HostResponse) 
 // Unlocking during backoff would let a concurrent compose re-sign the same
 // next nonce and risk ErrDiffFork after a durable write. Persist-first means
 // sequencer state is not committed until this returns nil.
-func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
-	return storage.AppendDiffWithRetry(context.Background(), s.store, s.escrowID, rec)
+//
+// Cancel is detached via WithoutCancel so a client disconnect cannot abort
+// durable persist while s.mu is held; request_id/trace values still propagate
+// into storage retry logs.
+func (s *Session) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return storage.AppendDiffWithRetry(context.WithoutCancel(ctx), s.store, s.escrowID, rec)
 }
 
 // maybeSaveSnapshotLocked schedules an asynchronous snapshot save when
@@ -1411,8 +1440,10 @@ func (s *Session) FlushSnapshot() error {
 // host. New callers that DO need a host-dependent decision (e.g. PoC probe
 // shaping, exclude-list handling) should use PrepareInferenceFn so the
 // decision and the nonce increment happen in the same critical section.
-func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, error) {
-	return s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return params, false, nil })
+func (s *Session) PrepareInference(ctx context.Context, params InferenceParams) (*PreparedInference, error) {
+	return s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+		return params, false, ctx, nil
+	})
 }
 
 // PrepareInferenceFn is the atomic form of PrepareInference. The chooser is
@@ -1441,7 +1472,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		ParticipantKey: s.hostParticipantKeyLocked(hostIdx),
 		ValidatorAddr:  strings.TrimSpace(s.group[hostIdx].ValidatorAddress),
 	}
-	params, probe, err := chooser(binding)
+	params, probe, persistCtx, err := chooser(binding)
 	if err != nil {
 		// Chooser declined this binding (e.g. queue empty after dropping
 		// canceled requests). Bail without consuming the nonce so the next
@@ -1491,8 +1522,13 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		}
 	}
 
-	diff, composedIdx, err := s.composeDiffLocked(txsForDiff)
+	// The next Start diff is the composer for a queued receipt and Finish.
+	// Stopping the quiet settle here is what keeps that from becoming its
+	// own nonce while another inference is still arriving.
+	s.stopQuietSettleLocked()
+	diff, composedIdx, err := s.composeDiffLocked(persistCtx, txsForDiff)
 	if err != nil {
+		s.armQuietSettleLocked()
 		return nil, err
 	}
 	if composedIdx != hostIdx {
@@ -1697,7 +1733,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference, err e
 
 // SendInference composes diff, sends to correct host, processes response.
 func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*host.HostResponse, error) {
-	p, err := s.PrepareInference(params)
+	p, err := s.PrepareInference(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1719,7 +1755,7 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLocked(extraTxs)
+	diff, hostIdx, err := s.composeDiffLocked(ctx, extraTxs)
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -2397,11 +2433,12 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 	}
 	if resp != nil && resp.HasEnvelope {
 		floor, _, _ := s.sm.HeightSyncFloorAsOf(s.nonce + 1)
+		stamp, _, _ := heightsync.RefStamp(tx)
 		kept, n := heightsync.FilterHostRaises(floor, resp.EnvelopeHeight, true, s.ownSlotsLocked(hostIdx), []*types.DevshardTx{tx})
 		if n > 0 {
 			logging.Warn("omitted host-signed raise: stamp does not match response envelope",
 				"subsystem", "heightsync", "escrow", s.escrowID, "host_idx", hostIdx,
-				"floor", floor, "envelope", resp.EnvelopeHeight)
+				"floor", floor, "envelope", resp.EnvelopeHeight, "stamp", stamp)
 			return
 		}
 		if len(kept) == 0 {
@@ -2991,7 +3028,7 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 
 func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, error) {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLockedInclude(extraTxs, includePinned)
+	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned)
 	if err != nil {
 		s.mu.Unlock()
 		return types.Diff{}, err
@@ -3037,6 +3074,166 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 	}
 
 	return diff, fmt.Errorf("send pending diff nonce %d to any host: %w", diff.Nonce, lastErr)
+}
+
+// defaultQuietSettleDelay is how long a leftover receipt waits for the next
+// Start diff. The withholding driver posts about once a second, so this stays
+// above that gap. WaitGatewaySessionSettled allows 90s, so one quiet compose
+// still releases the hold.
+const defaultQuietSettleDelay = 5 * time.Second
+
+// ArmQuietSettle schedules one compose of unpinned pending txs when no
+// PrepareInference follows. The next Start diff is the per-inference
+// composer and cancels this timer, so a chat does not pay a second
+// FeePerNonce for its receipt and Finish. Heartbeat on and off share this
+// path: the cadence drains only when a span is actually due.
+func (s *Session) ArmQuietSettle() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armQuietSettleLocked()
+}
+
+func (s *Session) armQuietSettleLocked() {
+	if s.quietSettleClosed || s.quietSettle != nil || !s.hasUnpinnedPendingLocked() {
+		return
+	}
+	d := s.quietSettleDelay
+	if d <= 0 {
+		d = defaultQuietSettleDelay
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(d, func() { s.fireQuietSettle(timer) })
+	s.quietSettle = timer
+}
+
+func (s *Session) fireQuietSettle(timer *time.Timer) {
+	s.mu.Lock()
+	if s.quietSettleClosed || s.quietSettle != timer {
+		s.mu.Unlock()
+		return
+	}
+	s.quietSettle = nil
+	pending := s.hasUnpinnedPendingLocked()
+	s.mu.Unlock()
+	if !pending {
+		return
+	}
+	if err := s.DrainUnpinnedPending(context.Background()); err != nil {
+		logging.Warn("quiet settle did not deliver host txs",
+			"subsystem", "session", "escrow", s.escrowID, "error", err)
+	}
+}
+
+func (s *Session) stopQuietSettleLocked() {
+	if s.quietSettle == nil {
+		return
+	}
+	s.quietSettle.Stop()
+	s.quietSettle = nil
+}
+
+func (s *Session) stopQuietSettle() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.quietSettleClosed = true
+	t := s.quietSettle
+	s.quietSettle = nil
+	s.mu.Unlock()
+	if t != nil {
+		t.Stop()
+	}
+}
+
+func (s *Session) hasUnpinnedPendingLocked() bool {
+	candidates, _ := s.splitPendingForComposeLocked(nil)
+	return len(candidates) > 0
+}
+
+// DrainUnpinnedPending commits queued host txs that are not pinned for an
+// error-miss, then sends each diff to a reachable host. The height-sync
+// heartbeat calls it before a span, and the quiet settle calls it when no
+// later Start diff arrived to carry the receipt. A completed request does
+// not: that nonce would be a second FeePerNonce for the same inference.
+//
+// The commit happens before the send. A host that does not answer leaves the
+// gateway ledger updated; the next catch-up carries the diff. Pinned finishes
+// stay queued. An empty queue does not advance the nonce.
+func (s *Session) DrainUnpinnedPending(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	span, err := s.drainUnpinnedPendingLocked()
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	sendErr := s.dispatchDrainedDiffs(ctx, span)
+	if err != nil {
+		return err
+	}
+	return sendErr
+}
+
+func (s *Session) dispatchDrainedDiffs(ctx context.Context, span []composedDiff) error {
+	var last error
+	for _, item := range span {
+		if err := s.sendDrainedDiff(ctx, item); err != nil {
+			last = err
+			if ctx.Err() != nil {
+				return err
+			}
+		}
+	}
+	return last
+}
+
+// sendDrainedDiff delivers one already-committed diff. It walks hosts the same
+// way SendPendingDiff does, and it does not consult heartbeat backoff: a host
+// skipped for a quiet-session span must still accept this settlement.
+func (s *Session) sendDrainedDiff(ctx context.Context, item composedDiff) error {
+	finalizeClients := s.getFinalizeClients()
+	if len(finalizeClients) == 0 {
+		return fmt.Errorf("send drained diff nonce %d: no hosts", item.diff.Nonce)
+	}
+	var lastErr error
+	for offset := 0; offset < len(finalizeClients); offset++ {
+		candidateIdx := (item.hostIdx + offset) % len(finalizeClients)
+		catchUp, catchUpErr := s.catchUpForSend(ctx, candidateIdx, item.diff.Nonce)
+		if catchUpErr != nil {
+			lastErr = fmt.Errorf("catch up host %d for drained diff: %w", candidateIdx, catchUpErr)
+			if ctx.Err() != nil {
+				return lastErr
+			}
+			continue
+		}
+		resp, sendErr := finalizeClients[candidateIdx].Send(ctx, host.HostRequest{
+			Diffs: catchUp,
+			Nonce: item.diff.Nonce,
+		}, nil, nil)
+		if sendErr != nil {
+			lastErr = fmt.Errorf("send drained diff to host %d: %w", candidateIdx, sendErr)
+			if ctx.Err() != nil {
+				return lastErr
+			}
+			continue
+		}
+		s.mu.Lock()
+		processErr := s.processResponse(candidateIdx, resp, item.diff.Nonce)
+		s.mu.Unlock()
+		s.publishHeightSyncView()
+		if processErr != nil {
+			return fmt.Errorf("process drained diff response from host %d: %w", candidateIdx, processErr)
+		}
+		return nil
+	}
+	return fmt.Errorf("send drained diff nonce %d to any host: %w", item.diff.Nonce, lastErr)
 }
 
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
@@ -3642,6 +3839,7 @@ func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
+	s.stopQuietSettle()
 	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()

@@ -374,3 +374,39 @@ func TestCanonicalSignedBytes_Nil(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestFinishPreimageCoversObservedStamp(t *testing.T) {
+	base := &MsgFinishInference{
+		InferenceId:       7,
+		ResponseHash:      []byte{1, 2, 3, 4},
+		ServedHash:        []byte{5, 6, 7, 8},
+		InputTokens:       3,
+		OutputTokens:      4,
+		ExecutorSlot:      1,
+		EscrowId:          "escrow",
+		ObservedHeight:    170,
+		ObservedBlockHash: []byte{0xaa},
+	}
+	otherHeight := &MsgFinishInference{
+		InferenceId:       7,
+		ResponseHash:      []byte{1, 2, 3, 4},
+		ServedHash:        []byte{5, 6, 7, 8},
+		InputTokens:       3,
+		OutputTokens:      4,
+		ExecutorSlot:      1,
+		EscrowId:          "escrow",
+		ObservedHeight:    171,
+		ObservedBlockHash: []byte{0xaa},
+	}
+	stamped, err := CanonicalSignedBytes(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moved, err := CanonicalSignedBytes(otherHeight)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stamped) == string(moved) {
+		t.Fatal("observed height must stay inside the finish preimage")
+	}
+}

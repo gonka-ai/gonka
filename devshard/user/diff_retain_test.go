@@ -25,7 +25,7 @@ func composeEmptyDiffs(t *testing.T, session *Session, n int) map[uint64][]byte 
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	for range n {
-		diff, _, err := session.composeDiffLocked(nil)
+		diff, _, err := session.composeDiffLocked(context.Background(), nil)
 		require.NoError(t, err)
 		roots[diff.Nonce] = diff.PostStateRoot
 	}
@@ -76,7 +76,7 @@ func TestSession_LateResponseForATrimmedNonceIsVerifiedFromTheStore(t *testing.T
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	slow, err := session.PrepareInference(params)
+	slow, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	slowResp, err := session.SendOnly(ctx, slow, nil, nil)
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestSession_LateResponseForATrimmedNonceWithAWrongRootIsRejected(t *testing
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	slow, err := session.PrepareInference(params)
+	slow, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	slowResp, err := session.SendOnly(ctx, slow, nil, nil)
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestSession_LateResponseWhenTheStoreFailsIsNotAMismatch(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	slow, err := session.PrepareInference(params)
+	slow, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	slowResp, err := session.SendOnly(ctx, slow, nil, nil)
 	require.NoError(t, err)

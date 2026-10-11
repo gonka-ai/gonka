@@ -237,10 +237,18 @@ func requirePickerSkippedUnfundableEscrow(t *testing.T, env fundingFallbackEnv, 
 	require.NotEmpty(t, requestID, "gateway response did not carry X-Request-Id")
 	logs, err := env.stack.ComposeLogsTail(400, "devshardctl")
 	require.NoError(t, err)
-	require.Contains(t, logs, "request="+requestID+" stage=gateway_runtime_selected escrow="+chosen,
+	require.True(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_runtime_selected", chosen)...),
 		"the picker did not select escrow %s for %s", chosen, requestID)
-	require.NotContains(t, logs, "request="+requestID+" stage=gateway_runtime_selected escrow="+skipped)
-	require.NotContains(t, logs, "request="+requestID+" stage=gateway_escrow_refused_funding escrow="+skipped)
+	require.False(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_runtime_selected", skipped)...))
+	require.False(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_escrow_refused_funding", skipped)...))
+}
+
+func gatewayStageFields(requestID, stage, escrow string) []harness.LogField {
+	return []harness.LogField{
+		harness.LogStringField("request", requestID),
+		harness.LogStringField("stage", stage),
+		harness.LogStringField("escrow", escrow),
+	}
 }
 
 func requireFundingRuntime(t *testing.T, status fundingFallbackStatus, escrowID string) fundingRuntimeStatus {

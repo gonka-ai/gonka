@@ -100,7 +100,7 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	}
 	defer c.conn.releaseChatStream()
 
-	creq, err := tokenRequest(c, env)
+	creq, err := tokenRequest(ctx, c, env)
 	if err != nil {
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 		return nil, err

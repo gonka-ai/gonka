@@ -14,6 +14,10 @@ import "devshard/types"
 // ownSlots is the responding host's slots. An ack signed by another slot is
 // left alone: that hop's envelope is not this hop's, and dropping it would
 // stall a turn on gossiped mempool copies.
+//
+// A Finish stamp is inside proposer_sig. Rewriting it would make every replica
+// reject the diff, so an unbacked Finish raise is omitted whole. The executor
+// avoids that by stamping the response-leg envelope before it signs.
 func FilterHostRaises(floor, envelopeH uint64, envelopePresent bool, ownSlots map[uint32]struct{}, txs []*types.DevshardTx) (kept []*types.DevshardTx, omitted int) {
 	if !envelopePresent || len(txs) == 0 {
 		return txs, 0

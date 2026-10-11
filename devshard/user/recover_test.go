@@ -683,7 +683,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	session.dispatchHeartbeatSpan(ctx, span[:1])
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 1)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Len(t, heightAcksInDiffs([]types.Diff{ackDiff}), 1,
@@ -793,7 +793,7 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, ackHostIdx, err := session.composeDiffLocked(nil)
+	ackDiff, ackHostIdx, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, base+4, ackDiff.Nonce)
@@ -1165,7 +1165,7 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	require.Len(t, heightAcksInTxs(recovered.PendingTxs()), 1)
 
 	recovered.mu.Lock()
-	lateAckDiff, _, err := recovered.composeDiffLocked(nil)
+	lateAckDiff, _, err := recovered.composeDiffLocked(context.Background(), nil)
 	recovered.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, finalNonce+1, lateAckDiff.Nonce)
@@ -1868,7 +1868,7 @@ func TestRecoverSession_SnapshotOnly_ReseedsTrimmedPrefixKeys(t *testing.T) {
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	for i := range hosts {
 		session.hostSyncNonce[i] = ackDiff.Nonce
 	}

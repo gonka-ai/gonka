@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -94,7 +95,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		return s.streamErrorEnvelope(c)
 	}
 	if f.HTTPStatus >= 400 {
-		return c.JSON(f.HTTPStatus, map[string]string{"error": "mock-openai fault injection"})
+		return c.JSON(f.HTTPStatus, OpenAIErrorBody(f.HTTPStatus, "mock-openai fault injection"))
 	}
 
 	body, err := readBody(c.Request())
@@ -110,9 +111,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		req.Model = "test-model"
 	}
 
-	// Latency stretches Validate (non-stream JSON). Streaming inference must
-	// still emit a first token immediately so gateway first-token timeout
-	// (1s floor) is not tripped while leases stay pending.
+	// Latency stretches Validate (non-stream JSON). ExecuteValidation always
+	// sets stream=false before the ML call. Streaming inference must still
+	// emit a first token immediately so the gateway 1s floor is not tripped.
 	if f.Latency > 0 && !req.Stream {
 		time.Sleep(f.Latency)
 	}
@@ -202,6 +203,34 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 	tokens := []rune(text)
 	if len(tokens) == 0 {
 		tokens = []rune(" ")
+	}
+	// vLLM-style streaming error: optional content prefix, then error event + [DONE].
+	if msg := strings.TrimSpace(f.SSEErrorMessage); msg != "" {
+		// Emit a short content prefix so partial body capture has bytes before the error.
+		prefix := tokens
+		if len(prefix) > 4 {
+			prefix = prefix[:4]
+		}
+		for _, r := range prefix {
+			if err := writeChunk(map[string]any{"content": string(r)}, nil, nil); err != nil {
+				return err
+			}
+		}
+		errPayload, err := json.Marshal(OpenAIErrorBody(500, msg))
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", errPayload); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
 	}
 	first := true
 	paused := false

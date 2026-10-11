@@ -76,24 +76,27 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-legacy-compat test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites. citest-baseline-smoke, citest-mixed-fleet,
 # citest-peerrpc-legacy-compat, and
-# citest-height-sync-dapi-compat are manual only (pinned images). All four
-# stay out of the auto-discovered CI matrix.
+# citest-height-sync-dapi-compat are manual only (pinned images).
+# citest-dapi-correlation is a focused subset of citest-observability.
+# All of those stay out of the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-legacy-compat|citest-height-sync-dapi-compat' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-legacy-compat|citest-height-sync-dapi-compat|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 # Pin previous participant images with TESTENV_VERSIOND_IMAGE +
 # TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl
+# gencompose names the pool mock-openai-0 … mock-openai-{N-1}. Every member
+# shares image devshard-mock-openai:latest, so building the first service is enough.
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl
 CITEST_BUILD_INFRA := versiond-router versiond-0
 # Rolling-update and warm-cutover stay in their own targets. Versiond.* used to
 # pull them into this suite as well.
@@ -205,9 +208,17 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	$(CITEST_RPC_RUN) -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 (isolated overlay; host histogram scrape).
+citest-observability: citest-images ## O1 smoke plus trace, disposition, payload, and shadow-host correlation.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
+	$(CITEST_RPC_RUN) -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
+
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
+
+citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run 'TestMLNodePool_' -count=1 -v -timeout 45m
 
 citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi chainoracle (no heightsyncd).
 	$(MAKE) build-devshardd

@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // TimeoutDeadline reads.
 func prepareNonce(t *testing.T, session *Session) uint64 {
 	t.Helper()
-	prepared, err := session.PrepareInference(InferenceParams{
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Prompt:      []byte(`{"messages":[{"role":"user","content":"x"}]}`),
 		Model:       "llama",
 		InputLength: 1,

@@ -22,7 +22,7 @@ func composeUnsentDiffs(t *testing.T, session *Session, count int) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	for range count {
-		_, _, err := session.composeDiffLocked(nil)
+		_, _, err := session.composeDiffLocked(context.Background(), nil)
 		require.NoError(t, err)
 	}
 }
