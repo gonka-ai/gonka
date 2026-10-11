@@ -69,11 +69,11 @@ type LeaseStore interface {
 	// older than ttl. Submitted leases are retryable because the corresponding
 	// validation tx may have lived only in a volatile mempool.
 	AcquireOneStale(ctx context.Context, escrowID string, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error)
-	// AcquireOneStaleVisible is AcquireOneStale restricted to epochID and
+	// AcquireOneStaleAmong is AcquireOneStale restricted to epochID and
 	// inferenceIDs. An empty inferenceIDs claims nothing. The retry loop uses
-	// it when catch-up failed and only inferences already visible in memory
+	// it when catch-up failed and only inferences already owed in memory
 	// are safe to reclaim.
-	AcquireOneStaleVisible(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error)
 	// SetResult updates status only when owner still holds a pending lease
 	// in epochID. epochID is part of the primary key and the partition key.
 	// Ownership is Address plus InstanceID. Hostname is ignored.
@@ -179,7 +179,7 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID string, owner Lease
 	return foundKey.inferenceID, foundKey.epochID, nil
 }
 
-func (m *Memory) AcquireOneStaleVisible(_ context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+func (m *Memory) AcquireOneStaleAmong(_ context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
 	if len(inferenceIDs) == 0 {
 		return 0, 0, nil
 	}
@@ -307,7 +307,7 @@ func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 // table provides the real cross-instance dedup.
 //
 // Acquire therefore always grants (validation runs inline), and AcquireOneStale
-// / AcquireOneStaleVisible / SetResult / Release are no-ops: the SQLite retry
+// / AcquireOneStaleAmong / SetResult / Release are no-ops: the SQLite retry
 // loop has no shared lease table to reclaim from. See docs/rolling-update.md
 // ("multi-instance ⇒ Postgres").
 
@@ -325,7 +325,7 @@ func (s *SQLite) AcquireOneStale(_ context.Context, _ string, _ LeaseOwner, _ ti
 	return 0, 0, nil
 }
 
-func (s *SQLite) AcquireOneStaleVisible(_ context.Context, _ string, _ uint64, _ []uint64, _ LeaseOwner, _ time.Duration) (uint64, uint64, error) {
+func (s *SQLite) AcquireOneStaleAmong(_ context.Context, _ string, _ uint64, _ []uint64, _ LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 	return 0, 0, nil
 }
 
@@ -432,7 +432,7 @@ func (s *Postgres) AcquireOneStale(ctx context.Context, escrowID string, owner L
 	return inferenceID, epochID, nil
 }
 
-func (s *Postgres) AcquireOneStaleVisible(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+func (s *Postgres) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
 	ids := make([]int64, 0, len(inferenceIDs))
 	for _, id := range inferenceIDs {
 		if id == 0 {
@@ -470,7 +470,7 @@ func (s *Postgres) AcquireOneStaleVisible(ctx context.Context, escrowID string, 
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, 0, nil
 		}
-		return 0, 0, fmt.Errorf("validation leases: acquire stale visible: %w", err)
+		return 0, 0, fmt.Errorf("validation leases: acquire stale among: %w", err)
 	}
 	return inferenceID, gotEpoch, nil
 }

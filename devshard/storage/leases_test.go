@@ -126,16 +126,16 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	require.Equal(t, uint64(10), epochID)
 }
 
-func TestMemoryLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
+func TestMemoryLease_AcquireOneStaleAmong_FiltersEpochAndID(t *testing.T) {
 	store := NewMemory()
-	runAcquireOneStaleVisibleTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+	runAcquireOneStaleAmongTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
 		ageMemoryLease(t, store, escrowID, inferenceID, epochID, time.Hour)
 	})
 }
 
-func TestPostgresLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
+func TestPostgresLease_AcquireOneStaleAmong_FiltersEpochAndID(t *testing.T) {
 	store := newTestPostgres(t)
-	runAcquireOneStaleVisibleTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+	runAcquireOneStaleAmongTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
 		_, err := store.pool.Exec(context.Background(),
 			`UPDATE devshard_validation_leases
 			 SET claimed_at = now() - interval '1 hour'
@@ -146,10 +146,10 @@ func TestPostgresLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
 	})
 }
 
-func runAcquireOneStaleVisibleTests(t *testing.T, store LeaseStore, age func(escrowID string, inferenceID, epochID uint64)) {
+func runAcquireOneStaleAmongTests(t *testing.T, store LeaseStore, age func(escrowID string, inferenceID, epochID uint64)) {
 	t.Helper()
 	ctx := context.Background()
-	const escrowID = "escrow-visible"
+	const escrowID = "escrow-among"
 	ttl := 30 * time.Minute
 	acquire := func(inferenceID, epochID uint64) {
 		won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, testOwner("holder"))
@@ -171,7 +171,7 @@ func runAcquireOneStaleVisibleTests(t *testing.T, store LeaseStore, age func(esc
 
 	claim := func(ids []uint64) uint64 {
 		t.Helper()
-		inferenceID, epochID, err := store.AcquireOneStaleVisible(ctx, escrowID, 10, ids, testOwner("retry"), ttl)
+		inferenceID, epochID, err := store.AcquireOneStaleAmong(ctx, escrowID, 10, ids, testOwner("retry"), ttl)
 		require.NoError(t, err)
 		if inferenceID != 0 {
 			require.Equal(t, uint64(10), epochID)
@@ -179,13 +179,13 @@ func runAcquireOneStaleVisibleTests(t *testing.T, store LeaseStore, age func(esc
 		return inferenceID
 	}
 
-	require.Zero(t, claim(nil), "no visible ids claims nothing")
+	require.Zero(t, claim(nil), "no inference ids claims nothing")
 	require.Zero(t, claim([]uint64{0}), "id 0 is ignored")
 	require.Zero(t, claim([]uint64{2}), "a skipped lease is not claimed")
 	require.Zero(t, claim([]uint64{3}), "a fresh lease is not claimed")
 	require.Zero(t, claim([]uint64{99}), "an id without a lease row claims nothing")
 	require.Equal(t, uint64(4), claim([]uint64{4}), "a stale submitted lease is claimed")
-	require.Equal(t, uint64(1), claim([]uint64{1, 2, 3, 4}), "only the remaining stale visible row is claimed")
+	require.Equal(t, uint64(1), claim([]uint64{1, 2, 3, 4}), "only the remaining stale owed row is claimed")
 	require.Zero(t, claim([]uint64{1, 2, 3, 4}), "a claimed row is no longer stale")
 
 	for _, inferenceID := range []uint64{1, 4} {
@@ -308,7 +308,7 @@ func TestSQLiteLease_AcquireOneStale_NoOp(t *testing.T) {
 	require.Equal(t, uint64(0), inferenceID)
 	require.Equal(t, uint64(0), epochID)
 
-	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{1}, testOwner("instance-2"), 30*time.Minute)
+	inferenceID, epochID, err = store.AcquireOneStaleAmong(ctx, "escrow-1", 10, []uint64{1}, testOwner("instance-2"), 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), inferenceID)
 	require.Equal(t, uint64(0), epochID)

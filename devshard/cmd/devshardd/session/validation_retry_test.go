@@ -43,7 +43,7 @@ func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId stri
 	return s.acquireFn(ctx, escrowId, owner, ttl)
 }
 
-func (s *stubStaleLeaseStore) AcquireOneStaleVisible(context.Context, string, uint64, []uint64, storage.LeaseOwner, time.Duration) (uint64, uint64, error) {
+func (s *stubStaleLeaseStore) AcquireOneStaleAmong(context.Context, string, uint64, []uint64, storage.LeaseOwner, time.Duration) (uint64, uint64, error) {
 	return 0, 0, nil
 }
 
@@ -1535,7 +1535,7 @@ func TestRetryStaleValidation_FailedCatchUpLeavesUnseenLeasePending(t *testing.T
 	}
 }
 
-func TestRetryStaleValidation_FailedCatchUpReclaimsVisibleLease(t *testing.T) {
+func TestRetryStaleValidation_FailedCatchUpReclaimsOwedLease(t *testing.T) {
 	const escrowID = "1"
 	store, mgr, e := laggingReplica(t, escrowID, 3)
 	h, ok := mgr.hostSnapshot(escrowID)
