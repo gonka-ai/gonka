@@ -752,6 +752,10 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -796,6 +800,10 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -2410,6 +2418,7 @@ func TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces(t *testing.T)
 	require.NoError(t, err)
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	var buf bytes.Buffer
