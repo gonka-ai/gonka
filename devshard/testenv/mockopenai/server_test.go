@@ -188,7 +188,7 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	_ = resp.Body.Close()
 	require.NotEmpty(t, lines)
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-test")
+	proc := completionapi.NewExecutorResponseProcessor("inference-test", false)
 	var streamed []string
 	for _, line := range lines {
 		updated, err := proc.ProcessStreamedResponse(line)
@@ -286,6 +286,7 @@ func TestChatCompletions_HonestReplayPassesValidation(t *testing.T) {
 		usage.PromptTokens,
 		usage.CompletionTokens,
 		"",
+		0,
 	)
 	require.NoError(t, err)
 	require.True(t, result.IsSuccessful(), "honest mock replay must validate successfully: %#v", result)
@@ -301,7 +302,7 @@ func TestChatCompletions_HonestStreamedReplayPassesValidation(t *testing.T) {
 	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
-	processor := completionapi.NewExecutorResponseProcessor("inference-1")
+	processor := completionapi.NewExecutorResponseProcessor("inference-1", false)
 	require.NoError(t, completionapi.ProcessHTTPResponse(executorResponse, processor))
 	storedResponse, err := processor.GetResponseBytes()
 	require.NoError(t, err)
@@ -323,6 +324,7 @@ func TestChatCompletions_HonestStreamedReplayPassesValidation(t *testing.T) {
 		usage.PromptTokens,
 		usage.CompletionTokens,
 		"",
+		0,
 	)
 	require.NoError(t, err)
 	require.True(t, result.IsSuccessful(), "honest streamed mock replay must validate successfully: %#v", result)
@@ -345,7 +347,7 @@ func TestChatCompletions_StreamLogprobTokensAreNumericIDs(t *testing.T) {
 	require.NoError(t, sc.Err())
 	_ = resp.Body.Close()
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp")
+	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp", true)
 	for _, line := range lines {
 		_, err := proc.ProcessStreamedResponse(line)
 		require.NoError(t, err)

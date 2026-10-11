@@ -249,9 +249,11 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 // mockTokenID maps token text to a stable non-negative decimal id so executor
 // and validator logprobs compare equal, and HasNonNumericTokens stays false.
 func mockTokenID(s string) string {
+	const replayTokenIDLimit = 9_000_000
+
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(s))
-	n := h.Sum32()
+	n := h.Sum32() % replayTokenIDLimit
 	if n == 0 {
 		n = 1
 	}

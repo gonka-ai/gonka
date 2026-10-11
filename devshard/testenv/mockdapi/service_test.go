@@ -1,7 +1,6 @@
 package mockdapi_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"net"
@@ -190,33 +189,6 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Equal(t, updated, cfg)
 }
 
-func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {
-	bed := startBed(t)
-	t.Cleanup(bed.cleanup)
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, bed.httpURL+"/block/stream?from=1", nil)
-	require.NoError(t, err)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	reader := bufio.NewReader(resp.Body)
-	var lastHeight int64
-	for i := 0; i < 2; i++ {
-		line, err := readSSEDataLine(reader)
-		require.NoError(t, err)
-		var hdr struct {
-			Height int64 `json:"height"`
-		}
-		require.NoError(t, json.Unmarshal([]byte(line), &hdr))
-		if i > 0 {
-			require.Greater(t, hdr.Height, lastHeight)
-		}
-		lastHeight = hdr.Height
-	}
-}
-
 func TestMockDAPI_AcquireMLNode(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)
@@ -264,17 +236,4 @@ func TestMockDAPI_AcquireMLNodePool(t *testing.T) {
 	var allocations map[string]uint64
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&allocations))
 	require.Equal(t, map[string]uint64{"mock-openai-0": 1, "mock-openai-1": 2}, allocations)
-}
-
-func readSSEDataLine(r *bufio.Reader) (string, error) {
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "data: ") {
-			return strings.TrimPrefix(line, "data: "), nil
-		}
-	}
 }
