@@ -230,8 +230,10 @@ services:
       {{ .Name }}:
         condition: service_started
 {{ end }}
+{{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
+{{ end }}
 {{ if ne .ID "versiond-0" }}
       versiond-0:
         condition: service_started
