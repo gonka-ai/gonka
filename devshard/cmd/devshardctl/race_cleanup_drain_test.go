@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
+	"devshard/types"
 )
 
 func TestJoinCanceledInflightsAbandonsHungDone(t *testing.T) {
@@ -120,4 +122,48 @@ func TestAwaitInflightDonesDrainsBeforeTimeout(t *testing.T) {
 	start := time.Now()
 	awaitInflightDones(context.Background(), []*inflight{inf})
 	require.Less(t, time.Since(start), 200*time.Millisecond)
+}
+
+// Test flow:
+//  1. Leave a Started loser whose execution deadline is still ahead.
+//  2. Run voteTimeoutsForFailedRequest under goTrackedRaceCleanup.
+//  3. Expect the barrier to clear without sleeping until that execution
+//     deadline; the nonce stays Started for the timeout sweep. Refusal waits
+//     still run under the barrier and are covered elsewhere.
+func TestGoTrackedRaceCleanupReleasesBarrierWhenTimeoutDeadlineIsFuture(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	nonce := startedInferenceConfirmedAt(t, env, time.Now())
+	due, reason, deadline := timeoutDeadlineDue(env.session, nonce, time.Now())
+	require.False(t, due, "fixture must leave an execution deadline ahead")
+	require.Equal(t, "execution", reason)
+	require.True(t, deadline.After(time.Now()))
+
+	var started, finished atomic.Int64
+	e := env.proxy.redundancy
+	e.onRaceCleanupStart = func() { started.Add(1) }
+	e.onRaceCleanupDone = func() { finished.Add(1) }
+
+	done := make(chan struct{})
+	close(done)
+	loser := &inflight{
+		escrowID: e.devshardID,
+		nonce:    nonce,
+		hostID:   "loser",
+		hostIdx:  int(nonce % 3),
+		sendTime: time.Now(),
+		done:     done,
+		err:      errors.New("speculative loser failed"),
+	}
+
+	start := time.Now()
+	e.goTrackedRaceCleanup(context.Background(), func(ctx context.Context) {
+		e.voteTimeoutsForFailedRequest(ctx, []*inflight{loser}, defaultParams())
+	})
+
+	require.Equal(t, int64(1), started.Load())
+	require.Eventually(t, func() bool { return finished.Load() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"pendingRaceCleanup must clear without waiting for a future HandleTimeout deadline")
+	require.Less(t, time.Since(start), time.Until(deadline),
+		"cleanup must finish before the protocol execution deadline")
+	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status)
 }

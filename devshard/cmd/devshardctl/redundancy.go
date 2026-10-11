@@ -3039,8 +3039,10 @@ func (e *Redundancy) goTrackedRaceCleanup(parent context.Context, fn func(contex
 }
 
 // raceCleanupGrace is how long Stop lets detached cleanups finish on their own
-// before cancelling them. They are already bounded by SecondaryWaitAfterWinner,
-// so reaching the cancel means something is wedged.
+// before cancelling them. Loser joins are bounded by SecondaryWaitAfterWinner
+// plus raceCleanupCancelGrace. Not-yet-due execution HandleTimeout votes are
+// deferred to the timeout sweep; refusal waits still run here and are bounded
+// by RefusalTimeout plus TimeoutBuffer.
 const raceCleanupGrace = 5 * time.Second
 
 // raceCleanupCancelGrace bounds the wait after cancelling. A cleanup blocked on
@@ -3717,6 +3719,41 @@ func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, error
 		return true
 	}
 	return !session.IsNonceFinished(inf.nonce)
+}
+
+// timeoutDeadlineDue reports whether Session.HandleTimeout can vote immediately.
+func timeoutDeadlineDue(session *user.Session, nonce uint64, sendTime time.Time) (due bool, reason string, deadline time.Time) {
+	if session == nil {
+		return true, "", time.Time{}
+	}
+	reason, deadline = session.TimeoutDeadline(nonce, sendTime)
+	return !time.Now().Before(deadline), reason, deadline
+}
+
+// runOrDeferHandleTimeout votes under the race-cleanup barrier when the work is
+// bounded: error-miss (no sleep), already-due deadlines, and not-yet-due
+// refusal (typically ≤ RefusalTimeout + buffer). A not-yet-due execution
+// deadline can be tens of minutes; sleeping for that under pendingRaceCleanup
+// blocked /v1/finalize. Those votes are deferred to the timeout sweep instead
+// so the barrier can clear. Attempt spans stay open across refusal sleep so
+// timeout outcomes can still be stamped before endAttemptSpan.
+func (e *Redundancy) runOrDeferHandleTimeout(ctx context.Context, inf *inflight, params user.InferenceParams, errorMiss bool, failStage string) {
+	kind := timeoutKindForInflight(inf, errorMiss)
+	if !errorMiss {
+		if due, reasonLabel, deadline := timeoutDeadlineDue(e.session, inf.nonce, inf.sendTime); !due && reasonLabel == "execution" {
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_deferred",
+				"host", inf.hostID,
+				"reason", reasonLabel,
+				"deadline_unix", deadline.Unix(),
+				"remaining_ms", time.Until(deadline).Milliseconds(),
+			)
+			e.recordGatewayTimeoutAction(inf, params, kind, "deferred", "deadline_not_due")
+			return
+		}
+	}
+	e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
+	result, err := e.runHandleTimeout(ctx, inf, params, errorMiss)
+	e.recordHandleTimeoutResult(ctx, inf, params, result, err, errorMiss, failStage)
 }
 
 func errorMissEnabledFor(inf *inflight) bool {
@@ -4532,9 +4569,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 							e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
 							return
 						}
-						e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-						result, err := e.runHandleTimeout(bgCtx, inf, params, errorMiss)
-						e.recordHandleTimeoutResult(bgCtx, inf, params, result, err, errorMiss, "background_timeout_failed")
+						e.runOrDeferHandleTimeout(bgCtx, inf, params, errorMiss, "background_timeout_failed")
 					}(inf)
 				}
 				e.logRequestSettled(bgCtx, winnerNonce, decision, "success")
@@ -4609,9 +4644,7 @@ func (e *Redundancy) voteTimeoutsForFailedRequest(ctx context.Context, failed []
 				e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
 				return
 			}
-			e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-			result, err := e.runHandleTimeout(ctx, inf, params, errorMiss)
-			e.recordHandleTimeoutResult(ctx, inf, params, result, err, errorMiss, "timeout_failed")
+			e.runOrDeferHandleTimeout(ctx, inf, params, errorMiss, "timeout_failed")
 		}(inf)
 	}
 }

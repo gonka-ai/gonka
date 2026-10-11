@@ -410,7 +410,9 @@ func (r *Recorder) Close() error {
 // accounting fact. Callers that mirror the outcome onto a span consult it too,
 // so the span never claims a dimension the counter does not carry.
 func TimeoutActionRecorded(action, reason string) bool {
-	if action == "started" {
+	if action == "started" || action == "deferred" {
+		// Deferred means race cleanup left the vote for the timeout sweep;
+		// the sweep (or a later due cleanup) records the real outcome.
 		return false
 	}
 	if action != "skipped" {
