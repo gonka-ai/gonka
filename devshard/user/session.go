@@ -2561,7 +2561,7 @@ func (s *Session) StateSizes() StateSizes {
 		SignatureNonces: len(s.signatures),
 		NonceStates:     len(s.nonceStates),
 		PendingTxs:      len(s.pendingTxs),
-		AppliedTxKeys:   0,
+		AppliedTxKeys:   len(s.appliedTxKeys),
 	}
 }
 
