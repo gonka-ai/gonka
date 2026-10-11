@@ -3046,7 +3046,36 @@ const raceCleanupGrace = 5 * time.Second
 // raceCleanupCancelGrace bounds the wait after cancelling. A cleanup blocked on
 // a host call that ignores its context cannot be joined, and teardown must not
 // hang on it, so the wait gives up and leaves the goroutine to unwind.
+//
+// waitForPendingLosers and waitForClientTimedOutAttempts use the same bound
+// after they cancel speculative SendOnly calls. An unbounded join there held
+// pendingRaceCleanup (and thus /v1/finalize) for the full InferenceTimeout when
+// a restarted host left the HTTP read ignoring cancel.
 const raceCleanupCancelGrace = 2 * time.Second
+
+// joinCanceledInflights waits for remaining done signals after cancel.
+// It returns how many attempts were still outstanding when timeout elapsed;
+// those send goroutines may still run, and callers must not read resp/err
+// until inflightDone reports true.
+func joinCanceledInflights(naturalDone <-chan *inflight, remaining int, timeout time.Duration) (abandoned int) {
+	if remaining <= 0 {
+		return 0
+	}
+	if timeout <= 0 {
+		return remaining
+	}
+	timer := time.NewTimer(timeout)
+	defer stopTimer(timer)
+	for remaining > 0 {
+		select {
+		case <-naturalDone:
+			remaining--
+		case <-timer.C:
+			return remaining
+		}
+	}
+	return 0
+}
 
 // waitRaceCleanups joins the detached cleanups, cancelling them if they overrun
 // the grace period. Always returns within raceCleanupGrace+raceCleanupCancelGrace.
@@ -3503,9 +3532,13 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 					inf.cancel()
 				}
 			}
-			for remaining > 0 {
-				<-naturalDone
-				remaining--
+			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
+				logRequestStage(ctx, "client_timeout_wait_drain_abandoned",
+					"escrow", e.devshardID,
+					"winner_nonce", winnerNonce,
+					"abandoned", abandoned,
+					"join_ms", raceCleanupCancelGrace.Milliseconds(),
+				)
 			}
 			return abandonedWinner
 		}
@@ -3516,9 +3549,10 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 // waitForPendingLosers waits for all not-yet-done attempts to close their done
 // channel, giving them at most SecondaryWaitAfterWinner to finish naturally.
 // Anything still running at the deadline has its per-attempt context cancelled
-// so SendOnly unwinds, and we drain the resulting done signals before
-// returning. Callers rely on this drain so finishRaceOutcome sees stable
-// inf.resp/inf.err state before invoking ProcessResponse / HandleTimeout.
+// so SendOnly unwinds, then we join for at most raceCleanupCancelGrace.
+// A transport that ignores cancel is abandoned: finishRaceOutcome must not
+// read resp/err until that attempt's done closes, so a hung host cannot hold
+// pendingRaceCleanup (and finalize) for InferenceTimeout.
 func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint64, attempts []*inflight) {
 	pending := pendingInflights(attempts)
 	if len(pending) == 0 {
@@ -3559,13 +3593,13 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 					inf.cancel()
 				}
 			}
-			// Drain the remaining signals. SendOnly honors ctx cancellation,
-			// so these should arrive promptly; the wait is unbounded so a
-			// hung transport leaks its own goroutine rather than corrupting
-			// finalization with a concurrent write to inf.resp/inf.err.
-			for remaining > 0 {
-				<-naturalDone
-				remaining--
+			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
+				logRequestStage(ctx, "speculative_wait_drain_abandoned",
+					"escrow", e.devshardID,
+					"winner_nonce", winnerNonce,
+					"abandoned", abandoned,
+					"join_ms", raceCleanupCancelGrace.Milliseconds(),
+				)
 			}
 			return
 		}
@@ -4175,6 +4209,10 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 }
 
 func (e *Redundancy) processInflightOnce(inf *inflight) error {
+	if inf == nil || !inflightDone(inf) {
+		// SendOnly may still write resp/err; ProcessResponse must wait for done.
+		return nil
+	}
 	inf.processOnce.Do(func() {
 		if inf.resp == nil {
 			return
@@ -4196,6 +4234,9 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	// them as a normal Finish before HandleErrorMiss runs — the inference then
 	// looks finished and is sampled for validation instead of missed.
 	for _, inf := range attempts {
+		if !inflightDone(inf) {
+			continue
+		}
 		if err := e.processInflightOnce(inf); err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "process_response_failed", "host", inf.hostID, "error", err)
 			if errors.Is(err, types.ErrStateHashMismatch) {
@@ -4231,6 +4272,23 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	for _, inf := range attempts {
 		finishedAt := time.Now()
 		inf.finishActiveStall(finishedAt)
+		if !inflightDone(inf) {
+			// Abandoned after cancel join timed out. Do not touch resp/err.
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed_transport_hung",
+				"host", inf.hostID,
+				"host_idx", inf.hostIdx,
+				"winner", inf.nonce == winnerNonce,
+				"reason", "send_ignored_cancel",
+			)
+			inf.closeAttemptPhases(finishedAt)
+			e.recordGatewayAttemptTerminal(inf, params, winnerNonce, false, opts.clientGone)
+			if e.session == nil || !e.session.IsNonceFinished(inf.nonce) {
+				failed = append(failed, inf)
+			} else {
+				inf.endAttemptSpan()
+			}
+			continue
+		}
 		ok := e.attemptCounts(inf, winnerNonce)
 		if !inf.probe {
 			anySucceeded = anySucceeded || ok
