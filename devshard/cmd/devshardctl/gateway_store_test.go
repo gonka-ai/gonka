@@ -1139,9 +1139,10 @@ func TestGatewaySettingsColumnsRoundTrip(t *testing.T) {
 			AccessMode: string(gatewayAccessModeOpen),
 		}},
 		EscrowRotation: EscrowRotationSettings{
-			Enabled:           true,
-			SettlementEnabled: true,
-			PrePoCBlocks:      400,
+			Enabled:                true,
+			SettlementEnabled:      true,
+			PrePoCBlocks:           400,
+			NonceDeactivationLimit: 12345,
 			Models: []EscrowRotationModelSettings{{
 				ModelID:     "Qwen/Test",
 				TargetCount: 3,

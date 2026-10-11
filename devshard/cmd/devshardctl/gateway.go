@@ -1012,7 +1012,6 @@ func (g *Gateway) checkBalances() {
 	g.retireExpiredEpochEscrows()
 	g.mu.Lock()
 	isRotationEnabled := g.settings.EscrowRotation.Enabled
-	configuredNonceLimit := g.nonceDeactivationLimit()
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
@@ -1036,11 +1035,8 @@ func (g *Gateway) checkBalances() {
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if chainMaxNonce == 0 || configuredNonceLimit < nonceLimit {
-			nonceLimit = configuredNonceLimit
-		}
-		if nonce >= nonceLimit {
+		nonceLimit := g.runtimeNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		if chainMaxNonce != 0 && nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
 				rt.id, nonce, nonceLimit)
 			g.scheduleDepletedEscrowReplacement(rt.id, rt.model, "high_nonce")
@@ -2360,21 +2356,22 @@ func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32)
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	nonceLimit := g.nonceDeactivationLimit()
-	if chainMaxNonce != 0 {
-		chainLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-		if chainLimit < nonceLimit {
-			nonceLimit = chainLimit
-		}
-	}
-	return rt.proxy.sm.LatestNonce() >= nonceLimit
+	return rt.proxy.sm.LatestNonce() >= g.runtimeNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 }
 
-func (g *Gateway) nonceDeactivationLimit() uint64 {
-	if g == nil || g.settings.EscrowRotation.NonceDeactivationLimit == 0 {
-		return nonceDeactivationLimit
+func (g *Gateway) runtimeNonceLimit(chainMaxNonce, groupSize uint32) uint64 {
+	limit := escrowNonceLimit(chainMaxNonce, groupSize)
+	if g == nil {
+		return limit
 	}
-	return g.settings.EscrowRotation.NonceDeactivationLimit
+	configured := g.settings.EscrowRotation.NonceDeactivationLimit
+	if chainMaxNonce == 0 && configured > 0 {
+		return configured
+	}
+	if configured > 0 && configured < limit {
+		return configured
+	}
+	return limit
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -3510,9 +3507,6 @@ func validateGatewaySettings(settings GatewaySettings) error {
 	if rotation.Enabled {
 		if rotation.PrePoCBlocks <= 0 {
 			return fmt.Errorf("escrow_rotation.pre_poc_blocks must be > 0")
-		}
-		if rotation.NonceDeactivationLimit == 0 {
-			return fmt.Errorf("escrow_rotation.nonce_deactivation_limit must be > 0")
 		}
 		if len(rotation.Models) == 0 {
 			return fmt.Errorf("escrow_rotation.models must contain at least one model when rotation is enabled")

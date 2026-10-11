@@ -79,6 +79,7 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 			escrow_rotation_enabled INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_settlement_enabled INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_pre_poc_blocks INTEGER NOT NULL DEFAULT 300,
+			escrow_rotation_nonce_deactivation_limit INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_models_json TEXT NOT NULL DEFAULT '',
 			gateway_disabled_enabled INTEGER NOT NULL DEFAULT 0,
 			gateway_disabled_message TEXT NOT NULL DEFAULT '',
@@ -972,6 +973,7 @@ func ensureGatewaySettingsRotationColumns(db *sql.DB) error {
 		{"escrow_rotation_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_settlement_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_pre_poc_blocks", "INTEGER NOT NULL DEFAULT 300"},
+		{"escrow_rotation_nonce_deactivation_limit", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_models_json", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {
