@@ -4192,9 +4192,9 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	// Process all responses first so Session has complete protocol state.
 	// Pin error-stream Finishes immediately: ProcessResponse queues them in
-	// pending, and a height-sync heartbeat can composeDiff them as a normal
-	// Finish before HandleErrorMiss runs — the inference then looks finished
-	// and is sampled for validation instead of missed.
+	// pending, and the drain below (or a height-sync heartbeat) can composeDiff
+	// them as a normal Finish before HandleErrorMiss runs — the inference then
+	// looks finished and is sampled for validation instead of missed.
 	for _, inf := range attempts {
 		if err := e.processInflightOnce(inf); err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "process_response_failed", "host", inf.hostID, "error", err)
@@ -4204,6 +4204,15 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		if errorMissEnabledFor(inf) {
 			e.session.PinPendingFinish(inf.nonce)
+		}
+	}
+	// Publish the receipt and Finish now. The heartbeat cadence is off unless
+	// DEVSHARD_HEIGHTSYNC_HEARTBEAT is set, and this request is already marked
+	// finished in memory, so no timeout goroutine will compose them later.
+	if e.session != nil {
+		if err := e.session.DrainUnpinnedPending(ctx); err != nil {
+			logging.Warn("drained host txs were not delivered",
+				"subsystem", "session", "escrow", e.devshardID, "error", err)
 		}
 	}
 

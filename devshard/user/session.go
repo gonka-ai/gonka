@@ -3053,6 +3053,88 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 	return diff, fmt.Errorf("send pending diff nonce %d to any host: %w", diff.Nonce, lastErr)
 }
 
+// DrainUnpinnedPending commits queued host txs that are not pinned for an
+// error-miss, then sends each diff to a reachable host. The height-sync
+// heartbeat drains this queue before a span. A completed request must drain
+// it too: with the cadence off, nothing else composes the receipt and Finish,
+// and the inference stays pending with its reservation held.
+//
+// The commit happens before the send. A host that does not answer leaves the
+// gateway ledger updated; the next catch-up carries the diff. Pinned finishes
+// stay queued. An empty queue does not advance the nonce.
+func (s *Session) DrainUnpinnedPending(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.mu.Lock()
+	span, err := s.drainUnpinnedPendingLocked()
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	sendErr := s.dispatchDrainedDiffs(ctx, span)
+	if err != nil {
+		return err
+	}
+	return sendErr
+}
+
+func (s *Session) dispatchDrainedDiffs(ctx context.Context, span []composedDiff) error {
+	var last error
+	for _, item := range span {
+		if err := s.sendDrainedDiff(ctx, item); err != nil {
+			last = err
+			if ctx.Err() != nil {
+				return err
+			}
+		}
+	}
+	return last
+}
+
+// sendDrainedDiff delivers one already-committed diff. It walks hosts the same
+// way SendPendingDiff does, and it does not consult heartbeat backoff: a host
+// skipped for a quiet-session span must still accept this settlement.
+func (s *Session) sendDrainedDiff(ctx context.Context, item composedDiff) error {
+	finalizeClients := s.getFinalizeClients()
+	if len(finalizeClients) == 0 {
+		return fmt.Errorf("send drained diff nonce %d: no hosts", item.diff.Nonce)
+	}
+	var lastErr error
+	for offset := 0; offset < len(finalizeClients); offset++ {
+		candidateIdx := (item.hostIdx + offset) % len(finalizeClients)
+		catchUp, catchUpErr := s.catchUpForSend(ctx, candidateIdx, item.diff.Nonce)
+		if catchUpErr != nil {
+			lastErr = fmt.Errorf("catch up host %d for drained diff: %w", candidateIdx, catchUpErr)
+			if ctx.Err() != nil {
+				return lastErr
+			}
+			continue
+		}
+		resp, sendErr := finalizeClients[candidateIdx].Send(ctx, host.HostRequest{
+			Diffs: catchUp,
+			Nonce: item.diff.Nonce,
+		}, nil, nil)
+		if sendErr != nil {
+			lastErr = fmt.Errorf("send drained diff to host %d: %w", candidateIdx, sendErr)
+			if ctx.Err() != nil {
+				return lastErr
+			}
+			continue
+		}
+		s.mu.Lock()
+		processErr := s.processResponse(candidateIdx, resp, item.diff.Nonce)
+		s.mu.Unlock()
+		s.publishHeightSyncView()
+		if processErr != nil {
+			return fmt.Errorf("process drained diff response from host %d: %w", candidateIdx, processErr)
+		}
+		return nil
+	}
+	return fmt.Errorf("send drained diff nonce %d to any host: %w", item.diff.Nonce, lastErr)
+}
+
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
 // hosts whose underlying client implements TimeoutVerifier. This gives the
 // proxy access to verifier instances for timeout vote collection.
