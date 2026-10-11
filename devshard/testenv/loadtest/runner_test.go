@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,31 @@ func TestIsAddressInUse(t *testing.T) {
 	require.True(t, isAddressInUse(errors.New("failed to set up container networking: Address already in use")))
 	require.False(t, isAddressInUse(errors.New("container is unhealthy")))
 	require.False(t, isAddressInUse(nil))
+}
+
+func TestLoadTestComposeEnvEnablesH2(t *testing.T) {
+	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
+	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
+	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
+	t.Setenv("DEVSHARD_RPC_H2_FRONT_HOST", "")
+	t.Setenv("DEVSHARD_RPC_GRPC", "false")
+
+	env := loadTestComposeEnv()
+	require.Equal(t, "8081", testEnvValue(env, "DEVSHARD_RPC_H2_PORT"))
+	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_HOST"))
+	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"))
+	require.Equal(t, "versiond-router", testEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST"))
+	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_GRPC"))
+}
+
+func testEnvValue(env []string, key string) string {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			return strings.TrimPrefix(item, prefix)
+		}
+	}
+	return ""
 }
 
 func TestStripStaticNetworking(t *testing.T) {

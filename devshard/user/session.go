@@ -980,7 +980,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// A ConfirmStart is admitted only when it verifies. The receipt is checked
 	// before the mempool so a forged confirm cannot take its dedup slot.
 	if len(resp.Receipt) > 0 {
-		s.acceptConfirmStartLocked(hostIdx, resp, &types.MsgConfirmStart{
+		s.acceptConfirmStartLocked(hostIdx, resp, "receipt", &types.MsgConfirmStart{
 			InferenceId:       inferenceNonce,
 			ExecutorSig:       resp.Receipt,
 			ConfirmedAt:       resp.ConfirmedAt,
@@ -990,7 +990,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	}
 	for _, tx := range resp.Mempool {
 		if tx != nil && tx.GetConfirmStart() != nil {
-			s.acceptConfirmStartLocked(hostIdx, resp, tx.GetConfirmStart())
+			s.acceptConfirmStartLocked(hostIdx, resp, "mempool", tx.GetConfirmStart())
 			continue
 		}
 		s.addPendingFromHostLocked(hostIdx, resp, tx)
@@ -1620,7 +1620,7 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.acceptConfirmStartLocked(-1, nil, &types.MsgConfirmStart{
+	s.acceptConfirmStartLocked(-1, nil, "receipt", &types.MsgConfirmStart{
 		InferenceId:       inferenceNonce,
 		ExecutorSig:       resp.Receipt,
 		ConfirmedAt:       resp.ConfirmedAt,
@@ -1634,7 +1634,7 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 // is dropped: the chain would either reject it or move the record to Started with no deadline, and
 // neither a refusal nor the execution sweep could then record the miss. A duplicate does not move
 // the stamp, so the queued signature and the deadline stay the same message. Caller holds s.mu.
-func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse, msg *types.MsgConfirmStart) {
+func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse, source string, msg *types.MsgConfirmStart) {
 	if msg == nil || len(msg.ExecutorSig) == 0 {
 		return
 	}
@@ -1652,7 +1652,8 @@ func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse,
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
 	if err := s.sm.CheckEvidence(&rec, tx); err != nil {
 		logging.Warn("rejected executor receipt", "subsystem", "session",
-			"escrow", s.escrowID, "nonce", msg.InferenceId, "error", err)
+			"escrow", s.escrowID, "nonce", msg.InferenceId,
+			"tx_hash", types.TxHash(tx), "source", source, "error", err)
 		return
 	}
 	s.addPendingFromHostLocked(hostIdx, resp, tx)

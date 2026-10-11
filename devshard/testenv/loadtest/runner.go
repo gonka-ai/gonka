@@ -175,15 +175,17 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 
 	composePath := filepath.Join(workDir, "docker-compose.yml")
 	project := ""
+	composeEnv := loadTestComposeEnv()
 	defer func() {
 		if opts.KeepStack || project == "" {
 			return
 		}
-		_ = runCommand(context.Background(), opts.TestenvDir, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
+		_ = runCommandWithEnv(context.Background(), opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
 	}()
 
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
+	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8081 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
@@ -196,13 +198,13 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err := fixComposePaths(composePath, opts.TestenvDir); err != nil {
 			return RunResult{}, err
 		}
-		err := runCommand(ctx, opts.TestenvDir, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
+		err := runCommandWithEnv(ctx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
 		if err == nil {
 			break
 		}
 		log.Printf("loadtest: Docker stack start failed: %v", err)
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		_ = runCommand(context.Background(), opts.TestenvDir, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
+		_ = runCommandWithEnv(context.Background(), opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
 		if !isAddressInUse(err) || attempt == maxStartAttempts {
 			return RunResult{}, err
 		}
@@ -724,13 +726,54 @@ func stripStaticNetworking(compose string) string {
 }
 
 func runCommand(ctx context.Context, dir, name string, args ...string) error {
+	return runCommandWithEnv(ctx, dir, nil, name, args...)
+}
+
+func runCommandWithEnv(ctx context.Context, dir string, env []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = env
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %w\n%s", name, strings.Join(args, " "), err, output)
 	}
 	return nil
+}
+
+// loadTestComposeEnv selects the v6 peer-RPC transport for this isolated stack.
+// The normal testenv Compose defaults remain unchanged for legacy and citest runs.
+func loadTestComposeEnv() []string {
+	env := os.Environ()
+	env = setEnvValue(env, "DEVSHARD_RPC_H2_PORT", "8081")
+	env = setEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE", "true")
+	env = setEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST", "versiond-router")
+	env = setEnvValue(env, "DEVSHARD_RPC_GRPC", "true")
+	return removeEnvValue(env, "DEVSHARD_RPC_H2_HOST")
+}
+
+func setEnvValue(env []string, key, value string) []string {
+	prefix := key + "="
+	filtered := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return append(filtered, prefix+value)
+}
+
+func removeEnvValue(env []string, key string) []string {
+	prefix := key + "="
+	filtered := make([]string, 0, len(env))
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func waitGateway(ctx context.Context, gatewayURL string) error {
