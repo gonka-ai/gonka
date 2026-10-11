@@ -1461,7 +1461,7 @@ func (s *flakyMetaStore) GetSessionMeta(id string) (*storage.SessionMeta, error)
 }
 
 // laggingReplica binds this replica after the first boundAt diffs are durable.
-// A peer then appends the rest to the shared store and holds the validation lease.
+// A peer then appends the rest to the shared store, takes the validation lease, and dies.
 func laggingReplica(t *testing.T, escrowID string, boundAt int) (*flakyMetaStore, *HostManager, *echo.Echo) {
 	t.Helper()
 	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, escrowID)
@@ -1508,7 +1508,7 @@ func TestRetryStaleValidation_FailedCatchUpLeavesUnseenLeasePending(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const escrowID = "1"
-			store, mgr, _ := laggingReplica(t, escrowID, tc.boundAt)
+			store, mgr, e := laggingReplica(t, escrowID, tc.boundAt)
 			h, ok := mgr.hostSnapshot(escrowID)
 			require.True(t, ok)
 			rec, present := h.SnapshotState().Inferences[1]
@@ -1519,7 +1519,7 @@ func TestRetryStaleValidation_FailedCatchUpLeavesUnseenLeasePending(t *testing.T
 			ctx := context.Background()
 
 			time.Sleep(60 * time.Millisecond)
-			store.failMeta.Store(true)
+			store.failMeta.Store(true) // one transient store error on this tick
 			rl.retryStaleValidationsForEscrow(ctx, escrowID)
 			store.failMeta.Store(false)
 
@@ -1530,6 +1530,7 @@ func TestRetryStaleValidation_FailedCatchUpLeavesUnseenLeasePending(t *testing.T
 
 			rl.retryStaleValidationsForEscrow(ctx, escrowID)
 			require.Equal(t, 1, inner.calls, "the next tick validates once catch-up succeeds")
+			require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e, escrowID), 1))
 		})
 	}
 }
