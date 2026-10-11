@@ -2410,11 +2410,12 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 	}
 	if resp != nil && resp.HasEnvelope {
 		floor, _, _ := s.sm.HeightSyncFloorAsOf(s.nonce + 1)
+		stamp, _, _ := heightsync.RefStamp(tx)
 		kept, n := heightsync.FilterHostRaises(floor, resp.EnvelopeHeight, true, s.ownSlotsLocked(hostIdx), []*types.DevshardTx{tx})
 		if n > 0 {
 			logging.Warn("omitted host-signed raise: stamp does not match response envelope",
 				"subsystem", "heightsync", "escrow", s.escrowID, "host_idx", hostIdx,
-				"floor", floor, "envelope", resp.EnvelopeHeight)
+				"floor", floor, "envelope", resp.EnvelopeHeight, "stamp", stamp)
 			return
 		}
 		if len(kept) == 0 {

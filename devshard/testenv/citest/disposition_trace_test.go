@@ -162,6 +162,9 @@ func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 	_ = harness.WaitTraceByAttr(t, obs, `{ span.devshard.disposition = "ghost" }`, 3*time.Minute)
 
 	harness.Step(t, "scrape Prometheus disposition labels and match span attrs")
+	// Prometheus scrapes every 15s. The first positive sample can be the
+	// previous scrape (a redundant finished_unused) while finished_used and
+	// ghost are already in the gateway. Keep polling until both are present.
 	var series []map[string]string
 	ok := harness.AssertEventually(t, 2*time.Minute, 5*time.Second, func() bool {
 		got, ready := harness.TryQueryPrometheusInstant(obs, `devshard_accounting_disposition > 0`)
@@ -169,11 +172,12 @@ func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 			return false
 		}
 		series = got
-		return true
+		return prometheusLabelPresent(got, "disposition", "finished_used") &&
+			prometheusLabelPresent(got, "disposition", "ghost")
 	})
 	if !ok {
 		harness.RequireMetricsBody(t, client, eps.GatewayHTTP+"/metrics", "devshard_accounting_disposition")
-		t.Fatalf("prometheus returned no positive devshard_accounting_disposition series")
+		t.Fatalf("prometheus disposition series missing finished_used or ghost; last=%v", series)
 	}
 
 	seen := map[string]bool{}
@@ -210,5 +214,30 @@ func requireDispositionSeen(t *testing.T, seen map[string]bool, key string) {
 	t.Helper()
 	if !seen[key] {
 		t.Fatalf("expected Prometheus series to include %s; saw %v", key, seen)
+	}
+}
+
+func prometheusLabelPresent(series []map[string]string, label, value string) bool {
+	for _, metric := range series {
+		if metric[label] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPrometheusLabelPresent_WaitsForBothDispositions(t *testing.T) {
+	partial := []map[string]string{{
+		"disposition":    "finished_unused",
+		"dispatch_phase": "normal",
+	}}
+	if prometheusLabelPresent(partial, "disposition", "finished_used") ||
+		prometheusLabelPresent(partial, "disposition", "ghost") {
+		t.Fatal("a stale scrape of finished_unused must not satisfy the poll")
+	}
+	full := append(partial, map[string]string{"disposition": "finished_used"}, map[string]string{"disposition": "ghost"})
+	if !prometheusLabelPresent(full, "disposition", "finished_used") ||
+		!prometheusLabelPresent(full, "disposition", "ghost") {
+		t.Fatal("poll must accept a scrape that contains finished_used and ghost")
 	}
 }
