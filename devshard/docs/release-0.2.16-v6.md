@@ -150,7 +150,10 @@ throttle, rotation status, suspicious hosts, and escrow rotation commitments.
 Escrow execution state stays on the host store. `perf.db` follows the same
 mode through `PerfStore`: `sqlite` keeps the local file; `hybrid` and
 `postgres` import it once into the gateway database and fail closed when
-Postgres is unreachable.
+Postgres is unreachable. **Gateway per-escrow session dirs are not migrated** —
+they remain local SQLite even when management/perf use Postgres (see
+[`gateway.md`](./gateway.md#gateway-persistence-backend) and
+[`host-health.md`](./host-health.md#known-limitations-postgres-gateway-cutover)).
 
 ### Diff catch-up is capped
 

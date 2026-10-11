@@ -504,14 +504,29 @@ func (s *sqlitePerfStore) readImportPage(ctx context.Context, selectPage string,
 		if err := rows.Scan(pointers...); err != nil {
 			return nil, afterKey, err
 		}
-		key, isInteger := values[0].(int64)
-		if !isInteger {
-			return nil, afterKey, fmt.Errorf("import key %v is not an integer", values[0])
+		key, err := importKeyAsInt64(values[0])
+		if err != nil {
+			return nil, afterKey, err
 		}
+		values[0] = key
 		lastKey = key
 		page = append(page, values)
 	}
 	return page, lastKey, rows.Err()
+}
+
+// importKeyAsInt64 accepts the integer types database/sql may return for SQLite INTEGER / rowid.
+func importKeyAsInt64(value any) (int64, error) {
+	switch key := value.(type) {
+	case int64:
+		return key, nil
+	case int:
+		return int64(key), nil
+	case int32:
+		return int64(key), nil
+	default:
+		return 0, fmt.Errorf("import key %v (%T) is not an integer", value, value)
+	}
 }
 
 func boolToInt(b bool) int {

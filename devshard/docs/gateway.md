@@ -48,7 +48,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env`, optional `settlement_enabled` (overrides `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` for that model) |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
-| - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings and epoch accounting use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` are migration sources, not runtime fallbacks |
+| - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings, epoch accounting, and `perf.db` use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` / `perf.db` are migration sources, not runtime fallbacks. **Per-escrow session storage stays on local SQLite** (see below) |
 | - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
 | - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
 | - | `PGUSER` | when `PGHOST` set | - | Postgres user |
@@ -75,9 +75,12 @@ pooled connection:
 Gateway settings, devshard topology, rotation status, escrow commitments, suspicious
 hosts, and participant throttle state are persisted in Postgres when `PGHOST` is
 set (or `DEVSHARD_STORAGE_MODE` is `hybrid` / `postgres`). Local
-`{baseStorageDir}/gateway.db` remains only as a one-shot migration source.
-Full design (including HA LWW-per-key semantics vs additive accounting) is in
-[storage-design.md](storage-design.md#gateway-store).
+`{baseStorageDir}/gateway.db` remains only as a one-shot migration source
+(left on disk after import; not quarantined). The same import-and-leave pattern
+applies to `accounting.db` and `perf.db`. Full design (including HA LWW-per-key
+semantics vs additive accounting) is in
+[storage-design.md](storage-design.md#gateway-store). Perf/pruner details and
+Postgres cutover limits are in [host-health.md](host-health.md#perfdb-what-startup-reads-and-what-is-pruned).
 
 When Postgres is selected:
 
@@ -85,13 +88,20 @@ When Postgres is selected:
 - Existing SQLite data is imported once (idempotent; skipped when Postgres already
   has settings or a migration marker exists).
 - Any leftover `gateway_sync_journal` rows from older hybrid builds are drained,
-  then the gateway serves **Postgres only**.
+  then the gateway serves **Postgres only** for those management/telemetry stores.
 
 When `PGHOST` is unset and mode is `sqlite`/`auto`, only SQLite is used.
 
+**Escrow sessions are not on Postgres.** Per-escrow execution logs stay in local
+`StoragePath` / `epoch_*.db` (`storage.NewSQLite` from `NewHTTPSession`) regardless
+of `PGHOST` or storage mode. Backups and failover for live escrows still depend on
+that local disk until a deliberate session migrate lands (tracked in
+[`gateway-sqlite-postgres-residuals.md`](gateway-sqlite-postgres-residuals.md)).
+
 **Rollback:** unset `PGHOST` and use `DEVSHARD_STORAGE_MODE=sqlite` to run
 SQLite-only again. Writes that landed in Postgres after migration are not
-automatically copied back to SQLite.
+automatically copied back to SQLite; reopening a leftover local file can serve
+stale data.
 
 **Postgres outage:** gateway store and epoch accounting fail closed (errors /
 boot failure). Session storage may still degrade to owner-only SQLite while

@@ -122,6 +122,7 @@ func (s *postgresPerfStore) ensureSchema(ctx context.Context) error {
 			created_at      TEXT NOT NULL,
 			PRIMARY KEY (request_id, escrow_id, nonce)
 		)`,
+		`CREATE INDEX IF NOT EXISTS request_accounting_attempts_lookup_idx ON request_accounting_attempts (request_id, escrow_id)`,
 		`CREATE TABLE IF NOT EXISTS request_accounting_aliases (
 			request_id        TEXT NOT NULL,
 			escrow_id         TEXT NOT NULL,
@@ -135,6 +136,27 @@ func (s *postgresPerfStore) ensureSchema(ctx context.Context) error {
 	for _, statement := range statements {
 		if _, err := s.pool.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("ensure perf postgres schema: %w", err)
+		}
+	}
+	// CREATE TABLE IF NOT EXISTS does not raise an existing IDENTITY start.
+	// Early #1964 databases may still have sequences at 1; bump so live ids
+	// stay at/above perfImportedIDCeiling and imports can claim the range below.
+	return s.ensureImportedIDSequences(ctx)
+}
+
+// ensureImportedIDSequences moves sample/log id sequences to at least
+// perfImportedIDCeiling (or MAX(id)+1 when the table already has higher ids).
+// setval(..., false) makes the next nextval return that value.
+func (s *postgresPerfStore) ensureImportedIDSequences(ctx context.Context) error {
+	for _, table := range []string{"perf_host_samples", "perf_request_log"} {
+		query := fmt.Sprintf(`
+			SELECT setval(
+				pg_get_serial_sequence('%s', 'id'),
+				GREATEST(%d::bigint, COALESCE((SELECT MAX(id) FROM %s), 0) + 1),
+				false
+			)`, table, perfImportedIDCeiling, table)
+		if _, err := s.pool.Exec(ctx, query); err != nil {
+			return fmt.Errorf("ensure %s id sequence: %w", table, err)
 		}
 	}
 	return nil
