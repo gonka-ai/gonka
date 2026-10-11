@@ -1,12 +1,12 @@
 # Validation credits
 
-Each devshard binary has a credit balance per model, shared across its escrows.
+Credits are counted per model and shared across escrows. Where the balance is kept depends on the storage mode (see the last item).
 
 - A successful, non-partial normal inference earns one credit. Replaying a stored response earns none.
-- Each validation attempt reserves a credit before node acquisition. Dispatch spends it, including retries; failures before dispatch return it with its original expiry.
+- Each validation attempt reserves one credit before node acquisition and keeps it across retries. The credit is spent once an ML node answers with 2xx or 4xx. If every node fails with 5xx, a transport error or a timeout, or the attempt fails before dispatch, the credit is returned with its original expiry.
 - Without credits, scheduling skips the model. Queued jobs and the lease wrapper recheck before starting work; the obligation is kept.
 - Unused credits expire after **60 minutes**, a compiled setting.
-- Restart resets credits to zero. Different binaries have separate balances.
+- With Postgres storage (`postgres`, or `hybrid` when Postgres is reachable at startup), credits are rows of `devshard_validation_credits`: every replica of the participant uses the same balance, and it survives a restart. With SQLite, each process keeps its own balance in memory, and a restart resets it to zero.
 
 There is no credit cap or extra concurrency limit. Existing node-manager limits
 still apply. Stale recovery stops claiming when no model in the session has
