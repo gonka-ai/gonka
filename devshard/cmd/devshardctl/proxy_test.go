@@ -1233,6 +1233,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 		hostIdx:  0,
 		nonce:    7,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}), // open: stall recording only runs while SendOnly is live
 	}
 	inf.contentChunks.Store(1)
 	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
@@ -1350,6 +1351,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    1,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	first.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	first.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1361,6 +1363,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    2,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	second.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	second.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
