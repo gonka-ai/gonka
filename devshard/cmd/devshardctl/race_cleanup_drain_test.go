@@ -101,3 +101,23 @@ func TestProcessInflightOnceSkipsAttemptsStillSending(t *testing.T) {
 	require.NoError(t, e.processInflightOnce(inf))
 	require.Nil(t, inf.processErr)
 }
+
+func TestAwaitInflightDonesReturnsWhenSendIgnoresCancel(t *testing.T) {
+	hungDone := make(chan struct{})
+	inf := &inflight{done: hungDone}
+	start := time.Now()
+	awaitInflightDones(context.Background(), []*inflight{inf})
+	elapsed := time.Since(start)
+	require.False(t, inflightDone(inf))
+	require.GreaterOrEqual(t, elapsed, raceCleanupCancelGrace)
+	require.Less(t, elapsed, raceCleanupCancelGrace+time.Second)
+}
+
+func TestAwaitInflightDonesDrainsBeforeTimeout(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	inf := &inflight{done: done}
+	start := time.Now()
+	awaitInflightDones(context.Background(), []*inflight{inf})
+	require.Less(t, time.Since(start), 200*time.Millisecond)
+}
