@@ -85,10 +85,11 @@ type PerfSettings struct {
 }
 
 type EscrowRotationSettings struct {
-	Enabled           bool                          `json:"enabled"`
-	SettlementEnabled bool                          `json:"settlement_enabled"`
-	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
-	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled                bool                          `json:"enabled"`
+	SettlementEnabled      bool                          `json:"settlement_enabled"`
+	PrePoCBlocks           int64                         `json:"pre_poc_blocks"`
+	NonceDeactivationLimit uint64                        `json:"nonce_deactivation_limit,omitempty"`
+	Models                 []EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 type EscrowRotationModelSettings struct {
