@@ -148,6 +148,7 @@ type VersiondCfg struct {
 	KeyringDir               string `yaml:"keyring_dir"`
 	KeyringPassword          string `yaml:"keyring_password"`
 	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
+	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.

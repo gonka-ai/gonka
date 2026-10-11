@@ -32,20 +32,21 @@ type RunnerConfig struct {
 }
 
 type RunResult struct {
-	Summary          Summary
-	Terminal         TerminalSummary
-	Assertions       []AssertionResult
-	OutputDir        string
-	WorkDir          string
-	GatewayURL       string
-	Allocations      map[string]uint64
-	MLStats          map[string]MLNodeStats
-	GatewayState     GatewayStateSizes
-	Metrics          MetricsSummary
-	HostFaults       []HostFaultResult
-	CPUProfiles      []CPUProfileResult
-	ProfileSnapshots []ProfileSnapshotResult
-	Accounting       *AccountingReport
+	Summary            Summary
+	Terminal           TerminalSummary
+	Assertions         []AssertionResult
+	OutputDir          string
+	WorkDir            string
+	GatewayURL         string
+	Allocations        map[string]uint64
+	MLStats            map[string]MLNodeStats
+	GatewayState       GatewayStateSizes
+	Metrics            MetricsSummary
+	HostFaults         []HostFaultResult
+	CPUProfiles        []CPUProfileResult
+	ContentionProfiles []ContentionProfileResult
+	ProfileSnapshots   []ProfileSnapshotResult
+	Accounting         *AccountingReport
 }
 
 type MLNodeStats struct {
@@ -259,11 +260,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	defer func() { result.Metrics = collector.stop() }()
 	collector.phase.Store("workload")
-	profiler, err := startCPUProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics.CPUProfiles)
+	profiler, err := startCPUProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics.CPUProfiles, scenario.Diagnostics.ContentionProfiles)
 	if err != nil {
 		return result, fmt.Errorf("start CPU profiler: %w", err)
 	}
-	defer func() { result.CPUProfiles = profiler.stop() }()
+	defer func() { result.CPUProfiles, result.ContentionProfiles = profiler.stop() }()
 	snapshots, err := startSnapshotProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics)
 	if err != nil {
 		return result, fmt.Errorf("start snapshot profiler: %w", err)
@@ -521,6 +522,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
 	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
+	cfg.Versiond.EnableContentionProfiles = scenario.Diagnostics.ContentionProfiles
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
 	configureParticipants(cfg, scenario.Topology.Participants)
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce

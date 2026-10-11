@@ -48,32 +48,80 @@ func TestHostCPUProfileUsesPrivateAdminListener(t *testing.T) {
 func TestCPUProfilerSavesBinaryAndManifest(t *testing.T) {
 	bytes := []byte{0x1f, 0x8b, 0, 1, 2, 3}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/debug/pprof/profile", r.URL.Path)
-		require.Equal(t, "1", r.URL.Query().Get("seconds"))
 		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
-		_, _ = w.Write(bytes)
+		switch r.URL.Path {
+		case "/debug/pprof/profile":
+			require.Equal(t, "1", r.URL.Query().Get("seconds"))
+			_, _ = w.Write(bytes)
+		case "/debug/pprof/goroutine":
+			require.Equal(t, "1", r.URL.Query().Get("debug"))
+			_, _ = w.Write([]byte("goroutine dump"))
+		case "/debug/pprof/mutex":
+			_, _ = w.Write([]byte("mutex profile"))
+		case "/debug/pprof/block":
+			_, _ = w.Write([]byte("block profile"))
+		default:
+			http.NotFound(w, r)
+		}
 	}))
 	defer server.Close()
 	dir := t.TempDir()
-	profiler, err := startCPUProfiler(context.Background(), RunnerConfig{OutputDir: dir}, &config.File{}, "", "", server.URL, "test-key", []CPUProfileWindow{{StartAfter: "0s", Duration: "1s"}})
+	profiler, err := startCPUProfiler(context.Background(), RunnerConfig{OutputDir: dir}, &config.File{}, "", "", server.URL, "test-key", []CPUProfileWindow{{StartAfter: "0s", Duration: "1s"}}, false)
 	require.NoError(t, err)
 	select {
 	case <-profiler.done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("profiler did not finish")
 	}
-	results := profiler.stop()
+	results, contentionResults := profiler.stop()
 	require.Len(t, results, 1)
+	require.Empty(t, contentionResults)
 	require.Empty(t, results[0].Error)
 	body, err := os.ReadFile(filepath.Join(dir, results[0].File))
 	require.NoError(t, err)
 	require.Equal(t, bytes, body)
 	require.FileExists(t, filepath.Join(dir, "cpu-profiles.json"))
-	require.Equal(t, results, profiler.stop())
+	secondResults, secondContentionResults := profiler.stop()
+	require.Equal(t, results, secondResults)
+	require.Empty(t, secondContentionResults)
+}
+
+func TestCPUProfilerSavesContentionProfiles(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/debug/pprof/profile":
+			_, _ = w.Write([]byte("cpu"))
+		case "/debug/pprof/goroutine":
+			_, _ = w.Write([]byte("goroutines"))
+		case "/debug/pprof/mutex":
+			_, _ = w.Write([]byte("mutex"))
+		case "/debug/pprof/block":
+			_, _ = w.Write([]byte("block"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	profiler, err := startCPUProfiler(context.Background(), RunnerConfig{OutputDir: dir}, &config.File{}, "", "", server.URL, "", []CPUProfileWindow{{StartAfter: "0s", Duration: "1s"}}, true)
+	require.NoError(t, err)
+	select {
+	case <-profiler.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("profiler did not finish")
+	}
+	cpuResults, contentionResults := profiler.stop()
+	require.Len(t, cpuResults, 1)
+	require.Len(t, contentionResults, 3)
+	for _, result := range contentionResults {
+		require.Empty(t, result.Error)
+		require.FileExists(t, filepath.Join(dir, result.File))
+	}
+	require.FileExists(t, filepath.Join(dir, "contention-profiles.json"))
 }
 
 func TestCPUProfilerCancellationDoesNotWaitForFutureWindow(t *testing.T) {
-	profiler, err := startCPUProfiler(context.Background(), RunnerConfig{OutputDir: t.TempDir()}, &config.File{}, "", "", "", "", []CPUProfileWindow{{StartAfter: "1h", Duration: "1s"}})
+	profiler, err := startCPUProfiler(context.Background(), RunnerConfig{OutputDir: t.TempDir()}, &config.File{}, "", "", "", "", []CPUProfileWindow{{StartAfter: "1h", Duration: "1s"}}, false)
 	require.NoError(t, err)
 	done := make(chan struct{})
 	go func() { profiler.stop(); close(done) }()
@@ -123,6 +171,13 @@ func TestLongRunNoSnapshotsScenario(t *testing.T) {
 	require.Equal(t, 64, scenario.Workload.MaxInFlight)
 	require.Equal(t, 32.0, scenario.Workload.Traffic.RPS)
 	require.Len(t, scenario.Diagnostics.CPUProfiles, 4)
+}
+
+func TestContentionProfilesRequireCPUWindows(t *testing.T) {
+	scenario := testScenario()
+	scenario.Diagnostics.ContentionProfiles = true
+	scenario.Diagnostics.CPUProfiles = nil
+	require.ErrorContains(t, scenario.Validate(), "contention_profiles requires")
 }
 
 func TestTenSecondLatencyWindows(t *testing.T) {

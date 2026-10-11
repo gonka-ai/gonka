@@ -118,6 +118,25 @@ memory, or `-sample_index=alloc_space -base BASELINE FILE` for allocation
 differences. Heap data is sampled and may lag the live memory counters until
 GC. Goroutine dumps reveal active and waiting stacks at the snapshot time.
 
+To collect lock-contention diagnostics together with every CPU window, enable
+the explicit scenario flag:
+
+```yaml
+diagnostics:
+  contention_profiles: true
+  cpu_profiles:
+    - start_after: 0s
+      duration: 30s
+```
+
+The flag requires at least one CPU window. At the end of each window the
+runner captures a goroutine dump (`debug=1`) and the cumulative mutex and
+block pprof profiles for the gateway and every configured host. Runtime
+sampling is enabled only for that scenario, so the default (`false` or
+omitted) keeps ordinary performance runs unchanged. Captures are written to
+`profiles/` and indexed by `contention-profiles.json`; collection failures are
+diagnostic artifacts and do not fail workload assertions.
+
 `catch-up` captures heap at 75s (baseline), 152s and 160s (resumed backlog),
 180s (after burst), 225s (after quarantine), and 270s (steady workload). Stacks
 are captured at 152s and 160s. Targets are Gateway, `versiond-2`, and healthy
@@ -578,7 +597,7 @@ records, summaries, state snapshots, and logs:
 | `metrics.jsonl` | Process memory/CPU/GC and per-escrow state time series. |
 | `metrics-summary.json` | Sampled peaks, counter deltas, initial/final state, and collection errors. |
 | `host-faults.json` | Optional host pause/resume timings and command errors. |
-| `cpu-profiles.json`, `profiles/` | Optional CPU profile manifest and binary pprof captures. |
+| `cpu-profiles.json`, `contention-profiles.json`, `profiles/` | Optional CPU, goroutine, mutex, and block profile manifests and captures. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |

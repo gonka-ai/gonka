@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,12 +29,26 @@ type CPUProfileResult struct {
 	Error      string    `json:"error,omitempty"`
 }
 
+type ContentionProfileResult struct {
+	Target            string    `json:"target"`
+	Window            int       `json:"window"`
+	Kind              string    `json:"kind"`
+	StartAfter        string    `json:"start_after"`
+	CPUWindowDuration string    `json:"cpu_window_duration"`
+	StartedAt         time.Time `json:"started_at"`
+	FinishedAt        time.Time `json:"finished_at"`
+	File              string    `json:"file,omitempty"`
+	Error             string    `json:"error,omitempty"`
+}
+
 type cpuProfiler struct {
-	cancel    context.CancelFunc
-	done      chan struct{}
-	results   []CPUProfileResult
-	outputDir string
-	once      sync.Once
+	cancel            context.CancelFunc
+	done              chan struct{}
+	results           []CPUProfileResult
+	contentionResults []ContentionProfileResult
+	contentionEnabled bool
+	outputDir         string
+	once              sync.Once
 }
 
 // pprof is on the child's private admin listener, not the versiond session
@@ -54,7 +69,7 @@ case "$addr" in
 esac
 exec wget -q -T "$(( $1 + 10 ))" -O - "http://$addr/debug/pprof/profile?seconds=$1"`
 
-func fetchCPUProfile(ctx context.Context, url, apiKey string) ([]byte, error) {
+func fetchPprofProfile(ctx context.Context, url, apiKey, name string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -68,19 +83,35 @@ func fetchCPUProfile(ctx context.Context, url, apiKey string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("CPU profile returned %s", resp.Status)
+		return nil, fmt.Errorf("%s returned %s", name, resp.Status)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, (32<<20)+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(body) == 0 || len(body) > 32<<20 {
-		return nil, fmt.Errorf("empty or oversized CPU profile")
+		return nil, fmt.Errorf("empty or oversized %s", name)
 	}
 	return body, nil
 }
 
-func startCPUProfiler(ctx context.Context, opts RunnerConfig, cfg *config.File, project, compose, gatewayURL, apiKey string, windows []CPUProfileWindow) (*cpuProfiler, error) {
+func fetchCPUProfile(ctx context.Context, url, apiKey string) ([]byte, error) {
+	return fetchPprofProfile(ctx, url, apiKey, "CPU profile")
+}
+
+type contentionProfileSpec struct {
+	kind     string
+	endpoint string
+	suffix   string
+}
+
+var contentionProfileSpecs = []contentionProfileSpec{
+	{kind: "goroutine", endpoint: "goroutine?debug=1", suffix: "goroutines.txt"},
+	{kind: "mutex", endpoint: "mutex", suffix: "mutex.pprof"},
+	{kind: "block", endpoint: "block", suffix: "block.pprof"},
+}
+
+func startCPUProfiler(ctx context.Context, opts RunnerConfig, cfg *config.File, project, compose, gatewayURL, apiKey string, windows []CPUProfileWindow, contentionEnabled bool) (*cpuProfiler, error) {
 	if len(windows) == 0 {
 		return nil, nil
 	}
@@ -88,7 +119,7 @@ func startCPUProfiler(ctx context.Context, opts RunnerConfig, cfg *config.File, 
 		return nil, err
 	}
 	child, cancel := context.WithCancel(ctx)
-	p := &cpuProfiler{cancel: cancel, done: make(chan struct{}), outputDir: opts.OutputDir}
+	p := &cpuProfiler{cancel: cancel, done: make(chan struct{}), outputDir: opts.OutputDir, contentionEnabled: contentionEnabled}
 	started := time.Now()
 	go func() {
 		defer close(p.done)
@@ -148,14 +179,71 @@ func startCPUProfiler(ctx context.Context, opts RunnerConfig, cfg *config.File, 
 			}
 			wg.Wait()
 			p.results = append(p.results, results...)
+			if p.contentionEnabled {
+				p.collectContentionWindow(child, opts, project, compose, gatewayURL, apiKey, targets, index+1, window)
+			}
 		}
 	}()
 	return p, nil
 }
 
-func (p *cpuProfiler) stop() []CPUProfileResult {
+func (p *cpuProfiler) collectContentionWindow(ctx context.Context, opts RunnerConfig, project, compose, gatewayURL, apiKey string, targets []string, windowIndex int, window CPUProfileWindow) {
+	results := make([]ContentionProfileResult, len(targets)*len(contentionProfileSpecs))
+	var wg sync.WaitGroup
+	for targetIndex, target := range targets {
+		for specIndex, spec := range contentionProfileSpecs {
+			resultIndex := targetIndex*len(contentionProfileSpecs) + specIndex
+			wg.Add(1)
+			go func(i int, target string, spec contentionProfileSpec) {
+				defer wg.Done()
+				result := ContentionProfileResult{
+					Target: target, Window: windowIndex, Kind: spec.kind,
+					StartAfter: window.StartAfter, CPUWindowDuration: window.Duration,
+					StartedAt: time.Now().UTC(),
+				}
+				log.Printf("loadtest: contention profile start target=%s kind=%s window=%d", target, spec.kind, windowIndex)
+				sampleCtx, sampleCancel := context.WithTimeout(ctx, 15*time.Second)
+				defer sampleCancel()
+				var body []byte
+				var err error
+				if target == "gateway" {
+					body, err = fetchPprofProfile(sampleCtx, strings.TrimRight(gatewayURL, "/")+"/debug/pprof/"+spec.endpoint, apiKey, spec.kind+" profile")
+				} else {
+					cmd := exec.CommandContext(sampleCtx, "docker", "compose", "-p", project, "-f", compose, "exec", "-T", target, "sh", "-c", hostSnapshotScript, "snapshot", "0", "/proc", spec.endpoint)
+					cmd.Dir = opts.TestenvDir
+					body, err = cmd.Output()
+					if exitErr, ok := err.(*exec.ExitError); ok {
+						err = fmt.Errorf("%w: %s", err, exitErr.Stderr)
+					}
+				}
+				if err == nil && (len(body) == 0 || len(body) > 32<<20) {
+					err = fmt.Errorf("empty or oversized %s profile", spec.kind)
+				}
+				if err == nil {
+					file := filepath.Join("profiles", fmt.Sprintf("%s-window-%02d.%s", filepath.Base(target), windowIndex, spec.suffix))
+					err = os.WriteFile(filepath.Join(p.outputDir, file), body, 0o644)
+					if err == nil {
+						result.File = file
+					}
+				}
+				result.FinishedAt = time.Now().UTC()
+				if err != nil {
+					result.Error = err.Error()
+					log.Printf("loadtest: contention profile failed target=%s kind=%s window=%d: %v", target, spec.kind, windowIndex, err)
+				} else {
+					log.Printf("loadtest: contention profile saved target=%s kind=%s window=%d file=%s", target, spec.kind, windowIndex, result.File)
+				}
+				results[i] = result
+			}(resultIndex, target, spec)
+		}
+	}
+	wg.Wait()
+	p.contentionResults = append(p.contentionResults, results...)
+}
+
+func (p *cpuProfiler) stop() ([]CPUProfileResult, []ContentionProfileResult) {
 	if p == nil {
-		return nil
+		return nil, nil
 	}
 	p.once.Do(func() {
 		p.cancel()
@@ -173,6 +261,25 @@ func (p *cpuProfiler) stop() []CPUProfileResult {
 		if err != nil {
 			p.results = append(p.results, CPUProfileResult{Target: "manifest", Error: err.Error()})
 		}
+		if p.contentionEnabled {
+			sort.Slice(p.contentionResults, func(i, j int) bool {
+				a, b := p.contentionResults[i], p.contentionResults[j]
+				if a.Window != b.Window {
+					return a.Window < b.Window
+				}
+				if a.Target != b.Target {
+					return a.Target < b.Target
+				}
+				return a.Kind < b.Kind
+			})
+			contentionBody, contentionErr := json.MarshalIndent(p.contentionResults, "", "  ")
+			if contentionErr == nil {
+				contentionErr = os.WriteFile(filepath.Join(p.outputDir, "contention-profiles.json"), append(contentionBody, '\n'), 0o644)
+			}
+			if contentionErr != nil {
+				p.contentionResults = append(p.contentionResults, ContentionProfileResult{Target: "manifest", Error: contentionErr.Error()})
+			}
+		}
 	})
-	return p.results
+	return p.results, p.contentionResults
 }

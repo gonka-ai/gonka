@@ -38,6 +38,7 @@ type Diagnostics struct {
 	Logs                     LogDiagnostics     `yaml:"logs"`
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
+	ContentionProfiles       bool               `yaml:"contention_profiles"`
 }
 
 type ProfileSnapshot struct {
@@ -346,6 +347,9 @@ func (s Scenario) Validate() error {
 		}
 	}
 	var previousEnd time.Duration
+	if s.Diagnostics.ContentionProfiles && len(s.Diagnostics.CPUProfiles) == 0 {
+		return fmt.Errorf("diagnostics.contention_profiles requires at least one cpu_profiles window")
+	}
 	for index, window := range s.Diagnostics.CPUProfiles {
 		start, startErr := time.ParseDuration(window.StartAfter)
 		length, lengthErr := time.ParseDuration(window.Duration)

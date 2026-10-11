@@ -167,6 +167,7 @@ services:
       DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
       DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
       DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
@@ -318,6 +319,7 @@ services:
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
       DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
