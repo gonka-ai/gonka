@@ -450,17 +450,10 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 			return fmt.Errorf("gateway.escrow_rotation is enabled but no model IDs were found")
 		}
 		settings["escrow_rotation"] = map[string]any{
-			"enabled":                  true,
-			"settlement_enabled":       rotation.SettlementEnabled,
-			"pre_poc_blocks":           rotation.PrePoCBlocks,
-			"nonce_deactivation_limit": rotation.NonceDeactivationLimit,
-			"models":                   models,
-		}
-	} else if limit := scenario.Gateway.EscrowRotation.NonceDeactivationLimit; limit > 0 {
-		// Admission still enforces this limit when replacement is disabled.
-		settings["escrow_rotation"] = map[string]any{
-			"enabled":                  false,
-			"nonce_deactivation_limit": limit,
+			"enabled":            true,
+			"settlement_enabled": rotation.SettlementEnabled,
+			"pre_poc_blocks":     rotation.PrePoCBlocks,
+			"models":             models,
 		}
 	}
 

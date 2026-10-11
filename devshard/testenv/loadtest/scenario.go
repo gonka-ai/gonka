@@ -80,14 +80,13 @@ type GatewayRedundancy struct {
 // GatewayEscrowRotation is scenario-level shorthand. The runner expands it
 // into one Gateway rotation model per configured or replayed model.
 type GatewayEscrowRotation struct {
-	Enabled                bool   `yaml:"enabled"`
-	SettlementEnabled      bool   `yaml:"settlement_enabled"`
-	PrePoCBlocks           int64  `yaml:"pre_poc_blocks"`
-	NonceDeactivationLimit uint64 `yaml:"nonce_deactivation_limit"`
-	TempCount              int    `yaml:"temp_count"`
-	TargetCount            int    `yaml:"target_count"`
-	Amount                 uint64 `yaml:"amount"`
-	PrivateKeyEnv          string `yaml:"private_key_env"`
+	Enabled           bool   `yaml:"enabled"`
+	SettlementEnabled bool   `yaml:"settlement_enabled"`
+	PrePoCBlocks      int64  `yaml:"pre_poc_blocks"`
+	TempCount         int    `yaml:"temp_count"`
+	TargetCount       int    `yaml:"target_count"`
+	Amount            uint64 `yaml:"amount"`
+	PrivateKeyEnv     string `yaml:"private_key_env"`
 }
 
 const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
@@ -419,9 +418,6 @@ func (s Scenario) Validate() error {
 		}
 		if rotation.Amount == 0 {
 			return fmt.Errorf("gateway.escrow_rotation.amount must be positive")
-		}
-		if rotation.NonceDeactivationLimit == 0 {
-			return fmt.Errorf("gateway.escrow_rotation.nonce_deactivation_limit must be positive")
 		}
 		if strings.TrimSpace(rotation.PrivateKeyEnv) == "" {
 			return fmt.Errorf("gateway.escrow_rotation.private_key_env must be set")

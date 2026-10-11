@@ -1035,7 +1035,7 @@ func (g *Gateway) checkBalances() {
 			continue
 		}
 		nonce := rt.proxy.sm.LatestNonce()
-		nonceLimit := g.runtimeNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
+		nonceLimit := escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 		if chainMaxNonce != 0 && nonce >= nonceLimit {
 			log.Printf("escrow_nonce_high escrow=%s nonce=%d limit=%d — scheduling replacement before deactivation",
 				rt.id, nonce, nonceLimit)
@@ -2356,22 +2356,7 @@ func (g *Gateway) runtimeAtNonceLimit(rt *devshardRuntime, chainMaxNonce uint32)
 	if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
 		return false
 	}
-	return rt.proxy.sm.LatestNonce() >= g.runtimeNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
-}
-
-func (g *Gateway) runtimeNonceLimit(chainMaxNonce, groupSize uint32) uint64 {
-	limit := escrowNonceLimit(chainMaxNonce, groupSize)
-	if g == nil {
-		return limit
-	}
-	configured := g.settings.EscrowRotation.NonceDeactivationLimit
-	if chainMaxNonce == 0 && configured > 0 {
-		return configured
-	}
-	if configured > 0 && configured < limit {
-		return configured
-	}
-	return limit
+	return rt.proxy.sm.LatestNonce() >= escrowNonceLimit(chainMaxNonce, rt.proxy.sm.TotalSlots())
 }
 
 // formatCandidateWeightsLocked returns a compact "id=W(e)" diagnostic
@@ -3038,11 +3023,10 @@ type adminPerfRequest struct {
 }
 
 type adminEscrowRotationRequest struct {
-	Enabled                *bool                          `json:"enabled,omitempty"`
-	SettlementEnabled      *bool                          `json:"settlement_enabled,omitempty"`
-	PrePoCBlocks           *int64                         `json:"pre_poc_blocks,omitempty"`
-	NonceDeactivationLimit *uint64                        `json:"nonce_deactivation_limit,omitempty"`
-	Models                 *[]EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled           *bool                          `json:"enabled,omitempty"`
+	SettlementEnabled *bool                          `json:"settlement_enabled,omitempty"`
+	PrePoCBlocks      *int64                         `json:"pre_poc_blocks,omitempty"`
+	Models            *[]EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
@@ -3253,11 +3237,10 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"settings": map[string]any{
-			"enabled":                  settings.EscrowRotation.Enabled,
-			"settlement_enabled":       settings.EscrowRotation.SettlementEnabled,
-			"pre_poc_blocks":           settings.EscrowRotation.PrePoCBlocks,
-			"nonce_deactivation_limit": settings.EscrowRotation.NonceDeactivationLimit,
-			"models":                   settings.EscrowRotation.Models,
+			"enabled":            settings.EscrowRotation.Enabled,
+			"settlement_enabled": settings.EscrowRotation.SettlementEnabled,
+			"pre_poc_blocks":     settings.EscrowRotation.PrePoCBlocks,
+			"models":             settings.EscrowRotation.Models,
 		},
 		"chain": map[string]any{
 			"block_height":               snapshot.BlockHeight,
@@ -3382,9 +3365,6 @@ func applyEscrowRotationRequest(settings *EscrowRotationSettings, req *adminEscr
 	}
 	if req.PrePoCBlocks != nil {
 		settings.PrePoCBlocks = *req.PrePoCBlocks
-	}
-	if req.NonceDeactivationLimit != nil {
-		settings.NonceDeactivationLimit = *req.NonceDeactivationLimit
 	}
 	if req.Models != nil {
 		settings.Models = append([]EscrowRotationModelSettings(nil), (*req.Models)...)

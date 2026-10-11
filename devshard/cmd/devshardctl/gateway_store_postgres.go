@@ -105,7 +105,6 @@ func (s *PostgresGatewayStore) ensureSchema(ctx context.Context) error {
 			escrow_rotation_enabled SMALLINT NOT NULL DEFAULT 0,
 			escrow_rotation_settlement_enabled SMALLINT NOT NULL DEFAULT 0,
 			escrow_rotation_pre_poc_blocks BIGINT NOT NULL DEFAULT 300,
-			escrow_rotation_nonce_deactivation_limit BIGINT NOT NULL DEFAULT 0,
 			escrow_rotation_models_json TEXT NOT NULL DEFAULT '',
 			gateway_disabled_enabled SMALLINT NOT NULL DEFAULT 0,
 			gateway_disabled_message TEXT NOT NULL DEFAULT '',
@@ -993,7 +992,6 @@ func ensurePGGatewaySettingsRotationColumns(ctx context.Context, pool *pgxpool.P
 		{"escrow_rotation_enabled", "SMALLINT NOT NULL DEFAULT 0"},
 		{"escrow_rotation_settlement_enabled", "SMALLINT NOT NULL DEFAULT 0"},
 		{"escrow_rotation_pre_poc_blocks", "BIGINT NOT NULL DEFAULT 300"},
-		{"escrow_rotation_nonce_deactivation_limit", "BIGINT NOT NULL DEFAULT 0"},
 		{"escrow_rotation_models_json", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {

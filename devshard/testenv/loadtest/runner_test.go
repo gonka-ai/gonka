@@ -274,19 +274,12 @@ func TestWriteGatewayStateSizes(t *testing.T) {
 	require.JSONEq(t, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`, string(body))
 }
 
-func TestDisabledRotationStillConfiguresAdmissionLimit(t *testing.T) {
+func TestDisabledRotationDoesNotConfigureGatewayNonceLimit(t *testing.T) {
 	scenario := testScenario()
-	scenario.Gateway.EscrowRotation.NonceDeactivationLimit = 1_000_000
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			EscrowRotation struct {
-				Enabled bool   `json:"enabled"`
-				Limit   uint64 `json:"nonce_deactivation_limit"`
-			} `json:"escrow_rotation"`
-		}
+		var body map[string]json.RawMessage
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		require.False(t, body.EscrowRotation.Enabled)
-		require.EqualValues(t, 1_000_000, body.EscrowRotation.Limit)
+		require.NotContains(t, body, "escrow_rotation")
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()

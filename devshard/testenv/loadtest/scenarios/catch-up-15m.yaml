@@ -44,7 +44,6 @@ workload:
 gateway:
   escrow_rotation:
     enabled: false
-    nonce_deactivation_limit: 1000000
   participant_throttle:
     transport_failure_quarantine: 70s
     http_quarantine: 70s

@@ -85,11 +85,10 @@ type PerfSettings struct {
 }
 
 type EscrowRotationSettings struct {
-	Enabled                bool                          `json:"enabled"`
-	SettlementEnabled      bool                          `json:"settlement_enabled"`
-	PrePoCBlocks           int64                         `json:"pre_poc_blocks"`
-	NonceDeactivationLimit uint64                        `json:"nonce_deactivation_limit,omitempty"`
-	Models                 []EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled           bool                          `json:"enabled"`
+	SettlementEnabled bool                          `json:"settlement_enabled"`
+	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
+	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 type EscrowRotationModelSettings struct {
@@ -397,7 +396,7 @@ func gatewaySettingsColumnNames() []string {
 		"redundancy_pairwise_winner_hold_min_samples",
 		"perf_sample_size", "perf_window_ms",
 		"escrow_rotation_enabled", "escrow_rotation_settlement_enabled",
-		"escrow_rotation_pre_poc_blocks", "escrow_rotation_nonce_deactivation_limit", "escrow_rotation_models_json",
+		"escrow_rotation_pre_poc_blocks", "escrow_rotation_models_json",
 		"gateway_disabled_enabled", "gateway_disabled_message", "gateway_disabled_new_url",
 		"redundancy_force_upstream_streaming",
 		"logprobs_optimization_override",
@@ -418,29 +417,27 @@ func gatewaySettingsUpdateAssignments(param string) string {
 }
 
 type gatewaySettingsRow struct {
-	settings                       GatewaySettings
-	rotationEnabled                int
-	rotationSettlementEnabled      int
-	rotationNonceDeactivationLimit int64
-	rotationModelsJSON             string
-	modelLimitsJSON                string
-	modelAccessJSON                string
-	disabledEnabled                int
-	forceUpstream                  int
-	logprobsOverride               sql.NullInt64
+	settings                  GatewaySettings
+	rotationEnabled           int
+	rotationSettlementEnabled int
+	rotationModelsJSON        string
+	modelLimitsJSON           string
+	modelAccessJSON           string
+	disabledEnabled           int
+	forceUpstream             int
+	logprobsOverride          sql.NullInt64
 }
 
 func newGatewaySettingsRow(settings GatewaySettings) gatewaySettingsRow {
 	settings = settings.WithTuningDefaults()
 	return gatewaySettingsRow{
-		settings:                       settings,
-		rotationEnabled:                gatewayBoolToInt(settings.EscrowRotation.Enabled),
-		rotationSettlementEnabled:      gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
-		rotationNonceDeactivationLimit: int64(settings.EscrowRotation.NonceDeactivationLimit),
-		rotationModelsJSON:             mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
-		modelLimitsJSON:                mustMarshalGatewayModelLimits(settings.ModelLimits),
-		modelAccessJSON:                "",
-		disabledEnabled:                gatewayBoolToInt(settings.Disabled.Enabled),
+		settings:                  settings,
+		rotationEnabled:           gatewayBoolToInt(settings.EscrowRotation.Enabled),
+		rotationSettlementEnabled: gatewayBoolToInt(settings.EscrowRotation.SettlementEnabled),
+		rotationModelsJSON:        mustMarshalEscrowRotationModels(settings.EscrowRotation.Models),
+		modelLimitsJSON:           mustMarshalGatewayModelLimits(settings.ModelLimits),
+		modelAccessJSON:           "",
+		disabledEnabled:           gatewayBoolToInt(settings.Disabled.Enabled),
 	}
 }
 
@@ -488,7 +485,6 @@ func (r *gatewaySettingsRow) scanDestinations() []any {
 		&r.rotationEnabled,
 		&r.rotationSettlementEnabled,
 		&s.EscrowRotation.PrePoCBlocks,
-		&r.rotationNonceDeactivationLimit,
 		&r.rotationModelsJSON,
 		&r.disabledEnabled,
 		&s.Disabled.Message,
@@ -502,10 +498,6 @@ func (r *gatewaySettingsRow) finish() (GatewaySettings, error) {
 	settings := r.settings
 	settings.EscrowRotation.Enabled = r.rotationEnabled != 0
 	settings.EscrowRotation.SettlementEnabled = r.rotationSettlementEnabled != 0
-	if r.rotationNonceDeactivationLimit < 0 {
-		return GatewaySettings{}, fmt.Errorf("load gateway escrow rotation nonce deactivation limit: negative value %d", r.rotationNonceDeactivationLimit)
-	}
-	settings.EscrowRotation.NonceDeactivationLimit = uint64(r.rotationNonceDeactivationLimit)
 	if strings.TrimSpace(r.rotationModelsJSON) != "" {
 		if err := json.Unmarshal([]byte(r.rotationModelsJSON), &settings.EscrowRotation.Models); err != nil {
 			return GatewaySettings{}, fmt.Errorf("load gateway rotation models: %w", err)
@@ -573,7 +565,6 @@ func (r *gatewaySettingsRow) valueArgs() []any {
 		r.rotationEnabled,
 		r.rotationSettlementEnabled,
 		s.EscrowRotation.PrePoCBlocks,
-		r.rotationNonceDeactivationLimit,
 		r.rotationModelsJSON,
 		r.disabledEnabled,
 		strings.TrimSpace(s.Disabled.Message),

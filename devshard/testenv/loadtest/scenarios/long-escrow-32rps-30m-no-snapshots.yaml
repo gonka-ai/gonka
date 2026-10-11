@@ -42,7 +42,6 @@ gateway:
     secondary_wait_after_winner: 30s
   escrow_rotation:
     enabled: false
-    nonce_deactivation_limit: 1000000
 
 assertions:
   requests:

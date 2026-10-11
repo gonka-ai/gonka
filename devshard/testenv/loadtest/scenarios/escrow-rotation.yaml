@@ -7,9 +7,11 @@ topology:
   storage: per_participant
   participants: 3
   chain:
-    # Keep the chain limit above the Gateway rotation threshold for this run.
+    # Drive rotation through the real chain-derived active nonce limit. The
+    # gateway keeps a 200-nonce in-flight margin, so 400 gives this 1 RPS run
+    # enough activity to cross the limit without changing Gateway settings.
     escrow_amount: 5000000000
-    max_nonce: 10000
+    max_nonce: 400
   mock_ml:
     allocator: round_robin
     nodes:
@@ -42,10 +44,8 @@ gateway:
   escrow_rotation:
     enabled: true
     settlement_enabled: true
-    # The observed baseline creates several thousand nonces in ten minutes.
-    nonce_deactivation_limit: 200
-    # Keep this run focused on nonce depletion; do not intentionally rotate at
-    # the epoch boundary.
+    # Rotation is driven by topology.chain.max_nonce through the chain params
+    # snapshot, rather than by a Gateway-only admission limit.
     pre_poc_blocks: 1
     temp_count: 1
     target_count: 1

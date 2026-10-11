@@ -522,7 +522,6 @@ gateway:
     enabled: true
     settlement_enabled: true
     pre_poc_blocks: 1
-    nonce_deactivation_limit: 200
     temp_count: 1
     target_count: 1
     amount: 5000000000
@@ -538,10 +537,11 @@ assertions:
     require_new_escrow: true
 ```
 
-The assertion only passes if the run creates enough nonce activity to cross
-`nonce_deactivation_limit`. A ten-minute run at 1 RPS may complete normally
-without rotating an escrow, so a rotation test must choose its rate and limit
-together.
+The assertion only passes if the run creates enough nonce activity to cross the
+chain-derived active nonce limit. Set `topology.chain.max_nonce` low enough for
+the workload to exercise rotation, while keeping enough headroom for protocol
+finalization and settlement. This keeps the test aligned with the same
+`DevshardEscrowParams.max_nonce` that hosts enforce.
 
 When `assertions.devshard.no_orphaned_work` is enabled, the runner polls
 `/v1/debug/inferences` until every non-ghost record has a terminal status
