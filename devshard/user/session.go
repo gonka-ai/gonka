@@ -393,6 +393,14 @@ type Session struct {
 	// heightSyncMinPublishNs is the min gap between publishes. 0 uses
 	// heightSyncDefaultMinPublish. Tests may override via TestingOnly*.
 	heightSyncMinPublishNs atomic.Int64
+
+	// quietSettle publishes a leftover receipt and Finish once the session
+	// has had no PrepareInference for quietSettleDelay. A following chat
+	// carries those txs in its Start diff, so this timer must not be the
+	// per-inference composer: that would be a second FeePerNonce.
+	quietSettleDelay  time.Duration
+	quietSettle       *time.Timer
+	quietSettleClosed bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -439,6 +447,13 @@ func (s *Session) heightSyncForceSlotsLocked() uint64 {
 // seed loop is unchanged. Zero leaves MaybeHeartbeat available.
 func WithDisableHeightSyncHeartbeat(on bool) SessionOption {
 	return func(sess *Session) { sess.disableHeightSyncHeartbeat = on }
+}
+
+// WithQuietSettleDelay overrides how long a leftover receipt waits for the
+// next Start diff before it is composed on its own nonce. Tests use a short
+// delay. Zero keeps defaultQuietSettleDelay.
+func WithQuietSettleDelay(d time.Duration) SessionOption {
+	return func(sess *Session) { sess.quietSettleDelay = d }
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
@@ -540,6 +555,9 @@ func NewSession(
 	}
 	if sess.clock == nil {
 		sess.clock = time.Now
+	}
+	if sess.quietSettleDelay <= 0 {
+		sess.quietSettleDelay = defaultQuietSettleDelay
 	}
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
 	sess.heartbeatPoke = make(chan struct{}, 1)
@@ -1504,8 +1522,13 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		}
 	}
 
+	// The next Start diff is the composer for a queued receipt and Finish.
+	// Stopping the quiet settle here is what keeps that from becoming its
+	// own nonce while another inference is still arriving.
+	s.stopQuietSettleLocked()
 	diff, composedIdx, err := s.composeDiffLocked(persistCtx, txsForDiff)
 	if err != nil {
+		s.armQuietSettleLocked()
 		return nil, err
 	}
 	if composedIdx != hostIdx {
@@ -3053,11 +3076,89 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 	return diff, fmt.Errorf("send pending diff nonce %d to any host: %w", diff.Nonce, lastErr)
 }
 
+// defaultQuietSettleDelay is how long a leftover receipt waits for the next
+// Start diff. The withholding driver posts about once a second, so this stays
+// above that gap. WaitGatewaySessionSettled allows 90s, so one quiet compose
+// still releases the hold.
+const defaultQuietSettleDelay = 5 * time.Second
+
+// ArmQuietSettle schedules one compose of unpinned pending txs when no
+// PrepareInference follows. The next Start diff is the per-inference
+// composer and cancels this timer, so a chat does not pay a second
+// FeePerNonce for its receipt and Finish. Heartbeat on and off share this
+// path: the cadence drains only when a span is actually due.
+func (s *Session) ArmQuietSettle() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.armQuietSettleLocked()
+}
+
+func (s *Session) armQuietSettleLocked() {
+	if s.quietSettleClosed || s.quietSettle != nil || !s.hasUnpinnedPendingLocked() {
+		return
+	}
+	d := s.quietSettleDelay
+	if d <= 0 {
+		d = defaultQuietSettleDelay
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(d, func() { s.fireQuietSettle(timer) })
+	s.quietSettle = timer
+}
+
+func (s *Session) fireQuietSettle(timer *time.Timer) {
+	s.mu.Lock()
+	if s.quietSettleClosed || s.quietSettle != timer {
+		s.mu.Unlock()
+		return
+	}
+	s.quietSettle = nil
+	pending := s.hasUnpinnedPendingLocked()
+	s.mu.Unlock()
+	if !pending {
+		return
+	}
+	if err := s.DrainUnpinnedPending(context.Background()); err != nil {
+		logging.Warn("quiet settle did not deliver host txs",
+			"subsystem", "session", "escrow", s.escrowID, "error", err)
+	}
+}
+
+func (s *Session) stopQuietSettleLocked() {
+	if s.quietSettle == nil {
+		return
+	}
+	s.quietSettle.Stop()
+	s.quietSettle = nil
+}
+
+func (s *Session) stopQuietSettle() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.quietSettleClosed = true
+	t := s.quietSettle
+	s.quietSettle = nil
+	s.mu.Unlock()
+	if t != nil {
+		t.Stop()
+	}
+}
+
+func (s *Session) hasUnpinnedPendingLocked() bool {
+	candidates, _ := s.splitPendingForComposeLocked(nil)
+	return len(candidates) > 0
+}
+
 // DrainUnpinnedPending commits queued host txs that are not pinned for an
 // error-miss, then sends each diff to a reachable host. The height-sync
-// heartbeat drains this queue before a span. A completed request must drain
-// it too: with the cadence off, nothing else composes the receipt and Finish,
-// and the inference stays pending with its reservation held.
+// heartbeat calls it before a span, and the quiet settle calls it when no
+// later Start diff arrived to carry the receipt. A completed request does
+// not: that nonce would be a second FeePerNonce for the same inference.
 //
 // The commit happens before the send. A host that does not answer leaves the
 // gateway ledger updated; the next catch-up carries the diff. Pinned finishes
@@ -3738,6 +3839,7 @@ func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
+	s.stopQuietSettle()
 	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()

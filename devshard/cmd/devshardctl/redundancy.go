@@ -4192,7 +4192,7 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	// Process all responses first so Session has complete protocol state.
 	// Pin error-stream Finishes immediately: ProcessResponse queues them in
-	// pending, and the drain below (or a height-sync heartbeat) can composeDiff
+	// pending, and the quiet settle (or a height-sync heartbeat) can compose
 	// them as a normal Finish before HandleErrorMiss runs — the inference then
 	// looks finished and is sampled for validation instead of missed.
 	for _, inf := range attempts {
@@ -4206,14 +4206,13 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			e.session.PinPendingFinish(inf.nonce)
 		}
 	}
-	// Publish the receipt and Finish now. The heartbeat cadence is off unless
-	// DEVSHARD_HEIGHTSYNC_HEARTBEAT is set, and this request is already marked
-	// finished in memory, so no timeout goroutine will compose them later.
+	// Leave the receipt and Finish queued for the next Start diff, which
+	// already pays FeePerNonce. Arm the quiet settle for the request that
+	// has no successor. The cadence is off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
+	// is set, and this request is already marked finished in memory, so no
+	// timeout goroutine will compose them later.
 	if e.session != nil {
-		if err := e.session.DrainUnpinnedPending(ctx); err != nil {
-			logging.Warn("drained host txs were not delivered",
-				"subsystem", "session", "escrow", e.devshardID, "error", err)
-		}
+		e.session.ArmQuietSettle()
 	}
 
 	winnerNonce = e.resolvedWinnerNonce(attempts, winnerNonce)
