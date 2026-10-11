@@ -655,6 +655,9 @@ func attemptFromErrorEvent(t *testing.T, nonce uint64, errorEvent string) *infli
 	require.NoError(t, err)
 	require.True(t, isErrorStreamAttempt(writer.inf), "the fixture must stream a parseable error event")
 	writer.inf.nonce = nonce
+	// SendOnly has finished writing the error stream; close done so client-visible
+	// error selection (which skips inflightStillSending) can read the attempt.
+	close(writer.inf.done)
 	return writer.inf
 }
 
