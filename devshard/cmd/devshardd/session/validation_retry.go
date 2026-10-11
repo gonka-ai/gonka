@@ -109,7 +109,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsOnce(ctx context.Context) {
 
 // retryStaleValidationsForEscrow claims stale validation leases for this escrow
 // until AcquireOneStale returns none. A failed catch-up reclaims only leases
-// whose inferences are already finished or challenged in memory.
+// for inferences the in-memory snapshot already shows as owed.
 func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context, escrowID string) {
 	caughtUp := false
 	var models map[string]struct{}
@@ -128,10 +128,10 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 					// The snapshot may be behind the store. An inference we
 					// cannot see would be marked skipped, and skipped is
 					// terminal. Reclaim only rows the snapshot already shows
-					// as finished or challenged; leave the rest pending.
+					// as owed; leave the rest pending.
 					slog.Warn("devshardd: validation retry: catch-up from store failed, reclaiming visible leases only",
 						"escrow", escrowID, "error", err)
-					r.retryVisibleStaleValidations(ctx, escrowID, &models)
+					r.retryVisibleStaleValidations(ctx, escrowID, live, &models)
 					return
 				}
 			}
@@ -154,26 +154,25 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 	}
 }
 
-// retryVisibleStaleValidations reclaims stale leases whose inferences are
-// already finished or challenged in memory. Caller holds no lease.
-func (r *ValidationRetryLoop) retryVisibleStaleValidations(ctx context.Context, escrowID string, models *map[string]struct{}) {
+// retryVisibleStaleValidations reclaims stale leases for inferences this host
+// owes a validation for in memory: finished and sampled, or challenged. The set
+// is read once per tick. A claimed row is no longer stale, so it is not picked
+// again; inferences that become owed later wait for the next tick.
+func (r *ValidationRetryLoop) retryVisibleStaleValidations(ctx context.Context, escrowID string, live *host.Host, models *map[string]struct{}) {
+	ids := live.OwedValidationIDs()
+	if len(ids) == 0 {
+		return
+	}
+	epochID := live.EpochID()
 	for {
 		snap, ok := r.manager.hostSnapshot(escrowID)
-		if !ok {
-			return
-		}
-		live, ok := snap.(*host.Host)
 		if !ok {
 			return
 		}
 		if !r.validationModelsAvailable(snap, models) {
 			return
 		}
-		ids := visibleStaleInferenceIDs(snap.SnapshotState())
-		if len(ids) == 0 {
-			return
-		}
-		inferenceID, leaseEpochID, err := r.leases.AcquireOneStaleVisible(ctx, escrowID, live.EpochID(), ids, r.owner, r.leaseTTL)
+		inferenceID, leaseEpochID, err := r.leases.AcquireOneStaleVisible(ctx, escrowID, epochID, ids, r.owner, r.leaseTTL)
 		if err != nil {
 			slog.Warn("devshardd: validation retry: acquire visible stale validation failed",
 				"escrow", escrowID, "error", err)
@@ -235,22 +234,6 @@ func (r *ValidationRetryLoop) validationModelsAvailable(snap hostSnap, models *m
 		}
 	}
 	return false
-}
-
-func visibleStaleInferenceIDs(st types.EscrowState) []uint64 {
-	if len(st.Inferences) == 0 {
-		return nil
-	}
-	ids := make([]uint64, 0, len(st.Inferences))
-	for id, rec := range st.Inferences {
-		if rec == nil {
-			continue
-		}
-		if rec.Status == types.StatusFinished || rec.Status == types.StatusChallenged {
-			ids = append(ids, id)
-		}
-	}
-	return ids
 }
 
 func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus) {

@@ -128,39 +128,81 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 
 func TestMemoryLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
 	store := NewMemory()
+	runAcquireOneStaleVisibleTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+		ageMemoryLease(t, store, escrowID, inferenceID, epochID, time.Hour)
+	})
+}
+
+func TestPostgresLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
+	store := newTestPostgres(t)
+	runAcquireOneStaleVisibleTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+		_, err := store.pool.Exec(context.Background(),
+			`UPDATE devshard_validation_leases
+			 SET claimed_at = now() - interval '1 hour'
+			 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+			epochID, escrowID, inferenceID,
+		)
+		require.NoError(t, err)
+	})
+}
+
+func runAcquireOneStaleVisibleTests(t *testing.T, store LeaseStore, age func(escrowID string, inferenceID, epochID uint64)) {
+	t.Helper()
 	ctx := context.Background()
-	won, err := store.Acquire(ctx, "escrow-1", 1, 10, testOwner("holder"))
-	require.NoError(t, err)
-	require.True(t, won)
-	won, err = store.Acquire(ctx, "escrow-1", 2, 10, testOwner("holder"))
-	require.NoError(t, err)
-	require.True(t, won)
-	won, err = store.Acquire(ctx, "escrow-1", 1, 11, testOwner("holder"))
-	require.NoError(t, err)
-	require.True(t, won)
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 2, 10, LeaseStatusSkipped, testOwner("holder")))
-	ageMemoryLease(t, store, "escrow-1", 1, 10, time.Hour)
-	ageMemoryLease(t, store, "escrow-1", 2, 10, time.Hour)
-	ageMemoryLease(t, store, "escrow-1", 1, 11, time.Hour)
+	const escrowID = "escrow-visible"
+	ttl := 30 * time.Minute
+	acquire := func(inferenceID, epochID uint64) {
+		won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, testOwner("holder"))
+		require.NoError(t, err)
+		require.True(t, won)
+	}
 
-	inferenceID, epochID, err := store.AcquireOneStaleVisible(ctx, "escrow-1", 10, nil, testOwner("retry"), 30*time.Minute)
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), inferenceID)
-	require.Equal(t, uint64(0), epochID)
+	acquire(1, 10)
+	acquire(2, 10)
+	acquire(3, 10)
+	acquire(4, 10)
+	acquire(1, 11)
+	require.NoError(t, store.SetResult(ctx, escrowID, 2, 10, LeaseStatusSkipped, testOwner("holder")))
+	require.NoError(t, store.SetResult(ctx, escrowID, 4, 10, LeaseStatusSubmitted, testOwner("holder")))
+	age(escrowID, 1, 10)
+	age(escrowID, 2, 10)
+	age(escrowID, 4, 10)
+	age(escrowID, 1, 11)
 
-	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{2}, testOwner("retry"), 30*time.Minute)
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), inferenceID, "a skipped lease is not claimed")
-	require.Equal(t, uint64(0), epochID)
+	claim := func(ids []uint64) uint64 {
+		t.Helper()
+		inferenceID, epochID, err := store.AcquireOneStaleVisible(ctx, escrowID, 10, ids, testOwner("retry"), ttl)
+		require.NoError(t, err)
+		if inferenceID != 0 {
+			require.Equal(t, uint64(10), epochID)
+		}
+		return inferenceID
+	}
 
-	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{1, 2}, testOwner("retry"), 30*time.Minute)
-	require.NoError(t, err)
-	require.Equal(t, uint64(1), inferenceID)
-	require.Equal(t, uint64(10), epochID)
+	require.Zero(t, claim(nil), "no visible ids claims nothing")
+	require.Zero(t, claim([]uint64{0}), "id 0 is ignored")
+	require.Zero(t, claim([]uint64{2}), "a skipped lease is not claimed")
+	require.Zero(t, claim([]uint64{3}), "a fresh lease is not claimed")
+	require.Zero(t, claim([]uint64{99}), "an id without a lease row claims nothing")
+	require.Equal(t, uint64(4), claim([]uint64{4}), "a stale submitted lease is claimed")
+	require.Equal(t, uint64(1), claim([]uint64{1, 2, 3, 4}), "only the remaining stale visible row is claimed")
+	require.Zero(t, claim([]uint64{1, 2, 3, 4}), "a claimed row is no longer stale")
 
-	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, 11, testOwner("holder"))
+	for _, inferenceID := range []uint64{1, 4} {
+		owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, 10, testOwner("retry"))
+		require.NoError(t, err)
+		require.True(t, owned, "inference %d is held by the claimer", inferenceID)
+	}
+	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 11, testOwner("holder"))
 	require.NoError(t, err)
-	require.True(t, owned, "a different epoch of the same inference is not claimed")
+	require.True(t, owned, "the same inference in another epoch is not claimed")
+	owned, err = store.OwnsPendingLease(ctx, escrowID, 3, 10, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, owned, "the fresh lease keeps its owner")
+	info, found, err := store.DescribeLease(ctx, escrowID, 2, 10)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, LeaseStatusSkipped, info.Status, "the skipped row is untouched")
 }
 
 func TestMemoryLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {

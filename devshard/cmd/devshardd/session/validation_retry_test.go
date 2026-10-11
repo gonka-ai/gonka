@@ -1541,6 +1541,7 @@ func TestRetryStaleValidation_FailedCatchUpReclaimsVisibleLease(t *testing.T) {
 	require.True(t, ok)
 	rec, present := h.SnapshotState().Inferences[1]
 	require.True(t, present && rec.Status == types.StatusFinished, "precondition: finish diff is already in memory")
+	require.Contains(t, h.(*host.Host).OwedValidationIDs(), uint64(1), "precondition: this host owes the validation")
 	require.NoError(t, acquireMemoryLease(context.Background(), store.Memory, escrowID, 99, 7, "dead-peer"))
 
 	inner := &stubEngine{}
