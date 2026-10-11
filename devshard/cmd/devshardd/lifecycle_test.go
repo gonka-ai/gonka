@@ -7,7 +7,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
@@ -198,8 +197,16 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
 	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone, nil)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseWork := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	t.Cleanup(releaseWork)
 	e.GET("/work", func(c echo.Context) error {
-		time.Sleep(20 * time.Millisecond)
+		close(started)
+		<-release
 		return c.String(http.StatusOK, "done")
 	})
 
@@ -221,9 +228,8 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 		defer close(workDone)
 		e.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/work", nil))
 	}()
-	require.Eventually(t, func() bool {
-		return lifecycle.Status().Inflight == 1
-	}, time.Second, 5*time.Millisecond)
+	<-started
+	require.EqualValues(t, 1, lifecycle.Status().Inflight)
 
 	rec = httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
@@ -237,6 +243,7 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "devshardd_lifecycle_inflight_requests 1")
 
+	releaseWork()
 	<-workDone
 	require.EqualValues(t, 0, lifecycle.Status().Inflight)
 }
