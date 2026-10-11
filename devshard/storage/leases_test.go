@@ -126,6 +126,43 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	require.Equal(t, uint64(10), epochID)
 }
 
+func TestMemoryLease_AcquireOneStaleVisible_FiltersEpochAndID(t *testing.T) {
+	store := NewMemory()
+	ctx := context.Background()
+	won, err := store.Acquire(ctx, "escrow-1", 1, 10, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = store.Acquire(ctx, "escrow-1", 2, 10, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, won)
+	won, err = store.Acquire(ctx, "escrow-1", 1, 11, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 2, 10, LeaseStatusSkipped, testOwner("holder")))
+	ageMemoryLease(t, store, "escrow-1", 1, 10, time.Hour)
+	ageMemoryLease(t, store, "escrow-1", 2, 10, time.Hour)
+	ageMemoryLease(t, store, "escrow-1", 1, 11, time.Hour)
+
+	inferenceID, epochID, err := store.AcquireOneStaleVisible(ctx, "escrow-1", 10, nil, testOwner("retry"), 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), inferenceID)
+	require.Equal(t, uint64(0), epochID)
+
+	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{2}, testOwner("retry"), 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), inferenceID, "a skipped lease is not claimed")
+	require.Equal(t, uint64(0), epochID)
+
+	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{1, 2}, testOwner("retry"), 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), inferenceID)
+	require.Equal(t, uint64(10), epochID)
+
+	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, 11, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, owned, "a different epoch of the same inference is not claimed")
+}
+
 func TestMemoryLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {
 	store := NewMemory()
 	ctx := context.Background()
@@ -225,6 +262,11 @@ func TestSQLiteLease_AcquireOneStale_NoOp(t *testing.T) {
 	require.NoError(t, err)
 
 	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-1", testOwner("instance-2"), 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), inferenceID)
+	require.Equal(t, uint64(0), epochID)
+
+	inferenceID, epochID, err = store.AcquireOneStaleVisible(ctx, "escrow-1", 10, []uint64{1}, testOwner("instance-2"), 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), inferenceID)
 	require.Equal(t, uint64(0), epochID)

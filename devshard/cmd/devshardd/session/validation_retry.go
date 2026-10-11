@@ -23,6 +23,7 @@ type sessionManager interface {
 // staleLeaseStore abstracts storage.LeaseStore for testing.
 type staleLeaseStore interface {
 	AcquireOneStale(ctx context.Context, escrowId string, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	AcquireOneStaleVisible(ctx context.Context, escrowId string, epochID uint64, inferenceIDs []uint64, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error)
 	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
 	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
 	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
@@ -107,7 +108,8 @@ func (r *ValidationRetryLoop) retryStaleValidationsOnce(ctx context.Context) {
 }
 
 // retryStaleValidationsForEscrow claims stale validation leases for this escrow
-// until AcquireOneStale returns none.
+// until AcquireOneStale returns none. A failed catch-up reclaims only leases
+// whose inferences are already finished or challenged in memory.
 func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context, escrowID string) {
 	caughtUp := false
 	var models map[string]struct{}
@@ -123,30 +125,21 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 		if !caughtUp {
 			if live, ok := snap.(*host.Host); ok {
 				if err := live.CatchUpFromStore(ctx); err != nil {
-					slog.Warn("devshardd: validation retry: catch-up from store failed",
+					// The snapshot may be behind the store. An inference we
+					// cannot see would be marked skipped, and skipped is
+					// terminal. Reclaim only rows the snapshot already shows
+					// as finished or challenged; leave the rest pending.
+					slog.Warn("devshardd: validation retry: catch-up from store failed, reclaiming visible leases only",
 						"escrow", escrowID, "error", err)
+					r.retryVisibleStaleValidations(ctx, escrowID, &models)
+					return
 				}
 			}
 			caughtUp = true
 		}
 
-		if gate, gated := r.inner.(devshardpkg.ValidationAvailability); gated {
-			if models == nil {
-				models = make(map[string]struct{})
-				for _, rec := range snap.SnapshotState().Inferences {
-					models[rec.Model] = struct{}{}
-				}
-			}
-			available := false
-			for model := range models {
-				if gate.CanValidate(model) {
-					available = true
-					break
-				}
-			}
-			if !available {
-				return
-			}
+		if !r.validationModelsAvailable(snap, &models) {
+			return
 		}
 		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.owner, r.leaseTTL)
 		if err != nil {
@@ -157,30 +150,107 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 		if inferenceID == 0 {
 			return // no more stale leases for this escrow
 		}
+		r.handleStaleClaim(ctx, escrowID, inferenceID, leaseEpochID)
+	}
+}
 
-		// Sessions are epoch-bounded: validation is no longer useful once the
-		// chain advances beyond the inference epoch. Rows may be retained longer
-		// for history and cleanup, but retry should stop after epoch+1: the
-		// phase reaches epoch+1 at poc_start, while escrows of the lease epoch
-		// still serve until set_new_validators.
-		if r.phase != nil && r.phase.EpochID() > leaseEpochID+1 {
-			slog.Info("devshardd: validation retry: epoch stale, skipping validation",
-				"escrow", escrowID, "inference", inferenceID,
-				"lease_epoch", leaseEpochID, "current_epoch", r.phase.EpochID())
-			r.markLeaseResult(ctx, escrowID, inferenceID, leaseEpochID, storage.LeaseStatusSkipped)
-			continue
+// retryVisibleStaleValidations reclaims stale leases whose inferences are
+// already finished or challenged in memory. Caller holds no lease.
+func (r *ValidationRetryLoop) retryVisibleStaleValidations(ctx context.Context, escrowID string, models *map[string]struct{}) {
+	for {
+		snap, ok := r.manager.hostSnapshot(escrowID)
+		if !ok {
+			return
 		}
+		live, ok := snap.(*host.Host)
+		if !ok {
+			return
+		}
+		if !r.validationModelsAvailable(snap, models) {
+			return
+		}
+		ids := visibleStaleInferenceIDs(snap.SnapshotState())
+		if len(ids) == 0 {
+			return
+		}
+		inferenceID, leaseEpochID, err := r.leases.AcquireOneStaleVisible(ctx, escrowID, live.EpochID(), ids, r.owner, r.leaseTTL)
+		if err != nil {
+			slog.Warn("devshardd: validation retry: acquire visible stale validation failed",
+				"escrow", escrowID, "error", err)
+			return
+		}
+		if inferenceID == 0 {
+			return
+		}
+		r.handleStaleClaim(ctx, escrowID, inferenceID, leaseEpochID)
+	}
+}
 
-		if err := r.retryStaleValidation(ctx, escrowID, inferenceID, leaseEpochID); err != nil {
-			if errors.Is(err, devshardpkg.ErrValidationDeferred) {
-				// The claim is no longer stale, even if release failed. Keep looking
-				// for other models; the availability check stops us once all are empty.
+func (r *ValidationRetryLoop) handleStaleClaim(ctx context.Context, escrowID string, inferenceID, leaseEpochID uint64) {
+	// Sessions are epoch-bounded: validation is no longer useful once the
+	// chain advances beyond the inference epoch. Rows may be retained longer
+	// for history and cleanup, but retry should stop after epoch+1: the
+	// phase reaches epoch+1 at poc_start, while escrows of the lease epoch
+	// still serve until set_new_validators.
+	if r.phase != nil && r.phase.EpochID() > leaseEpochID+1 {
+		slog.Info("devshardd: validation retry: epoch stale, skipping validation",
+			"escrow", escrowID, "inference", inferenceID,
+			"lease_epoch", leaseEpochID, "current_epoch", r.phase.EpochID())
+		r.markLeaseResult(ctx, escrowID, inferenceID, leaseEpochID, storage.LeaseStatusSkipped)
+		return
+	}
+
+	if err := r.retryStaleValidation(ctx, escrowID, inferenceID, leaseEpochID); err != nil {
+		if errors.Is(err, devshardpkg.ErrValidationDeferred) {
+			// The claim is no longer stale, even if release failed. Keep looking
+			// for other models; the availability check stops us once all are empty.
+			return
+		}
+		slog.Warn("devshardd: validation retry: validation failed",
+			"escrow", escrowID, "inference", inferenceID, "error", err)
+	}
+}
+
+// validationModelsAvailable reports whether this process can validate at least
+// one model present in the snapshot. Engines without a credit gate are always
+// available. models caches the snapshot's model set for the rest of the tick.
+func (r *ValidationRetryLoop) validationModelsAvailable(snap hostSnap, models *map[string]struct{}) bool {
+	gate, gated := r.inner.(devshardpkg.ValidationAvailability)
+	if !gated {
+		return true
+	}
+	if *models == nil {
+		built := make(map[string]struct{})
+		for _, rec := range snap.SnapshotState().Inferences {
+			if rec == nil {
 				continue
 			}
-			slog.Warn("devshardd: validation retry: validation failed",
-				"escrow", escrowID, "inference", inferenceID, "error", err)
+			built[rec.Model] = struct{}{}
+		}
+		*models = built
+	}
+	for model := range *models {
+		if gate.CanValidate(model) {
+			return true
 		}
 	}
+	return false
+}
+
+func visibleStaleInferenceIDs(st types.EscrowState) []uint64 {
+	if len(st.Inferences) == 0 {
+		return nil
+	}
+	ids := make([]uint64, 0, len(st.Inferences))
+	for id, rec := range st.Inferences {
+		if rec == nil {
+			continue
+		}
+		if rec.Status == types.StatusFinished || rec.Status == types.StatusChallenged {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus) {
