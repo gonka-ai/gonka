@@ -528,6 +528,38 @@ func TestDecideCurrentChallengeSegment_FullyReservedHostIsRefundedNotPaid(t *tes
 	}
 }
 
+func TestDecideLastChallengeSegment_AFreeNodeOutsideTheSnapshotStillPays(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 100},
+		{id: "m2", weight: 50},
+	})
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 180,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId:      "m1",
+			VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 100}},
+		}},
+	}))
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 50,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: testutil.Executor,
+			NodeId:      "m1-n",
+			ModelId:     "m1",
+			PocWeight:   100,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State, "m2 was free, an earlier segment could have checked it")
+}
+
 func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T) {
 	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
 		{id: "m1", weight: 80, count: 80, accept: true},

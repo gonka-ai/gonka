@@ -196,10 +196,10 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	)
 	expected := fullExpected[ch.Target] - shielded[ch.Target]
 	if shielded[ch.Target] > 0 && expected <= 0 {
-		if rotate {
-			return nil
+		if !rotate && am.keeper.BuildEpochReservationView(ctx, ch.EpochIndex).FullyReservedAt(ch.Target, finish-1) {
+			return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
 		}
-		return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
+		return nil
 	}
 	totalExpected := map[string]int64{ch.Target: expected}
 
