@@ -77,6 +77,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         WITHDRAW_OPERATION,  // keccak256("WITHDRAW_OPERATION")
         recipient,
+        address(this),       // Bridge contract address
         tokenContract,
         amount
     )
@@ -112,6 +113,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         MINT_OPERATION,  // keccak256("MINT_OPERATION")
         recipient,
+        address(this),   // Bridge contract address
         amount
     )
 );
@@ -140,7 +142,7 @@ function submitGroupKey(
     uint64 epochId,
     bytes calldata groupPublicKey,    // 256-byte G2 public key (uncompressed)
     bytes calldata validationSig      // 128-byte signature from previous epoch
-) external
+) public onlyNormalOperation
 ```
 
 Anyone can submit the next sequential epoch with valid signature from previous epoch validators.
@@ -158,19 +160,19 @@ Admin can set group keys without validation signature during ADMIN_CONTROL state
 ### State Management
 
 ```solidity
-function resetToNormalOperation() external onlyOwner
+function resetToNormalOperation() external onlyOwner onlyAdminControl
 function checkAndHandleTimeout() external  // Callable by anyone
 ```
 
 **States:**
-- `ADMIN_CONTROL` - Initial state, conflict resolution, timeout recovery
+- `ADMIN_CONTROL` - Initial state and timeout recovery
 - `NORMAL_OPERATION` - Standard bridge operations
 
 **Timeout:** 30 days without new epochs triggers automatic admin control.
 
 ### Access Control & Multisig Deployment
 
-The `owner` role controls two privileged functions — `setGroupKey()` and `resetToNormalOperation()` — both gated by `onlyAdminControl`, meaning they are only callable in `ADMIN_CONTROL` state (triggered by a 30-day epoch timeout or a BLS key conflict). They are unreachable during normal bridge operation.
+The `owner` role controls two privileged functions — `setGroupKey()` and `resetToNormalOperation()` — both gated by `onlyAdminControl`, meaning they are only callable in `ADMIN_CONTROL` state (initial setup or 30-day epoch timeout recovery). They are unreachable during normal bridge operation.
 
 The contract will be deployed with a **multisig wallet as owner** (no single EOA), eliminating single-key risk for these admin-state scenarios.
 
@@ -184,7 +186,7 @@ function getLatestEpochInfo() external view returns (uint64 epochId, uint64 time
 function isTimeoutReached() external view returns (bool)
 function getContractBalance(address tokenContract) external view returns (uint256)  // address(this) for ETH
 function getWGNKInfo() external view returns (string memory name, string memory symbol, uint8 decimals, uint256 totalSupply)
-function decimals() external view returns (uint8)  // Returns 9
+function decimals() public view virtual override returns (uint8)  // Returns 9
 ```
 
 ## Events
@@ -210,6 +212,7 @@ error MustBeInAdminControl()      // Operation requires ADMIN_CONTROL state
 error InvalidEpochSequence()      // Epoch not sequential
 error NoValidGenesisEpoch()       // Cannot enable operations without epoch 1
 error TimeoutNotReached()         // Timeout check called too early
+error InvalidAmount()             // Zero-amount withdrawal or mint rejected
 ```
 
 ## Gas Costs
