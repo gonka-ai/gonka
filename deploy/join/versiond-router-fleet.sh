@@ -1550,7 +1550,7 @@ prepare_slot_networks() {
 }
 
 pull_router_image() {
-    local image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    local image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     [[ $pull_policy != never ]] || return 0
     if slot_compose "${slots[0]}" render pull --policy "$pull_policy" router; then
         return 0
@@ -1574,7 +1574,7 @@ desired_slot_config_hash() {
 # configuration is rendered per slot on first use.
 candidate_image_id=
 resolve_candidate() {
-    candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$candidate_image") || fail \
         "candidate router image is not available: $candidate_image"
     desired_hashes=()

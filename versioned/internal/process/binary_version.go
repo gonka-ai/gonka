@@ -18,6 +18,7 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	printFleetCompatFlag     = "--print-fleet-compat"
 	initializePostgresFlag   = "--initialize-postgres-schema"
 	envHADeployment          = "GONKA_HA"
 	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
@@ -36,6 +37,9 @@ type childPreflight struct {
 	binaryLogVersion  string
 	adminAPISupported bool
 	storageMode       string
+	// fleetCompat is empty when the binary has no --print-fleet-compat.
+	// Overlap requires the running and incoming values to be equal.
+	fleetCompat string
 	// haDeployment overrides GONKA_HA for this child. It is nil for binaries
 	// other than devshard, false for legacy-pinned versions, and true for
 	// devshard versions that can be routed across the HA pool.
@@ -90,6 +94,7 @@ func preflightChildWithAdminProbeContext(
 
 	adminSupported := false
 	storageMode := ""
+	fleetCompat := ""
 	var childHA *bool
 	if probeAdmin {
 		ha, err := childHADeployment(slotName)
@@ -132,12 +137,27 @@ func preflightChildWithAdminProbeContext(
 				slotName, storageModePostgres, storageMode,
 			)
 		}
+
+		compat, compatErr := readFleetCompatContext(ctx, binPath)
+		if compatErr != nil {
+			if !errors.Is(compatErr, errVersionFlagUnsupported) {
+				slog.Warn(
+					"--print-fleet-compat unavailable, treating fleet compat as empty",
+					"slot", slotName,
+					"bin", binPath,
+					"error", compatErr,
+				)
+			}
+		} else {
+			fleetCompat = compat
+		}
 	}
 
 	return childPreflight{
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
 		storageMode:       storageMode,
+		fleetCompat:       fleetCompat,
 		haDeployment:      childHA,
 	}, nil
 }
@@ -236,6 +256,10 @@ func readAdminAPIVersionContext(ctx context.Context, binPath string) (string, er
 
 func readStorageModeContext(ctx context.Context, binPath string) (string, error) {
 	return readEmbeddedVersionContext(ctx, binPath, printStorageModeFlag)
+}
+
+func readFleetCompatContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printFleetCompatFlag)
 }
 
 func initializePostgresSchemaContext(ctx context.Context, binPath string, env []string) (bool, error) {

@@ -7,9 +7,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// MigrateFeeParamsToTree copies flat StoreCommit gas fields into the fee-group
-// tree, forces enabled_fee_groups empty, and leaves min_gas_price_ngonka at 0.
-// The v0.2.16 upgrade handler may set enabled_fee_groups afterward from plan.Info.
+// MigrateFeeParamsToTree preserves legacy StoreCommit gas rates and installs default fee groups.
 func (k Keeper) MigrateFeeParamsToTree(ctx context.Context) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -23,13 +21,23 @@ func (k Keeper) MigrateFeeParamsToTree(ctx context.Context) error {
 	}
 
 	fp := params.FeeParams
-	fp.EnabledFeeGroups = nil
+	defaults := types.DefaultFeeParams()
+	fp.EnabledFeeGroups = defaults.EnabledFeeGroups
 	fp.MinGasPriceNgonka = 0
 
 	if len(fp.Groups) == 0 {
 		def := types.DefaultFeeParams()
 		overlayStoreCommitRates(def, fp.BaseValidationGas, fp.GasPerPocCount)
 		fp.Groups = def.Groups
+	}
+
+	for _, name := range fp.EnabledFeeGroups {
+		group := fp.GroupByName(name)
+		if group == nil {
+			group = defaults.GroupByName(name)
+			fp.Groups = append(fp.Groups, group)
+		}
+		group.MinGasPrice = 1
 	}
 
 	if types.ClampFeeTreeSafetyLimits(fp) {

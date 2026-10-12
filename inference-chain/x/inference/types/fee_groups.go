@@ -65,7 +65,7 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*collateraltypes.MsgDepositCollateral)(nil)):  FeeGroupEpoch,
 	reflect.TypeOf((*collateraltypes.MsgWithdrawCollateral)(nil)): FeeGroupEpoch,
 
-	// bls (omit deprecated MsgRequestThresholdSignature; it stays ungrouped)
+	// bls
 	reflect.TypeOf((*blstypes.MsgSubmitDealerPart)(nil)):                  FeeGroupBLS,
 	reflect.TypeOf((*blstypes.MsgSubmitVerificationVector)(nil)):          FeeGroupBLS,
 	reflect.TypeOf((*blstypes.MsgRespondDealerComplaints)(nil)):           FeeGroupBLS,
@@ -100,7 +100,6 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*MsgCancelMaintenance)(nil)):                           FeeGroupCosmos,
 
 	// governance: authority-gated. Fee-free while "governance" is not enabled.
-	// MsgRequestThresholdSignature stays ungrouped on purpose.
 	reflect.TypeOf((*MsgUpdateParams)(nil)):                      FeeGroupGovernance,
 	reflect.TypeOf((*MsgRegisterModel)(nil)):                     FeeGroupGovernance,
 	reflect.TypeOf((*MsgDeleteGovernanceModel)(nil)):             FeeGroupGovernance,
@@ -223,8 +222,7 @@ func IsKnownFeeGroup(name string) bool {
 // IsNetworkDuty reports whether msg is a protocol obligation that ante
 // exempts from fees. This set is compiled, not a gov param: enabling a fee
 // group does not charge these types until a later upgrade removes them here.
-// MsgPoCV2StoreCommit, HardwareDiff, and MsgRequestThresholdSignature are
-// intentionally excluded.
+// MsgPoCV2StoreCommit and HardwareDiff are intentionally excluded.
 func IsNetworkDuty(msg sdk.Msg) bool {
 	switch msg.(type) {
 	case *MsgSubmitPocBatch,

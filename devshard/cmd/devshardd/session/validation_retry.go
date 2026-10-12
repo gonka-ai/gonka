@@ -24,10 +24,10 @@ type sessionManager interface {
 
 // staleLeaseStore abstracts storage.LeaseStore for testing.
 type staleLeaseStore interface {
-	AcquireOneStale(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	AcquireOneStale(ctx context.Context, escrowId string, owner storage.LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 }
 
 // hostSnap abstracts *host.Host state reads for testing.
@@ -49,9 +49,9 @@ type ValidationRetryLoop struct {
 	leases       staleLeaseStore
 	inner        devshardpkg.ValidationEngine // no lease wrapping: lease already held
 	manager      sessionManager
-	phase        *chain.Phase
-	instanceAddr string
-	leaseTTL     time.Duration
+	phase    *chain.Phase
+	owner    storage.LeaseOwner
+	leaseTTL time.Duration
 	interval     time.Duration
 }
 
@@ -63,14 +63,14 @@ func NewValidationRetryLoop(
 	inner devshardpkg.ValidationEngine,
 	manager *HostManager,
 	phase *chain.Phase,
-	instanceAddr string,
+	owner storage.LeaseOwner,
 ) *ValidationRetryLoop {
 	return &ValidationRetryLoop{
-		leases:       leases,
-		inner:        inner,
-		manager:      manager,
-		phase:        phase,
-		instanceAddr: instanceAddr,
+		leases:   leases,
+		inner:    inner,
+		manager:  manager,
+		phase:    phase,
+		owner:    owner,
 		leaseTTL:     DefaultValidationLeaseTTL,
 		interval:     DefaultValidationRetryInterval,
 	}
@@ -130,7 +130,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 			caughtUp = true
 		}
 
-		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.instanceAddr, r.leaseTTL)
+		inferenceID, leaseEpochID, err := r.leases.AcquireOneStale(ctx, escrowID, r.owner, r.leaseTTL)
 		if err != nil {
 			slog.Warn("devshardd: validation retry: acquire stale validation failed",
 				"escrow", escrowID, "error", err)
@@ -159,7 +159,7 @@ func (r *ValidationRetryLoop) retryStaleValidationsForEscrow(ctx context.Context
 }
 
 func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus) {
-	if err := r.leases.SetResult(ctx, escrowID, inferenceID, epochID, status, r.instanceAddr); err != nil {
+	if err := r.leases.SetResult(ctx, escrowID, inferenceID, epochID, status, r.owner); err != nil {
 		if errors.Is(err, storage.ErrLeaseNotOwned) {
 			slog.Info("devshardd: validation retry: mark result skipped; lease not owned",
 				"escrow", escrowID, "inference", inferenceID, "status", status)
@@ -171,7 +171,7 @@ func (r *ValidationRetryLoop) markLeaseResult(ctx context.Context, escrowID stri
 }
 
 func (r *ValidationRetryLoop) releaseOwnedLease(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
-	if err := r.leases.Release(ctx, escrowID, inferenceID, epochID, r.instanceAddr); err != nil {
+	if err := r.leases.Release(ctx, escrowID, inferenceID, epochID, r.owner); err != nil {
 		slog.Warn("devshardd: validation retry: release lease failed",
 			"escrow", escrowID, "inference", inferenceID, "error", err)
 	}
@@ -235,7 +235,7 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return nil
 	}
-	owned, err := r.leases.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, r.instanceAddr)
+	owned, err := r.leases.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, r.owner)
 	if err != nil {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return fmt.Errorf("owns pending lease: %w", err)

@@ -152,7 +152,7 @@ func TestIsNetworkDuty(t *testing.T) {
 
 func TestDefaultFeeParamsTree(t *testing.T) {
 	fp := types.DefaultFeeParams()
-	require.Empty(t, fp.EnabledFeeGroups)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, fp.EnabledFeeGroups)
 	g, rule := fp.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
 	require.NotNil(t, g)
 	require.Equal(t, types.FeeGroupEpoch, g.Name)

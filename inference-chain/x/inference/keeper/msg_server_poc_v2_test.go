@@ -623,3 +623,38 @@ func TestPoCV2StoreCommit_TreeDepthBoundAndFrozen(t *testing.T) {
 	require.Equal(t, uint32(10), stored[commitKey(testutil.Executor, testPoCModelID)].Count)
 	require.Equal(t, uint32(24), stored[commitKey(testutil.Executor, testPoCModelID)].TreeDepth)
 }
+
+func TestPoCV2StoreCommit_SeparateRetriesIsolateStaleModel(t *testing.T) {
+	for _, sameBlock := range []bool{true, false} {
+		name := "later block"
+		if sameBlock {
+			name = "same block"
+		}
+		t.Run(name, func(t *testing.T) {
+			k, ctx, server := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID, testPoCModelID2)
+			msg := func(model string, count uint32) *types.MsgPoCV2StoreCommit {
+				return &types.MsgPoCV2StoreCommit{Creator: testutil.Executor, PocStageStartBlockHeight: 100, Entries: []*types.PoCV2CommitEntry{makePoCV2CommitEntry(model, count, 1)}}
+			}
+			_, err := server.PoCV2StoreCommit(ctx, msg(testPoCModelID, 10))
+			require.NoError(t, err)
+			if !sameBlock {
+				ctx = ctx.WithBlockHeight(111)
+			}
+			failedCtx, _ := ctx.CacheContext()
+			_, err = server.PoCV2StoreCommit(failedCtx, msg(testPoCModelID, 10))
+			if sameBlock {
+				require.ErrorContains(t, err, "only one commit per block")
+			} else {
+				require.ErrorContains(t, err, "count must increase")
+			}
+			successCtx, write := ctx.CacheContext()
+			_, err = server.PoCV2StoreCommit(successCtx, msg(testPoCModelID2, 20))
+			require.NoError(t, err)
+			write()
+			commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, 100)
+			require.NoError(t, err)
+			require.Equal(t, uint32(10), commits[commitKey(testutil.Executor, testPoCModelID)].Count)
+			require.Equal(t, uint32(20), commits[commitKey(testutil.Executor, testPoCModelID2)].Count)
+		})
+	}
+}

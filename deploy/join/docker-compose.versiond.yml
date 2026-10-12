@@ -23,7 +23,7 @@
 
 x-versiond: &versiond
   image: >-
-    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
+    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd

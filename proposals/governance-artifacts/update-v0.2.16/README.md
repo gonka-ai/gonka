@@ -6,7 +6,7 @@ The v0.2.16 upgrade includes protocol changes and bug fixes across the chain and
 
 Before v0.2.16, a sudden increase in claimed compute immediately increased a participant's power in governance, BLS, and PoC validation. This gave unconfirmed capacity influence over consensus and over validation of other participants.
 
-The upgrade limits that power to compute confirmed in the previous epoch. New or returning participants start at 0, and a failed confirmation sets the next baseline to 0. New compute still earns rewards immediately. Only trust-sensitive power waits one confirmed epoch.
+The upgrade limits that power to compute confirmed in the previous epoch. New or returning participants start with zero voting power but still earn rewards.
 
 ## Dynamic Coefficients v1
 
@@ -16,29 +16,44 @@ With fixed coefficients, an entire hardware class tends to switch to the same mo
 
 This upgrade lets governance set a target percentage of network compute and a coefficient range for each model. The protocol dynamically adjusts the coefficient inside that range to move compute toward the target. Compute above the target is scored at the minimum coefficient, which discourages oversupply.
 
-Governance initially sets targets from demand estimates and data sources such as OpenRouter. Later versions can aggregate host estimates and eventually use on-chain model usage. This version changes incentives only. It does not automatically switch the models deployed by a host. At upgrade, the minimum and maximum both equal the current scale, so coefficients and rewards stay unchanged until governance opens the ranges.
+The target configuration is defined in [dynamic-coeff-init.md](../../multi-model-poc/dynamic-coeff-init.md). The upgrade applies the initial configuration below. Each model starts from its existing coefficient, with a range of up to 10% above or below it, within the target bounds. Models not listed in that document use only the 10% limit.
+
+Initial configuration at upgrade, using existing coefficients of 0.3024 (MiniMax), 0.62 (GLM), and 0.246 (DeepSeek):
+
+| Model | Starting coefficient | Allowed range | Relative difficulty |
+| --- | --- | --- | --- |
+| MiniMax M2.7 | 0.3024 | Fixed at 0.3024 | 1 |
+| GLM 5.3 Flash | 0.62 | 0.558 - 0.682 | 2.668169014084 |
+| DeepSeek V4 Flash 0731 | 0.246 | 0.2214 - 0.2706 | 1.541666666666 |
+| Other enabled models | Current scale | Current scale * [0.9, 1.1] | 1 |
+
+Starting coefficients come from chain parameters at upgrade height. Current-epoch reward weights stay unchanged. Later epochs use the new ranges.
+
+Target compute shares start equal across enabled models, with rounding to total 100%. Governance can later apply the target configuration without resetting coefficients. Hosts choose which models to deploy.
 
 ## Fee
 
 Historically, the protocol has charged no transaction fees. An attacker can therefore submit high-volume messages at little cost while every validator pays the processing and storage cost.
 
-The upgrade groups transaction types and adds per-message gas rules so each group can be priced separately. All groups are disabled by default and charge nothing. Governance can enable and price them later. The upgrade proposal info can also enable groups at upgrade height.
+The upgrade groups transaction types and adds per-message gas rules so each group can be priced separately. The `epoch` and `cosmos` groups are enabled by default at 1 ngonka per gas. All other groups remain disabled and charge nothing.
+
+Before the upgrade, hosts must check that their cold-to-warm feegrant is valid. The cold account must have enough spendable GNK to cover fees.
 
 ## PoC Challenge
 
 PoC and random Confirmation PoC prove a host's claimed capacity. During the rest of the epoch, inference statistics check that this hardware is used for work assigned by the protocol. A high rate of missed or invalid inferences can remove a host. This provides a strong ongoing check, but its sensitivity depends on inference volume and may not reveal every gap between claimed and available capacity. PoC Challenge adds an additional security layer for these cases.
 
-An approved challenger can require one active host to leave inference and run PoC at full capacity until the next regular PoC. To open the challenge, the challenger locks a payment equal to a fraction of the target's remaining epoch reward. If the target passes, it receives the payment. If it fails, the challenger is refunded and the target receives the same penalty as for a failed Confirmation PoC. Inference missed during the challenge does not count against the target.
+An approved challenger can require an active host to leave inference and run PoC at full capacity. The challenger locks a payment, which goes to the host if it passes or is refunded if it fails. Failure carries the same penalty as failed Confirmation PoC.
 
 Only allowlisted devshard escrow creators can open a challenge. If the allowlist is empty, anyone can open one.
 
 ## Upgrade Plan
 
-The node binary is upgraded through an on-chain software upgrade proposal. Existing hosts are not required to rebuild their `api` or `node` containers.
+The chain and API binaries are upgraded through an on-chain software upgrade proposal. Existing hosts are not required to rebuild their `api` or `node` containers.
 
 Devshard binaries stay on the versions already approved.
 
-New hosts joining after the upgrade should use the `deploy/join` files in this PR.
+New hosts joining after the upgrade should use the `deploy/join` files published with the final v0.2.16 release.
 
 ## Proposed Process
 
@@ -51,14 +66,10 @@ The handler is [`inference-chain/app/upgrades/v0_2_16/upgrades.go`](https://gith
 
 - Extend existing cold-to-warm grants with PoC Challenge and model intent messages, so hosts do not have to repeat the ML ops grant.
 - Move approved devshard versions from shared escrow params into a separate store without changing the approved list.
-- Convert existing model scales to Dynamic Coefficients v1 and freeze the config for the upcoming epoch. Each model starts with its minimum and maximum equal to the current scale, so the upgrade does not change reward weights.
+- Start dynamic coefficients from current model scales and apply the ranges and targets above to the upcoming epoch.
 - Initialize PoC Challenge with a payment ratio of 0.1, at most 4 active challenges, and a minimum punishable segment of 300 blocks.
 
-Fee groups stay disabled unless the software-upgrade proposal info explicitly enables and prices them.
-
-## TODO
-
-- [ ] Include additional simulation results and confirm the target percentage and coefficient range for each model in Dynamic Coefficients v1.
+The epoch and cosmos fee groups default to 1 ngonka/gas. The software-upgrade proposal info can override the enabled groups and their prices. An explicit empty `enabled_fee_groups` list disables charging.
 
 ## Other Changes
 
@@ -67,7 +78,8 @@ Fee groups stay disabled unless the software-upgrade proposal info explicitly en
 - Cap governance, BLS, and PoC voting power by previously confirmed compute. Rewards still use current weight. [#1588](https://github.com/gonka-ai/gonka/pull/1588), [#1694](https://github.com/gonka-ai/gonka/pull/1694), reworking [#1585](https://github.com/gonka-ai/gonka/pull/1585), by @libermans, @gmorgachev, @DimaOrekhovPS.
 - Adjust model coefficients toward governance targets within configured bounds. [#1566](https://github.com/gonka-ai/gonka/pull/1566) by @gmorgachev.
 - Add paid PoC challenges between regular PoCs. [#1811](https://github.com/gonka-ai/gonka/pull/1811) by @gmorgachev.
-- Add fee groups and per-message gas rules, with charging disabled by default. [#1616](https://github.com/gonka-ai/gonka/pull/1616) by @GLiberman.
+- Reject submitted transaction fees above 100 GNK before fee deduction. [#1874](https://github.com/gonka-ai/gonka/pull/1874) by @gmorgachev.
+- Add fee groups and per-message gas rules, with epoch and cosmos charging enabled at 1 ngonka/gas by default. [#1616](https://github.com/gonka-ai/gonka/pull/1616) by @GLiberman.
 - Require participant permission for PoC v2 submissions and reject unauthorized authz wrappers. [#1623](https://github.com/gonka-ai/gonka/pull/1623), incorporating [#1552](https://github.com/gonka-ai/gonka/pull/1552), by @staaason, based on a HackerOne report.
 - Reject malformed BLS encrypted shares and skip dealers whose shares cannot be decrypted. [#1687](https://github.com/gonka-ai/gonka/pull/1687) by @GLiberman.
 - Reject SMST proofs that do not match the stored commitment. [#1782](https://github.com/gonka-ai/gonka/pull/1782) by @gmorgachev, based on a HackerOne report.
@@ -119,6 +131,9 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @aikuznetsov
 - @akup
 - @baychak
+- @bonujel
+- @cyberdelamain
+- @clanster
 - @DimaOrekhovPS
 - @GLiberman
 - @gmorgachev
@@ -126,9 +141,12 @@ Compatibility testing covered devshard v4.1 and v5 with both v0.2.15 and v0.2.16
 - @maksimenkoff
 - @Mayveskii
 - @niktverd
+- @qdanik
 - @redstartechno
 - @snevolin
 - @staaason
 - @tcharchian
 - @vbgd0
+- @vitaly-andr
+- @x0152
 - @zpoken

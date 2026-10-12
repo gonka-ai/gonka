@@ -1,7 +1,7 @@
 services:
   router:
     image: >-
-      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     environment:
       - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
       - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}

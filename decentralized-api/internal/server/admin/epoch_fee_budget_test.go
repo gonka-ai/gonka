@@ -76,12 +76,14 @@ func TestMaxConfirmationPocs_SafetyWindowDoesNotInflateSpacing(t *testing.T) {
 
 func TestEpochFeeBudgetNgonka_ZeroWhenFeesOff(t *testing.T) {
 	fp := types.DefaultFeeParams()
+	fp.EnabledFeeGroups = nil
 	got := epochFeeBudgetNgonka(fp, types.DefaultEpochParams(), types.DefaultConfirmationPoCParams(), 10_000)
 	require.True(t, got.IsZero())
 }
 
 func TestEpochBudgetKnown(t *testing.T) {
 	off := types.DefaultFeeParams()
+	off.EnabledFeeGroups = nil
 	require.True(t, epochBudgetKnown(off, countSourceNone), "fees off: budget is 0")
 
 	on := types.DefaultFeeParams()
@@ -198,6 +200,7 @@ func TestGetEpochFeeBudget_FeesDisabledKnownZero(t *testing.T) {
 	s, _, _ := setupTestServer(t)
 
 	params := types.DefaultParams()
+	params.FeeParams.EnabledFeeGroups = nil
 	qc := s.recorder.NewInferenceQueryClient().(*mockInferenceQueryClient)
 	qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params:      params,

@@ -21,7 +21,7 @@ func TestMigrateFeeParamsToTree_Nil(t *testing.T) {
 	updated, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, updated.FeeParams)
-	require.Empty(t, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, updated.FeeParams.EnabledFeeGroups)
 	require.Equal(t, uint64(0), updated.FeeParams.MinGasPriceNgonka)
 	require.NotEmpty(t, updated.FeeParams.Groups)
 }
@@ -40,7 +40,7 @@ func TestMigrateFeeParamsToTree_CopiesFlatRates(t *testing.T) {
 	require.NoError(t, k.MigrateFeeParamsToTree(ctx))
 	updated, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Empty(t, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, updated.FeeParams.EnabledFeeGroups)
 	_, rule := updated.FeeParams.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
 	require.NotNil(t, rule)
 	require.Equal(t, uint64(777_000), rule.Base.Gas)
@@ -90,4 +90,25 @@ func TestMigrateFeeParamsToTree_ClampsUncappedLegacyRates(t *testing.T) {
 	require.Equal(t, types.MaxGasPerUnit, rule.GetStoredDelta().GasPerUnit)
 	require.Equal(t, types.MaxPeriodBaseGas, updated.FeeParams.BaseValidationGas)
 	require.Equal(t, types.MaxGasPerUnit, updated.FeeParams.GasPerPocCount)
+}
+
+func TestMigrateFeeParamsToTree_ExistingTree(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	fp.Groups = fp.Groups[:1]
+	fp.EnabledFeeGroups = nil
+	fp.Groups[0].MinGasPrice = 17
+	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = 321
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.MigrateFeeParamsToTree(ctx))
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, updated.FeeParams.Validate())
+	require.Equal(t, []string{"epoch", "cosmos"}, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(1), updated.FeeParams.GroupByName("epoch").MinGasPrice)
+	require.Equal(t, uint64(1), updated.FeeParams.GroupByName("cosmos").MinGasPrice)
+	require.Equal(t, uint64(321), updated.FeeParams.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit)
 }

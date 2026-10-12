@@ -84,6 +84,9 @@ func NewServer(
 
 	// Return current unsanitized config as JSON
 	g.GET("config", s.getConfig)
+	g.GET("devshard/versions", s.getDevshardVersionOverrides)
+	g.POST("devshard/versions", s.postDevshardVersionOverride)
+	g.DELETE("devshard/versions", s.deleteDevshardVersionOverride)
 
 	// Manual validation recovery and claim endpoint
 	g.POST("claim-reward/recover", s.postClaimRewardRecover)

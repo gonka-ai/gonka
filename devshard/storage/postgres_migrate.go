@@ -210,6 +210,14 @@ ALTER TABLE devshard_storage_identity
     ADD COLUMN IF NOT EXISTS challenge UUID,
 	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
 	},
+	{
+		ID:   15,
+		Name: "devshard_validation_lease_identity",
+		Statements: []string{`
+ALTER TABLE devshard_validation_leases
+    ADD COLUMN IF NOT EXISTS instance_id TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS hostname    TEXT NOT NULL DEFAULT ''`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

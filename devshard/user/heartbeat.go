@@ -43,9 +43,12 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 }
 
 // StartHeartbeatLoop waits for router catalog admission, then runs
-// MaybeHeartbeat immediately and every Interval until StopHeartbeatLoop
-// or Close. Idempotent. A Close that races Start does not leave a
-// goroutine behind. In-process clients have no catalog URL and skip the wait.
+// MaybeHeartbeat immediately and again at each cadence deadline until
+// StopHeartbeatLoop or Close. The deadline is lastTurnover+Interval after a
+// turnover, or turnOpenedAt+TurnTimeout while a turn is still open — not a
+// free-running ticker, which opens a full Interval late. Idempotent. A Close
+// that races Start does not leave a goroutine behind. In-process clients
+// have no catalog URL and skip the wait.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
@@ -56,13 +59,9 @@ func (s *Session) StartHeartbeatLoop() {
 	s.heartbeatLoopOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
-		interval := s.heartbeat.Config().Interval
-		if interval <= 0 {
-			interval = heightsync.DefaultHeartbeatInterval
-		}
 		go func() {
 			defer close(done)
-			s.runHeartbeatLoop(ctx, interval)
+			s.runHeartbeatLoop(ctx)
 		}()
 		s.mu.Lock()
 		if s.heartbeatClosed {
@@ -96,28 +95,90 @@ func (s *Session) StopHeartbeatLoop() {
 	}
 }
 
-func (s *Session) runHeartbeatLoop(ctx context.Context, interval time.Duration) {
+func (s *Session) runHeartbeatLoop(ctx context.Context) {
 	if err := s.WaitRouterCatalog(ctx); err != nil {
 		logging.Debug("heartbeat loop stopped before catalog", "subsystem", "heightsync",
 			"escrow", s.escrowID, "error", err)
 		return
 	}
-	if err := s.MaybeHeartbeat(ctx); err != nil {
-		logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
-			"escrow", s.escrowID, "error", err)
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	past := s.heartbeatDelay() <= time.Millisecond
+	s.tickHeartbeat(ctx)
+	delay := s.heartbeatDelayAfterTick(past)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			if err := s.MaybeHeartbeat(ctx); err != nil {
-				logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
-					"escrow", s.escrowID, "error", err)
+		case <-timer.C:
+			past = s.heartbeatDelay() <= time.Millisecond
+			s.tickHeartbeat(ctx)
+			delay = s.heartbeatDelayAfterTick(past)
+		case <-s.heartbeatPoke:
+			// Turnover landed while sleeping. Re-arm from the new lastTurnover;
+			// do not open a span until that deadline.
+			delay = s.heartbeatDelay()
+		}
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
 			}
 		}
+		timer.Reset(delay)
+	}
+}
+
+func (s *Session) tickHeartbeat(ctx context.Context) {
+	if err := s.MaybeHeartbeat(ctx); err != nil {
+		logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "error", err)
+	}
+}
+
+// heartbeatDelay is the sleep until the next due check. See Heartbeat.NextWake.
+func (s *Session) heartbeatDelay() time.Duration {
+	if s == nil || s.heartbeat == nil {
+		return heightsync.DefaultHeartbeatInterval
+	}
+	return s.heartbeat.NextWake(s.now())
+}
+
+// heartbeatDelayAfterTick is heartbeatDelay unless the deadline was already
+// past when the tick started and the tick left it there. NextWake then
+// reports 1ms, and a skipped tick (no height, session no longer active)
+// would spin. Poll once per Interval in that case. A deadline that expires
+// during the tick is woken immediately so an abandon is not postponed.
+func (s *Session) heartbeatDelayAfterTick(alreadyPast bool) time.Duration {
+	delay := s.heartbeatDelay()
+	if delay > time.Millisecond || !alreadyPast {
+		return delay
+	}
+	interval := heightsync.DefaultHeartbeatInterval
+	if s != nil && s.heartbeat != nil {
+		if cfg := s.heartbeat.Config().Interval; cfg > 0 {
+			interval = cfg
+		}
+	}
+	return interval
+}
+
+func (s *Session) now() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.nowLocked()
+}
+
+// pokeHeartbeat asks the loop to recompute its deadline. Non-blocking: a
+// turnover that lands inside MaybeHeartbeat is already visible to the re-arm
+// after that call returns, so a missed poke there changes nothing.
+func (s *Session) pokeHeartbeat() {
+	if s == nil || s.heartbeatPoke == nil {
+		return
+	}
+	select {
+	case s.heartbeatPoke <- struct{}{}:
+	default:
 	}
 }
 

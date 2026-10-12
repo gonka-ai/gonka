@@ -52,9 +52,9 @@ Shares and raw totals are not duplicated. The next PoC reconstructs N-1 shares
 from model subgroup data.
 
 When no prior dynamic snapshot exists, every enabled model starts at
-`coeff_min`, with `s = step_max / 2` and `prev_sign = 0`. Existing models retain
-their old coefficient because the v0.2.16 migration pins `coeff_min` and
-`coeff_max` to the deprecated `weight_scale_factor`.
+`coeff_min`, with `s = step_max / 2` and `prev_sign = 0`. The v0.2.16 migration
+seeds existing models with their current static scales on the current root epoch,
+so their first dynamic calculation carries that state instead.
 
 Disabled and removed models have no controller state. Re-enabling one starts it
 as a new model.
@@ -77,7 +77,7 @@ only defines the coefficient pin. Clamping before the deadband deliberately
 extends the formula so narrowed governance bounds apply immediately.
 
 The fixed base model still receives `target_share_bps` so targets total 10,000.
-Setting `coeff_min = coeff_max = 1` makes its allocation operationally
+Setting `coeff_min = coeff_max` to a fixed positive value makes its allocation operationally
 residual.
 
 ## Arithmetic
@@ -105,17 +105,26 @@ No binary floating point is used in consensus code.
 Dynamic mode requires complete config for every enabled model. A model without
 per-model dynamic config is disabled.
 
-The v0.2.16 migration enables the pipeline with pinned ranges:
+The v0.2.16 migration applies the initial configuration described in the
+[upgrade proposal](../governance-artifacts/update-v0.2.16/README.md#dynamic-coefficients-v1):
 
-- `coeff_min = coeff_max = deprecated weight_scale_factor`
-- `D_i = 1`
-- targets split deterministically to total 10,000 bps
-- controller globals use the specification defaults
+- Set `base_coefficient = weight_scale_factor`, `s = 0.025`, and `prev_sign = 0`
+  on the current root epoch, preserving current effective coefficients.
+- Allow up to 10% above or below the current scale, within the benchmark limits
+  in [dynamic coefficient initialization](dynamic-coeff-init.md).
+- Unknown models use that 10% range directly and `D_i = 1`.
+  Known models use the measured relative difficulties.
+  For known models, the migration fails if the 10% range and benchmark limits
+  do not overlap.
+- Targets split equally to total 10,000 bps, with the remainder assigned to the
+  enabled initial delegation model or, if absent, the first model by ID.
+- Controller globals use the specification defaults.
 
-Pinned ranges make adjustment and dilution inert, preserving pre-upgrade
-weights. The migration clears `weight_scale_factor`; post-migration runtime
-never reads it. Governance later supplies real difficulties, targets, and
-ranges.
+The first dynamic calculation starts from the saved base and adjusts it within
+the allowed range. Compute above the target is scored at the minimum.
+The migration clears `weight_scale_factor`; post-migration runtime never reads it.
+Governance can later update difficulties, targets, and ranges without resetting
+controller state.
 
 After migration, governance cannot set `dynamic_coefficient_params` to nil.
 Legacy static mode is accepted only while every model still carries the

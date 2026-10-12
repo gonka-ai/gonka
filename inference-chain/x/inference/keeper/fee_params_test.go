@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestFeeParams_NilAtGenesis(t *testing.T) {
+func TestFeeParams_DefaultsAtGenesis(t *testing.T) {
 	k, ctx := testkeeper.InferenceKeeper(t)
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, params.FeeParams)
-	require.Empty(t, params.FeeParams.EnabledFeeGroups)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, params.FeeParams.EnabledFeeGroups)
 	require.Equal(t, uint64(0), params.FeeParams.MinGasPriceNgonka)
 }
 
