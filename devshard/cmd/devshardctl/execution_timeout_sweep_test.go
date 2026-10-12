@@ -145,3 +145,54 @@ func TestSweepExecutionTimeoutsSkipsAnEscrowThatIsNoLongerRegistered(t *testing.
 	require.Zero(t, due)
 	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status)
 }
+
+func pendingInferenceStartedAt(t *testing.T, env *testProxyEnv, startedAt time.Time) uint64 {
+	t.Helper()
+	params := defaultParams()
+	params.StartedAt = startedAt.Unix()
+	prepared, err := env.session.PrepareInference(t.Context(), params)
+	require.NoError(t, err)
+	nonce := prepared.Nonce()
+	record, tracked := env.sm.GetInference(nonce)
+	require.True(t, tracked)
+	require.Equal(t, types.StatusPending, record.Status)
+	require.Equal(t, startedAt.Unix(), record.StartedAt)
+	return nonce
+}
+
+// Test flow:
+//  1. Leave a Pending inference whose refusal window (plus sweep grace) has passed.
+//  2. Run the sweep.
+//  3. Expect a refusal timeout: race cleanup defers not-yet-due votes, so the
+//     sweep must close overdue Pending rows too.
+func TestSweepExecutionTimeoutsReturnsAnOverduePendingRefusal(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	nonce := pendingInferenceStartedAt(t, env, time.Now().Add(-time.Hour))
+	reserved := env.sm.SnapshotState().Inferences[nonce].ReservedCost
+	balanceBefore := env.sm.Balance()
+
+	due, applied, failed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+
+	require.Equal(t, 1, due)
+	require.Equal(t, 1, applied)
+	require.Zero(t, failed)
+	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[nonce].Status)
+	require.Equal(t, balanceBefore+reserved, env.sm.Balance())
+	require.Zero(t, runtime.pendingRaceCleanup.Load())
+}
+
+// Test flow:
+//  1. Leave a fresh Pending inference still inside its refusal window.
+//  2. Run the sweep.
+//  3. Expect nothing due: the sweep must not race the refusal deadline.
+func TestSweepExecutionTimeoutsLeavesAFreshPendingToItsRace(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	nonce := pendingInferenceStartedAt(t, env, time.Now())
+
+	due, applied, failed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+
+	require.Zero(t, due)
+	require.Zero(t, applied)
+	require.Zero(t, failed)
+	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
+}

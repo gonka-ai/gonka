@@ -69,6 +69,11 @@ type LeaseStore interface {
 	// older than ttl. Submitted leases are retryable because the corresponding
 	// validation tx may have lived only in a volatile mempool.
 	AcquireOneStale(ctx context.Context, escrowID string, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error)
+	// AcquireOneStaleAmong is AcquireOneStale restricted to epochID and
+	// inferenceIDs. An empty inferenceIDs claims nothing. The retry loop uses
+	// it when catch-up failed and only inferences already owed in memory
+	// are safe to reclaim.
+	AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error)
 	// SetResult updates status only when owner still holds a pending lease
 	// in epochID. epochID is part of the primary key and the partition key.
 	// Ownership is Address plus InstanceID. Hostname is ignored.
@@ -174,6 +179,59 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID string, owner Lease
 	return foundKey.inferenceID, foundKey.epochID, nil
 }
 
+func (m *Memory) AcquireOneStaleAmong(_ context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	if len(inferenceIDs) == 0 {
+		return 0, 0, nil
+	}
+	want := make(map[uint64]struct{}, len(inferenceIDs))
+	for _, id := range inferenceIDs {
+		if id == 0 {
+			continue
+		}
+		want[id] = struct{}{}
+	}
+	if len(want) == 0 {
+		return 0, 0, nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byInference := m.validationLeases[escrowID]
+	if len(byInference) == 0 {
+		return 0, 0, nil
+	}
+	cutoff := time.Now().Add(-ttl)
+	var (
+		foundKey memoryLeaseKey
+		found    bool
+	)
+	for key, lease := range byInference {
+		if key.epochID != epochID {
+			continue
+		}
+		if _, ok := want[key.inferenceID]; !ok {
+			continue
+		}
+		if (lease.status != LeaseStatusPending && lease.status != LeaseStatusSubmitted) || !lease.claimedAt.Before(cutoff) {
+			continue
+		}
+		foundKey = key
+		found = true
+		break
+	}
+	if !found {
+		return 0, 0, nil
+	}
+	lease := byInference[foundKey]
+	lease.instanceAddr = owner.Address
+	lease.instanceID = owner.InstanceID
+	lease.hostname = owner.Hostname
+	lease.claimedAt = time.Now()
+	lease.status = LeaseStatusPending
+	byInference[foundKey] = lease
+	return foundKey.inferenceID, foundKey.epochID, nil
+}
+
 func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -249,8 +307,9 @@ func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 // table provides the real cross-instance dedup.
 //
 // Acquire therefore always grants (validation runs inline), and AcquireOneStale
-// / SetResult / Release are no-ops: the SQLite retry loop has no shared lease
-// table to reclaim from. See docs/rolling-update.md ("multi-instance ⇒ Postgres").
+// / AcquireOneStaleAmong / SetResult / Release are no-ops: the SQLite retry
+// loop has no shared lease table to reclaim from. See docs/rolling-update.md
+// ("multi-instance ⇒ Postgres").
 
 func (s *SQLite) Acquire(_ context.Context, _ string, _, _ uint64, _ LeaseOwner) (bool, error) {
 	return true, nil
@@ -263,6 +322,10 @@ func (s *SQLite) DescribeLease(_ context.Context, _ string, _, _ uint64) (LeaseI
 }
 
 func (s *SQLite) AcquireOneStale(_ context.Context, _ string, _ LeaseOwner, _ time.Duration) (uint64, uint64, error) {
+	return 0, 0, nil
+}
+
+func (s *SQLite) AcquireOneStaleAmong(_ context.Context, _ string, _ uint64, _ []uint64, _ LeaseOwner, _ time.Duration) (uint64, uint64, error) {
 	return 0, 0, nil
 }
 
@@ -367,6 +430,49 @@ func (s *Postgres) AcquireOneStale(ctx context.Context, escrowID string, owner L
 		return 0, 0, fmt.Errorf("validation leases: acquire stale: %w", err)
 	}
 	return inferenceID, epochID, nil
+}
+
+func (s *Postgres) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	ids := make([]int64, 0, len(inferenceIDs))
+	for _, id := range inferenceIDs {
+		if id == 0 {
+			continue
+		}
+		ids = append(ids, int64(id))
+	}
+	if len(ids) == 0 {
+		return 0, 0, nil
+	}
+	var inferenceID, gotEpoch uint64
+	err := s.pool.QueryRow(ctx,
+		`WITH candidate AS (
+		     SELECT epoch_id, escrow_id, inference_id
+		     FROM devshard_validation_leases
+		     WHERE escrow_id = $4
+		       AND epoch_id = $5
+		       AND inference_id = ANY($6::bigint[])
+		       AND status IN ('pending', 'submitted')
+		       AND claimed_at < now() - make_interval(secs => $7)
+		     LIMIT 1
+		     FOR UPDATE SKIP LOCKED
+		 )
+		 UPDATE devshard_validation_leases v
+		 SET instance_address = $1, instance_id = $2, hostname = $3,
+		     claimed_at = now(), status = 'pending'
+		 FROM candidate
+		 WHERE v.epoch_id = candidate.epoch_id
+		   AND v.escrow_id = candidate.escrow_id
+		   AND v.inference_id = candidate.inference_id
+		 RETURNING v.inference_id, v.epoch_id`,
+		owner.Address, owner.InstanceID, owner.Hostname, escrowID, epochID, ids, ttl.Seconds(),
+	).Scan(&inferenceID, &gotEpoch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, 0, nil
+		}
+		return 0, 0, fmt.Errorf("validation leases: acquire stale among: %w", err)
+	}
+	return inferenceID, gotEpoch, nil
 }
 
 func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {

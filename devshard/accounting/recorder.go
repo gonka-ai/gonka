@@ -336,7 +336,9 @@ func (r *Recorder) TimeoutResult(
 	nonce uint64,
 	kind, action, reason, detailReason, timeoutReason string,
 ) {
-	if r == nil || r.tracker == nil || action == "started" {
+	if r == nil || r.tracker == nil || action == "started" || action == "deferred" || action == "scheduled" {
+		// Scheduled/deferred means a deadline wait was armed; the vote records
+		// the real outcome when it runs. RecordTimeout only accepts real outcomes.
 		return
 	}
 	if action == "skipped" && !timeoutSkipRequiresAccounting(reason) {
@@ -410,7 +412,9 @@ func (r *Recorder) Close() error {
 // accounting fact. Callers that mirror the outcome onto a span consult it too,
 // so the span never claims a dimension the counter does not carry.
 func TimeoutActionRecorded(action, reason string) bool {
-	if action == "started" {
+	if action == "started" || action == "deferred" || action == "scheduled" {
+		// Scheduled/deferred means a deadline wait was armed; the vote (or
+		// sweep backup) records the real outcome when it runs.
 		return false
 	}
 	if action != "skipped" {

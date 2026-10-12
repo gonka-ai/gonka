@@ -543,6 +543,13 @@ func (h *Host) IsGroupMemberAddr(addr string) bool {
 	return ok
 }
 
+// OwedValidationIDs returns the inferences this host still owes a validation
+// for: finished ones it sampled and challenged ones, excluding work it executed
+// or already validated. Cheaper than SnapshotState: no records are copied.
+func (h *Host) OwedValidationIDs() []uint64 {
+	return h.sm.OwedValidationIDs()
+}
+
 // SnapshotState returns a deep copy of the current state.
 func (h *Host) SnapshotState() types.EscrowState {
 	h.mu.Lock()

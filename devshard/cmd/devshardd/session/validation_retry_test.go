@@ -43,6 +43,10 @@ func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId stri
 	return s.acquireFn(ctx, escrowId, owner, ttl)
 }
 
+func (s *stubStaleLeaseStore) AcquireOneStaleAmong(context.Context, string, uint64, []uint64, storage.LeaseOwner, time.Duration) (uint64, uint64, error) {
+	return 0, 0, nil
+}
+
 func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error {
 	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
 	if s.setResultFn != nil {
@@ -1442,7 +1446,7 @@ func TestValidationRetryDeferredModelDoesNotBlockCreditedModel(t *testing.T) {
 	}
 }
 
-// flakyMetaStore is a shared (HA) store whose GetSessionMeta fails on demand,
+// flakyMetaStore is a shared store whose GetSessionMeta fails on demand,
 // modelling a transient Postgres error during CatchUpFromStore.
 type flakyMetaStore struct {
 	*storage.Memory
@@ -1456,9 +1460,8 @@ func (s *flakyMetaStore) GetSessionMeta(id string) (*storage.SessionMeta, error)
 	return s.Memory.GetSessionMeta(id)
 }
 
-// laggingReplica: this replica bound the session after the first boundAt diffs
-// (start, confirm, finish) were durable; a peer replica then appended the rest
-// to the shared store, took the validation lease and died.
+// laggingReplica binds this replica after the first boundAt diffs are durable.
+// A peer then appends the rest to the shared store, takes the validation lease, and dies.
 func laggingReplica(t *testing.T, escrowID string, boundAt int) (*flakyMetaStore, *HostManager, *echo.Echo) {
 	t.Helper()
 	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, escrowID)
@@ -1495,7 +1498,7 @@ func laggingReplica(t *testing.T, escrowID string, boundAt int) (*flakyMetaStore
 	return store, mgr, e
 }
 
-func TestRetryStaleValidation_FailedCatchUpDoesNotSkipLease(t *testing.T) {
+func TestRetryStaleValidation_FailedCatchUpLeavesUnseenLeasePending(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		boundAt int
@@ -1522,12 +1525,41 @@ func TestRetryStaleValidation_FailedCatchUpDoesNotSkipLease(t *testing.T) {
 
 			owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 7, retryOwner("dead-peer"))
 			require.NoError(t, err)
-			require.True(t, owned, "lease must stay pending and unclaimed while catch-up fails")
+			require.True(t, owned, "an inference the snapshot cannot see must stay pending")
+			require.Zero(t, inner.calls)
 
-			// The next tick, with a healthy store.
 			rl.retryStaleValidationsForEscrow(ctx, escrowID)
-			require.Equal(t, 1, inner.calls, "the inference must be validated once catch-up succeeds")
+			require.Equal(t, 1, inner.calls, "the next tick validates once catch-up succeeds")
 			require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e, escrowID), 1))
 		})
 	}
+}
+
+func TestRetryStaleValidation_FailedCatchUpReclaimsOwedLease(t *testing.T) {
+	const escrowID = "1"
+	store, mgr, e := laggingReplica(t, escrowID, 3)
+	h, ok := mgr.hostSnapshot(escrowID)
+	require.True(t, ok)
+	rec, present := h.SnapshotState().Inferences[1]
+	require.True(t, present && rec.Status == types.StatusFinished, "precondition: finish diff is already in memory")
+	require.Contains(t, h.(*host.Host).OwedValidationIDs(), uint64(1), "precondition: this host owes the validation")
+	require.NoError(t, acquireMemoryLease(context.Background(), store.Memory, escrowID, 99, 7, "dead-peer"))
+
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{leases: store, inner: inner, manager: mgr, owner: retryOwner("addr"), leaseTTL: 50 * time.Millisecond}
+	ctx := context.Background()
+
+	time.Sleep(60 * time.Millisecond)
+	store.failMeta.Store(true)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+	store.failMeta.Store(false)
+
+	owned, err := store.OwnsPendingLease(ctx, escrowID, 99, 7, retryOwner("dead-peer"))
+	require.NoError(t, err)
+	require.True(t, owned, "a lease whose inference is not in memory stays pending")
+	owned, err = store.OwnsPendingLease(ctx, escrowID, 1, 7, retryOwner("dead-peer"))
+	require.NoError(t, err)
+	require.False(t, owned, "the finished inference is reclaimed on this tick")
+	require.Equal(t, 1, inner.calls)
+	require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e, escrowID), 1))
 }
