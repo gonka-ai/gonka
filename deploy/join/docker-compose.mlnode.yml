@@ -7,7 +7,16 @@ services:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
+      # PoC batch (set in .env), the batch both prefill mining and validation use. Its forward is
+      # batch x 1024 tokens and must fit --max-num-batched-tokens: vLLM sizes its MoE workspace by
+      # that at startup, and a larger batch fails (0 nonces) instead of slowing down.
+      # GLM-5.3-Flash: 8 on 8xH100, 16 on H200, 32 on B200/B300. DeepSeek-V4-Flash on 4xH100
+      # (max-num-batched-tokens 16384): 16. Everything else: 32.
       - POC_BATCH_SIZE_DEFAULT=${POC_BATCH_SIZE_DEFAULT:-32}
+      # DeepSeek-V4-Flash on 2xH200: set to 0 in .env. vLLM 0.30 otherwise takes its CUDA-graph estimate
+      # (6.7 GiB) off the KV cache, which then holds fewer than the 1024 decode-PoC rows x 512 tokens, and
+      # mining preempts (383 nonces/min instead of ~640). vLLM reads it as an int: keep a number here.
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-1}
     deploy:
       resources:
         reservations:
