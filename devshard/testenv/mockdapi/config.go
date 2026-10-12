@@ -33,6 +33,9 @@ type Config struct {
 	OmitBlockRoutes bool
 }
 
+// MLNode is one Mock ML endpoint exposed through AcquireMLNode.
+type MLNode = params.MLNode
+
 // DefaultConfig returns listen defaults for local dev.
 func DefaultConfig() Config {
 	return Config{

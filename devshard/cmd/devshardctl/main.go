@@ -20,6 +20,7 @@ import (
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
+	"devshard/profiling"
 	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
@@ -136,6 +137,7 @@ func main() {
 		logFormat = os.Getenv("DEVSHARD_LOG_FORMAT")
 	}
 	installGatewayLogger(logFormat)
+	profiling.ConfigureContentionProfilesFromEnv()
 	// Init degrades in-process on exporter/resource failure (Ready=false);
 	// never couple gateway availability to OTel config.
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{

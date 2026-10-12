@@ -372,6 +372,17 @@ func TestUser_PendingTxDedup(t *testing.T) {
 		"duplicate mempool txs should be deduplicated")
 }
 
+func TestStateSizesIncludesAppliedTxKeys(t *testing.T) {
+	session := &Session{
+		appliedTxKeys: map[string]struct{}{
+			"finish:1":     {},
+			"validation:2": {},
+		},
+	}
+
+	require.Equal(t, 2, session.StateSizes().AppliedTxKeys)
+}
+
 func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	session := &Session{
 		pendingTxKeys: make(map[string]struct{}),

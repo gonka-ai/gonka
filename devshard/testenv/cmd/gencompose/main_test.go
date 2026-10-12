@@ -495,6 +495,27 @@ func TestWriteCompose_MockDapiObservabilityEnv(t *testing.T) {
 	require.Equal(t, "${LOG_FORMAT:-json}", env["LOG_FORMAT"])
 }
 
+func TestWriteCompose_ContentionProfilesEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Versiond.EnableContentionProfiles = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, "true", compose.Services["versiond-0"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
+	require.Equal(t, "true", compose.Services["devshardctl"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
+}
+
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()

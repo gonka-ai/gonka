@@ -84,19 +84,31 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-{{ range mlNodeIDs . }}
-      - {{ . }}
+{{ range mockMLNodes . }}
+      - {{ .Name }}
 {{ end }}
     restart: unless-stopped
-{{ range $i, $id := mlNodeIDs . }}
+{{ range $i, $node := mockMLNodes . }}
 
-  {{ $id }}:
+  {{ $node.Name }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
       MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_TTFT: "{{ $node.TTFT }}"
+      MOCK_OPENAI_TOKEN_INTERVAL: "{{ $node.TokenInterval }}"
+      MOCK_OPENAI_WORKERS: "{{ $node.Workers }}"
+      MOCK_OPENAI_QUEUE: "{{ $node.Queue }}"
+      MOCK_OPENAI_HANG: "{{ $node.Hang }}"
+      MOCK_OPENAI_FAILURE_RATE: "{{ $node.FailureRate }}"
+      MOCK_OPENAI_HTTP_STATUS: "{{ $node.HTTPStatus }}"
+{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ end }}
+{{ if $.MockOpenAI.ReplayFile }}    volumes:
+      - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro
+{{ end }}
     ports:
       - "{{ mlNodeHostPort $ $i }}:{{ $.MockOpenAI.HTTPPort }}"
     networks:
@@ -154,6 +166,8 @@ services:
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
       DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
       DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
@@ -213,12 +227,14 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-{{ range mlNodeIDs $ }}
-      {{ . }}:
+{{ range mockMLNodes $ }}
+      {{ .Name }}:
         condition: service_started
 {{ end }}
+{{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
+{{ end }}
 {{ if ne .ID "versiond-0" }}
       versiond-0:
         condition: service_started
@@ -226,8 +242,8 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-{{ range mlNodeIDs $ }}
-      - {{ . }}
+{{ range mockMLNodes $ }}
+      - {{ .Name }}
 {{ end }}
 {{ end }}
     stop_grace_period: 30m
@@ -241,6 +257,7 @@ services:
     image: devshard-versiond-router:latest
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_PORT: "8080"
       # Pin only versions that actually have a child. A fictional v1 makes
       # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
@@ -289,6 +306,7 @@ services:
     entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
+      DEVSHARD_STATS_PORT: "{{ .Devshardctl.StatsPort }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
       DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
@@ -300,6 +318,8 @@ services:
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
@@ -325,6 +345,7 @@ services:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
       - "{{ .Devshardctl.Port }}:{{ .Devshardctl.Port }}"
+      - "{{ .Devshardctl.StatsPort }}:{{ .Devshardctl.StatsPort }}"
     networks:
       testenv:
         ipv4_address: {{ .Devshardctl.IP }}
@@ -354,13 +375,14 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
 		"legacyVersiondHost":        legacyVersiondHost,
+		"mockMLNodes":               mockMLNodes,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
 		"mlNodeIDs":                 mlNodeIDs,
 		"mlNodeIPOffset":            config.MLNodeIPOffset,
 		"mlNodeHostPort":            mlNodeHostPort,
 		"primaryMLEndpoint":         primaryMLEndpoint,
-		"mockMLNodesEnv":            mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -391,6 +413,30 @@ func writeEnvFile(cfg *config.File, outPath string) error {
 	b.WriteString("TESTENV_OTEL_ENDPOINT=\n")
 	b.WriteString("LOG_FORMAT=json\n")
 	return os.WriteFile(outPath, []byte(b.String()), 0o600)
+}
+
+func mockMLNodes(cfg *config.File) []config.MockOpenAINodeCfg {
+	if cfg != nil && len(cfg.MockOpenAI.Nodes) > 0 {
+		return cfg.MockOpenAI.Nodes
+	}
+	ids := []string{"mock-openai-0"}
+	if cfg != nil {
+		ids = cfg.MLNodeIDs()
+	}
+	nodes := make([]config.MockOpenAINodeCfg, 0, len(ids))
+	for _, id := range ids {
+		nodes = append(nodes, config.MockOpenAINodeCfg{Name: id})
+	}
+	return nodes
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	nodes := mockMLNodes(cfg)
+	entries := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
 }
 
 func versionEnvSuffix(versionName string) string {
@@ -477,17 +523,15 @@ func mlNodeIDs(cfg *config.File) []string {
 }
 
 func primaryMLEndpoint(cfg *config.File) string {
-	if cfg == nil {
+	nodes := mockMLNodes(cfg)
+	if len(nodes) == 0 {
 		return "http://mock-openai-0:8088"
 	}
-	return cfg.PrimaryMLEndpoint()
-}
-
-func mockMLNodesEnv(cfg *config.File) string {
-	if cfg == nil {
-		return "mock-openai-0=http://mock-openai-0:8088"
+	port := config.DefaultMockOpenAIHTTPPort
+	if cfg != nil && cfg.MockOpenAI.HTTPPort > 0 {
+		port = cfg.MockOpenAI.HTTPPort
 	}
-	return cfg.MockMLNodesEnv()
+	return fmt.Sprintf("http://%s:%d", nodes[0].Name, port)
 }
 
 // mlNodeHostPort publishes a distinct host port per pool member (container port unchanged).

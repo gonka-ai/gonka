@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"devshard/observability"
+	"devshard/profiling"
 )
 
 // Version is the devshard protocol name (approved_versions.name). Set at build
@@ -45,6 +46,7 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 	if err != nil {
 		return err
 	}
+	profiling.ConfigureContentionProfilesFromEnv()
 
 	installHostLogger(os.Getenv("LOG_FORMAT"), cfg.BinaryLogVersion)
 
