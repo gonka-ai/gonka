@@ -24,19 +24,18 @@ func bytesEqual(a, b []byte) bool {
 	return true
 }
 
-func verifySMSTProofWithCounts(rootHash []byte, count uint32, nonce int32, leafData []byte, proof []smstProofElement) bool {
-	if len(proof) == 0 {
+func verifySMSTProofWithCounts(rootHash []byte, count uint32, treeDepth int, nonce int32, leafData []byte, proof []smstProofElement) bool {
+	if treeDepth <= 0 || len(proof) != treeDepth {
 		return false
 	}
 
-	depth := len(proof)
 	leafHash := smstHashLeaf(leafData)
-	path := smstNoncePath(nonce, depth)
+	path := smstNoncePath(nonce, treeDepth)
 
 	currentHash := leafHash
 	currentCount := uint32(1)
 
-	for i := depth - 1; i >= 0; i-- {
+	for i := treeDepth - 1; i >= 0; i-- {
 		elem := proof[i]
 		goRight := path[i]
 
@@ -93,9 +92,12 @@ func decodeProofElements(proof [][]byte) []smstProofElement {
 // accumulator uses uint64 to detect overflow, and we explicitly check that it
 // stays within bounds of count. Since sibling counts are committed by the root hash,
 // a malicious prover cannot forge counts without changing the root.
-func VerifySMSTProofWithDenseIndex(rootHash []byte, count uint32, denseIndex uint32, nonce int32, leafData []byte, proof [][]byte) bool {
+func VerifySMSTProofWithDenseIndex(rootHash []byte, count uint32, treeDepth uint32, denseIndex uint32, nonce int32, leafData []byte, proof [][]byte) bool {
 	// Reject edge cases: empty proof, zero count, or out-of-bounds index
 	if len(proof) == 0 || count == 0 || denseIndex >= count {
+		return false
+	}
+	if treeDepth == 0 || treeDepth > uint32(smstMaxDepth) || uint32(len(proof)) != treeDepth {
 		return false
 	}
 
@@ -104,15 +106,14 @@ func VerifySMSTProofWithDenseIndex(rootHash []byte, count uint32, denseIndex uin
 		return false
 	}
 
-	if !verifySMSTProofWithCounts(rootHash, count, nonce, leafData, elements) {
+	if !verifySMSTProofWithCounts(rootHash, count, int(treeDepth), nonce, leafData, elements) {
 		return false
 	}
 
-	depth := len(elements)
-	path := smstNoncePath(nonce, depth)
+	path := smstNoncePath(nonce, int(treeDepth))
 
 	var computedIndex uint64
-	for i := 0; i < depth; i++ {
+	for i := 0; i < int(treeDepth); i++ {
 		if path[i] {
 			computedIndex += uint64(elements[i].siblingCount)
 			if computedIndex >= uint64(count) && computedIndex != uint64(denseIndex) {

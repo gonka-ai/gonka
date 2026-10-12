@@ -2,9 +2,7 @@ package bridge
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -68,41 +66,13 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, ClassifyQueryError(fmt.Errorf("DevshardEscrow %s: %w", escrowID, err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, ErrEscrowNotFound
 	}
 
-	e := resp.Escrow
-	appHash, err := hex.DecodeString(e.AppHash)
-	if err != nil {
-		return nil, fmt.Errorf("decode app_hash: %w", err)
-	}
-
-	slots := make([]string, len(e.Slots))
-	copy(slots, e.Slots)
-
-	return &EscrowInfo{
-		EscrowID:                  strconv.FormatUint(id, 10),
-		Amount:                    e.Amount,
-		CreatorAddress:            e.Creator,
-		AppHash:                   appHash,
-		Slots:                     slots,
-		ModelID:                   e.ModelId,
-		TokenPrice:                e.TokenPrice,
-		CreateDevshardFee:         e.CreateDevshardFee,
-		FeePerNonce:               e.FeePerNonce,
-		InferenceSealGraceNonces:  e.InferenceSealGraceNonces,
-		InferenceSealGraceSeconds: e.InferenceSealGraceSeconds,
-		AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
-		ValidationRate:            e.ValidationRate,
-		VoteThresholdFactor:       e.VoteThresholdFactor,
-		RefusalTimeout:            e.RefusalTimeout,
-		ExecutionTimeout:          e.ExecutionTimeout,
-		EpochID:                   e.EpochIndex,
-		Settled:                   e.Settled,
-	}, nil
+	return EscrowInfoFromQuery(id, resp.Escrow)
 }
 
 func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
@@ -112,7 +82,7 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}
 	if resp == nil || resp.Participant.Address == "" {
 		return nil, ErrParticipantNotFound

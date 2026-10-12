@@ -112,6 +112,10 @@ func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestSQLite(t))
 }
 
+func TestSQLite_DiffSizes(t *testing.T) {
+	runDiffSizes(t, newTestSQLite(t))
+}
+
 func TestSQLite_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestSQLite(t))
 }
@@ -138,6 +142,10 @@ func TestSQLite_SealedInferenceBulkInsert(t *testing.T) {
 
 func TestSQLite_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestSQLite(t))
+}
+
+func TestSQLite_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, newTestSQLite(t))
 }
 
 func TestSQLite_AddSignature(t *testing.T) {

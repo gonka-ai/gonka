@@ -111,13 +111,18 @@ func TestEscrowCacheRoundTrip(t *testing.T) {
 	in := &bridge.EscrowInfo{
 		EscrowID: "2", Amount: 1, CreatorAddress: "c", Slots: []string{"a", "b"},
 		TokenPrice: 3, ValidationRate: 4, VoteThresholdFactor: 5, EpochID: 6,
+		RefusalTimeout: 5, ExecutionTimeout: 17,
 	}
 	cache := EscrowCacheFromInfo(in)
 	require.Equal(t, uint32(5), cache.VoteThresholdFactor)
+	require.Equal(t, int64(5), cache.RefusalTimeout)
+	require.Equal(t, int64(17), cache.ExecutionTimeout)
 
 	out := EscrowInfoFromCache(&cache)
 	require.Equal(t, in.CreatorAddress, out.CreatorAddress)
 	require.Equal(t, in.Slots, out.Slots)
 	require.Equal(t, in.VoteThresholdFactor, out.VoteThresholdFactor)
 	require.Equal(t, in.EpochID, out.EpochID)
+	require.Equal(t, in.RefusalTimeout, out.RefusalTimeout)
+	require.Equal(t, in.ExecutionTimeout, out.ExecutionTimeout)
 }

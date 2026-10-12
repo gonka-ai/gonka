@@ -182,12 +182,14 @@ func TestComputeNewWeightsCarriesPreservedNodesFromRegularSnapshot(t *testing.T)
 		},
 	}))
 
-	result := am.ComputeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
+	computed := am.computeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
+	result := computed.participants
 	require.Len(t, result, 1)
 	require.Equal(t, testutil.Executor, result[0].Index)
 	require.Equal(t, int64(10), result[0].Weight)
 	require.Equal(t, []string{"model-a"}, result[0].Models)
 	require.Len(t, result[0].MlNodes, 1)
+	require.Empty(t, computed.freshNodeIDs, "preserved-only computation must not report fresh PoC provenance")
 	require.Len(t, result[0].MlNodes[0].MlNodes, 1)
 	require.Equal(t, "node-1", result[0].MlNodes[0].MlNodes[0].NodeId)
 }

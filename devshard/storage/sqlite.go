@@ -841,6 +841,35 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	return result, rows.Err()
 }
 
+func (s *SQLite) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	if fromNonce > toNonce || limit <= 0 {
+		return nil, nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.readDB.Query(
+		`SELECT nonce, length(txs_proto) FROM diffs
+		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
+		 ORDER BY nonce LIMIT ?`,
+		escrowID, fromNonce, toNonce, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DiffSize
+	for rows.Next() {
+		var ds DiffSize
+		if err := rows.Scan(&ds.Nonce, &ds.Bytes); err != nil {
+			return nil, err
+		}
+		out = append(out, ds)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLite) MarkFinalized(escrowID string, nonce uint64) error {
 	p, _, err := s.poolFor(escrowID)
 	if err != nil {
@@ -1120,6 +1149,47 @@ func (s *SQLite) ClearValidationObs(escrowID string) error {
 		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLite) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	flag := 0
+	if pending {
+		flag = 1
+	}
+	res, err := p.writeDB.Exec(`UPDATE sessions SET obs_rebuild_pending = ? WHERE escrow_id = ?`, flag, escrowID)
+	if err != nil {
+		return fmt.Errorf("set obs rebuild pending: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	return nil
+}
+
+func (s *SQLite) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return false, err
+	}
+	var flag int
+	if err := p.readDB.QueryRow(
+		`SELECT obs_rebuild_pending FROM sessions WHERE escrow_id = ?`, escrowID,
+	).Scan(&flag); err != nil {
+		if err == sql.ErrNoRows {
+			return false, fmt.Errorf("session %s not found", escrowID)
+		}
+		return false, fmt.Errorf("read obs rebuild pending: %w", err)
+	}
+	return flag != 0, nil
+}
+
+// LockValidationObsRebuild always succeeds: one process owns a SQLite file.
+func (s *SQLite) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
 }
 
 const sqliteValidationObsBatchChunk = 100

@@ -89,6 +89,14 @@ func TestGRPCBridge_GetEscrow_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, bridge.ErrEscrowNotFound)
 }
 
+func TestGRPCBridge_GetEscrow_TransientQueryError(t *testing.T) {
+	st := seed.Defaults()
+	st.SetEscrowQueryFault(true)
+
+	_, err := startGRPCBridgeWithStore(t, st).GetEscrow("1")
+	require.ErrorIs(t, err, bridge.ErrChainUnavailable)
+}
+
 func TestGRPCBridge_GetHostInfo(t *testing.T) {
 	b := startGRPCBridge(t)
 	host := "gonka1host000000000000000000000000000000000"

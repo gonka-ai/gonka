@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"hash/fnv"
 	"strconv"
 	"time"
 )
@@ -30,7 +29,8 @@ type FaultConfig struct {
 	Latency          time.Duration
 	HTTPStatus       int // 0 = OK
 	DropFirstChunk   bool
-	PartialStream    bool // omit final chunk + [DONE]
+	PartialStream    bool   // omit final chunk + [DONE]
+	SSEErrorMessage  string // if set: HTTP 200 stream with OpenAI/vLLM error event + [DONE]
 	StreamChunkDelay time.Duration
 	PauseStream      bool // pause after first content chunk until testenv release
 	// StreamErrorEnvelope returns HTTP 200 text/event-stream with an OpenAI
@@ -41,13 +41,14 @@ type FaultConfig struct {
 
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
-	LatencyMs           *int  `json:"latency_ms,omitempty"`
-	HTTPStatus          *int  `json:"http_status,omitempty"`
-	DropFirstChunk      *bool `json:"drop_first_chunk,omitempty"`
-	PartialStream       *bool `json:"partial_stream,omitempty"`
-	StreamChunkDelay    *int  `json:"stream_chunk_delay_ms,omitempty"`
-	PauseStream         *bool `json:"pause_stream,omitempty"`
-	StreamErrorEnvelope *bool `json:"stream_error_envelope,omitempty"`
+	LatencyMs           *int    `json:"latency_ms,omitempty"`
+	HTTPStatus          *int    `json:"http_status,omitempty"`
+	DropFirstChunk      *bool   `json:"drop_first_chunk,omitempty"`
+	PartialStream       *bool   `json:"partial_stream,omitempty"`
+	SSEErrorMessage     *string `json:"sse_error_message,omitempty"`
+	StreamChunkDelay    *int    `json:"stream_chunk_delay_ms,omitempty"`
+	PauseStream         *bool   `json:"pause_stream,omitempty"`
+	StreamErrorEnvelope *bool   `json:"stream_error_envelope,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -63,6 +64,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	if p.PartialStream != nil {
 		dst.PartialStream = *p.PartialStream
 	}
+	if p.SSEErrorMessage != nil {
+		dst.SSEErrorMessage = *p.SSEErrorMessage
+	}
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
 	}
@@ -71,6 +75,25 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.StreamErrorEnvelope != nil {
 		dst.StreamErrorEnvelope = *p.StreamErrorEnvelope
+	}
+}
+
+// OpenAIErrorBody is the nested OpenAI/vLLM error JSON shape.
+func OpenAIErrorBody(status int, message string) map[string]any {
+	if message == "" {
+		message = "mock-openai fault injection"
+	}
+	typ := "InternalServerError"
+	if status >= 400 && status < 500 {
+		typ = "BadRequestError"
+	}
+	return map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    typ,
+			"param":   nil,
+			"code":    status,
+		},
 	}
 }
 
@@ -141,8 +164,8 @@ func promptTokenEstimate(body []byte) int {
 // "token" is a numeric token ID (decimal string), matching vLLM after
 // gm/enforced-str. The decoded text lives in "bytes" (UTF-8 code units as
 // []int — []byte would JSON-encode as base64 and break completionapi.Response).
-// Validators reject decoded-text tokens via HasNonNumericTokens before the
-// ML replay; citest SlowMockOpenAI needs that replay so leases stay pending.
+// Validators refuse to replay decoded-text tokens and ids past the replay
+// limits; citest SlowMockOpenAI needs that replay so leases stay pending.
 func buildLogprobContent(text string, topN int) []map[string]any {
 	if topN < 0 {
 		topN = 0
@@ -153,9 +176,8 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 	var out []map[string]any
 	for _, r := range []rune(text) {
 		tok := string(r)
-		id := mockTokenID(tok)
 		entry := map[string]any{
-			"token":   id,
+			"token":   mockTokenID(r, 0),
 			"logprob": -0.1,
 			"bytes":   utf8CodeUnits(tok),
 		}
@@ -166,7 +188,7 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 				alt = tok + string(rune('a'+i-1))
 			}
 			tops = append(tops, map[string]any{
-				"token":   mockTokenID(alt),
+				"token":   mockTokenID(r, i),
 				"logprob": -0.1 - float64(i),
 				"bytes":   utf8CodeUnits(alt),
 			})
@@ -177,16 +199,20 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 	return out
 }
 
-// mockTokenID maps token text to a stable non-negative decimal id so executor
-// and validator logprobs compare equal, and HasNonNumericTokens stays false.
-func mockTokenID(s string) string {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(s))
-	n := h.Sum32()
-	if n == 0 {
-		n = 1
-	}
-	return strconv.FormatUint(uint64(n), 10)
+const (
+	// mockAlternateSlots leaves an id for every top_logprobs alternate (at most 20).
+	mockAlternateSlots = 32
+	// MockVocabularySize keeps every mock id below the smallest real vocab, so a
+	// validator that bounds replay by a resolved vocab still replays them.
+	MockVocabularySize = 32_000
+)
+
+// mockTokenID gives each (character, alternate) its own stable id. The padding
+// repeats one character, so a shared id inside one position would cost
+// similarity at every padded position. Runes below 1000 never collide, and the
+// mock's text is ASCII.
+func mockTokenID(r rune, alternate int) string {
+	return strconv.Itoa((int(r)*mockAlternateSlots + alternate) % MockVocabularySize)
 }
 
 func utf8CodeUnits(s string) []int {

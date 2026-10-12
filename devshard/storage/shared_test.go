@@ -155,6 +155,65 @@ func runAppendDiff_GetDiffs(t *testing.T, store Storage) {
 	require.Equal(t, uint64(5), meta.LatestNonce)
 }
 
+// runDiffSizes pins DiffSizes to the stored txs_proto length, ascending
+// order, the limit, and a hole resolved by the first returned nonce.
+func runDiffSizes(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+	payloads := map[uint64]int{1: 0, 2: 10, 3: 1000, 5: 7, 6: 70_000}
+	want := make(map[uint64]int, len(payloads))
+	for _, n := range []uint64{6, 1, 3, 2, 5} {
+		var txs []*types.DevshardTx
+		if size := payloads[n]; size > 0 {
+			txs = txWithPayload(size)
+		}
+		blob, err := marshalTxs(txs)
+		require.NoError(t, err)
+		want[n] = len(blob)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+			Diff:      types.Diff{Nonce: n, Txs: txs, UserSig: []byte("sig")},
+			StateHash: []byte{byte(n)},
+		}))
+	}
+
+	sizes, err := store.DiffSizes("escrow-1", 1, 10, DiffPageMaxNonces)
+	require.NoError(t, err)
+	var nonces []uint64
+	for _, s := range sizes {
+		nonces = append(nonces, s.Nonce)
+		require.Equal(t, want[s.Nonce], s.Bytes, "nonce %d", s.Nonce)
+	}
+	require.Equal(t, []uint64{1, 2, 3, 5, 6}, nonces)
+
+	sizes, err = store.DiffSizes("escrow-1", 1, 10, 2)
+	require.NoError(t, err)
+	require.Len(t, sizes, 2)
+	require.Equal(t, uint64(2), sizes[1].Nonce)
+
+	sizes, err = store.DiffSizes("escrow-1", 4, 10, 1)
+	require.NoError(t, err)
+	require.Len(t, sizes, 1)
+	require.Equal(t, uint64(5), sizes[0].Nonce, "the first entry names the next stored nonce")
+
+	sizes, err = store.DiffSizes("escrow-1", 7, 6, DiffPageMaxNonces)
+	require.NoError(t, err)
+	require.Empty(t, sizes)
+
+	var got []uint64
+	err = ReadDiffPages(store, "escrow-1", 1, 6, func(page []types.DiffRecord) error {
+		for _, rec := range page {
+			got = append(got, rec.Nonce)
+		}
+		return nil
+	})
+	var gap *DiffGapError
+	require.ErrorAs(t, err, &gap)
+	require.Equal(t, uint64(4), gap.Expected)
+	require.Equal(t, uint64(5), gap.Next)
+	require.Equal(t, []uint64{1, 2, 3}, got)
+}
+
 func runGetSignatures(t *testing.T, store Storage) {
 	t.Helper()
 
@@ -443,6 +502,33 @@ func runValidationObsBatchDrain(t *testing.T, store Storage) {
 	require.Equal(t, rows, again)
 
 	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", nil))
+}
+
+// runValidationObsRebuildPending pins the durable rebuild mark: absent on a new
+// session, set and cleared on the session row, and an error for an unknown
+// escrow rather than a silent false.
+func runValidationObsRebuildPending(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending, "a new session has no unfinished rebuild")
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", true))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.True(t, pending)
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", false))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	require.Error(t, store.SetValidationObsRebuildPending("escrow-missing", true))
+	_, err = store.ValidationObsRebuildPending("escrow-missing")
+	require.Error(t, err)
 }
 
 func runAddSignature(t *testing.T, store Storage) {

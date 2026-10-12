@@ -1,6 +1,9 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then execs HAProxy.
+# environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
+# Watch streams. An in-flight Chat keeps its own stream until the response
+# finishes, so a rollout does not wait out an idle Watch or reset a body
+# that is still streaming.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -20,6 +23,12 @@
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
+#   VERSIOND_ROUTER_H2_PORT  published-hop frontend (default 8081, proto h2).
+#                             :8080 stays HTTP/1.1 for JSON/healthz/catalog.
+#   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
+#                             on), with check-proto h1 so the existing health
+#                             check stays HTTP/1.1. Set false for HTTP/1.1
+#                             mock upstreams.
 #   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
 #                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
@@ -64,6 +73,7 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
+H2_PORT="${VERSIOND_ROUTER_H2_PORT:-8081}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -193,7 +203,7 @@ explicit_server_options() {
         *) eso_options=$(printf '%s' "$eso_options" | \
             sed 's/ resolvers docker init-addr none//') ;;
     esac
-    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/"
+    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/; s/\${BACKEND_PROTO}/$BACKEND_PROTO/"
 }
 
 # Explicit server lines for one backend, replacing the template's
@@ -291,6 +301,23 @@ ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+# Default on for the peer-RPC twin only. JSON backends stay HTTP/1.1 so a
+# v4 or v5 child stays UP while this router is already serving, and the
+# public proxy can be admitted before versiond is replaced. The twin dials
+# h2c and keeps its health check on HTTP/1.1: a check that speaks h2 marks
+# every server DOWN, and dropping the check reports "no check", which drain
+# does not treat as UP. The twin also requires the peer-rpc-ok body, so a
+# v5.0.2 /readyz 200 does not join the HTTP/2 pool. HTTP/1.1 mock upstreams
+# (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false and the twin
+# stays on HTTP/1.1 with them.
+: "${VERSIOND_ROUTER_BACKEND_H2:=true}"
+BACKEND_H2=$(bool_env VERSIOND_ROUTER_BACKEND_H2)
+BACKEND_PROTO=
+if [ -n "$BACKEND_H2" ]; then
+    PEER_BACKEND_PROTO=' proto h2 check-proto h1'
+else
+    PEER_BACKEND_PROTO=
+fi
 
 if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
     FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
@@ -314,7 +341,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -322,6 +349,10 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$H2_PORT" -eq 0 ] || [ "$H2_PORT" -eq 8080 ] || [ "$H2_PORT" -eq "$ADMIN_PORT" ]; then
+    echo "versiond-router: VERSIOND_ROUTER_H2_PORT must be a distinct positive port (not 8080 or the admin port)" >&2
+    exit 1
+fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || \
@@ -411,7 +442,29 @@ VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
 # With an explicit endpoint list the template's server-template line is
 # replaced by explicit servers, except for a legacy owner that is not an
 # endpoint id: that keeps the single-host DNS template.
+# peer_rpc_check turns a JSON /readyz probe into the peer-RPC probe. The
+# dynamic form looks the slot up under the JSON backend name: the _rpc twin
+# is not a slot-map key, so be_name drops that suffix first.
+peer_rpc_check() {
+    printf '%s\n' "$1" | awk '
+        {
+            gsub(/be_name,map/, "be_name,regsub(_rpc$,),map")
+            amp = "\\&"
+            if (sub(/uri-lf \/readyz\?/, "uri-lf /readyz?peer-rpc=1" amp)) { print; next }
+            if (sub(/uri \/readyz\?/, "uri /readyz?peer-rpc=1" amp)) { print; next }
+            sub(/uri \/readyz$/, "uri /readyz?peer-rpc=1")
+            print
+        }
+    '
+}
+
+# sed treats &, \, and the | delimiter as replacement syntax.
+sed_repl() {
+    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
 render_backend() {
+    expect=${READY_EXPECT:-200,404}
     : > "$POOL_SERVERS_FILE"
     if [ "$POOL_MODE" = endpoints ]; then
         explicit_server_lines "${10}" "$4" "$8" > "$POOL_SERVERS_FILE"
@@ -424,18 +477,48 @@ render_backend() {
     else
         rb_servers="s|\\\${BACKEND_HOST}|$4|g"
     fi
+    # Empty on JSON pools. The peer-RPC twin requires a body v5.0.2 never
+    # sends, so its plain /readyz 200 does not join the HTTP/2 pool.
+    body_expect=${PEER_RPC_BODY_EXPECT-}
+    PEER_RPC_BODY_EXPECT=
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
-        -e "s|\${READY_CHECK_SEND}|$2|g" \
-        -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
+        -e "s|\${READY_CHECK_SEND}|$(sed_repl "$2")|g" \
+        -e "s|\${ROUTE_CHECK_SEND}|$(sed_repl "$3")|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
+        -e "s|\${BACKEND_PROTO}|$BACKEND_PROTO|g" \
+        -e "s|\${READY_EXPECT}|$expect|g" \
+        -e "s|\${PEER_RPC_BODY_EXPECT}|$(sed_repl "$body_expect")|g" \
         -e "$rb_servers" \
         "$POOL_TEMPLATE"
+}
+
+# The JSON backend and this twin share servers. Only the readiness check
+# differs, so a child without h2c stays UP for JSON and DOWN for Connect.
+# Args match render_backend except the response label, which is the twin name:
+# $1 name, $2 readiness check, $3 route check, $4 host, $5 slots, $6 HA header,
+# $7 server state, $8 retry policy, $9 kind.
+peer_route_check() {
+    printf '%s\n' "$1" | sed 's|be_name,map|be_name,regsub(_rpc$,),map|'
+}
+
+render_peer_backend() {
+    saved_expect=${READY_EXPECT-}
+    saved_proto=$BACKEND_PROTO
+    READY_EXPECT=200
+    BACKEND_PROTO=$PEER_BACKEND_PROTO
+    # v5.0.2 answers /readyz?peer-rpc=1 with 200 and "ready". Only a current
+    # versiond sends this body, so the twin stays down until that process is up.
+    PEER_RPC_BODY_EXPECT='http-check expect string peer-rpc-ok'
+    render_backend "${1}_rpc" "$(peer_rpc_check "$2")" "$(peer_route_check "$3")" \
+        "$4" "$5" "$6" "${1}_rpc" "$7" "$8" "$9"
+    READY_EXPECT=$saved_expect
+    BACKEND_PROTO=$saved_proto
 }
 
 : > "$MAP"
@@ -473,6 +556,11 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
     versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" pool > "$POOL_BACKENDS_FILE"
+render_peer_backend versiond_ha_pool \
+    'http-check send meth GET uri /readyz' \
+    'http-check send meth GET uri /healthz' \
+    "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool_rpc)" \
+    '' "$VERSIONLESS_RETRY_ON" pool >> "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -504,6 +592,12 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" '' \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
 }
@@ -556,6 +650,12 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" "$server_state" \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
 
@@ -582,6 +682,12 @@ while IFS= read -r version; do
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
         versiond_legacy '' "$DEFAULT_RETRY_ON" legacy \
+        >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
+        '' "$DEFAULT_RETRY_ON" legacy \
         >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 
@@ -712,6 +818,7 @@ sed \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
+    -e "s|\${H2_PORT}|$H2_PORT|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${CATALOG_STATUS_SERVER_STATE}|$CATALOG_STATUS_SERVER_STATE|g" \
@@ -772,4 +879,4 @@ if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"

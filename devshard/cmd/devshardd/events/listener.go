@@ -138,20 +138,26 @@ func (l *Listener) run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	slog.Info("chain events: connecting", "rpc", l.rpcURL, "subscriptions", len(l.subs))
 	client, err := rpchttp.New(l.rpcURL, "/websocket")
 	if err != nil {
 		return fmt.Errorf("rpc client: %w", err)
 	}
+	client.SetLogger(cometSlog{})
 	if err := client.Start(); err != nil {
+		slog.Warn("chain events: websocket start failed", "rpc", l.rpcURL, "err", err)
 		return fmt.Errorf("rpc start: %w", err)
 	}
 	defer client.Stop() //nolint:errcheck
 
 	errCh := make(chan error, len(l.subs))
 
+	queries := make([]string, 0, len(l.subs))
 	for _, sub := range l.subs {
+		queries = append(queries, sub.query)
 		ch, err := client.Subscribe(ctx, subscriberID, sub.query, subscriptionBuffer)
 		if err != nil {
+			slog.Warn("chain events: subscribe failed", "rpc", l.rpcURL, "query", sub.query, "err", err)
 			return fmt.Errorf("subscribe %q: %w", sub.query, err)
 		}
 		handlers := sub.handlers
@@ -169,6 +175,7 @@ func (l *Listener) run(ctx context.Context) error {
 			}
 		}()
 	}
+	slog.Info("chain events: subscribed", "rpc", l.rpcURL, "queries", queries)
 	l.setReady(true)
 	defer l.setReady(false)
 
@@ -207,12 +214,15 @@ func parseTxEvent[T txEventParser[T]](result ctypes.ResultEvent) (out T, ok bool
 // parseNewBlockEvent extracts height, hash, time, and chain id from a
 // NewBlock ResultEvent.
 func parseNewBlockEvent(result ctypes.ResultEvent) (NewBlockEvent, bool) {
-	data, ok := result.Data.(cmttypes.EventDataNewBlock)
+	data, ok := observer.AsEventDataNewBlock(result.Data)
 	if !ok {
+		slog.Warn("chain events: unexpected NewBlock data type",
+			"query", result.Query, "got", fmt.Sprintf("%T", result.Data))
 		return NewBlockEvent{}, false
 	}
 	hdr, ok := observer.HeaderFromNewBlock(data)
 	if !ok {
+		slog.Warn("chain events: NewBlock missing block payload", "query", result.Query)
 		return NewBlockEvent{}, false
 	}
 	return NewBlockEvent{

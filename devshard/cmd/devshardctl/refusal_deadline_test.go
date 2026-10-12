@@ -18,7 +18,7 @@ func TestRefusalDeadline_UnreachableDeadlineSkipsTheRoundInsteadOfLosingIt(t *te
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	// A stamp in the wrong unit lands far in the future, which is exactly how a millisecond
@@ -44,7 +44,7 @@ func TestRefusalDeadline_APassedDeadlineStillCollectsVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	startedAt := time.Now().Add(-time.Hour)

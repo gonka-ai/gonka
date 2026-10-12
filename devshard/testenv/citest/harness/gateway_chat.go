@@ -83,7 +83,7 @@ func PostGatewayChatCompletion(t *testing.T, client *http.Client, gatewayURL, ad
 		client = GatewayChatClient()
 	}
 	var resp ChatCompletionResponse
-	require.NoError(t, postGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp))
+	require.NoError(t, PostGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp))
 	require.NotEmpty(t, resp.Choices, "gateway chat returned no choices")
 	require.NotEmpty(t, resp.Choices[0].Message.Content, "empty assistant content")
 	return resp
@@ -96,7 +96,7 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 		client = GatewayChatClient()
 	}
 	var resp ChatCompletionResponse
-	if err := postGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp); err != nil {
+	if err := PostGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp); err != nil {
 		return resp, err
 	}
 	if len(resp.Choices) == 0 {
@@ -106,6 +106,16 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 		return resp, fmt.Errorf("empty assistant content")
 	}
 	return resp, nil
+}
+
+// GatewayCapacityGone is a dead escrow/runtime: further chat cannot create work.
+func GatewayCapacityGone(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no devshard runtimes available") ||
+		strings.Contains(msg, "insufficient escrow balance")
 }
 
 // PostGatewayChatCompletionEventually retries chat while hosts recover from a
@@ -295,7 +305,8 @@ func RequireMockOpenAIContent(t *testing.T, content string) {
 	require.True(t, strings.HasPrefix(content, "mock-openai:"), "expected mock-openai echo, got %q", content)
 }
 
-func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
+// PostGatewayJSON posts an authenticated JSON request to a gateway endpoint and decodes the response.
+func PostGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err

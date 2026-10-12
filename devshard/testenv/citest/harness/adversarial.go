@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
+	"crypto/rand"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -19,11 +21,16 @@ import (
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
 	"devshard/transport"
+	"devshard/transport/rpcpb"
+	"devshard/transport/rpcpb/rpcpbconnect"
 
+	"connectrpc.com/connect"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
@@ -68,11 +75,13 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 	t.Helper()
 	zero := 0
 	f := false
+	empty := ""
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
 		LatencyMs:           &zero,
 		HTTPStatus:          &zero,
 		DropFirstChunk:      &f,
 		PartialStream:       &f,
+		SSEErrorMessage:     &empty,
 		StreamChunkDelay:    &zero,
 		PauseStream:         &f,
 		StreamErrorEnvelope: &f,
@@ -120,46 +129,86 @@ func RequireWarmKeyRevoked(t *testing.T, eps Endpoints, granter, warmAddress str
 	}
 }
 
-// PostWarmKeySignedTransport posts a devshard transport request signed by a warm grantee key
-// through versiond-router. Returns the HTTP status (body is discarded).
-func PostWarmKeySignedTransport(t *testing.T, client *http.Client, routerHTTP, version, escrowID, pathSuffix, warmPrivateKeyHex string, body []byte) int {
+// RequireWarmKeyTransportRejected asserts Connect gossip denies a revoked warm key.
+// Echo POST /sessions/:id/gossip/nonce is retired (410 before auth). Peers call
+// GossipService.Nonce. Membership is VerifyWarmKey: Attach runs it before a
+// token exists, and Nonce runs it again for a peer that already has one.
+// A revoked grantee therefore comes back permission-denied. A valid key is
+// not: this does not accept "no handshake" (unauthenticated), which every
+// caller without a token would see.
+func RequireWarmKeyTransportRejected(t *testing.T, stack *Stack, cfg *config.File, eps Endpoints, warmPrivateKeyHex string) {
 	t.Helper()
-	if client == nil {
-		client = HTTPClient()
+	require.NotNil(t, stack)
+	require.NotNil(t, cfg)
+	require.NotEmpty(t, cfg.Hosts)
+	hostAddr := cfg.Hosts[0].Address
+	require.NotEmpty(t, hostAddr, "host address")
+	version := cfg.Versiond.VersionName
+	if version == "" {
+		version = "v2"
 	}
+	escrowID := GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	signer, err := signing.SignerFromHex(warmPrivateKeyHex)
 	require.NoError(t, err)
 
-	ts := time.Now().Unix()
-	sig, err := transport.SignRequest(signer, escrowID, body, ts)
-	require.NoError(t, err)
+	base := strings.TrimRight(stack.RouterH2HTTP(t), "/") + "/devshard/" + version + "/sessions/" + escrowID + "/rpc"
+	httpClient := routerH2Client(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
 
-	url := RouterSessionURL(routerHTTP, version, escrowID, pathSuffix)
-	httpReq, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	require.NoError(t, err)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set(transport.HeaderSignature, hex.EncodeToString(sig))
-	httpReq.Header.Set(transport.HeaderTimestamp, fmt.Sprintf("%d", ts))
+	auth := rpcpbconnect.NewPeerAuthServiceClient(httpClient, base, connect.WithGRPC())
+	attachReq := connect.NewRequest(signedWarmKeyAttach(t, signer, hostAddr))
+	attachResp, err := auth.Attach(ctx, attachReq)
+	if err != nil {
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
+			"revoked warm key must be permission-denied at Connect attach (gossip's membership gate): %v", err)
+		return
+	}
+	require.NotNil(t, attachResp)
+	require.NotEmpty(t, attachResp.Msg.GetSessionToken())
 
-	resp, err := client.Do(httpReq)
+	payload, err := proto.Marshal(&rpcpb.GossipNonceRequest{Nonce: 1, StateSig: []byte{0}})
 	require.NoError(t, err)
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode
+	env, err := transport.SignEnvelope(signer, escrowID, payload, time.Now().Unix())
+	require.NoError(t, err)
+	nonceReq := connect.NewRequest(env)
+	transport.SetSessionHeader(nonceReq.Header(), attachResp.Msg.GetSessionToken())
+	gossip := rpcpbconnect.NewGossipServiceClient(httpClient, base, connect.WithGRPC())
+	_, err = gossip.Nonce(ctx, nonceReq)
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err),
+		"revoked warm key must be permission-denied on Connect gossip: %v", err)
 }
 
-// RequireWarmKeyTransportRejected asserts a warm-key signed devshard transport call is
-// rejected after grantee revocation (devshardd bridge + router auth path).
-func RequireWarmKeyTransportRejected(t *testing.T, client *http.Client, cfg *config.File, eps Endpoints, warmPrivateKeyHex string) {
+func signedWarmKeyAttach(t *testing.T, signer signing.Signer, hostAddr string) *rpcpb.AttachRequest {
 	t.Helper()
-	escrowID := GetGatewayEscrowID(t, client, eps.GatewayHTTP)
-	// Minimal gossip/nonce body: auth runs before handler validation.
-	body := []byte(`{"nonce":1,"slot_id":0,"state_hash":"","state_sig":"00"}`)
-	status := PostWarmKeySignedTransport(
-		t, client, eps.RouterHTTP, cfg.Versiond.VersionName, escrowID, "/gossip/nonce", warmPrivateKeyHex, body,
-	)
-	require.Equal(t, http.StatusForbidden, status,
-		"warm-key transport should be forbidden after grantee revocation (got HTTP %d)", status)
+	nonce := make([]byte, 16)
+	_, err := rand.Read(nonce)
+	require.NoError(t, err)
+	ts := time.Now().Unix()
+	sig, err := transport.SignAttach(signer, hostAddr, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	return &rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		Signature:       sig,
+		HostAddress:     hostAddr,
+		Timestamp:       ts,
+	}
+}
+
+// routerH2Client speaks prior-knowledge HTTP/2 to versiond-router's h2 bind.
+func routerH2Client(t *testing.T) *http.Client {
+	t.Helper()
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	return &http.Client{Transport: tr, Timeout: 20 * time.Second}
 }
 
 // DialMockChainGRPC dials the mock-chain inference gRPC port from a citest config.
@@ -293,6 +342,40 @@ func PatchAdversarialFastTimeouts(t *testing.T, client *http.Client, mockDapiHTT
 	time.Sleep(8 * time.Second)
 }
 
+// PatchGatewayAdminSettings POSTs a partial /v1/admin/settings body (JSON object).
+func PatchGatewayAdminSettings(t *testing.T, client *http.Client, gatewayURL string, body map[string]any) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(respBody))
+}
+
+// PatchAdversarialFastRedundancy shrinks gateway redundancy timers so a stopped
+// host fails the race quickly enough for deadline-based dispositions in citest.
+func PatchAdversarialFastRedundancy(t *testing.T, client *http.Client, gatewayURL string) {
+	t.Helper()
+	PatchGatewayAdminSettings(t, client, gatewayURL, map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+}
+
 // PostGatewayChatStreamResult posts stream chat and returns status, assembled content, and whether [DONE] was seen.
 func PostGatewayChatStreamResult(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, content string, sawDone bool) {
 	t.Helper()
@@ -397,6 +480,20 @@ func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey stri
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, nil, string(raw)
+}
+
+// PostGatewayChatSoft posts non-stream chat and returns status / transport error
+// without failing the test. Used while injecting host faults where either
+// success or failure is acceptable.
+func PostGatewayChatSoft(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, transportErr error) {
+	t.Helper()
+	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	if transportErr != nil {
+		t.Logf("citest: soft chat transport error: %v", transportErr)
+		return 0, transportErr
+	}
+	t.Logf("citest: soft chat status=%d body_len=%d", status, len(body))
+	return status, nil
 }
 
 // PostGatewayChatExpectFailure posts non-stream chat and requires HTTP status >= 400 or transport timeout.

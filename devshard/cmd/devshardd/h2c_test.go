@@ -1,0 +1,60 @@
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"io"
+	"net"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+)
+
+func TestBuildServerEnablesH2C(t *testing.T) {
+	e := buildServer(newLifecycleState())
+	require.NotNil(t, e.Server.Protocols)
+	require.True(t, e.Server.Protocols.HTTP1())
+	require.True(t, e.Server.Protocols.UnencryptedHTTP2())
+
+	// Listen here. StartH2C assigns e.Listener from its own goroutine, and
+	// Echo does not synchronize that field.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := ln.Addr().String()
+	e.Server.Handler = e
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- e.Server.Serve(ln) }()
+
+	plain, err := http.Get("http://" + addr + "/healthz")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = plain.Body.Close() })
+	require.Equal(t, 1, plain.ProtoMajor)
+	require.Equal(t, http.StatusOK, plain.StatusCode)
+	body, err := io.ReadAll(plain.Body)
+	require.NoError(t, err)
+	require.Equal(t, "ok", string(body))
+
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	t.Cleanup(tr.CloseIdleConnections)
+	h2 := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	resp, err := h2.Get("http://" + addr + "/healthz")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	require.Equal(t, 2, resp.ProtoMajor)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, e.Shutdown(shutdownCtx))
+	require.ErrorIs(t, <-errCh, http.ErrServerClosed)
+}

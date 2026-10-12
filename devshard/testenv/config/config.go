@@ -28,9 +28,12 @@ type File struct {
 	Grantees     []GranteeBinding    `yaml:"grantees"`
 	EpochGroups  []EpochGroupBinding `yaml:"epoch_groups"`
 
-	MockChain      MockChainCfg      `yaml:"mock_chain"`
-	MockDapi       MockDapiCfg       `yaml:"mock_dapi"`
-	MockOpenAI     MockOpenAICfg     `yaml:"mock_openai"`
+	MockChain  MockChainCfg  `yaml:"mock_chain"`
+	MockDapi   MockDapiCfg   `yaml:"mock_dapi"`
+	MockOpenAI MockOpenAICfg `yaml:"mock_openai"`
+	// MLNodes is the number of mock-openai instances (T7). Default 1.
+	// Services are named mock-openai-0 … mock-openai-{N-1}.
+	MLNodes        int               `yaml:"ml_nodes"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
@@ -209,26 +212,37 @@ const (
 	DefaultMockDapiHTTPPort     = 9100
 	DefaultMockDapiHost         = "mock-dapi"
 	DefaultMockOpenAIHTTPPort   = 8088
-	DefaultMockOpenAIHost       = "mock-openai"
-	DefaultVersionName          = "v2"
-	DefaultBinaryVersion        = "0.2.13-v2-r2"
-	VersiondModeSingle          = "single"
-	VersiondModeMulti           = "multi"
-	DefaultVersiondModeMulti    = VersiondModeMulti
-	DefaultDevsharddHostMount   = "../../build/devshardd"
-	DefaultDevsharddOverride    = "/opt/devshard/devshardd"
-	DefaultVersiondPoll         = "5s"
-	DefaultKeyringDir           = "/keyring"
-	DefaultKeyringPassword      = "testenv1"
-	DefaultVersiondRouterHost   = "versiond-router"
-	DefaultVersiondRouterPort   = 8080
-	DefaultDevshardctlHost      = "devshardctl"
-	DefaultPostgresHost         = "devshard-postgres"
-	DefaultPostgresPort         = 5432
-	DefaultPostgresDB           = "devshardd"
-	DefaultPostgresUser         = "devshardd"
-	DefaultPostgresPassword     = "devshardd"
-	DefaultEscrowSlots          = 4
+	DefaultMockOpenAIHost       = "mock-openai-0"
+	DefaultMLNodes              = 1
+	// MLNodeIPBase is the first host octet offset for mock-openai-0 (BaseIP.40+i).
+	MLNodeIPBase              = 40
+	DefaultVersionName        = "v2"
+	DefaultBinaryVersion      = "0.2.13-v2-r2"
+	VersiondModeSingle        = "single"
+	VersiondModeMulti         = "multi"
+	DefaultVersiondModeMulti  = VersiondModeMulti
+	DefaultDevsharddHostMount = "../../build/devshardd"
+	DefaultDevsharddOverride  = "/opt/devshard/devshardd"
+	DefaultVersiondPoll       = "5s"
+	DefaultKeyringDir         = "/keyring"
+	DefaultKeyringPassword    = "testenv1"
+	DefaultVersiondRouterHost = "versiond-router"
+	DefaultVersiondRouterPort = 8080
+	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
+	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
+	// on DefaultVersiondRouterPort.
+	DefaultVersiondRouterH2Port = 8081
+	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
+	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
+	DefaultProxyService     = "proxy"
+	DefaultRPCH2Port        = 8443
+	DefaultDevshardctlHost  = "devshardctl"
+	DefaultPostgresHost     = "devshard-postgres"
+	DefaultPostgresPort     = 5432
+	DefaultPostgresDB       = "devshardd"
+	DefaultPostgresUser     = "devshardd"
+	DefaultPostgresPassword = "devshardd"
+	DefaultEscrowSlots      = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
 	DefaultEscrowSlotURL = "http://versiond-router:8080"
@@ -239,8 +253,12 @@ const (
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
 	DefaultModelID       = "test-model"
-	DefaultAdminAPIKey   = "testenv-citest-admin"
-	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	// The chain stores the similarity pass bar as value * 10^exponent, like
+	// production's 958e-3; 50e-2 is a 0.50 bar.
+	DefaultValidationThresholdValue    = int64(50)
+	DefaultValidationThresholdExponent = int32(-2)
+	DefaultAdminAPIKey                 = "testenv-citest-admin"
+	DefaultAppHash                     = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -322,8 +340,12 @@ func (c *File) ApplyDefaults() {
 	if c.MockOpenAI.HTTPPort == 0 {
 		c.MockOpenAI.HTTPPort = DefaultMockOpenAIHTTPPort
 	}
-	if c.MockOpenAI.Host == "" {
-		c.MockOpenAI.Host = DefaultMockOpenAIHost
+	if c.MLNodes <= 0 {
+		c.MLNodes = DefaultMLNodes
+	}
+
+	if c.MockOpenAI.Host == "" || c.MockOpenAI.Host == "mock-openai" {
+		c.MockOpenAI.Host = c.PrimaryMLNodeID()
 	}
 
 	if c.Versiond.VersionName == "" {
@@ -424,6 +446,63 @@ func RouterBaseURL(c *File) string {
 		host = DefaultVersiondRouterHost
 	}
 	return fmt.Sprintf("http://%s:%d", host, DefaultHostPort)
+}
+
+// ResolvedMLNodes returns the effective mock-openai pool size (at least 1).
+func (c *File) ResolvedMLNodes() int {
+	if c == nil || c.MLNodes <= 0 {
+		return DefaultMLNodes
+	}
+	return c.MLNodes
+}
+
+// MLNodeID returns the compose service / AcquireMLNode id for pool index i.
+func MLNodeID(i int) string {
+	return fmt.Sprintf("mock-openai-%d", i)
+}
+
+// PrimaryMLNodeID is mock-openai-0 (the PatchMockOpenAIFault alias target).
+func (c *File) PrimaryMLNodeID() string {
+	return MLNodeID(0)
+}
+
+// MLNodeIDs returns mock-openai-0 … mock-openai-{N-1}.
+func (c *File) MLNodeIDs() []string {
+	n := c.ResolvedMLNodes()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = MLNodeID(i)
+	}
+	return ids
+}
+
+// MLNodeEndpoint is the in-compose HTTP base URL for a pool member.
+func (c *File) MLNodeEndpoint(nodeID string) string {
+	port := DefaultMockOpenAIHTTPPort
+	if c != nil && c.MockOpenAI.HTTPPort > 0 {
+		port = c.MockOpenAI.HTTPPort
+	}
+	return fmt.Sprintf("http://%s:%d", nodeID, port)
+}
+
+// PrimaryMLEndpoint is MOCK_ML_ENDPOINT shorthand (first pool member).
+func (c *File) PrimaryMLEndpoint() string {
+	return c.MLNodeEndpoint(c.PrimaryMLNodeID())
+}
+
+// MockMLNodesEnv formats MOCK_ML_NODES: "id=url,id=url".
+func (c *File) MockMLNodesEnv() string {
+	ids := c.MLNodeIDs()
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id + "=" + c.MLNodeEndpoint(id)
+	}
+	return strings.Join(parts, ",")
+}
+
+// MLNodeIPOffset is the fourth octet offset for mock-openai-i (40+i).
+func MLNodeIPOffset(i int) int {
+	return MLNodeIPBase + i
 }
 
 // PrimaryEscrowID returns the seeded escrow id for single-escrow gateway bootstrap.

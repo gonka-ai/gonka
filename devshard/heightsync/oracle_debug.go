@@ -1,11 +1,12 @@
 package heightsync
 
 import (
-	"context"
 	"time"
 )
 
-// blockOracleStaleDiagnostics is implemented by blockoracle/client.HTTP (mockdapi / height-sync SSE).
+// blockOracleStaleDiagnostics is implemented by failover.Oracle from cached
+// state (last served header, LastObservedAt, comet connected). It must not
+// RPC. The old HTTP /block/stream client is gone from the host path.
 type blockOracleStaleDiagnostics interface {
 	StaleDetails() (stale bool, lastRecvAgeMs int64, latestHeight int64, neverReceived bool)
 }
@@ -56,9 +57,6 @@ func snapshotLocalOracle(s *LocalOracleSource) OracleDecideSnapshot {
 		return out
 	}
 	out.Stale = s.Stale()
-	if hdr, err := s.oracle.Latest(context.Background()); err == nil && hdr != nil {
-		out.LatestHeight = hdr.Height
-	}
 	return out
 }
 

@@ -66,12 +66,15 @@ fun versiondOverrideEnvKey(version: String): String =
 
 /** Env vars for versiond compose: force local override binary as [version]. */
 fun versiondOverrideEnv(version: String = devshardTestVersion()): Map<String, String> =
-    mapOf(
-        "VERSIOND_BINARY_NAME" to "devshardd",
-        versiondOverrideEnvKey(version) to DEVSHARD_OVERRIDE_BINARY_PATH,
-        "VERSIOND_FORCE" to version,
-        "VERSIOND_SERVICE_NAME" to "versiond",
-    )
+    buildMap {
+        put("VERSIOND_BINARY_NAME", "devshardd")
+        put(versiondOverrideEnvKey(version), DEVSHARD_OVERRIDE_BINARY_PATH)
+        put("VERSIOND_FORCE", version)
+        put("VERSIOND_SERVICE_NAME", "versiond")
+        System.getenv("DEVSHARD_LOG_LEVEL")?.takeIf { it.isNotBlank() }?.let {
+            put("DEVSHARD_LOG_LEVEL", it)
+        }
+    }
 
 fun devshardVersionedRoutePrefix(version: String = devshardTestVersion()): String =
     "/devshard/$version"

@@ -16,7 +16,8 @@ import (
 )
 
 // TestValidationLeaseRaceCore drives chat load under HA + 100% validation_rate,
-// monitors Postgres leases in parallel, and PASS/FAILs on uniqueness (manual plan §§4–6).
+// monitors Postgres leases in parallel, and PASS/FAILs on uniqueness and on
+// every validator replaying and passing the mock replies (manual plan §§4–6).
 func TestValidationLeaseRaceCore(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -25,7 +26,7 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "devshardctl", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "devshardctl", "mock-openai-0", "devshard-postgres")
 		}
 	})
 
@@ -86,6 +87,7 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 
 	final := harness.WaitLeaseTerminal(t, stack, cfg, 1, 2*time.Minute)
 	harness.RequireLeaseExclusivityPass(t, final, 5)
+	harness.RequireMockValidationsPassed(t, stack, cfg)
 }
 
 // TestValidationLeaseRacePendingStretch covers manual plan §7a: slow ML keeps
@@ -100,7 +102,7 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai-0", "devshard-postgres")
 		}
 	})
 
@@ -170,7 +172,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai-0", "devshard-postgres")
 		}
 	})
 

@@ -217,7 +217,7 @@ func TestSnapshotHeightSync_DoesNotSealAnchors(t *testing.T) {
 	require.Equal(t, 1, session.anchors.OpenLen(), "Snapshot must be read-only")
 
 	session.mu.Lock()
-	session.anchors.ObserveTip(100)
+	session.anchors.ObserveTip(10 + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks)
 	session.mu.Unlock()
 	require.Zero(t, session.anchors.OpenLen(), "producer ObserveTip seals")
 }

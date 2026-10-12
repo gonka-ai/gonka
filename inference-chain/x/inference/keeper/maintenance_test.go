@@ -132,6 +132,34 @@ func TestScheduleMaintenance_Success(t *testing.T) {
 	require.Equal(t, resp.ReservationId, state.ScheduledReservationId)
 }
 
+func TestScheduleMaintenance_RejectsChallengeGenerating(t *testing.T) {
+	t.Parallel()
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.EpochLength = 2000
+	params.EpochParams.ConfirmationPocSafetyWindow = 50
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  2,
+		Target:      participant,
+		StartHeight: 1,
+	}))
+
+	_, err = ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+		Creator:        participant,
+		Participant:    participant,
+		StartHeight:    500,
+		DurationBlocks: 50,
+	})
+	require.ErrorIs(t, err, types.ErrIllegalState)
+}
+
 func TestScheduleMaintenance_Failures(t *testing.T) {
 	t.Parallel()
 
