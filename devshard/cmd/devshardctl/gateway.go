@@ -5094,7 +5094,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	// Before the chain call: a replacement that fails to broadcast must not leave the escrow it
 	// replaces resident, holding its session and its series.
-	if !settings.EscrowRotation.SettlementEnabled {
+	if !settlementEnabledForModel(settings, modelID) {
 		g.retireRuntime(id, reason)
 	}
 
