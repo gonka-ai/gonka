@@ -448,7 +448,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		perf,
 		len(session.Clients()),
 		model,
-		sharedParticipantRequestLimiter.IsBlocked,
+		throttledOrOutOfChatBudget(session.Clients(), session.HostParticipantKeyList(), sharedParticipantRequestLimiter.IsBlocked),
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
 	proxy := &Proxy{

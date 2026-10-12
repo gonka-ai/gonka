@@ -282,8 +282,7 @@ func bodySampleForLog(p []byte, limit int) (string, bool) {
 // the body a host returned out of the error string, where nothing bounds its length.
 func hostFailureLogFields(inf *inflight, session nonceFinishedChecker) []any {
 	fields := []any{"failure_reason", gatewayAttemptFailureReason(inf, session, "")}
-	var upstreamErr *transport.UpstreamStatusError
-	if errors.As(inf.err, &upstreamErr) {
+	if upstreamErr, refused := hostRefusal(inf.err); refused {
 		sample, truncated := bodySampleForLog([]byte(upstreamErr.Body), emptyStreamBodySampleLimit)
 		return append(fields,
 			"http_status", upstreamErr.StatusCode,
@@ -3829,6 +3828,10 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				return
 			}
 
+			releasePost, postErr := acquireTimeoutVotePost(waitCtx, timeoutVotePosts)
+			if postErr != nil {
+				return
+			}
 			var (
 				result    user.TimeoutResult
 				needsWait bool
@@ -3845,6 +3848,7 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				}
 				e.recordHandleTimeoutResult(bgCtx, inf, params, result, voteErr, false, failStage)
 			})
+			releasePost()
 			if needsWait {
 				continue
 			}
@@ -4166,8 +4170,8 @@ func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
 	if e == nil || e.perf == nil || inf == nil || inf.probe {
 		return
 	}
-	var upstream *transport.UpstreamStatusError
-	if !errors.As(inf.err, &upstream) || !isVersionRefusal(upstream.Body) {
+	upstream, refused := hostRefusal(inf.err)
+	if !refused || !isVersionRefusal(upstream.Body) {
 		return
 	}
 	if participantKey := e.participantKeyForHost(inf.hostIdx); participantKey != "" {

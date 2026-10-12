@@ -279,3 +279,25 @@ func TestRPCBudgetEndpoint(t *testing.T) {
 	require.Equal(t, "other", rpcBudgetEndpoint(""))
 	require.Equal(t, "GetDiffs", rpcBudgetEndpoint("GetDiffs"))
 }
+
+// Test flow:
+//  1. Advertise 6000 weight a minute with a burst of one chat.
+//  2. Read the chat wait twice, take the chat, then read the wait again.
+//  3. Assert reading never spends the budget, the spent bucket reports one chat's refill, and an unadvertised budget never waits.
+func TestPeerRPCBudget_WaitReadsTheBudgetWithoutSpendingIt(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	now := func() time.Time { return clock }
+	var budget peerRPCBudget
+	budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, now())
+
+	firstRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	secondRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	require.NoError(t, budget.take(context.Background(), rpcpbconnect.SessionServiceChatProcedure, now, nil))
+	spentRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	var unadvertised peerRPCBudget
+
+	require.Zero(t, firstRead, "a full bucket sends a chat at once")
+	require.Zero(t, secondRead, "reading the wait must not spend the budget")
+	require.Equal(t, 10*time.Minute/6000, spentRead, "a spent bucket waits one chat's refill at 6000/min")
+	require.Zero(t, unadvertised.wait(now(), rpcpbconnect.SessionServiceChatProcedure))
+}

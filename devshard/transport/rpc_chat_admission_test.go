@@ -405,3 +405,25 @@ func TestRPCClient_Send_AllowRequestSkipsTheHost(t *testing.T) {
 	require.Empty(t, admission.results)
 	require.Empty(t, admission.faults)
 }
+
+// Test flow:
+//  1. Build a chat client on a connection whose host advertised a burst of one chat, and one that sends chat over HTTP.
+//  2. Read the chat wait before and after a chat spends the burst.
+//  3. Assert the wait is zero until the burst is spent, then one chat's refill, and always zero for a client that does not send chat over the connection.
+func TestRPCClient_ChatBudgetWaitReportsTheAdvertisedBudget(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{BaseURL: "http://127.0.0.1:1", HostAddress: "gonka1chatbudget", Signer: signer, DirectMux: true})
+	t.Cleanup(pc.Close)
+	pc.budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, time.Now())
+	chat := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, DefaultClientConfig()), pc, ParseRPCEndpoints(EndpointChat))
+	chatOverHTTP := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, DefaultClientConfig()), pc, ParseRPCEndpoints(EndpointDiffs))
+
+	before := chat.ChatBudgetWait()
+	require.NoError(t, pc.takePeerBudget(context.Background(), rpcpbconnect.SessionServiceChatProcedure))
+	after := chat.ChatBudgetWait()
+
+	require.Zero(t, before)
+	require.Greater(t, after, time.Duration(0))
+	require.LessOrEqual(t, after, 10*time.Minute/6000)
+	require.Zero(t, chatOverHTTP.ChatBudgetWait())
+}

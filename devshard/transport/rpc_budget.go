@@ -306,3 +306,24 @@ func (b *peerStreamBudget) releaseKind(chat bool) {
 		b.inUse--
 	}
 }
+
+func (b *peerRPCBudget) wait(now time.Time, procedure string) time.Duration {
+	cost := float64(RPCProcedureWeight(procedure))
+	if cost <= 0 {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.bucket == nil {
+		return 0
+	}
+	b.bucket.refill(now)
+	need := TokenAdmitThreshold(cost, b.bucket.burst) - b.bucket.tokens
+	switch {
+	case need <= 0:
+		return 0
+	case b.bucket.ratePerMin <= 0:
+		return time.Minute
+	}
+	return max(time.Duration(need/b.bucket.ratePerMin*float64(time.Minute)), time.Millisecond)
+}

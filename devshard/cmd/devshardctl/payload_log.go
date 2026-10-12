@@ -191,8 +191,7 @@ func collectFailureResponseBody(inf *inflight) ([]byte, bool) {
 	if inf == nil {
 		return nil, false
 	}
-	var ue *transport.UpstreamStatusError
-	if errors.As(inf.err, &ue) && ue != nil && ue.Body != "" {
+	if ue, refused := hostRefusal(inf.err); refused && ue.Body != "" {
 		return []byte(ue.Body), false
 	}
 	if len(inf.errorBodySample) > 0 {
@@ -218,8 +217,7 @@ func collectFailureResponseMeta(inf *inflight) (int, map[string]string) {
 	if inf == nil {
 		return 0, nil
 	}
-	var ue *transport.UpstreamStatusError
-	if errors.As(inf.err, &ue) && ue != nil {
+	if ue, refused := hostRefusal(inf.err); refused {
 		return ue.StatusCode, ue.Headers
 	}
 	// Streaming host answer that later failed still had HTTP 200.

@@ -1663,6 +1663,11 @@ func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse,
 			"escrow", s.escrowID, "nonce", msg.InferenceId)
 		return
 	}
+	if rec.Status != types.StatusPending {
+		logging.Debug("dropped confirm for an inference already started", "subsystem", "session",
+			"escrow", s.escrowID, "nonce", msg.InferenceId, "source", source, "status", rec.Status)
+		return
+	}
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
 	if err := s.sm.CheckEvidence(&rec, tx); err != nil {
 		logging.Warn("rejected executor receipt", "subsystem", "session",
