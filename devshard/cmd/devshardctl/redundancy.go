@@ -546,6 +546,8 @@ type Redundancy struct {
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
 	stateRewoundAt       map[string]time.Time // when each participant's one catch-up replay was spent
+	refusalPayloadMu     sync.Mutex
+	refusalPayloads      map[uint64]*host.InferencePayload
 
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
@@ -3792,6 +3794,9 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		"remaining_ms", time.Until(deadline).Milliseconds(),
 	)
 	e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
+	if reasonLabel == "refused" {
+		e.rememberRefusalPayload(inf.nonce, e.inferenceTimeoutPayload(params))
+	}
 
 	unpinFinish := errorMissEnabledFor(inf)
 	e.raceCleanupWG.Add(1)
@@ -3842,6 +3847,9 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				kind = timeoutKindForInflight(inf, false)
 				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
 				result, needsWait, voteErr = e.runVoteTimeout(bgCtx, inf, params, reason)
+				if result.Applied {
+					e.forgetRefusalPayload(inf.nonce)
+				}
 				if needsWait {
 					e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 					return

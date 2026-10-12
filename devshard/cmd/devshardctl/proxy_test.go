@@ -557,7 +557,7 @@ func (c *delayedResultClient) Send(ctx context.Context, req host.HostRequest, _ 
 	}
 }
 
-func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if c.voteGate != nil {
 		select {
 		case <-c.voteGate:
@@ -565,7 +565,7 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 			return false, nil, 0, nil, "", ctx.Err()
 		}
 	}
-	if !c.accept {
+	if !c.accept || (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && payload == nil) {
 		return false, nil, 0, nil, "", nil
 	}
 	voterSlot := c.group[c.slotIdx].SlotID
