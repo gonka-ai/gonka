@@ -66,8 +66,8 @@ func (s stubBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserve
 	return &types.QueryPreservedNodesSnapshotResponse{Found: false}, nil
 }
 
-func (s stubBrokerChainBridge) GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error) {
-	return &types.QueryActiveTrainshardsResponse{}, nil
+func (s stubBrokerChainBridge) GetTrainingNodeReservations(string) (*types.QueryTrainingNodeReservationsResponse, error) {
+	return &types.QueryTrainingNodeReservationsResponse{}, nil
 }
 
 func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {

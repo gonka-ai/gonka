@@ -25,44 +25,25 @@ func reservationBroker(bridge *MockBrokerChainBridge, nodes ...*NodeWithState) *
 	}
 }
 
-func activeShard(status types.TrainshardStatus, nodes ...*types.TrainshardReservedNode) *types.Trainshard {
-	return &types.Trainshard{Status: status, Nodes: nodes}
-}
-
-func reservedNode(participant, nodeID string, status types.TrainshardNodeStatus) *types.TrainshardReservedNode {
-	return &types.TrainshardReservedNode{Participant: participant, NodeId: nodeID, Status: status}
-}
-
-func TestEnsureReservedNodesCached_HoldsOnlyThisHostsActiveReservations(t *testing.T) {
-	const (
-		shardActive = types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE
-		shardOver   = types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED
-		nodeActive  = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
-		nodeKicked  = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED
-	)
+func TestEnsureReservedNodesCached_HoldsEveryNodeTheChainStillReserves(t *testing.T) {
 	ours := createTestNodeWithStatus("ours", types.HardwareNodeStatus_INFERENCE)
 	ours.State.LockCount = 1
-	sameIDElsewhere := createTestNodeWithStatus("same-id", types.HardwareNodeStatus_INFERENCE)
-	kicked := createTestNodeWithStatus("kicked", types.HardwareNodeStatus_INFERENCE)
-	settled := createTestNodeWithStatus("settled", types.HardwareNodeStatus_INFERENCE)
+	returning := createTestNodeWithStatus("returning", types.HardwareNodeStatus_INFERENCE)
+	free := createTestNodeWithStatus("free", types.HardwareNodeStatus_INFERENCE)
 	bridge := &MockBrokerChainBridge{}
-	bridge.On("GetActiveTrainshards").Return(&types.QueryActiveTrainshardsResponse{Trainshards: []*types.Trainshard{
-		activeShard(shardActive,
-			reservedNode(reservingHost, "ours", nodeActive),
-			reservedNode("gonka1other", "same-id", nodeActive),
-			reservedNode(reservingHost, "kicked", nodeKicked)),
-		activeShard(shardOver, reservedNode(reservingHost, "settled", nodeActive)),
-	}}, nil)
-	broker := reservationBroker(bridge, ours, sameIDElsewhere, kicked, settled)
+	bridge.On("GetTrainingNodeReservations", reservingHost).Return(&types.QueryTrainingNodeReservationsResponse{
+		NodeIds: []string{"ours", "returning", "not-ours"},
+	}, nil)
+	broker := reservationBroker(bridge, ours, returning, free)
 
 	require.NoError(t, broker.EnsureReservedNodesCached())
 
-	assert.True(t, ours.State.Reserved)
-	assert.Equal(t, types.HardwareNodeStatus_STOPPED, ours.State.IntendedStatus, "reserved: out of inference at once, the stop waits for the in-flight request")
-	for _, free := range []*NodeWithState{sameIDElsewhere, kicked, settled} {
-		assert.False(t, free.State.Reserved, free.Node.Id)
-		assert.Equal(t, types.HardwareNodeStatus_INFERENCE, free.State.IntendedStatus, free.Node.Id)
+	for _, held := range []*NodeWithState{ours, returning} {
+		assert.True(t, held.State.Reserved, held.Node.Id)
+		assert.Equal(t, types.HardwareNodeStatus_STOPPED, held.State.IntendedStatus, held.Node.Id)
 	}
+	assert.False(t, free.State.Reserved)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, free.State.IntendedStatus)
 	select {
 	case <-broker.reconcileTrigger:
 	default:
@@ -95,7 +76,7 @@ func TestEnsureReservedNodesCached_ReturnsANodeOnlyWhenTheOperatorDoesNotHoldIt(
 	held.State.Reserved = true
 	held.State.AdminState.Stopped = true
 	bridge := &MockBrokerChainBridge{}
-	bridge.On("GetActiveTrainshards").Return(&types.QueryActiveTrainshardsResponse{}, nil)
+	bridge.On("GetTrainingNodeReservations", reservingHost).Return(&types.QueryTrainingNodeReservationsResponse{}, nil)
 	broker := reservationBroker(bridge, free, held)
 
 	require.NoError(t, broker.EnsureReservedNodesCached())
@@ -110,7 +91,7 @@ func TestEnsureReservedNodesCached_KeepsTheLastAnswerWhenTheChainCannotBeRead(t 
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_STOPPED)
 	node.State.Reserved = true
 	bridge := &MockBrokerChainBridge{}
-	bridge.On("GetActiveTrainshards").Return(nil, errors.New("connection refused"))
+	bridge.On("GetTrainingNodeReservations", reservingHost).Return(nil, errors.New("connection refused"))
 	broker := reservationBroker(bridge, node)
 
 	assert.Error(t, broker.EnsureReservedNodesCached())

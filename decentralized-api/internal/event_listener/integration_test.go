@@ -156,12 +156,12 @@ func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
 }
 
-func (m *MockBrokerChainBridge) GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error) {
-	args := m.Called()
+func (m *MockBrokerChainBridge) GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error) {
+	args := m.Called(participant)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*types.QueryActiveTrainshardsResponse), args.Error(1)
+	return args.Get(0).(*types.QueryTrainingNodeReservationsResponse), args.Error(1)
 }
 
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
@@ -370,7 +370,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		},
 	}, nil)
 	mockChainBridge.On("GetPreservedNodesSnapshot", mock.Anything).Return(&types.QueryPreservedNodesSnapshotResponse{Found: false}, nil)
-	mockChainBridge.On("GetActiveTrainshards").Return(&types.QueryActiveTrainshardsResponse{}, nil)
+	mockChainBridge.On("GetTrainingNodeReservations", mock.Anything).Return(&types.QueryTrainingNodeReservationsResponse{}, nil)
 
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{

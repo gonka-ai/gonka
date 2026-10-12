@@ -44,7 +44,7 @@ type BrokerChainBridge interface {
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
-	GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error)
+	GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -118,9 +118,9 @@ func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), &types.QueryPreservedNodesSnapshotRequest{})
 }
 
-func (b *BrokerChainBridgeImpl) GetActiveTrainshards() (*types.QueryActiveTrainshardsResponse, error) {
+func (b *BrokerChainBridgeImpl) GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
-	return queryClient.ActiveTrainshards(b.client.GetContext(), &types.QueryActiveTrainshardsRequest{})
+	return queryClient.TrainingNodeReservations(b.client.GetContext(), &types.QueryTrainingNodeReservationsRequest{Participant: participant})
 }
 
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
@@ -1846,31 +1846,23 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 	return nil
 }
 
-// EnsureReservedNodesCached holds every node an active trainshard reserves out of inference and
-// PoC, read from the chain before the block's phase commands. The trainshard daemon stops it too,
+// EnsureReservedNodesCached holds every node the chain still reserves for training, return buffer
+// included, out of inference and PoC, read from the chain before the block's phase commands. The trainshard daemon stops it too,
 // but only once it polls: a phase command in between would start PoC on the cards the run takes.
 // A node whose reservation ends goes back to inference unless the operator still holds it stopped
 func (b *Broker) EnsureReservedNodesCached() error {
-	resp, err := b.chainBridge.GetActiveTrainshards()
-	if err != nil {
-		return err
-	}
 	participantAddr := b.GetParticipantAddress()
 	if participantAddr == "" {
 		return fmt.Errorf("participant address unavailable for trainshard reservations")
 	}
+	resp, err := b.chainBridge.GetTrainingNodeReservations(participantAddr)
+	if err != nil {
+		return err
+	}
 
 	reserved := make(map[string]bool)
-	for _, shard := range resp.GetTrainshards() {
-		if shard == nil || shard.Status != types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
-			continue
-		}
-		for _, node := range shard.Nodes {
-			if node != nil && node.Participant == participantAddr &&
-				node.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE {
-				reserved[node.NodeId] = true
-			}
-		}
+	for _, id := range resp.GetNodeIds() {
+		reserved[id] = true
 	}
 
 	changed := false

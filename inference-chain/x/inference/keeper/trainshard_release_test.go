@@ -46,6 +46,47 @@ func TestAutokickTrainshardNode_ClosesShardWithoutActiveNodes(t *testing.T) {
 	require.False(t, k.IsNodeReserved(ctx, creator, node))
 }
 
+func TestTrainingNodeReservations_ListsANodeUntilItsReturnEnds(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	_, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{})
+	require.Error(t, err)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	node := shard.Nodes[0].NodeId
+
+	held := func() []string {
+		answer, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{Participant: creator})
+		require.NoError(t, err)
+		return answer.NodeIds
+	}
+	require.Equal(t, []string{node}, held())
+	other, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{Participant: sample.AccAddress()})
+	require.NoError(t, err)
+	require.Empty(t, other.NodeIds)
+
+	_, err = ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      creator,
+		TrainshardId: resp.TrainshardId,
+		Participant:  creator,
+		NodeId:       node,
+		Reason:       "nccl timeout",
+		RequestId:    "req-1",
+	})
+	require.NoError(t, err)
+	closed, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	until := closed.Nodes[0].ReservedUntilHeight
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until - 1))
+	require.Equal(t, []string{node}, held())
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until))
+	require.Empty(t, held())
+}
+
 func TestAutokickTrainshardNode_IdempotentPerRequestId(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 

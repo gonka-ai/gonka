@@ -327,6 +327,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "proposal_id"}},
 				},
 				{
+					RpcMethod:      "TrainingNodeReservations",
+					Use:            "training-node-reservations [participant]",
+					Short:          "List the nodes a participant has reserved by training, return buffer included",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
 					RpcMethod:      "MaintenanceCredit",
 					Use:            "maintenance-credit [participant]",
 					Short:          "Query maintenance credit for a participant",

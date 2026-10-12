@@ -56,3 +56,18 @@ func (k Keeper) TrainshardProposal(ctx context.Context, req *types.QueryGetTrain
 	}
 	return &types.QueryGetTrainshardProposalResponse{Proposal: &proposal, Found: true}, nil
 }
+
+func (k Keeper) TrainingNodeReservations(ctx context.Context, req *types.QueryTrainingNodeReservationsRequest) (*types.QueryTrainingNodeReservationsResponse, error) {
+	if req == nil || req.Participant == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	var nodeIds []string
+	err := k.TrainshardReservations.Walk(ctx, collections.NewPrefixedPairRange[string, string](req.Participant), func(key collections.Pair[string, string], _ uint64) (bool, error) {
+		nodeIds = append(nodeIds, key.K2())
+		return false, nil
+	})
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	return &types.QueryTrainingNodeReservationsResponse{NodeIds: nodeIds}, nil
+}
