@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -157,8 +158,11 @@ func (k Keeper) pruneClosedTrainshards(ctx context.Context, height int64, retent
 		if shard, err := k.Trainshards.Get(ctx, key.K2()); err == nil {
 			var until int64
 			for _, n := range shard.Nodes {
-				if n != nil && n.ReservedUntilHeight > until {
-					until = n.ReservedUntilHeight
+				if n == nil {
+					continue
+				}
+				if _, end := trainshardNodeWindow(&shard, n, ReservationScopeShield); end != math.MaxInt64 && end > until {
+					until = end
 				}
 			}
 			if until >= height {
