@@ -88,7 +88,7 @@ func (am AppModule) decideCurrentChallengeSegment(
 		return am.advanceAfterDecision(ctx, ch, rotate)
 	}
 
-	if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
+	if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight, rotate); err != nil {
 		return err
 	}
 	updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
@@ -140,6 +140,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	ch types.PoCChallenge,
 	finish int64,
 	snapshotHeight int64,
+	rotate bool,
 ) error {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
@@ -194,8 +195,11 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 		types.ConfirmationWeightCoefficients(presentScales),
 	)
 	expected := fullExpected[ch.Target] - shielded[ch.Target]
-	if expected <= 0 {
-		return nil
+	if shielded[ch.Target] > 0 && expected <= 0 {
+		if rotate {
+			return nil
+		}
+		return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
 	}
 	totalExpected := map[string]int64{ch.Target: expected}
 

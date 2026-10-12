@@ -487,34 +487,45 @@ func TestDecideCurrentChallengeSegment_ReservationAtTheSegmentFinishIsExpected(t
 	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
 }
 
-func TestDecideCurrentChallengeSegment_FullyReservedHostIsNotFailed(t *testing.T) {
-	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
-		{id: "m1", weight: 100},
-	})
-	p, ok := k.GetParticipant(ctx, testutil.Executor)
-	require.True(t, ok)
-	p.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromFloat(0.1)
-	require.NoError(t, k.Participants.Set(ctx, mustAccAddr(t, testutil.Executor), p))
-	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
-		TrainshardId:    1,
-		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
-		CreatedAtHeight: 300,
-		Nodes: []*types.TrainshardReservedNode{{
-			Participant: testutil.Executor,
-			NodeId:      "m1-n",
-			ModelId:     "m1",
-			PocWeight:   100,
-			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
-		}},
-	}))
-	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
-	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
-	group, found := k.GetEpochGroupData(ctx, 2, "")
-	require.True(t, found)
-	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+func TestDecideCurrentChallengeSegment_FullyReservedHostIsRefundedNotPaid(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		rotate bool
+		want   types.PoCChallengeState
+	}{
+		{"a middle segment moves on", true, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN},
+		{"the last segment aborts so the challenger gets the lock back", false, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+				{id: "m1", weight: 100},
+			})
+			p, ok := k.GetParticipant(ctx, testutil.Executor)
+			require.True(t, ok)
+			p.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromFloat(0.1)
+			require.NoError(t, k.Participants.Set(ctx, mustAccAddr(t, testutil.Executor), p))
+			require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+				TrainshardId:    1,
+				Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+				CreatedAtHeight: 300,
+				Nodes: []*types.TrainshardReservedNode{{
+					Participant: testutil.Executor,
+					NodeId:      "m1-n",
+					ModelId:     "m1",
+					PocWeight:   100,
+					Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+				}},
+			}))
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, tc.rotate))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+			group, found := k.GetEpochGroupData(ctx, 2, "")
+			require.True(t, found)
+			require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+		})
+	}
 }
 
 func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T) {
