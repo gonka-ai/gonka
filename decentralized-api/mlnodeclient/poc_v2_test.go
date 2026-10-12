@@ -1,6 +1,7 @@
 package mlnodeclient
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -99,4 +100,13 @@ func TestShouldAbstain_NanAndComparedNothing(t *testing.T) {
 	require.True(t, excluded.ShouldAbstain())
 	require.Equal(t, int64(3), excluded.ToValidatedWeight(), "abstain must not be encoded as invalid weight")
 	require.False(t, (&ValidatedResultV2{NTotal: 5, NExcluded: 0, FraudDetected: false}).ShouldAbstain())
+}
+
+func TestStatTestParamsFromChain_AlphaReachesMLNodeAsFraudThreshold(t *testing.T) {
+	body, err := json.Marshal(StatTestParamsFromChain(&types.PoCStatTestParams{PValueThreshold: types.DecimalFromFloat(0.02)}))
+	require.NoError(t, err)
+	var wire map[string]float64
+	require.NoError(t, json.Unmarshal(body, &wire))
+	require.InDelta(t, 0.02, wire["fraud_threshold"], 1e-9)
+	require.NotContains(t, wire, "p_value_threshold")
 }
