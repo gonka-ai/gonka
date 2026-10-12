@@ -433,6 +433,38 @@ func TestRefreshTrainingNodeOptIn_RejectsForeignNode(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrTrainshardNodeNotOwned)
 }
 
+func TestAssembleTrainshard_SkipsAHostUnderPoCChallenge(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	epoch, ok := k.GetEffectiveEpochIndex(ctx)
+	require.True(t, ok)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 0}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.EpochLength = 2000
+	params.EpochParams.ConfirmationPocSafetyWindow = 50
+	require.NoError(t, k.SetParams(ctx, params))
+	ctx = ctx.WithBlockHeight(types.TrainshardAssemblyOpensAt(ctx.BlockHeight(), types.Epoch{Index: epoch}, *params.EpochParams, nil))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  epoch,
+		Target:      creator,
+		StartHeight: ctx.BlockHeight(),
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.ErrorContains(t, err, "2 under a PoC challenge")
+
+	ch, found, err := k.GetPoCChallenge(ctx, creator)
+	require.NoError(t, err)
+	require.True(t, found)
+	ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+	require.NoError(t, k.SetPoCChallenge(ctx, ch))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+}
+
 func TestAssembleTrainshard_SkipsExpiredOptIn(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, "node-a"), ctx.BlockHeight()))

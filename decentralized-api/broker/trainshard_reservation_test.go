@@ -141,3 +141,26 @@ func TestGetCommandForState_StopsAReservedNode(t *testing.T) {
 
 	assert.True(t, ok)
 }
+
+func TestStartPocCommand_UnderChallengeKeepsAReservedNodeStopped(t *testing.T) {
+	reserved := createTestNodeWithStatus("reserved", types.HardwareNodeStatus_STOPPED)
+	reserved.State.Reserved = true
+	free := createTestNode("free")
+	free.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	withOverlay(t, stubChallengeOverlay{
+		self: "me",
+		ch:   testOpenCh("me", 500, 900, true, 1),
+	})
+	broker := &Broker{
+		nodes:        map[string]*NodeWithState{"reserved": reserved, "free": free},
+		phaseTracker: newPhaseTrackerWithPhase(t, types.InferencePhase),
+	}
+
+	cmd := NewStartPocCommand()
+	cmd.Execute(broker)
+
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, reserved.State.IntendedStatus)
+	assert.False(t, challengeGenerateNeedsDispatch(reserved, *broker.phaseTracker.GetCurrentEpochState()))
+	assert.Equal(t, types.HardwareNodeStatus_POC, free.State.IntendedStatus)
+	assert.Equal(t, PocStatusGenerating, free.State.PocIntendedStatus)
+}

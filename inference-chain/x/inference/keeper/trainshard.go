@@ -291,7 +291,7 @@ func (k Keeper) selectTrainshardNodes(
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 
 	var skipped struct {
-		guardian, optIn, endpoint, reserved, totalCap, profileCap, modelCap int
+		guardian, challenged, optIn, endpoint, reserved, totalCap, profileCap, modelCap int
 	}
 	ofProfile := 0
 	candidates := make([]*trainingEpochNode, 0, len(view.nodes))
@@ -302,6 +302,10 @@ func (k Keeper) selectTrainshardNodes(
 		ofProfile++
 		if guardians[node.participant] {
 			skipped.guardian++
+			continue
+		}
+		if k.IsUnderChallenge(ctx, node.participant) {
+			skipped.challenged++
 			continue
 		}
 		opted, err := k.hasLiveTrainingOptIn(ctx, node.participant, node.nodeId, height)
@@ -399,10 +403,10 @@ func (k Keeper) selectTrainshardNodes(
 
 	if uint32(takenTotal) < nodeCount {
 		return nil, types.ErrTrainshardCapacity.Wrapf(
-			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d without a live opt-in, "+
+			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d under a PoC challenge, %d without a live opt-in, "+
 				"%d without an endpoint, %d already reserved, %d over the total reserve cap (%d), "+
 				"%d over the profile share cap (%d), %d over a model share cap or its last free node",
-			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.guardian, skipped.optIn,
+			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.guardian, skipped.challenged, skipped.optIn,
 			skipped.endpoint, skipped.reserved, skipped.totalCap, params.MaxTotalReservedNodes,
 			skipped.profileCap, profileCap, skipped.modelCap)
 	}
