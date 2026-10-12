@@ -21,28 +21,37 @@ func Stage(ctx context.Context, stage string, kv ...any) {
 // StageLevel is Stage at an explicit slog level. Failure outcomes use
 // slog.LevelError so level=error alerting still sees them. JSON and legacy
 // text shapes match Stage, including the stage key Loki joins on.
+//
+// The stage (+ kv) attrs are always attached. Citests query Loki with
+// `| json | stage=…`; that join breaks if only the legacy text message
+// carries `stage=` while a JSON handler is installed (format flag drifted).
 func StageLevel(ctx context.Context, level slog.Level, stage string, kv ...any) {
+	args := stageAttrs(ctx, stage, kv)
 	if IsJSONLogFormat() {
-		args := make([]any, 0, 4+len(kv))
-		if id, ok := RequestID(ctx); ok {
-			args = append(args, "request", id)
-		}
-		args = append(args, "stage", stage)
-		for i := 0; i < len(kv); i += 2 {
-			key := fmt.Sprintf("field_%d", i)
-			if s, ok := kv[i].(string); ok && s != "" {
-				key = s
-			}
-			var value any = "<missing>"
-			if i+1 < len(kv) {
-				value = kv[i+1]
-			}
-			args = append(args, key, value)
-		}
 		slog.Log(ctx, level, stage, args...)
 		return
 	}
-	slog.Log(ctx, level, formatLegacyStage(ctx, stage, kv))
+	slog.Log(ctx, level, formatLegacyStage(ctx, stage, kv), args...)
+}
+
+func stageAttrs(ctx context.Context, stage string, kv []any) []any {
+	args := make([]any, 0, 4+len(kv))
+	if id, ok := RequestID(ctx); ok {
+		args = append(args, "request", id)
+	}
+	args = append(args, "stage", stage)
+	for i := 0; i < len(kv); i += 2 {
+		key := fmt.Sprintf("field_%d", i)
+		if s, ok := kv[i].(string); ok && s != "" {
+			key = s
+		}
+		var value any = "<missing>"
+		if i+1 < len(kv) {
+			value = kv[i+1]
+		}
+		args = append(args, key, value)
+	}
+	return args
 }
 
 func formatLegacyStage(ctx context.Context, stage string, kv []any) string {

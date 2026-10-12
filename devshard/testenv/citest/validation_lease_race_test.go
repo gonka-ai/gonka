@@ -139,7 +139,8 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 			}
 			slowClient := harness.GatewayChatClient()
 			slowClient.Timeout = 3 * time.Minute
-			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
+			// Stream so SlowMockOpenAI latency does not delay first token.
+			if _, err := harness.TryPostGatewayChatCompletionStream(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
 				loadErrs.Add(1)
 				t.Logf("citest: 7a chat %d: %v", i, err)
 			}
@@ -210,8 +211,9 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 				},
 				MaxTokens: 16,
 			}
+			// Stream so SlowMockOpenAI latency does not delay first token.
 			// Chat may fail after the replica is stopped; best-effort to create pending leases.
-			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
+			if _, err := harness.TryPostGatewayChatCompletionStream(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
 				t.Logf("citest: 7b chat %d: %v", i, err)
 			}
 		}(i)

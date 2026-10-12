@@ -186,6 +186,7 @@ func RequireRequestIDOnTrace(
 	require.NotEmpty(t, traceID)
 	require.NotEmpty(t, requestID, "gateway must return X-Request-Id")
 	require.NotEmpty(t, composeServices)
+	traceID = NormalizeTraceID(traceID)
 
 	for _, svc := range composeServices {
 		query := fmt.Sprintf(`{compose_service=~%q} | json | trace_id=%q | request_id=%q`, svc, traceID, requestID)
@@ -206,14 +207,51 @@ func RequireStagesForTrace(
 	t.Helper()
 	require.NotEmpty(t, traceID)
 	require.NotEmpty(t, stages)
+	traceID = NormalizeTraceID(traceID)
 
+	if timeout == 0 {
+		timeout = 2 * time.Minute
+	}
 	var all []LokiEntry
 	for _, stage := range stages {
 		query := fmt.Sprintf(`{compose_service=~%q} | json | trace_id=%q | stage=%q`,
 			composeService, traceID, stage)
-		all = append(all, WaitLokiEntries(t, obs, query, 1, timeout)...)
+		t.Logf("citest: waiting for >=1 Loki entries: %s", query)
+		var entries []LokiEntry
+		ok := assertEventually(t, timeout, 3*time.Second, func() bool {
+			got, queried := TryQueryLokiEntries(obs, query, 500)
+			if !queried || len(got) < 1 {
+				return false
+			}
+			entries = got
+			return true
+		})
+		if !ok {
+			sampleQuery := fmt.Sprintf(`{compose_service=~%q} | json | trace_id=%q`, composeService, traceID)
+			if sample, sampled := TryQueryLokiEntries(obs, sampleQuery, 20); sampled {
+				t.Logf("citest: %d lines on trace without stage=%s filter:", len(sample), stage)
+				for i, e := range sample {
+					if i >= 5 {
+						break
+					}
+					t.Logf("citest: sample[%d] stage=%q msg=%q keys=%v",
+						i, e.Str("stage"), e.Str("msg"), fieldKeys(e.Fields))
+				}
+			}
+			require.Fail(t, fmt.Sprintf("Loki returned fewer than 1 entries within %s for %s", timeout, query))
+		}
+		all = append(all, entries...)
 	}
 	return all
+}
+
+func fieldKeys(fields map[string]any) []string {
+	keys := make([]string, 0, len(fields))
+	for k := range fields {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // TraceIDsForRequest returns the distinct trace_ids stamped on composeService

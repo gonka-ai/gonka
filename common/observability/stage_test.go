@@ -25,3 +25,21 @@ func TestStageLevel_UsesTheGivenLevel(t *testing.T) {
 	require.Contains(t, out, `"subsystem":"Nodes"`)
 	require.Contains(t, out, `"stage":"mlnode_acquire"`)
 }
+
+// Text format still attaches a structured stage attr so a JSON handler (or
+// Loki `| json | stage=`) can join even if IsJSONLogFormat drifted false.
+func TestStageLevel_TextModeStillEmitsStageAttr(t *testing.T) {
+	restoreInstalledLogger(t)
+	var buf bytes.Buffer
+	InstallLoggerWithOptions(LoggerOptions{Format: "text", Level: slog.LevelInfo, Out: &buf})
+	// Force the JSON handler while leaving the format flag on text — the
+	// drift citests hit when compose ships json lines without stage attrs.
+	slog.SetDefault(slog.New(NewTraceHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+
+	Stage(context.Background(), "mlnode_acquire", "outcome", "acquired", "node_id", "n1")
+
+	out := buf.String()
+	require.Contains(t, out, `"stage":"mlnode_acquire"`)
+	require.Contains(t, out, `"outcome":"acquired"`)
+	require.Contains(t, out, `"node_id":"n1"`)
+}

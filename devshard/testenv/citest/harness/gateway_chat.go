@@ -209,6 +209,83 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 	return content, sawDone
 }
 
+// TryPostGatewayChatCompletionStream is the worker-safe stream variant of
+// PostGatewayChatCompletionStream. Prefer it under SlowMockOpenAI: latency_ms
+// delays Validate (stream=false) only; stream first tokens still flush
+// immediately so the gateway first-token floor is not tripped.
+func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, err error) {
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	req.Stream = true
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if adminAPIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("POST %s: %d %s", gatewayURL+"/v1/chat/completions", resp.StatusCode, string(body))
+	}
+	var assembled strings.Builder
+	var sawDone bool
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "data: [DONE]" {
+			sawDone = true
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			continue
+		}
+		if s, ok := delta["content"].(string); ok {
+			assembled.WriteString(s)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	if !sawDone {
+		return assembled.String(), fmt.Errorf("stream missing data: [DONE]")
+	}
+	content = assembled.String()
+	if content == "" {
+		return "", fmt.Errorf("stream assembled empty content")
+	}
+	return content, nil
+}
+
 // PostGatewayChatHTTP posts /v1/chat/completions and returns status, headers, and body.
 // Unlike PostGatewayChatCompletion it does not require HTTP 200.
 func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) GatewayChatHTTPResult {
