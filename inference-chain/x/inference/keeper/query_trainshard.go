@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -61,9 +62,25 @@ func (k Keeper) TrainingNodeReservations(ctx context.Context, req *types.QueryTr
 	if req == nil || req.Participant == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
+	next := sdk.UnwrapSDKContext(ctx).BlockHeight() + 1
 	var nodeIds []string
-	err := k.TrainshardReservations.Walk(ctx, collections.NewPrefixedPairRange[string, string](req.Participant), func(key collections.Pair[string, string], _ uint64) (bool, error) {
-		nodeIds = append(nodeIds, key.K2())
+	err := k.TrainshardReservations.Walk(ctx, collections.NewPrefixedPairRange[string, string](req.Participant), func(key collections.Pair[string, string], shardId uint64) (bool, error) {
+		shard, err := k.Trainshards.Get(ctx, shardId)
+		if errors.Is(err, collections.ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return true, err
+		}
+		for _, n := range shard.Nodes {
+			if n == nil || n.Participant != key.K1() || n.NodeId != key.K2() {
+				continue
+			}
+			if start, end := trainshardNodeWindow(&shard, n, ReservationScopeShield); start <= next && end >= next {
+				nodeIds = append(nodeIds, key.K2())
+			}
+			break
+		}
 		return false, nil
 	})
 	if err != nil {

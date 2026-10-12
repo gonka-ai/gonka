@@ -609,7 +609,7 @@ func (k Keeper) CollectReservedNodeIds(ctx context.Context) map[string]map[strin
 }
 
 func (k Keeper) CollectReservedNodeIdsAt(ctx context.Context, height int64) map[string]map[string]struct{} {
-	reserved := k.CollectReservedNodeIds(ctx)
+	reserved := make(map[string]map[string]struct{})
 	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
 		for _, n := range shard.Nodes {
 			if n == nil {

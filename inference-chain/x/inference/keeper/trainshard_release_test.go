@@ -58,12 +58,12 @@ func TestTrainingNodeReservations_ListsANodeUntilItsReturnEnds(t *testing.T) {
 	require.NoError(t, err)
 	node := shard.Nodes[0].NodeId
 
-	held := func() []string {
-		answer, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{Participant: creator})
+	held := func(height int64) []string {
+		answer, err := k.TrainingNodeReservations(ctx.WithBlockHeight(height), &types.QueryTrainingNodeReservationsRequest{Participant: creator})
 		require.NoError(t, err)
 		return answer.NodeIds
 	}
-	require.Equal(t, []string{node}, held())
+	require.Equal(t, []string{node}, held(ctx.BlockHeight()))
 	other, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{Participant: sample.AccAddress()})
 	require.NoError(t, err)
 	require.Empty(t, other.NodeIds)
@@ -82,9 +82,15 @@ func TestTrainingNodeReservations_ListsANodeUntilItsReturnEnds(t *testing.T) {
 	until := closed.Nodes[0].ReservedUntilHeight
 
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until - 1))
-	require.Equal(t, []string{node}, held())
+	require.Equal(t, []string{node}, held(until-1))
+
+	require.True(t, k.IsNodeReserved(ctx, creator, node), "cleanup is behind")
+	require.Empty(t, held(until), "the chain stops shielding the node at its next block")
+	require.Contains(t, k.CollectReservedNodeIdsAt(ctx, until)[creator], node)
+	require.NotContains(t, k.CollectReservedNodeIdsAt(ctx, until+1)[creator], node)
+
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until))
-	require.Empty(t, held())
+	require.Empty(t, held(until))
 }
 
 func TestAutokickTrainshardNode_IdempotentPerRequestId(t *testing.T) {
