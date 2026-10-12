@@ -57,10 +57,12 @@ type ValidationV2 struct {
 }
 
 // StatTestParamsV2 contains optional statistical test parameters for validation.
+// The chain's p_value_threshold goes out as fraud_threshold, the name MLNode reads; under any other
+// name MLNode drops it and tests at its own default of 0.01.
 type StatTestParamsV2 struct {
 	DistThreshold   float64 `json:"dist_threshold,omitempty"`
 	PMismatch       float64 `json:"p_mismatch,omitempty"`
-	PValueThreshold float64 `json:"p_value_threshold,omitempty"`
+	PValueThreshold float64 `json:"fraud_threshold,omitempty"`
 }
 
 // Default stat test parameter values.
