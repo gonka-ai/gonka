@@ -332,7 +332,7 @@ is unlimited).
 |---|---|---|
 | GetSignatures, Gossip Nonce | 1 | 6000/min |
 | Gossip Txs, seed / repair / verify-* | 2 | 3000/min |
-| Chat | 10 | 600/min |
+| Chat | 1 | 6000/min |
 | GetMempool, GetPayload | 6 | 1000/min |
 | GetDiffs | 60 | 100/min |
 | Attach / Watch | 0 | floor / stream cap, not this bucket |

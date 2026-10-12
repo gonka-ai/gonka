@@ -288,7 +288,7 @@ func TestPeerRPCBudget_WaitReadsTheBudgetWithoutSpendingIt(t *testing.T) {
 	clock := time.Unix(1_700_000_000, 0)
 	now := func() time.Time { return clock }
 	var budget peerRPCBudget
-	budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: 10}, now())
+	budget.apply(&rpcpb.RateLimits{MessagesPerMin: 6000, MessagesBurst: RPCWeightChat}, now())
 
 	firstRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
 	secondRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
@@ -298,6 +298,6 @@ func TestPeerRPCBudget_WaitReadsTheBudgetWithoutSpendingIt(t *testing.T) {
 
 	require.Zero(t, firstRead, "a full bucket sends a chat at once")
 	require.Zero(t, secondRead, "reading the wait must not spend the budget")
-	require.Equal(t, 10*time.Minute/6000, spentRead, "a spent bucket waits one chat's refill at 6000/min")
+	require.Equal(t, RPCWeightChat*time.Minute/6000, spentRead, "a spent bucket waits one chat's refill at 6000/min")
 	require.Zero(t, unadvertised.wait(now(), rpcpbconnect.SessionServiceChatProcedure))
 }
