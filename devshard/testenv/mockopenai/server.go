@@ -185,18 +185,13 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		req.Model = "test-model"
 	}
 
-	// Latency is the time to first response for JSON and the time to first
-	// chunk for streaming. StreamChunkDelay controls only later chunks.
+	// Latency delays Validate (non-stream JSON) only. Stream first-token
+	// delay is StreamFirstTokenDelay inside streamCompletion; StreamChunkDelay
+	// sleeps after each flushed chunk.
 	if f.Latency > 0 && !req.Stream {
-		timer := time.NewTimer(f.Latency)
-		select {
-		case <-timer.C:
-		case <-c.Request().Context().Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
+		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
 			s.recordFailure(c.Request().Context())
-			return c.Request().Context().Err()
+			return err
 		}
 	}
 
@@ -305,7 +300,7 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 }
 
 func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
-	if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
+	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
 		return err
 	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")

@@ -4,6 +4,7 @@ package citest
 
 import (
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -90,8 +91,22 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 	harness.RequireMockValidationsPassed(t, stack, cfg)
 }
 
-// TestValidationLeaseRacePendingStretch covers manual plan §7a: slow ML keeps
-// leases pending while exclusivity still holds.
+// validateHoldLatencyMs is long enough that pending stays elevated through the
+// stretch window + first-token follow-up, then drains after ResetMockOpenAIFault.
+const validateHoldLatencyMs = 12_000
+
+// pendingStretchHold is sampled exclusivity while Validate is still in-flight.
+// Must stay well below validateHoldLatencyMs so pending does not drain mid-hold.
+const pendingStretchHold = 3 * time.Second
+
+// TestValidationLeaseRacePendingStretch covers manual plan §7a on one shared
+// stack: Validate-only SlowMockOpenAI holds pending with exclusivity, Execute
+// stays first-token healthy, then pending drains after fault reset.
+//
+// Subtests:
+//   - streamClient — client stream API (interchangeable under always-stream)
+//   - nonStreamClientAlwaysStream — non-stream client under pinned ForceUpstreamStreaming
+//     (the path that used to 502 when latency_ms leaked onto stream ML calls)
 func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -108,6 +123,7 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	harness.PatchGatewayForceUpstreamStreaming(t, client, eps.GatewayHTTP, true)
 	dapi := harness.MockDAPIFromEndpoints(eps)
 	harness.SetValidationRate100(t, client, dapi.HTTP)
 
@@ -121,43 +137,165 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
 	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
 
-	harness.Step(t, "slow mock-openai so leases stay pending during Validate")
-	harness.SlowMockOpenAI(t, client, mockOpenAI, 12_000)
+	t.Run("streamClient", func(t *testing.T) {
+		runPendingStretchOnStack(t, stack, cfg, eps, client, mockOpenAI, model, "7a-stream", true)
+	})
+	t.Run("nonStreamClientAlwaysStream", func(t *testing.T) {
+		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
+		harness.WaitLeasePendingZero(t, stack, cfg, 2*time.Minute)
+		runPendingStretchOnStack(t, stack, cfg, eps, client, mockOpenAI, model, "7a-always-stream", false)
+	})
+}
+
+func runPendingStretchOnStack(
+	t *testing.T,
+	stack *harness.Stack,
+	cfg *config.File,
+	eps harness.Endpoints,
+	client *http.Client,
+	mockOpenAI, model, label string,
+	useStreamClient bool,
+) {
+	t.Helper()
+
+	harness.Step(t, "%s: SlowMockOpenAI Validate latency=%dms, stream first-token immediate", label, validateHoldLatencyMs)
+	harness.SlowMockOpenAI(t, client, mockOpenAI, validateHoldLatencyMs)
 
 	var wg sync.WaitGroup
-	var loadErrs atomic.Int32
-	for i := 0; i < 4; i++ {
+	var loadOK, loadErrs, firstTokenOK atomic.Int32
+	var fastestFirstToken atomic.Int64 // nanoseconds; 0 = none
+	const nLoad = 4
+	for i := 0; i < nLoad; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			req := harness.ChatCompletionRequest{
 				Model: model,
 				Messages: []harness.ChatMessage{
-					{Role: "user", Content: fmt.Sprintf("citest validation lease race 7a slow %d", i)},
+					{Role: "user", Content: fmt.Sprintf("citest validation lease race %s slow %d", label, i)},
 				},
 				MaxTokens: 16,
 			}
 			slowClient := harness.GatewayChatClient()
 			slowClient.Timeout = 3 * time.Minute
-			// Stream so SlowMockOpenAI latency does not delay first token.
-			if _, err := harness.TryPostGatewayChatCompletionStream(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
-				loadErrs.Add(1)
-				t.Logf("citest: 7a chat %d: %v", i, err)
+			if useStreamClient {
+				res, err := harness.TryPostGatewayChatCompletionStreamTimed(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req)
+				if err != nil {
+					loadErrs.Add(1)
+					t.Logf("citest: %s chat %d: %v", label, i, err)
+					return
+				}
+				recordFirstToken(&firstTokenOK, &fastestFirstToken, res.FirstToken)
+				loadOK.Add(1)
+				return
 			}
+			// Non-stream client under always-stream: full JSON OK implies gateway
+			// got first token; dedicated stream probes below measure TTFT explicitly.
+			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
+				loadErrs.Add(1)
+				t.Logf("citest: %s chat %d: %v", label, i, err)
+				return
+			}
+			loadOK.Add(1)
 		}(i)
+	}
+	if !useStreamClient {
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				req := harness.ChatCompletionRequest{
+					Model: model,
+					Messages: []harness.ChatMessage{
+						{Role: "user", Content: fmt.Sprintf("citest validation lease race %s ttft %d", label, i)},
+					},
+					MaxTokens: 16,
+				}
+				probe := harness.GatewayChatClient()
+				probe.Timeout = 3 * time.Minute
+				res, err := harness.TryPostGatewayChatCompletionStreamTimed(probe, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req)
+				if err != nil {
+					t.Logf("citest: %s ttft probe %d: %v", label, i, err)
+					return
+				}
+				recordFirstToken(&firstTokenOK, &fastestFirstToken, res.FirstToken)
+			}(i)
+		}
 	}
 
 	pending := harness.WaitLeasePending(t, stack, cfg, 1, 45*time.Second)
 	require.Equal(t, 0, pending.DuplicateGroups)
-	harness.Step(t, "observed pending=%d under slow ML", pending.Pending)
+	harness.RequireLeaseOneOwnerPerInference(t, pending)
+	harness.Step(t, "%s: observed pending=%d; holding stretch with exclusivity", label, pending.Pending)
 
+	var sawOKWhilePending, sawFirstTokenWhilePending atomic.Bool
+	peak := harness.HoldLeasePendingStretch(t, stack, cfg, 1, pendingStretchHold, 500*time.Millisecond, func(_ harness.LeaseSnapshot) {
+		if loadOK.Load() > 0 {
+			sawOKWhilePending.Store(true)
+		}
+		if firstTokenOK.Load() > 0 {
+			sawFirstTokenWhilePending.Store(true)
+		}
+	})
+
+	// Validate latency is 12s; stretch is 3s. Keep requiring pending≥1 until we
+	// have seen Execute progress (first token and full chat OK).
+	followUp := time.Duration(validateHoldLatencyMs)*time.Millisecond - pendingStretchHold - 2*time.Second
+	if followUp < 3*time.Second {
+		followUp = 3 * time.Second
+	}
+	if !sawOKWhilePending.Load() || !sawFirstTokenWhilePending.Load() {
+		ok := harness.AssertEventually(t, followUp, 250*time.Millisecond, func() bool {
+			snap, err := stack.TryPostgresLeaseSnapshot(cfg)
+			if err != nil || snap.Pending < 1 {
+				return false
+			}
+			if loadOK.Load() > 0 {
+				sawOKWhilePending.Store(true)
+			}
+			if firstTokenOK.Load() > 0 {
+				sawFirstTokenWhilePending.Store(true)
+			}
+			return sawOKWhilePending.Load() && sawFirstTokenWhilePending.Load()
+		})
+		require.True(t, ok,
+			"%s: expected chat OK + first-token while pending≥1 (ok=%d err=%d firstToken=%d)",
+			label, loadOK.Load(), loadErrs.Load(), firstTokenOK.Load())
+	}
+	require.True(t, sawOKWhilePending.Load(),
+		"%s: Execute must succeed while Validate still holds pending (ok=%d err=%d)",
+		label, loadOK.Load(), loadErrs.Load())
+	require.True(t, sawFirstTokenWhilePending.Load(),
+		"%s: first content token must arrive while pending≥1 (firstTokenOK=%d)",
+		label, firstTokenOK.Load())
+	ft := time.Duration(fastestFirstToken.Load())
+	require.Greater(t, ft, time.Duration(0))
+	require.Less(t, ft, harness.GatewayFirstTokenFloor,
+		"%s: first token %s should stay under gateway floor %s", label, ft, harness.GatewayFirstTokenFloor)
+
+	harness.Step(t, "%s: reset SlowMockOpenAI; wait pending drain / terminal growth", label)
 	harness.ResetMockOpenAIFault(t, client, mockOpenAI)
+	drain := harness.WaitLeasePendingDrain(t, stack, cfg, peak.Submitted+peak.Skipped, peak.Pending, 2*time.Minute)
 	wg.Wait()
-	time.Sleep(2 * time.Second)
-	require.Less(t, loadErrs.Load(), int32(4), "all slow chats failed; cannot trust pending stretch")
 
-	final := stack.PostgresLeaseSnapshot(t, cfg)
-	harness.RequireLeaseExclusivityPass(t, final, 1)
+	require.Less(t, loadErrs.Load(), int32(nLoad), "%s: all slow chats failed; cannot trust pending stretch", label)
+	harness.RequireLeaseExclusivityPass(t, drain, 1)
+}
+
+func recordFirstToken(ok *atomic.Int32, fastestNS *atomic.Int64, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	ok.Add(1)
+	for {
+		prev := fastestNS.Load()
+		if prev != 0 && int64(d) >= prev {
+			return
+		}
+		if fastestNS.CompareAndSwap(prev, int64(d)) {
+			return
+		}
+	}
 }
 
 // TestValidationLeaseRaceStaleReclaim covers manual plan §7b: graceful stop
@@ -211,9 +349,9 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 				},
 				MaxTokens: 16,
 			}
-			// Stream so SlowMockOpenAI latency does not delay first token.
+			// Non-stream client is fine under SlowMockOpenAI (Validate-only latency).
 			// Chat may fail after the replica is stopped; best-effort to create pending leases.
-			if _, err := harness.TryPostGatewayChatCompletionStream(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
+			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
 				t.Logf("citest: 7b chat %d: %v", i, err)
 			}
 		}(i)
@@ -221,6 +359,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 
 	pending := harness.WaitLeasePending(t, stack, cfg, 1, 40*time.Second)
 	require.Equal(t, 0, pending.DuplicateGroups)
+	harness.RequireLeaseOneOwnerPerInference(t, pending)
 	submittedBefore := pending.Submitted
 	pendingBefore := pending.Pending
 	wantNonce := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).LatestNonce

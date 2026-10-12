@@ -42,16 +42,22 @@ func DefaultConfig() Config {
 }
 
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
+//
+// Latency delays non-stream JSON only (Validate). StreamFirstTokenDelay delays
+// the first SSE chunk (Execute TTFT). StreamChunkDelay sleeps after each
+// flushed chunk, so the first token stays immediate when StreamFirstTokenDelay
+// is zero. Do not put Validate latency in front of the first stream chunk.
 type FaultConfig struct {
-	Latency          time.Duration
-	HTTPStatus       int // 0 = OK
-	FailureRate      float64
-	Hang             bool // accept the request and wait for its context to be cancelled
-	DropFirstChunk   bool
-	PartialStream    bool   // omit final chunk + [DONE]
-	SSEErrorMessage  string // if set: HTTP 200 stream with OpenAI/vLLM error event + [DONE]
-	StreamChunkDelay time.Duration
-	PauseStream      bool // pause after first content chunk until testenv release
+	Latency               time.Duration
+	StreamFirstTokenDelay time.Duration
+	HTTPStatus            int // 0 = OK
+	FailureRate           float64
+	Hang                  bool // accept the request and wait for its context to be cancelled
+	DropFirstChunk        bool
+	PartialStream         bool   // omit final chunk + [DONE]
+	SSEErrorMessage       string // if set: HTTP 200 stream with OpenAI/vLLM error event + [DONE]
+	StreamChunkDelay      time.Duration
+	PauseStream           bool // pause after first content chunk until testenv release
 	// StreamErrorEnvelope returns HTTP 200 text/event-stream with an OpenAI
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
@@ -76,6 +82,7 @@ func (f FaultConfig) ShouldFail(body []byte) bool {
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
 	LatencyMs           *int    `json:"latency_ms,omitempty"`
+	StreamTTFTMs        *int    `json:"stream_ttft_ms,omitempty"`
 	HTTPStatus          *int    `json:"http_status,omitempty"`
 	DropFirstChunk      *bool   `json:"drop_first_chunk,omitempty"`
 	PartialStream       *bool   `json:"partial_stream,omitempty"`
@@ -89,6 +96,9 @@ type FaultPatch struct {
 func (p FaultPatch) apply(dst *FaultConfig) {
 	if p.LatencyMs != nil {
 		dst.Latency = time.Duration(*p.LatencyMs) * time.Millisecond
+	}
+	if p.StreamTTFTMs != nil {
+		dst.StreamFirstTokenDelay = time.Duration(*p.StreamTTFTMs) * time.Millisecond
 	}
 	if p.HTTPStatus != nil {
 		dst.HTTPStatus = *p.HTTPStatus

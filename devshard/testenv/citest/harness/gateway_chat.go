@@ -209,47 +209,65 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 	return content, sawDone
 }
 
+// StreamChatTimed is the result of an incremental SSE chat: FirstToken is set
+// when the first content delta arrives (gateway first-token floor signal).
+type StreamChatTimed struct {
+	Content    string
+	FirstToken time.Duration // 0 if no content delta was seen
+	SawDone    bool
+}
+
+// GatewayFirstTokenFloor is the default redundancy first-token timeout floor
+// (~1s). Timed stream probes under SlowMockOpenAI should land well under this.
+const GatewayFirstTokenFloor = time.Second
+
 // TryPostGatewayChatCompletionStream is the worker-safe stream variant of
-// PostGatewayChatCompletionStream. Prefer it under SlowMockOpenAI: latency_ms
-// delays Validate (stream=false) only; stream first tokens still flush
-// immediately so the gateway first-token floor is not tripped.
+// PostGatewayChatCompletionStream. Under SlowMockOpenAI, latency_ms delays
+// Validate only; with stream_ttft_ms=0 the first SSE chunk flushes immediately
+// so the gateway first-token floor stays green (client stream or non-stream).
 func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, err error) {
+	res, err := TryPostGatewayChatCompletionStreamTimed(client, gatewayURL, adminAPIKey, req)
+	return res.Content, err
+}
+
+// TryPostGatewayChatCompletionStreamTimed streams the response incrementally
+// and records time-to-first-content-delta before draining to [DONE].
+func TryPostGatewayChatCompletionStreamTimed(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (StreamChatTimed, error) {
+	var out StreamChatTimed
 	if client == nil {
 		client = GatewayChatClient()
 	}
 	req.Stream = true
 	data, err := json.Marshal(req)
 	if err != nil {
-		return "", err
+		return out, err
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	if err != nil {
-		return "", err
+		return out, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 	if adminAPIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
 	}
+	start := time.Now()
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return "", err
+		return out, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", err
-	}
 	if resp.StatusCode >= 300 {
-		return "", fmt.Errorf("POST %s: %d %s", gatewayURL+"/v1/chat/completions", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return out, fmt.Errorf("POST %s: %d %s", gatewayURL+"/v1/chat/completions", resp.StatusCode, string(body))
 	}
 	var assembled strings.Builder
-	var sawDone bool
-	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "data: [DONE]" {
-			sawDone = true
+			out.SawDone = true
 			continue
 		}
 		if !strings.HasPrefix(line, "data: ") {
@@ -269,21 +287,27 @@ func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAP
 		if delta == nil {
 			continue
 		}
-		if s, ok := delta["content"].(string); ok {
+		if s, ok := delta["content"].(string); ok && s != "" {
+			if out.FirstToken == 0 {
+				out.FirstToken = time.Since(start)
+			}
 			assembled.WriteString(s)
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return "", err
+		return out, err
 	}
-	if !sawDone {
-		return assembled.String(), fmt.Errorf("stream missing data: [DONE]")
+	out.Content = assembled.String()
+	if !out.SawDone {
+		return out, fmt.Errorf("stream missing data: [DONE]")
 	}
-	content = assembled.String()
-	if content == "" {
-		return "", fmt.Errorf("stream assembled empty content")
+	if out.Content == "" {
+		return out, fmt.Errorf("stream assembled empty content")
 	}
-	return content, nil
+	if out.FirstToken == 0 {
+		return out, fmt.Errorf("stream completed without a content delta")
+	}
+	return out, nil
 }
 
 // PostGatewayChatHTTP posts /v1/chat/completions and returns status, headers, and body.

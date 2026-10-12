@@ -610,7 +610,7 @@ func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
 	}
 }
 
-func TestLatencyAppliesToJSONAndFirstStreamChunk(t *testing.T) {
+func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
@@ -627,9 +627,14 @@ func TestLatencyAppliesToJSONAndFirstStreamChunk(t *testing.T) {
 	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(streamBody))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	_, _ = io.ReadAll(resp.Body)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "stream must emit a first chunk immediately")
+	require.True(t, strings.HasPrefix(sc.Text(), "data: "))
+	firstChunkAt := time.Since(start)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "streaming inference must honor TTFT latency")
+	require.Less(t, firstChunkAt, 200*time.Millisecond,
+		"latency_ms must not delay the first stream chunk (got %s)", firstChunkAt)
 
 	jsonBody := []byte(`{"model":"test-model","messages":[{"role":"user","content":"slow"}]}`)
 	start = time.Now()
@@ -639,4 +644,49 @@ func TestLatencyAppliesToJSONAndFirstStreamChunk(t *testing.T) {
 	_, _ = io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
 	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "non-stream Validate must honor latency_ms")
+}
+
+func TestStreamTTFTDelaysFirstChunkOnly(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	ttft := 300
+	patch, err := json.Marshal(map[string]int{"stream_ttft_ms": ttft})
+	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = resp.Body.Close()
+
+	streamBody := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"ttft"}]}`)
+	start := time.Now()
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(streamBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "stream did not publish its first chunk")
+	require.GreaterOrEqual(t, time.Since(start), 250*time.Millisecond, "stream_ttft_ms must delay the first chunk")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+}
+
+func TestStreamChunkDelayAfterFirstChunk(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{StreamChunkDelay: 80 * time.Millisecond},
+	}).Handler())
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"abcdefghij"}]}`)
+	start := time.Now()
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "first chunk must flush before StreamChunkDelay")
+	require.Less(t, time.Since(start), 60*time.Millisecond, "first chunk must be immediate")
+	for sc.Scan() {
+	}
+	require.NoError(t, sc.Err())
+	_ = resp.Body.Close()
+	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "later chunks honor stream_chunk_delay_ms")
 }
