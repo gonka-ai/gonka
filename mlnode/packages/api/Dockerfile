@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.30.0-poc-befecf6
+ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.30.0-poc-91099f9-e6988c0@sha256:70320ede0db27ce6c2c3ee73bc7397e3953b936ac93606296b9c0e184188cd5e
 ARG MLNODE_RELEASE_VERSION=unknown
 ARG EXPECTED_VLLM_VERSION=0.30.0
 FROM ${VLLM_BASE_IMAGE} AS base
