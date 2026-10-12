@@ -67,15 +67,6 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 			{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 		},
 	}, nil).Maybe()
-	qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
-		Params: types.Params{EpochParams: &defaultEpochParams},
-		LatestEpoch: types.Epoch{
-			Index:               3,
-			PocStartBlockHeight: 1,
-		},
-		BlockHeight: 100,
-	}, nil)
-
 	mockSeedManager := &MockRandomSeedManager{}
 	mockSeedManager.On("ChangeCurrentSeed").Return()
 	mockSeedManager.On("RequestMoney", mock.AnythingOfType("uint64")).Return()
@@ -99,6 +90,20 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 		cm,
 	)
 	return dispatcher, cm
+}
+
+// expectBlockParams answers EpochInfo with these Params, as the chain does.
+func expectBlockParams(qc *mockParamsQueryClient, resp *types.QueryParamsResponse) *mock.Call {
+	p := resp.Params
+	p.EpochParams = &defaultEpochParams
+	return qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
+		Params: p,
+		LatestEpoch: types.Epoch{
+			Index:               3,
+			PocStartBlockHeight: 1,
+		},
+		BlockHeight: 100,
+	}, nil)
 }
 
 func devshardParamsResponse(
@@ -138,9 +143,7 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	qc := &mockParamsQueryClient{}
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
-	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(true, 20000), nil,
-	).Once()
+	expectBlockParams(qc, devshardParamsResponse(true, 20000)).Once()
 	err := dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 100,
 		Hash:   "real-block-hash-1",
@@ -158,9 +161,7 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	require.Equal(t, "v1", got.Versions[0].Name)
 	require.Equal(t, int64(100), cm.RuntimeParamsBlockHeight())
 
-	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(false, 30000), nil,
-	).Once()
+	expectBlockParams(qc, devshardParamsResponse(false, 30000)).Once()
 	err = dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 101,
 		Hash:   "real-block-hash-2",
@@ -171,6 +172,7 @@ func TestOnNewBlockDispatcher_UpdatesRuntimeCache(t *testing.T) {
 	require.False(t, got.DevshardRequestsEnabled)
 	require.Equal(t, uint32(30000), got.MaxNonce)
 	require.Equal(t, int64(101), cm.RuntimeParamsBlockHeight())
+	qc.AssertNotCalled(t, "Params", mock.Anything, mock.Anything)
 }
 
 func TestOnNewBlockDispatcher_NoNotifyOnUnchangedBlock(t *testing.T) {
@@ -178,7 +180,7 @@ func TestOnNewBlockDispatcher_NoNotifyOnUnchangedBlock(t *testing.T) {
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
 	resp := devshardParamsResponse(true, 20000)
-	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Twice()
+	expectBlockParams(qc, resp).Twice()
 
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 300,
@@ -203,9 +205,7 @@ func TestOnNewBlockDispatcher_ApplyRuntimeConfigBlockIfChanged_Notifies(t *testi
 	qc := &mockParamsQueryClient{}
 	dispatcher, cm := newRuntimeCacheTestDispatcher(t, qc)
 
-	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(true, 20000), nil,
-	).Once()
+	expectBlockParams(qc, devshardParamsResponse(true, 20000)).Once()
 
 	ch := cm.RuntimeConfigNotifier().NotifyChan()
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
@@ -239,9 +239,7 @@ func TestOnNewBlockDispatcher_KeepsVersionsOnDevshardApprovedVersionsError(t *te
 		}
 	}
 	qc.On("DevshardApprovedVersions", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
-	qc.On("Params", mock.Anything, mock.Anything).Return(
-		devshardParamsResponse(false, 30000), nil,
-	).Once()
+	expectBlockParams(qc, devshardParamsResponse(false, 30000)).Once()
 
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 103,
@@ -264,7 +262,7 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 		MaxNonce:                100,
 	})
 
-	qc.On("Params", mock.Anything, mock.Anything).Return(&types.QueryParamsResponse{
+	expectBlockParams(qc, &types.QueryParamsResponse{
 		Params: types.Params{
 			ValidationParams: &types.ValidationParams{
 				TimestampExpiration: 10,
@@ -274,7 +272,7 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 			},
 			DevshardEscrowParams: nil,
 		},
-	}, nil).Once()
+	}).Once()
 
 	require.NotPanics(t, func() {
 		err := dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
@@ -302,7 +300,7 @@ func TestOnNewBlockDispatcher_AppliesFeeTreeFromParams(t *testing.T) {
 
 	resp := devshardParamsResponse(true, 1)
 	resp.Params.FeeParams = fp
-	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+	expectBlockParams(qc, resp).Once()
 
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 400,
@@ -319,13 +317,13 @@ func TestOnNewBlockDispatcher_KeepsFeeTreeOnParamsError(t *testing.T) {
 	dispatcher.applyFeeTree = func(*types.FeeParams) {
 		called = true
 	}
-	qc.On("Params", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
+	qc.On("EpochInfo", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
 
-	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+	require.Error(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 401,
 		Hash:   "fee-tree-params-fail",
 	}))
-	require.False(t, called, "failed Params query must not wipe the last known-good fee cache")
+	require.False(t, called, "failed EpochInfo query must not wipe the last known-good fee cache")
 }
 
 func TestOnNewBlockDispatcher_AppliesNilFeeTreeFromParams(t *testing.T) {
@@ -341,7 +339,7 @@ func TestOnNewBlockDispatcher_AppliesNilFeeTreeFromParams(t *testing.T) {
 
 	resp := devshardParamsResponse(true, 1)
 	resp.Params.FeeParams = nil
-	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+	expectBlockParams(qc, resp).Once()
 
 	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
 		Height: 402,

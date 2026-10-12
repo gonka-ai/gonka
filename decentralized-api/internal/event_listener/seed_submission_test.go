@@ -272,3 +272,24 @@ func TestEnsureSeedSubmittedSerializesDuplicateEvents(t *testing.T) {
 
 	require.Equal(t, 1, manager.generatedCount())
 }
+
+func TestEnsureSeedSubmittedBacksOffWhileSeedNeverLands(t *testing.T) {
+	dispatcher, manager, _ := newSeedTestDispatcher(emptySeedQuery())
+	epoch := seedTestEpoch()
+
+	var heights []int64
+	for h := int64(100); h < 500; h++ {
+		before := manager.generatedCount()
+		dispatcher.ensureSeedSubmitted(context.Background(), epoch, h, seedTestParticipant)
+		if manager.generatedCount() > before {
+			heights = append(heights, h)
+		}
+	}
+	require.Equal(t, []int64{100, 102, 106, 114, 130, 162, 194, 226, 258, 290, 322, 354, 386, 418, 450, 482}, heights)
+
+	next := epoch
+	next.EpochIndex = 3
+	dispatcher.ensureSeedSubmitted(context.Background(), next, 500, seedTestParticipant)
+	dispatcher.ensureSeedSubmitted(context.Background(), next, 502, seedTestParticipant)
+	require.Equal(t, len(heights)+2, manager.generatedCount())
+}

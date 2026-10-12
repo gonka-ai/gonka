@@ -144,7 +144,18 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	statusHold           map[string]statusHold
 }
+
+// statusHold counts consecutive syncs in which a node differed from the chain only by status.
+type statusHold struct {
+	status types.HardwareNodeStatus
+	syncs  int
+}
+
+// hardwareStatusHoldSyncs: no chain logic reads HardwareNode.Status, so a status-only change is
+// submitted once it persists this many syncs; a flapping node no longer costs a tx per flip.
+const hardwareStatusHoldSyncs = 3
 
 type lockEntry struct {
 	nodeID          string
@@ -788,9 +799,19 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 
 		chainNode, exists := chainNodesMap[id]
 		if !exists {
+			delete(b.statusHold, id)
 			diff.NewOrModified = append(diff.NewOrModified, localHWNode)
 		} else if !areHardwareNodesEqual(localHWNode, chainNode) {
-			diff.NewOrModified = append(diff.NewOrModified, localHWNode)
+			if b.statusChangeSettled(id, localHWNode, chainNode) {
+				diff.NewOrModified = append(diff.NewOrModified, localHWNode)
+			}
+		} else {
+			delete(b.statusHold, id)
+		}
+	}
+	for id := range b.statusHold {
+		if _, ok := localNodes[id]; !ok {
+			delete(b.statusHold, id)
 		}
 	}
 
@@ -800,6 +821,31 @@ func (b *Broker) calculateNodesDiff(chainNodesMap map[string]*types.HardwareNode
 		}
 	}
 	return diff
+}
+
+// statusChangeSettled reports whether a node that differs from its chain record should be
+// submitted now: at once if anything besides status changed, else after hardwareStatusHoldSyncs.
+func (b *Broker) statusChangeSettled(id string, local, chain *types.HardwareNode) bool {
+	asChain := *local
+	asChain.Status = chain.Status
+	if !areHardwareNodesEqual(&asChain, chain) {
+		delete(b.statusHold, id)
+		return true
+	}
+	if b.statusHold == nil {
+		b.statusHold = make(map[string]statusHold)
+	}
+	h := b.statusHold[id]
+	if h.status != local.Status {
+		h = statusHold{status: local.Status}
+	}
+	h.syncs++
+	if h.syncs >= hardwareStatusHoldSyncs {
+		delete(b.statusHold, id)
+		return true
+	}
+	b.statusHold[id] = h
+	return false
 }
 
 // convertInferenceNodeToHardwareNode converts a local InferenceNode into a HardwareNode.
