@@ -608,6 +608,31 @@ func (k Keeper) CollectReservedNodeIds(ctx context.Context) map[string]map[strin
 	return reserved
 }
 
+func (k Keeper) CollectReservedNodeIdsAt(ctx context.Context, height int64) map[string]map[string]struct{} {
+	reserved := k.CollectReservedNodeIds(ctx)
+	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
+		for _, n := range shard.Nodes {
+			if n == nil {
+				continue
+			}
+			start, end := trainshardNodeWindow(&shard, n, ReservationScopeShield)
+			if start > height || end < height {
+				continue
+			}
+			set, ok := reserved[n.Participant]
+			if !ok {
+				set = make(map[string]struct{})
+				reserved[n.Participant] = set
+			}
+			set[n.NodeId] = struct{}{}
+		}
+		return false, nil
+	}); err != nil {
+		k.LogError("CollectReservedNodeIdsAt walk failed", types.Training, "error", err)
+	}
+	return reserved
+}
+
 func modelFreeWeight(p *types.ActiveParticipant, modelId string, reservedNodes map[string]struct{}) (int64, bool) {
 	modelIndex := -1
 	for i, m := range p.Models {

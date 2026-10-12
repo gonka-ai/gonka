@@ -451,6 +451,8 @@ func TestEpochBoundaryReservationViewsStaySymmetric(t *testing.T) {
 
 			_, freshKept := kept[key]
 			require.Equal(t, !tc.keepsFrozenWeight, freshKept)
+			_, sampledOut := k.CollectReservedNodeIdsAt(ctx, upcomingEpoch.PocStartBlockHeight)[testutil.Executor]["node-1"]
+			require.Equal(t, tc.keepsFrozenWeight, sampledOut)
 			if !tc.keepsFrozenWeight {
 				require.Empty(t, merged)
 				return

@@ -343,7 +343,7 @@ type KeeperForModelAssigner interface {
 	GetGenesisGuardianAddresses(ctx context.Context) []string
 	GetRootGroupDataWithLiveMembers(ctx context.Context) (types.EpochGroupData, map[string]bool, error)
 	GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (map[string]types.EpochGroupData, map[string]map[string]bool, error)
-	CollectReservedNodeIds(ctx context.Context) map[string]map[string]struct{}
+	CollectReservedNodeIdsAt(ctx context.Context, height int64) map[string]map[string]struct{}
 }
 
 func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[string]bool, trustWeights map[string]int64) int64 {
@@ -637,7 +637,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 			types.Allocation, "error", subErr)
 	}
 	// assembly is closed through PoC and cPoC, so no node becomes reserved while the episode runs
-	reserved := ma.keeper.CollectReservedNodeIds(ctx)
+	reserved := ma.keeper.CollectReservedNodeIdsAt(ctx, anchorHeight)
 
 	for _, modelId := range sortedModelIds {
 		currentSubData := subGroupDataByModel[modelId]

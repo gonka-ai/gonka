@@ -56,7 +56,7 @@ type mockKeeperForModelAssigner struct {
 	reserved           map[string]map[string]struct{} // participant -> node ids held by training
 }
 
-func (m *mockKeeperForModelAssigner) CollectReservedNodeIds(ctx context.Context) map[string]map[string]struct{} {
+func (m *mockKeeperForModelAssigner) CollectReservedNodeIdsAt(ctx context.Context, height int64) map[string]map[string]struct{} {
 	return m.reserved
 }
 
