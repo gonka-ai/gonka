@@ -103,6 +103,46 @@ func TestPruneClosedTrainshards_KeepsTwoEpochsEvenIfRetentionWasSetTooLow(t *tes
 	require.ErrorIs(t, err, collections.ErrNotFound)
 }
 
+func TestPruneClosedTrainshards_KeepsAShardUntilItsNodesReturn(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params := types.DefaultParams()
+	require.NoError(t, k.SetParams(ctx, params))
+
+	const closedAt = int64(10)
+	floor := 2*params.EpochParams.EpochLength + params.TrainingParams.ReleaseBufferBlocks
+	until := closedAt + floor + 50
+	shard := types.Trainshard{
+		TrainshardId:   1,
+		Creator:        "creator",
+		Status:         types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		ClosedAtHeight: closedAt,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant:         "host",
+			NodeId:              "node-1",
+			Status:              types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
+			ReleasedAtHeight:    closedAt,
+			ReservedUntilHeight: until,
+		}},
+	}
+	require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
+	require.NoError(t, k.TrainshardClosedIndex.Set(ctx, collections.Join(closedAt, shard.TrainshardId)))
+
+	for _, height := range []int64{closedAt + floor, until} {
+		k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(height))
+		_, err := k.Trainshards.Get(ctx, shard.TrainshardId)
+		require.NoError(t, err, height)
+	}
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until + 1))
+	_, err := k.Trainshards.Get(ctx, shard.TrainshardId)
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	closed, err := k.TrainshardClosedIndex.Iterate(ctx, nil)
+	require.NoError(t, err)
+	defer closed.Close()
+	require.False(t, closed.Valid())
+}
+
 func TestExpireTrainshards_DrainsBacklogAcrossBlocks(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

@@ -154,6 +154,24 @@ func (k Keeper) pruneClosedTrainshards(ctx context.Context, height int64, retent
 	}
 
 	for _, key := range prunable {
+		if shard, err := k.Trainshards.Get(ctx, key.K2()); err == nil {
+			var until int64
+			for _, n := range shard.Nodes {
+				if n != nil && n.ReservedUntilHeight > until {
+					until = n.ReservedUntilHeight
+				}
+			}
+			if until >= height {
+				if err := k.TrainshardClosedIndex.Set(ctx, collections.Join(until+1-retention, key.K2())); err != nil {
+					k.LogError("trainshard prune defer failed", types.System, "trainshard_id", key.K2(), "error", err)
+					continue
+				}
+				if err := k.TrainshardClosedIndex.Remove(ctx, key); err != nil {
+					k.LogError("trainshard prune defer remove failed", types.System, "trainshard_id", key.K2(), "error", err)
+				}
+				continue
+			}
+		}
 		if err := k.Trainshards.Remove(ctx, key.K2()); err != nil {
 			k.LogError("trainshard prune remove failed", types.System, "trainshard_id", key.K2(), "error", err)
 			continue
