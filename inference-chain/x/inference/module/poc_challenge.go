@@ -187,15 +187,15 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 		measured[ch.Target] = fullMeasured[ch.Target]
 	}
 	fullExpected := weightByParticipant(participants.Participants, presentScales)
-	reserved := am.keeper.CollectEpochReservedNodeWeightsBetween(ctx, ch.EpochIndex, ch.StartHeight, finish, keeper.ReservationScopeShield)
+	reserved := am.keeper.CollectEpochReservedNodeWeightsBetween(ctx, ch.EpochIndex, ch.StartHeight, finish-1, keeper.ReservationScopeShield)
 	shielded, _ := reservedConfirmationWeights(
 		map[string][]*types.TrainshardReservedNode{ch.Target: reserved[ch.Target]},
 		&types.PreservedNodesSnapshot{},
 		types.ConfirmationWeightCoefficients(presentScales),
 	)
 	expected := fullExpected[ch.Target] - shielded[ch.Target]
-	if expected < 0 {
-		expected = 0
+	if expected <= 0 {
+		return nil
 	}
 	totalExpected := map[string]int64{ch.Target: expected}
 

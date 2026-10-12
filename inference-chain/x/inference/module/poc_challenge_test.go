@@ -463,10 +463,38 @@ func TestDecideCurrentChallengeSegment_ReservedNodeIsNotExpected(t *testing.T) {
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
 }
 
+func TestDecideCurrentChallengeSegment_ReservationAtTheSegmentFinishIsExpected(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 50, count: 50, accept: true},
+		{id: "m2", weight: 50},
+	})
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 500,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: testutil.Executor,
+			NodeId:      "m2-n",
+			ModelId:     "m2",
+			PocWeight:   50,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
+}
+
 func TestDecideCurrentChallengeSegment_FullyReservedHostIsNotFailed(t *testing.T) {
 	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
 		{id: "m1", weight: 100},
 	})
+	p, ok := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, ok)
+	p.CurrentEpochStats.ConfirmationPoCRatio = types.DecimalFromFloat(0.1)
+	require.NoError(t, k.Participants.Set(ctx, mustAccAddr(t, testutil.Executor), p))
 	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
 		TrainshardId:    1,
 		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
