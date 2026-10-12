@@ -2,10 +2,7 @@ package mockdapi
 
 import (
 	"context"
-	"errors"
-	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"common/chainoracle/blocks"
@@ -99,14 +96,16 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 // nodeManagerServer augments the chainoracle params NodeManager (GetRuntimeConfig
 // + AcquireMLNode + …) with a mock GetHostEvents producer for the escrow
 // long-poll warm scenario. Other RPCs are inherited from the embedded params server.
+//
+// When a test-only ML pool is configured, AcquireMLNode still goes through
+// params.Server so mlnode_acquire/release Stage lines and lock tracking stay
+// truthful; this wrapper only tallies /testenv/ml-allocations.
 type nodeManagerServer struct {
 	*params.Server
 	ring         *hostEventRing
 	blocks       blocks.BlockOracle
 	omitBlocks   bool
 	mlNodes      []MLNode
-	nextNode     atomic.Uint64
-	lockSeq      atomic.Uint64
 	allocationMu sync.Mutex
 	allocations  map[string]uint64
 }
@@ -122,35 +121,17 @@ func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle 
 	}
 }
 
-// AcquireMLNode uses the configured test-only pool when present. With no pool,
-// it preserves the historical single-endpoint params-server behavior.
+// AcquireMLNode delegates to params.Server (stage logs + lock table) and, when
+// a test-only pool is configured, increments /testenv/ml-allocations.
 func (s *nodeManagerServer) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	if len(s.mlNodes) == 0 {
-		return s.Server.AcquireMLNode(ctx, req)
+	resp, err := s.Server.AcquireMLNode(ctx, req)
+	if err != nil || len(s.mlNodes) == 0 {
+		return resp, err
 	}
-	excluded := make(map[string]struct{}, len(req.GetExcludedNodes()))
-	for _, id := range req.GetExcludedNodes() {
-		excluded[id] = struct{}{}
-	}
-	available := make([]MLNode, 0, len(s.mlNodes))
-	for _, node := range s.mlNodes {
-		if _, skip := excluded[node.ID]; !skip {
-			available = append(available, node)
-		}
-	}
-	if len(available) == 0 {
-		return nil, errors.New("no ML nodes available")
-	}
-	node := available[(s.nextNode.Add(1)-1)%uint64(len(available))]
-	id := s.lockSeq.Add(1)
 	s.allocationMu.Lock()
-	s.allocations[node.ID]++
+	s.allocations[resp.NodeId]++
 	s.allocationMu.Unlock()
-	return &gen.AcquireMLNodeResponse{
-		LockId:   "mock-" + node.ID + "-" + req.GetModel() + "-" + strconv.FormatUint(id, 10),
-		Endpoint: node.Endpoint,
-		NodeId:   node.ID,
-	}, nil
+	return resp, nil
 }
 
 func (s *nodeManagerServer) AllocationCounts() map[string]uint64 {
