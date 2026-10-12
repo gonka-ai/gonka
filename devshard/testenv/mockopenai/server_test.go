@@ -256,6 +256,46 @@ func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
 		"validators reject decoded-text logprobs before ML replay: %+v", enforced)
 }
 
+// Test flow:
+// 1. Request a completion with logprobs and top_logprobs=5, as the executor does.
+// 2. Require every alternative's bytes to be the ASCII of its token id.
+// 3. Compress the response and require it to slim instead of being refused.
+func TestChatCompletions_LogprobsCompressLikeVLLM(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","logprobs":true,"top_logprobs":5,"messages":[{"role":"user","content":"compress me"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cr, err := completionapi.NewCompletionResponseFromBytes(raw)
+	require.NoError(t, err)
+	logprobs := cr.ExtractLogits()
+	require.NotEmpty(t, logprobs)
+	for _, position := range logprobs {
+		require.Len(t, position.TopLogprobs, 5)
+		for _, alternative := range position.TopLogprobs {
+			require.Equal(t, alternative.Token, string(intsToBytes(alternative.Bytes)))
+		}
+	}
+
+	compressed, err := completionapi.CompressResponsePayload(raw)
+	require.NoError(t, err)
+	require.Less(t, len(compressed), len(raw))
+}
+
+func intsToBytes(values []int) []byte {
+	out := make([]byte, len(values))
+	for i, value := range values {
+		out[i] = byte(value)
+	}
+	return out
+}
+
 func TestChatCompletions_HonestReplayPassesValidation(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
