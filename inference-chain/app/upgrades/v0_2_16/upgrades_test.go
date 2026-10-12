@@ -72,7 +72,7 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
 	require.True(t, found)
 	require.Len(t, seeded.ConfirmationWeightScales, 3)
-	frozen, err := coefficient.Freeze(got.PocParams)
+	frozen, err := coefficient.Freeze(got.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"model-a": 100, "model-b": 100, "model-c": 100}
 	result, err := coefficient.Calculate(frozen.Params, frozen.Scales, seeded.ConfirmationWeightScales, totals, totals, nil, true)
@@ -168,7 +168,7 @@ func TestMigrateDynamicCoefficientParamsMeasuredModels(t *testing.T) {
 	// Seeded bases, rather than the lower bounds, drive the first epoch's adjustment.
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
 	require.True(t, found)
-	frozen, err := coefficient.Freeze(got.PocParams)
+	frozen, err := coefficient.Freeze(got.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"MiniMaxAI/MiniMax-M2.7": 1000}
 	result, err := coefficient.Calculate(frozen.Params, frozen.Scales, seeded.ConfirmationWeightScales, totals, totals, nil, true)
@@ -585,7 +585,7 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 	params, err = k.GetParams(ctx)
 	require.NoError(t, err)
 
-	frozen, err := coefficient.Freeze(params.PocParams)
+	frozen, err := coefficient.Freeze(params.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"MiniMaxAI/MiniMax-M2.7": 100, "zai-org/GLM-5.3-Flash": 100}
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
@@ -638,7 +638,7 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// The next snapshot adopts the proposal and carries the previous base coefficients.
-	next, err := coefficient.Freeze(updated.PocParams)
+	next, err := coefficient.Freeze(updated.PocParams, nil)
 	require.NoError(t, err)
 	require.Equal(t, params.PocParams.DynamicCoefficientParams, next.Params)
 	third, err := coefficient.Calculate(next.Params, next.Scales, second.Scales, totals, totals, nil, true)
