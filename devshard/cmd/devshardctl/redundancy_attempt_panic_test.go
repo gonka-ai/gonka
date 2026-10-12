@@ -67,7 +67,8 @@ func TestRunInference_APanickingHostFailsOverToAHealthyOne(t *testing.T) {
 	require.Equal(t, int32(1), panicking.calls.Load(), "the panicking host must have been tried")
 	require.NotEmpty(t, buf.String(), "a healthy host must serve the request")
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, uint32(1), missesForSlot(t, env, 1), "the host whose attempt panicked still owes its nonce a timeout vote")
+	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) == 1 }, testWaitLimit, 20*time.Millisecond,
+		"the host whose attempt panicked still owes its nonce a timeout vote")
 }
 
 func TestRunInference_AWinnerThatPanicsMidStreamEndsTheRequest(t *testing.T) {

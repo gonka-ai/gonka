@@ -1233,6 +1233,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 		hostIdx:  0,
 		nonce:    7,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}), // open: stall recording only runs while SendOnly is live
 	}
 	inf.contentChunks.Store(1)
 	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
@@ -1350,6 +1351,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    1,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	first.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	first.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1361,6 +1363,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    2,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	second.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	second.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1694,7 +1697,11 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 
 	releaseVote()
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[prepared.Nonce()].Status, "the open nonce never reached a timeout vote")
+	// Protocol timeout votes sleep/vote off the outer barrier; TimedOut can land
+	// after the outer cleanup Done once the vote gate opens.
+	require.Eventually(t, func() bool {
+		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
+	}, testWaitLimit, 20*time.Millisecond, "the open nonce never reached a timeout vote")
 }
 
 func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
@@ -1815,7 +1822,10 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	var hostErr *hostApplicationError
 	require.ErrorAs(t, err, &hostErr)
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, uint32(1), missesForSlot(t, env, 1), "the host that rejected the prompt still owes its nonce a timeout vote")
+	// Not-yet-due timeout votes sleep off the drain barrier and apply at the
+	// protocol deadline, so Missed can land after the outer cleanup Done.
+	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) >= 1 }, 3*time.Second, 20*time.Millisecond,
+		"the host that rejected the prompt still owes its nonce a timeout vote")
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {

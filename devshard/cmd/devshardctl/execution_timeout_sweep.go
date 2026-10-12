@@ -19,21 +19,42 @@ func executionTimeoutSweepWindow(config types.SessionConfig) time.Duration {
 	return time.Duration(config.ExecutionTimeout)*time.Second + user.TimeoutBuffer + executionTimeoutSweepGrace
 }
 
+func refusalTimeoutSweepWindow(config types.SessionConfig) time.Duration {
+	return time.Duration(config.RefusalTimeout)*time.Second + user.TimeoutBuffer + executionTimeoutSweepGrace
+}
+
 func deadlineFromStamp(stampedAt int64, now time.Time, window time.Duration) time.Time {
 	return time.Unix(min(stampedAt, now.Unix()), 0).Add(window)
 }
 
-func overdueStartedInferences(state types.EscrowState, now time.Time, budget int) []uint64 {
-	window := executionTimeoutSweepWindow(state.Config)
+// overdueTimeoutInferences returns nonces whose protocol timeout deadline (plus
+// sweep grace) has passed. Started inferences use the execution window from
+// ConfirmedAt; Pending inferences use the refusal window from StartedAt so
+// race-cleanup-deferred refusal votes are not left forever.
+func overdueTimeoutInferences(state types.EscrowState, now time.Time, budget int) []uint64 {
+	executionWindow := executionTimeoutSweepWindow(state.Config)
+	refusalWindow := refusalTimeoutSweepWindow(state.Config)
 	var due []uint64
 	for nonce, inference := range state.Inferences {
 		if len(due) == budget {
 			break
 		}
-		if inference.Status != types.StatusStarted || inference.ConfirmedAt <= 0 {
-			continue
-		}
-		if now.Before(deadlineFromStamp(inference.ConfirmedAt, now, window)) {
+		switch inference.Status {
+		case types.StatusStarted:
+			if inference.ConfirmedAt <= 0 {
+				continue
+			}
+			if now.Before(deadlineFromStamp(inference.ConfirmedAt, now, executionWindow)) {
+				continue
+			}
+		case types.StatusPending:
+			if inference.StartedAt <= 0 {
+				continue
+			}
+			if now.Before(deadlineFromStamp(inference.StartedAt, now, refusalWindow)) {
+				continue
+			}
+		default:
 			continue
 		}
 		due = append(due, nonce)
@@ -82,7 +103,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime == nil || runtime.session == nil || runtime.proxy == nil || runtime.proxy.sm == nil {
 		return 0, 0, 0
 	}
-	if runtime.proxy.sm.Phase() != types.PhaseActive || len(overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget)) == 0 {
+	if runtime.proxy.sm.Phase() != types.PhaseActive || len(overdueTimeoutInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget)) == 0 {
 		return 0, 0, 0
 	}
 	g.mu.Lock()
@@ -100,11 +121,13 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime.proxy.sm.Phase() != types.PhaseActive {
 		return 0, 0, 0
 	}
-	for _, nonce := range overdueStartedInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget) {
+	for _, nonce := range overdueTimeoutInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget) {
 		if ctx.Err() != nil {
 			break
 		}
 		due++
+		// sendTime zero makes a Pending refusal deadline already past once the
+		// sweep selected the nonce by StartedAt; Started uses ConfirmedAt.
 		result, err := runtime.session.HandleTimeout(ctx, nonce, time.Time{}, nil)
 		switch {
 		case result.Applied:

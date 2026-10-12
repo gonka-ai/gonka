@@ -382,6 +382,14 @@ func (m *ManagedStorage) AcquireOneStale(ctx context.Context, escrowID string, o
 	return ls.AcquireOneStale(ctx, escrowID, owner, ttl)
 }
 
+func (m *ManagedStorage) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStaleAmong(ctx, escrowID, epochID, inferenceIDs, owner, ttl)
+}
+
 func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {
 	ls, ok := m.inner.(LeaseStore)
 	if !ok {

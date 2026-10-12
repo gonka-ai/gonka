@@ -925,6 +925,18 @@ func (h *HybridStorage) AcquireOneStale(ctx context.Context, escrowID string, ow
 	return ls.AcquireOneStale(ctx, escrowID, owner, ttl)
 }
 
+func (h *HybridStorage) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return 0, 0, err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStaleAmong(ctx, escrowID, epochID, inferenceIDs, owner, ttl)
+}
+
 func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {
 	b, err := h.routed(escrowID)
 	if err != nil {

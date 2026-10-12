@@ -3394,106 +3394,145 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 	return false
 }
 
-// HandleTimeout handles the full protocol timeout for a failed inference nonce:
-// waits for the protocol deadline, collects timeout votes, and submits
-// MsgTimeoutInference if sufficient votes are gathered.
-// sendTime is when the nonce's network call started.
+// HandleTimeout waits for the protocol deadline, then votes. Gateway race
+// cleanup should prefer WaitTimeoutDeadline off the drain barrier and
+// VoteTimeout under a brief barrier hold so finalize is never blocked on sleep.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
-	reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime)
-	s.mu.Lock()
-	hostIdx := int(nonce % uint64(len(s.group)))
-	hostID := s.HostLabel(hostIdx)
-	s.mu.Unlock()
-
-	logFields := func(extra ...any) []any {
-		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
-		return append(base, extra...)
-	}
-	closed := func() (TimeoutResult, error) {
-		logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
-		return TimeoutResult{Outcome: "skipped", DetailReason: "nonce_closed"}, nil
-	}
-	if s.nonceClosed(nonce) {
-		return closed()
-	}
-
-	if reasonLabel == "execution" {
-		// A receipt moves the inference to Started. Publish its pending
-		// ConfirmStart before asking peers to verify an execution timeout so
-		// they evaluate the same receipt-backed state.
-		st := s.sm.SnapshotState()
-		if rec, ok := st.Inferences[nonce]; !ok {
-			return TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
-		} else if rec.Status == types.StatusPending {
-			if err := s.SendPendingDiff(ctx); err != nil {
-				return TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
-			}
+	for {
+		reason, ready, skipped, err := s.WaitTimeoutDeadline(ctx, nonce, sendTime)
+		if !ready {
+			return skipped, err
 		}
+		result, needsWait, err := s.VoteTimeout(ctx, nonce, sendTime, payload, reason)
+		if needsWait {
+			continue
+		}
+		return result, err
 	}
-	if s.closedByPendingFinish(ctx, nonce) {
-		return closed()
-	}
+}
 
-	// A canceled wait leaves Reason empty, because Reason means the deadline was
-	// reached and callers count an inference timeout from it. Outcome and
-	// DetailReason still report the skip.
-	var reason types.TimeoutReason
-	// A finish can land while the deadline is still ahead. The wait rechecks the
-	// record and publishes a queued finish so the record can close before the
-	// deadline; the check below then skips the vote.
-	recordClosed := func() bool {
+// WaitTimeoutDeadline waits until the protocol timeout deadline for nonce, or
+// until the nonce closes / ctx cancels. On success ready is true and reason is
+// the timeout kind to vote. It may loop internally when a refusal wait ends
+// because a receipt started the inference (execution deadline applies next).
+func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTime time.Time) (reason types.TimeoutReason, ready bool, skipped TimeoutResult, err error) {
+	for {
+		reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime)
+		hostID := s.timeoutHostLabel(nonce)
+		logFields := func(extra ...any) []any {
+			return append([]any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}, extra...)
+		}
+		closed := TimeoutResult{Outcome: "skipped", DetailReason: "nonce_closed"}
 		if s.nonceClosed(nonce) {
-			return true
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
+			return 0, false, closed, nil
 		}
-		s.mu.Lock()
-		queued := HasMsgFinish(s.pendingTxs, nonce)
-		s.mu.Unlock()
-		return queued && s.closedByPendingFinish(ctx, nonce)
-	}
-	if reasonLabel == "execution" {
-		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
-			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
-		}, recordClosed) {
-			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
-		}
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-	} else {
-		if !s.sleepRefusal(ctx, nonce, sendTime, deadline, func() {
-			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
-		}, recordClosed) {
-			if ctx.Err() != nil {
-				return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+
+		if reasonLabel == "execution" {
+			// A receipt moves the inference to Started. Publish its pending
+			// ConfirmStart before asking peers to verify an execution timeout so
+			// they evaluate the same receipt-backed state.
+			st := s.sm.SnapshotState()
+			if rec, ok := st.Inferences[nonce]; !ok {
+				return 0, false, TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
+			} else if rec.Status == types.StatusPending {
+				if err := s.SendPendingDiff(ctx); err != nil {
+					return 0, false, TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
+				}
 			}
 		}
-		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
-	}
+		if s.closedByPendingFinish(ctx, nonce) {
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
+			return 0, false, closed, nil
+		}
 
+		// A finish can land while the deadline is still ahead. The wait rechecks
+		// the record and publishes a queued finish so the record can close before
+		// the deadline; the caller then skips the vote.
+		recordClosed := func() bool {
+			if s.nonceClosed(nonce) {
+				return true
+			}
+			s.mu.Lock()
+			queued := HasMsgFinish(s.pendingTxs, nonce)
+			s.mu.Unlock()
+			return queued && s.closedByPendingFinish(ctx, nonce)
+		}
+		if reasonLabel == "execution" {
+			if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
+				logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
+			}, recordClosed) {
+				return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			}
+			reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+		} else {
+			if !s.sleepRefusal(ctx, nonce, sendTime, deadline, func() {
+				logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
+			}, recordClosed) {
+				if ctx.Err() != nil {
+					return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+				}
+			}
+			reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
+		}
+
+		if s.nonceClosed(nonce) {
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
+			return 0, false, closed, nil
+		}
+		if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
+			// Applied receipt: the executor now owes a finish. Keep waiting here
+			// for the execution deadline so barrier holders never see this sleep.
+			continue
+		}
+		// A queued confirm (not yet Started) ends the refusal wait; VoteTimeout
+		// reports confirmed_before_vote. Do not treat that as an execution wait.
+		return reason, true, TimeoutResult{}, nil
+	}
+}
+
+// VoteTimeout collects timeout votes and submits MsgTimeoutInference for an
+// already-due deadline. It must not sleep for a future protocol deadline.
+// needsWait is true when a recovery receipt started the inference and the
+// caller must WaitTimeoutDeadline again before an execution vote.
+func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload, reason types.TimeoutReason) (result TimeoutResult, needsWait bool, err error) {
+	hostID := s.timeoutHostLabel(nonce)
+	logFields := func(extra ...any) []any {
+		return append([]any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}, extra...)
+	}
 	if s.nonceClosed(nonce) {
-		return closed()
+		logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "nonce_closed"}, false, nil
 	}
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
-		// The receipt landed while waiting. The executor now owes a finish,
-		// so the execution deadline applies instead.
-		return s.HandleTimeout(ctx, nonce, sendTime, payload)
+		// Applied receipt between Wait and Vote; caller must wait for execution.
+		return TimeoutResult{Outcome: "skipped", DetailReason: "deadline_not_due", Reason: "execution"}, true, nil
 	}
-
-	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
-
-	// The challenge is chosen here, after the wait. A verified executor receipt that landed during it
-	// is no longer a refusal: the chain will accept that signature, verifiers reject a refusal against
-	// the started record, and the execution sweep votes the timeout that matches it. An unverified
-	// receipt never sets this stamp. Stop before any vote is sent.
+	// Queued confirm stamp (not yet Started): refusal must not be voted, and we
+	// must not sleep for execution here — same outcome as before the split.
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.inferenceConfirmed(nonce, sendTime) {
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "confirmed_before_vote")...)
-		return TimeoutResult{Outcome: "skipped", DetailReason: "confirmed_before_vote"}, fmt.Errorf("inference %d: confirmed before the refusal vote", nonce)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "confirmed_before_vote"}, false, fmt.Errorf("inference %d: confirmed before the refusal vote", nonce)
 	}
+	if reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime); time.Now().Before(deadline) {
+		// Refuse to sleep under a caller that expected a due vote (e.g. drain
+		// barrier). Gateway schedule loops wait off-barrier and retry.
+		logging.Stage(ctx, "timeout_skipped", logFields(
+			"reason", "deadline_not_due",
+			"timeout_kind", reasonLabel,
+			"remaining_ms", time.Until(deadline).Milliseconds(),
+		)...)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "deadline_not_due", Reason: reasonLabel}, true, nil
+	}
+
+	result = TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
 
 	if elapsed, refusalTimeout, unreachable := s.refusalDeadlineUnreachable(reason, payload); unreachable {
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "refusal_deadline_unreachable",
 			"elapsed_seconds", elapsed, "refusal_timeout_seconds", refusalTimeout)...)
 		result.Outcome = "skipped"
 		result.DetailReason = "refusal_deadline_unreachable"
-		return result, fmt.Errorf("inference %d: refusal deadline unreachable", nonce)
+		return result, false, fmt.Errorf("inference %d: refusal deadline unreachable", nonce)
 	}
 
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)
@@ -3505,11 +3544,11 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		if hasPendingFinish {
 			if err := s.SendPendingDiff(ctx); err != nil {
 				logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
-				return result, fmt.Errorf("publish pending finish before execution timeout: %w", err)
+				return result, false, fmt.Errorf("publish pending finish before execution timeout: %w", err)
 			}
 			if s.recoveryLanded(nonce, reason) {
 				logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
-				return result, nil
+				return result, false, nil
 			}
 			// The pending finish did not apply. It is not evidence the work
 			// completed, so the vote still runs.
@@ -3524,7 +3563,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		if ctx.Err() != nil {
 			result.DetailReason = "context_canceled"
 		}
-		return result, fmt.Errorf("collect timeout votes: %w", err)
+		return result, false, fmt.Errorf("collect timeout votes: %w", err)
 	}
 
 	result.Votes = len(votes)
@@ -3546,7 +3585,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 				result.Outcome = "diff_send_failed"
 			}
 			logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
-			return result, fmt.Errorf("send timeout diff: %w", err)
+			return result, false, fmt.Errorf("send timeout diff: %w", err)
 		}
 		if result.Applied {
 			result.Outcome = "applied"
@@ -3558,7 +3597,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 			result.DetailReason = "timeout_not_applied"
 		}
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
-		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
+		return result, false, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
 	recovery = host.RecoveryTxsFor(recovery, nonce)
@@ -3571,16 +3610,16 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		s.mu.Unlock()
 		if err := s.SendPendingDiff(ctx); err != nil {
 			logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
-			return result, fmt.Errorf("publish timeout recovery: %w", err)
+			return result, false, fmt.Errorf("publish timeout recovery: %w", err)
 		}
 		if s.recoveryLanded(nonce, reason) {
 			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
 			if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
-				// A recovered receipt starts the record, and the executor
-				// still owes a finish by the execution deadline.
-				return s.HandleTimeout(ctx, nonce, sendTime, payload)
+				// A recovered receipt starts the record; caller waits for the
+				// execution deadline off any drain barrier.
+				return result, true, nil
 			}
-			return result, nil
+			return result, false, nil
 		}
 		// The txs were returned but did not apply. They are not evidence the
 		// work completed, so the vote stands.
@@ -3597,7 +3636,16 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		result.DetailReason = "vote_weight_short"
 	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
-	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+	return result, false, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+func (s *Session) timeoutHostLabel(nonce uint64) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.group) == 0 {
+		return ""
+	}
+	return s.HostLabel(int(nonce % uint64(len(s.group))))
 }
 
 // recoveryTxsForReason keeps the transactions a rejected vote can still
