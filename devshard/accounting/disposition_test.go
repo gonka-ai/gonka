@@ -331,6 +331,7 @@ func TestUsageMappingIsSharedWithTheGateway(t *testing.T) {
 func TestTimeoutActionRecordedMatchesRecorder(t *testing.T) {
 	require.False(t, TimeoutActionRecorded("started", "none"))
 	require.False(t, TimeoutActionRecorded("deferred", "deadline_not_due"))
+	require.False(t, TimeoutActionRecorded("scheduled", "deadline_not_due"))
 	require.False(t, TimeoutActionRecorded("skipped", "nonce_already_finished"))
 	require.False(t, TimeoutActionRecorded("skipped", "empty_stream_without_non_empty_winner"))
 	require.True(t, TimeoutActionRecorded("skipped", "phase_transition_aborted"))

@@ -11,6 +11,7 @@ import (
 
 	"devshard/host"
 	"devshard/types"
+	"devshard/user"
 )
 
 func TestJoinCanceledInflightsAbandonsHungDone(t *testing.T) {
@@ -127,16 +128,20 @@ func TestAwaitInflightDonesDrainsBeforeTimeout(t *testing.T) {
 // Test flow:
 //  1. Leave a Started loser whose execution deadline is still ahead.
 //  2. Run voteTimeoutsForFailedRequest under goTrackedRaceCleanup.
-//  3. Expect the barrier to clear without sleeping until that execution
-//     deadline; the nonce stays Started for the timeout sweep. Refusal waits
-//     still run under the barrier and are covered elsewhere.
-func TestGoTrackedRaceCleanupReleasesBarrierWhenTimeoutDeadlineIsFuture(t *testing.T) {
+//  3. Expect the outer barrier to clear immediately (Wait is off-barrier).
+//  4. Expect TimedOut near the protocol deadline under a brief second barrier hold.
+func TestGoTrackedRaceCleanupSchedulesFutureExecutionTimeoutOffBarrier(t *testing.T) {
+	prevBuffer := user.TimeoutBuffer
+	user.TimeoutBuffer = 150 * time.Millisecond
+	t.Cleanup(func() { user.TimeoutBuffer = prevBuffer })
+
 	env := setupTestProxy(t, 3, nil, true)
 	nonce := startedInferenceConfirmedAt(t, env, time.Now())
 	due, reason, deadline := timeoutDeadlineDue(env.session, nonce, time.Now())
 	require.False(t, due, "fixture must leave an execution deadline ahead")
 	require.Equal(t, "execution", reason)
-	require.True(t, deadline.After(time.Now()))
+	waitBudget := time.Until(deadline)
+	require.Greater(t, waitBudget, 50*time.Millisecond)
 
 	var started, finished atomic.Int64
 	e := env.proxy.redundancy
@@ -160,10 +165,19 @@ func TestGoTrackedRaceCleanupReleasesBarrierWhenTimeoutDeadlineIsFuture(t *testi
 		e.voteTimeoutsForFailedRequest(ctx, []*inflight{loser}, defaultParams())
 	})
 
-	require.Equal(t, int64(1), started.Load())
-	require.Eventually(t, func() bool { return finished.Load() == 1 }, 2*time.Second, 10*time.Millisecond,
-		"pendingRaceCleanup must clear without waiting for a future HandleTimeout deadline")
-	require.Less(t, time.Since(start), time.Until(deadline),
-		"cleanup must finish before the protocol execution deadline")
-	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status)
+	require.Equal(t, int64(1), started.Load(), "outer cleanup announces the barrier")
+	require.Eventually(t, func() bool { return finished.Load() >= 1 }, 500*time.Millisecond, 5*time.Millisecond,
+		"outer pendingRaceCleanup must clear without sleeping until the execution deadline")
+	require.Less(t, time.Since(start), 100*time.Millisecond,
+		"scheduling the deadline wait must not hold the outer barrier")
+	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status,
+		"vote must not run before the protocol deadline")
+
+	require.Eventually(t, func() bool {
+		return env.sm.SnapshotState().Inferences[nonce].Status == types.StatusTimedOut
+	}, waitBudget+2*time.Second, 20*time.Millisecond,
+		"scheduled VoteTimeout must apply at the protocol deadline")
+	require.GreaterOrEqual(t, time.Since(start), waitBudget-50*time.Millisecond)
+	require.Eventually(t, func() bool { return finished.Load() >= 2 }, time.Second, 10*time.Millisecond,
+		"the deadline vote must take a brief second barrier hold")
 }

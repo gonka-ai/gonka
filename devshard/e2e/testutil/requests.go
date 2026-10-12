@@ -315,10 +315,10 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 
 // The gateway refuses finalize with 409 while the escrow still has work in
 // flight. Race cleanup outlives the winning completion: it waits up to
-// SecondaryWaitAfterWinner plus a short cancel join for speculative losers,
-// and may still run a bounded refusal HandleTimeout. Not-yet-due execution
-// timeouts are deferred to the timeout sweep so they do not hold
-// pendingRaceCleanup for the execution window. Wait for the drain, then finalize.
+// SecondaryWaitAfterWinner plus a short cancel join for speculative losers.
+// Not-yet-due HandleTimeout waits sleep off pendingRaceCleanup and only hold
+// it briefly for the vote at the protocol deadline. Wait for the drain, then
+// finalize.
 const (
 	finalizeDrainWait = 6 * time.Minute
 	finalizeDrainPoll = 100 * time.Millisecond
