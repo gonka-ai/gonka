@@ -18,7 +18,10 @@ import (
 const (
 	defaultScannerBufferSize = 64 * 1024 // 64KB initial scanner buffer
 
-	mlNodeHTTPTimeout = 5 * time.Minute
+	// mlNodeHTTPTimeout covers the full ML-node chat completion, including
+	// streaming the response body. It matches the 32-minute session
+	// ExecutionTimeout so the HTTP client does not abort a live inference.
+	mlNodeHTTPTimeout = 32 * time.Minute
 )
 
 // NewNoRedirectClient returns an HTTP client that does not follow redirects.

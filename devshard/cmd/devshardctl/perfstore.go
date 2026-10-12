@@ -181,30 +181,19 @@ func (s *PerfStore) InsertRequest(rec RequestRecord) error {
 	return err
 }
 
-// LoadSamples returns recent participant-keyed samples.
+// LoadSamples returns recent participant-keyed samples, reading newest first and stopping past the window. See devshard/docs/host-health.md, "perf.db: what startup reads and what is pruned".
 func (s *PerfStore) LoadSamples() ([]RequestSample, error) {
-	cutoff := ""
-	if ParticipantPerfWindow > 0 {
-		cutoff = time.Now().Add(-2*ParticipantPerfWindow - time.Hour).Format(time.RFC3339Nano)
-	}
-	query := `SELECT host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens
-		 FROM perf_host_samples WHERE participant_key <> ''`
-	args := []any{}
-	if cutoff != "" {
-		query += ` AND send_time >= ?`
-		args = append(args, cutoff)
-	}
-	query += ` ORDER BY id DESC LIMIT ?`
-	args = append(args, PerfWindowSize*4096)
-	rows, err := s.db.Query(
-		query, args...)
+	cutoff, stopBefore := sampleWindow(time.Now())
+	rows, err := s.db.Query(`SELECT host_idx, participant_key, responsive, send_time, receipt_time, first_token, total_time_ms, input_tokens, source_escrow
+		 FROM perf_host_samples ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
+	limit := PerfWindowSize * 4096
 	var samples []RequestSample
-	for rows.Next() {
+	for len(samples) < limit && rows.Next() {
 		var (
 			hostIdx        int
 			participantKey string
@@ -214,15 +203,26 @@ func (s *PerfStore) LoadSamples() ([]RequestSample, error) {
 			firstStr       string
 			totalMs        float64
 			inputTokens    uint64
+			sourceEscrow   string
 		)
-		if err := rows.Scan(&hostIdx, &participantKey, &responsive, &sendStr, &receiptStr, &firstStr, &totalMs, &inputTokens); err != nil {
+		if err := rows.Scan(&hostIdx, &participantKey, &responsive, &sendStr, &receiptStr, &firstStr, &totalMs, &inputTokens, &sourceEscrow); err != nil {
 			return nil, err
+		}
+		sendTime := strToTime(sendStr)
+		if !cutoff.IsZero() && sendTime.Before(cutoff) {
+			if isPastSampleWindow(sendTime, sourceEscrow, stopBefore) {
+				break
+			}
+			continue
+		}
+		if participantKey == "" {
+			continue
 		}
 		samples = append(samples, RequestSample{
 			HostIdx:        hostIdx,
 			ParticipantKey: participantKey,
 			Responsive:     responsive != 0,
-			SendTime:       strToTime(sendStr),
+			SendTime:       sendTime,
 			ReceiptTime:    strToTime(receiptStr),
 			FirstToken:     strToTime(firstStr),
 			TotalTime:      time.Duration(totalMs) * time.Millisecond,
@@ -281,24 +281,17 @@ func (s *PerfStore) LoadRequests() ([]RequestRecord, error) {
 	return records, rows.Err()
 }
 
-// Prune removes old rows beyond the retention window.
-func (s *PerfStore) Prune() error {
-	if ParticipantPerfWindow > 0 {
-		cutoff := time.Now().Add(-2*ParticipantPerfWindow - time.Hour).Format(time.RFC3339Nano)
-		if _, err := s.db.Exec(`DELETE FROM perf_host_samples WHERE send_time <> '' AND send_time < ?`, cutoff); err != nil {
-			return err
-		}
+// sampleWindow is the oldest send time startup loads and the older one past which a live sample ends the newest-first walk.
+func sampleWindow(now time.Time) (cutoff, stopBefore time.Time) {
+	if ParticipantPerfWindow <= 0 {
+		return time.Time{}, time.Time{}
 	}
-	_, err := s.db.Exec(
-		`DELETE FROM perf_host_samples WHERE id NOT IN (SELECT id FROM perf_host_samples ORDER BY id DESC LIMIT ?)`,
-		PerfWindowSize*4096)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(
-		`DELETE FROM perf_request_log WHERE id NOT IN (SELECT id FROM perf_request_log ORDER BY id DESC LIMIT ?)`,
-		requestLogSize)
-	return err
+	cutoff = now.Add(-2*ParticipantPerfWindow - time.Hour)
+	return cutoff, cutoff.Add(-time.Hour)
+}
+
+func isPastSampleWindow(sendTime time.Time, sourceEscrow string, stopBefore time.Time) bool {
+	return !stopBefore.IsZero() && sourceEscrow == "" && !sendTime.IsZero() && sendTime.Before(stopBefore)
 }
 
 func (s *PerfStore) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath string, participantKeys []string) ([]RequestSample, error) {

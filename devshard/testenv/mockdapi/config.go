@@ -14,6 +14,7 @@ type Config struct {
 	ChainRPCAddr      string
 	ChainTestenvURL   string
 	MLEndpoint        string
+	MLNodes           []MLNode
 	ChainPollInterval time.Duration
 	BlockInterval     time.Duration
 	ChainID           string
@@ -24,6 +25,12 @@ type Config struct {
 	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64
+}
+
+// MLNode is one Mock ML endpoint exposed through AcquireMLNode.
+type MLNode struct {
+	ID       string
+	Endpoint string
 }
 
 // DefaultConfig returns listen defaults for local dev.

@@ -75,6 +75,7 @@ func (v ThinkingValidator) shouldMirror(routedModel string) bool {
 	return filtercore.MatchesModel(routedModel, v.MirrorToTemplateKwargsForModels)
 }
 
+// mirrorThinkingToTemplateKwargs fills in the resolved answer and leaves a caller's own answer standing.
 func mirrorThinkingToTemplateKwargs(document map[string]any, enabled bool) error {
 	chatTemplateKwargs, err := getOrCreateChatTemplateKwargs(document)
 	if err != nil {
@@ -84,5 +85,16 @@ func mirrorThinkingToTemplateKwargs(document map[string]any, enabled bool) error
 		return nil
 	}
 	chatTemplateKwargs["thinking"] = enabled
+	return nil
+}
+
+// silenceThinkingInTemplateKwargs overrules the caller, the way the forced budget already does: a route
+// that cannot afford thinking cannot afford it in the template either.
+func silenceThinkingInTemplateKwargs(document map[string]any) error {
+	chatTemplateKwargs, err := getOrCreateChatTemplateKwargs(document)
+	if err != nil {
+		return err
+	}
+	chatTemplateKwargs["thinking"] = false
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -19,8 +20,6 @@ import (
 func TestDefaultRedundancySettings_AllowsThirtyMinuteInference(t *testing.T) {
 	settings := DefaultRedundancySettings()
 	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamMaxAttemptWaitMS)
 }
 
 func TestSseChunkHasContent(t *testing.T) {
@@ -399,6 +398,17 @@ func TestRetriableCapabilityErrorClassification(t *testing.T) {
 	require.EqualValues(t, 120001, parseContextTotalRequested("This model's maximum context length is 120000 tokens. However, you requested 3072 output tokens and your prompt contains at least 116929 input tokens, for a total of at least 120001 tokens."))
 }
 
+// Test flow:
+//  1. Put U+023A, which lowercases from 2 bytes to 3, before a marker that ends the message.
+//  2. Parse each context marker from it and require 0 instead of a slice-out-of-range panic.
+//  3. Put two expanders before a marker followed by a number and require that exact number, not one shifted by the expansion.
+func TestParseUintAfterMarkerByteExpandingUnicode(t *testing.T) {
+	require.EqualValues(t, 0, parseContextLengthLimit("Ⱥmaximum context length is "))
+	require.EqualValues(t, 0, parseContextTotalRequested("Ⱥfor a total of at least "))
+	require.EqualValues(t, 0, parseContextRequested("Ⱥyou requested "))
+	require.EqualValues(t, 4096, parseContextLengthLimit("ȺȺmaximum context length is 4096 tokens"))
+}
+
 func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer
@@ -420,6 +430,243 @@ func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	require.Equal(t, "error.BadRequestError", inf.errorSource)
 	require.Equal(t, int64(0), inf.contentChunks.Load(), "capability miss must not be treated as winning content")
 	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
+}
+
+func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
+	cases := []struct {
+		name       string
+		errorEvent string
+	}{
+		{name: "context length rejection", errorEvent: contextLengthErrorEvent},
+		{name: "context length rejection without a status code", errorEvent: contextLengthWithoutStatusErrorEvent},
+		{name: "malformed request", errorEvent: malformedJSONErrorEvent},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			race, writer := newSingleAttemptRaceWriter(false)
+
+			_, err := writer.Write([]byte(testCase.errorEvent))
+
+			require.NoError(t, err)
+			require.True(t, race.isDeterministicallyRejected(), "the rejection must stop new attempts before this attempt finishes")
+			require.False(t, race.hasDecided(), "a rejection is not an answer")
+		})
+	}
+}
+
+type contextRefusalClient struct {
+	message string
+	calls   *atomic.Int32
+}
+
+func (client contextRefusalClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if req.Payload != nil {
+		client.calls.Add(1)
+	}
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"error":{"code":400,"message":"`+client.message+`","type":"BadRequestError"}}`+"\n\n")
+		_, _ = io.WriteString(stream, "data: [DONE]\n\n")
+	}
+	return &host.HostResponse{Nonce: req.Nonce, ConfirmedAt: time.Now().Unix()}, nil
+}
+
+// Test flow:
+//  1. Pair a host's context-length refusal with the model's context limit.
+//  2. Ask whether any honest host could still serve the request.
+//  3. Only a host already at the model limit, or a request beyond it, is final.
+func TestContextRefusalBeyondModelLimit(t *testing.T) {
+	testCases := []struct {
+		name              string
+		modelContextLimit uint64
+		message           string
+		want              bool
+	}{
+		{name: "host_already_serves_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", want: true},
+		{name: "requested_total_exceeds_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 3072 output tokens and your prompt contains at least 396929 input tokens, for a total of at least 400001 tokens.", want: true},
+		{name: "requested_total_fits_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 3072 output tokens and your prompt contains at least 196929 input tokens, for a total of at least 200001 tokens.", want: false},
+		{name: "smaller_host_without_requested_total", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.", want: false},
+		{name: "smaller_host_with_a_request_beyond_the_model_limit", modelContextLimit: 400000, message: "This model's maximum context length is 131072 tokens. However, you requested 1000000 tokens.", want: true},
+		{name: "model_without_a_known_limit", modelContextLimit: 0, message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", want: false},
+		{name: "not_a_context_refusal", modelContextLimit: 400000, message: "The model does not exist.", want: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.want, contextRefusalBeyondModelLimit(testCase.message, testCase.modelContextLimit))
+		})
+	}
+}
+
+// Test flow:
+//  1. A trusted host streams a context-length refusal for DeepSeek, whose context limit is 400000 tokens.
+//  2. The race writer classifies the refusal.
+//  3. Only a refusal no larger host could avoid stops the race; one from a smaller host leaves it open.
+func TestRaceWriter_AContextLengthRejectionForAModelWithAKnownLimitStopsOnlyWhenFinal(t *testing.T) {
+	cases := []struct {
+		name         string
+		message      string
+		wantRejected bool
+	}{
+		{name: "host already serves the model limit", message: "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.", wantRejected: true},
+		{name: "a larger host could still serve it", message: "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.", wantRejected: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			race, writer := newSingleAttemptRaceWriter(false)
+			writer.inf.model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+			_, err := writer.Write([]byte(`data: {"error":{"code":400,"message":"` + testCase.message + `","type":"BadRequestError"}}` + "\n\n"))
+
+			require.NoError(t, err)
+			require.Equal(t, testCase.wantRejected, race.isDeterministicallyRejected())
+		})
+	}
+}
+
+func TestRaceWriter_ASuspiciousHostsContextLengthRejectionLeavesTheRaceOpen(t *testing.T) {
+	race, writer := newSingleAttemptRaceWriter(true)
+
+	_, err := writer.Write([]byte(contextLengthErrorEvent))
+
+	require.NoError(t, err)
+	require.False(t, race.isDeterministicallyRejected(), "a quarantined host's rejection must not stop other hosts from serving the request")
+}
+
+func TestRaceWriter_AContextLengthEventAfterAnotherErrorLeavesTheRaceOpen(t *testing.T) {
+	race, writer := newSingleAttemptRaceWriter(false)
+
+	_, firstWriteErr := writer.Write([]byte(toolChoiceErrorEvent))
+	_, secondWriteErr := writer.Write([]byte(contextLengthErrorEvent))
+
+	require.NoError(t, firstWriteErr)
+	require.NoError(t, secondWriteErr)
+	require.False(t, race.isDeterministicallyRejected(), "the race may stop only on the error the attempt reports to the caller")
+}
+
+func TestHostApplicationErrorFromAttempts_PicksTheErrorTheCallerShouldSee(t *testing.T) {
+	cases := []struct {
+		name        string
+		attempts    []*inflight
+		winnerNonce uint64
+		wantStatus  int
+	}{
+		{name: "the winner's error comes first", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), missingModelAttempt(t, 2)}, winnerNonce: 2, wantStatus: http.StatusNotFound},
+		{name: "a context-length rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), contextLengthRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a malformed request rejection beats an earlier error", attempts: []*inflight{missingModelAttempt(t, 1), malformedJSONRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusBadRequest},
+		{name: "a winner without an error gives way to a context-length rejection", attempts: []*inflight{contextLengthRejectedAttempt(t, 1), {nonce: 2}}, winnerNonce: 2, wantStatus: http.StatusBadRequest},
+		{name: "a suspicious host's rejection gets no preference over a trusted error before it", attempts: []*inflight{missingModelAttempt(t, 1), markedSuspicious(contextLengthRejectedAttempt(t, 2))}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+		{name: "without a rejection the first error is kept", attempts: []*inflight{missingModelAttempt(t, 1), toolChoiceRejectedAttempt(t, 2)}, winnerNonce: 0, wantStatus: http.StatusNotFound},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			hostErr := hostApplicationErrorFromAttempts(testCase.attempts, testCase.winnerNonce)
+
+			require.NotNil(t, hostErr)
+			require.Equal(t, testCase.wantStatus, hostErr.statusCode())
+		})
+	}
+}
+
+// Test flow:
+//  1. Every host of a three-host group refuses a DeepSeek prompt as longer than its context.
+//  2. Run one inference for that model, whose context limit is 400000 tokens.
+//  3. A refusal from a host at the model limit stops at the first host; one from a smaller host still moves on, across the whole group when the cap allows it and to one more host under the default cap.
+func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
+	testCases := []struct {
+		name             string
+		message          string
+		isWholeGroup     bool
+		wantHostRequests int32
+	}{
+		{
+			name:             "host_already_serves_the_model_limit",
+			message:          "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.",
+			isWholeGroup:     true,
+			wantHostRequests: 1,
+		},
+		{
+			name:             "a_host_with_the_model_limit_could_still_serve_it",
+			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     true,
+			wantHostRequests: 3,
+		},
+		{
+			name:             "the_default_cap_tries_one_more_host",
+			message:          "This model's maximum context length is 131072 tokens. However, you requested 150000 tokens.",
+			isWholeGroup:     false,
+			wantHostRequests: DefaultMaxSpeculativeAttempts,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+			zeroReceiptTimeout(t)
+			if testCase.isWholeGroup {
+				allowSpeculativeAttemptsOnWholeGroup(t)
+			}
+			env := setupTestProxy(t, 3, nil, true)
+			var hostRequests atomic.Int32
+			for _, killable := range env.killables {
+				killable.inner = contextRefusalClient{message: testCase.message, calls: &hostRequests}
+			}
+			params := defaultParams()
+			params.Model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+			var sink bytes.Buffer
+			_ = env.proxy.redundancy.RunInference(context.Background(), params, &sink, nil)
+
+			require.Equal(t, testCase.wantHostRequests, hostRequests.Load())
+		})
+	}
+}
+
+// attemptFromErrorEvent returns the attempt a trusted host leaves after streaming errorEvent through the race writer.
+func attemptFromErrorEvent(t *testing.T, nonce uint64, errorEvent string) *inflight {
+	t.Helper()
+	_, writer := newSingleAttemptRaceWriter(false)
+	_, err := writer.Write([]byte(errorEvent))
+	require.NoError(t, err)
+	require.True(t, isErrorStreamAttempt(writer.inf), "the fixture must stream a parseable error event")
+	writer.inf.nonce = nonce
+	return writer.inf
+}
+
+func contextLengthRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, contextLengthErrorEvent)
+}
+
+func malformedJSONRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, malformedJSONErrorEvent)
+}
+
+func missingModelAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, modelNotFoundErrorEvent)
+}
+
+func toolChoiceRejectedAttempt(t *testing.T, nonce uint64) *inflight {
+	return attemptFromErrorEvent(t, nonce, toolChoiceErrorEvent)
+}
+
+func markedSuspicious(attempt *inflight) *inflight {
+	attempt.suspicious = true
+	return attempt
+}
+
+func newSingleAttemptRaceWriter(suspicious bool) (*raceGroup, *raceWriter) {
+	ctx := context.Background()
+	race := newRaceGroup(ctx, ctx, "escrow-x", &bytes.Buffer{})
+	attempt := &inflight{
+		hostID:       "host-A",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		suspicious:   suspicious,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	return race, &raceWriter{group: race, nonce: 1, inf: attempt}
 }
 
 func TestCapabilityErrorsSkippedFromCache(t *testing.T) {

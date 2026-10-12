@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/golang/protobuf/proto"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,6 +46,38 @@ func TestChainPhaseGateFetchEpochInfoParsesConfirmationPoC(t *testing.T) {
 	require.Equal(t, confirmationPoCValidation, snapshot.ConfirmationPoCPhase)
 	require.True(t, snapshot.RequestsBlocked)
 	require.Equal(t, "confirmation_poc", snapshot.BlockReason)
+}
+
+func TestChainPhaseGateFetchEpochInfoFallsBackToChain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	gate.SetChainQueryClient(&preservedSnapshotStub{
+		epochInfoResp: &inferencetypes.QueryEpochInfoResponse{
+			BlockHeight: 105,
+			Params: inferencetypes.Params{EpochParams: &inferencetypes.EpochParams{
+				EpochLength:           100,
+				PocStageDuration:      20,
+				PocValidationDelay:    5,
+				PocValidationDuration: 20,
+				SetNewValidatorsDelay: 5,
+			}},
+			LatestEpoch: inferencetypes.Epoch{
+				Index:               12,
+				PocStartBlockHeight: 100,
+			},
+		},
+	})
+
+	resp, err := gate.fetchEpochInfo()
+	require.NoError(t, err)
+	snapshot := deriveChainPhaseSnapshot(resp)
+	require.Equal(t, int64(105), snapshot.BlockHeight)
+	require.Equal(t, uint64(12), snapshot.EpochIndex)
+	require.Equal(t, epochPhasePoCGenerate, snapshot.EpochPhase)
 }
 
 func TestChainPhaseGateDerivesEpochSwitchFromCurrentSetNewValidators(t *testing.T) {
@@ -305,6 +340,43 @@ func TestChainPhaseGateFetchPreservedParticipantKeys(t *testing.T) {
 	require.Equal(t, []string{
 		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2",
 	}, excluded)
+}
+
+func TestChainPhaseGateFetchParticipantsFallsBackToChain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	active := &inferencetypes.ActiveParticipants{
+		Participants: []*inferencetypes.ActiveParticipant{{
+			Index:        "gonka1participant",
+			InferenceUrl: "http://participant.example:8080",
+			Models:       []string{"Model/A"},
+			MlNodes: []*inferencetypes.ModelMLNodes{{
+				MlNodes: []*inferencetypes.MLNodeInfo{{
+					NodeId:             "node-1",
+					PocWeight:          7,
+					TimeslotAllocation: []bool{true},
+				}},
+			}},
+		}},
+	}
+	value, err := proto.Marshal(active)
+	require.NoError(t, err)
+
+	storeQuery := &phaseGateStoreQueryStub{resp: &cmtservice.ABCIQueryResponse{Value: value}}
+	gate := NewChainPhaseGate(server.URL, 0)
+	gate.SetChainQueryClient(&preservedSnapshotStub{
+		currentEpochResp: &inferencetypes.QueryGetCurrentEpochResponse{Epoch: 12},
+	})
+	gate.SetStoreQueryClient(storeQuery)
+
+	state, err := gate.fetchParticipantsState(false, 0, false)
+	require.NoError(t, err)
+	require.Equal(t, float64(7), state.weights["gonka1participant"])
+	require.Equal(t, "http://participant.example:8080", state.inferenceURLs["gonka1participant"])
+	require.Equal(t, inferencetypes.ActiveParticipantsFullKey(12), storeQuery.req.Data)
 }
 
 func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {

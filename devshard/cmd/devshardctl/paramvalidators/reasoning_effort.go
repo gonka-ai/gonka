@@ -10,9 +10,6 @@ var (
 	ErrReasoningEffortValue = errors.New("reasoning_effort: unsupported value")
 )
 
-// Re-check the strip wiring in the catalog whenever a reasoning-capable model is
-// added to devshard: today every routed model is non-reasoning so the catalog
-// strips reasoning_effort for all of them via ModelScopedParameterHandler{Models: nil}.
 type ReasoningEffortValidator struct{}
 
 var allowedReasoningEffortValues = map[string]struct{}{
@@ -22,6 +19,7 @@ var allowedReasoningEffortValues = map[string]struct{}{
 	"medium":  {},
 	"high":    {},
 	"xhigh":   {},
+	"max":     {}, // DeepSeek-V4 only
 }
 
 func (v ReasoningEffortValidator) Validate(vctx ValidatorContext) error {

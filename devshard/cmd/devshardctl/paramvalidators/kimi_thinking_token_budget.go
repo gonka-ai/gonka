@@ -1,8 +1,9 @@
 package paramvalidators
 
 // KimiThinkingTokenBudgetValidator resolves thinking_token_budget for Kimi-K2.6:
-// force 0 at small max_tokens, else default to max_tokens/Divisor, cap at
-// AbsoluteMax, clamp to (max_tokens - ContentHeadroom). No-op for other models.
+// force 0 at small max_tokens and silence thinking in the chat template too, else
+// default to max_tokens/Divisor, cap at AbsoluteMax, clamp to
+// (max_tokens - ContentHeadroom). No-op for other models.
 type KimiThinkingTokenBudgetValidator struct {
 	Model                   string
 	DefaultDivisor          uint64
@@ -21,7 +22,9 @@ func (v KimiThinkingTokenBudgetValidator) Validate(vctx ValidatorContext) error 
 	}
 	if v.ForceZeroBelowMaxTokens > 0 && maxTokens < v.ForceZeroBelowMaxTokens {
 		vctx.Document["thinking_token_budget"] = uint64(0)
-		return nil
+		// The budget alone is a logits processor that speculative decoding discards, so the template
+		// has to be silenced too — and with the same force, or a caller's thinking:true survives it.
+		return silenceThinkingInTemplateKwargs(vctx.Document)
 	}
 	if _, exists := vctx.Document["thinking_token_budget"]; !exists && v.DefaultDivisor > 0 {
 		vctx.Document["thinking_token_budget"] = maxTokens / v.DefaultDivisor

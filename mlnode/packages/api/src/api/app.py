@@ -27,21 +27,39 @@ from api.service_management import (
     API_PREFIX
 )
 from api.routes import router as api_router
+from api.metrics.routes import router as metrics_router, metrics_enabled
+from api.metrics.allowlist import SCHEMA_VERSION, VLLM_ALLOWLIST
+from api.metrics import xid_source
 from api.watcher import watch_managers
 from api.proxy import ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
 
+from common.logger import create_logger
+
+logger = create_logger(__name__)
 
 WATCH_INTERVAL = 2
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Honesty mechanics: operators must see the export mode in the startup log
+    if metrics_enabled():
+        logger.info(
+            f"metrics export: GONKA_METRICS=full, schema v{SCHEMA_VERSION}, "
+            f"{len(VLLM_ALLOWLIST)} vLLM families + GPU/host"
+        )
+    else:
+        logger.info("metrics export: GONKA_METRICS=off, /api/v1/metrics disabled")
+
     app.state.service_state = ServiceState.STOPPED
     app.state.pow_manager = PowManager()
     app.state.inference_manager = InferenceManager()
     app.state.train_manager = TrainManager()
     app.state.model_manager = ModelManager()
     app.state.gpu_manager = GPUManager()
+
+    if metrics_enabled() and app.state.gpu_manager.is_cuda_available():
+        xid_source.start()
 
     await start_vllm_proxy()
 
@@ -67,6 +85,7 @@ async def lifespan(app: FastAPI):
     if app.state.train_manager.is_running():
         app.state.train_manager.stop()
 
+    xid_source.stop()
     app.state.gpu_manager._shutdown_nvml()
 
     await stop_vllm_proxy()
@@ -117,6 +136,15 @@ app.include_router(
     api_router,
     prefix=API_PREFIX,
     tags=["API"],
+)
+
+# Always registered; GONKA_METRICS=off makes the handler answer 404 so a
+# disabled node looks identical to a pre-metrics image (no conflict check:
+# metrics must work in any service state).
+app.include_router(
+    metrics_router,
+    prefix=API_PREFIX,
+    tags=["Metrics"],
 )
 
 app.include_router(

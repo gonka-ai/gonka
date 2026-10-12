@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -671,8 +672,88 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	if err != nil {
 		return fmt.Errorf("update latest_nonce: %w", err)
 	}
+	if rec.SessionState != nil {
+		if err := writeSessionStateTx(tx, escrowID, rec.Nonce, rec.SessionState); err != nil {
+			return err
+		}
+	}
 
 	return tx.Commit()
+}
+
+// writeSessionStateTx applies a diff's state delta inside the diff's transaction.
+func writeSessionStateTx(tx *sql.Tx, escrowID string, nonce uint64, delta *types.SessionStateDelta) error {
+	if delta.ReplaceAll {
+		if _, err := tx.Exec(`DELETE FROM session_inferences WHERE escrow_id = ?`, escrowID); err != nil {
+			return fmt.Errorf("clear session inferences: %w", err)
+		}
+	}
+	if len(delta.Upserts) > 0 {
+		upsert, err := tx.Prepare(`INSERT INTO session_inferences (escrow_id, inference_id, entry) VALUES (?, ?, ?)
+			ON CONFLICT (escrow_id, inference_id) DO UPDATE SET entry = excluded.entry`)
+		if err != nil {
+			return fmt.Errorf("prepare session inference upsert: %w", err)
+		}
+		defer func() { _ = upsert.Close() }()
+		for id, entry := range delta.Upserts {
+			if _, err := upsert.Exec(escrowID, id, entry); err != nil {
+				return fmt.Errorf("upsert session inference %d: %w", id, err)
+			}
+		}
+	}
+	for _, id := range delta.Deletes {
+		if _, err := tx.Exec(`DELETE FROM session_inferences WHERE escrow_id = ? AND inference_id = ?`, escrowID, id); err != nil {
+			return fmt.Errorf("delete session inference %d: %w", id, err)
+		}
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO session_state (escrow_id, nonce, header) VALUES (?, ?, ?)
+		 ON CONFLICT (escrow_id) DO UPDATE SET nonce = excluded.nonce, header = excluded.header`,
+		escrowID, nonce, delta.Header,
+	); err != nil {
+		return fmt.Errorf("upsert session state: %w", err)
+	}
+	return nil
+}
+
+// LoadSessionState reads the state written with the session's diffs.
+func (s *SQLite) LoadSessionState(escrowID string) (SessionState, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return SessionState{}, err
+	}
+	// One read transaction, so the header and the rows come from the same WAL snapshot.
+	tx, err := p.readDB.Begin()
+	if err != nil {
+		return SessionState{}, fmt.Errorf("begin session state read: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var loaded SessionState
+	err = tx.QueryRow(`SELECT nonce, header FROM session_state WHERE escrow_id = ?`, escrowID).Scan(&loaded.Nonce, &loaded.Header)
+	if errors.Is(err, sql.ErrNoRows) {
+		return SessionState{}, ErrSessionStateNotFound
+	}
+	if err != nil {
+		return SessionState{}, fmt.Errorf("read session state: %w", err)
+	}
+	rows, err := tx.Query(`SELECT inference_id, entry FROM session_inferences WHERE escrow_id = ?`, escrowID)
+	if err != nil {
+		return SessionState{}, fmt.Errorf("read session inferences: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	loaded.Entries = make(map[uint64][]byte)
+	for rows.Next() {
+		var id uint64
+		var entry []byte
+		if err := rows.Scan(&id, &entry); err != nil {
+			return SessionState{}, fmt.Errorf("scan session inference: %w", err)
+		}
+		loaded.Entries[id] = entry
+	}
+	if err := rows.Err(); err != nil {
+		return SessionState{}, fmt.Errorf("read session inferences: %w", err)
+	}
+	return loaded, nil
 }
 
 func (s *SQLite) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {

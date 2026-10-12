@@ -36,6 +36,21 @@ var ErrEscrowBackendConflict = errors.New("escrow exists in multiple storage bac
 // ErrSnapshotNotFound is returned when no snapshot exists for a session.
 var ErrSnapshotNotFound = errors.New("snapshot not found")
 
+// ErrSessionStateNotFound is returned when a session has no state written with its diffs.
+var ErrSessionStateNotFound = errors.New("session state not found")
+
+// SessionState is a session's state as written with its diffs: the header and the live inference entries as of Nonce.
+type SessionState struct {
+	Nonce   uint64
+	Header  []byte
+	Entries map[uint64][]byte
+}
+
+// SessionStateStore is a Storage that applies DiffRecord.SessionState in the diff's own transaction.
+type SessionStateStore interface {
+	LoadSessionState(escrowID string) (SessionState, error)
+}
+
 // ErrEpochPruned is returned when a managed store is asked to create a session
 // in an epoch that has already passed the local retention horizon.
 var ErrEpochPruned = errors.New("epoch already pruned")

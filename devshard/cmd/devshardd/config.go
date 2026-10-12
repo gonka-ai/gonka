@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"devshard/cmd/devshardd/session"
+	"devshard/signing"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -297,6 +298,20 @@ func parseDurationEnv(key string, fallback time.Duration) (time.Duration, error)
 		return 0, fmt.Errorf("duration %q must be > 0", v)
 	}
 	return d, nil
+}
+
+// signerInfoPath is the file-keyring record to watch for uid.
+// Non-file backends return an empty path so the signer keeps the key
+// decrypted at startup for the process lifetime.
+func signerInfoPath(nodeConfig ChainNodeConfig, uid string) (string, error) {
+	if nodeConfig.KeyringBackend != keyring.BackendFile {
+		return "", nil
+	}
+	dir, err := expandHome(nodeConfig.KeyringDir)
+	if err != nil {
+		return "", err
+	}
+	return signing.FileKeyringInfoPath(dir, uid), nil
 }
 
 func expandHome(path string) (string, error) {

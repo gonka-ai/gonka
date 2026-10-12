@@ -56,10 +56,11 @@ func newGatewayChainTxClient(conn grpc.ClientConnInterface, settings GatewaySett
 	if conn == nil {
 		return nil, fmt.Errorf("chain gRPC connection is required")
 	}
+	resolvedFeeDenom, resolvedFeeAmount := resolveTxFee(feeDenom, feeAmount)
 	return chaintx.New(conn, chaintx.Config{
 		ChainID:      firstNonEmpty(chainID, os.Getenv("DEVSHARD_CHAIN_ID"), chaintx.DefaultChainID),
-		FeeDenom:     firstNonEmpty(feeDenom, os.Getenv("DEVSHARD_TX_FEE_DENOM"), chaintx.DefaultFeeDenom),
-		FeeAmount:    firstNonZeroUint64(feeAmount, uint64(readInt64Env("DEVSHARD_TX_FEE_AMOUNT", int64(chaintx.DefaultFeeAmount)))),
+		FeeDenom:     resolvedFeeDenom,
+		FeeAmount:    resolvedFeeAmount,
 		GasLimit:     firstNonZeroUint64(gasLimit, settings.TxGasLimit, uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", int64(chaintx.DefaultGasLimit)))),
 		PollInterval: txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_INTERVAL_MS"), chaintx.DefaultPollInterval),
 		PollTimeout:  txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_TIMEOUT_MS"), chaintx.DefaultPollTimeout),

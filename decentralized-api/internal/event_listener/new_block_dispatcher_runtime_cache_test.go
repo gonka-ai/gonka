@@ -35,6 +35,14 @@ func (m *mockParamsQueryClient) Params(ctx context.Context, req *types.QueryPara
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *mockParamsQueryClient) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
+}
+
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
 	t.Helper()
 

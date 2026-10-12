@@ -40,13 +40,14 @@ const fallbackSlotWait = 100 * time.Millisecond
 // round-robins direct HTTP without lock/release. When capacity has been
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
-	mlClient     *mlnodeclient.Client
-	mgr          *mlnodeclient.Manager
-	capacity     *mlnodeclient.Cache
-	payloadStore PayloadStore
-	httpClient   *http.Client
-	chainParams  ChainParamsProvider
-	phase        *chain.Phase
+	validationBudget *validationBudget
+	mlClient         *mlnodeclient.Client
+	mgr              *mlnodeclient.Manager
+	capacity         *mlnodeclient.Cache
+	payloadStore     PayloadStore
+	httpClient       *http.Client
+	chainParams      ChainParamsProvider
+	phase            *chain.Phase
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
@@ -61,13 +62,14 @@ func NewEngine(
 	phase *chain.Phase,
 ) *Engine {
 	return &Engine{
-		mlClient:     mlClient,
-		mgr:          mgr,
-		capacity:     capacity,
-		payloadStore: payloadStore,
-		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
-		chainParams:  chainParams,
-		phase:        phase,
+		validationBudget: newValidationBudget(defaultValidationCreditTTL),
+		mlClient:         mlClient,
+		mgr:              mgr,
+		capacity:         capacity,
+		payloadStore:     payloadStore,
+		httpClient:       NewNoRedirectClient(mlNodeHTTPTimeout),
+		chainParams:      chainParams,
+		phase:            phase,
 	}
 }
 
@@ -78,13 +80,17 @@ func NewEngine(
 // Node acquisition prefers gRPC (dapi authoritative); on dapi-unreachable it
 // falls back to the passive ML-node cache.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
+	result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 		return e.executeMLRequest(ctx, model, req.EscrowID, body)
 	}, e.chainParams)
+	if err == nil && result != nil && !result.PartialResponse {
+		e.validationBudget.earn(req.Model)
+	}
+	return result, err
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string, refund func()) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
@@ -94,7 +100,7 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
 		return e.httpClient.Do(httpReq)
-	})
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("execute inference: %w", err)
 	}
@@ -106,30 +112,53 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 // unreachable it falls back to mgr.PickNode round-robin without lock/release.
 // ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path.
 // escrowID is forwarded on Acquire so dapi can attribute per-escrow load.
+// fn must call refund if it returns before attempting an HTTP dispatch.
+// guard is nil for generation; validation returns ErrValidationEpochUnavailable when expired.
 func (e *Engine) doWithLockedNode(
 	ctx context.Context,
 	path observability.Path,
 	model string,
 	escrowID string,
-	fn func(endpoint string) (*http.Response, error),
+	fn func(endpoint string, refund func()) (*http.Response, error),
+	guard func() error,
 ) (*http.Response, error) {
+	dispatch := fn
+	fn = func(endpoint string, refund func()) (*http.Response, error) {
+		if guard != nil {
+			if err := guard(); err != nil {
+				refund()
+				return nil, err
+			}
+		}
+		return dispatch(endpoint, refund)
+	}
 	var excluded []string
 	excludedSet := make(map[string]struct{})
 	var lastErr error
 	lastReason := observability.ReasonAcquireErr
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
+		if guard != nil {
+			if err := guard(); err != nil {
+				return nil, err
+			}
+		}
+		refund, ok := e.reserveValidationCredit(path, model)
+		if !ok {
+			return nil, devshard.ErrValidationDeferred
+		}
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
 		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
 		cancel()
 
 		if err != nil {
+			refund()
 			if ctx.Err() != nil {
 				lastReason = observability.ReasonTimeout
 				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 			}
 			if shouldFallback(err) {
-				return e.doWithFallbackNodes(ctx, path, model, excludedSet, fn, err)
+				return e.doWithFallbackNodes(ctx, path, model, excludedSet, fn, err, guard)
 			}
 
 			// dapi up but no nodes (ResourceExhausted) or other transient
@@ -151,7 +180,13 @@ func (e *Engine) doWithLockedNode(
 		}
 
 		started := time.Now()
-		resp, httpErr := fn(acq.Endpoint)
+		resp, httpErr := fn(acq.Endpoint, refund)
+		if errors.Is(httpErr, devshard.ErrValidationEpochUnavailable) {
+			if err := e.mlClient.Release(ctx, acq.LockId, mlnodegen.ReleaseOutcome_SUCCESS); err != nil {
+				observability.IncMLNodeAttempt(path, observability.ReasonReleaseErr, acq.NodeId)
+			}
+			return nil, httpErr
+		}
 		outcome := mlnodegen.ReleaseOutcome_SUCCESS
 
 		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
@@ -211,8 +246,9 @@ func (e *Engine) doWithFallbackNodes(
 	path observability.Path,
 	model string,
 	excluded map[string]struct{},
-	fn func(endpoint string) (*http.Response, error),
+	fn func(endpoint string, refund func()) (*http.Response, error),
 	acquireErr error,
+	guard func() error,
 ) (*http.Response, error) {
 	if e.mgr == nil {
 		return nil, observability.Classify(
@@ -229,9 +265,19 @@ func (e *Engine) doWithFallbackNodes(
 	lastReason := observability.ReasonAcquireErr
 
 	for {
+		if guard != nil {
+			if err := guard(); err != nil {
+				return nil, err
+			}
+		}
 		if ctx.Err() != nil {
 			lastReason = observability.ReasonTimeout
 			return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
+		}
+
+		refund, ok := e.reserveValidationCredit(path, model)
+		if !ok {
+			return nil, devshard.ErrValidationDeferred
 		}
 
 		pickExcluded := excluded
@@ -241,6 +287,7 @@ func (e *Engine) doWithFallbackNodes(
 
 		endpoint, nodeID, ok := e.mgr.PickNode(model, pickExcluded)
 		if !ok {
+			refund()
 			if limit && len(capacityExcluded) > 0 {
 				// Every known node is at its local bound — wait and retry.
 				clear(capacityExcluded)
@@ -265,11 +312,13 @@ func (e *Engine) doWithFallbackNodes(
 		if limit {
 			if _, known := e.capacity.Get(nodeID); known {
 				if !e.capacity.TryAcquire(nodeID, model) {
+					refund()
 					capacityExcluded[nodeID] = struct{}{}
 					continue
 				}
 				acquired = true
 			} else if !e.capacity.TryAcquireUnknown(nodeID, model) {
+				refund()
 				// PickNode returned a node dapi never reported. Bound it with a
 				// synthetic budget instead of an unbounded bypass; retry another.
 				capacityExcluded[nodeID] = struct{}{}
@@ -280,12 +329,15 @@ func (e *Engine) doWithFallbackNodes(
 		}
 
 		started := time.Now()
-		resp, httpErr := fn(endpoint)
+		resp, httpErr := fn(endpoint, refund)
 		if acquired {
 			e.capacity.Release(nodeID, model)
 		}
 		if acquiredUnknown {
 			e.capacity.ReleaseUnknown(nodeID, model)
+		}
+		if errors.Is(httpErr, devshard.ErrValidationEpochUnavailable) {
+			return nil, httpErr
 		}
 		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
 		observability.IncMLNodeAttempt(path, lastReason, nodeID)

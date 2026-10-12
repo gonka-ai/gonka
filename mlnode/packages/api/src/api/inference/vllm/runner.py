@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import time
 import requests
@@ -8,6 +9,8 @@ import shutil
 import shlex
 import psutil
 import signal
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, List
 from abc import abstractmethod
@@ -22,6 +25,100 @@ WAIT_FOR_SERVER_TIMEOUT = 1200
 WAIT_FOR_SERVER_CHECK_INTERVAL = 3
 
 logger = create_logger(__name__)
+
+HANG_CONSECUTIVE = 3
+
+# (metric suffix, cross-series reduce). Sum/max across ALL series: /metrics
+# can briefly expose several registries mid-restart.
+_HEARTBEAT_SERIES = (
+    ("iteration_tokens_total_count", sum),
+    ("num_requests_running", max),
+    ("num_requests_waiting", max),
+)
+
+
+def _int_env(name: str, default: int) -> int:
+    """os.environ[name] as int; unset/empty -> default, garbage -> default + warning."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer -- using %d", name, raw, default)
+        return default
+
+
+def _scrape_heartbeat(host: str, port: int):
+    """Read the scheduler heartbeat values from one vLLM replica."""
+    try:
+        response = requests.get(f"http://{host}:{port}/metrics", timeout=3)
+        response.raise_for_status()
+        txt = response.text
+    except requests.exceptions.ConnectTimeout:
+        # Saturation, not death: the caller's grace window decides.
+        return None, None, None
+    except requests.ConnectionError:
+        raise
+    except Exception:
+        return None, None, None
+    values = []
+    for name, reduce_fn in _HEARTBEAT_SERIES:
+        try:
+            series = re.findall(rf"(?m)^vllm:{name}\S*\s+([0-9eE.+-]+)", txt)
+            values.append(reduce_fn(float(x) for x in series) if series else None)
+        except Exception:
+            values.append(None)
+    return tuple(values)
+
+
+def _scrape_heartbeats(host: str, ports: list[int]):
+    """Scrape every replica within one per-request timeout window."""
+    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+        futures = {port: pool.submit(_scrape_heartbeat, host, port) for port in ports}
+        return {port: future.result() for port, future in futures.items()}
+
+
+def _heartbeat_verdict(
+    port: int, st: dict, iters, running, waiting, now: float, grace: int
+) -> bool:
+    """Advance one replica's heartbeat state and return its liveness."""
+    if grace <= 0:
+        return True
+
+    complete = all(value is not None for value in (iters, running, waiting))
+    if not st["seen"]:
+        if not complete:
+            return False
+        st.update(ts=now, iter=iters, hung=0, seen=True)
+        return True
+
+    idle = complete and running == 0 and waiting == 0
+    progressed = iters is not None and iters != st["iter"]
+    if idle or progressed:
+        st["ts"] = now
+        st["iter"] = iters
+        st["hung"] = 0
+        return True
+
+    if now - st["ts"] <= grace:
+        st["hung"] = 0
+        return True
+
+    st["hung"] += 1
+    if st["hung"] >= HANG_CONSECUTIVE:
+        logger.error(
+            "vLLM instance on port %s: scheduler heartbeat frozen >%ss "
+            "over %d consecutive checks with running=%s waiting=%s -- "
+            "reporting unhealthy for restart",
+            port,
+            grace,
+            st["hung"],
+            running,
+            waiting,
+        )
+        return False
+    return True
 
 
 class IVLLMRunner(ITrackableTask):
@@ -49,6 +146,7 @@ class VLLMRunner(IVLLMRunner):
     VLLM_PYTHON_PATH = "/usr/bin/python3.12"
     VLLM_PORT = int(os.getenv("INFERENCE_PORT", 5000))
     VLLM_HOST = "0.0.0.0"
+    WORKER_EXTENSION_CLASS = "gonka_poc.worker.PoCWorkerExtension"
 
     MAX_INSTANCES = int(os.getenv("INFERENCE_MAX_INSTANCES", 128))
 
@@ -61,8 +159,29 @@ class VLLMRunner(IVLLMRunner):
         self.vllm_python_path = os.getenv("VLLM_PYTHON_PATH", self.VLLM_PYTHON_PATH)
         self.model = model
         self.dtype = dtype
-        self.additional_args = additional_args or []
+        self.additional_args = list(additional_args or [])
+        if "--worker-extension-cls" not in self.additional_args:
+            self.additional_args.extend(
+                ["--worker-extension-cls", self.WORKER_EXTENSION_CLASS]
+            )
         self.processes: List[subprocess.Popen] = []
+        self._hb = {}
+        self._hb_lock = threading.Lock()
+
+    def get_config_summary(self) -> dict:
+        """Public config snapshot for observability (metrics exporter).
+
+        Zero for the numeric fields means "not passed explicitly" — the
+        effective vLLM default is not known to mlnode.
+        """
+        return {
+            "model": self.model,
+            "dtype": self.dtype,
+            "max_num_seqs": self._get_arg_value("--max-num-seqs", default=0),
+            "max_model_len": self._get_arg_value("--max-model-len", default=0),
+            "tensor_parallel_size": self._get_arg_value("--tensor-parallel-size", default=0),
+            "pipeline_parallel_size": self._get_arg_value("--pipeline-parallel-size", default=0),
+        }
 
     def _get_arg_value(self, name: str, default: int = 1) -> int:
         if name in self.additional_args:
@@ -109,6 +228,9 @@ class VLLMRunner(IVLLMRunner):
 
         self._verify_and_fix_env()
 
+        vllm_module = os.getenv(
+            "MLNODE_VLLM_MODULE", "vllm.entrypoints.openai.api_server"
+        )
         backend_ports = []
         for i in range(instances):
             sleep_time = 5 * i
@@ -116,7 +238,7 @@ class VLLMRunner(IVLLMRunner):
             backend_ports.append(port)
             vllm_command = [
                 self.vllm_python_path,
-                "-m", "vllm.entrypoints.openai.api_server",
+                "-m", vllm_module,
                 "--model", self.model,
                 "--dtype", self.dtype,
                 "--port", str(port),
@@ -128,7 +250,8 @@ class VLLMRunner(IVLLMRunner):
             command = ["sh", "-c", f"sleep {sleep_time} && exec {vllm_command_str}"]
 
             env = os.environ.copy()
-            env["VLLM_USE_V1"] = "0"
+            # Metrics trust contract: no vendor telemetry from vLLM
+            env["VLLM_NO_USAGE_STATS"] = "1"
 
             start_gpu = i * gpus_per_instance
             if total_gpus > 0:
@@ -206,7 +329,8 @@ class VLLMRunner(IVLLMRunner):
 
     def _wait_for_server(self) -> bool:
         start_time = time.time()
-        while time.time() - start_time < WAIT_FOR_SERVER_TIMEOUT:
+        timeout = _int_env("VLLM_RUNNER_TIMEOUT", WAIT_FOR_SERVER_TIMEOUT)
+        while time.time() - start_time < timeout:
             if not self.is_running():
                 raise RuntimeError(f"vLLM process exited prematurely: {self.get_error_if_exist()}")
 
@@ -215,7 +339,7 @@ class VLLMRunner(IVLLMRunner):
 
             time.sleep(WAIT_FOR_SERVER_CHECK_INTERVAL)
 
-        logger.error("vLLM server did not become available within timeout.")
+        logger.error("vLLM server did not become available within %d seconds", timeout)
         return False
 
     def is_running(self) -> bool:
@@ -224,15 +348,31 @@ class VLLMRunner(IVLLMRunner):
     def is_available(self) -> bool:
         if not self.is_running():
             return False
-        try:
-            # Check if any backend is available
-            for port in range(self.VLLM_PORT + 1, self.VLLM_PORT + len(self.processes) + 1):
-                resp = requests.get(f"http://{self.VLLM_HOST}:{port}/health", timeout=2)
-                if resp.status_code == 200:
-                    return True
-            return False
-        except (requests.ConnectionError, requests.Timeout):
-            return False
+        with self._hb_lock:
+            grace = _int_env("MLNODE_HANG_GRACE_SEC", 120)
+            now = time.monotonic()
+            healthy = True
+            ports = list(
+                range(
+                    self.VLLM_PORT + 1,
+                    self.VLLM_PORT + len(self.processes) + 1,
+                )
+            )
+            try:
+                scrapes = _scrape_heartbeats(self.VLLM_HOST, ports)
+            except requests.ConnectionError:
+                return False
+
+            for port, (iters, running, waiting) in scrapes.items():
+                st = self._hb.setdefault(
+                    port,
+                    {"ts": now, "iter": None, "hung": 0, "seen": False},
+                )
+                ok = _heartbeat_verdict(
+                    port, st, iters, running, waiting, now, grace
+                )
+                healthy = healthy and ok
+            return healthy
 
     def get_error_if_exist(self) -> Optional[str]:
         for p in self.processes:

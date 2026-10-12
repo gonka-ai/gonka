@@ -12,6 +12,7 @@
           "--enable-expert-parallel",
           "--trust-remote-code",
           "--mm-encoder-tp-mode", "data",
+          "--enable-auto-tool-choice",
           "--tool-call-parser", "kimi_k2",
           "--reasoning-parser", "kimi_k2",
           "--attention-backend", "FLASHINFER_MLA",

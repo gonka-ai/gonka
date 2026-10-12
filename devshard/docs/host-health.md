@@ -93,6 +93,25 @@ primary dispatch:
 | Cross-escrow | Yes (process-wide) | No (per-escrow runtime) |
 | Recovery | Time-based (30-60 min) or admin override | Automatic — good samples push out bad ones |
 
+## perf.db: what startup reads and what is pruned
+
+`perf.db` holds `perf_host_samples`, `perf_request_log` and the `request_accounting` tables. Startup reads only the host samples of the last `2 × ParticipantPerfWindow + 1h` and the newest `requestLogSize` request log rows; nothing else reads the perf tables.
+
+`PerfStore.LoadSamples` (`perfstore.go`) walks the host samples newest first and stops at the first live sample (empty `source_escrow`) that started more than an hour before the window. A sample is written when its request finishes but carries the time it started, so ids follow completion while `send_time` follows start; the hour of slack keeps a long request finishing late from ending the walk before samples still inside the window. Legacy samples backfilled by `BackfillLegacyEscrowSamples` carry old times at high ids, which is why only live samples end the walk. The table has no index on `send_time`, and building one on a long history would cost a restart as long as the full scan it replaces.
+
+`perfPruner` (`perf_prune.go`), started by `Gateway.startPerfPruner` and stopped by `Gateway.Close`, deletes what nothing reads: host samples at or below the sample that ends the startup walk (every one of them finished before that sample started, more than an hour before the window, given an execution timeout well under an hour), and request log rows older than the newest `requestLogSize`. Request accounting is pruned only while accounting is on and `DEVSHARD_STATS_RETENTION_EPOCHS` is above zero (it defaults to 2; `0` keeps everything): rows go when their escrow is neither in the accounting ledger, which applies that retention itself, nor resident in the gateway. That walk reads every accounting row, so it runs once per epoch. The first pass runs a minute after start and then every ten minutes. Everything it reads or deletes, the boundary search included, goes 2000 rows at a time with a 20 ms pause between batches, because request-path inserts share the store's single connection. The retention check runs only once a batch's cursor is closed: gateway paths that hold the gateway lock also need that connection (an admin import, a legacy escrow's sample backfill), so checking residency under the lock while the cursor holds the connection would deadlock the gateway.
+
+Deleted pages are reused by SQLite but not returned to the filesystem: pruning stops `perf.db` from growing, and shrinking an existing file takes a manual `VACUUM` while the gateway is stopped.
+
+Measured with the startup simulation ([gateway-load-simulation.md](./gateway-load-simulation.md), "Startup simulation") on 1 million requests (2.2 GB, 3 million host samples), cold cache, Docker Desktop on Apple silicon:
+
+| Read limit | `NewPerfTracker` before | after |
+| --- | --- | --- |
+| 3000 IOPS | 40.3 s | 0.25 s |
+| 1000 IOPS | 121 s | 1.0 s |
+
+The first prune pass of that file at 1000 IOPS took 2 min 20 s and deleted 3 million host samples, 996 thousand request log rows and 4 million accounting rows, while a writer inserting every 10 ms saw p50 90 µs, p99 54 ms and max 82 ms.
+
 ## Interaction between the two systems
 
 The two systems are independent and can overlap:

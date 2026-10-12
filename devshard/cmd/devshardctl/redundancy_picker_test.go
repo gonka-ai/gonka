@@ -15,6 +15,7 @@ import (
 // should appear twice in the attempt list.
 func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	zeroReceiptTimeout(t)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	env := setupTestProxy(t, 4, nil, true)
 
 	// Kill the primary (host 1) and its natural secondary (host 2).
@@ -38,4 +39,14 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 			h.HostIdx)
 		seen[h.HostIdx] = true
 	}
+}
+
+// Test flow:
+//  1. Read the speculative attempt cap the package starts with, before any test or phase gate sets it.
+//  2. Ask a sixteen-host redundancy for its attempt cap.
+//  3. Require both to be DefaultMaxSpeculativeAttempts, so an unconfigured gateway races two hosts instead of the whole group.
+func TestMaxSpeculativeAttemptsStartsAtTheDefaultOfTwo(t *testing.T) {
+	require.Equal(t, 2, DefaultMaxSpeculativeAttempts)
+	require.Equal(t, DefaultMaxSpeculativeAttempts, CurrentMaxSpeculativeAttempts())
+	require.Equal(t, DefaultMaxSpeculativeAttempts, (&Redundancy{groupSize: 16}).maxAttempts())
 }

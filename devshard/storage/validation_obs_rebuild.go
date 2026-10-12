@@ -38,58 +38,73 @@ func ValidationObsEntriesFromTxs(txs []*types.DevshardTx) []ValidationObsEntry {
 // round trip per journal record or a transaction per inference.
 const validationObsRebuildChunk = 500
 
-// RebuildValidationObsFromDiffs rebuilds validation observability for an escrow
-// from the canonical diff journal. It clears live and sealed obs tables, replays
-// validation txs from records in nonce order, then drains live rows for each
-// sealed inference id. Idempotent w.r.t. diff content.
-//
-// Only the clear makes this safe to re-run: the drain deletes the live row
-// that RecordValidationsAppliedOnce dedups against, so replaying a range on top
-// of already-drained rows would count those validations a second time. Callers
-// must pass the whole journal, never a partial range.
-func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []types.DiffRecord, sealedInferenceIDs []uint64) error {
+type validationObsRebuild struct {
+	store    Storage
+	escrowID string
+	pending  []ValidationObsEntry
+}
+
+// add merges entries across records instead of writing once per nonce; the write is ON CONFLICT DO NOTHING.
+func (r *validationObsRebuild) add(records []types.DiffRecord) error {
+	for _, record := range records {
+		entries := ValidationObsEntriesFromTxs(record.Txs)
+		if len(entries) == 0 {
+			continue
+		}
+		r.pending = append(r.pending, entries...)
+		if len(r.pending) >= validationObsRebuildChunk {
+			if err := r.flush(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (r *validationObsRebuild) flush() error {
+	if len(r.pending) == 0 {
+		return nil
+	}
+	if err := r.store.RecordValidationsAppliedOnce(r.escrowID, r.pending); err != nil {
+		return fmt.Errorf("validation obs rebuild: record: %w", err)
+	}
+	r.pending = r.pending[:0]
+	return nil
+}
+
+// RebuildValidationObs clears validation observability for an escrow, replays the whole diff journal that
+// eachPage feeds to add in nonce order, then drains live rows of sealed inferences; a partial journal double-counts.
+func RebuildValidationObs(store Storage, escrowID string, eachPage func(add func([]types.DiffRecord) error) error, sealedInferenceIDs []uint64) error {
 	if store == nil {
 		return fmt.Errorf("validation obs rebuild: nil store")
 	}
 	if err := store.ClearValidationObs(escrowID); err != nil {
 		return fmt.Errorf("validation obs rebuild: clear: %w", err)
 	}
-	// Accumulate across records instead of writing once per nonce: the write is
-	// ON CONFLICT DO NOTHING keyed on (inference_id, slot_id), so merging
-	// records is indistinguishable from applying them one at a time.
-	pending := make([]ValidationObsEntry, 0, validationObsRebuildChunk)
-	flush := func() error {
-		if len(pending) == 0 {
-			return nil
-		}
-		if err := store.RecordValidationsAppliedOnce(escrowID, pending); err != nil {
-			return fmt.Errorf("validation obs rebuild: record: %w", err)
-		}
-		pending = pending[:0]
-		return nil
+	rebuild := &validationObsRebuild{
+		store:    store,
+		escrowID: escrowID,
+		pending:  make([]ValidationObsEntry, 0, validationObsRebuildChunk),
 	}
-	for _, rec := range records {
-		entries := ValidationObsEntriesFromTxs(rec.Txs)
-		if len(entries) == 0 {
-			continue
-		}
-		pending = append(pending, entries...)
-		if len(pending) >= validationObsRebuildChunk {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
-	}
-	if err := flush(); err != nil {
+	if err := eachPage(rebuild.add); err != nil {
 		return err
 	}
-
+	if err := rebuild.flush(); err != nil {
+		return err
+	}
 	ids := append([]uint64(nil), sealedInferenceIDs...)
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	if err := store.DrainInferenceValidationObsBatch(escrowID, ids); err != nil {
 		return fmt.Errorf("validation obs rebuild: drain: %w", err)
 	}
 	return nil
+}
+
+// RebuildValidationObsFromDiffs is RebuildValidationObs over a journal already held in memory.
+func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []types.DiffRecord, sealedInferenceIDs []uint64) error {
+	return RebuildValidationObs(store, escrowID, func(add func([]types.DiffRecord) error) error {
+		return add(records)
+	}, sealedInferenceIDs)
 }
 
 // SealedInferenceIDsSorted returns sorted inference ids from a seal-nonce map.

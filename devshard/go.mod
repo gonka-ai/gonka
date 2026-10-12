@@ -16,6 +16,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/goccy/go-json v0.10.5
+	github.com/gtank/ristretto255 v0.1.2
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000

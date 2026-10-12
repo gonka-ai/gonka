@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,9 @@ func main() {
 	cfg.ChainRPCAddr = envOr("MOCK_CHAIN_RPC_ADDR", "http://mock-chain:26657")
 	cfg.ChainTestenvURL = os.Getenv("MOCK_CHAIN_TESTENV_URL")
 	cfg.MLEndpoint = envOr("MOCK_ML_ENDPOINT", "http://mock-openai:8088")
+	if nodes := parseMLNodes(os.Getenv("MOCK_ML_NODES")); len(nodes) > 0 {
+		cfg.MLNodes = nodes
+	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {
@@ -35,7 +39,6 @@ func main() {
 			cfg.BlockInterval = d
 		}
 	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -56,6 +59,18 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseMLNodes(raw string) []mockdapi.MLNode {
+	var nodes []mockdapi.MLNode
+	for _, item := range strings.Split(raw, ",") {
+		id, endpoint, ok := strings.Cut(strings.TrimSpace(item), "=")
+		if !ok || id == "" || endpoint == "" {
+			continue
+		}
+		nodes = append(nodes, mockdapi.MLNode{ID: id, Endpoint: endpoint})
+	}
+	return nodes
 }
 
 func versionFromEnv() cosrv.Version {

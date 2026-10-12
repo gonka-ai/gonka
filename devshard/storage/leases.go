@@ -28,9 +28,9 @@ type LeaseStore interface {
 	Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
 	AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
 	// SetResult updates status only when instanceAddr still owns a pending lease.
-	SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error
+	SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error
 	// OwnsPendingLease reports whether instanceAddr currently holds the pending lease.
-	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error)
+	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
 }
 
 type memoryLease struct {
@@ -44,17 +44,17 @@ func (m *Memory) Acquire(_ context.Context, escrowID string, inferenceID, epochI
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.validationLeases == nil {
-		m.validationLeases = make(map[string]map[uint64]memoryLease)
+		m.validationLeases = make(map[string]map[[2]uint64]memoryLease)
 	}
 	byInference := m.validationLeases[escrowID]
 	if byInference == nil {
-		byInference = make(map[uint64]memoryLease)
+		byInference = make(map[[2]uint64]memoryLease)
 		m.validationLeases[escrowID] = byInference
 	}
-	if _, exists := byInference[inferenceID]; exists {
+	if _, exists := byInference[[2]uint64{epochID, inferenceID}]; exists {
 		return false, nil
 	}
-	byInference[inferenceID] = memoryLease{
+	byInference[[2]uint64{epochID, inferenceID}] = memoryLease{
 		epochID:      epochID,
 		instanceAddr: instanceAddr,
 		claimedAt:    time.Now(),
@@ -76,11 +76,11 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID, instanceAddr strin
 		foundEpoch uint64
 		found      bool
 	)
-	for inferenceID, lease := range byInference {
+	for key, lease := range byInference {
 		if lease.status != LeaseStatusPending || !lease.claimedAt.Before(cutoff) {
 			continue
 		}
-		foundID = inferenceID
+		foundID = key[1]
 		foundEpoch = lease.epochID
 		found = true
 		break
@@ -88,37 +88,37 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID, instanceAddr strin
 	if !found {
 		return 0, 0, nil
 	}
-	lease := byInference[foundID]
+	lease := byInference[[2]uint64{foundEpoch, foundID}]
 	lease.instanceAddr = instanceAddr
 	lease.claimedAt = time.Now()
-	byInference[foundID] = lease
+	byInference[[2]uint64{foundEpoch, foundID}] = lease
 	return foundID, foundEpoch, nil
 }
 
-func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	byInference := m.validationLeases[escrowID]
 	if byInference == nil {
 		return ErrLeaseNotOwned
 	}
-	lease, ok := byInference[inferenceID]
+	lease, ok := byInference[[2]uint64{epochID, inferenceID}]
 	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr {
 		return ErrLeaseNotOwned
 	}
 	lease.status = status
-	byInference[inferenceID] = lease
+	byInference[[2]uint64{epochID, inferenceID}] = lease
 	return nil
 }
 
-func (m *Memory) OwnsPendingLease(_ context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (m *Memory) OwnsPendingLease(_ context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	byInference := m.validationLeases[escrowID]
 	if byInference == nil {
 		return false, nil
 	}
-	lease, ok := byInference[inferenceID]
+	lease, ok := byInference[[2]uint64{epochID, inferenceID}]
 	if !ok {
 		return false, nil
 	}
@@ -127,9 +127,9 @@ func (m *Memory) OwnsPendingLease(_ context.Context, escrowID string, inferenceI
 
 func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 	for escrowID, byInference := range m.validationLeases {
-		for inferenceID, lease := range byInference {
+		for key, lease := range byInference {
 			if lease.epochID < cutoff {
-				delete(byInference, inferenceID)
+				delete(byInference, key)
 			}
 		}
 		if len(byInference) == 0 {
@@ -159,11 +159,11 @@ func (s *SQLite) AcquireOneStale(_ context.Context, _, _ string, _ time.Duration
 	return 0, 0, nil
 }
 
-func (s *SQLite) SetResult(_ context.Context, _ string, _ uint64, _ LeaseStatus, _ string) error {
+func (s *SQLite) SetResult(_ context.Context, _ string, _, _ uint64, _ LeaseStatus, _ string) error {
 	return nil
 }
 
-func (s *SQLite) OwnsPendingLease(_ context.Context, _ string, _ uint64, _ string) (bool, error) {
+func (s *SQLite) OwnsPendingLease(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
 	return true, nil
 }
 
@@ -216,12 +216,12 @@ func (s *Postgres) AcquireOneStale(ctx context.Context, escrowID, instanceAddr s
 	return inferenceID, epochID, nil
 }
 
-func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE devshard_validation_leases SET status = $1
 		 WHERE escrow_id = $2 AND inference_id = $3
-		   AND instance_address = $4 AND status = 'pending'`,
-		status, escrowID, inferenceID, instanceAddr,
+		   AND instance_address = $4 AND status = 'pending' AND epoch_id = $5`,
+		status, escrowID, inferenceID, instanceAddr, epochID,
 	)
 	if err != nil {
 		return fmt.Errorf("validation leases: set result %s/%d: %w", escrowID, inferenceID, err)
@@ -232,14 +232,14 @@ func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID u
 	return nil
 }
 
-func (s *Postgres) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (s *Postgres) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	var one int
 	err := s.pool.QueryRow(ctx,
 		`SELECT 1 FROM devshard_validation_leases
 		 WHERE escrow_id = $1 AND inference_id = $2
-		   AND instance_address = $3 AND status = 'pending'
+		   AND instance_address = $3 AND status = 'pending' AND epoch_id = $4
 		 LIMIT 1`,
-		escrowID, inferenceID, instanceAddr,
+		escrowID, inferenceID, instanceAddr, epochID,
 	).Scan(&one)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

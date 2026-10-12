@@ -58,6 +58,8 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 	g.POST("/sessions/:id/gossip/txs", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGossipTxs }))
 
+	g.GET("/sessions/:id/state", withSession(resolver,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetState }))
 	g.GET("/sessions/:id/diffs", withSession(resolver,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetDiffs }))
 	g.GET("/sessions/:id/mempool", withSession(resolver,

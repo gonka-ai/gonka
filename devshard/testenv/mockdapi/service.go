@@ -2,6 +2,7 @@ package mockdapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -32,6 +33,7 @@ type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
 	paramsSrv      *params.Server
+	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
 	admin          *adminface.Client
@@ -41,13 +43,24 @@ type Service struct {
 	httpEcho       *echo.Echo
 }
 
+type mlNodeStats struct {
+	Allocations         uint64 `json:"allocations"`
+	RequestsReceived    uint64 `json:"requests_received"`
+	SuccessfulResponses uint64 `json:"successful_responses"`
+	FailedResponses     uint64 `json:"failed_responses"`
+	Timeouts            uint64 `json:"timeouts"`
+	ReplayHits          uint64 `json:"replay_hits"`
+	ReplayMisses        uint64 `json:"replay_misses"`
+	Error               string `json:"error,omitempty"`
+}
+
 // New connects to mock-chain gRPC and prepares chainoracle surfaces.
 func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.ChainGRPCAddr == "" {
 		return nil, errors.New("mockdapi: ChainGRPCAddr is required")
 	}
-	if cfg.MLEndpoint == "" {
-		return nil, errors.New("mockdapi: MLEndpoint is required")
+	if cfg.MLEndpoint == "" && len(cfg.MLNodes) == 0 {
+		return nil, errors.New("mockdapi: an ML endpoint is required")
 	}
 	if cfg.ChainPollInterval <= 0 {
 		cfg.ChainPollInterval = time.Second
@@ -94,16 +107,19 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	hostEvents := newHostEventRing()
+	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, cfg.MLNodes)
 
 	s := &Service{
 		cfg:            cfg,
 		paramsSrc:      src,
 		paramsSrv:      paramsSrv,
+		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
 		blockMock:      blockMock,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
-		hostEvents:     newHostEventRing(),
+		hostEvents:     hostEvents,
 	}
 	return s, nil
 }
@@ -195,7 +211,7 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
+	gen.RegisterNodeManagerServer(gs, s.nodeManager)
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()
@@ -211,6 +227,12 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	cosrv.Mount(e.Group(""), cosrv.Config{
 		Blocks:          s.blockMock,
 		VersionProvider: s.versions,
+	})
+	e.GET("/testenv/ml-allocations", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, s.nodeManager.AllocationCounts())
+	})
+	e.GET("/testenv/ml-stats", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, s.mlNodeStats(c.Request().Context()))
 	})
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
@@ -233,6 +255,54 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+func (s *Service) mlNodeStats(ctx context.Context) map[string]mlNodeStats {
+	allocations := s.nodeManager.AllocationCounts()
+	result := make(map[string]mlNodeStats, len(s.nodeManager.mlNodes))
+	client := &http.Client{Timeout: 2 * time.Second}
+	for _, node := range s.nodeManager.mlNodes {
+		stats := mlNodeStats{Allocations: allocations[node.ID]}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, node.Endpoint+"/testenv/stats", nil)
+		if err != nil {
+			stats.Error = err.Error()
+			result[node.ID] = stats
+			continue
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			stats.Error = err.Error()
+			result[node.ID] = stats
+			continue
+		}
+		if response.StatusCode != http.StatusOK {
+			stats.Error = response.Status
+			_ = response.Body.Close()
+			result[node.ID] = stats
+			continue
+		}
+		var nodeStats struct {
+			RequestsReceived    uint64 `json:"requests_received"`
+			SuccessfulResponses uint64 `json:"successful_responses"`
+			FailedResponses     uint64 `json:"failed_responses"`
+			Timeouts            uint64 `json:"timeouts"`
+			ReplayHits          uint64 `json:"replay_hits"`
+			ReplayMisses        uint64 `json:"replay_misses"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&nodeStats); err != nil {
+			stats.Error = err.Error()
+		} else {
+			stats.RequestsReceived = nodeStats.RequestsReceived
+			stats.SuccessfulResponses = nodeStats.SuccessfulResponses
+			stats.FailedResponses = nodeStats.FailedResponses
+			stats.Timeouts = nodeStats.Timeouts
+			stats.ReplayHits = nodeStats.ReplayHits
+			stats.ReplayMisses = nodeStats.ReplayMisses
+		}
+		_ = response.Body.Close()
+		result[node.ID] = stats
+	}
+	return result
 }
 
 func mountBinaryFiles(g *echo.Group, dir string) {

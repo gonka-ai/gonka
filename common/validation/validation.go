@@ -213,7 +213,12 @@ func customDistance(
 	for i := range originalLogprobs {
 		o := originalLogprobs[i]
 		v := validationLogprobs[i]
-		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
+		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
+		originalTopLogprobs := o.TopLogprobs
+		if len(originalTopLogprobs) > len(v.TopLogprobs) {
+			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
+		}
+		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
 		if err != nil {
 			logging.Error("Error calculating position distance", types.Validation, "error", err)
 			return math.Inf(1), err
@@ -221,12 +226,13 @@ func customDistance(
 		distance += posDistance
 	}
 	totalLogprobs := max(100, len(originalLogprobs))
-	if len(originalLogprobs[0].TopLogprobs) > 0 {
-		totalLogprobs *= len(originalLogprobs[0].TopLogprobs)
-	}
 
 	return distance / float64(totalLogprobs), nil
 }
+
+// maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
+// below 0.5 for finite a,b, so a non-finite (untrusted) executor logprob is scored at this maximum.
+const maxPositionTerm = 0.5
 
 func positionDistance(
 	originalLogprobs []completionapi.TopLogprobs,
@@ -261,24 +267,22 @@ func positionDistance(
 	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
 
 	for _, v := range validationLogprobs {
-		var originalLogprob float64
-		if origProb, exists := originalLogprobMap[v.Token]; exists {
-			originalLogprob = origProb
-		} else {
+		originalLogprob, matched := originalLogprobMap[v.Token]
+		if !matched {
 			originalLogprob = nextOriginalLogprob
 		}
 
-		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
-		if math.IsNaN(denom) || denom == 0 {
+		if math.IsInf(originalLogprob, 0) || math.IsNaN(originalLogprob) ||
+			math.IsInf(v.Logprob, 0) || math.IsNaN(v.Logprob) {
+			distance += maxPositionTerm
 			continue
 		}
-		term := math.Abs(v.Logprob-originalLogprob) / denom / 2.0
-		if !math.IsNaN(term) {
-			distance += term
-		}
+
+		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
 	}
 
-	return distance, nil
+	return distance / float64(len(validationLogprobs)), nil
 }
 
 var zero = inference.Decimal{Value: 0, Exponent: 0}
@@ -293,7 +297,8 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // then compares logits. execute receives the constructed JSON body and should POST
 // it to the validator's ML node; the response is compared against the original.
 // claimedInputTokens and claimedOutputTokens are what the executor reported; if
-// the validator's re-execution uses fewer tokens, validation fails to catch inflation.
+// the validator's re-execution uses fewer tokens, validation checks for inflation.
+// DeepSeek V4 Flash 0731 permits the known 78/79-token input prefix difference.
 // Pass 0 for both to skip the token count check.
 func ExecuteValidation(
 	ctx context.Context,
@@ -392,12 +397,19 @@ func ExecuteValidation(
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
-		if TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens) ||
-			TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
+		inputInflated := TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens)
+		suspectedCause := ""
+		if inputInflated {
+			var exempt bool
+			exempt, suspectedCause = handleDeepSeekFormatterException(inferenceID, requestMap, claimedInputTokens, claimedOutputTokens, validationUsage)
+			inputInflated = !exempt
+		}
+		if inputInflated || TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn("validation failed: inflated token counts", types.Validation,
 				"inferenceId", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
-				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
+				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
+				"suspected_cause", suspectedCause, "resolution", "invalid")
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 		}
 	}
@@ -434,6 +446,23 @@ func ExecuteValidation(
 		)
 	}
 
+	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
+	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
+	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
+	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
+	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
+	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
+	// above; empty-sentinel errors are exempt.
+	if !isEmptySentinel && len(originalLogits) > 0 {
+		minTokens := completionapi.MinTokensOf(requestMap)
+		if minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below min_tokens floor",
+				types.Validation, "inferenceId", inferenceID,
+				"outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		}
+	}
+
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
@@ -451,4 +480,58 @@ func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
 	}
 	return resp, err
+}
+
+// handleDeepSeekFormatterException checks two known DeepSeek V4 Flash 0731 issues.
+// We expect these to be rare and caused by an old MLNode on either the executor
+// or validator. These checks do not confirm which MLNode version is running.
+//
+//   - Extra instruction: old and new formatters can differ by 78 or 79 input tokens.
+//     We allow this difference and log the exception. Output counts and logits
+//     still go through the normal checks.
+//   - Missing history: old formatters can leave out reasoning from earlier messages.
+//     We suspect this when the input difference is larger, output counts match,
+//     and the request contains earlier assistant reasoning. We log the suspected
+//     cause but still reject the inference because the input histories are too
+//     different to reliably compare model outputs.
+func handleDeepSeekFormatterException(
+	inferenceID string,
+	request map[string]interface{},
+	claimedInput, claimedOutput uint64,
+	usage *completionapi.Usage,
+) (exempt bool, suspectedCause string) {
+	model, _ := request["model"].(string)
+	if model != "deepseek-ai/DeepSeek-V4-Flash-0731" || claimedInput <= usage.PromptTokens {
+		return false, ""
+	}
+	delta := claimedInput - usage.PromptTokens
+	if delta == 78 || delta == 79 {
+		logging.Warn("validation input usage exception applied", types.Validation,
+			"inferenceId", inferenceID, "model", model,
+			"exception", "deepseek_formatter_prefix", "input_delta", delta,
+			"claimedInput", claimedInput, "validationInput", usage.PromptTokens,
+			"resolution", "continue_validation")
+		return true, ""
+	}
+	// A heuristic only: different thinking defaults can omit historical reasoning.
+	if delta > 79 && claimedOutput == usage.CompletionTokens && hasAssistantReasoning(request) {
+		return false, "deepseek_formatter_history"
+	}
+	return false, ""
+}
+
+// hasAssistantReasoning checks for history that thinking and chat modes may render differently.
+func hasAssistantReasoning(request map[string]interface{}) bool {
+	messages, _ := request["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] != "assistant" {
+			continue
+		}
+		reasoning, _ := message["reasoning_content"].(string)
+		if reasoning != "" {
+			return true
+		}
+	}
+	return false
 }

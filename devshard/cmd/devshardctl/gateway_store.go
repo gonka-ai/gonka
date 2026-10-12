@@ -63,9 +63,6 @@ type RedundancySettings struct {
 	PerInputTokenFirstTokenLagMS  int64   `json:"per_input_token_first_token_lag_ms"`
 	InterChunkStallTimeoutMS      int64   `json:"inter_chunk_stall_timeout_ms"`
 	StreamingAttemptHardTimeoutMS int64   `json:"streaming_attempt_hard_timeout_ms"`
-	NonStreamResponseFloorMS      int64   `json:"non_stream_response_floor_ms"`
-	NonStreamNoContentTimeoutMS   int64   `json:"non_stream_no_content_timeout_ms"`
-	NonStreamMaxAttemptWaitMS     int64   `json:"non_stream_max_attempt_wait_ms"`
 	PerInputTokenResponseLagMS    int64   `json:"per_input_token_response_lag_ms"`
 	SecondaryWaitAfterWinnerMS    int64   `json:"secondary_wait_after_winner_ms"`
 	ParallelAdvantageThreshold    float64 `json:"parallel_advantage_threshold"`
@@ -77,6 +74,9 @@ type RedundancySettings struct {
 	PairwiseWinnerHoldMS          int64   `json:"pairwise_winner_hold_ms"`
 	PairwiseWinnerHoldMinSpeedup  float64 `json:"pairwise_winner_hold_min_speedup"`
 	PairwiseWinnerHoldMinSamples  int     `json:"pairwise_winner_hold_min_samples"`
+	// ForceUpstreamStreaming is a kill switch for always-stream-to-host.
+	// nil (omitted in JSON) and true keep #1581's force; false rolls it back.
+	ForceUpstreamStreaming *bool `json:"force_upstream_streaming,omitempty"`
 }
 
 type PerfSettings struct {
@@ -85,18 +85,20 @@ type PerfSettings struct {
 }
 
 type EscrowRotationSettings struct {
-	Enabled           bool                          `json:"enabled"`
-	SettlementEnabled bool                          `json:"settlement_enabled"`
-	PrePoCBlocks      int64                         `json:"pre_poc_blocks"`
-	Models            []EscrowRotationModelSettings `json:"models,omitempty"`
+	Enabled                bool                          `json:"enabled"`
+	SettlementEnabled      bool                          `json:"settlement_enabled"`
+	PrePoCBlocks           int64                         `json:"pre_poc_blocks"`
+	NonceDeactivationLimit uint64                        `json:"nonce_deactivation_limit"`
+	Models                 []EscrowRotationModelSettings `json:"models,omitempty"`
 }
 
 type EscrowRotationModelSettings struct {
-	ModelID       string `json:"model_id"`
-	TempCount     int    `json:"temp_count"`
-	TargetCount   int    `json:"target_count"`
-	Amount        uint64 `json:"amount"`
-	PrivateKeyEnv string `json:"private_key_env"`
+	ModelID           string `json:"model_id"`
+	TempCount         int    `json:"temp_count"`
+	TargetCount       int    `json:"target_count"`
+	Amount            uint64 `json:"amount"`
+	PrivateKeyEnv     string `json:"private_key_env"`
+	SettlementEnabled *bool  `json:"settlement_enabled,omitempty"`
 }
 
 const (
@@ -138,12 +140,6 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 	if s.Redundancy.StreamingAttemptHardTimeoutMS == 0 {
 		s.Redundancy.StreamingAttemptHardTimeoutMS = redundancyDefaults.StreamingAttemptHardTimeoutMS
 	}
-	if s.Redundancy.NonStreamNoContentTimeoutMS == 0 {
-		s.Redundancy.NonStreamNoContentTimeoutMS = redundancyDefaults.NonStreamNoContentTimeoutMS
-	}
-	if s.Redundancy.NonStreamMaxAttemptWaitMS == 0 {
-		s.Redundancy.NonStreamMaxAttemptWaitMS = redundancyDefaults.NonStreamMaxAttemptWaitMS
-	}
 	if s.Redundancy.SpeedPolicy == "" {
 		s.Redundancy.SpeedPolicy = redundancyDefaults.SpeedPolicy
 	}
@@ -165,11 +161,17 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 	if s.Redundancy.PairwiseWinnerHoldMinSamples == 0 {
 		s.Redundancy.PairwiseWinnerHoldMinSamples = redundancyDefaults.PairwiseWinnerHoldMinSamples
 	}
+	if s.Redundancy.ForceUpstreamStreaming == nil {
+		s.Redundancy.ForceUpstreamStreaming = boolPtr(true)
+	}
 	if s.Perf == (PerfSettings{}) {
 		s.Perf = perfDefaults
 	}
 	if s.EscrowRotation.PrePoCBlocks == 0 {
 		s.EscrowRotation.PrePoCBlocks = 300
+	}
+	if s.EscrowRotation.NonceDeactivationLimit == 0 {
+		s.EscrowRotation.NonceDeactivationLimit = nonceDeactivationLimit
 	}
 	for i := range s.EscrowRotation.Models {
 		model := &s.EscrowRotation.Models[i]
@@ -288,6 +290,7 @@ type GatewayDevshardState struct {
 	RuntimeConfig
 	Active            bool   `json:"active"`
 	SettlementPending bool   `json:"settlement_pending,omitempty"`
+	OnHoldSince       string `json:"on_hold_since,omitempty"`
 	RotationRole      string `json:"rotation_role,omitempty"`
 	RotationEpoch     uint64 `json:"rotation_epoch,omitempty"`
 	CreatedAt         string `json:"created_at,omitempty"`
@@ -356,9 +359,6 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			redundancy_per_input_token_first_token_lag_ms INTEGER NOT NULL DEFAULT 10,
 			redundancy_inter_chunk_stall_timeout_ms INTEGER NOT NULL DEFAULT 60000,
 			redundancy_streaming_attempt_hard_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
-			redundancy_non_stream_response_floor_ms INTEGER NOT NULL DEFAULT 20000,
-			redundancy_non_stream_no_content_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
-			redundancy_non_stream_max_attempt_wait_ms INTEGER NOT NULL DEFAULT 1800000,
 			redundancy_per_input_token_response_lag_ms INTEGER NOT NULL DEFAULT 20,
 			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 600000,
 			redundancy_parallel_advantage_threshold REAL NOT NULL DEFAULT 0.5,
@@ -370,11 +370,13 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			redundancy_pairwise_winner_hold_ms INTEGER NOT NULL DEFAULT 500,
 			redundancy_pairwise_winner_hold_min_speedup REAL NOT NULL DEFAULT 0.1,
 			redundancy_pairwise_winner_hold_min_samples INTEGER NOT NULL DEFAULT 6,
+			redundancy_force_upstream_streaming INTEGER NOT NULL DEFAULT 1,
 			perf_sample_size INTEGER NOT NULL DEFAULT 256,
 			perf_window_ms INTEGER NOT NULL DEFAULT 3600000,
 			escrow_rotation_enabled INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_settlement_enabled INTEGER NOT NULL DEFAULT 0,
 			escrow_rotation_pre_poc_blocks INTEGER NOT NULL DEFAULT 300,
+			escrow_rotation_nonce_deactivation_limit INTEGER NOT NULL DEFAULT 19800,
 			escrow_rotation_models_json TEXT NOT NULL DEFAULT '',
 			gateway_disabled_enabled INTEGER NOT NULL DEFAULT 0,
 			gateway_disabled_message TEXT NOT NULL DEFAULT '',
@@ -464,6 +466,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard protocol version: %w", err)
+	}
+	if err := ensureGatewayDevshardsColumn(db, "on_hold_since", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard on hold since: %w", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
@@ -564,22 +570,23 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
 		       redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
 		       redundancy_streaming_attempt_hard_timeout_ms,
-		       redundancy_non_stream_response_floor_ms, redundancy_non_stream_no_content_timeout_ms,
-		       redundancy_non_stream_max_attempt_wait_ms, redundancy_per_input_token_response_lag_ms,
+		       redundancy_per_input_token_response_lag_ms,
 		       redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
 		       redundancy_unresponsive_threshold, redundancy_speed_policy, redundancy_pairwise_budget_percentile,
 		       redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
 		       redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 		       redundancy_pairwise_winner_hold_min_samples,
+		       redundancy_force_upstream_streaming,
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
-		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
-	       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
+		       escrow_rotation_pre_poc_blocks, escrow_rotation_nonce_deactivation_limit, escrow_rotation_models_json,
+		       gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url
 		FROM gateway_settings
 		WHERE id = 1`)
 	var rotationEnabled int
 	var rotationSettlementEnabled int
 	var disabledEnabled int
+	var forceUpstreamStreaming int
 	var rotationModelsJSON string
 	var modelLimitsJSON string
 	var modelAccessJSON string
@@ -609,9 +616,6 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		&state.Settings.Redundancy.InterChunkStallTimeoutMS,
 		&state.Settings.Redundancy.StreamingAttemptHardTimeoutMS,
-		&state.Settings.Redundancy.NonStreamResponseFloorMS,
-		&state.Settings.Redundancy.NonStreamNoContentTimeoutMS,
-		&state.Settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		&state.Settings.Redundancy.PerInputTokenResponseLagMS,
 		&state.Settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		&state.Settings.Redundancy.ParallelAdvantageThreshold,
@@ -623,11 +627,13 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Redundancy.PairwiseWinnerHoldMS,
 		&state.Settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		&state.Settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		&forceUpstreamStreaming,
 		&state.Settings.Perf.SampleSize,
 		&state.Settings.Perf.WindowMS,
 		&rotationEnabled,
 		&rotationSettlementEnabled,
 		&state.Settings.EscrowRotation.PrePoCBlocks,
+		&state.Settings.EscrowRotation.NonceDeactivationLimit,
 		&rotationModelsJSON,
 		&disabledEnabled,
 		&state.Settings.Disabled.Message,
@@ -659,11 +665,12 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		state.Settings.ModelLimits = applyLegacyModelAccessToLimits(state.Settings.ModelLimits, legacyModelAccess)
 	}
 	state.Settings.Disabled.Enabled = disabledEnabled != 0
+	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(forceUpstreamStreaming != 0)
 	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -688,6 +695,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
 			&settlementPending,
+			&devshard.OnHoldSince,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
 		}
@@ -736,19 +744,19 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			redundancy_receipt_timeout_ms, redundancy_first_token_timeout_floor_ms,
 			redundancy_per_input_token_first_token_lag_ms, redundancy_inter_chunk_stall_timeout_ms,
 			redundancy_streaming_attempt_hard_timeout_ms,
-			redundancy_non_stream_response_floor_ms, redundancy_non_stream_no_content_timeout_ms,
-			redundancy_non_stream_max_attempt_wait_ms, redundancy_per_input_token_response_lag_ms,
+			redundancy_per_input_token_response_lag_ms,
 			redundancy_secondary_wait_after_winner_ms, redundancy_parallel_advantage_threshold,
 			redundancy_unresponsive_threshold, redundancy_speed_policy, redundancy_pairwise_budget_percentile,
 			redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
 			redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 			redundancy_pairwise_winner_hold_min_samples,
+			redundancy_force_upstream_streaming,
 			perf_sample_size, perf_window_ms,
 			escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -774,9 +782,6 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		settings.Redundancy.InterChunkStallTimeoutMS,
 		settings.Redundancy.StreamingAttemptHardTimeoutMS,
-		settings.Redundancy.NonStreamResponseFloorMS,
-		settings.Redundancy.NonStreamNoContentTimeoutMS,
-		settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		settings.Redundancy.PerInputTokenResponseLagMS,
 		settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		settings.Redundancy.ParallelAdvantageThreshold,
@@ -788,6 +793,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Redundancy.PairwiseWinnerHoldMS,
 		settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		gatewayOptionalBoolToInt(settings.Redundancy.ForceUpstreamStreaming, true),
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
@@ -800,6 +806,9 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		now,
 	); err != nil {
 		return fmt.Errorf("insert gateway settings: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE gateway_settings SET escrow_rotation_nonce_deactivation_limit = ? WHERE id = 1`, settings.EscrowRotation.NonceDeactivationLimit); err != nil {
+		return fmt.Errorf("insert gateway rotation nonce limit: %w", err)
 	}
 
 	for _, devshard := range devshards {
@@ -839,9 +848,6 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    redundancy_per_input_token_first_token_lag_ms = ?,
 		    redundancy_inter_chunk_stall_timeout_ms = ?,
 		    redundancy_streaming_attempt_hard_timeout_ms = ?,
-		    redundancy_non_stream_response_floor_ms = ?,
-		    redundancy_non_stream_no_content_timeout_ms = ?,
-		    redundancy_non_stream_max_attempt_wait_ms = ?,
 		    redundancy_per_input_token_response_lag_ms = ?,
 		    redundancy_secondary_wait_after_winner_ms = ?,
 		    redundancy_parallel_advantage_threshold = ?,
@@ -853,6 +859,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    redundancy_pairwise_winner_hold_ms = ?,
 		    redundancy_pairwise_winner_hold_min_speedup = ?,
 		    redundancy_pairwise_winner_hold_min_samples = ?,
+		    redundancy_force_upstream_streaming = ?,
 		    perf_sample_size = ?,
 		    perf_window_ms = ?,
 		    escrow_rotation_enabled = ?,
@@ -889,9 +896,6 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Redundancy.PerInputTokenFirstTokenLagMS,
 		settings.Redundancy.InterChunkStallTimeoutMS,
 		settings.Redundancy.StreamingAttemptHardTimeoutMS,
-		settings.Redundancy.NonStreamResponseFloorMS,
-		settings.Redundancy.NonStreamNoContentTimeoutMS,
-		settings.Redundancy.NonStreamMaxAttemptWaitMS,
 		settings.Redundancy.PerInputTokenResponseLagMS,
 		settings.Redundancy.SecondaryWaitAfterWinnerMS,
 		settings.Redundancy.ParallelAdvantageThreshold,
@@ -903,6 +907,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Redundancy.PairwiseWinnerHoldMS,
 		settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		gatewayOptionalBoolToInt(settings.Redundancy.ForceUpstreamStreaming, true),
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
@@ -923,6 +928,9 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 	}
 	if n == 0 {
 		return fmt.Errorf("gateway settings not initialized")
+	}
+	if _, err := s.db.Exec(`UPDATE gateway_settings SET escrow_rotation_nonce_deactivation_limit = ? WHERE id = 1`, settings.EscrowRotation.NonceDeactivationLimit); err != nil {
+		return fmt.Errorf("update gateway rotation nonce limit: %w", err)
 	}
 	return nil
 }
@@ -1040,17 +1048,17 @@ func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
 
 func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
 	createdAt := now
-	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
 	// Preserve the existing settlement_pending marker so an unrelated upsert
 	// never silently clears a queued settlement; a brand-new row falls back
 	// to the value carried on devshard.
 	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
-	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
+	onHoldSince := devshard.OnHoldSince
+	_ = tx.QueryRow(`SELECT created_at, settlement_pending, on_hold_since FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt, &settlementPending, &onHoldSince)
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			protocol_version, rotation_role, rotation_epoch, settlement_pending
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -1064,6 +1072,7 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		settlementPending,
+		onHoldSince,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
 	}
@@ -1081,7 +1090,7 @@ func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error
 	var settlementPending int
 	err := s.db.QueryRow(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
 		FROM gateway_devshards
 		WHERE id = ?`, id).Scan(
 		&devshard.ID,
@@ -1097,6 +1106,7 @@ func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error
 		&devshard.RotationRole,
 		&devshard.RotationEpoch,
 		&settlementPending,
+		&devshard.OnHoldSince,
 	)
 	if err == sql.ErrNoRows {
 		return GatewayDevshardState{}, false, nil
@@ -1131,10 +1141,62 @@ func (s *GatewayStore) SetDevshardSettlementPending(id string, pending bool) err
 	return nil
 }
 
+func (s *GatewayStore) HoldDevshardIfActive(id string, since time.Time) (time.Time, bool, error) {
+	id = strings.TrimSpace(id)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("begin devshard %s hold: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`
+		UPDATE gateway_devshards
+		SET on_hold_since = CASE WHEN on_hold_since = '' THEN ? ELSE on_hold_since END, updated_at = ?
+		WHERE id = ? AND active = 1`,
+		since.UTC().Format(time.RFC3339Nano),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		id,
+	)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("hold devshard %s: %w", id, err)
+	}
+	affectedRows, err := result.RowsAffected()
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	if affectedRows == 0 {
+		return time.Time{}, false, nil
+	}
+	var storedSince string
+	if err := tx.QueryRow(`SELECT on_hold_since FROM gateway_devshards WHERE id = ?`, id).Scan(&storedSince); err != nil {
+		return time.Time{}, false, fmt.Errorf("read devshard %s hold: %w", id, err)
+	}
+	heldSince, err := time.Parse(time.RFC3339Nano, storedSince)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("parse devshard %s on_hold_since %q: %w", id, storedSince, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return time.Time{}, false, fmt.Errorf("commit devshard %s hold: %w", id, err)
+	}
+	return heldSince, true, nil
+}
+
+func (s *GatewayStore) ReleaseDevshardHold(id string) error {
+	if _, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET on_hold_since = '', updated_at = ?
+		WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	); err != nil {
+		return fmt.Errorf("release devshard %s hold: %w", id, err)
+	}
+	return nil
+}
+
 func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards
-		SET active = ?, updated_at = ?
+		SET active = ?, on_hold_since = '', updated_at = ?
 		WHERE id = ?`,
 		gatewayBoolToInt(active),
 		time.Now().UTC().Format(time.RFC3339Nano),
@@ -1151,6 +1213,26 @@ func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 		return fmt.Errorf("devshard %s not found", id)
 	}
 	return nil
+}
+
+// DeactivateDevshardIfActive reports whether it moved an active row to inactive; a missing or already inactive row reports false.
+func (s *GatewayStore) DeactivateDevshardIfActive(id string, settlementPending bool) (bool, error) {
+	result, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET active = 0, settlement_pending = MAX(settlement_pending, ?), on_hold_since = '', updated_at = ?
+		WHERE id = ? AND active = 1`,
+		gatewayBoolToInt(settlementPending),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return false, fmt.Errorf("deactivate devshard %s settlement_pending=%t: %w", id, settlementPending, err)
+	}
+	deactivatedRows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	return deactivatedRows == 1, nil
 }
 
 func (s *GatewayStore) DeleteDevshard(id string) error {
@@ -1479,6 +1561,16 @@ func gatewayBoolToInt(v bool) int {
 	return 0
 }
 
+func gatewayOptionalBoolToInt(v *bool, defaultTrue bool) int {
+	if v == nil {
+		if defaultTrue {
+			return 1
+		}
+		return 0
+	}
+	return gatewayBoolToInt(*v)
+}
+
 func mustMarshalEscrowRotationModels(models []EscrowRotationModelSettings) string {
 	if len(models) == 0 {
 		return ""
@@ -1524,9 +1616,6 @@ func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
 		{"redundancy_per_input_token_first_token_lag_ms", "INTEGER NOT NULL DEFAULT 10"},
 		{"redundancy_inter_chunk_stall_timeout_ms", "INTEGER NOT NULL DEFAULT 60000"},
 		{"redundancy_streaming_attempt_hard_timeout_ms", "INTEGER NOT NULL DEFAULT 1800000"},
-		{"redundancy_non_stream_response_floor_ms", "INTEGER NOT NULL DEFAULT 20000"},
-		{"redundancy_non_stream_no_content_timeout_ms", "INTEGER NOT NULL DEFAULT 1800000"},
-		{"redundancy_non_stream_max_attempt_wait_ms", "INTEGER NOT NULL DEFAULT 1800000"},
 		{"redundancy_per_input_token_response_lag_ms", "INTEGER NOT NULL DEFAULT 20"},
 		{"redundancy_secondary_wait_after_winner_ms", "INTEGER NOT NULL DEFAULT 600000"},
 		{"redundancy_parallel_advantage_threshold", "REAL NOT NULL DEFAULT 0.5"},
@@ -1538,6 +1627,7 @@ func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
 		{"redundancy_pairwise_winner_hold_ms", "INTEGER NOT NULL DEFAULT 500"},
 		{"redundancy_pairwise_winner_hold_min_speedup", "REAL NOT NULL DEFAULT 0.1"},
 		{"redundancy_pairwise_winner_hold_min_samples", "INTEGER NOT NULL DEFAULT 6"},
+		{"redundancy_force_upstream_streaming", "INTEGER NOT NULL DEFAULT 1"},
 		{"perf_sample_size", "INTEGER NOT NULL DEFAULT 256"},
 		{"perf_window_ms", "INTEGER NOT NULL DEFAULT 3600000"},
 	}
@@ -1557,6 +1647,7 @@ func ensureGatewaySettingsRotationColumns(db *sql.DB) error {
 		{"escrow_rotation_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_settlement_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"escrow_rotation_pre_poc_blocks", "INTEGER NOT NULL DEFAULT 300"},
+		{"escrow_rotation_nonce_deactivation_limit", "INTEGER NOT NULL DEFAULT 19800"},
 		{"escrow_rotation_models_json", "TEXT NOT NULL DEFAULT ''"},
 	}
 	for _, column := range columns {

@@ -59,10 +59,11 @@ func startEngineMLClient(t *testing.T, srv *engineMockNM) *mlnodeclient.Client {
 
 func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity *mlnodeclient.Cache) *Engine {
 	return &Engine{
-		mlClient:   ml,
-		mgr:        mgr,
-		capacity:   capacity,
-		httpClient: http.DefaultClient,
+		validationBudget: newValidationBudget(defaultValidationCreditTTL),
+		mlClient:         ml,
+		mgr:              mgr,
+		capacity:         capacity,
+		httpClient:       http.DefaultClient,
 	}
 }
 
@@ -100,9 +101,9 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
-		func(endpoint string) (*http.Response, error) {
+		func(endpoint string, refund func()) (*http.Response, error) {
 			return http.Get(endpoint)
-		})
+		}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -146,9 +147,9 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
+		func(endpoint string, refund func()) (*http.Response, error) {
 			return http.Get(endpoint)
-		})
+		}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -185,9 +186,9 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	defer cancel()
 
 	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
+		func(endpoint string, refund func()) (*http.Response, error) {
 			return http.Get(endpoint)
-		})
+		}, nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Equal(t, int32(0), mlHits.Load(), "must not fall back to cached node")
@@ -222,9 +223,9 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
+		func(endpoint string, refund func()) (*http.Response, error) {
 			return http.Get(endpoint)
-		})
+		}, nil)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -245,9 +246,9 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
+		func(endpoint string, refund func()) (*http.Response, error) {
 			return http.Get(endpoint)
-		})
+		}, nil)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "no cached nodes")
@@ -311,9 +312,9 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
+				func(endpoint string, refund func()) (*http.Response, error) {
 					return http.Get(endpoint)
-				})
+				}, nil)
 			if err != nil {
 				errCh <- err
 				return
@@ -375,9 +376,9 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
+				func(endpoint string, refund func()) (*http.Response, error) {
 					return http.Get(endpoint)
-				})
+				}, nil)
 			if err != nil {
 				errCh <- err
 				return
@@ -456,9 +457,9 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
+				func(endpoint string, refund func()) (*http.Response, error) {
 					return http.Get(endpoint)
-				})
+				}, nil)
 			if err != nil {
 				errCh <- err
 				return
@@ -474,4 +475,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

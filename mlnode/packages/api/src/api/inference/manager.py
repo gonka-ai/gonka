@@ -48,7 +48,7 @@ class InferenceManager(IManager):
     ):
         if self.is_running():
             raise Exception("VLLMRunner is already running. Stop it first.")
-        
+
         self.vllm_runner = self.runner_class(
             model=init_request.model,
             dtype=init_request.dtype,
@@ -116,7 +116,7 @@ class InferenceManager(IManager):
             self._startup_task = None
             self._exception = None
             proxy_module.shutdown_event.clear()
-            
+
             # Update state to reflect completion
             with self._lock:
                 self._state = ManagerState.STOPPED

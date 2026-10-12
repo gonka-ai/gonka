@@ -1,0 +1,29 @@
+[
+  {
+    "id": "node1",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "deepseek-ai/DeepSeek-V4-Flash-0731": {
+        "model_override": {
+          "hf_repo": "MJPansa/DeepSeek-V4-Flash-0731-NVFP4",
+          "hf_commit": "64d64cd89bc63a66aa46506da89d7821f7491c62"
+        },
+        "args": [
+          "--tensor-parallel-size", "1",
+          "--gpu-memory-utilization", "0.90",
+          "--max-model-len", "400000",
+          "--max-num-batched-tokens", "32768",
+          "--kv-cache-dtype", "fp8",
+          "--tokenizer-mode", "deepseek_v4",
+          "--enable-auto-tool-choice",
+          "--tool-call-parser", "deepseek_v4",
+          "--reasoning-parser", "deepseek_v4",
+          "--trust-remote-code"
+        ]
+      }
+    }
+  }
+]

@@ -111,7 +111,7 @@ func TestFlushSnapshot_RetiredEscrowRebuildsWithoutReplay(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	for i := 0; i < numInferences; i++ {
 		_, err := session.SendInference(ctx, params)

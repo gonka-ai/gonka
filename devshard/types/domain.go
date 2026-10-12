@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v2"
+const DevshardStateRootAndProtocolVersion = "v4"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -78,16 +78,25 @@ type HostStats struct {
 type ProtocolVersion string
 
 const (
-	ProtocolV1 ProtocolVersion = "1"
-	ProtocolV2 ProtocolVersion = "2"
-	ProtocolV3 ProtocolVersion = "3"
+	ProtocolV1             ProtocolVersion = "1"
+	ProtocolV2             ProtocolVersion = "2"
+	ProtocolV3             ProtocolVersion = "3"
+	ProtocolV4             ProtocolVersion = "4"
+	ProtocolV41            ProtocolVersion = "4.1"
+	DefaultProtocolVersion                 = ProtocolV41
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
-// Empty string defaults to ProtocolV1.
+// Empty string defaults to DefaultProtocolVersion.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
-	case "", string(ProtocolV1), "v1":
+	case "":
+		return DefaultProtocolVersion, nil
+	case string(ProtocolV41), "v4.1":
+		return ProtocolV41, nil
+	case string(ProtocolV4), "v4":
+		return ProtocolV4, nil
+	case string(ProtocolV1), "v1":
 		return ProtocolV1, nil
 	case string(ProtocolV2), "v2":
 		return ProtocolV2, nil
@@ -155,6 +164,18 @@ type DiffRecord struct {
 	Signatures   map[uint32][]byte
 	WarmKeyDelta map[uint32]string // warm key bindings introduced at this nonce
 	CreatedAt    int64
+	// SessionState, when set, is written in the same transaction as the diff so the stored state never lags the journal.
+	SessionState *SessionStateDelta
+}
+
+// SessionStateDelta is the state a diff leaves behind: the live inference
+// entries it wrote or removed and the session header as of its nonce.
+// ReplaceAll means Upserts is the whole live set and older rows are dropped.
+type SessionStateDelta struct {
+	Header     []byte
+	Upserts    map[uint64][]byte
+	Deletes    []uint64
+	ReplaceAll bool
 }
 
 // ComputeWarmKeyDelta returns entries in after that are not in before.

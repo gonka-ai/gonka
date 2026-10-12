@@ -1,0 +1,83 @@
+{
+ "choices": [
+  {
+   "index": 0,
+   "logprobs": {
+    "content": [
+     {
+      "token": "The",
+      "logprob": 0,
+      "bytes": [
+       84,
+       104,
+       101
+      ],
+      "top_logprobs": [
+       {
+        "token": "The",
+        "logprob": 0,
+        "bytes": [
+         84,
+         104,
+         101
+        ]
+       },
+       {
+        "token": "\u0002",
+        "logprob": -9999,
+        "bytes": [
+         2
+        ]
+       },
+       {
+        "token": "\u0000",
+        "logprob": -9999,
+        "bytes": [
+         0
+        ]
+       }
+      ]
+     },
+     {
+      "token": " user",
+      "logprob": 0,
+      "bytes": [
+       32,
+       117,
+       115,
+       101,
+       114
+      ],
+      "top_logprobs": [
+       {
+        "token": " user",
+        "logprob": 0,
+        "bytes": [
+         32,
+         117,
+         115,
+         101,
+         114
+        ]
+       },
+       {
+        "token": "\u0002",
+        "logprob": -9999,
+        "bytes": [
+         2
+        ]
+       },
+       {
+        "token": "\u0000",
+        "logprob": -9999,
+        "bytes": [
+         0
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

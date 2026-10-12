@@ -28,18 +28,18 @@ type File struct {
 	Grantees     []GranteeBinding    `yaml:"grantees"`
 	EpochGroups  []EpochGroupBinding `yaml:"epoch_groups"`
 
-	MockChain  MockChainCfg  `yaml:"mock_chain"`
-	MockDapi   MockDapiCfg   `yaml:"mock_dapi"`
-	MockOpenAI MockOpenAICfg `yaml:"mock_openai"`
+	MockChain      MockChainCfg      `yaml:"mock_chain"`
+	MockDapi       MockDapiCfg       `yaml:"mock_dapi"`
+	MockOpenAI     MockOpenAICfg     `yaml:"mock_openai"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
 	Postgres       PostgresCfg       `yaml:"postgres"`
-	Escrow    EscrowMeta   `yaml:"escrow"`
-	Hosts     []HostCfg    `yaml:"hosts"`
-	User        UserCfg        `yaml:"user"`
-	WarmGrantee WarmGranteeCfg `yaml:"warm_grantee"`
-	Network     NetworkCfg     `yaml:"network"`
+	Escrow         EscrowMeta        `yaml:"escrow"`
+	Hosts          []HostCfg         `yaml:"hosts"`
+	User           UserCfg           `yaml:"user"`
+	WarmGrantee    WarmGranteeCfg    `yaml:"warm_grantee"`
+	Network        NetworkCfg        `yaml:"network"`
 }
 
 type Epoch struct {
@@ -101,7 +101,7 @@ type MockChainCfg struct {
 	GRPCPort    int    `yaml:"grpc_port"`
 	RPCPort     int    `yaml:"rpc_port"`
 	TestenvPort int    `yaml:"testenv_port"`
-	Host         string `yaml:"host"`
+	Host        string `yaml:"host"`
 }
 
 // MockDapiCfg is the listen addresses of cmd/mockdapi.
@@ -113,20 +113,36 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int    `yaml:"http_port"`
-	Host     string `yaml:"host"`
+	HTTPPort   int                 `yaml:"http_port"`
+	Host       string              `yaml:"host"`
+	ReplayFile string              `yaml:"replay_file,omitempty"`
+	Nodes      []MockOpenAINodeCfg `yaml:"nodes"`
+}
+
+// MockOpenAINodeCfg configures one independently-behaving Mock ML container.
+// An empty Nodes slice preserves the historical single mock-openai service.
+type MockOpenAINodeCfg struct {
+	Name          string  `yaml:"name"`
+	TTFT          string  `yaml:"ttft,omitempty"`
+	TokenInterval string  `yaml:"token_interval,omitempty"`
+	Workers       int     `yaml:"workers,omitempty"`
+	Queue         int     `yaml:"queue,omitempty"`
+	Hang          bool    `yaml:"hang,omitempty"`
+	FailureRate   float64 `yaml:"failure_rate,omitempty"`
+	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode             string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName      string `yaml:"version_name"`
-	HostBinaryMount  string `yaml:"host_binary_mount"`
-	OverridePath     string `yaml:"override_path"`
-	PollInterval     string `yaml:"poll_interval"`
-	BinaryVersion    string `yaml:"binary_version"`
-	KeyringDir       string `yaml:"keyring_dir"`
-	KeyringPassword  string `yaml:"keyring_password"`
+	Mode                     string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName              string `yaml:"version_name"`
+	HostBinaryMount          string `yaml:"host_binary_mount"`
+	OverridePath             string `yaml:"override_path"`
+	PollInterval             string `yaml:"poll_interval"`
+	BinaryVersion            string `yaml:"binary_version"`
+	KeyringDir               string `yaml:"keyring_dir"`
+	KeyringPassword          string `yaml:"keyring_password"`
+	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky nginx router in front of versiond instances.
@@ -143,15 +159,19 @@ type DevshardctlCfg struct {
 	IP   string `yaml:"ip"`
 }
 
-// PostgresCfg is optional shared storage for devshardd children.
+// PostgresCfg configures storage for devshardd children. PerParticipant creates
+// one isolated Postgres service per on-chain participant while replicas of that
+// participant share its service. The default is the existing shared service
+// used by HA-specific testenv scenarios.
 type PostgresCfg struct {
-	Enabled  bool   `yaml:"enabled"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	IP       string `yaml:"ip"`
+	Enabled        bool   `yaml:"enabled"`
+	PerParticipant bool   `yaml:"per_participant"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	Database       string `yaml:"database"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	IP             string `yaml:"ip"`
 }
 
 // EscrowMeta describes slot layout gencompose owns (distinct from escrows[] seed).
@@ -169,6 +189,9 @@ type HostCfg struct {
 	URL           string `yaml:"url"`
 	Port          int    `yaml:"port"`
 	IP            string `yaml:"ip"`
+	// KeyName identifies the on-chain participant loaded by this versiond
+	// container. Multiple hosts may share one key as HA replicas.
+	KeyName string `yaml:"key_name"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -191,48 +214,48 @@ type WarmGranteeCfg struct {
 }
 
 const (
-	DefaultChainID           = "gonka-test"
-	DefaultBlockHeight       = int64(150)
-	DefaultMockChainGRPCPort = 9090
-	DefaultMockChainRPCPort  = 26657
+	DefaultChainID              = "gonka-test"
+	DefaultBlockHeight          = int64(150)
+	DefaultMockChainGRPCPort    = 9090
+	DefaultMockChainRPCPort     = 26657
 	DefaultMockChainTestenvPort = 9191
-	DefaultMockChainHost     = "mock-chain"
-	DefaultMockDapiGRPCPort  = 9400
-	DefaultMockDapiHTTPPort  = 9100
-	DefaultMockDapiHost      = "mock-dapi"
-	DefaultMockOpenAIHTTPPort = 8088
-	DefaultMockOpenAIHost     = "mock-openai"
-	DefaultVersionName        = "v2"
-	DefaultBinaryVersion      = "0.2.13-v2-r2"
-	VersiondModeSingle        = "single"
-	VersiondModeMulti         = "multi"
-	DefaultVersiondModeMulti  = VersiondModeMulti
-	DefaultDevsharddHostMount = "../../build/devshardd"
-	DefaultDevsharddOverride  = "/opt/devshard/devshardd"
-	DefaultVersiondPoll       = "5s"
-	DefaultKeyringDir         = "/keyring"
-	DefaultKeyringPassword    = "testenv1"
-	DefaultVersiondRouterHost = "versiond-router"
-	DefaultVersiondRouterPort = 8080
-	DefaultDevshardctlHost    = "devshardctl"
-	DefaultPostgresHost       = "devshard-postgres"
-	DefaultPostgresPort       = 5432
-	DefaultPostgresDB         = "devshardd"
-	DefaultPostgresUser       = "devshardd"
-	DefaultPostgresPassword   = "devshardd"
-	DefaultEscrowSlots       = 4
+	DefaultMockChainHost        = "mock-chain"
+	DefaultMockDapiGRPCPort     = 9400
+	DefaultMockDapiHTTPPort     = 9100
+	DefaultMockDapiHost         = "mock-dapi"
+	DefaultMockOpenAIHTTPPort   = 8088
+	DefaultMockOpenAIHost       = "mock-openai"
+	DefaultVersionName          = "v2"
+	DefaultBinaryVersion        = "0.2.13-v2-r2"
+	VersiondModeSingle          = "single"
+	VersiondModeMulti           = "multi"
+	DefaultVersiondModeMulti    = VersiondModeMulti
+	DefaultDevsharddHostMount   = "../../build/devshardd"
+	DefaultDevsharddOverride    = "/opt/devshard/devshardd"
+	DefaultVersiondPoll         = "5s"
+	DefaultKeyringDir           = "/keyring"
+	DefaultKeyringPassword      = "testenv1"
+	DefaultVersiondRouterHost   = "versiond-router"
+	DefaultVersiondRouterPort   = 8080
+	DefaultDevshardctlHost      = "devshardctl"
+	DefaultPostgresHost         = "devshard-postgres"
+	DefaultPostgresPort         = 5432
+	DefaultPostgresDB           = "devshardd"
+	DefaultPostgresUser         = "devshardd"
+	DefaultPostgresPassword     = "devshardd"
+	DefaultEscrowSlots          = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
-	DefaultEscrowSlotURL     = "http://versiond-router:8080"
-	DefaultEscrowAmount      = uint64(1_000_000)
-	DefaultTokenPrice        = uint64(100)
-	DefaultUserPort          = 8081
-	DefaultHostPort          = 8080
-	DefaultNetworkCIDR       = "172.30.0.0/24"
-	DefaultNetworkBaseIP     = "172.30.0"
-	DefaultModelID           = "test-model"
-	DefaultAdminAPIKey       = "testenv-citest-admin"
-	DefaultAppHash           = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	DefaultEscrowSlotURL = "http://versiond-router:8080"
+	DefaultEscrowAmount  = uint64(1_000_000)
+	DefaultTokenPrice    = uint64(100)
+	DefaultUserPort      = 8081
+	DefaultHostPort      = 8080
+	DefaultNetworkCIDR   = "172.30.0.0/24"
+	DefaultNetworkBaseIP = "172.30.0"
+	DefaultModelID       = "test-model"
+	DefaultAdminAPIKey   = "testenv-citest-admin"
+	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -437,6 +460,97 @@ func PrimaryModelID(c *File) string {
 	return DefaultModelID
 }
 
+// VersiondKeyName returns the Cosmos keyring entry loaded by a versiond
+// container. Explicit key_name values win; otherwise multi mode keeps the
+// first two hosts as the default HA pair and treats later hosts as solo
+// participants.
+func VersiondKeyName(c *File, h HostCfg) string {
+	if name := strings.TrimSpace(h.KeyName); name != "" {
+		return name
+	}
+	if c != nil && c.Versiond.Mode == VersiondModeMulti && len(c.Hosts) > 0 {
+		for i, host := range c.Hosts {
+			if host.ID != h.ID {
+				continue
+			}
+			if i <= 1 {
+				if name := strings.TrimSpace(c.Hosts[0].KeyName); name != "" {
+					return name
+				}
+				return c.Hosts[0].ID
+			}
+			return h.ID
+		}
+	}
+	return h.ID
+}
+
+// OnChainIdentityHosts returns one representative host for each distinct
+// participant identity. HA replicas are intentionally returned only once.
+func OnChainIdentityHosts(c *File) []HostCfg {
+	if c == nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(c.Hosts))
+	identities := make([]HostCfg, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		name := VersiondKeyName(c, h)
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		identities = append(identities, h)
+	}
+	return identities
+}
+
+// KeyNameReplicaCount returns the number of containers loading h's identity.
+func KeyNameReplicaCount(c *File, h HostCfg) int {
+	if c == nil {
+		return 0
+	}
+	name := VersiondKeyName(c, h)
+	count := 0
+	for _, host := range c.Hosts {
+		if VersiondKeyName(c, host) == name {
+			count++
+		}
+	}
+	return count
+}
+
+// RouterPoolHostIDs returns the sticky router pool. In multi mode this is the
+// first replicated identity; solo participants are reached directly.
+func RouterPoolHostIDs(c *File) []string {
+	if c == nil {
+		return nil
+	}
+	pooledKey := ""
+	if c.Versiond.Mode == VersiondModeMulti {
+		for _, h := range c.Hosts {
+			if KeyNameReplicaCount(c, h) > 1 {
+				pooledKey = VersiondKeyName(c, h)
+				break
+			}
+		}
+	}
+	ids := make([]string, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		if pooledKey != "" && VersiondKeyName(c, h) != pooledKey {
+			continue
+		}
+		ids = append(ids, h.ID)
+	}
+	return ids
+}
+
+func (c *File) onChainHostCount() int {
+	return len(OnChainIdentityHosts(c))
+}
+
 // Validate enforces invariants gencompose and mock-chain rely on.
 func (c *File) Validate() error {
 	if c.ChainID == "" {
@@ -445,9 +559,9 @@ func (c *File) Validate() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
-	if c.Escrow.Slots < len(c.Hosts) {
-		return fmt.Errorf("escrow.slots (%d) must be >= number of hosts (%d)",
-			c.Escrow.Slots, len(c.Hosts))
+	if c.Escrow.Slots < c.onChainHostCount() {
+		return fmt.Errorf("escrow.slots (%d) must be >= number of on-chain host identities (%d)",
+			c.Escrow.Slots, c.onChainHostCount())
 	}
 	for i, h := range c.Hosts {
 		if strings.TrimSpace(h.Address) == "" {
@@ -461,10 +575,29 @@ func (c *File) Validate() error {
 		return errors.New("user key and address must be set (run gencompose)")
 	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
-		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")
+		return errors.New("versiond.mode multi requires postgres.enabled: true")
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
+	for i, node := range c.MockOpenAI.Nodes {
+		if strings.TrimSpace(node.Name) == "" {
+			return fmt.Errorf("mock_openai.nodes[%d].name must not be empty", i)
+		}
+		if _, exists := seenMLNodes[node.Name]; exists {
+			return fmt.Errorf("mock_openai.nodes contains duplicate name %q", node.Name)
+		}
+		if node.Workers < 0 || node.Queue < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		if node.FailureRate < 0 || node.FailureRate > 1 {
+			return fmt.Errorf("mock_openai.nodes[%d] failure_rate must be between 0 and 1", i)
+		}
+		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
+			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		seenMLNodes[node.Name] = struct{}{}
 	}
 	return nil
 }

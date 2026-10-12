@@ -35,7 +35,7 @@ func testPayload() *InferencePayload {
 		Prompt:      testPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }
@@ -76,7 +76,7 @@ func stateWithPendingFull(inferenceID uint64, executorSlot uint32) types.EscrowS
 				PromptHash:   promptHash[:],
 				Model:        "llama",
 				InputLength:  100,
-				MaxTokens:    50,
+				MaxTokens:    testutil.TestMaxTokens,
 			},
 		},
 		HostStats: map[uint32]*types.HostStats{0: {}, 1: {}},

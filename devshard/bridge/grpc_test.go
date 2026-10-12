@@ -59,7 +59,8 @@ func TestGRPCBridge_GetValidationThreshold(t *testing.T) {
 	threshold, err := b.GetValidationThreshold(1, "test-model")
 	require.NoError(t, err)
 	require.NotNil(t, threshold)
-	assert.Equal(t, int64(50), threshold.Value)
+	assert.Equal(t, int64(95), threshold.Value)
+	assert.Equal(t, int32(-2), threshold.Exponent)
 }
 
 func TestGRPCBridge_GetValidationThreshold_MissingReturnsError(t *testing.T) {

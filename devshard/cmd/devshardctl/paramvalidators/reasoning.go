@@ -13,7 +13,9 @@ func (v ReasoningValidator) Validate(vctx ValidatorContext) error {
 	if !ok {
 		return nil
 	}
+	// Record the refusal: on a route that defaults the effort, absent reads as unspecified.
 	if enabled, ok := inner["enabled"].(bool); ok && !enabled {
+		vctx.Document["reasoning_effort"] = "none"
 		return nil
 	}
 	effort, hasEffort := inner["effort"]
