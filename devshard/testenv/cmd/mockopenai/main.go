@@ -43,9 +43,10 @@ func envOr(key, def string) string {
 
 func faultsFromEnv() mockopenai.FaultConfig {
 	f := mockopenai.DefaultConfig().Faults
+	// TTFT delays the first SSE chunk only. latency_ms delays Validate JSON.
 	if v := os.Getenv("MOCK_OPENAI_TTFT"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
-			f.Latency = d
+			f.StreamFirstTokenDelay = d
 		}
 	}
 	if v := os.Getenv("MOCK_OPENAI_LATENCY_MS"); v != "" {

@@ -154,11 +154,37 @@ func RequireLeaseExclusivityPass(t *testing.T, snap LeaseSnapshot, minLeases int
 	t.Helper()
 	require.Equal(t, 0, snap.DuplicateGroups,
 		"duplicate (epoch_id, escrow_id, inference_id) groups: %+v", snap)
+	RequireLeaseOneOwnerPerInference(t, snap)
 	require.GreaterOrEqual(t, snap.Total, minLeases,
 		"lease rows=%d < min=%d (pending=%d submitted=%d skipped=%d)",
 		snap.Total, minLeases, snap.Pending, snap.Submitted, snap.Skipped)
 	t.Logf("citest: lease exclusivity PASS total=%d pending=%d submitted=%d skipped=%d",
 		snap.Total, snap.Pending, snap.Submitted, snap.Skipped)
+}
+
+// RequireLeaseOneOwnerPerInference asserts each inference_id in the snapshot
+// rows maps to a single instance_address (pending and terminal alike).
+func RequireLeaseOneOwnerPerInference(t *testing.T, snap LeaseSnapshot) {
+	t.Helper()
+	if err := leaseOneOwnerConflict(snap); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+func leaseOneOwnerConflict(snap LeaseSnapshot) error {
+	owners := make(map[uint64]string, len(snap.Rows))
+	for _, r := range snap.Rows {
+		if prev, ok := owners[r.InferenceID]; ok {
+			if prev != r.InstanceAddress {
+				return fmt.Errorf("citest: inference_id=%d has multiple owners %q and %q (status=%s)",
+					r.InferenceID, prev, r.InstanceAddress, r.Status)
+			}
+			return fmt.Errorf("citest: inference_id=%d appears more than once in lease snapshot (owner=%s)",
+				r.InferenceID, r.InstanceAddress)
+		}
+		owners[r.InferenceID] = r.InstanceAddress
+	}
+	return nil
 }
 
 // invalidMockVoteMarkers are the versiond log lines of a validator that voted
@@ -411,14 +437,89 @@ func PauseMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string) {
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{HTTPStatus: &status})
 }
 
-// SlowMockOpenAI stretches Validate so leases stay pending. Validate always
-// posts non-stream JSON (ExecuteValidation sets stream=false), so latency_ms
-// applies there. Load traffic under this fault must use stream chat
-// (TryPostGatewayChatCompletionStream): non-stream chat is delayed too and
-// trips the gateway first-token floor.
+// SlowMockOpenAI stretches Validate so leases stay pending without delaying
+// Execute's first stream chunk. Two knobs (see FaultPatch):
+//
+//   - latency_ms → non-stream JSON only (ExecuteValidation sets stream=false)
+//   - stream_chunk_delay_ms / stream_ttft_ms → 0 so gateway first-token stays green
+//
+// Under always-stream upstream, client stream and non-stream are interchangeable:
+// both talk stream to ML, so load must not rely on "client stream avoids latency."
 func SlowMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string, latencyMs int) {
 	t.Helper()
-	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{LatencyMs: &latencyMs})
+	zero := 0
+	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
+		LatencyMs:        &latencyMs,
+		StreamChunkDelay: &zero,
+		StreamTTFTMs:     &zero,
+	})
+}
+
+// HoldLeasePendingStretch requires pending to stay ≥ minPending for hold while
+// load is still running, sampling exclusivity each tick. Returns the peak
+// pending snapshot observed in the window.
+//
+// onTick runs each sample (including the initial one) while pending is still
+// elevated — use it to observe Execute success concurrent with the Validate hold.
+func HoldLeasePendingStretch(t *testing.T, stack *Stack, cfg *config.File, minPending int, hold, tick time.Duration, onTick func(LeaseSnapshot)) LeaseSnapshot {
+	t.Helper()
+	if tick <= 0 {
+		tick = 500 * time.Millisecond
+	}
+	if hold <= 0 {
+		hold = 2 * time.Second
+	}
+	deadline := time.Now().Add(hold)
+	peak := stack.PostgresLeaseSnapshot(t, cfg)
+	require.GreaterOrEqual(t, peak.Pending, minPending, "stretch requires pending already elevated")
+	require.Equal(t, 0, peak.DuplicateGroups)
+	RequireLeaseOneOwnerPerInference(t, peak)
+	if onTick != nil {
+		onTick(peak)
+	}
+	for time.Now().Before(deadline) {
+		time.Sleep(tick)
+		snap := stack.PostgresLeaseSnapshot(t, cfg)
+		require.Equal(t, 0, snap.DuplicateGroups, "duplicates during pending stretch: %+v", snap)
+		RequireLeaseOneOwnerPerInference(t, snap)
+		require.GreaterOrEqual(t, snap.Pending, minPending,
+			"pending dropped during stretch (got %d want >=%d); not a sustained Validate hold",
+			snap.Pending, minPending)
+		if snap.Pending > peak.Pending ||
+			(snap.Pending == peak.Pending && snap.Submitted > peak.Submitted) {
+			peak = snap
+		}
+		if onTick != nil {
+			onTick(snap)
+		}
+	}
+	t.Logf("citest: pending stretch held >=%d for %s (peak pending=%d submitted=%d)",
+		minPending, hold, peak.Pending, peak.Submitted)
+	return peak
+}
+
+// WaitLeasePendingDrain waits until pending==0 and terminal rows (submitted+
+// skipped) grew by at least pendingAtHold — Validate finished rather than stuck.
+// Skipped counts too: a completed Validate that votes skip still drains the hold.
+func WaitLeasePendingDrain(t *testing.T, stack *Stack, cfg *config.File, terminalAtHold, pendingAtHold int, timeout time.Duration) LeaseSnapshot {
+	t.Helper()
+	floor := terminalAtHold + pendingAtHold
+	deadline := time.Now().Add(timeout)
+	var last LeaseSnapshot
+	for time.Now().Before(deadline) {
+		last = stack.PostgresLeaseSnapshot(t, cfg)
+		require.Equal(t, 0, last.DuplicateGroups, "duplicates while draining pending")
+		terminal := last.Submitted + last.Skipped
+		if last.Pending == 0 && terminal >= floor {
+			t.Logf("citest: pending drained terminal=%d (submitted=%d skipped=%d floor=%d)",
+				terminal, last.Submitted, last.Skipped, floor)
+			return last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("citest: pending drain incomplete after %s (pending=%d submitted=%d skipped=%d want terminal>=%d)",
+		timeout, last.Pending, last.Submitted, last.Skipped, floor)
+	return last
 }
 
 // WaitLeasePending polls until at least minPending leases are pending (or timeout).
