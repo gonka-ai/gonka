@@ -1817,7 +1817,7 @@ func (s *Session) finalizeDiffRound(ctx context.Context, extraTxs []*types.Devsh
 		return nil
 	}
 	var rejected *HostResponseRejectedError
-	if !errors.As(err, &rejected) || errors.Is(err, ErrNilHostResponse) {
+	if !errors.As(err, &rejected) || errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
 		return err
 	}
 	logging.Error("finalize: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
@@ -1853,7 +1853,7 @@ func (s *Session) refreshPendingTxsFromHost(ctx context.Context, h physicalHost,
 		if err == nil {
 			return nil
 		}
-		if errors.Is(err, ErrNilHostResponse) {
+		if errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
 			return err
 		}
 		logging.Warn("finalize resume: catch-up failed, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
@@ -1870,7 +1870,7 @@ func (s *Session) refreshPendingTxsFromHost(ctx context.Context, h physicalHost,
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, ErrNilHostResponse) {
+	if errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
 		return err
 	}
 	logging.Warn("finalize resume: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,

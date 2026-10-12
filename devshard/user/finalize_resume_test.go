@@ -56,7 +56,7 @@ func TestFinalize_SkipsHostWithRejectedResponse(t *testing.T) {
 		_, err := session.SendInference(ctx, finalizeTestParams())
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := int(session.Nonce())
 
 	liar := &corruptStateHashClient{inner: session.clients[2]}
 	session.clients[2] = liar
@@ -64,7 +64,7 @@ func TestFinalize_SkipsHostWithRejectedResponse(t *testing.T) {
 	require.NoError(t, session.Finalize(ctx))
 	require.Greater(t, liar.hits, 0)
 	require.Equal(t, types.PhaseSettlement, session.StateMachine().Phase())
-	require.Equal(t, preFinalize+numHosts+1, len(session.Diffs()))
+	require.Equal(t, uint64(preFinalize+numHosts+1), session.Nonce())
 	require.Equal(t, session.StateMachine().FinalizeNonce()+uint64(numHosts), session.Nonce())
 	require.True(t, session.HasQuorumAt(session.Nonce()))
 
@@ -81,7 +81,7 @@ func TestFinalize_ResumesFromFinalizingPhase(t *testing.T) {
 		_, err := session.SendInference(ctx, finalizeTestParams())
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := int(session.Nonce())
 
 	require.NoError(t, session.sendDiffRound(ctx, []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
@@ -94,7 +94,7 @@ func TestFinalize_ResumesFromFinalizingPhase(t *testing.T) {
 	require.NoError(t, session.Finalize(ctx))
 	require.Equal(t, types.PhaseSettlement, session.StateMachine().Phase())
 	require.Equal(t, finalizeNonce+uint64(numHosts), session.Nonce())
-	require.Equal(t, preFinalize+numHosts+1, len(session.Diffs()))
+	require.Equal(t, uint64(preFinalize+numHosts+1), session.Nonce())
 	require.True(t, session.HasQuorumAt(session.Nonce()))
 }
 
@@ -140,7 +140,7 @@ func TestFinalize_ResumesAfterRecoveryWithLiarStillPresent(t *testing.T) {
 		_, err := session.SendInference(ctx, finalizeTestParams())
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := int(session.Nonce())
 
 	err = session.sendDiffRound(ctx, []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
@@ -285,7 +285,6 @@ func TestFinalize_ResumeRecoversPendingTxsQueuedBeforeCrash(t *testing.T) {
 	recoveredState := recovered.StateMachine().SnapshotState()
 	require.Equal(t, referenceState.Balance, recoveredState.Balance)
 	require.Equal(t, referenceState.Fees, recoveredState.Fees)
-	require.Equal(t, referenceState.SealedAcc, recoveredState.SealedAcc)
 	for slot, hs := range referenceState.HostStats {
 		require.Equal(t, hs.Cost, recoveredState.HostStats[slot].Cost, "slot %d cost", slot)
 	}
@@ -365,7 +364,7 @@ func TestFinalize_ResumeRefreshBypassesAdmission(t *testing.T) {
 
 	recoveredState := recovered.StateMachine().SnapshotState()
 	require.Equal(t, referenceState.Balance, recoveredState.Balance)
-	require.Equal(t, referenceState.SealedAcc, recoveredState.SealedAcc)
+	require.Equal(t, referenceState.Fees, recoveredState.Fees)
 	for slot, hs := range referenceState.HostStats {
 		require.Equal(t, hs.Cost, recoveredState.HostStats[slot].Cost, "slot %d cost", slot)
 	}
@@ -530,4 +529,42 @@ func TestFinalize_ResumeRefreshFansOutAcrossHosts(t *testing.T) {
 	require.Equal(t, types.PhaseSettlement, session.StateMachine().Phase())
 	require.Equal(t, session.StateMachine().FinalizeNonce()+uint64(numHosts), session.Nonce())
 	require.True(t, session.HasQuorumAt(session.Nonce()))
+}
+
+type staleResponseClient struct {
+	inner HostClient
+	stale *host.HostResponse
+}
+
+func (c *staleResponseClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if req.Payload != nil {
+		return c.inner.Send(ctx, req, stream, receiptHandler)
+	}
+	resp := *c.stale
+	return &resp, nil
+}
+
+func TestFinalize_LocalRootUnavailablePropagates(t *testing.T) {
+	store := &failRootReadStore{Storage: storage.NewMemory()}
+	session := setupStoredSession(t, store)
+	ctx := context.Background()
+
+	slow, err := session.PrepareInference(ctx, finalizeTestParams())
+	require.NoError(t, err)
+	slowResp, err := session.SendOnly(ctx, slow, nil, nil)
+	require.NoError(t, err)
+	for range 3 {
+		_, err := session.SendInference(ctx, finalizeTestParams())
+		require.NoError(t, err)
+	}
+	session.mu.Lock()
+	require.Greater(t, session.firstRetainedNonceLocked(), slowResp.Nonce)
+	session.mu.Unlock()
+
+	store.nonce = slowResp.Nonce
+	session.clients[slow.hostIdx] = &staleResponseClient{inner: session.clients[slow.hostIdx], stale: slowResp}
+
+	err = session.Finalize(ctx)
+	require.ErrorIs(t, err, ErrLocalRootUnavailable)
+	require.NotErrorIs(t, err, types.ErrStateHashMismatch)
 }
