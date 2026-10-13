@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -353,7 +354,9 @@ func TestHostPingHardInvariantProbeFailureDoesNotQuarantine(t *testing.T) {
 	limiter.SetMetrics(metrics)
 	before := metricCounterSum(t, metrics, "devshard_gateway_participant_quarantine_transitions_total")
 
-	sink := &hostPingSink{metrics: metrics, targets: newHostPingTargets()}
+	targets := newHostPingTargets()
+	targets.ObserveEscrowHost("e1", "http://fail.example:1", "/devshard/v4", "pk-fail")
+	sink := &hostPingSink{metrics: metrics, targets: targets}
 	for i := 0; i < 5; i++ {
 		sink.Observe(probe.Result{
 			Key:  "http://fail.example:1",
@@ -524,4 +527,49 @@ func metricCounterSum(t *testing.T, metrics *DevshardMetrics, name string) float
 		}
 	}
 	return sum
+}
+
+func TestHostPingConcurrentProbeAndRelease(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{})
+	sink := &hostPingSink{metrics: metrics, targets: job.targets}
+	const dial = "http://concurrent.example:8080"
+	for i := 0; i < 100; i++ {
+		escrowID := fmt.Sprintf("escrow-%d", i)
+		job.ObserveEscrowHost(escrowID, dial, "", "pk")
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			sink.Observe(probe.Result{Key: dial, Up: true, At: time.Now()})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			job.ReleaseEscrow(escrowID)
+		}()
+		close(start)
+		wg.Wait()
+		assertNoHostPingSeriesForHost(t, metrics, dial)
+	}
+}
+
+func TestHostPingSharedHostStillAcceptsProbeAfterRelease(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{})
+	const dial = "http://shared.example:8080"
+	job.ObserveEscrowHost("e1", dial, "", "pk-shared")
+	job.ObserveEscrowHost("e2", dial, "", "pk-shared")
+	job.ReleaseEscrow("e1")
+	sink := &hostPingSink{metrics: metrics, targets: job.targets}
+	sink.Observe(probe.Result{Key: dial, Up: true, At: time.Now()})
+	// A stale scheduler Forget must not delete a currently registered host.
+	sink.Forget(dial)
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_ping_up", map[string]string{"host": dial}, 1)
+	job.ReleaseEscrow("e2")
+	assertNoHostPingSeriesForHost(t, metrics, dial)
 }
