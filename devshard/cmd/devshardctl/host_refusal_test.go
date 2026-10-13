@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 
 	"connectrpc.com/connect"
+	"github.com/stretchr/testify/require"
 )
 
 // Test flow:
@@ -27,4 +29,20 @@ func TestAConnectRefusalIsReadAsItsHTTPStatus(t *testing.T) {
 	if status != http.StatusTooManyRequests || string(body) != "rate limit exceeded" {
 		t.Fatalf("response meta = (%d, %q), want (429, \"rate limit exceeded\")", status, body)
 	}
+}
+
+// Test flow:
+//  1. Build failed attempts cancelled over Connect: a loser stopped after the winner and a plain context cancellation.
+//  2. Read each attempt's failure reason and recorded response status.
+//  3. Assert neither is read as a host refusal, so a cancellation is never charged to the host as an HTTP 500.
+func TestAConnectCancellationIsNotAHostRefusal(t *testing.T) {
+	cancelled := &inflight{err: connect.NewError(connect.CodeCanceled, context.Canceled)}
+	plain := &inflight{err: fmt.Errorf("send: %w", context.Canceled)}
+
+	_, refused := hostRefusal(cancelled.err)
+	status, _ := collectFailureResponseMeta(cancelled)
+
+	require.False(t, refused)
+	require.NotEqual(t, http.StatusInternalServerError, status)
+	require.Equal(t, gatewayAttemptFailureReason(plain, nil, ""), gatewayAttemptFailureReason(cancelled, nil, ""))
 }

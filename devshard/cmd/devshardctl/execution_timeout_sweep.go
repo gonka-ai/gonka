@@ -134,12 +134,21 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		if ctx.Err() != nil {
 			break
 		}
+		releasePost, acquired := tryAcquireTimeoutVotePost(timeoutVotePosts)
+		if !acquired {
+			break
+		}
 		due++
 		// sendTime zero makes a Pending refusal deadline already past once the
 		// sweep selected the nonce by StartedAt; Started uses ConfirmedAt.
 		payload, _ := redundancy.refusalPayload(nonce)
-		redundancy.forgetRefusalPayload(nonce)
 		result, err := runtime.session.HandleTimeout(ctx, nonce, time.Time{}, payload)
+		releasePost()
+		if timeoutVoteUnjudged(result) {
+			redundancy.noteRefusalSweepFailed(nonce)
+		} else {
+			redundancy.forgetRefusalPayload(nonce)
+		}
 		switch {
 		case result.Applied:
 			applied++

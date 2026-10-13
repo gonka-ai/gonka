@@ -14,3 +14,12 @@ func acquireTimeoutVotePost(ctx context.Context, posts chan struct{}) (release f
 		return nil, ctx.Err()
 	}
 }
+
+func tryAcquireTimeoutVotePost(posts chan struct{}) (release func(), acquired bool) {
+	select {
+	case posts <- struct{}{}:
+		return func() { <-posts }, true
+	default:
+		return nil, false
+	}
+}

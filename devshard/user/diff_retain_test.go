@@ -21,6 +21,7 @@ import (
 // cursor stays at 0 and only the cap trims s.diffs.
 func composeEmptyDiffs(t *testing.T, session *Session, n int) map[uint64][]byte {
 	t.Helper()
+	session.stopLaggingSync()
 	roots := make(map[uint64][]byte, n)
 	session.mu.Lock()
 	defer session.mu.Unlock()

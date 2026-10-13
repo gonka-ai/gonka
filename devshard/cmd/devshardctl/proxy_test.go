@@ -535,6 +535,7 @@ type verifierClient struct {
 	group    []types.SlotAssignment
 	slotIdx  int
 	voteGate <-chan struct{}
+	failWith error
 }
 
 type delayedResultClient struct {
@@ -564,6 +565,9 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 		case <-ctx.Done():
 			return false, nil, 0, nil, "", ctx.Err()
 		}
+	}
+	if c.failWith != nil {
+		return false, nil, 0, nil, "", c.failWith
 	}
 	if !c.accept || (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && payload == nil) {
 		return false, nil, 0, nil, "", nil

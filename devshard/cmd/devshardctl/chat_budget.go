@@ -6,6 +6,8 @@ import (
 	"devshard/user"
 )
 
+const chatBudgetSpentWait = 100 * time.Millisecond
+
 type chatBudget interface {
 	ChatBudgetWait() time.Duration
 }
@@ -24,6 +26,6 @@ func throttledOrOutOfChatBudget(clients []user.HostClient, keys []string, limite
 			return true
 		}
 		budget, paced := budgets[participantKey]
-		return paced && budget.ChatBudgetWait() > 0
+		return paced && budget.ChatBudgetWait() >= chatBudgetSpentWait
 	}
 }

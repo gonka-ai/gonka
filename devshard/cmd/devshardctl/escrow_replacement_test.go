@@ -107,6 +107,10 @@ func TestGatewayBalanceExhaustedTakesTheEscrowOutOfServiceWhenItsReplacementFail
 	require.False(t, stillRegistered, "a failed replacement left the depleted runtime resident with its session and series")
 }
 
+// Test flow:
+//  1. Enable settlement globally but disable it for the depleted escrow's model, and make its replacement fail.
+//  2. Exhaust the escrow's balance and wait for the replacement attempt to finish.
+//  3. Assert the runtime is retired and the escrow is not saved as due for settlement, because its model does not settle.
 func TestGatewayBalanceExhaustedRetiresTheRuntimeWhenItsModelDoesNotSettle(t *testing.T) {
 	gateway, depletedRuntime := newReplacementTestGateway(t, withoutSettlementForTheModel)
 	stubCreateOnChainFailingBeforeBroadcast(t)

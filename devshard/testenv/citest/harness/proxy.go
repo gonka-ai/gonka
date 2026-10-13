@@ -132,10 +132,10 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 		"http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 100 }",
 		fmt.Sprintf("http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt %d }", lim.AttachRate), 1)
 	out = strings.Replace(out,
-		"http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt 1000 }",
+		"http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt 2000 }",
 		fmt.Sprintf("http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt %d }", lim.ChatRate), 1)
 	out = strings.Replace(out,
-		"http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt 1000 }",
+		"http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt 2000 }",
 		fmt.Sprintf("http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt %d }", lim.ChatRate), 1)
 	out = strings.Replace(out,
 		"http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_diffs { sc_http_req_rate(1) gt 400 }",

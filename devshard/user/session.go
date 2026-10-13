@@ -294,6 +294,12 @@ type Session struct {
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
 
+	laggingSyncAt     map[int]uint64
+	laggingSyncCtx    context.Context
+	laggingSyncCancel context.CancelFunc
+	laggingSyncClosed bool
+	laggingSyncs      sync.WaitGroup
+
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
@@ -1144,6 +1150,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.maybeSaveSnapshotLocked()
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
+		s.syncLaggingHostsLocked()
 		return diff, hostIdx, nil
 	}
 
@@ -1161,6 +1168,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	s.retainPendingLocked(held, applied)
 	s.observeTurnLocked(diff)
 	s.diffObserver(diff)
+	s.syncLaggingHostsLocked()
 	return diff, hostIdx, nil
 }
 
@@ -1820,9 +1828,9 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
-func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
+func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx, finalizeRound bool) error {
 	s.mu.Lock()
-	s.composingFinalizeRound = true
+	s.composingFinalizeRound = finalizeRound
 	diff, hostIdx, err := s.composeDiffLocked(ctx, extraTxs)
 	s.composingFinalizeRound = false
 	if err != nil {
@@ -2050,7 +2058,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 			if !hasPending {
 				break
 			}
-			if err := s.sendDiffRound(ctx, nil); err != nil {
+			if err := s.sendDiffRound(ctx, nil, false); err != nil {
 				return fmt.Errorf("sync hosts cycle %d diff round: %w", cycle+1, err)
 			}
 		}
@@ -2127,14 +2135,14 @@ func (s *Session) Finalize(ctx context.Context) error {
 		if i == 0 {
 			extra = []*types.DevshardTx{finalizeTx}
 		}
-		if err := s.sendDiffRound(ctx, extra); err != nil {
+		if err := s.sendDiffRound(ctx, extra, true); err != nil {
 			return err
 		}
 	}
 
 	// Phase A+1: drain the last host's reveal.
 	logging.Info("finalize phase A+1: draining last reveal", "subsystem", "finalize", "escrow", s.escrowID)
-	if err := s.sendDiffRound(ctx, nil); err != nil {
+	if err := s.sendDiffRound(ctx, nil, true); err != nil {
 		return err
 	}
 
@@ -4010,6 +4018,7 @@ func (s *Session) Close() error {
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
 	s.stopQuietSettle()
+	s.stopLaggingSync()
 	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()

@@ -191,8 +191,8 @@ func collectFailureResponseBody(inf *inflight) ([]byte, bool) {
 	if inf == nil {
 		return nil, false
 	}
-	if ue, refused := hostRefusal(inf.err); refused && ue.Body != "" {
-		return []byte(ue.Body), false
+	if upstream, refused := hostRefusal(inf.err); refused && upstream.Body != "" {
+		return []byte(upstream.Body), false
 	}
 	if len(inf.errorBodySample) > 0 {
 		// Holds one complete SSE error event, appended once and never capped.
@@ -217,8 +217,8 @@ func collectFailureResponseMeta(inf *inflight) (int, map[string]string) {
 	if inf == nil {
 		return 0, nil
 	}
-	if ue, refused := hostRefusal(inf.err); refused {
-		return ue.StatusCode, ue.Headers
+	if upstream, refused := hostRefusal(inf.err); refused {
+		return upstream.StatusCode, upstream.Headers
 	}
 	// Streaming host answer that later failed still had HTTP 200.
 	if inf.err != nil || inf.errorSource != "" || isEmptyStreamAttempt(inf) {

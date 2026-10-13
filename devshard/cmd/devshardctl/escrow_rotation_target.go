@@ -50,5 +50,11 @@ func (g *Gateway) activeRotationEscrowCount(ctx context.Context, role string, ep
 	if !ok {
 		return 0, fmt.Errorf("gateway state is not initialized")
 	}
-	return countActiveRotationEscrows(state.Devshards, role, epoch, modelID), nil
+	serving := make([]GatewayDevshardState, 0, len(state.Devshards))
+	for _, devshard := range state.Devshards {
+		if !g.isAwaitingParticipant(devshard.ID) {
+			serving = append(serving, devshard)
+		}
+	}
+	return countActiveRotationEscrows(serving, role, epoch, modelID), nil
 }

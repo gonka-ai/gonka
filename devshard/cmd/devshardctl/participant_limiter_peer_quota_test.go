@@ -27,21 +27,24 @@ func TestParticipantRequestLimiterPeerQuotaRefusalQuarantinesUntilTheBudgetRefil
 }
 
 // Test flow:
-//  1. Observe each refusal a host or its proxy gives a sender that sends too fast, and two refusals that mean the host itself is busy.
+//  1. Observe each refusal a host or its proxy gives a sender that sends too fast, a full peer table, a body that only contains the rate-limit sentence, and two refusals that mean the host itself is busy.
 //  2. Read each host's quarantine.
-//  3. Assert every sender-rate refusal quarantines only for the short pause, and the busy refusals keep the hour.
+//  3. Assert only the exact sender-rate sentences get the short pause, a full peer table gets its own few minutes, and everything else keeps the hour.
 func TestParticipantRequestLimiterTreatsEverySenderRateRefusalAsShort(t *testing.T) {
 	testCases := []struct {
-		name      string
-		status    int
-		body      string
-		wantShort bool
+		name        string
+		status      int
+		body        string
+		wantMax     time.Duration
+		wantAtLeast time.Duration
 	}{
-		{name: "peer budget spent", status: http.StatusTooManyRequests, body: "rate limit exceeded", wantShort: true},
-		{name: "peer table full", status: http.StatusTooManyRequests, body: "too many peers", wantShort: true},
-		{name: "proxy zone over Connect", status: http.StatusServiceUnavailable, body: "HTTP status 429 Too Many Requests", wantShort: true},
-		{name: "host busy 429", status: http.StatusTooManyRequests, body: "too many requests", wantShort: false},
-		{name: "host busy 503", status: http.StatusServiceUnavailable, body: "no capacity", wantShort: false},
+		{name: "peer budget spent", status: http.StatusTooManyRequests, body: "rate limit exceeded", wantMax: peerQuotaQuarantine},
+		{name: "peer budget spent over HTTP", status: http.StatusTooManyRequests, body: `{"message":"rate limit exceeded"}`, wantMax: peerQuotaQuarantine},
+		{name: "proxy zone over Connect", status: http.StatusServiceUnavailable, body: "HTTP status 429 Too Many Requests", wantMax: peerQuotaQuarantine},
+		{name: "peer table full", status: http.StatusTooManyRequests, body: "too many peers", wantMax: peerTableFullQuarantine, wantAtLeast: peerTableFullQuarantine - time.Second},
+		{name: "sentence inside another body", status: http.StatusTooManyRequests, body: "busy: rate limit exceeded by the model", wantAtLeast: httpThrottleQuarantine - time.Minute},
+		{name: "host busy 429", status: http.StatusTooManyRequests, body: "too many requests", wantAtLeast: httpThrottleQuarantine - time.Minute},
+		{name: "host busy 503", status: http.StatusServiceUnavailable, body: "no capacity", wantAtLeast: httpThrottleQuarantine - time.Minute},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -51,7 +54,10 @@ func TestParticipantRequestLimiterTreatsEverySenderRateRefusalAsShort(t *testing
 			remaining := time.Duration(limiter.Snapshot([]string{"host"})["host"].QuarantineRemainingMS) * time.Millisecond
 
 			require.True(t, limiter.IsBlocked("host"))
-			require.Equal(t, testCase.wantShort, remaining <= peerQuotaQuarantine, "quarantine remaining %v", remaining)
+			require.GreaterOrEqual(t, remaining, testCase.wantAtLeast)
+			if testCase.wantMax > 0 {
+				require.LessOrEqual(t, remaining, testCase.wantMax)
+			}
 		})
 	}
 }

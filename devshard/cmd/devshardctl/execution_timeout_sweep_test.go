@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -216,6 +218,28 @@ func TestSweepExecutionTimeoutsTriesAPendingRefusalOnce(t *testing.T) {
 	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
 }
 
+// Test flow:
+//  1. Leave an overdue Pending refusal with its payload, against verifiers that cannot be reached.
+//  2. Run the sweep four times.
+//  3. Expect the refusal to be posted on each of the first three ticks and dropped after that: a group that could not judge the vote is asked again, a dead one does not spend the sweep budget forever.
+func TestSweepExecutionTimeoutsRetriesAPendingRefusalTheGroupCouldNotJudge(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	nonce, payload := pendingRefusalStartedAt(t, env, time.Now().Add(-time.Hour))
+	env.proxy.redundancy.rememberRefusalPayload(nonce, payload)
+	for _, verifier := range env.verifiers {
+		verifier.failWith = errors.New("verifier unreachable")
+	}
+
+	var dues []int
+	for range 4 {
+		due, _, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+		dues = append(dues, due)
+	}
+
+	require.Equal(t, []int{1, 1, 1, 0}, dues)
+	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
+}
+
 func pendingRefusalStartedAt(t *testing.T, env *testProxyEnv, startedAt time.Time) (uint64, *host.InferencePayload) {
 	t.Helper()
 	params := defaultParams()
@@ -238,4 +262,70 @@ func TestSweepExecutionTimeoutsLeavesAFreshPendingToItsRace(t *testing.T) {
 	require.Zero(t, applied)
 	require.Zero(t, failed)
 	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
+}
+
+// Test flow:
+//  1. Take every free timeout-vote place, then leave an inference whose execution deadline passed an hour ago.
+//  2. Run the sweep, then give the places back and run it again.
+//  3. Expect no vote while every place is taken and the timeout applied once one is free: the sweep's votes count against the same limit as the races', and it skips rather than waits under the finalize lock.
+func TestSweepExecutionTimeoutsSkipsWhileEveryTimeoutVotePlaceIsTaken(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	nonce := startedInferenceConfirmedAt(t, env, time.Now().Add(-time.Hour))
+	var releases []func()
+	for {
+		release, acquired := tryAcquireTimeoutVotePost(timeoutVotePosts)
+		if !acquired {
+			break
+		}
+		releases = append(releases, release)
+	}
+	releaseAll := func() {
+		for _, release := range releases {
+			release()
+		}
+		releases = nil
+	}
+	t.Cleanup(releaseAll)
+
+	_, blockedApplied, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+	statusWhileBlocked := env.sm.SnapshotState().Inferences[nonce].Status
+	releaseAll()
+	_, freedApplied, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+
+	require.Zero(t, blockedApplied)
+	require.Equal(t, types.StatusStarted, statusWhileBlocked)
+	require.Equal(t, 1, freedApplied)
+	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[nonce].Status)
+}
+
+// Test flow:
+//  1. Leave a Pending refusal whose deadline passed an hour ago, against verifiers that decline every vote.
+//  2. Let its race vote it and wait for the race cleanup to finish.
+//  3. Expect no payload kept for the sweep: the group judged the refusal, so voting it again would only repeat the same round.
+func TestARaceRefusalTheGroupDeclinedLeavesNothingToSweep(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, false)
+	startedAt := time.Now().Add(-time.Hour)
+	nonce, _ := pendingRefusalStartedAt(t, env, startedAt)
+	params := defaultParams()
+	params.StartedAt = startedAt.Unix()
+	redundancy := env.proxy.redundancy
+	done := make(chan struct{})
+	close(done)
+	refused := &inflight{
+		escrowID: redundancy.devshardID,
+		nonce:    nonce,
+		hostID:   "refused",
+		hostIdx:  int(nonce % 3),
+		sendTime: startedAt,
+		done:     done,
+		err:      errors.New("host refused"),
+	}
+
+	redundancy.goTrackedRaceCleanup(context.Background(), func(ctx context.Context) {
+		redundancy.voteTimeoutsForFailedRequest(ctx, []*inflight{refused}, params)
+	})
+	redundancy.raceCleanupWG.Wait()
+
+	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
+	require.False(t, redundancy.hasRefusalPayload(nonce))
 }

@@ -23,8 +23,9 @@ const (
 	// httpThrottleQuarantine is the wall-clock cooldown after 429/503. It
 	// matches the old ~60m "full token bucket" recovery (600 tokens at
 	// 10/min) in one explicit duration so IsBlocked and IsAvailable align.
-	httpThrottleQuarantine = 60 * time.Minute
-	peerQuotaQuarantine    = time.Second
+	httpThrottleQuarantine  = 60 * time.Minute
+	peerQuotaQuarantine     = time.Second
+	peerTableFullQuarantine = 3 * time.Minute
 	// transportFailureQuarantine is used when the HTTP request never
 	// received a response (connection error, etc.).
 	transportFailureQuarantine = 30 * time.Minute
@@ -1377,6 +1378,8 @@ func (l *ParticipantRequestLimiter) recordQuarantineTransition(participantKey, m
 
 func participantHTTPQuarantineReason(path string, statusCode int, body string) string {
 	switch {
+	case isPeerTableFull(statusCode, body):
+		return "peer_table_full_quarantine"
 	case isSenderRateRefusal(statusCode, body):
 		return "sender_rate_quarantine"
 	case isParticipantThrottleStatus(statusCode):
@@ -1394,6 +1397,8 @@ func participantHTTPQuarantineReason(path string, statusCode int, body string) s
 
 func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statusCode int, body string) time.Duration {
 	switch {
+	case isPeerTableFull(statusCode, body):
+		return peerTableFullQuarantine
 	case isSenderRateRefusal(statusCode, body):
 		return peerQuotaQuarantine
 	case isParticipantThrottleStatus(statusCode):
@@ -1411,8 +1416,15 @@ func isSenderRateRefusal(statusCode int, body string) bool {
 	if !isParticipantThrottleStatus(statusCode) {
 		return false
 	}
-	reason := strings.ToLower(body)
-	return strings.Contains(reason, "rate limit exceeded") || strings.Contains(reason, "too many peers") || strings.Contains(reason, "http status 429")
+	switch strings.TrimSpace(body) {
+	case "rate limit exceeded", `{"message":"rate limit exceeded"}`, "HTTP status 429 Too Many Requests":
+		return true
+	}
+	return false
+}
+
+func isPeerTableFull(statusCode int, body string) bool {
+	return statusCode == http.StatusTooManyRequests && strings.TrimSpace(body) == "too many peers"
 }
 
 func isParticipantThrottleStatus(statusCode int) bool {
