@@ -1020,6 +1020,7 @@ func (g *Gateway) checkBalances() {
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
+	shareChainMaxNonce(runtimes, g.chainMaxNonce())
 	if !isRotationEnabled {
 		g.releaseEscrowHolds(runtimes, "rotation_disabled")
 		return

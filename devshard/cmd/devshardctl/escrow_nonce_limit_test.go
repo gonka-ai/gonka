@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	devshardpkg "devshard"
+	"devshard/types"
 )
 
 type signalingMaxNonce struct {
@@ -117,4 +118,19 @@ func TestGatewayChooseRuntimeReplacesNothingUntilTheChainMaxNonceIsKnown(t *test
 // A chain max_nonce too small for the margin must not wrap the limit around to a nonce no escrow ever reaches.
 func TestEscrowNonceLimitKeepsTheHostActiveCapWhenNoMarginIsLeft(t *testing.T) {
 	require.EqualValues(t, 146, escrowNonceLimit(150, 3), "150 - (3+1) leaves no room for the 200 in-flight margin")
+}
+
+// Test flow:
+//  1. Share a chain max_nonce that leaves no room for active work past the session's current nonce with every runtime, including an inactive one.
+//  2. Prepare an inference on the inactive runtime's session.
+//  3. Assert the session refuses it with ErrNonceLimitExceeded, so a retired escrow composes no work its hosts would refuse.
+func TestShareChainMaxNonceReachesEveryRuntimeSession(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	inactive := &devshardRuntime{id: "escrow-proxy", session: env.session}
+	maxNonce := uint32(env.session.Nonce() + types.FinalizeNonceReserve(3))
+
+	shareChainMaxNonce([]*devshardRuntime{nil, inactive}, maxNonce)
+	_, err := env.session.PrepareInference(t.Context(), defaultParams())
+
+	require.ErrorIs(t, err, types.ErrNonceLimitExceeded)
 }

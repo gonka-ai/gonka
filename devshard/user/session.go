@@ -291,6 +291,9 @@ type Session struct {
 	// hostCatchUp holds one lock per host index for chunked catch-up.
 	hostCatchUp map[int]*sync.Mutex
 
+	chainMaxNonce          atomic.Uint32
+	composingFinalizeRound bool
+
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
 	// pile up duplicate saves. See maybeSaveSnapshotLocked.
@@ -1090,6 +1093,16 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	hostIdx := int(nonce % uint64(len(s.group)))
 
 	pending, held := s.splitPendingForComposeLocked(includePinned)
+	if s.pastActiveCapLocked(nonce) {
+		if types.DiffHasActiveCompletionWork(types.Diff{Txs: extraTxs}) {
+			return types.Diff{}, 0, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, nonce, types.ErrNonceLimitExceeded)
+		}
+		pending = withoutActiveCompletionWork(pending)
+	}
+	if s.reservedForFinalizationLocked(nonce) && !s.composingFinalizeRound {
+		s.retainPendingLocked(append(held, pending...), nil)
+		return types.Diff{}, 0, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, nonce, types.ErrNonceLimitExceeded)
+	}
 	sort.SliceStable(pending, func(i, j int) bool {
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
@@ -1205,6 +1218,40 @@ func (s *Session) unpinPendingFinish(inferenceID uint64) {
 		return
 	}
 	s.pinnedFinishIDs[inferenceID] = n
+}
+
+// SetChainMaxNonce tells the session the chain's devshard max_nonce: past types.MaxActiveNonce an active session composes only the round that opens finalization, which its hosts keep the remaining nonces for.
+func (s *Session) SetChainMaxNonce(maxNonce uint32) {
+	s.chainMaxNonce.Store(maxNonce)
+}
+
+func (s *Session) nonceCapReached() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reservedForFinalizationLocked(s.nonce + 1)
+}
+
+func (s *Session) pastActiveCapLocked(nonce uint64) bool {
+	maxNonce := s.chainMaxNonce.Load()
+	return maxNonce != 0 && s.sm.Phase() == types.PhaseActive && nonce > types.MaxActiveNonce(maxNonce, len(s.group))
+}
+
+func (s *Session) reservedForFinalizationLocked(nonce uint64) bool {
+	maxNonce := s.chainMaxNonce.Load()
+	if maxNonce == 0 {
+		return false
+	}
+	return nonce > uint64(maxNonce) || s.sm.Phase() == types.PhaseFinalizing || s.pastActiveCapLocked(nonce)
+}
+
+func withoutActiveCompletionWork(txs []*types.DevshardTx) []*types.DevshardTx {
+	admitted := make([]*types.DevshardTx, 0, len(txs))
+	for _, tx := range txs {
+		if !types.DiffHasActiveCompletionWork(types.Diff{Txs: []*types.DevshardTx{tx}}) {
+			admitted = append(admitted, tx)
+		}
+	}
+	return admitted
 }
 
 func (s *Session) splitPendingForComposeLocked(includePinned []uint64) (candidates, held []*types.DevshardTx) {
@@ -1775,7 +1822,9 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
 	s.mu.Lock()
+	s.composingFinalizeRound = true
 	diff, hostIdx, err := s.composeDiffLocked(ctx, extraTxs)
+	s.composingFinalizeRound = false
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -3155,7 +3204,7 @@ func (s *Session) ArmQuietSettle() {
 }
 
 func (s *Session) armQuietSettleLocked() {
-	if s.quietSettleClosed || s.quietSettle != nil || !s.hasUnpinnedPendingLocked() {
+	if s.quietSettleClosed || s.quietSettle != nil || !s.hasUnpinnedPendingLocked() || s.reservedForFinalizationLocked(s.nonce+1) {
 		return
 	}
 	d := s.quietSettleDelay
@@ -3458,6 +3507,10 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
 			return 0, false, closed, nil
 		}
+		if s.nonceCapReached() {
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_cap_reached")...)
+			return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "nonce_cap_reached"}, nil
+		}
 
 		if reasonLabel == "execution" {
 			// A receipt moves the inference to Started. Publish its pending
@@ -3534,6 +3587,10 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 	if s.nonceClosed(nonce) {
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
 		return TimeoutResult{Outcome: "skipped", DetailReason: "nonce_closed"}, false, nil
+	}
+	if s.nonceCapReached() {
+		logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_cap_reached")...)
+		return TimeoutResult{Outcome: "skipped", DetailReason: "nonce_cap_reached"}, false, nil
 	}
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && s.nonceStarted(nonce) {
 		// Applied receipt between Wait and Vote; caller must wait for execution.
