@@ -90,6 +90,8 @@ The timeout is:
 
 This scales the waiting time with prompt size while still enforcing a minimum threshold.
 
+An answer from a suspicious host (manually flagged, in shadow quarantine or on probation) is held rather than streamed, so that an honest rival can win. When a rival's receipt or first-token timeout fires and the race already holds a suspicious answer whose Finish is in hand, while no rival has produced a first token, the proxy serves that answer instead of adding an attempt or failing the request. The rivals still running are cancelled after `SecondaryWaitAfterWinner` and their nonces are voted as timeouts, so a host that hangs after its receipt cannot hold a finished answer, the client's request and the escrow's settlement until the transport's inference timeout.
+
 ### 3. Non-streaming response timeout
 
 If the request is non-streaming and the attempt does not fully finish soon enough after send time, the proxy adds another attempt.

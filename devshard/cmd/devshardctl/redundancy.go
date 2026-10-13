@@ -2699,6 +2699,20 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if race.winnerNonce() != 0 {
 				break
 			}
+			if fallback, released := suspiciousWinnerRelease(attempts); released && failClosedEscalationStage(trigger.stage) {
+				if err := race.promoteFallbackWinner(fallback); err != nil {
+					stopTimer(stallTimer)
+					stopTimer(winnerHardTimeoutTimer)
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, fallback.nonce, raceFinishOptions{clientGone: clientFlag})
+					})
+					return err
+				}
+				trigger.inf.escalated = true
+				logInferenceStage(settleCtx, fallback.escrowID, fallback.nonce, "suspicious_winner_released",
+					"host", fallback.hostID, "stage", trigger.stage, "pending", len(pendingInflights(attempts)))
+				break
+			}
 			if len(attempts) < maxAttempts {
 				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
 					trigger.inf.escalated = true
