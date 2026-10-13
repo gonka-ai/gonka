@@ -25,6 +25,7 @@ import (
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
+
 	"go.opentelemetry.io/otel/trace"
 
 	"common/completionapi"
@@ -47,10 +48,6 @@ var errAttemptPanicked = errors.New("attempt panicked")
 // produce a first token, with no unused host left to start. Always-stream
 // first-token / receipt timers are failover triggers; at the attempt limit they
 // must still fail the client instead of waiting for host Execute or meta-drain.
-var (
-	errAllHostsFirstTokenTimeout = errors.New("all hosts timed out waiting for first token")
-	errAllHostsReceiptTimeout    = errors.New("all hosts timed out waiting for receipt")
-)
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
@@ -842,6 +839,7 @@ type inflight struct {
 	model                      string
 	sendTime                   time.Time
 	escalated                  bool
+	endedByGateway             atomic.Bool
 	probe                      bool
 	excludePairwise            bool
 	startedBeforePoCGeneration bool
@@ -991,6 +989,15 @@ func (inf *inflight) receiptAt() time.Time {
 		return time.Unix(0, n)
 	}
 	return time.Time{}
+}
+
+// cancelByGateway ends an attempt for the race's own reasons, so nothing it
+// leaves unfinished is charged to its host.
+func (inf *inflight) cancelByGateway() {
+	inf.endedByGateway.Store(true)
+	if inf.cancel != nil {
+		inf.cancel()
+	}
 }
 
 func (inf *inflight) hasReceipt() bool {
@@ -2692,11 +2699,25 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			// every primary that receipts-in under ReceiptTimeout, i.e. the
 			// majority of a healthy run. Skip and let the loop re-schedule
 			// the correct next trigger.
-			current, stillValid := e.escalationForInflight(trigger.inf, params)
+			current, stillValid := e.escalationForInflight(trigger.inf, params, len(attempts) < e.maxAttempts())
 			if !stillValid || current.stage != trigger.stage {
 				break
 			}
 			if race.winnerNonce() != 0 {
+				break
+			}
+			if fallback, released := suspiciousWinnerRelease(attempts); released && deadlineEscalationStage(trigger.stage) {
+				if err := race.promoteFallbackWinner(fallback); err != nil {
+					stopTimer(stallTimer)
+					stopTimer(winnerHardTimeoutTimer)
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, fallback.nonce, raceFinishOptions{clientGone: clientFlag})
+					})
+					return err
+				}
+				trigger.inf.escalated = true
+				logInferenceStage(settleCtx, fallback.escrowID, fallback.nonce, "suspicious_winner_released",
+					"host", fallback.hostID, "stage", trigger.stage, "pending", len(pendingInflights(attempts)))
 				break
 			}
 			if len(attempts) < maxAttempts {
@@ -2706,15 +2727,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					e.watchInflightDone(next, doneCh)
 					break
 				}
-			}
-			if failClosedEscalationStage(trigger.stage) {
-				if stallTimer != nil {
-					stopTimer(stallTimer)
-				}
-				if winnerHardTimeoutTimer != nil {
-					stopTimer(winnerHardTimeoutTimer)
-				}
-				return e.failClosedNoWinner(settleCtx, attempts, params, decision, trigger, clientFlag)
 			}
 			trigger.inf.escalated = true
 			logInferenceStage(settleCtx, trigger.inf.escrowID, trigger.inf.nonce, "escalation_skipped",
@@ -2821,8 +2833,9 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 		chosen escalationTrigger
 		ok     bool
 	)
+	canStartAttempt := len(attempts) < e.maxAttempts()
 	for _, inf := range attempts {
-		trigger, candidate := e.escalationForInflight(inf, params)
+		trigger, candidate := e.escalationForInflight(inf, params, canStartAttempt)
 		if !candidate {
 			continue
 		}
@@ -2834,7 +2847,7 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 	return chosen, ok
 }
 
-func failClosedEscalationStage(stage string) bool {
+func deadlineEscalationStage(stage string) bool {
 	switch stage {
 	case "first_token_timeout_wait_elapsed", "receipt_timeout_wait_elapsed":
 		return true
@@ -2850,57 +2863,17 @@ func shouldArmEscalationTimer(hasTrigger bool, winner uint64, nAttempts, maxAtte
 	if nAttempts < maxAttempts {
 		return true
 	}
-	return failClosedEscalationStage(stage)
+	return deadlineEscalationStage(stage)
 }
 
-func failClosedErrorForStage(stage string) error {
-	if stage == "receipt_timeout_wait_elapsed" {
-		return errAllHostsReceiptTimeout
-	}
-	return errAllHostsFirstTokenTimeout
-}
-
-func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, trigger escalationTrigger, clientFlag *cancelFlag) error {
-	err := failClosedErrorForStage(trigger.stage)
-	pending := pendingInflights(attempts)
-	hostID := ""
-	nonce := uint64(0)
-	escrowID := e.devshardID
-	if trigger.inf != nil {
-		hostID = trigger.inf.hostID
-		nonce = trigger.inf.nonce
-		escrowID = trigger.inf.escrowID
-	}
-	logInferenceStage(ctx, escrowID, nonce, "escalation_fail_closed",
-		"host", hostID,
-		"stage", trigger.stage,
-		"reason", trigger.reason,
-		"pending", len(pending),
-		"attempts", len(attempts),
-		"max_attempts", e.maxAttempts(),
-		"decision", decision.Reason,
-		"error", err,
-	)
-	for _, inf := range pending {
-		if inf.cancel != nil {
-			inf.cancel()
-		}
-	}
-	e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
-		e.finishRaceWhenPendingDone(cleanupCtx, attempts, params, decision, 0, raceFinishOptions{
-			forceTreatAsFailure:  true,
-			recordFailureSamples: true,
-			clientGone:           clientFlag,
-		})
-	})
-	return err
-}
-
-func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams) (escalationTrigger, bool) {
+// escalationForInflight escalates a suspicious attempt at once only while
+// another attempt can start; at the limit it keeps its receipt and first-token
+// deadlines, which let a held suspicious answer go.
+func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams, canStartAttempt bool) (escalationTrigger, bool) {
 	if inf == nil || inf.escalated {
 		return escalationTrigger{}, false
 	}
-	if inf.suspicious {
+	if inf.suspicious && canStartAttempt {
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -2908,7 +2881,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "suspicious_host",
 		}, true
 	}
-	if inf.probe {
+	if inf.probe && canStartAttempt {
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -3609,9 +3582,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 					"host", inf.hostID,
 					"reason", reason,
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				inf.cancelByGateway()
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "client_timeout_wait_drain_abandoned",
@@ -3670,9 +3641,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 					"host", inf.hostID,
 					"reason", "winner_grace_expired",
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				inf.cancelByGateway()
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "speculative_wait_drain_abandoned",
@@ -4092,7 +4061,7 @@ func inflightFinished(inf *inflight) bool {
 // We gate on receiptTime being set so attempts that never even confirmed
 // receipt fall through to the upstream error/timeout path instead.
 func isEmptyStreamAttempt(inf *inflight) bool {
-	if inf == nil || inf.probe {
+	if inf == nil || inf.probe || inf.endedByGateway.Load() {
 		return false
 	}
 	if !inf.hasReceipt() {
@@ -4841,7 +4810,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	if inf.probe {
 		return
 	}
-	if inf.phaseTransitionAborted {
+	if inf.phaseTransitionAborted || inf.endedByGateway.Load() {
 		return
 	}
 	emptyStream := isEmptyStreamAttempt(inf)

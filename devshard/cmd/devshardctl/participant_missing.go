@@ -94,7 +94,9 @@ func (g *Gateway) retryAwaitingParticipants(ctx context.Context) {
 		g.mu.Lock()
 		if _, exists := g.runtimes[escrowID]; exists {
 			g.mu.Unlock()
-			runtime.close()
+			if err := runtime.close(); err != nil {
+				log.Printf("close devshard %s: %v", escrowID, err)
+			}
 			g.stopAwaitingParticipant(escrowID)
 			continue
 		}

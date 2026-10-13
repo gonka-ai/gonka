@@ -90,6 +90,12 @@ The timeout is:
 
 This scales the waiting time with prompt size while still enforcing a minimum threshold.
 
+An answer from a suspicious host (manually flagged, in shadow quarantine or on probation) is held rather than streamed, so that an honest rival can win. When a rival's receipt or first-token timeout fires and the race already holds a suspicious answer whose Finish is in hand, while no rival has produced a first token, the proxy serves that answer instead of waiting for the rivals. The rivals still running are cancelled after `SecondaryWaitAfterWinner` and their nonces are voted as timeouts, so a host that hangs after its receipt cannot hold a finished answer, the client's request and the escrow's settlement until the transport's inference timeout.
+
+At the attempt limit a missed receipt or first-token deadline starts nothing and ends nothing: the attempts keep running until one answers or fails, bounded by `StreamingAttemptHardTimeout`, and the client gets an error only when they do fail. A host stops generating when its stream is cut, so cancelling an attempt that holds a receipt would leave its nonce to close only as an execution-timeout miss, a miss the host did not earn.
+
+Attempts the race itself ends, the losers left past `SecondaryWaitAfterWinner` and the attempts still running when a departed client's drain runs out, are marked as ended by the gateway. Such an attempt is never charged to its host: it takes no empty-stream strike, records no performance sample, and reports the failure reason `gateway_cancelled`.
+
 ### 3. Non-streaming response timeout
 
 If the request is non-streaming and the attempt does not fully finish soon enough after send time, the proxy adds another attempt.

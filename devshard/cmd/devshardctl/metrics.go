@@ -1342,6 +1342,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 	switch {
 	case inf.phaseTransitionAborted:
 		return "phase_transition_aborted"
+	case inf.endedByGateway.Load():
+		return "gateway_cancelled"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
 	case isModelBurnEmpty(inf, model):

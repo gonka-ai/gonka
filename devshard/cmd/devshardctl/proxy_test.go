@@ -2516,7 +2516,77 @@ func (hangBeforeReceiptClient) Send(ctx context.Context, req host.HostRequest, s
 	return nil, ctx.Err()
 }
 
-func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
+// lateReceiptThenContentClient signs its receipt after receiptDelay and
+// streams its first content contentDelay later.
+type lateReceiptThenContentClient struct {
+	receiptDelay time.Duration
+	contentDelay time.Duration
+}
+
+func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	for _, delay := range []time.Duration{c.receiptDelay, c.contentDelay} {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if receiptHandler != nil {
+			receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+			receiptHandler = nil
+			continue
+		}
+		if stream != nil {
+			_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"served"}}]}`+"\n\n")
+		}
+	}
+	return &host.HostResponse{
+		Nonce: req.Nonce,
+		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{
+			FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: req.Nonce},
+		}}},
+		ConfirmedAt: time.Now().Unix(),
+	}, nil
+}
+
+// Test flow:
+//  1. Give two hosts, the attempt limit, a receipt that comes after the receipt timeout, so the primary's late receipt starts a secondary.
+//  2. Let the secondary's receipt deadline pass while the primary, holding its receipt, is still before its first-token deadline.
+//  3. Assert the race waits for the primary and serves its content instead of failing closed and cancelling it.
+func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttemptLimit(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	setSpeculativeTiming(t, 40*time.Millisecond, 400*time.Millisecond, 0, 50*time.Millisecond)
+	slowHost := lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
+	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	params := defaultParams()
+	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 400*time.Millisecond)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "served")
+}
+
+// Test flow:
+//  1. Give two hosts, the attempt limit, receipts that land fast and first content that lands after every first-token deadline.
+//  2. Run one inference.
+//  3. Assert the race serves the content once it arrives: at the attempt limit a missed deadline judges the host, it does not end the request.
+func TestRunInference_AtTheAttemptLimitAMissedDeadlineWaitsForTheAnswer(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	setSpeculativeTiming(t, 40*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+	slowHost := lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 150 * time.Millisecond}
+	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	params := defaultParams()
+	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+
+	require.NoError(t, err)
+	require.Contains(t, buf.String(), "served")
+}
+
+func TestShouldArmEscalationTimerArmsOnlyDeadlinesAtTheAttemptLimit(t *testing.T) {
 	require.True(t, shouldArmEscalationTimer(true, 0, 2, 3, "first_token_timeout_wait_elapsed"))
 	require.True(t, shouldArmEscalationTimer(true, 0, 3, 3, "first_token_timeout_wait_elapsed"))
 	require.True(t, shouldArmEscalationTimer(true, 0, 3, 3, "receipt_timeout_wait_elapsed"))
@@ -2525,44 +2595,77 @@ func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
 	require.False(t, shouldArmEscalationTimer(false, 0, 3, 3, "first_token_timeout_wait_elapsed"))
 }
 
-func TestRunInference_AllHostsHangAfterReceiptFailsClosed(t *testing.T) {
-	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
-	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
-	env := setupTestProxyWithClients(t, []user.HostClient{
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-	})
-	params := defaultParams()
-	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
-
-	start := time.Now()
-	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
-	elapsed := time.Since(start)
-
-	require.ErrorIs(t, err, errAllHostsFirstTokenTimeout)
-	require.Less(t, elapsed, 2*time.Second, "fail-closed must not wait for meta-drain or the client timeout")
-	require.GreaterOrEqual(t, gatewayStatusCodeForError(err), http.StatusInternalServerError)
+// heldHostClient holds a request until release closes, sending its receipt
+// first when withReceipt is set, and records whether the race cancelled it.
+type heldHostClient struct {
+	withReceipt bool
+	release     <-chan struct{}
+	cancelled   *atomic.Int32
 }
 
-func TestRunInference_AllHostsHangBeforeReceiptFailsClosed(t *testing.T) {
-	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
-	setSpeculativeTiming(t, 20*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
-	env := setupTestProxyWithClients(t, []user.HostClient{
-		hangBeforeReceiptClient{},
-		hangBeforeReceiptClient{},
-		hangBeforeReceiptClient{},
-	})
+func (c heldHostClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if c.withReceipt && receiptHandler != nil {
+		receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+	}
+	select {
+	case <-c.release:
+		return nil, errors.New("host failed")
+	case <-ctx.Done():
+		c.cancelled.Add(1)
+		return nil, ctx.Err()
+	}
+}
 
-	start := time.Now()
-	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
-	elapsed := time.Since(start)
+// Test flow:
+//  1. Hold every host at the attempt limit — before its receipt, after it, and as suspicious hosts after it — far past every deadline.
+//  2. Require the race to stay open and cancel no attempt while the hosts hold.
+//  3. Let the hosts fail and require the client to get that failure, not a gateway timeout.
+func TestRunInference_AtTheAttemptLimitHeldHostsAreWaitedForNotCancelled(t *testing.T) {
+	cases := []struct {
+		name         string
+		withReceipt  bool
+		isSuspicious bool
+	}{
+		{name: "before the receipt"},
+		{name: "after the receipt", withReceipt: true},
+		{name: "suspicious hosts after the receipt", withReceipt: true, isSuspicious: true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+			setSpeculativeTiming(t, 20*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+			release := make(chan struct{})
+			var cancelled atomic.Int32
+			held := heldHostClient{withReceipt: testCase.withReceipt, release: release, cancelled: &cancelled}
+			env := setupTestProxyWithClients(t, []user.HostClient{held, held})
+			if testCase.isSuspicious {
+				env.proxy.redundancy.suspiciousParticipant = func(string) bool { return true }
+			}
+			params := defaultParams()
+			seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
+			finished := make(chan error, 1)
+			go func() {
+				var buf bytes.Buffer
+				finished <- env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+			}()
 
-	require.ErrorIs(t, err, errAllHostsReceiptTimeout)
-	require.Less(t, elapsed, 2*time.Second, "fail-closed must not wait for meta-drain or the client timeout")
-	require.GreaterOrEqual(t, gatewayStatusCodeForError(err), http.StatusInternalServerError)
+			select {
+			case err := <-finished:
+				t.Fatalf("the race ended while its hosts were still holding: %v", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			require.Zero(t, cancelled.Load(), "a missed deadline must not cancel an attempt")
+			close(release)
+
+			select {
+			case err := <-finished:
+				require.Error(t, err)
+				require.NotContains(t, err.Error(), "timed out")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the race did not end after its hosts failed")
+			}
+		})
+	}
 }
 
 func TestRunInference_OneHostHangAfterReceiptFailovers(t *testing.T) {

@@ -474,6 +474,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	runtimes, startupSkipped, err := buildGatewayRuntimes(ctx, gatewayStore, &gatewayState, baseStorageDir, perf, chainClient)
 	if err != nil {
 		runtimeParamsClose()
+		perf.Close()
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}

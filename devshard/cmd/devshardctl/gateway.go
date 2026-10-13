@@ -1484,6 +1484,7 @@ func (g *Gateway) Close() error {
 	if g.perfPruner != nil {
 		g.perfPruner.stopAndWait()
 	}
+	g.perf.Close()
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1830,6 +1831,20 @@ func (g *Gateway) serveChatOnEscrow(rt *devshardRuntime, body []byte, cost chatR
 		return nil, false
 	}
 	return capture, true
+}
+
+// rotatesModelLocked reports a model escrow rotation keeps serving, so a gap
+// between a deactivation and its replacement is temporary.
+func (g *Gateway) rotatesModelLocked(model string) bool {
+	if !g.settings.EscrowRotation.Enabled {
+		return false
+	}
+	for _, rotationModel := range g.settings.EscrowRotation.Models {
+		if rotationModel.ModelID == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
@@ -2283,7 +2298,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 			}
 		}
 		if len(matching) == 0 {
-			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) || g.rotatesModelLocked(requestModel) {
 				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
 			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}

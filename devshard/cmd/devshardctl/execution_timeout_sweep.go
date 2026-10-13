@@ -104,7 +104,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		return 0, 0, 0
 	}
 	redundancy := runtime.proxy.redundancy
-	if runtime.proxy.sm.Phase() != types.PhaseActive {
+	if runtime.proxy.sm.Phase() != types.PhaseActive || runtime.session.NonceCapReached() {
 		return 0, 0, 0
 	}
 	snapshot := runtime.proxy.sm.SnapshotState()
