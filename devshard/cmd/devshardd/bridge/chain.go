@@ -13,6 +13,8 @@ import (
 	"devshard/cmd/devshardd/events"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
@@ -114,6 +116,9 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
+	if status.Code(err) == codes.NotFound {
+		return nil, fmt.Errorf("Participant %s: %w", address, bridge.ErrParticipantNotFound)
+	}
 	if err != nil {
 		return nil, bridge.ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}

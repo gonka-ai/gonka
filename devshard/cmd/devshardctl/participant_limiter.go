@@ -1377,8 +1377,8 @@ func (l *ParticipantRequestLimiter) recordQuarantineTransition(participantKey, m
 
 func participantHTTPQuarantineReason(path string, statusCode int, body string) string {
 	switch {
-	case isPeerQuotaRefusal(statusCode, body):
-		return "peer_quota_quarantine"
+	case isSenderRateRefusal(statusCode, body):
+		return "sender_rate_quarantine"
 	case isParticipantThrottleStatus(statusCode):
 		return "http_throttle_quarantine"
 	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
@@ -1394,7 +1394,7 @@ func participantHTTPQuarantineReason(path string, statusCode int, body string) s
 
 func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statusCode int, body string) time.Duration {
 	switch {
-	case isPeerQuotaRefusal(statusCode, body):
+	case isSenderRateRefusal(statusCode, body):
 		return peerQuotaQuarantine
 	case isParticipantThrottleStatus(statusCode):
 		return l.httpThrottleQuarantine
@@ -1407,8 +1407,12 @@ func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statu
 	}
 }
 
-func isPeerQuotaRefusal(statusCode int, body string) bool {
-	return statusCode == http.StatusTooManyRequests && strings.Contains(strings.ToLower(body), "rate limit exceeded")
+func isSenderRateRefusal(statusCode int, body string) bool {
+	if !isParticipantThrottleStatus(statusCode) {
+		return false
+	}
+	reason := strings.ToLower(body)
+	return strings.Contains(reason, "rate limit exceeded") || strings.Contains(reason, "too many peers") || strings.Contains(reason, "http status 429")
 }
 
 func isParticipantThrottleStatus(statusCode int) bool {

@@ -10,6 +10,8 @@ import (
 	devshardpkg "devshard"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
@@ -81,6 +83,9 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	}
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
+	if status.Code(err) == codes.NotFound {
+		return nil, fmt.Errorf("Participant %s: %w", address, ErrParticipantNotFound)
+	}
 	if err != nil {
 		return nil, ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}

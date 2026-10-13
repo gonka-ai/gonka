@@ -25,3 +25,33 @@ func TestParticipantRequestLimiterPeerQuotaRefusalQuarantinesUntilTheBudgetRefil
 	require.LessOrEqual(t, quotaRemaining, peerQuotaQuarantine, "a quota refusal must not hold an honest host for the throttle hour")
 	require.Greater(t, busyRemaining, httpThrottleQuarantine-time.Minute, "any other 429 keeps the throttle quarantine")
 }
+
+// Test flow:
+//  1. Observe each refusal a host or its proxy gives a sender that sends too fast, and two refusals that mean the host itself is busy.
+//  2. Read each host's quarantine.
+//  3. Assert every sender-rate refusal quarantines only for the short pause, and the busy refusals keep the hour.
+func TestParticipantRequestLimiterTreatsEverySenderRateRefusalAsShort(t *testing.T) {
+	testCases := []struct {
+		name      string
+		status    int
+		body      string
+		wantShort bool
+	}{
+		{name: "peer budget spent", status: http.StatusTooManyRequests, body: "rate limit exceeded", wantShort: true},
+		{name: "peer table full", status: http.StatusTooManyRequests, body: "too many peers", wantShort: true},
+		{name: "proxy zone over Connect", status: http.StatusServiceUnavailable, body: "HTTP status 429 Too Many Requests", wantShort: true},
+		{name: "host busy 429", status: http.StatusTooManyRequests, body: "too many requests", wantShort: false},
+		{name: "host busy 503", status: http.StatusServiceUnavailable, body: "no capacity", wantShort: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			limiter := NewParticipantRequestLimiter(2, 10)
+
+			limiter.ObserveResultWithBodyForModel("host", "", lookupLimitedChatPath, testCase.status, testCase.body, "", "")
+			remaining := time.Duration(limiter.Snapshot([]string{"host"})["host"].QuarantineRemainingMS) * time.Millisecond
+
+			require.True(t, limiter.IsBlocked("host"))
+			require.Equal(t, testCase.wantShort, remaining <= peerQuotaQuarantine, "quarantine remaining %v", remaining)
+		})
+	}
+}
