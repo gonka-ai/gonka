@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/big"
 	"math/bits"
+	"slices"
 
 	"cosmossdk.io/log"
 	mathsdk "cosmossdk.io/math"
@@ -640,6 +641,7 @@ func getDynamicP0(participants []types.Participant, validationParams *types.Vali
 	var totalRequests uint64
 	var missedRequests uint64
 	participantsUsed := 0
+	var hostRatesPermille []uint64
 
 	for _, participant := range participants {
 		if participant.CurrentEpochStats == nil {
@@ -671,6 +673,10 @@ func getDynamicP0(participants []types.Participant, validationParams *types.Vali
 		}
 		missedRequests = sumMissed
 		participantsUsed++
+
+		rhi, rlo := bits.Mul64(missed, 1000)
+		rate, _ := bits.Div64(rhi, rlo, total)
+		hostRatesPermille = append(hostRatesPermille, rate)
 	}
 
 	if totalRequests < dynamicP0MinTotalRequests || participantsUsed < dynamicP0MinParticipantsWithTotal {
@@ -700,7 +706,12 @@ func getDynamicP0(participants []types.Participant, validationParams *types.Vali
 		finalPermille = governanceP0Permille
 	}
 
-	skipPunishment := selectedTablePermille == 500
+	// The baseline is volume-weighted, so a few large hosts can push it past the
+	// breaker alone; skip only when the median host is degraded as well.
+	slices.Sort(hostRatesPermille)
+	medianPermille := hostRatesPermille[(len(hostRatesPermille)-1)/2]
+	skipPunishment := selectedTablePermille == 500 &&
+		ceilToSupportedP0Permille(min(medianPermille+dynamicP0MarginPermille, 500)) == 500
 
 	logger.Info("Bitcoin Rewards: Dynamic p0 selection",
 		"epoch", epoch,
@@ -711,6 +722,7 @@ func getDynamicP0(participants []types.Participant, validationParams *types.Vali
 		"marginPermille", dynamicP0MarginPermille,
 		"targetPermille", targetPermille,
 		"selectedTablePermille", selectedTablePermille,
+		"medianHostPermille", medianPermille,
 		"governancePermille", governanceP0Permille,
 		"finalPermille", finalPermille,
 		"skipPunishment", skipPunishment,

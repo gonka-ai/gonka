@@ -2386,6 +2386,23 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
 
+	t.Run("Two large hosts cannot trip the breaker alone", func(t *testing.T) {
+		participants := []types.Participant{
+			{Address: "big1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 0, MissedRequests: 4000}},
+			{Address: "big2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 0, MissedRequests: 3000}},
+			{Address: "p1", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 1980, MissedRequests: 20}},
+			{Address: "p2", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 1980, MissedRequests: 20}},
+			{Address: "p3", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 1980, MissedRequests: 20}},
+			{Address: "p4", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 1980, MissedRequests: 20}},
+			{Address: "p5", CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 1980, MissedRequests: 20}},
+		}
+
+		p0, skipPunishment := getDynamicP0(participants, nil, 1, logger)
+		require.False(t, skipPunishment)
+		require.Equal(t, int64(500), p0.Value)
+		require.Equal(t, int32(-3), p0.Exponent)
+	})
+
 	t.Run("Excluded hosts do not loosen the baseline", func(t *testing.T) {
 		active := func(addr string, inf, missed uint64) types.Participant {
 			return types.Participant{Address: addr, Status: types.ParticipantStatus_ACTIVE,
