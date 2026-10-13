@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -35,6 +36,10 @@ type HTTPSessionConfig struct {
 	// false in this library so tests can call MaybeHeartbeat. The gateway
 	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
 	DisableHeightSyncHeartbeat bool
+	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
+	// receipt/Finish compose. Zero keeps the session default (5m). The
+	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
+	QuietSettleDelay time.Duration
 	// ExtraClientConfig: only its HeightSync fields reach each host client.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
@@ -268,6 +273,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
+		if cfg.QuietSettleDelay > 0 {
+			session.SetQuietSettleDelay(cfg.QuietSettleDelay)
+		}
 		if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 			hs := cfg.ExtraClientConfig.HeightSync
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
@@ -344,6 +352,9 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 	}
 	if cfg.DisableHeightSyncHeartbeat {
 		extra = append(extra, WithDisableHeightSyncHeartbeat(true))
+	}
+	if cfg.QuietSettleDelay > 0 {
+		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
 	}
 	return extra
 }

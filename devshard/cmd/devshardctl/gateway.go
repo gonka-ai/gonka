@@ -422,6 +422,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		RequestAdmission:           sharedParticipantRequestLimiter,
 		RequireHeightSeed:          requireHeightSeedFromEnv(),
 		DisableHeightSyncHeartbeat: !heightSyncHeartbeatFromEnv(),
+		QuietSettleDelay:           quietSettleDelayFromEnv(),
 		Escrow:                     escrow,
 		RefusalTimeoutSeconds:      timeoutOverrides.RefusalTimeoutSeconds,
 		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
