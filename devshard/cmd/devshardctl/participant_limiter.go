@@ -24,6 +24,7 @@ const (
 	// matches the old ~60m "full token bucket" recovery (600 tokens at
 	// 10/min) in one explicit duration so IsBlocked and IsAvailable align.
 	httpThrottleQuarantine = 60 * time.Minute
+	peerQuotaQuarantine    = time.Second
 	// transportFailureQuarantine is used when the HTTP request never
 	// received a response (connection error, etc.).
 	transportFailureQuarantine = 30 * time.Minute
@@ -1376,6 +1377,8 @@ func (l *ParticipantRequestLimiter) recordQuarantineTransition(participantKey, m
 
 func participantHTTPQuarantineReason(path string, statusCode int, body string) string {
 	switch {
+	case isPeerQuotaRefusal(statusCode, body):
+		return "peer_quota_quarantine"
 	case isParticipantThrottleStatus(statusCode):
 		return "http_throttle_quarantine"
 	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
@@ -1391,6 +1394,8 @@ func participantHTTPQuarantineReason(path string, statusCode int, body string) s
 
 func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statusCode int, body string) time.Duration {
 	switch {
+	case isPeerQuotaRefusal(statusCode, body):
+		return peerQuotaQuarantine
 	case isParticipantThrottleStatus(statusCode):
 		return l.httpThrottleQuarantine
 	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
@@ -1400,6 +1405,10 @@ func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statu
 	default:
 		return 0
 	}
+}
+
+func isPeerQuotaRefusal(statusCode int, body string) bool {
+	return statusCode == http.StatusTooManyRequests && strings.Contains(strings.ToLower(body), "rate limit exceeded")
 }
 
 func isParticipantThrottleStatus(statusCode int) bool {
