@@ -19,6 +19,7 @@ import (
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/transport"
+	"devshard/user"
 )
 
 const (
@@ -28,6 +29,7 @@ const (
 	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
 	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
 	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envQuietSettleDelay    = "DEVSHARD_QUIET_SETTLE_DELAY"
 )
 
 type heightSyncProcessState struct {
@@ -233,6 +235,24 @@ func requireHeightSeedFromEnv() bool {
 // any other value leave heartbeats off. The height-seed loop is separate.
 func heightSyncHeartbeatFromEnv() bool {
 	return envBoolOptIn(envHeightSyncHeartbeat)
+}
+
+// quietSettleDelayFromEnv is how long leftover receipt/Finish wait for a
+// successor Start before composing on their own nonce. Unset → production
+// default (5m). Testenv sets DEVSHARD_QUIET_SETTLE_DELAY=5s. Invalid or
+// non-positive values fall back to the production default.
+func quietSettleDelayFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(envQuietSettleDelay))
+	if raw == "" {
+		return user.DefaultQuietSettleDelay
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid quiet settle delay; using default",
+			"env", envQuietSettleDelay, "value", raw, "default", user.DefaultQuietSettleDelay, "error", err)
+		return user.DefaultQuietSettleDelay
+	}
+	return d
 }
 
 // gatewayChainOracleFromEnv is the optional verification follower. Only

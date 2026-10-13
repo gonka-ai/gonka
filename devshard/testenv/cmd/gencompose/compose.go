@@ -341,6 +341,8 @@ services:
       DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
       DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
       DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
+      # Production default is 5m; keep 5s so WaitGatewaySessionSettled (90s) still passes.
+      DEVSHARD_QUIET_SETTLE_DELAY: ${DEVSHARD_QUIET_SETTLE_DELAY:-5s}
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:

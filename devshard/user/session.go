@@ -450,10 +450,24 @@ func WithDisableHeightSyncHeartbeat(on bool) SessionOption {
 }
 
 // WithQuietSettleDelay overrides how long a leftover receipt waits for the
-// next Start diff before it is composed on its own nonce. Tests use a short
-// delay. Zero keeps defaultQuietSettleDelay.
+// next Start diff before it is composed on its own nonce. Zero keeps
+// DefaultQuietSettleDelay (5m). Testenv / citest pass TestQuietSettleDelay (5s).
 func WithQuietSettleDelay(d time.Duration) SessionOption {
 	return func(sess *Session) { sess.quietSettleDelay = d }
+}
+
+// SetQuietSettleDelay updates the quiet-settle wait on a live session (recover
+// path). Non-positive values keep DefaultQuietSettleDelay.
+func (s *Session) SetQuietSettleDelay(d time.Duration) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if d <= 0 {
+		d = DefaultQuietSettleDelay
+	}
+	s.quietSettleDelay = d
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
@@ -557,7 +571,7 @@ func NewSession(
 		sess.clock = time.Now
 	}
 	if sess.quietSettleDelay <= 0 {
-		sess.quietSettleDelay = defaultQuietSettleDelay
+		sess.quietSettleDelay = DefaultQuietSettleDelay
 	}
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
 	sess.heartbeatPoke = make(chan struct{}, 1)
@@ -3110,11 +3124,16 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 	return diff, fmt.Errorf("send pending diff nonce %d to any host: %w", diff.Nonce, lastErr)
 }
 
-// defaultQuietSettleDelay is how long a leftover receipt waits for the next
-// Start diff. The withholding driver posts about once a second, so this stays
-// above that gap. WaitGatewaySessionSettled allows 90s, so one quiet compose
-// still releases the hold.
-const defaultQuietSettleDelay = 5 * time.Second
+// DefaultQuietSettleDelay is how long a leftover receipt waits for the next
+// Start diff in production. Sparse traffic should absorb leftovers into a
+// later Start rather than burn FeePerNonce every few seconds.
+//
+// Testenv sets DEVSHARD_QUIET_SETTLE_DELAY=5s (TestQuietSettleDelay) so
+// WaitGatewaySessionSettled (90s) still sees the hold release.
+const DefaultQuietSettleDelay = 5 * time.Minute
+
+// TestQuietSettleDelay is the citest / unit-harness quiet-settle wait.
+const TestQuietSettleDelay = 5 * time.Second
 
 // ArmQuietSettle schedules one compose of unpinned pending txs when no
 // PrepareInference follows. The next Start diff is the per-inference
@@ -3136,7 +3155,7 @@ func (s *Session) armQuietSettleLocked() {
 	}
 	d := s.quietSettleDelay
 	if d <= 0 {
-		d = defaultQuietSettleDelay
+		d = DefaultQuietSettleDelay
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(d, func() {
