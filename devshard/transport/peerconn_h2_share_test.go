@@ -166,8 +166,12 @@ func TestPeerConn_TenEscrowsShareOneH2Conn(t *testing.T) {
 	}
 	require.Len(t, tokens, n)
 
+	// Ready is published after Attach, before Watch starts asynchronously.
+	// Wait for server-side stream registration before checking the shared mux.
+	require.Eventually(t, func() bool {
+		return host.watches.Load() == int32(n)
+	}, 5*time.Second, 10*time.Millisecond, "each escrow keeps its own Watch stream")
 	require.Equal(t, int32(1), host.accepts.Load(), "10 escrows to one host must share one TCP")
-	require.Equal(t, int32(n), host.watches.Load(), "each escrow keeps its own Watch stream")
 	require.Equal(t, "HTTP/2.0", host.proto.Load())
 
 	for _, i := range []int{0, 3, 7} {
