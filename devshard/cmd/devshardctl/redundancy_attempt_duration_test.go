@@ -19,6 +19,91 @@ import (
 	"devshard/user"
 )
 
+// The pairwise comparison reads the duration of each attempt from buildInvolvement. It must be the
+// time from send until that attempt ended, not the time until the request settled.
+func TestAttemptDurationIsMeasuredWhenTheAttemptEnds(t *testing.T) {
+	e := &Redundancy{}
+	// Both attempts were sent a second ago, so the request settles long after either of them ended.
+	// The end times are given, not measured, so the test does not depend on the scheduler.
+	t0 := time.Now().Add(-time.Second)
+	a := &inflight{hostIdx: 0, nonce: 1, sendTime: t0, done: make(chan struct{})}
+	b := &inflight{hostIdx: 1, nonce: 2, sendTime: t0.Add(50 * time.Millisecond), done: make(chan struct{})}
+
+	// A really takes 100 ms, B really takes 400 ms.
+	a.markEnded(t0.Add(100 * time.Millisecond))
+	b.markEnded(t0.Add(450 * time.Millisecond))
+	close(a.done)
+	close(b.done)
+
+	ha := e.buildInvolvement(a, 1, user.InferenceParams{})
+	hb := e.buildInvolvement(b, 1, user.InferenceParams{})
+
+	if ha.TotalTimeMs != 100 {
+		t.Errorf("attempt A took 100 ms, recorded %.0f ms", ha.TotalTimeMs)
+	}
+	if hb.TotalTimeMs != 400 {
+		t.Errorf("attempt B took 400 ms, recorded %.0f ms", hb.TotalTimeMs)
+	}
+	if ha.TotalTimeMs >= hb.TotalTimeMs {
+		t.Errorf("attempt A is faster than B but is recorded as slower or equal (%.0f ms vs %.0f ms)", ha.TotalTimeMs, hb.TotalTimeMs)
+	}
+}
+
+func TestAttemptDurationFallsBackToElapsedTimeWhenTheEndWasNeverRecorded(t *testing.T) {
+	sent := time.Now().Add(-300 * time.Millisecond)
+	inf := &inflight{sendTime: sent}
+	got := inf.attemptDuration(sent.Add(300 * time.Millisecond))
+	if got != 300*time.Millisecond {
+		t.Fatalf("attempt that never ended: got %v, want 300ms", got)
+	}
+}
+
+func TestAttemptEndIsRecordedOnce(t *testing.T) {
+	sent := time.Now()
+	inf := &inflight{sendTime: sent}
+	inf.markEnded(sent.Add(100 * time.Millisecond))
+	inf.markEnded(sent.Add(900 * time.Millisecond))
+	if got := inf.attemptDuration(sent.Add(5 * time.Second)); got != 100*time.Millisecond {
+		t.Fatalf("duration after a second markEnded: got %v, want 100ms", got)
+	}
+}
+
+// The performance sample of an attempt carries the same duration as its involvement record: the time
+// until the attempt ended, not the time until the sample was recorded.
+func TestPerformanceSamplesUseTheAttemptDuration(t *testing.T) {
+	cases := []struct {
+		name   string
+		record func(e *Redundancy, inf *inflight)
+	}{
+		{"ordinary sample", func(e *Redundancy, inf *inflight) {
+			e.recordSample(inf, user.InferenceParams{}, true)
+		}},
+		{"winner failure after content", func(e *Redundancy, inf *inflight) {
+			e.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			perf := NewPerfTracker(nil)
+			e := &Redundancy{perf: perf}
+			// Sent a second ago, ended after 100 ms, recorded now.
+			sent := time.Now().Add(-time.Second)
+			inf := &inflight{hostIdx: 0, nonce: 1, sendTime: sent, done: make(chan struct{})}
+			inf.markEnded(sent.Add(100 * time.Millisecond))
+
+			tc.record(e, inf)
+
+			stats := perf.Stats(0)
+			if stats.TotalSamples != 1 {
+				t.Fatalf("expected one recorded sample, got %d", stats.TotalSamples)
+			}
+			if stats.AvgTotalTimeMs != 100 {
+				t.Fatalf("sample duration is %.0f ms, want 100 ms (the attempt's own duration)", stats.AvgTotalTimeMs)
+			}
+		})
+	}
+}
+
 // gatedReceiptClient holds the receipt callback of its inner client until gate is closed, so a test
 // decides when the attempt on this host can end instead of waiting on a timer.
 type gatedReceiptClient struct {
