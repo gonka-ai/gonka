@@ -216,7 +216,7 @@ func (r *chatFrameReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// ChatBudgetWait reports how long a chat to this host would wait for the peer budget the host advertised; zero when it would go at once or chat does not use this connection.
+// ChatBudgetWait reports how long a chat to this host would wait for the peer budget the host advertised; zero when it would go at once, chat does not use this connection, or the host advertised less than the network default.
 func (c *RPCClient) ChatBudgetWait() time.Duration {
 	if c == nil || c.conn == nil || !c.Uses(EndpointChat) {
 		return 0

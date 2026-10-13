@@ -314,7 +314,7 @@ func (b *peerRPCBudget) wait(now time.Time, procedure string) time.Duration {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.bucket == nil {
+	if b.bucket == nil || b.bucket.ratePerMin < float64(DefaultRPCMessagesPerMin) || b.bucket.burst < float64(DefaultRPCMessagesBurst) {
 		return 0
 	}
 	b.bucket.refill(now)
