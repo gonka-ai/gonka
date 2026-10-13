@@ -217,6 +217,63 @@ func TestSession_SendCatchUpReadsEachChunkFromTheStore(t *testing.T) {
 	require.Equal(t, uint64(n), session.hostSyncNonce[0])
 }
 
+// jumpAheadCatchUpClient applies the whole journal before the first chunk
+// returns, the way a refused-timeout ChallengeReceipt dumps another host's
+// journal onto the paused executor. The response nonce is then the tip.
+type jumpAheadCatchUpClient struct {
+	*InProcessClient
+	session    *Session
+	mu         sync.Mutex
+	chunks     [][2]uint64
+	respNonces []uint64
+}
+
+func (c *jumpAheadCatchUpClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	last := req.Diffs[len(req.Diffs)-1].Nonce
+	c.mu.Lock()
+	c.chunks = append(c.chunks, [2]uint64{req.Diffs[0].Nonce, last})
+	first := len(c.chunks) == 1
+	c.mu.Unlock()
+	if first {
+		c.session.mu.Lock()
+		all := append([]types.Diff(nil), c.session.diffRangeLocked(1, c.session.nonce)...)
+		c.session.mu.Unlock()
+		c.Host.ApplyCatchUpDiffs(all)
+	}
+	resp, err := c.InProcessClient.Send(ctx, req, stream, onReceipt)
+	if err == nil && resp != nil {
+		c.mu.Lock()
+		c.respNonces = append(c.respNonces, resp.Nonce)
+		c.mu.Unlock()
+	}
+	return resp, err
+}
+
+func TestSession_SendCatchUpDoesNotSkipWhenHostJumpsAheadMidway(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize*3 + 50
+	composeEmptyDiffs(t, session, n)
+	client := &jumpAheadCatchUpClient{
+		InProcessClient: session.clients[0].(*InProcessClient),
+		session:         session,
+	}
+
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+
+	require.Equal(t, [][2]uint64{
+		{1, catchUpChunkSize},
+		{catchUpChunkSize + 1, catchUpChunkSize * 2},
+		{catchUpChunkSize*2 + 1, catchUpChunkSize * 3},
+		{catchUpChunkSize*3 + 1, n},
+	}, client.chunks, "a tip-sized response after the first chunk must not skip the rest")
+	require.NotEmpty(t, client.respNonces)
+	require.Equal(t, uint64(n), client.respNonces[0], "the first chunk's response is the tip, as in the load-test jump")
+	require.Equal(t, uint64(n), client.Host.LatestNonce())
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.Equal(t, uint64(n), session.hostSyncNonce[0])
+}
+
 type recordedSend struct {
 	from, to, nonce uint64
 	payload         bool
