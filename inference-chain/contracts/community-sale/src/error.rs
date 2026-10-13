@@ -19,7 +19,7 @@ pub enum ContractError {
     ZeroAmount {},
 
     #[error("Insufficient contract balance: {available}, needed: {needed}")]
-    InsufficientBalance { available: u128, needed: u128 },
+    InsufficientBalance { available: String, needed: String },
 
     #[error("Token not accepted: {token}")]
     TokenNotAccepted { token: String },

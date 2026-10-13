@@ -252,43 +252,47 @@ func (r *pairwiseRing) ordered() []PairwiseComparison {
 }
 
 func summarizePairwise(key pairwiseKey, comparisons []PairwiseComparison) PairwiseSummary {
-	s := PairwiseSummary{
-		Model:             key.model,
-		ParticipantA:      key.a,
-		ParticipantB:      key.b,
-		ShapeBucket:       key.bucket,
-		SampleCount:       len(comparisons),
-		RecentComparisons: comparisons,
-	}
-	if len(comparisons) == 0 {
-		return s
-	}
-	var aTotal, bTotal, ratioTotal float64
-	for _, c := range comparisons {
-		aTotal += c.ATotalMs
-		bTotal += c.BTotalMs
-		ratioTotal += c.RatioAToB
-		if c.Timestamp.After(parsePairwiseSummaryTime(s.LastUpdated)) {
-			s.LastUpdated = c.Timestamp.Format(time.RFC3339Nano)
+	summary := pairwiseStatistics(key, comparisons)
+	summary.RecentComparisons = comparisons
+	var latest time.Time
+	for _, comparison := range comparisons {
+		if comparison.Timestamp.After(latest) {
+			latest = comparison.Timestamp
 		}
 	}
-	n := float64(len(comparisons))
-	s.AvgATotalMs = aTotal / n
-	s.AvgBTotalMs = bTotal / n
-	s.AvgRatioAToB = ratioTotal / n
-	if s.AvgRatioAToB > 1 {
-		s.AvgSpeedupAToB = 1 - 1/s.AvgRatioAToB
+	if !latest.IsZero() {
+		summary.LastUpdated = latest.Format(time.RFC3339Nano)
 	}
-	s.Confidence = pairwiseSampleConfidence(len(comparisons))
-	return s
+	return summary
 }
 
-func parsePairwiseSummaryTime(value string) time.Time {
-	if value == "" {
-		return time.Time{}
+// pairwiseStatistics is the order-independent part of a summary, cheap enough to compute over a ring in place on every routing decision.
+func pairwiseStatistics(key pairwiseKey, comparisons []PairwiseComparison) PairwiseSummary {
+	summary := PairwiseSummary{
+		Model:        key.model,
+		ParticipantA: key.a,
+		ParticipantB: key.b,
+		ShapeBucket:  key.bucket,
+		SampleCount:  len(comparisons),
 	}
-	t, _ := time.Parse(time.RFC3339Nano, value)
-	return t
+	if len(comparisons) == 0 {
+		return summary
+	}
+	var aTotal, bTotal, ratioTotal float64
+	for _, comparison := range comparisons {
+		aTotal += comparison.ATotalMs
+		bTotal += comparison.BTotalMs
+		ratioTotal += comparison.RatioAToB
+	}
+	count := float64(len(comparisons))
+	summary.AvgATotalMs = aTotal / count
+	summary.AvgBTotalMs = bTotal / count
+	summary.AvgRatioAToB = ratioTotal / count
+	if summary.AvgRatioAToB > 1 {
+		summary.AvgSpeedupAToB = 1 - 1/summary.AvgRatioAToB
+	}
+	summary.Confidence = pairwiseSampleConfidence(len(comparisons))
+	return summary
 }
 
 func pairwiseSampleConfidence(samples int) float64 {
@@ -330,7 +334,7 @@ func (t *PairwiseTracker) EstimateRatio(model string, inputTokens uint64, a, b s
 		if ring == nil || len(ring.comparisons) == 0 {
 			return 0, 0, false
 		}
-		s := summarizePairwise(key, ring.ordered())
+		s := pairwiseStatistics(key, ring.comparisons)
 		if s.AvgRatioAToB <= 0 {
 			return 0, 0, false
 		}
@@ -349,7 +353,7 @@ func (t *PairwiseTracker) directRatio(model, bucket, a, b string) (float64, floa
 	if ring == nil || len(ring.comparisons) == 0 {
 		return 0, 0, 0, false
 	}
-	s := summarizePairwise(key, ring.ordered())
+	s := pairwiseStatistics(key, ring.comparisons)
 	return s.AvgRatioAToB, s.Confidence, s.SampleCount, s.AvgRatioAToB > 0
 }
 
@@ -419,7 +423,7 @@ func (t *PairwiseTracker) SpeedupCutoffForParticipants(model string, inputTokens
 		if participantAvailable != nil && (!participantAvailable(key.a) || !participantAvailable(key.b)) {
 			continue
 		}
-		s := summarizePairwise(key, ring.ordered())
+		s := pairwiseStatistics(key, ring.comparisons)
 		if s.AvgSpeedupAToB > 0 {
 			speedups = append(speedups, s.AvgSpeedupAToB*s.Confidence)
 		}

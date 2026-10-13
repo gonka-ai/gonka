@@ -12,7 +12,8 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
-	blockclient "devshard/chainoracle/blocks/client"
+	"common/chainoracle/blocks/nmclient"
+	"common/nodemanager"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
@@ -21,13 +22,12 @@ import (
 )
 
 const (
-	envChainOracleURL     = "DEVSHARD_CHAINORACLE_URL"
-	envHeightSyncK        = "DEVSHARD_HEIGHTSYNC_K"
-	envHeightSyncSlots    = "DEVSHARD_HEIGHTSYNC_SLOTS"
-	envHeightSyncProbe    = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
-	envLogLevel           = "DEVSHARD_LOG_LEVEL"
-	envRequireHeightSeed  = "DEVSHARD_REQUIRE_HEIGHT_SEED"
-	envGatewayChainOracle = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envHeightSyncK         = "DEVSHARD_HEIGHTSYNC_K"
+	envHeightSyncSlots     = "DEVSHARD_HEIGHTSYNC_SLOTS"
+	envHeightSyncProbe     = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
+	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
+	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
+	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
 )
 
 type heightSyncProcessState struct {
@@ -40,25 +40,6 @@ var (
 	hsSt   *heightSyncProcessState
 	hsErr  error
 )
-
-// initGatewaySlog raises slog when DEVSHARD_LOG_LEVEL is set.
-// Unset leaves the Go default (Info), matching today's gateway logs.
-func initGatewaySlog() {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLogLevel)))
-	if raw == "" {
-		return
-	}
-	level := slog.LevelInfo
-	switch raw {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-}
 
 func parseUintEnv(name string) (uint64, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -107,7 +88,6 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 		if !gatewayChainOracleFromEnv() {
 			return
 		}
-		url := strings.TrimSpace(os.Getenv(envChainOracleURL))
 		if _, err := parseUintEnv(envHeightSyncK); err != nil {
 			hsErr = err
 			return
@@ -121,64 +101,85 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 			return
 		}
 
-		var lookup *blockclient.Lookup
-		if url != "" {
-			cli, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: url})
-			if err != nil {
-				hsErr = fmt.Errorf("chainoracle lookup client: %w", err)
-				return
-			}
-			lookup = cli
+		nmOracle, nmClose, err := nodeManagerOracleFromEnv()
+		if err != nil {
+			hsErr = err
+			return
 		}
 		rpc := strings.TrimSpace(cometRPC)
 		if rpc == "" {
 			rpc = effectiveChainRPC()
 		}
 		var chainOracle blocks.BlockOracle
-		if chainClient != nil || rpc != "" {
-			chainOracle = direct.NewFromChain(chainClient, rpc)
+		if chainClient != nil {
+			chainOracle = direct.NewFromChain(chainClient)
 		}
-		if lookup == nil && chainOracle == nil {
+		if nmOracle == nil && chainOracle == nil && rpc == "" {
+			if nmClose != nil {
+				nmClose()
+			}
 			return
 		}
 
-		cache := tipcache.New(0)
+		cache := tipcache.New(failover.CometMaxAge)
+		fo := failover.New(cache, nmOracle, chainOracle)
 		feedCtx, cancelFeed := context.WithCancel(context.Background())
 		if rpc != "" {
-			if err := tipcache.StartComet(feedCtx, rpc, cache); err != nil {
+			if err := tipcache.StartCometWithHooks(feedCtx, rpc, cache, tipcache.CometHooks{
+				OnConnected:    func() { fo.SetCometConnected(true) },
+				OnDisconnected: func() { fo.SetCometConnected(false) },
+			}); err != nil {
 				slog.Warn("height-sync comet feed", "err", err, "rpc", rpc)
 			}
 		}
-		var hist failover.History
-		if lookup != nil {
-			hist = lookup
-		}
 		closer := func() {
 			cancelFeed()
-			if lookup != nil {
-				lookup.Close()
+			if nmClose != nil {
+				nmClose()
 			}
 		}
-		oracle := failover.New(cache, hist, chainOracle)
-		hsSt = &heightSyncProcessState{oracle: oracle, closer: closer}
+		hsSt = &heightSyncProcessState{oracle: fo, closer: closer}
 		slog.Info("height sync chain follower enabled",
-			"oracle_url", url, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
+			"node_manager", nmOracle != nil, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
 	return hsSt, hsErr
 }
 
-func heightSyncCourierSourcesPresent() bool {
-	if strings.TrimSpace(os.Getenv(envChainOracleURL)) != "" {
-		return true
+func nodeManagerOracleFromEnv() (blocks.BlockOracle, func(), error) {
+	addr := strings.TrimSpace(os.Getenv("NODE_MANAGER_ADDR"))
+	if addr == "" {
+		return nil, nil, nil
 	}
-	return effectiveChainRPC() != ""
+	cli, err := nodemanager.NewClient(addr)
+	if err != nil {
+		return nil, nil, fmt.Errorf("chainoracle node-manager dial: %w", err)
+	}
+	lookup, err := nmclient.New(cli.NodeManagerClient())
+	if err != nil {
+		_ = cli.Close()
+		return nil, nil, err
+	}
+	return lookup, func() { _ = cli.Close() }, nil
 }
 
-// extraClientConfigFromEnv returns a per-session courier ClientConfig when a
-// dapi URL or chain RPC is available. The scheduler is always PeerTipOracleSource
-// over a fresh HeightSyncPeerTips. The optional chain follower is
-// HeightSyncLogOracle only (DEVSHARD_GATEWAY_CHAIN_ORACLE). Nil, nil when
-// neither source exists.
+func heightSyncCourierSourcesPresent() bool {
+	if strings.TrimSpace(os.Getenv("NODE_MANAGER_ADDR")) != "" {
+		return true
+	}
+	if effectiveChainRPC() != "" {
+		return true
+	}
+	// Testermint's gateway only injects DEVSHARD_CHAIN_GRPC; courier seed
+	// POSTs to hosts and does not need Comet RPC or NodeManager on the
+	// gateway process itself.
+	return strings.TrimSpace(firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_GRPC"), os.Getenv("NODE_GRPC_URL"))) != ""
+}
+
+// extraClientConfigFromEnv returns a per-session courier ClientConfig when
+// NODE_MANAGER_ADDR, chain RPC, or chain gRPC is available. The scheduler is
+// always PeerTipOracleSource over a fresh HeightSyncPeerTips. The optional
+// chain follower is HeightSyncLogOracle only (DEVSHARD_GATEWAY_CHAIN_ORACLE).
+// Nil, nil when neither source exists.
 func extraClientConfigFromEnv() (*transport.ClientConfig, error) {
 	k, err := parseUintEnv(envHeightSyncK)
 	if err != nil {
@@ -227,11 +228,22 @@ func requireHeightSeedFromEnv() bool {
 	}
 }
 
+// heightSyncHeartbeatFromEnv is the gateway quiet-session cadence. Only
+// true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
+// any other value leave heartbeats off. The height-seed loop is separate.
+func heightSyncHeartbeatFromEnv() bool {
+	return envBoolOptIn(envHeightSyncHeartbeat)
+}
+
 // gatewayChainOracleFromEnv is the optional verification follower. Only
 // true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
 // any other value leave the follower unbuilt.
 func gatewayChainOracleFromEnv() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envGatewayChainOracle)))
+	return envBoolOptIn(envGatewayChainOracle)
+}
+
+func envBoolOptIn(name string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	switch raw {
 	case "true", "1", "on":
 		return true

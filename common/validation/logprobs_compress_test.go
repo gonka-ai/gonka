@@ -178,7 +178,7 @@ func TestValidationRunsUnchangedAgainstASlimmedPayload(t *testing.T) {
 				Header:     http.Header{"Content-Type": []string{"application/json"}},
 				Body:       io.NopCloser(bytes.NewReader(replay)),
 			}, nil
-		}, 7, uint64(len(content)), "")
+		}, 7, uint64(len(content)), "", 0)
 	if err != nil {
 		t.Fatalf("ExecuteValidation: %v", err)
 	}

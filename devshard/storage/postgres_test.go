@@ -162,6 +162,9 @@ func TestPostgres_CreateSession_EmptyVersionRejected(t *testing.T) {
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, newTestPostgres(t))
 }
+func TestPostgres_DiffSizes(t *testing.T) {
+	runDiffSizes(t, newTestPostgres(t))
+}
 func TestPostgres_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestPostgres(t))
 }
@@ -183,6 +186,117 @@ func TestPostgres_SealedInferenceBulkInsert(t *testing.T) {
 func TestPostgres_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestPostgres(t))
 }
+func TestPostgres_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, newTestPostgres(t))
+}
+
+// Two handles on one database stand in for two replicas: the rebuild lock is
+// exclusive across them, and unlocking hands it to the other.
+func TestPostgres_ValidationObsRebuildLockIsExclusiveAcrossPools(t *testing.T) {
+	first := newTestPostgres(t)
+	require.NoError(t, first.CreateSession(defaultParams()))
+
+	second, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.WaitReady(context.Background()))
+
+	unlock, acquired, err := first.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	_, acquired, err = second.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.False(t, acquired, "a second replica must not rebuild while the first holds the lock")
+
+	unlock()
+	unlockSecond, acquired, err := second.LockValidationObsRebuild("escrow-1")
+	require.NoError(t, err)
+	require.True(t, acquired, "closing the holder's connection releases the lock")
+	unlockSecond()
+}
+func TestPostgres_ValidationCreditsAreSharedAcrossPools(t *testing.T) {
+	first := newTestPostgres(t)
+	second, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.WaitReady(context.Background()))
+
+	ctx := context.Background()
+	require.NoError(t, first.EarnValidationCredit(ctx, "gonka1participant", "model-a", time.Hour))
+
+	ok, err := second.ValidationCreditAvailable(ctx, "gonka1participant", "model-a")
+	require.NoError(t, err)
+	require.True(t, ok, "the sibling replica must see the earned credit")
+
+	other, err := second.ValidationCreditAvailable(ctx, "gonka1other", "model-a")
+	require.NoError(t, err)
+	require.False(t, other, "another participant cannot spend this credit")
+
+	_, reserved, err := second.ReserveValidationCredit(ctx, "gonka1participant", "model-a", time.Minute)
+	require.NoError(t, err)
+	require.True(t, reserved)
+
+	_, reserved, err = first.ReserveValidationCredit(ctx, "gonka1participant", "model-a", time.Minute)
+	require.NoError(t, err)
+	require.False(t, reserved, "one execution yields one credit across replicas")
+}
+
+func TestPostgres_ValidationCreditHolds(t *testing.T) {
+	first := newTestPostgres(t)
+	second, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
+	require.NoError(t, second.WaitReady(context.Background()))
+	ctx := context.Background()
+	const who, model = "gonka1participant", "model-a"
+	available := func() bool {
+		t.Helper()
+		ok, err := second.ValidationCreditAvailable(ctx, who, model)
+		require.NoError(t, err)
+		return ok
+	}
+	rows := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, first.pool.QueryRow(ctx, `SELECT count(*) FROM devshard_validation_credits WHERE participant = $1`, who).Scan(&n))
+		return n
+	}
+	require.NoError(t, first.EarnValidationCredit(ctx, who, model, time.Hour))
+
+	held, ok, err := first.ReserveValidationCredit(ctx, who, model, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, available(), "a held credit is out of the sibling's reach")
+	require.NoError(t, first.RefundValidationCredit(ctx, held))
+	require.True(t, available(), "a refund clears the hold")
+	renewed, err := first.RenewValidationCredit(ctx, held, time.Minute)
+	require.NoError(t, err)
+	require.False(t, renewed, "a refunded hold cannot be renewed")
+
+	// A replica that dies holding a credit stops renewing it.
+	dead, ok, err := first.ReserveValidationCredit(ctx, who, model, 500*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Eventually(t, available, 5*time.Second, 50*time.Millisecond, "a lapsed hold returns the credit")
+	taken, ok, err := second.ReserveValidationCredit(ctx, who, model, time.Minute)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, first.SpendValidationCredit(ctx, dead))
+	require.NoError(t, first.RefundValidationCredit(ctx, dead))
+	renewed, err = first.RenewValidationCredit(ctx, dead, time.Minute)
+	require.NoError(t, err)
+	require.False(t, renewed)
+	require.Equal(t, 1, rows(), "the stale holder cannot touch the new hold")
+	require.False(t, available())
+
+	renewed, err = second.RenewValidationCredit(ctx, taken, 500*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, renewed)
+	require.NoError(t, second.SpendValidationCredit(ctx, taken))
+	require.Zero(t, rows(), "spend deletes the credit")
+}
+
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }

@@ -72,6 +72,59 @@ func mempoolHeightAcks(txs []*types.DevshardTx) []*types.MsgHeightAck {
 	return out
 }
 
+func TestHost_RepairHeightReplaysSignedResponse(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{
+		heartbeatDiff(t, user, 1, 1, 100, slots),
+		heartbeatDiff(t, user, 2, 1, 100, slots),
+		heartbeatDiff(t, user, 3, 1, 100, slots),
+	}})
+	require.NoError(t, err)
+	require.NotNil(t, h.HeightSyncTurnRecord(1))
+	afterSetup := or.latestCalls.Load()
+
+	req := &heightsync.RepairRequest{
+		TurnStart:         1,
+		RefNonce:          1,
+		RequesterSlot:     1,
+		ObservedHeight:    100,
+		ObservedBlockHash: []byte{0xaa},
+	}
+	first, err := h.BuildRepairHeightResponse(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, heightsync.RepairOutcomeHeight, first.Outcome)
+	require.NotEmpty(t, first.ResponderSig)
+	require.Equal(t, afterSetup+1, or.latestCalls.Load())
+
+	or.setHeight(250)
+	or.setHash([]byte{0xbb})
+	second, err := h.BuildRepairHeightResponse(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, first.ResponderSig, second.ResponderSig)
+	require.Equal(t, first.ObservedHeight, second.ObservedHeight)
+	require.Equal(t, first.ObservedBlockHash, second.ObservedBlockHash)
+	require.Equal(t, afterSetup+1, or.latestCalls.Load(), "a repeat must not read the oracle again")
+
+	served := h.RepairResponderBudget().ServedCount()
+	_, err = h.BuildRepairHeightResponse(context.Background(), &heightsync.RepairRequest{
+		TurnStart:     99,
+		RequesterSlot: 1,
+	})
+	require.ErrorIs(t, err, heightsync.ErrRepairUnknownTurn)
+	require.Equal(t, served, h.RepairResponderBudget().ServedCount(), "an unknown turn is not admitted")
+}
+
 func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
@@ -108,6 +161,31 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 
 	err = heightsync.VerifyAck(signing.NewSecp256k1Verifier(), ack, hosts[0].Address())
 	require.NoError(t, err)
+}
+
+func TestHost_NoHeightAckOnceFinalizing(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	d1 := heartbeatDiff(t, user, 1, 1, 100, slots)
+	d2 := heartbeatDiff(t, user, 2, 1, 100, slots)
+	d3 := heartbeatDiff(t, user, 3, 1, 100, slots)
+	d4 := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}},
+	})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, d4}})
+	require.NoError(t, err)
+	require.Empty(t, mempoolHeightAcks(resp.Mempool))
+	require.True(t, h.SnapshotState().Phase >= types.PhaseFinalizing)
 }
 
 func TestHost_PeerSeenMarksAcksNotHeartbeats(t *testing.T) {
@@ -466,4 +544,62 @@ func TestHost_BlockedOracleDoesNotHoldMutex(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("HandleRequest did not return")
 	}
+}
+
+func TestHost_WarmAckAppliesWithoutCachedBinding(t *testing.T) {
+	cold := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warm.Address() && coldAddr == cold[0].Address(), nil
+	}
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+
+	group := testutil.MakeGroup(cold)
+	config := testutil.DefaultConfig(len(cold))
+	verifier := signing.NewSecp256k1Verifier()
+	newHost := func(signer *signing.Secp256k1Signer, opts ...HostOption) *Host {
+		t.Helper()
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
+			state.WithWarmKeyResolver(resolver))
+		require.NoError(t, err)
+		all := append([]HostOption{WithGrace(100)}, opts...)
+		h, err := NewHost(sm, signer, stub.NewInferenceEngine(), "escrow-1", group, nil, all...)
+		require.NoError(t, err)
+		return h
+	}
+	signerHost := newHost(warm, WithChainOracle(or))
+	peer := newHost(cold[1])
+
+	const slots = uint64(3)
+	d1 := heartbeatDiff(t, user, 1, 1, 100, slots)
+	d2 := heartbeatDiff(t, user, 2, 1, 100, slots)
+	d3 := heartbeatDiff(t, user, 3, 1, 100, slots)
+	resp, err := signerHost.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
+	require.NoError(t, err)
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1)
+	recovered, err := heightsync.RecoverAckSigner(signing.NewSecp256k1Verifier(), acks[0])
+	require.NoError(t, err)
+	require.Equal(t, warm.Address(), recovered)
+	require.Empty(t, signerHost.sm.WarmKeys(), "emitting an ack must not bind WarmKeys")
+
+	ackDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
+	})
+	_, err = signerHost.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, ackDiff}})
+	require.NoError(t, err, "signing host must apply its own first-time warm ack")
+	require.Equal(t, warm.Address(), signerHost.sm.WarmKeys()[0])
+
+	_, err = peer.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, ackDiff}})
+	require.NoError(t, err, "peer applyCore must accept the warm ack with empty WarmKeys")
+	require.Equal(t, uint64(4), peer.sm.LatestNonce())
+	require.Equal(t, warm.Address(), peer.sm.WarmKeys()[0])
 }

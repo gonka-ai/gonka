@@ -170,6 +170,7 @@ type InferenceRecordProto struct {
 	ValidatedBy       []byte                 `protobuf:"bytes,17,opt,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
 	StartedAtHeight   uint64                 `protobuf:"varint,18,opt,name=started_at_height,json=startedAtHeight,proto3" json:"started_at_height,omitempty"`
 	ConfirmedAtHeight uint64                 `protobuf:"varint,19,opt,name=confirmed_at_height,json=confirmedAtHeight,proto3" json:"confirmed_at_height,omitempty"`
+	ServedHash        []byte                 `protobuf:"bytes,20,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -337,6 +338,13 @@ func (x *InferenceRecordProto) GetConfirmedAtHeight() uint64 {
 	return 0
 }
 
+func (x *InferenceRecordProto) GetServedHash() []byte {
+	if x != nil {
+		return x.ServedHash
+	}
+	return nil
+}
+
 type InferencesMapProto struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Entries       []*InferenceRecordProto `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -394,7 +402,7 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\x14required_validations\x18\x05 \x01(\rR\x13requiredValidations\x123\n" +
 	"\x15completed_validations\x18\x06 \x01(\rR\x14completedValidations\"J\n" +
 	"\x11HostStatsMapProto\x125\n" +
-	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xa9\x05\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xca\x05\n" +
 	"\x14InferenceRecordProto\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\rR\x06status\x12#\n" +
@@ -420,7 +428,9 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\rvotes_invalid\x18\x10 \x01(\rR\fvotesInvalid\x12!\n" +
 	"\fvalidated_by\x18\x11 \x01(\fR\vvalidatedBy\x12*\n" +
 	"\x11started_at_height\x18\x12 \x01(\x04R\x0fstartedAtHeight\x12.\n" +
-	"\x13confirmed_at_height\x18\x13 \x01(\x04R\x11confirmedAtHeight\"Q\n" +
+	"\x13confirmed_at_height\x18\x13 \x01(\x04R\x11confirmedAtHeight\x12\x1f\n" +
+	"\vserved_hash\x18\x14 \x01(\fR\n" +
+	"servedHash\"Q\n" +
 	"\x12InferencesMapProto\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.devshard.v1.InferenceRecordProtoR\aentriesB\x10Z\x0edevshard/typesb\x06proto3"
 

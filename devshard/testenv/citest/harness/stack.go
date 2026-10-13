@@ -20,11 +20,22 @@ import (
 const (
 	defaultStackTimeout       = 12 * time.Minute
 	composeCleanupStopTimeout = 5 * time.Second
+	// versiond hosts declare stop_grace_period: 30m so operator evacuation can
+	// drain. Fault-injection StopService must not inherit that: without
+	// --timeout, compose waits the full grace, the 2m CommandContext SIGKILLs
+	// the CLI, and the container is still running (H27/H40).
+	composeFaultStopTimeout = 10 * time.Second
 	// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow
 	// warmup wait for catalog admission inside the process, but client chat
 	// does not. Start the process after the router has admitted the version
 	// so the first chat is not a catalog-503 flake.
 	gatewayComposeService = "devshardctl"
+)
+
+const (
+	hostAddrEnv       = "TESTENV_HOST_ADDR"
+	keepStackEnv      = "TESTENV_CITEST_KEEP_STACK"
+	dumpLogsOnExitEnv = "TESTENV_CITEST_DUMP_LOGS"
 )
 
 // Stack is a generated compose workdir for Docker citest.
@@ -35,6 +46,11 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	ObsProfile    ObsProfile
+	payloadEnv    map[string]string // merged into .env by PrepareObservabilityOverlay
+	// ProxyOverlay appends docker-compose.proxy.yml. Default citest must
+	// leave this false so existing suites stay on versiond-router:8080.
+	ProxyOverlay bool
 	// ComposeProject is the docker compose project label. Empty uses the
 	// workdir basename (Compose default). Observability citest sets this so
 	// Promtail only ships this stack's containers.
@@ -63,7 +79,13 @@ func NewStack(t *testing.T, prefix string) *Stack {
 
 	workDir, err := os.MkdirTemp(testenvDir, prefix)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
+	t.Cleanup(func() {
+		if keepStackEnabled() {
+			t.Logf("citest: keeping stack workdir %s because %s=1", workDir, keepStackEnv)
+			return
+		}
+		_ = os.RemoveAll(workDir)
+	})
 
 	return &Stack{
 		WorkDir:        workDir,
@@ -105,6 +127,7 @@ func (s *Stack) RunGencompose(t *testing.T) {
 		t.Fatalf("gencompose: %v\n%s", err, out)
 	}
 	fixComposePaths(t, s.ComposePath, s.TestenvDir)
+	PinVersiondImagesFromEnv(t, s.ComposePath)
 	PatchComposeUseRandomHostPorts(t, s.ComposePath)
 }
 
@@ -116,13 +139,13 @@ func (s *Stack) LoadConfig(t *testing.T) *config.File {
 	return cfg
 }
 
-// Endpoints reads Docker-assigned localhost ports from a running compose stack.
+// Endpoints reads Docker-assigned host-published ports from a running compose stack.
 func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	t.Helper()
 	eps := s.MockChainEndpoints(t, cfg)
 	eps.MockDapiHTTP = "http://" + s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.HTTPPort)
 	eps.MockDapiGRPC = s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.GRPCPort)
-	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, "mock-openai", cfg.MockOpenAI.HTTPPort)
+	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, cfg.PrimaryMLNodeID(), cfg.MockOpenAI.HTTPPort)
 	eps.RouterHTTP = "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
 	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, "devshardctl", cfg.Devshardctl.Port)
 	return eps
@@ -159,21 +182,34 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 	raw := strings.TrimSpace(string(out))
 	host, port, err := net.SplitHostPort(raw)
 	require.NoError(t, err, "parse docker compose port output %q", raw)
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
+	host = hostPublishedAddr(host)
 	return net.JoinHostPort(host, port)
 }
 
+func hostPublishedAddr(composeHost string) string {
+	override := strings.TrimSpace(os.Getenv(hostAddrEnv))
+	if override != "" {
+		return override
+	}
+	switch composeHost {
+	case "", "0.0.0.0", "::":
+		return "127.0.0.1"
+	default:
+		return composeHost
+	}
+}
+
+// Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
+// Set TESTENV_CITEST_BUILD=1 to pass --build (local iteration); CI should reuse images from citest-images.
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
 // The gateway starts only after GET /{version}/healthz succeeds so heartbeats
 // are not 503 undeclared_version.
 func (s *Stack) Up(t *testing.T) {
 	t.Helper()
-	s.upAfterCatalog(t, false)
+	s.upAfterCatalog(t, ComposeBuildEnabled())
 }
 
-// UpBuild starts the stack and rebuilds images first.
+// UpBuild starts the stack and always rebuilds images first.
 func (s *Stack) UpBuild(t *testing.T) {
 	t.Helper()
 	s.upAfterCatalog(t, true)
@@ -186,21 +222,54 @@ func (s *Stack) UpServices(t *testing.T, build bool, services ...string) {
 }
 
 // UpWithObservability starts the stack and observability overlay (see PrepareObservabilityOverlay).
+// Same image policy as Up: reuse by default; TESTENV_CITEST_BUILD=1 adds --build.
+// (devshardd is volume-mounted; gateway is baked into devshard-runtime — rebuild when that code changes.)
 func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 	t.Helper()
 	s.PrepareObservabilityOverlay(t, cfg)
-	s.upAfterCatalog(t, false)
+	s.upAfterCatalog(t, ComposeBuildEnabled())
+}
+
+// ComposeBuildEnabled reports whether compose up should pass --build.
+// Opt-in via TESTENV_CITEST_BUILD=1; Makefile citest-* targets build images separately.
+func ComposeBuildEnabled() bool {
+	return os.Getenv("TESTENV_CITEST_BUILD") == "1"
+}
+
+func keepStackEnabled() bool {
+	return os.Getenv(keepStackEnv) == "1"
+}
+
+func dumpLogsOnExitEnabled() bool {
+	return os.Getenv(dumpLogsOnExitEnv) == "1"
+}
+
+// UpInfra starts every compose service except the gateway. Compatibility tests
+// use this to put a short, explicit bound on catalog admission failures instead
+// of inheriting the normal five-minute healthy-stack startup window.
+func (s *Stack) UpInfra(t *testing.T, build bool) {
+	t.Helper()
+	s.ensureProxyOverlay(t)
+	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
+	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
+	s.composeUp(t, build, infra)
+}
+
+// UpGateway creates the gateway after a caller has established catalog
+// admission. This preserves the heartbeat ordering enforced by Up; StartGateway
+// is reserved for a gateway container that was already created and then stopped.
+func (s *Stack) UpGateway(t *testing.T) {
+	t.Helper()
+	s.composeUp(t, false, []string{gatewayComposeService})
 }
 
 // upAfterCatalog brings up every compose service except the gateway, waits for
 // router catalog admission, then starts the gateway.
 func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
 	t.Helper()
-	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
-	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
-	s.composeUp(t, build, infra)
+	s.UpInfra(t, build)
 	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
-	s.composeUp(t, false, []string{gatewayComposeService})
+	s.UpGateway(t)
 }
 
 func (s *Stack) composeServiceNames(t *testing.T) []string {
@@ -235,14 +304,49 @@ func withoutComposeService(names []string, skip string) []string {
 	return out
 }
 
+func composeStopArgs(fileArgs []string, service string, timeout time.Duration) []string {
+	seconds := int((timeout + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	args := append([]string{"compose"}, fileArgs...)
+	return append(args, "stop", "--timeout", strconv.Itoa(seconds), service)
+}
+
+// observabilityFragmentArgs prefers the isolated copies written next to the
+// stack. Those copies bind-mount ./data and publish a random host port.
+func (s *Stack) observabilityFragmentArgs(profile ObsProfile) []string {
+	args := make([]string, 0, len(profile.ComposeFragmentNames())*2)
+	for _, frag := range profile.ComposeFragmentNames() {
+		path := filepath.Join(s.WorkDir, frag)
+		if _, err := os.Stat(path); err != nil {
+			path = filepath.Join(s.TestenvDir, frag)
+		}
+		args = append(args, "-f", path)
+	}
+	return args
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
+	if s.ProxyOverlay {
+		args = append(args, "-f", proxyOverlayPath(s))
+	}
 	if s.Observability {
-		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
-		if _, err := os.Stat(overlay); err != nil {
-			overlay = filepath.Join(s.TestenvDir, "docker-compose.observability.yml")
+		profile := s.ObsProfile
+		if profile == "" {
+			profile = ResolveObsProfile()
 		}
-		args = append(args, "-f", overlay)
+		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
+		if _, err := os.Stat(overlay); err == nil {
+			args = append(args, "-f", overlay)
+			args = append(args, s.observabilityFragmentArgs(profile)...)
+		} else {
+			args = append(args, "-f", filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
+			for _, frag := range profile.ComposeFragmentNames() {
+				args = append(args, "-f", filepath.Join(s.TestenvDir, frag))
+			}
+		}
 		ipOverride := filepath.Join(s.WorkDir, "docker-compose.observability.ip.yml")
 		if _, err := os.Stat(ipOverride); err == nil {
 			args = append(args, "-f", ipOverride)
@@ -256,6 +360,9 @@ func (s *Stack) composeEnv() []string {
 	if s.ComposeProject != "" {
 		env = append(env, "COMPOSE_PROJECT_NAME="+s.ComposeProject)
 	}
+	if s.Observability {
+		env = append(env, "TESTENV_OBS_CONFIG_DIR="+s.WorkDir)
+	}
 	return env
 }
 
@@ -264,7 +371,16 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
 	defer cancel()
 
-	t.Cleanup(func() { s.Down(t) })
+	t.Cleanup(func() {
+		if dumpLogsOnExitEnabled() {
+			DumpComposeLogs(t, s)
+		}
+		if keepStackEnabled() {
+			t.Logf("citest: keeping compose stack %s because %s=1", filepath.Base(s.WorkDir), keepStackEnv)
+			return
+		}
+		s.Down(t)
+	})
 
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "up", "-d", "--wait", "--pull", "missing")
@@ -309,12 +425,19 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "stop", service)...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, composeFaultStopTimeout)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose stop %s: %v\n%s", service, err, out)
+	}
+	running, err := s.ServiceRunning(service)
+	if err != nil {
+		t.Fatalf("inspect stopped %s: %v", service, err)
+	}
+	if running {
+		t.Fatalf("docker compose stop %s: container still running", service)
 	}
 }
 
@@ -334,12 +457,9 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (Serv
 	if err != nil {
 		return ServiceStopResult{}, err
 	}
-	graceSeconds := int((grace + time.Second - 1) / time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
 	defer cancel()
-	args := append([]string{"compose"}, s.composeFileArgs()...)
-	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
-	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd := exec.CommandContext(ctx, "docker", composeStopArgs(s.composeFileArgs(), service, grace)...)
 	cmd.Dir = s.WorkDir
 	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
@@ -434,7 +554,30 @@ func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
 	if tail <= 0 {
 		tail = 120
 	}
-	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color", "--tail", strconv.Itoa(tail))
+	return s.composeLogs(tail, services)
+}
+
+// ComposeLogsAll returns the full log buffer (no --tail). One-shot warns stay
+// visible after later SSE/debug noise that would evict a short tail window.
+func (s *Stack) ComposeLogsAll(services ...string) (string, error) {
+	return s.composeLogs(0, services)
+}
+
+// ComposeLogsContain reports whether needle appears anywhere in those services'
+// full logs.
+func (s *Stack) ComposeLogsContain(needle string, services ...string) (bool, error) {
+	out, err := s.ComposeLogsAll(services...)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(out, needle), nil
+}
+
+func (s *Stack) composeLogs(tail int, services []string) (string, error) {
+	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color")
+	if tail > 0 {
+		args = append(args, "--tail", strconv.Itoa(tail))
+	}
 	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir
@@ -451,6 +594,25 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	for _, name := range services {
 		require.Contains(t, running, name, "service %s not running; running=%v", name, running)
 	}
+}
+
+// ServiceImage is the image name of the running container (Config.Image).
+func (s *Stack) ServiceImage(t *testing.T, service string) string {
+	t.Helper()
+	cmd := exec.Command("docker", append(append([]string{"compose"}, s.composeFileArgs()...), "ps", "-aq", service)...)
+	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "docker compose ps -q %s\n%s", service, out)
+	id := strings.TrimSpace(string(out))
+	if i := strings.IndexByte(id, '\n'); i >= 0 {
+		id = id[:i]
+	}
+	require.NotEmpty(t, id, "no container for %s", service)
+	inspect := exec.Command("docker", "inspect", "-f", "{{.Config.Image}}", id)
+	img, err := inspect.CombinedOutput()
+	require.NoError(t, err, "docker inspect %s\n%s", id, img)
+	return strings.TrimSpace(string(img))
 }
 
 func (s *Stack) ServiceRunning(service string) (bool, error) {

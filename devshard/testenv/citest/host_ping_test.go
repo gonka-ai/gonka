@@ -135,14 +135,18 @@ func TestHostPing(t *testing.T) {
 
 		harness.WaitMetricAbsent(t, client, metricsURL, "devshard_gateway_host_ping_up",
 			map[string]string{"host": dial}, 45*time.Second)
+		// In-flight ticks snapshot TargetCount before ReleaseEscrow; wait for
+		// the next tick (interval is patched to 3s) to publish 0.
+		require.Eventually(t, func() bool {
+			body := harness.FetchMetricsText(t, client, metricsURL)
+			m, ok := harness.FindMetric(harness.ParseMetricsText(body), "devshard_gateway_host_ping_targets", nil)
+			return !ok || m.Value == 0
+		}, 15*time.Second, 200*time.Millisecond, "host_ping_targets must drop to 0 after deactivate")
 		body := harness.FetchMetricsText(t, client, metricsURL)
 		metrics := harness.ParseMetricsText(body)
 		harness.RequireNoMetric(t, metrics, "devshard_gateway_host_ping_last_probe_timestamp_seconds",
 			map[string]string{"host": dial})
 		require.False(t, harness.MetricHasLabelValue(metrics, "devshard_gateway_host_ping_participant_info", "host", dial))
-		if m, ok := harness.FindMetric(metrics, "devshard_gateway_host_ping_targets", nil); ok {
-			require.Equal(t, 0.0, m.Value)
-		}
 	})
 
 	t.Run("E4_new_escrow_chat_healthy", func(t *testing.T) {
@@ -165,14 +169,39 @@ func TestHostPing(t *testing.T) {
 			map[string]string{"host": dial}, func(v float64) bool { return v == 1 }, 45*time.Second)
 
 		before := quarantineTransitionsSum(t, client, metricsURL)
-		stack.StopService(t, "versiond-0")
-		stack.StopService(t, "versiond-1")
+		// Fail only {prefix}/clock. Stopping versiond also 503s heartbeats and
+		// quarantines both HA participants — that is not a ping leak.
+		harness.FailChildClock(t, stack, cfg)
+
+		deadline := time.Now().Add(15 * time.Second)
+		var clockStatus int
+		for time.Now().Before(deadline) {
+			clockStatus, _, _ = harness.FetchChildPingHeaders(t, client, eps.RouterHTTP, version)
+			if clockStatus == http.StatusServiceUnavailable {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		require.Equal(t, http.StatusServiceUnavailable, clockStatus,
+			"clock fault file must 503 /%s/clock (rebuild linux binary: make -C testenv build-devshardd)", version)
 
 		harness.WaitMetricGauge(t, client, metricsURL, "devshard_gateway_host_ping_up",
 			map[string]string{"host": dial}, func(v float64) bool { return v == 0 }, 45*time.Second)
 
 		after := quarantineTransitionsSum(t, client, metricsURL)
 		require.Equal(t, before, after, "probe outage must not quarantine participants")
+
+		okReq := harness.ChatCompletionRequest{
+			Model: model,
+			Messages: []harness.ChatMessage{
+				{Role: "user", Content: "citest host-ping clock fault chat still works"},
+			},
+			MaxTokens: 16,
+		}
+		okResp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, okReq)
+		harness.RequireMockOpenAIContent(t, okResp.Choices[0].Message.Content)
+		require.Equal(t, before, quarantineTransitionsSum(t, client, metricsURL),
+			"chat after clock fault must not quarantine")
 	})
 }
 

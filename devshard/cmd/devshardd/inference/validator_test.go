@@ -16,43 +16,54 @@ import (
 	commonvalidation "common/validation"
 	devshardpkg "devshard"
 	"devshard/storage"
+	"devshard/transport"
 )
 
 // stubLeases implements leaseOps for testing.
 type stubLeases struct {
-	acquireFn      func(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	acquireFn      func(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	describeFn     func(ctx context.Context, escrowId string, inferenceId, epochId uint64) (storage.LeaseInfo, bool, error)
+	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error
+	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error)
+	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error
 	setResultCalls []string // records "escrowId/inferenceId/epochId/status"
 	releaseCalls   []string // records "escrowId/inferenceId/epochId/instanceAddr"
 	acquireEpochs  []uint64
+	describeCalls  int
 }
 
-func (s *stubLeases) Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error) {
+func (s *stubLeases) Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, owner storage.LeaseOwner) (bool, error) {
 	s.acquireEpochs = append(s.acquireEpochs, epochId)
-	return s.acquireFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+	return s.acquireFn(ctx, escrowId, inferenceId, epochId, owner)
 }
 
-func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error {
+func (s *stubLeases) DescribeLease(ctx context.Context, escrowId string, inferenceId, epochId uint64) (storage.LeaseInfo, bool, error) {
+	s.describeCalls++
+	if s.describeFn != nil {
+		return s.describeFn(ctx, escrowId, inferenceId, epochId)
+	}
+	return storage.LeaseInfo{}, false, nil
+}
+
+func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, owner storage.LeaseOwner) error {
 	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
 	if s.setResultFn != nil {
-		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, instanceAddr)
+		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, owner)
 	}
 	return nil
 }
 
-func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error) {
+func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) (bool, error) {
 	if s.ownsFn != nil {
-		return s.ownsFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.ownsFn(ctx, escrowId, inferenceId, epochId, owner)
 	}
 	return true, nil
 }
 
-func (s *stubLeases) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error {
-	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, instanceAddr))
+func (s *stubLeases) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, owner storage.LeaseOwner) error {
+	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, owner.Address))
 	if s.releaseFn != nil {
-		return s.releaseFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.releaseFn(ctx, escrowId, inferenceId, epochId, owner)
 	}
 	return nil
 }
@@ -76,8 +87,12 @@ func (s *stubValidator) Validate(ctx context.Context, req devshardpkg.ValidateRe
 
 // newTestLeaseValidator builds a LeaseValidator wrapping a stub ValidationEngine.
 // phase is always a zero *chain.Phase (EpochID returns 0).
+func testLeaseOwner() storage.LeaseOwner {
+	return storage.LeaseOwner{Address: "validator-addr", InstanceID: "validator-proc", Hostname: "versiond"}
+}
+
 func newTestLeaseValidator(leases leaseOps, innerFn func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error)) *LeaseValidator {
-	return NewLeaseValidator(&stubValidator{fn: innerFn}, new(chain.Phase), leases, "validator-addr", time.Hour)
+	return NewLeaseValidator(&stubValidator{fn: innerFn}, new(chain.Phase), leases, testLeaseOwner(), time.Hour)
 }
 
 // successInner returns a valid result.
@@ -95,13 +110,13 @@ func TestResolveValidationEpoch(t *testing.T) {
 
 func TestLeaseValidator_AcquireUsesRequestEpoch(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, epochId uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, epochId uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
 	phase := new(chain.Phase)
 	phase.SetEpoch(11)
-	c := NewLeaseValidator(&stubValidator{fn: successInner}, phase, store, "validator-addr", time.Hour)
+	c := NewLeaseValidator(&stubValidator{fn: successInner}, phase, store, testLeaseOwner(), time.Hour)
 
 	req := makeReq()
 	req.EpochID = 5
@@ -120,7 +135,7 @@ func TestLeaseValidator_AcquireUsesRequestEpoch(t *testing.T) {
 // in Validator.Validate) is passed through without completing the lease.
 func TestLeaseValidator_InvalidResult_DoesNotSetSubmitted(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -141,7 +156,7 @@ func TestLeaseValidator_InvalidResult_DoesNotSetSubmitted(t *testing.T) {
 func TestLeaseValidator_LeaseLost_ReturnsLeasedEachCall(t *testing.T) {
 	acquireCalls := 0
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			acquireCalls++
 			return false, nil
 		},
@@ -156,11 +171,130 @@ func TestLeaseValidator_LeaseLost_ReturnsLeasedEachCall(t *testing.T) {
 	require.Empty(t, store.releaseCalls, "never acquired, so must not release")
 }
 
+// TestLeaseValidator_RefusedAcquire_ReportsConflictingRow covers the diagnosis
+// path: Acquire only reports that some row was in the way, so the refusal is
+// explained by reading the row back. Stale is graded against the lease TTL, not
+// against a wall-clock constant.
+func TestLeaseValidator_RefusedAcquire_ReportsConflictingRow(t *testing.T) {
+	claimedAt := time.Now().Add(-45 * time.Minute)
+	tests := []struct {
+		name      string
+		info      storage.LeaseInfo
+		leaseTTL  time.Duration
+		wantStale bool
+	}{
+		{
+			name:      "pending within ttl",
+			info:      storage.LeaseInfo{InstanceAddr: "gonka1peer", InstanceID: "proc-b", Hostname: "versiond2", Status: storage.LeaseStatusPending, ClaimedAt: claimedAt},
+			leaseTTL:  time.Hour,
+			wantStale: false,
+		},
+		{
+			name:      "pending past ttl",
+			info:      storage.LeaseInfo{InstanceAddr: "gonka1peer", Status: storage.LeaseStatusPending, ClaimedAt: claimedAt},
+			leaseTTL:  30 * time.Minute,
+			wantStale: true,
+		},
+		{
+			name: "submitted is never stale",
+			info: storage.LeaseInfo{InstanceAddr: "gonka1peer", Status: storage.LeaseStatusSubmitted, ClaimedAt: claimedAt},
+			// Only a pending row can be reclaimed on age alone, so a submitted
+			// row well past the TTL must not be graded as stale.
+			leaseTTL:  time.Minute,
+			wantStale: false,
+		},
+		{
+			name:      "skipped is never stale",
+			info:      storage.LeaseInfo{InstanceAddr: "gonka1peer", Status: storage.LeaseStatusSkipped, ClaimedAt: claimedAt},
+			leaseTTL:  time.Minute,
+			wantStale: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubLeases{
+				acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+					return false, nil
+				},
+				describeFn: func(_ context.Context, _ string, _, _ uint64) (storage.LeaseInfo, bool, error) {
+					return tt.info, true, nil
+				},
+			}
+			c := NewLeaseValidator(&stubValidator{fn: successInner}, new(chain.Phase), store, testLeaseOwner(), tt.leaseTTL)
+
+			_, err := c.Validate(context.Background(), makeReq())
+
+			require.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
+			var conflict *devshardpkg.LeaseConflict
+			require.ErrorAs(t, err, &conflict)
+			assert.Equal(t, string(tt.info.Status), conflict.Status)
+			assert.Equal(t, tt.info.InstanceAddr, conflict.Owner)
+			assert.Equal(t, tt.info.InstanceID, conflict.InstanceID)
+			assert.Equal(t, tt.info.Hostname, conflict.Hostname)
+			assert.False(t, conflict.OwnerIsSelf(testLeaseOwner().Address, testLeaseOwner().InstanceID))
+			assert.True(t, conflict.OwnerIsSelf(tt.info.InstanceAddr, tt.info.InstanceID) || tt.info.InstanceID == "")
+			assert.WithinDuration(t, claimedAt, conflict.ClaimedAt, time.Second)
+			assert.Equal(t, tt.wantStale, conflict.Stale)
+			assert.Equal(t, 1, store.describeCalls)
+			require.Empty(t, store.releaseCalls, "never acquired, so must not release")
+		})
+	}
+}
+
+// TestLeaseValidator_RefusedAcquire_UnreadableRow verifies the error still
+// carries the sentinel, and claims no status, when the row cannot be read. A
+// vanished row and a failed read are different diagnoses and must not collapse.
+func TestLeaseValidator_RefusedAcquire_UnreadableRow(t *testing.T) {
+	tests := []struct {
+		name       string
+		describeFn func(context.Context, string, uint64, uint64) (storage.LeaseInfo, bool, error)
+		wantDetail string
+	}{
+		{
+			name: "row absent",
+			describeFn: func(context.Context, string, uint64, uint64) (storage.LeaseInfo, bool, error) {
+				return storage.LeaseInfo{}, false, nil
+			},
+			wantDetail: "already released",
+		},
+		{
+			name: "read failed",
+			describeFn: func(context.Context, string, uint64, uint64) (storage.LeaseInfo, bool, error) {
+				return storage.LeaseInfo{}, false, errors.New("connection refused")
+			},
+			wantDetail: "connection refused",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &stubLeases{
+				acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+					return false, nil
+				},
+				describeFn: tt.describeFn,
+			}
+			c := newTestLeaseValidator(store, successInner)
+
+			_, err := c.Validate(context.Background(), makeReq())
+
+			require.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
+			var conflict *devshardpkg.LeaseConflict
+			require.ErrorAs(t, err, &conflict)
+			assert.False(t, conflict.Observed())
+			assert.Empty(t, conflict.Status)
+			assert.Contains(t, conflict.Detail, tt.wantDetail)
+			require.Empty(t, store.releaseCalls)
+		})
+	}
+}
+
 // TestLeaseValidator_LeaseDBError_FailsClosed verifies that a lease store
 // failure prevents validation from running without cross-instance deduplication.
 func TestLeaseValidator_LeaseDBError_FailsClosed(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return false, errors.New("connection refused")
 		},
 	}
@@ -180,7 +314,7 @@ func TestLeaseValidator_LeaseDBError_FailsClosed(t *testing.T) {
 // execution does not complete the lease before MsgValidation is submitted.
 func TestLeaseValidator_Success_DoesNotSetSubmitted(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -190,6 +324,64 @@ func TestLeaseValidator_Success_DoesNotSetSubmitted(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Valid)
 	require.Empty(t, store.setResultCalls)
+}
+
+// TestLeaseValidator_CachesResult_SkipsInnerOnRetry covers the Phase-B
+// optimization: after a successful Validate, a later acquire of the same
+// (escrow, inference) returns the cached verdict without re-running ML/payload work.
+func TestLeaseValidator_CachesResult_SkipsInnerOnRetry(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	first, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, first.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, first.Reason)
+	require.Equal(t, 1, innerCalls)
+
+	require.NoError(t, c.ReleaseValidationLease(context.Background(), "escrow-1", 42))
+
+	second, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, second.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, second.Reason)
+	require.Equal(t, 1, innerCalls, "cached verdict must skip the inner ValidationEngine")
+	require.Equal(t, 2, len(store.acquireEpochs), "each Validate still acquires a lease")
+}
+
+// TestLeaseValidator_InnerError_NotCached verifies failed attempts do not
+// poison the cache: a later successful Validate still runs the engine.
+func TestLeaseValidator_InnerError_NotCached(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+	}
+	innerCalls := 0
+	c := newTestLeaseValidator(store, func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		innerCalls++
+		if innerCalls == 1 {
+			return nil, errors.New("local ml 503")
+		}
+		return &devshardpkg.ValidateResult{Valid: false, Reason: executorPayloadUnavailableReason}, nil
+	})
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.Error(t, err)
+	require.Equal(t, 1, innerCalls)
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.False(t, result.Valid)
+	require.Equal(t, 2, innerCalls, "errors must not be cached")
 }
 
 type stubThresholdResolver struct {
@@ -264,7 +456,7 @@ func TestEvaluateValidationResult_ThresholdResolveError(t *testing.T) {
 
 func TestLeaseValidator_MarkValidationSubmitted_SetsSubmitted(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -281,11 +473,11 @@ func TestLeaseValidator_MarkValidationSubmitted_SetsSubmitted(t *testing.T) {
 
 func TestLeaseValidator_AllowValidationSubmit_TTLExceeded(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
-	c := NewLeaseValidator(&stubValidator{fn: successInner}, new(chain.Phase), store, "validator-addr", time.Millisecond)
+	c := NewLeaseValidator(&stubValidator{fn: successInner}, new(chain.Phase), store, testLeaseOwner(), time.Millisecond)
 	_, err := c.Validate(context.Background(), makeReq())
 	require.NoError(t, err)
 	time.Sleep(2 * time.Millisecond)
@@ -303,10 +495,10 @@ func TestLeaseValidator_AllowValidationSubmit_TTLExceeded(t *testing.T) {
 
 func TestLeaseValidator_AllowValidationSubmit_NotOwned(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
-		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return false, nil
 		},
 	}
@@ -322,7 +514,7 @@ func TestLeaseValidator_AllowValidationSubmit_NotOwned(t *testing.T) {
 
 func TestLeaseValidator_InnerError_Releases(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -343,7 +535,7 @@ func TestLeaseValidator_InnerError_Releases(t *testing.T) {
 
 func TestLeaseValidator_Canceled_Releases(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -363,9 +555,66 @@ func TestLeaseValidator_Canceled_Releases(t *testing.T) {
 	require.Len(t, store.releaseCalls, 1, "forgotten acquire must not release again")
 }
 
+func TestLeaseValidator_CanceledParentContext_StillReleases(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &stubLeases{
+		acquireFn: func(ctx context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			require.NoError(t, ctx.Err())
+			return true, nil
+		},
+		releaseFn: func(ctx context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) error {
+			require.NoError(t, ctx.Err(), "release must not inherit the canceled request context")
+			return nil
+		},
+	}
+	started := make(chan struct{})
+	c := newTestLeaseValidator(store, func(ctx context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		close(started)
+		<-ctx.Done()
+		return nil, ctx.Err()
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := c.Validate(ctx, makeReq())
+		errCh <- err
+	}()
+	<-started
+	cancel()
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Validate did not return after cancel")
+	}
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls,
+		"shutdown abort must still DELETE the pending row")
+}
+
+func TestLeaseValidator_ReleaseValidationLease_CanceledContext(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
+			return true, nil
+		},
+		releaseFn: func(ctx context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) error {
+			require.NoError(t, ctx.Err(), "explicit release must not inherit a canceled parent")
+			return nil
+		},
+	}
+	c := newTestLeaseValidator(store, successInner)
+	_, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = c.ReleaseValidationLease(ctx, "escrow-1", 42)
+	require.NoError(t, err)
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls)
+}
+
 func TestLeaseValidator_AlreadyLeased_DoesNotRelease(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return false, nil
 		},
 	}
@@ -383,7 +632,7 @@ func TestLeaseValidator_AlreadyLeased_DoesNotRelease(t *testing.T) {
 
 func TestLeaseValidator_ReleaseValidationLease_NoAcquire_NoOp(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
 	}
@@ -397,10 +646,10 @@ func TestLeaseValidator_ReleaseValidationLease_NoAcquire_NoOp(t *testing.T) {
 func TestLeaseValidator_ReleaseValidationLease_ErrorForgetsAcquire(t *testing.T) {
 	releaseErr := errors.New("release failed")
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ storage.LeaseOwner) (bool, error) {
 			return true, nil
 		},
-		releaseFn: func(_ context.Context, _ string, _, _ uint64, _ string) error {
+		releaseFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseOwner) error {
 			return releaseErr
 		},
 	}
@@ -439,9 +688,54 @@ func newFaultTestValidator(phaseEpoch uint64, voteFalse bool, fetch payloadFetch
 		phase:                   phase,
 		chainParams:             stubChainParams{},
 		thresholds:              thresholds,
+		vocabularySizes:         stubVocabularyResolver{},
 		voteFalseOnFetchFailure: voteFalse,
 		fetchPayloads:           fetch,
 		executeML:               executeML,
+	}
+}
+
+type stubVocabularyResolver struct {
+	vocabularySize int
+}
+
+func (resolver stubVocabularyResolver) Resolve(context.Context, uint64, string) int {
+	return resolver.vocabularySize
+}
+
+// Test flow:
+// 1. The executor stored token id 42 and the resolver reports the model's vocab size.
+// 2. With vocab 42 the id is out of range: the validator votes false and never calls its ML node.
+// 3. With vocab 43 the id is valid and the replay reaches the ML node.
+func TestValidator_Validate_BoundsTokenIDsByResolvedVocabulary(t *testing.T) {
+	validPrompt := []byte(`{"messages":[]}`)
+	storedResponse := []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"logprobs":{"content":[{"token":"42","logprob":-0.5,"top_logprobs":[{"token":"42","logprob":-0.5}]}]}}]}`)
+	cases := []struct {
+		name           string
+		vocabularySize int
+		wantReplayed   bool
+	}{
+		{"id at vocab size votes false without replay", 42, false},
+		{"id inside vocab is replayed", 43, true},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return validPrompt, storedResponse, nil
+			}
+			executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+				replayed = true
+				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
+			}
+			validator := newFaultTestValidator(10, true, fetch, executeML, nil)
+			validator.vocabularySizes = stubVocabularyResolver{vocabularySize: testCase.vocabularySize}
+
+			result, err := validator.Validate(context.Background(), faultReq(10))
+			require.NoError(t, err)
+			assert.Equal(t, testCase.wantReplayed, replayed)
+			assert.Equal(t, testCase.wantReplayed, result.Valid)
+		})
 	}
 }
 
@@ -536,10 +830,20 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			wantFalse:  true,
 		},
 		{
-			name:       "404 out of window skipped",
+			// PoC window: phase is LatestEpoch (11 from poc_start), the escrow
+			// is still on EffectiveEpoch 10 until set_new_validators.
+			name:       "404 at phase epoch+1 votes false",
 			fetch:      taggedFetch(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)),
 			voteFalse:  true,
 			phaseEpoch: 11,
+			reqEpoch:   10,
+			wantFalse:  true,
+		},
+		{
+			name:       "404 out of window skipped",
+			fetch:      taggedFetch(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)),
+			voteFalse:  true,
+			phaseEpoch: 12,
 			reqEpoch:   10,
 			wantSkip:   true,
 		},
@@ -684,6 +988,41 @@ func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {
 	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, err, false))
 	assert.Nil(t, executorFaultVerdict(cancelledCtx(), phase, req, req.EpochID, err, true))
 	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, errors.New("local bridge down"), true))
+	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, transport.ErrPeerNotReady, true))
+}
+
+func TestLeaseValidator_PeerNotReadyReleasesForNextAcquire(t *testing.T) {
+	held := false
+	store := &stubLeases{
+		acquireFn: func(context.Context, string, uint64, uint64, storage.LeaseOwner) (bool, error) {
+			if held {
+				return false, nil
+			}
+			held = true
+			return true, nil
+		},
+		releaseFn: func(context.Context, string, uint64, uint64, storage.LeaseOwner) error {
+			held = false
+			return nil
+		},
+	}
+	calls := 0
+	c := newTestLeaseValidator(store, func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		calls++
+		if calls == 1 {
+			return nil, transport.ErrPeerNotReady
+		}
+		return &devshardpkg.ValidateResult{Valid: true}, nil
+	})
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.ErrorIs(t, err, transport.ErrPeerNotReady)
+	require.Len(t, store.releaseCalls, 1)
+
+	result, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+	require.True(t, result.Valid)
+	require.Equal(t, 2, calls)
 }
 
 // The D2 window must follow the epoch the payload was actually requested for.

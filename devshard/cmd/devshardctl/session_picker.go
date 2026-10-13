@@ -150,9 +150,10 @@ type pickerResult struct {
 }
 
 // ghostDispatcher dispatches a synthetic probe inference. Implemented
-// by Redundancy.runGhostProbe. Picker calls it with a freshly prepared
-// inference (params already set to a tiny probe), the kind classifying
-// why the nonce is being burned, and a reason string for log labeling.
+// by Redundancy.runGhostProbe. Picker calls it with the originating
+// request context (when available), a freshly prepared inference
+// (params already set to a tiny probe), the kind classifying why the
+// nonce is being burned, and a reason string for log labeling.
 //
 // Contract: the dispatcher is synchronous and MUST NOT contact the
 // host. The MsgStart for the nonce is composed and applied locally
@@ -160,7 +161,7 @@ type pickerResult struct {
 // see it as catch-up on its next real dispatch); the dispatcher only
 // records the burn for observability. The kind is preserved on the
 // signature for log-label differentiation.
-type ghostDispatcher func(prepared *user.PreparedInference, kind ghostKind, reason string)
+type ghostDispatcher func(ctx context.Context, prepared *user.PreparedInference, kind ghostKind, reason string)
 
 // throttleChecker reports whether a participant is currently
 // reactively throttled (the limiter would reject AllowRequest right
@@ -206,6 +207,30 @@ func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDi
 	}
 }
 
+// ghostOriginContext picks the request context a ghost burn should inherit
+// (T3.5). A burn only ever happens on a loop iteration that did not choose a
+// request, so the causally responsible request is the oldest waiter -- the one
+// whose dispatch this burn is delaying. With an empty queue the burn is
+// detached and falls back to the picker's own log context.
+func (p *sessionPicker) ghostOriginContext() context.Context {
+	if p == nil {
+		return context.Background()
+	}
+	p.mu.Lock()
+	var oldest *pickerRequest
+	if len(p.queue) > 0 {
+		oldest = p.queue[0]
+	}
+	p.mu.Unlock()
+	if oldest != nil && oldest.ctx != nil {
+		return oldest.ctx
+	}
+	if p.logCtx != nil {
+		return p.logCtx
+	}
+	return context.Background()
+}
+
 // start launches the dispatcher goroutine. Idempotent only when called
 // from the same caller -- not safe to call twice from different
 // goroutines, but production constructs the picker exactly once.
@@ -215,7 +240,7 @@ func (p *sessionPicker) start() {
 
 // stop signals the dispatcher to drain and exit. Blocks until exit.
 // Pending requests still waiting in queue receive errPickerStopped.
-// Tests should call this in cleanup; production callers do not.
+// Production calls this via Redundancy.Stop() on retire and finalize.
 func (p *sessionPicker) stop() {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
@@ -228,6 +253,15 @@ func (p *sessionPicker) stop() {
 		p.wakeUp()
 		<-p.stopped
 	})
+}
+
+func (p *sessionPicker) isStopped() bool {
+	if p == nil {
+		return true
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.done
 }
 
 // submit enqueues a request. Non-blocking. The submitter must read
@@ -315,7 +349,7 @@ func (p *sessionPicker) run() {
 			holdUntil           time.Time
 			ghostParticipantKey string
 		)
-		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
+		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			p.dropCanceledLocked()
@@ -336,7 +370,7 @@ func (p *sessionPicker) run() {
 			// will be subsumed by the PoC label until the phase ends.
 			if shouldUseProbeForParticipant(p.model, b.ParticipantKey) {
 				ghost = ghostPoC
-				return ghostProbeParams(p.model), true, nil
+				return ghostProbeParams(p.model), true, p.logCtx, nil
 			}
 
 			// Branch 1b: the host just refused, so burning the nonce keeps the queue flowing without
@@ -344,11 +378,11 @@ func (p *sessionPicker) run() {
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
 				ghostParticipantKey = b.ParticipantKey
-				return ghostProbeParams(p.model), true, nil
+				return ghostProbeParams(p.model), true, p.logCtx, nil
 			}
 
 			if len(p.queue) == 0 {
-				return user.InferenceParams{}, false, errPickerEmpty
+				return user.InferenceParams{}, false, nil, errPickerEmpty
 			}
 
 			// Branch 2: try to match a queued request whose exclude
@@ -371,7 +405,7 @@ func (p *sessionPicker) run() {
 				}
 				chosen = r
 				p.removeAtLocked(i)
-				return r.params, false, nil
+				return r.params, false, r.ctx, nil
 			}
 
 			// Branch 3: no compatible request. Hold the nonce briefly
@@ -383,7 +417,7 @@ func (p *sessionPicker) run() {
 			mature := oldest.submitTime.Add(pickerStaleThreshold)
 			if time.Now().Before(mature) {
 				holdUntil = mature
-				return user.InferenceParams{}, false, errPickerHold
+				return user.InferenceParams{}, false, nil, errPickerHold
 			}
 			if blockReason != "" {
 				ghost = ghostStateDiverged
@@ -393,10 +427,10 @@ func (p *sessionPicker) run() {
 					"host_idx", b.HostIdx,
 					"queue_depth", len(p.queue),
 				)
-				return ghostProbeParams(p.model), true, nil
+				return ghostProbeParams(p.model), true, p.logCtx, nil
 			}
 			ghost = ghostExclude
-			return ghostProbeParams(p.model), true, nil
+			return ghostProbeParams(p.model), true, p.logCtx, nil
 		})
 
 		// Phase 3: act on chooser outcome.
@@ -459,8 +493,8 @@ func (p *sessionPicker) run() {
 				)
 			}
 			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
-			if p.dispatchGhost != nil {
-				p.dispatchGhost(prepared, ghost, ghostReason)
+			if p.dispatchGhost != nil && !p.isStopped() {
+				p.dispatchGhost(p.ghostOriginContext(), prepared, ghost, ghostReason)
 			}
 			// Loop straight into the next iteration. Ghost burns are
 			// the cost of advancing the nonce stream past hosts that

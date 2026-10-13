@@ -15,6 +15,7 @@ import (
 // should appear twice in the attempt list.
 func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	zeroReceiptTimeout(t)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	env := setupTestProxy(t, 4, nil, true)
 
 	// Kill the primary (host 1) and its natural secondary (host 2).
@@ -38,4 +39,17 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 			h.HostIdx)
 		seen[h.HostIdx] = true
 	}
+}
+
+// Test flow:
+//  1. Set the speculative attempt cap to its default, restoring the previous value afterwards.
+//  2. Ask a sixteen-host redundancy for its attempt cap.
+//  3. Require the default to be two and the cap to follow it.
+func TestMaxSpeculativeAttemptsDefaultsToTwo(t *testing.T) {
+	previous := CurrentMaxSpeculativeAttempts()
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previous) })
+	SetMaxSpeculativeAttempts(DefaultMaxSpeculativeAttempts)
+
+	require.Equal(t, 2, DefaultMaxSpeculativeAttempts)
+	require.Equal(t, 2, (&Redundancy{groupSize: 16}).maxAttempts())
 }

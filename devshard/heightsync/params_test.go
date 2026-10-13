@@ -14,13 +14,17 @@ import (
 	"devshard/types"
 )
 
+func TestFleetCompat_PinsScheduleAndLeaseIdentity(t *testing.T) {
+	require.Equal(t, "d_ack=73,f=120000ms,lease=instance_id", heightsync.FleetCompat())
+}
+
 func TestHeartbeatConfig_Defaults(t *testing.T) {
 	cfg := heightsync.DefaultHeartbeatConfig()
-	require.Equal(t, 6*time.Second, cfg.Interval)
-	require.Equal(t, 2*cfg.Interval, cfg.TurnTimeout,
-		"a turn needs patience beyond the interval that opened it")
-	require.Equal(t, heightsync.DefaultIdleMultiple*cfg.Interval, cfg.IdleTimeout,
-		"a host tolerates four missed turnovers before arming")
+	require.Equal(t, 24*time.Second, cfg.Interval)
+	require.Equal(t, 2*cfg.Interval, cfg.TurnTimeout)
+	require.Equal(t, 4*cfg.Interval, cfg.IdleTimeout)
+	require.Equal(t, heightsync.DefaultTurnTimeout, cfg.TurnTimeout)
+	require.Equal(t, heightsync.DefaultHeartbeatIdleTimeout, cfg.IdleTimeout)
 	require.Equal(t, cfg.Interval+cfg.TurnTimeout, cfg.TurnoverBudget())
 	require.Greater(t, cfg.IdleTimeout, cfg.TurnoverBudget(),
 		"one lost turnover must never arm a host")
@@ -33,8 +37,8 @@ func TestHeartbeatConfig_Defaults(t *testing.T) {
 func TestHeartbeatConfig_AckWindowFollowsTheSchedule(t *testing.T) {
 	cfg := heightsync.DefaultHeartbeatConfig()
 	require.Equal(t, time.Second, cfg.BlockTime, "the assumption is explicit, not implicit")
-	require.Equal(t, uint64(19), cfg.AckDeadlineBlocks,
-		"18s of turnover budget at 1s blocks, plus the boundary block")
+	require.Equal(t, uint64(73), cfg.AckDeadlineBlocks,
+		"72s of turnover budget at 1s blocks, plus the boundary block")
 	require.GreaterOrEqual(t, cfg.AckWindow(), cfg.TurnoverBudget(),
 		"the log must not disown a turn its producer is still working on")
 	require.NoError(t, cfg.Validate(heightsync.DefaultOriginatorFreshness))
@@ -43,7 +47,8 @@ func TestHeartbeatConfig_AckWindowFollowsTheSchedule(t *testing.T) {
 	require.Equal(t, uint64(3), heightsync.AckDeadlineBlocksFor(9*time.Second, 5*time.Second))
 	slow := heightsync.HeartbeatConfig{BlockTime: 5 * time.Second}
 	require.NoError(t, slow.Validate(heightsync.DefaultOriginatorFreshness))
-	require.Equal(t, 25*time.Second, slow.AckWindow())
+	require.Equal(t, 80*time.Second, slow.AckWindow(),
+		"72s turnover at 5s blocks is 15 blocks plus the boundary")
 
 	// A longer interval carries the window with it: nothing is left behind at an
 	// absolute default that the schedule has outgrown.
@@ -67,17 +72,17 @@ func TestHeartbeatConfig_ValidateRejectsBadOverride(t *testing.T) {
 	require.NoError(t, slower.Validate(heightsync.DefaultOriginatorFreshness))
 
 	// The pre-step-4 shipped value, now rejected on the shipped schedule: two
-	// blocks of window against eighteen seconds of turnover budget is the mismatch
+	// blocks of window against seventy-two seconds of turnover budget is the mismatch
 	// that flagged honest acks late and fired repair probes in steady state.
 	dAck2 := ok
 	dAck2.AckDeadlineBlocks = 2
 	err := dAck2.Validate(heightsync.DefaultOriginatorFreshness)
 	require.ErrorContains(t, err, "ack window")
-	require.ErrorContains(t, err, "18s")
+	require.ErrorContains(t, err, "1m12s")
 
 	// The same D_ack is fine where blocks are slow enough to mean it.
 	dAck2Slow := dAck2
-	dAck2Slow.BlockTime = 10 * time.Second
+	dAck2Slow.BlockTime = 40 * time.Second
 	require.NoError(t, dAck2Slow.Validate(heightsync.DefaultOriginatorFreshness))
 
 	badCadence := ok
@@ -91,8 +96,8 @@ func TestHeartbeatConfig_FromSnapshotZeroUsesDefaults(t *testing.T) {
 	require.Equal(t, heightsync.DefaultHeartbeatConfig(), got)
 
 	// Scheduling knobs overlay; evaluation knobs stay compiled. IntervalMs=2000
-	// derives TurnTimeout/IdleTimeout, keeps the compiled D_ack=19, and still
-	// passes Validate (6s budget inside a 19s window, 8s idle > 6s).
+	// derives TurnTimeout/IdleTimeout, keeps the compiled D_ack=73, and still
+	// passes Validate (6s budget inside a 73s window, 8s idle > 6s).
 	overlay := heightsync.OverlayHeartbeatConfig(commrc.Snapshot{
 		HeightSync: commrc.HeightSyncParams{
 			IntervalMs: 2000, BlockTimeMs: 6000, AckDeadlineBlocks: 7,
@@ -123,9 +128,9 @@ func TestHeartbeatConfig_FromSnapshotZeroUsesDefaults(t *testing.T) {
 func TestHeartbeatConfig_InvalidOverlayIsClamped(t *testing.T) {
 	before := heightsync.OverlayClampCount()
 	got := heightsync.OverlayHeartbeatConfig(commrc.Snapshot{
-		HeightSync: commrc.HeightSyncParams{IntervalMs: 8000},
+		HeightSync: commrc.HeightSyncParams{IntervalMs: 40000},
 	})
-	require.True(t, got.Clamped, "8s interval ⇒ 24s budget against a compiled 19s window")
+	require.True(t, got.Clamped, "40s interval ⇒ 120s budget against a compiled 37s window")
 	require.Contains(t, got.Reason, "ack window")
 	require.Equal(t, heightsync.DefaultHeartbeatConfig(), got.Config,
 		"an invalid overlay must not ship")

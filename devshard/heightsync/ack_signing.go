@@ -19,7 +19,7 @@ var (
 	ErrAckVerify = errors.New("heightsync: ack signature verification failed")
 )
 
-// CanonicalAckBytes returns DomainHeightAck || proto.Marshal(fields 1..7).
+// CanonicalAckBytes returns DomainHeightAck || deterministic proto of fields 1..7.
 func CanonicalAckBytes(ack *types.MsgHeightAck) ([]byte, error) {
 	if ack == nil {
 		return nil, ErrAckEmpty
@@ -29,7 +29,7 @@ func CanonicalAckBytes(ack *types.MsgHeightAck) ([]byte, error) {
 		return nil, ErrAckEmpty
 	}
 	content.HostSig = nil
-	body, err := proto.Marshal(content)
+	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
 	if err != nil {
 		return nil, fmt.Errorf("marshal height ack: %w", err)
 	}
@@ -53,27 +53,48 @@ func SignAck(signer signing.Signer, ack *types.MsgHeightAck) error {
 	return nil
 }
 
-// VerifyAck checks host_sig against slotKey (the registered host address).
-func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey string) error {
+// RecoverAckSigner returns the address that produced host_sig over fields 1–7.
+func RecoverAckSigner(verifier signing.Verifier, ack *types.MsgHeightAck) (string, error) {
 	if verifier == nil {
-		return errors.New("heightsync: nil verifier")
+		return "", errors.New("heightsync: nil verifier")
 	}
 	if ack == nil {
-		return ErrAckEmpty
+		return "", ErrAckEmpty
 	}
 	if len(ack.HostSig) == 0 {
-		return ErrAckNoSig
+		return "", ErrAckNoSig
 	}
 	blob, err := CanonicalAckBytes(ack)
 	if err != nil {
-		return err
+		return "", err
 	}
 	recovered, err := verifier.RecoverAddress(blob, ack.HostSig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAckVerify, err)
+		return "", fmt.Errorf("%w: %v", ErrAckVerify, err)
 	}
-	if recovered != slotKey {
-		return fmt.Errorf("%w: signer %q != slot key %q", ErrAckVerify, recovered, slotKey)
+	return recovered, nil
+}
+
+// VerifyAck checks host_sig recovers to slotKey. Exact match: callers that
+// already resolved the acting address (cold or warm) pass that address.
+// Production identity (cold / bound warm / sibling / authz) is VerifyAckAllowed.
+func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey string) error {
+	if ack == nil {
+		return ErrAckEmpty
+	}
+	return VerifyAckAllowed(verifier, ack, signing.Exact(ack.SlotId, slotKey))
+}
+
+// VerifyAckAllowed recovers host_sig and checks it against the same actor set
+// as log-plane L2 (and confirm/finish/vote).
+func VerifyAckAllowed(verifier signing.Verifier, ack *types.MsgHeightAck, actors signing.SlotActors) error {
+	recovered, err := RecoverAckSigner(verifier, ack)
+	if err != nil {
+		return err
+	}
+	if !actors.Allows(ack.SlotId, recovered) {
+		expected, _ := actors.Expected(ack.SlotId)
+		return fmt.Errorf("%w: signer %q != slot key %q", ErrAckVerify, recovered, expected)
 	}
 	return nil
 }

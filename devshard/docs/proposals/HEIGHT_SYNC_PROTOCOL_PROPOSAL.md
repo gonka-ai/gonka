@@ -22,7 +22,7 @@ Related docs:
 [`height-sync-tests.md`](../height-sync-tests.md) (test catalog — implemented and planned),
 [`height-sync-implementation-plan.md`](../height-sync-implementation-plan.md) (phasing, and the `D*` / `H*` identifiers the catalog carries),
 [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md),
-[`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md),
+[`finalization.md`](./finalization.md),
 [`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md).
 
 ---
@@ -205,11 +205,11 @@ dispute surfaces for attribution.
 | **Sync vector** | The user's signed per-slot report of ack status for the previous turn (`MsgHeartbeat.sync_vector`). Early visibility of who the user claims answered; only contradictions against `Diff` itself are attributable (§11.1). |
 | **Repair probe** | Unicast host→host query when a peer's ack is missing from `Diff`. Fetches that peer's current height and liveness. Does **not** attribute the omission to host vs sequencer. §11.3. |
 | **Close-ready** | Local, **unsignalled** host flag meaning "I would vote `AGREE` on a `USER_TIMEOUT` finalization". §12. |
-| **`Interval`** | Heartbeat cadence in **milliseconds**: the longest gap allowed between turnovers. Default `3 s`; constraint `2 · Interval ≤ F`. |
-| **`TurnTimeout`** | How long the user waits on one open turn before abandoning it. Default `2 · Interval` = `6 s`. |
+| **`Interval`** | Heartbeat cadence in **milliseconds**: the longest gap allowed between turnovers. Default `12 s`; constraint `2 · Interval ≤ F`. |
+| **`TurnTimeout`** | How long the user waits on one open turn before abandoning it. Default `2 · Interval` (`24 s`). |
 | **Turnover budget** | `Interval + TurnTimeout`: the producer's own worst case for one turnover, and the quantity `D_ack` and `T_idle` are both stated against. |
-| **`D_ack`** | The turn's ack window in mainnet blocks after the request height. Derived from the turnover budget through `block_time` (§20), default `10`. Stays in blocks: it judges *logged* heights, so it must replay identically. |
-| **`T_idle`** | User-silence budget in **milliseconds** before a host arms close-ready. Default `4 · Interval` = `12 s`; constraint `T_idle > Interval + TurnTimeout`. |
+| **`D_ack`** | The turn's ack window in mainnet blocks after the request height. Derived from the turnover budget through `block_time` (§20), default `37`. Stays in blocks: it judges *logged* heights, so it must replay identically. |
+| **`T_idle`** | User-silence budget in **milliseconds** before a host arms close-ready. Default `4 · Interval` (`48 s`); constraint `T_idle > Interval + TurnTimeout`. |
 
 ---
 
@@ -492,7 +492,7 @@ it fails *silently*:
 | -------------------------------------- | ---------- |
 | No new `(H, hash)` enters circulation; every cached tip ages past `F` | Local oracles go stale / courier cache empty; cPoC holds `Inconclusive` (§17) |
 | cPoC's height interval `I = [h_X, h_carry]` is never tightened from above | [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md) **C14** strategic-delay attack succeeds: a host signs a *fresh lie* during a later genuine cPoC window and the wide band admits it |
-| No **user-signed** height claim exists anywhere in the log — §15 signs the response leg only | [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) `USER_TIMEOUT` requires "latest user `HeightSyncSection` … with … sender signature", which is **unsatisfiable** under §15 as written |
+| No **user-signed** height claim exists anywhere in the log — §15 signs the response leg only | [`finalization.md`](./finalization.md) `USER_TIMEOUT` requires a user-signed height claim in `Diff` (`MsgHeartbeat.observed_height`, §10.5). Without heartbeat that claim never appears; the request-leg `HeightSyncSection` is unsigned (§15) and is not evidence |
 | Hosts see only their own tip plus whatever the courier hands them | a host cannot distinguish "the roster is aligned" from "I am the only aligned host" |
 | A host that never answered and a host whose answer the user dropped are indistinguishable | a stalled turn cannot be attributed to anyone |
 
@@ -1150,7 +1150,7 @@ and slashes nobody. It has exactly two effects, both deferred:
 
 1. **Voting eligibility.** When a `FinalizeInit{trigger_reason =
    USER_TIMEOUT}` eventually arrives
-   ([`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)),
+   ([`finalization.md`](./finalization.md)),
    an **armed** host MAY vote `AGREE`; an **unarmed** host MUST vote
    `REJECT`. An unarmed host is by definition a host the user *is*
    serving, so from its view the timeout claim is false.
@@ -2297,11 +2297,11 @@ the test scenario that proves it (full catalog in
 | Strong recency | off (`max_lag_blocks = 0`) | follow-on hardening |
 | Confirmation rule | **withdrawn** (local oracle + optional Strong) | §17; no `ConfirmationConfig` |
 | `StaleAfter` (block oracle client) | `10 s` client default; testenv: `block_time + block_interval_delta + 1s` (floor `10s`) | `MOCKDAPI_STALE_AFTER` env (compose / devshardd-testenv) |
-| `Interval` (heartbeat cadence, **milliseconds**) | `3 s`; constraint `2 · Interval ≤ F` so two turnovers always fit inside the freshness budget | chain param; `HeartbeatConfig.Interval` |
-| `TurnTimeout` (patience for one open turn, **milliseconds**) | `2 · Interval` = `6 s`; after this the producer abandons the turn so one dead slot cannot silence the cadence. Strictly greater than `Interval`: a span is dispatched slot by slot before it waits for acks, so equality abandons every turn as the next becomes due | chain param; `HeartbeatConfig.TurnTimeout` |
+| `Interval` (heartbeat cadence, **milliseconds**) | `12 s`; constraint `2 · Interval ≤ F` so two turnovers always fit inside the freshness budget | chain param; `HeartbeatConfig.Interval` |
+| `TurnTimeout` (patience for one open turn, **milliseconds**) | `2 · Interval` (`24 s`); after this the producer abandons the turn so one dead slot cannot silence the cadence. Strictly greater than `Interval`: a span is dispatched slot by slot before it waits for acks, so equality abandons every turn as the next becomes due | chain param; `HeartbeatConfig.TurnTimeout` |
 | `block_time` (assumed chain block interval, **milliseconds**) | `1 s` — the fastest chain we deploy against. The only deployment fact in this table, and the rate that converts the schedule into `D_ack`. Assuming fast blocks is the safe direction: too wide a window merely delays noticing a stalled turn, while too narrow a one calls honest acks late | chain param; `HeartbeatConfig.BlockTime` |
-| `D_ack` (ack window, blocks) | **derived**: `⌈(Interval + TurnTimeout) / block_time⌉ + 1` = `10` at the shipped schedule. Constraint `D_ack · block_time ≥ Interval + TurnTimeout` — the log must outlast the producer's own patience. The trailing block is the boundary `h_req` was read inside. Not derived from `slots_num`: a tolerance must not be coupled to a topology number (§14) | chain param; `HeartbeatConfig.AckDeadlineBlocks` overrides the derivation |
-| `T_idle` (close-ready arming, **milliseconds**) | `4 · Interval` = `12 s`; constraint `T_idle > Interval + TurnTimeout` so one lost turnover never arms a host | chain param; `HeartbeatConfig.IdleTimeout` |
+| `D_ack` (ack window, blocks) | **derived**: `⌈(Interval + TurnTimeout) / block_time⌉ + 1` = `37` at the shipped schedule. Constraint `D_ack · block_time ≥ Interval + TurnTimeout` — the log must outlast the producer's own patience. The trailing block is the boundary `h_req` was read inside. Not derived from `slots_num`: a tolerance must not be coupled to a topology number (§14) | chain param; `HeartbeatConfig.AckDeadlineBlocks` overrides the derivation |
+| `T_idle` (close-ready arming, **milliseconds**) | `4 · Interval` (`48 s`); constraint `T_idle > Interval + TurnTimeout` so one lost turnover never arms a host | chain param; `HeartbeatConfig.IdleTimeout` |
 | `δ_probe` (repair stagger) | `1 s`, multiplied by `(V_slot − j) mod slots_num` | `RepairConfig.Stagger` |
 | `R_max` (repair probes per `Interval` per host) | `slots_num` | `RepairConfig.MaxProbesPerWindow` |
 | Floor retain window | `4096` increases | `FloorConfig.Window` (`DefaultFloorWindow`). One entry per *increase* of `F`, not per nonce; a query past the window returns `known = false` and L0 is skipped (§14) |
@@ -2324,7 +2324,7 @@ the test scenario that proves it (full catalog in
 | Container parity for Strong (Phase E) | ⏳ | follow-on. |
 | **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, time cadence `Interval`, `observed_height` stamps, turn record | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
-| **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
+| **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `finalization.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
 | Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |

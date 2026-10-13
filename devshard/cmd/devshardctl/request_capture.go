@@ -284,46 +284,53 @@ func capturedAttempts(attempts []*inflight, winnerNonce uint64) []capturedChatAt
 			confirmedAt     int64
 			hasReceipt      bool
 			streamBytesRead int64
+			errText         string
 		)
-		if inf.resp != nil {
-			confirmedAt = inf.resp.ConfirmedAt
-			hasReceipt = len(inf.resp.Receipt) > 0
-			streamBytesRead = inf.resp.StreamBytesRead
-		}
-		errText := ""
-		if inf.err != nil {
-			errText = inf.err.Error()
+		done := !inflightStillSending(inf)
+		if done {
+			if inf.resp != nil {
+				confirmedAt = inf.resp.ConfirmedAt
+				hasReceipt = len(inf.resp.Receipt) > 0
+				streamBytesRead = inf.resp.StreamBytesRead
+			}
+			if inf.err != nil {
+				errText = inf.err.Error()
+			}
+		} else {
+			errText = "transport_hung"
 		}
 		attempt := capturedChatAttempt{
-			Escrow:                      inf.escrowID,
-			Nonce:                       inf.nonce,
-			Host:                        inf.hostID,
-			HostIdx:                     inf.hostIdx,
-			Winner:                      inf.nonce == winnerNonce,
-			Probe:                       inf.probe,
-			EmptyStream:                 isEmptyStreamAttempt(inf),
-			ErrorStream:                 isErrorStreamAttempt(inf),
-			Error:                       errText,
-			Finished:                    inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isFailedStreamAttempt(inf),
-			Responsive:                  confirmedAt > 0,
-			HasReceipt:                  hasReceipt,
-			ConfirmedAt:                 confirmedAt,
-			OutputChunks:                inf.outputChunks.Load(),
-			ContentChunks:               inf.contentChunks.Load(),
-			OutputBytes:                 inf.outputBytes.Load(),
-			StreamBytesRead:             streamBytesRead,
-			ContentSource:               inf.contentSource,
-			ErrorSource:                 inf.errorSource,
-			ErrorCode:                   inf.errorCode,
-			ErrorType:                   inf.errorType,
-			ErrorMessage:                inf.errorMessage,
-			ResponseBodySample:          inf.emptyResponseBodySample,
-			ResponseBodySampleTruncated: inf.emptyResponseBodySampleTruncated,
+			Escrow:          inf.escrowID,
+			Nonce:           inf.nonce,
+			Host:            inf.hostID,
+			HostIdx:         inf.hostIdx,
+			Winner:          inf.nonce == winnerNonce,
+			Probe:           inf.probe,
+			Error:           errText,
+			Responsive:      confirmedAt > 0,
+			HasReceipt:      hasReceipt,
+			ConfirmedAt:     confirmedAt,
+			OutputChunks:    inf.outputChunks.Load(),
+			ContentChunks:   inf.contentChunks.Load(),
+			OutputBytes:     inf.outputBytes.Load(),
+			StreamBytesRead: streamBytesRead,
 		}
-		if opts.shortContentResponses && isShortContentAttempt(inf, opts) && len(inf.shortContentResponseBody) > 0 {
-			attempt.ResponseBodyBase64 = base64.StdEncoding.EncodeToString(inf.shortContentResponseBody)
-			attempt.ResponseBodyTruncated = inf.shortContentResponseBodyTruncated
-			attempt.ResponseBodyBytes = len(inf.shortContentResponseBody)
+		if done {
+			attempt.EmptyStream = isEmptyStreamAttempt(inf)
+			attempt.ErrorStream = isErrorStreamAttempt(inf)
+			attempt.Finished = inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isFailedStreamAttempt(inf)
+			attempt.ContentSource = inf.contentSource
+			attempt.ErrorSource = inf.errorSource
+			attempt.ErrorCode = inf.errorCode
+			attempt.ErrorType = inf.errorType
+			attempt.ErrorMessage = inf.errorMessage
+			attempt.ResponseBodySample = inf.emptyResponseBodySample
+			attempt.ResponseBodySampleTruncated = inf.emptyResponseBodySampleTruncated
+			if opts.shortContentResponses && isShortContentAttempt(inf, opts) && len(inf.shortContentResponseBody) > 0 {
+				attempt.ResponseBodyBase64 = base64.StdEncoding.EncodeToString(inf.shortContentResponseBody)
+				attempt.ResponseBodyTruncated = inf.shortContentResponseBodyTruncated
+				attempt.ResponseBodyBytes = len(inf.shortContentResponseBody)
+			}
 		}
 		captured = append(captured, attempt)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
@@ -146,7 +147,7 @@ func TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime(t *testin
 	env.gateway.mu.Unlock()
 	require.NotNil(t, resident)
 	resident.active.Store(false)
-	require.NoError(t, env.gateway.store.SetDevshardActive("12", false))
+	require.NoError(t, env.gateway.store.SetDevshardActive(context.Background(), "12", false))
 
 	cached := env.postDirectChat("12", body)
 	require.Equal(t, http.StatusConflict, cached.Code)
@@ -479,7 +480,7 @@ func TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat(t *testing.T) {
 // - Assert the gateway serves only cheap metadata and does not hydrate runtime state.
 func TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly(t *testing.T) {
 	env := newGatewayMockEnv(t, nil)
-	require.NoError(t, env.gateway.store.UpsertDevshard(GatewayDevshardState{
+	require.NoError(t, env.gateway.store.UpsertDevshard(context.Background(), GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
 			ID:          "77",
 			Model:       "Qwen/Test",
@@ -519,7 +520,7 @@ func TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly(t *testing.T)
 // - Assert admin reads do not fall back to the public metadata-only response.
 func TestGatewayMockEnvNonResidentDevshardAdminReadHydratesOrFailsWithoutMetadataFallback(t *testing.T) {
 	env := newGatewayMockEnv(t, nil)
-	require.NoError(t, env.gateway.store.UpsertDevshard(GatewayDevshardState{
+	require.NoError(t, env.gateway.store.UpsertDevshard(context.Background(), GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
 			ID:          "77",
 			Model:       "Qwen/Test",

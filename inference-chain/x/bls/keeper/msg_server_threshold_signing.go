@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/bls/types"
 )
@@ -26,9 +25,4 @@ func (ms msgServer) SubmitPartialSignature(ctx context.Context, msg *types.MsgSu
 	}
 
 	return &types.MsgSubmitPartialSignatureResponse{}, nil
-}
-
-// RequestThresholdSignature handles requests for threshold signatures from external users
-func (ms msgServer) RequestThresholdSignature(ctx context.Context, msg *types.MsgRequestThresholdSignature) (*types.MsgRequestThresholdSignatureResponse, error) {
-	return nil, sdkerrors.Wrap(types.ErrDeprecated, "threshold signature request message is deprecated")
 }

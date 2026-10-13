@@ -71,9 +71,10 @@ func smstParallelHashFromEnv() bool {
 // life of the tree and serves proofs without any rebuild. It is captured after a
 // GetRoot (flush/recover), so its nodes are already hashed.
 type smstSnapshot struct {
-	root  *smstNode
-	depth int
-	count uint32
+	root      *smstNode
+	depth     int
+	count     uint32
+	cutHeight int
 }
 
 // insertCOW is a copy-on-write Insert: it rewrites only the nodes on the
@@ -131,14 +132,14 @@ func (s *SMST) insertAtCOW(node *smstNode, path []bool, level int, leafHash []by
 // depth in force at this count (the depth a historical proof must use). Callers
 // capture after GetRoot, so the retained nodes are already hashed.
 func (s *SMST) snapshot() smstSnapshot {
-	return smstSnapshot{root: s.root, depth: s.depth, count: s.leafCount}
+	return smstSnapshot{root: s.root, depth: s.depth, count: s.leafCount, cutHeight: s.cutHeight}
 }
 
 // cloneSnapshot deep-copies the live tree into an independent snapshot. Used when
 // COW is disabled so later in-place inserts cannot mutate historical nodes.
 // Callers must hold the store write lock and have already ensureHashed.
 func (s *SMST) cloneSnapshot() smstSnapshot {
-	return smstSnapshot{root: cloneSMSTNode(s.root), depth: s.depth, count: s.leafCount}
+	return smstSnapshot{root: cloneSMSTNode(s.root), depth: s.depth, count: s.leafCount, cutHeight: s.cutHeight}
 }
 
 func cloneSMSTNode(n *smstNode) *smstNode {
@@ -166,5 +167,61 @@ func (s *SMST) snapshotView(snap smstSnapshot) *SMST {
 		emptyHash:    s.emptyHash,
 		leafCount:    snap.count,
 		navExistence: true,
+		cutHeight:    snap.cutHeight,
+		deferredHash: s.deferredHash,
+		parallelHash: s.parallelHash,
 	}
+}
+
+func (s *SMST) attachSealedCOW(nonce int32, sealed *smstNode) {
+	if sealed == nil {
+		return
+	}
+	s.attachCutCOW(nonce, &smstNode{hash: appendHash(sealed.hash), count: sealed.count})
+}
+
+func (s *SMST) attachCutCOW(nonce int32, cutNode *smstNode) {
+	if cutNode == nil {
+		return
+	}
+	requiredDepth := s.requiredDepth(nonce)
+	if requiredDepth > s.depth {
+		s.expandDepth(requiredDepth)
+	}
+	path := s.noncePath(nonce)
+	s.root = s.attachSealedAt(s.root, path, 0, cutNode)
+}
+
+func appendHash(h []byte) []byte {
+	if h == nil {
+		return nil
+	}
+	return append([]byte(nil), h...)
+}
+
+func (s *SMST) attachSealedAt(node *smstNode, path []bool, level int, sealed *smstNode) *smstNode {
+	cut := s.cutLevel()
+	if cut >= 0 && level == cut {
+		if sealed.left == nil && sealed.right == nil {
+			return &smstNode{hash: appendHash(sealed.hash), count: sealed.count}
+		}
+		return sealed
+	}
+	newNode := &smstNode{}
+	if node != nil {
+		newNode.left = node.left
+		newNode.right = node.right
+	}
+	if path[level] {
+		newNode.right = s.attachSealedAt(newNode.right, path, level+1, sealed)
+	} else {
+		newNode.left = s.attachSealedAt(newNode.left, path, level+1, sealed)
+	}
+	newNode.count = s.nodeCount(newNode.left) + s.nodeCount(newNode.right)
+	if s.deferredHash {
+		newNode.hash = nil
+	} else {
+		newNode.hash = s.computeHash(newNode, level)
+	}
+	return newNode
 }

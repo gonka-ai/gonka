@@ -50,6 +50,18 @@ type SMST struct {
 	// need hashing (default on). Eager per-insert path hashing stays serial
 	// (parent depends on child); this flag mainly accelerates deferred fill.
 	parallelHash bool
+
+	// cutHeight is the paged suffix height. 0 means a full in-RAM tree.
+	// After spill, nodes at depth-cutHeight are sealed (hash+count, no children).
+	cutHeight int
+
+	// cutExists is consulted at a sealed suffix cut. The live spilled tree
+	// and snapshot views set this so HasNonce is not a false miss at the cut.
+	cutExists func(nonce int32) bool
+
+	// cutDenseIndex returns the suffix-local dense index at a sealed cut so
+	// denseIndexForNonce does not walk nil children.
+	cutDenseIndex func(nonce int32) (uint32, error)
 }
 
 // NewSMST creates a new sparse merkle sum tree.
@@ -63,11 +75,11 @@ func NewSMST(depth int) *SMST {
 	}
 
 	s := &SMST{
-		depth:         depth,
-		emptyHash:     make([][]byte, depth+1),
-		hasNonce:      make(map[int32]bool),
-		deferredHash:  true,
-		parallelHash:  true,
+		depth:        depth,
+		emptyHash:    make([][]byte, depth+1),
+		hasNonce:     make(map[int32]bool),
+		deferredHash: true,
+		parallelHash: true,
 	}
 
 	s.emptyHash[0] = smstHashEmpty()
@@ -181,6 +193,18 @@ func (s *SMST) ensureHashed() {
 	s.hashNodeParallel(s.root, 0, sem)
 }
 
+func (s *SMST) cutLevel() int {
+	if s.cutHeight <= 0 {
+		return -1
+	}
+	return s.depth - s.cutHeight
+}
+
+func (s *SMST) isSealed(node *smstNode, level int) bool {
+	cut := s.cutLevel()
+	return cut >= 0 && level == cut && node != nil && node.hash != nil && node.left == nil && node.right == nil
+}
+
 func (s *SMST) hashNode(node *smstNode, level int) {
 	if node == nil || node.hash != nil {
 		return
@@ -247,6 +271,9 @@ func (s *SMST) navigateToLeaf(node *smstNode, index uint32, level int, proof *[]
 	if node == nil {
 		return ErrLeafIndexOutOfRange
 	}
+	if s.isSealed(node, level) {
+		return errSealedCut
+	}
 
 	leftCount := s.nodeCount(node.left)
 
@@ -300,8 +327,15 @@ func (s *SMST) hasNonceInTree(nonce int32) bool {
 		return false
 	}
 	node := s.root
+	level := 0
 	for _, goRight := range s.noncePath(nonce) {
 		if node == nil {
+			return false
+		}
+		if s.isSealed(node, level) {
+			if s.cutExists != nil {
+				return s.cutExists(nonce)
+			}
 			return false
 		}
 		if goRight {
@@ -309,6 +343,7 @@ func (s *SMST) hasNonceInTree(nonce int32) bool {
 		} else {
 			node = node.left
 		}
+		level++
 	}
 	return node != nil
 }
@@ -321,9 +356,20 @@ func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
 	path := s.noncePath(nonce)
 	node := s.root
 	var denseIndex uint32
+	level := 0
 	for _, goRight := range path {
 		if node == nil {
 			return 0, ErrNonceNotFound
+		}
+		if s.isSealed(node, level) {
+			if s.cutDenseIndex == nil {
+				return 0, ErrNonceNotFound
+			}
+			local, err := s.cutDenseIndex(nonce)
+			if err != nil {
+				return 0, err
+			}
+			return denseIndex + local, nil
 		}
 		if goRight {
 			denseIndex += s.nodeCount(node.left)
@@ -331,6 +377,7 @@ func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
 		} else {
 			node = node.left
 		}
+		level++
 	}
 	if node == nil {
 		return 0, ErrNonceNotFound
@@ -430,4 +477,116 @@ func smstHashEmpty() []byte {
 	h := sha256.New()
 	h.Write([]byte{smstLeafPrefix})
 	return h.Sum(nil)
+}
+
+func sealWalk(node *smstNode, level, cut int) *smstNode {
+	if node == nil {
+		return nil
+	}
+	if level == cut {
+		h := node.hash
+		if h != nil {
+			h = append([]byte(nil), h...)
+		}
+		return &smstNode{hash: h, count: node.count}
+	}
+	h := node.hash
+	if h != nil {
+		h = append([]byte(nil), h...)
+	}
+	return &smstNode{
+		hash:  h,
+		count: node.count,
+		left:  sealWalk(node.left, level+1, cut),
+		right: sealWalk(node.right, level+1, cut),
+	}
+}
+
+func (s *SMST) sealAtCut(cutHeight int) {
+	if cutHeight <= 0 || s.root == nil {
+		s.cutHeight = cutHeight
+		return
+	}
+	s.ensureHashed()
+	s.cutHeight = cutHeight
+	cut := s.cutLevel()
+	if cut < 0 {
+		return
+	}
+	s.root = sealWalk(s.root, 0, cut)
+}
+
+type denseCut struct {
+	prefix     uint32
+	localIndex uint32
+	elements   []smstProofElement
+}
+
+func (s *SMST) walkDenseToCut(denseIndex uint32) (denseCut, error) {
+	var out denseCut
+	if s.root == nil || denseIndex >= s.root.count {
+		return out, ErrLeafIndexOutOfRange
+	}
+	cut := s.cutLevel()
+	if cut < 0 {
+		return out, errSealedCut
+	}
+	node := s.root
+	var prefix uint32
+	for level := 0; level < cut; level++ {
+		if node == nil {
+			return out, ErrLeafIndexOutOfRange
+		}
+		leftCount := s.nodeCount(node.left)
+		if denseIndex < leftCount {
+			out.elements = append(out.elements, smstProofElement{
+				siblingHash:  s.nodeHash(node.right, level+1),
+				siblingCount: s.nodeCount(node.right),
+			})
+			node = node.left
+		} else {
+			prefix |= 1 << (cut - 1 - level)
+			out.elements = append(out.elements, smstProofElement{
+				siblingHash:  s.nodeHash(node.left, level+1),
+				siblingCount: s.nodeCount(node.left),
+			})
+			denseIndex -= leftCount
+			node = node.right
+		}
+	}
+	if node == nil {
+		return out, ErrLeafIndexOutOfRange
+	}
+	if denseIndex >= node.count {
+		return out, ErrLeafIndexOutOfRange
+	}
+	out.prefix = prefix
+	out.localIndex = denseIndex
+	return out, nil
+}
+
+func (s *SMST) proofElementsToCut(nonce int32) []smstProofElement {
+	cut := s.cutLevel()
+	if cut < 0 || s.root == nil {
+		return nil
+	}
+	path := s.noncePath(nonce)
+	elements := make([]smstProofElement, 0, cut)
+	node := s.root
+	for level := 0; level < cut && node != nil; level++ {
+		if path[level] {
+			elements = append(elements, smstProofElement{
+				siblingHash:  s.nodeHash(node.left, level+1),
+				siblingCount: s.nodeCount(node.left),
+			})
+			node = node.right
+		} else {
+			elements = append(elements, smstProofElement{
+				siblingHash:  s.nodeHash(node.right, level+1),
+				siblingCount: s.nodeCount(node.right),
+			})
+			node = node.left
+		}
+	}
+	return elements
 }

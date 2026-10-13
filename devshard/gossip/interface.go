@@ -12,17 +12,14 @@ type PeerClient interface {
 	GossipTxs(ctx context.Context, txs []*types.DevshardTx) error
 }
 
-// GossipSig carries a host's signature for a specific nonce, ready for gossip.
-type GossipSig struct {
-	Nonce     uint64
-	StateHash []byte
-	Sig       []byte
-	SlotID    uint32
-}
+// GossipSig is a host signature for a gossiped nonce.
+type GossipSig = types.GossipSig
 
-// DiffFetcher retrieves diffs from a peer (backed by HTTPClient).
+// DiffFetcher retrieves diffs from a peer (backed by HTTPClient). It passes
+// each non-empty page to fn in ascending nonce order before fetching the next,
+// and returns the first error from fn.
 type DiffFetcher interface {
-	GetDiffs(ctx context.Context, fromNonce, toNonce uint64) ([]types.Diff, error)
+	GetDiffPages(ctx context.Context, fromNonce, toNonce uint64, fn func([]types.Diff) error) error
 }
 
 // StateUpdater applies recovered diffs and signs them (backed by Host).
@@ -39,4 +36,3 @@ type SigAccumulator interface {
 type MempoolSink interface {
 	AddTx(tx *types.DevshardTx)
 }
-

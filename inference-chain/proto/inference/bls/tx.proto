@@ -33,10 +33,7 @@ service Msg {
   // SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
   rpc SubmitPartialSignature(MsgSubmitPartialSignature) returns (MsgSubmitPartialSignatureResponse);
   
-  // RequestThresholdSignature allows external users to request a threshold signature
-  rpc RequestThresholdSignature(MsgRequestThresholdSignature) returns (MsgRequestThresholdSignatureResponse) {
-    option deprecated = true;
-  }
+
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -206,7 +203,7 @@ message MsgSubmitPartialSignature {
 // MsgSubmitPartialSignature message.
 message MsgSubmitPartialSignatureResponse {}
 
-// MsgRequestThresholdSignature allows external users to request a threshold signature via transaction
+// MsgRequestThresholdSignature is retained for compatibility; its transaction RPC was removed.
 message MsgRequestThresholdSignature {
   option (cosmos.msg.v1.signer) = "creator";
   option (amino.name)           = "inference/x/bls/MsgRequestThresholdSignature";

@@ -437,10 +437,7 @@ func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	// Ensure dealer 1 has ciphertexts for participant 0 so complaint evidence is meaningful.
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
-	participant0Shares := make([][]byte, 33)
-	for i := range participant0Shares {
-		participant0Shares[i] = []byte{byte(i + 1)}
-	}
+	participant0Shares := dummyEncryptedShares(33)
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
 		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},
@@ -483,10 +480,7 @@ func TestSubmitVerificationVector_MissingComplaintForFalseDealerWithSharesReject
 	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
-	participant0Shares := make([][]byte, 33)
-	for i := range participant0Shares {
-		participant0Shares[i] = []byte{byte(i + 1)}
-	}
+	participant0Shares := dummyEncryptedShares(33)
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
 		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},
@@ -580,10 +574,7 @@ func TestSubmitVerificationVector_InvalidComplaintSlotRejected(t *testing.T) {
 	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
-	participant0Shares := make([][]byte, 33)
-	for i := range participant0Shares {
-		participant0Shares[i] = []byte{byte(i + 1)}
-	}
+	participant0Shares := dummyEncryptedShares(33)
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
 		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},
@@ -619,10 +610,7 @@ func TestSubmitVerificationVector_InvalidComplaintCiphertextRejected(t *testing.
 	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
 	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
 	epochBLSData.DealerParts[1].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
-	participant0Shares := make([][]byte, 33)
-	for i := range participant0Shares {
-		participant0Shares[i] = []byte{byte(i + 1)}
-	}
+	participant0Shares := dummyEncryptedShares(33)
 	epochBLSData.DealerParts[1].ParticipantShares = []*types.EncryptedSharesForParticipant{
 		{EncryptedShares: participant0Shares},
 		{EncryptedShares: [][]byte{[]byte("c1")}},

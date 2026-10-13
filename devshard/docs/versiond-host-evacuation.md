@@ -6,7 +6,8 @@ This document defines how an operator removes, replaces, or upgrades a whole
 `versiond` host without terminating requests that are already running. It is the
 implementation contract for `rolling-update.md` section 1.8. Child binary rolling
 updates remain a separate operation managed inside one live `versiond`
-([rolling-update.md](./rolling-update.md), Track A).
+([rolling-update.md](./rolling-update.md), Track A). Peer RPC hops:
+[grpc-transport-connection.md](./grpc-transport-connection.md).
 
 ## The operator contract
 
@@ -16,14 +17,29 @@ its container:
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
 | Evacuate / stop | `docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `docker compose up -d versiond2` | it rejoins the pool only once `/readyz` returns 200 |
-| Add a host | start another container on the pool alias | DNS gains an A record; the router finds it within seconds |
-| Decommission | remove the service from the desired deployment and remove its container | DNS loses the record permanently; `restart: always` cannot bring it back |
-| Inspect what the router believes | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
+| Replace / restart | `docker compose up -d --no-deps --wait versiond2` | it rejoins the pool only once `/readyz` returns 200; `--wait` returns at the same moment |
+| Add a host | add `docker-compose.versiond3.yml` (or a copy of it) to the model and `up` the new service, or list a remote host in the endpoint file and run `./versiond-router-fleet.sh apply` | DNS gains an A record, or the routers roll onto the new list; a host is routed to only after its first successful check |
+| Decommission | persist `VERSIOND2_REPLICAS=0` in `config.env`, then `docker compose stop versiond2` and `docker compose rm -f versiond2` | a later full `up -d` does not recreate it; `restart: always` cannot bring it back |
+| Inspect what the routers believe | `./versiond-router-fleet.sh status` | read-only; the routers keep no other state |
 
 This works because the router derives everything it needs by observation:
-membership from DNS, health from active `/readyz` checks. Nothing has to be told
-about the change, so nothing can be told about it incorrectly.
+membership from DNS or the endpoint file, health from active `/readyz` checks.
+Nothing has to be told about the change beyond the membership list itself.
+
+JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` share
+that placement. `proxy`'s h2 frontend uses the same version + escrow hash as
+today's `versiond_router_in`. Failing `/readyz` withdraws the host from both
+hops. There is no second evacuation procedure for Connect. See
+[grpc-transport-connection.md](./grpc-transport-connection.md).
+
+`docker compose stop` is temporary because both hosts use `restart: always`.
+Permanent membership lives in `config.env`: `VERSIOND_REPLICAS` and
+`VERSIOND2_REPLICAS` (and `VERSIOND3_REPLICAS` for an added replica) are the
+desired replica counts of the local services (`1` or `0`); the examples above
+use `versiond2` but apply to any replica. Never decommission `VERSIOND_LEGACY_HOST` while
+`VERSIOND_NON_HA_VERSIONS` is non-empty; those versions have SQLite state only
+on that host. Hosts on other machines are managed on those machines (see
+[release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond)).
 
 ## Safety invariants
 
@@ -33,7 +49,7 @@ about the change, so nothing can be told about it incorrectly.
 2. A draining host cannot accept new proxy work or start, swap, or restart a
    child process.
 3. A proxy admission lease covers the complete response, including the full
-   lifetime of an SSE stream.
+   lifetime of an SSE stream and, after phase 6, an HTTP/2 `/rpc/` stream.
 4. Child lifecycle HTTP calls and polling never run while the process manager
    mutex is held.
 5. `SIGKILL` is only an external backstop after a configured timeout. A second
@@ -45,7 +61,8 @@ about the change, so nothing can be told about it incorrectly.
 7. The external kill grace must exceed versiond's single absolute shutdown
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
 8. An established request stays on its original router connection and versiond
-   generation. A later request for the same HA escrow may recover on another host
+   generation. That includes JSON SSE and phase 6 HTTP/2 `/rpc/` streams. A
+   later request for the same HA escrow may recover on another host
    from shared Postgres; legacy SQLite escrows never enter the HA pool.
 9. A host that has never converged is not routed to through the host-level
    pool: coarse readiness is a statement about capacity to serve, not about

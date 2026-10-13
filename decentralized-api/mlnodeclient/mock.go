@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -39,6 +40,7 @@ type MockClient struct {
 	DeleteModelError      error
 	ListModelsError       error
 	GetDiskSpaceError     error
+	GetPowStatusV2Error   error
 
 	// Call tracking
 	StopCalled             int
@@ -63,6 +65,10 @@ type MockClient struct {
 	PowStatusV2            string // "IDLE", "GENERATING", etc.
 	PoCValidationInference bool
 
+	// PoC v2 fan-out responses; nil means every backend succeeded
+	InitGenerateV2Resp *PoCInitGenerateResponseV2
+	StopPowV2Resp      *PoCStopResponseV2
+
 	// Capture parameters
 	LastInferenceModel    string
 	LastInferenceArgs     []string
@@ -86,13 +92,15 @@ func NewMockClient() *MockClient {
 }
 
 func (m *MockClient) WithTryLock(t *testing.T, f func()) {
-	lock := m.Mu.TryLock()
-	if !lock {
-		t.Fatal("TryLock called more than once")
-	} else {
-		defer m.Mu.Unlock()
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for !m.Mu.TryLock() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for mock client lock")
+		}
+		time.Sleep(time.Millisecond)
 	}
-
+	defer m.Mu.Unlock()
 	f()
 }
 
@@ -176,6 +184,8 @@ func (m *MockClient) Reset() {
 	m.LastModelDelete = nil
 	m.PowStatusV2 = ""
 	m.PoCValidationInference = false
+	m.InitGenerateV2Resp = nil
+	m.StopPowV2Resp = nil
 }
 
 func (m *MockClient) Stop(ctx context.Context) error {
@@ -432,6 +442,9 @@ func (m *MockClient) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequ
 	m.CurrentState = MlNodeState_POW
 	m.InferenceIsHealthy = false
 
+	if m.InitGenerateV2Resp != nil {
+		return m.InitGenerateV2Resp, nil
+	}
 	// Default success response
 	return &PoCInitGenerateResponseV2{
 		Status:   "OK",
@@ -460,6 +473,9 @@ func (m *MockClient) GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, 
 	defer m.Mu.Unlock()
 
 	m.GetPowStatusV2Called++
+	if m.GetPowStatusV2Error != nil {
+		return nil, m.GetPowStatusV2Error
+	}
 
 	// Use configured status or default to IDLE
 	status := m.PowStatusV2
@@ -480,6 +496,9 @@ func (m *MockClient) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) 
 
 	m.StopPowV2Called++
 
+	if m.StopPowV2Resp != nil {
+		return m.StopPowV2Resp, nil
+	}
 	// Default success response
 	return &PoCStopResponseV2{
 		Status: "OK",

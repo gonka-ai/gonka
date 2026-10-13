@@ -244,22 +244,62 @@ func formatLogLine(msg string, kv []any) string {
 }
 
 type mutableTestOracle struct {
-	mu  sync.Mutex
-	hdr *blocks.Header
+	mu       sync.Mutex
+	hdr      *blocks.Header
+	byHeight map[int64]*blocks.Header
+}
+
+func cloneTestHeader(h *blocks.Header) *blocks.Header {
+	if h == nil {
+		return nil
+	}
+	cp := *h
+	cp.BlockHash = append([]byte(nil), h.BlockHash...)
+	return &cp
+}
+
+func (o *mutableTestOracle) record(h *blocks.Header) {
+	if h == nil {
+		return
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.byHeight == nil {
+		o.byHeight = make(map[int64]*blocks.Header)
+	}
+	o.byHeight[h.Height] = cloneTestHeader(h)
+}
+
+func (o *mutableTestOracle) setLatest(h *blocks.Header) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.hdr = cloneTestHeader(h)
+	if h == nil {
+		return
+	}
+	if o.byHeight == nil {
+		o.byHeight = make(map[int64]*blocks.Header)
+	}
+	o.byHeight[h.Height] = cloneTestHeader(h)
 }
 
 func (o *mutableTestOracle) Latest(context.Context) (*blocks.Header, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.hdr == nil {
-		return nil, nil
-	}
-	h := *o.hdr
-	h.BlockHash = append([]byte(nil), o.hdr.BlockHash...)
-	return &h, nil
+	return cloneTestHeader(o.hdr), nil
 }
 
-func (o *mutableTestOracle) At(context.Context, int64) (*blocks.Header, error) { return nil, nil }
+func (o *mutableTestOracle) At(_ context.Context, height int64) (*blocks.Header, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if h, ok := o.byHeight[height]; ok {
+		return cloneTestHeader(h), nil
+	}
+	if o.hdr != nil && o.hdr.Height == height {
+		return cloneTestHeader(o.hdr), nil
+	}
+	return nil, nil
+}
 
 func (o *mutableTestOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, nil
@@ -397,6 +437,161 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMatchNoWarn(t *testing.T)
 	rec2 := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body2)
 	require.Equal(t, http.StatusOK, rec2.Code)
 	require.Empty(t, capLog.warns)
+}
+
+func heightSyncTestPayload() *PayloadJSON {
+	return &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+}
+
+func postHeightSyncWrapped(t *testing.T, env *serverTestEnv, nonce uint64, start bool, payload *PayloadJSON, hs *heightsync.HeightSyncSection) *httptest.ResponseRecorder {
+	t.Helper()
+	var txs []*types.DevshardTx
+	if start {
+		txs = []*types.DevshardTx{testutil.StartTx(nonce)}
+	}
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", nonce, txs)
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	ir := InferenceRequest{Diffs: []DiffJSON{dj}, Nonce: nonce, Payload: payload}
+	if hs == nil {
+		body, err := json.Marshal(ir)
+		require.NoError(t, err)
+		return env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
+	}
+	wrapBody, err := MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, hs, ir)
+	require.NoError(t, err)
+	return env.doPostContentType(t, "/devshard/v2/sessions/escrow-1/chat/completions", "application/x-protobuf", wrapBody)
+}
+
+func fabricatedRequestAnchor(height int64, hash []byte) *heightsync.HeightSyncSection {
+	return &heightsync.HeightSyncSection{
+		ChainID:             "chain-x",
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       height,
+		MainnetBlockHashHex: hex.EncodeToString(hash),
+		TimestampUnixMs:     time.Now().UnixMilli(),
+		Direction:           "request",
+	}
+}
+
+func installWarnCapture(t *testing.T) *warnCaptureLogger {
+	t.Helper()
+	capLog := &warnCaptureLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(discardRestLogger{}) })
+	return capLog
+}
+
+// TestServer_Inference_HeightSync_UntrustedHashKnownHeight is the live-chain
+// window citest actually hits: the fabricated pair arrives at or behind local
+// Latest(), or pending is held while Latest() jumps past H. Warn via Latest()
+// or Oracle.At(H); honest hashes at a lagging height must not warn.
+func TestServer_Inference_HeightSync_UntrustedHashKnownHeight(t *testing.T) {
+	fake := bytes.Repeat([]byte{0xbb}, 32)
+	canon11 := bytes.Repeat([]byte{0xcc}, 32)
+	hash10 := bytes.Repeat([]byte{0x01}, 32)
+	hash12 := bytes.Repeat([]byte{0xdd}, 32)
+	payload := heightSyncTestPayload()
+	hdr := func(height int64, hash []byte) *blocks.Header {
+		return &blocks.Header{Height: height, ChainID: "chain-x", BlockHash: append([]byte(nil), hash...)}
+	}
+
+	t.Run("pending_oracle_jumped_past_mismatch", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(10, hash10))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, fake))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Empty(t, capLog.warns)
+
+		or.record(hdr(11, canon11))
+		or.setLatest(hdr(12, hash12))
+		rec2 := postHeightSyncWrapped(t, env, 2, false, payload, nil)
+		require.Equal(t, http.StatusOK, rec2.Code)
+		require.True(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
+
+	t.Run("inbound_at_local_mismatch", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(11, canon11))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, fake))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.True(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
+
+	t.Run("inbound_behind_mismatch", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(12, hash12))
+		or.record(hdr(11, canon11))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, fake))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.True(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
+
+	t.Run("inbound_behind_canonical_hash_no_warn", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(12, hash12))
+		or.record(hdr(11, canon11))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, canon11))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.False(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
+
+	t.Run("jumped_past_match_no_warn", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(10, hash10))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, canon11))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Empty(t, capLog.warns)
+
+		or.record(hdr(11, canon11))
+		or.setLatest(hdr(12, hash12))
+		rec2 := postHeightSyncWrapped(t, env, 2, false, payload, nil)
+		require.Equal(t, http.StatusOK, rec2.Code)
+		require.False(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
+
+	t.Run("jumped_past_dummy_at_keeps_pending", func(t *testing.T) {
+		capLog := installWarnCapture(t)
+		or := &mutableTestOracle{}
+		or.setLatest(hdr(10, hash10))
+		sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+		env := setupServerEnv(t, WithHeightSync(sched, or))
+
+		rec := postHeightSyncWrapped(t, env, 1, true, payload, fabricatedRequestAnchor(11, fake))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Empty(t, capLog.warns)
+
+		or.record(blocks.DummyHeader(11))
+		or.setLatest(hdr(12, hash12))
+		rec2 := postHeightSyncWrapped(t, env, 2, false, payload, nil)
+		require.Equal(t, http.StatusOK, rec2.Code)
+		require.False(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+
+		or.record(hdr(11, canon11))
+		rec3 := postHeightSyncWrapped(t, env, 3, false, payload, nil)
+		require.Equal(t, http.StatusOK, rec3.Code)
+		require.True(t, warnsContain(capLog.warns, "untrusted peer tip disagrees"), capLog.warns)
+	})
 }
 
 // TestServer_Inference_HeightSync_ForcedTurn_HostAnchorsEvenIfRequestOmits

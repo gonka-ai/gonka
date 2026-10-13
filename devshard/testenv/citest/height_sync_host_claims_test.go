@@ -44,14 +44,35 @@ func waitHostClaimChatReady(t *testing.T, stack *harness.Stack, eps harness.Endp
 
 func composeLogs(t *testing.T, stack *harness.Stack, services ...string) string {
 	t.Helper()
-	out, err := stack.ComposeLogsTail(2000, services...)
+	out, err := stack.ComposeLogsAll(services...)
 	require.NoError(t, err)
 	return out
 }
 
 func composeLogsContains(stack *harness.Stack, needle string, services ...string) bool {
-	out, err := stack.ComposeLogsTail(2000, services...)
-	return err == nil && strings.Contains(out, needle)
+	ok, err := stack.ComposeLogsContain(needle, services...)
+	return err == nil && ok
+}
+
+func composeLogsHaveField(stack *harness.Stack, field harness.LogField, services ...string) bool {
+	out, err := stack.ComposeLogsAll(services...)
+	return err == nil && harness.LogsContainFields(out, field)
+}
+
+func dumpHeightSyncLogs(t *testing.T, stack *harness.Stack, services ...string) {
+	t.Helper()
+	out, err := stack.ComposeLogsAll(services...)
+	if err != nil {
+		t.Logf("citest: compose logs: %v", err)
+		return
+	}
+	var matched []string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "heightsync") {
+			matched = append(matched, line)
+		}
+	}
+	t.Logf("citest: heightsync log lines (%d):\n%s", len(matched), strings.Join(matched, "\n"))
 }
 
 // TestContainerE2E_HeightSync_HostLowerHeightAutoAligns is scenario A: the solo
@@ -75,9 +96,9 @@ func TestContainerE2E_HeightSync_HostLowerHeightAutoAligns(t *testing.T) {
 	require.GreaterOrEqual(t, spread, 15.0, "solo lag of 20 must show up as height_spread")
 
 	logs := composeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
-	require.True(t, strings.Contains(logs, "delta=-"),
+	require.True(t, harness.LogsContainFields(logs, harness.LogNumberPrefixField("delta", "-")),
 		"operators must see a negative delta for the lagging host; logs:\n%s", logs)
-	require.Contains(t, logs, "trust_level=peer_aligned")
+	require.True(t, harness.LogsContainFields(logs, harness.LogStringField("trust_level", "peer_aligned")))
 }
 
 // TestContainerE2E_HeightSync_HostFutureHeightBeyondD is scenario B: the solo
@@ -100,7 +121,7 @@ func TestContainerE2E_HeightSync_HostFutureHeightBeyondD(t *testing.T) {
 	})
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsContains(stack, "trust_level=untrusted_peer", "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "future claim |Δ|>D must log trust_level=untrusted_peer")
 
@@ -125,18 +146,24 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 	postHeightSyncChat(t, cfg, eps, "citest height-sync fabricated hash seed c")
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsContains(stack, "trust_level=untrusted_peer", "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "H+1 fabricated claim must log untrusted_peer before reconcile")
 
-	// Pending is the last carried H+1. Reconcile warns only when local Latest()
-	// equals that height (not later). Keep chatting across both slots so the
-	// HA host handles a request on the tick that catches the held tip.
+	// Courier delay plus 1s blocks usually deliver the fabricated pair after
+	// honest Latest() has already reached or passed H. The host compares the
+	// claim to Latest() or Oracle.At(H); keep chatting so an HA replica sees it.
 	n := 0
 	ok = harness.AssertEventually(t, 45*time.Second, time.Second, func() bool {
+		if composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1") {
+			return true
+		}
 		n++
 		postHeightSyncChat(t, cfg, eps, fmt.Sprintf("citest height-sync fabricated hash reconcile %d", n))
 		return composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1")
 	})
+	if !ok {
+		dumpHeightSyncLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
+	}
 	require.True(t, ok, "honest host must warn when its oracle reaches the fabricated height")
 }

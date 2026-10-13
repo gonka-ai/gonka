@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,58 +99,119 @@ func (s *Server) latestOracleHeader(ctx context.Context) *blocks.Header {
 	return hdr
 }
 
+func (s *Server) oracleHeaderAt(height int64) *blocks.Header {
+	if s.heightSyncLogOracle == nil || height <= 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	hdr, err := s.heightSyncLogOracle.At(ctx, height)
+	if err != nil || hdr == nil {
+		return nil
+	}
+	return hdr
+}
+
+// canonicalHeaderForClaim is the verifier's view of claimedH: Latest() when that
+// is already the tip, otherwise Oracle.At(H). Nil means the height is still
+// unknown (future tip, missing At, or dummy/old-dapi placeholder).
+func (s *Server) canonicalHeaderForClaim(claimedH int64, latest *blocks.Header) *blocks.Header {
+	if claimedH <= 0 {
+		return nil
+	}
+	if latest != nil && claimedH == latest.Height {
+		if blocks.IsDummyHeader(latest) {
+			return nil
+		}
+		return latest
+	}
+	if latest != nil && claimedH > latest.Height {
+		return nil
+	}
+	hdr := s.oracleHeaderAt(claimedH)
+	if hdr == nil || blocks.IsDummyHeader(hdr) {
+		return nil
+	}
+	return hdr
+}
+
+func (s *Server) logUntrustedHashMismatch(sessionID, peerID string, claimedH int64, claimedHash []byte, canon *blocks.Header) {
+	if canon == nil || bytes.Equal(canon.BlockHash, claimedHash) {
+		return
+	}
+	logging.Warn("heightsync: untrusted peer tip disagrees with oracle at reconciled height",
+		heightsync.LogFieldSubsystem, "heightsync",
+		heightsync.LogFieldSessionID, sessionID,
+		heightsync.LogFieldHeight, claimedH,
+		heightsync.LogFieldPeerID, peerID,
+		"oracle_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(canon.BlockHash)),
+		"untrusted_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(claimedHash)),
+	)
+}
+
 func (s *Server) reconcilePendingUntrusted(sessionID string, oracleHdr *blocks.Header) {
 	if s.pendingUntrustedBySession == nil || oracleHdr == nil {
 		return
 	}
 	s.pendingUntrustedMu.Lock()
-	defer s.pendingUntrustedMu.Unlock()
 	p := s.pendingUntrustedBySession[sessionID]
-	if p == nil {
+	if p == nil || oracleHdr.Height < p.MainnetHeight {
+		s.pendingUntrustedMu.Unlock()
 		return
 	}
-	if oracleHdr.Height < p.MainnetHeight {
+	tip := pendingUntrustedTip{
+		MainnetHeight: p.MainnetHeight,
+		BlockHash:     append([]byte(nil), p.BlockHash...),
+		PeerID:        p.PeerID,
+	}
+	s.pendingUntrustedMu.Unlock()
+
+	canon := s.canonicalHeaderForClaim(tip.MainnetHeight, oracleHdr)
+	if canon == nil {
+		// At(H) not ready (old dapi dummy / missing historical header). Keep
+		// pending so a later request can still warn.
 		return
 	}
-	if oracleHdr.Height > p.MainnetHeight {
+
+	s.pendingUntrustedMu.Lock()
+	if cur := s.pendingUntrustedBySession[sessionID]; cur != nil &&
+		cur.MainnetHeight == tip.MainnetHeight && bytes.Equal(cur.BlockHash, tip.BlockHash) {
 		delete(s.pendingUntrustedBySession, sessionID)
-		return
 	}
-	if !bytes.Equal(oracleHdr.BlockHash, p.BlockHash) {
-		logging.Warn("heightsync: untrusted peer tip disagrees with oracle at reconciled height",
-			heightsync.LogFieldSubsystem, "heightsync",
-			heightsync.LogFieldSessionID, sessionID,
-			heightsync.LogFieldHeight, p.MainnetHeight,
-			heightsync.LogFieldPeerID, p.PeerID,
-			"oracle_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(oracleHdr.BlockHash)),
-			"untrusted_block_hash_prefix", heightSyncHashPrefix(hex.EncodeToString(p.BlockHash)),
-		)
-	}
-	delete(s.pendingUntrustedBySession, sessionID)
+	s.pendingUntrustedMu.Unlock()
+
+	s.logUntrustedHashMismatch(sessionID, tip.PeerID, tip.MainnetHeight, tip.BlockHash, canon)
 }
 
 func (s *Server) notePendingUntrustedInbound(sessionID, peerID string, hs *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {
 	if s.pendingUntrustedBySession == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
-	localH := int64(0)
-	if oracleHdr != nil {
-		localH = oracleHdr.Height
-	}
-	if hs.MainnetHeight <= localH {
-		return
-	}
 	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
 	if err != nil {
 		return
 	}
-	s.pendingUntrustedMu.Lock()
-	defer s.pendingUntrustedMu.Unlock()
-	s.pendingUntrustedBySession[sessionID] = &pendingUntrustedTip{
-		MainnetHeight: hs.MainnetHeight,
-		BlockHash:     append([]byte(nil), raw...),
-		PeerID:        peerID,
+	localH := int64(0)
+	if oracleHdr != nil {
+		localH = oracleHdr.Height
 	}
+	if hs.MainnetHeight > localH {
+		s.pendingUntrustedMu.Lock()
+		s.pendingUntrustedBySession[sessionID] = &pendingUntrustedTip{
+			MainnetHeight: hs.MainnetHeight,
+			BlockHash:     append([]byte(nil), raw...),
+			PeerID:        peerID,
+		}
+		s.pendingUntrustedMu.Unlock()
+		return
+	}
+	// Courier delay / 1s blocks: the lie often arrives after local Latest()
+	// already reached or passed H. Compare now; do not wait for an exact-height tick.
+	canon := s.canonicalHeaderForClaim(hs.MainnetHeight, oracleHdr)
+	if canon == nil {
+		return
+	}
+	s.logUntrustedHashMismatch(sessionID, peerID, hs.MainnetHeight, raw, canon)
 }
 
 func (s *Server) logInboundHeightSync(peerID, sessionID string, nonce uint64, hs *heightsync.HeightSyncSection, oracleHdr *blocks.Header, v heightsync.InboundValidation) {
@@ -395,9 +457,6 @@ type heightSyncSeedResponse struct {
 // HandleHeightSync emits one host Anchor (ForceAnchor) for courier cache seeding.
 // Requires WithHeightSync (seed RPC defaults on); escrow owner only.
 func (s *Server) HandleHeightSync(c echo.Context) error {
-	if s.heightSync == nil || !s.heightSyncSeedRPC {
-		return echo.NewHTTPError(http.StatusNotFound, "height-sync seed RPC disabled")
-	}
 	sender, err := getSender(c)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "missing sender")
@@ -410,12 +469,29 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
 
+	sec, err := s.ServeSeedHeightSync(c.Request().Context())
+	if err != nil {
+		if errors.Is(err, ErrHeightSyncSeedDisabled) {
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		}
+		return err
+	}
+	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
+}
+
+// ServeSeedHeightSync is the transport-neutral core behind POST .../height-sync
+// and SessionService.SeedHeightSync. Callers enforce owner-only.
+func (s *Server) ServeSeedHeightSync(ctx context.Context) (*heightsync.HeightSyncSection, error) {
+	if s.heightSync == nil || !s.heightSyncSeedRPC {
+		return nil, ErrHeightSyncSeedDisabled
+	}
+
 	h := heightsync.DecideHints{
-		Nonce:              0, // seed consumes no session nonce
+		Nonce:              0,
 		ForceAnchor:        true,
 		OriginatorSenderID: s.host.Signer().Address(),
 	}
-	sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
+	sec, dErr, oracleMiss := s.heightSync.Decide(ctx, h)
 	if oracleMiss {
 		heightsync.IncOracleFailure(s.host.Signer().Address())
 	}
@@ -424,16 +500,35 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 			heightsync.LogFieldSubsystem, "heightsync",
 			"error", dErr.Error())
 	}
+	signed := false
 	if sec != nil {
 		sec.Direction = "response"
 		if !s.attachResponseOriginSignature(sec, h.Nonce) {
+			logging.Info("heightsync: seed RPC unsigned omit",
+				heightsync.LogFieldSubsystem, "heightsync",
+				"escrow", s.host.EscrowID(),
+				"oracle_miss", oracleMiss)
 			s.logOutboundHeightSync(nil, h.Nonce)
-			return writeJSON(c, http.StatusOK, heightSyncSeedResponse{})
+			return nil, nil
 		}
+		signed = true
 		s.logOutboundHeightSync(sec, h.Nonce)
-		s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+		s.recordOutboundAnchorIfAnchor(sec, "POST /height-sync")
 	}
-	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
+	height := int64(0)
+	hashLen := 0
+	if sec != nil {
+		height = sec.MainnetHeight
+		hashLen = len(strings.TrimSpace(sec.MainnetBlockHashHex))
+	}
+	logging.Info("heightsync: seed RPC",
+		heightsync.LogFieldSubsystem, "heightsync",
+		"escrow", s.host.EscrowID(),
+		"oracle_miss", oracleMiss,
+		"signed", signed,
+		"height", height,
+		"hash_hex_len", hashLen)
+	return sec, nil
 }
 
 // SetHeightSyncOriginSigner overrides the signer used for outbound response
@@ -468,6 +563,10 @@ func (s *Server) attachResponseOriginSignature(sec *heightsync.HeightSyncSection
 }
 
 func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {
+	s.recordEnvelopeBinding(req, sec, oracleHdr, requestLegEvidenceFromContext(c, s.host.EscrowID()))
+}
+
+func (s *Server) recordEnvelopeBinding(req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header, evidence *heightsync.RequestLegEvidence) {
 	if s == nil || s.heightSyncMarks == nil || sec == nil {
 		return
 	}
@@ -484,7 +583,7 @@ func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostReque
 		Txs:          txs,
 		Sec:          sec,
 		LocalAligned: local,
-		RequestLeg:   requestLegEvidenceFromContext(c, s.host.EscrowID()),
+		RequestLeg:   evidence,
 	}, heightsync.DefaultHeartbeatConfig())
 	s.heightSyncMarks.AppendAll(marks)
 }

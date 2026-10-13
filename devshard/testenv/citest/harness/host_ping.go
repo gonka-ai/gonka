@@ -18,6 +18,21 @@ import (
 // (escrow slot URL origin, no RoutePrefix).
 const ExpectedHostPingDial = config.DefaultEscrowSlotURL
 
+// ChildClockFaultFile is the trip file checked by testenv-tagged /clock (must
+// match cmd/devshardd defaultClockFaultFile).
+const ChildClockFaultFile = "/tmp/devshard-clock-fault"
+
+// FailChildClock makes GET /clock return 503 on every versiond child without
+// restarting hosts or touching /healthz / inference.
+func FailChildClock(t *testing.T, stack *Stack, cfg *config.File) {
+	t.Helper()
+	require.NotEmpty(t, cfg.Hosts)
+	for _, h := range cfg.Hosts {
+		require.NotEmpty(t, h.ID)
+		stack.ComposeExec(t, h.ID, "touch", ChildClockFaultFile)
+	}
+}
+
 // BootHostPingStack boots the standard stack with a fast gateway host-ping
 // interval so freshness advances inside citest timeouts.
 func BootHostPingStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
