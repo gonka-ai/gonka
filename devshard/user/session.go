@@ -3139,7 +3139,14 @@ func (s *Session) armQuietSettleLocked() {
 		d = defaultQuietSettleDelay
 	}
 	var timer *time.Timer
-	timer = time.AfterFunc(d, func() { s.fireQuietSettle(timer) })
+	timer = time.AfterFunc(d, func() {
+		// armQuietSettleLocked assigns timer while holding mu. Synchronize
+		// the callback's read with that assignment before checking identity.
+		s.mu.Lock()
+		firedTimer := timer
+		s.mu.Unlock()
+		s.fireQuietSettle(firedTimer)
+	})
 	s.quietSettle = timer
 }
 
