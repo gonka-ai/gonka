@@ -73,9 +73,9 @@ func (s *snapshotRecoveryStressGetDiffsStore) snapshot() []snapshotRecoveryStres
 
 // TestStressSnapshotRecoveryBudget verifies that snapshot-backed recovery keeps
 // the replay budget bounded across many active sessions. The current recovery
-// path still performs one full-journal read per session to rebuild validation
-// observability, so this test budgets for that known cost while preventing a
-// second full replay caused by snapshots being ignored.
+// path folds the pre-snapshot journal for height sync, scans the full journal
+// for applied tx keys, and replays the tail. Budget for those known reads,
+// while enforcing the v6 page limit and detecting ignored snapshots.
 func TestStressSnapshotRecoveryBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping snapshot recovery stress test in short mode")
@@ -120,23 +120,47 @@ func TestStressSnapshotRecoveryBudget(t *testing.T) {
 
 	calls := spy.snapshot()
 	totalCalls, totalRecords := snapshotRecoveryStressTotals(calls)
+	prefixCalls, prefixRecords := snapshotRecoveryStressRangeTotals(calls, 1, snapshotNonce)
 	tailCalls, tailRecords := snapshotRecoveryStressRangeTotals(calls, snapshotNonce+1, latestNonce)
-	backfillCalls, backfillRecords := snapshotRecoveryStressBackfillTotals(calls, snapshotNonce)
-	fullCalls, fullRecords := snapshotRecoveryStressRangeTotals(calls, 1, latestNonce)
 
-	expectedTailRecords := numSessions * tail
+	// v6 pages the height-sync fold, tail replay, and applied-key scan. Count
+	// overlapping nonces rather than expecting a single GetDiffs per range;
+	// one scan page can straddle the snapshot boundary.
+	expectedTailRecords := 2 * numSessions * tail
 	maxExpectedBackfillRecords := numSessions * numHosts
-	currentKnownFullReadBudget := numSessions * int(latestNonce)
-	maxExpectedRecords := currentKnownFullReadBudget + expectedTailRecords + maxExpectedBackfillRecords
+	expectedPrefixRecords := 2 * numSessions * int(snapshotNonce)
+	maxExpectedRecords := expectedPrefixRecords + expectedTailRecords + maxExpectedBackfillRecords
 
 	t.Logf("recovered %d sessions in %s", numSessions, recoverDuration)
-	t.Logf("GetDiffs budget: calls=%d records=%d tail_calls=%d tail_records=%d backfill_calls=%d backfill_records=%d full_calls=%d full_records=%d max_expected_records=%d",
-		totalCalls, totalRecords, tailCalls, tailRecords, backfillCalls, backfillRecords, fullCalls, fullRecords, maxExpectedRecords)
+	t.Logf("GetDiffs budget: calls=%d records=%d tail_calls=%d tail_records=%d prefix_calls=%d prefix_records=%d max_expected_records=%d",
+		totalCalls, totalRecords, tailCalls, tailRecords, prefixCalls, prefixRecords, maxExpectedRecords)
 
-	require.Equal(t, numSessions, tailCalls, "snapshot recovery should replay exactly one post-snapshot tail per session")
-	require.Equal(t, expectedTailRecords, tailRecords, "snapshot recovery replayed an unexpected number of post-snapshot records")
-	require.LessOrEqual(t, backfillRecords, maxExpectedBackfillRecords, "snapshot backfill should stay bounded by host cursor lag")
-	require.LessOrEqual(t, fullCalls, numSessions, "snapshot recovery performed more than the known validation-observability full read per session")
+	for _, call := range calls {
+		require.LessOrEqual(t, call.to-call.from+1, uint64(storage.DiffPageMaxNonces),
+			"GetDiffs exceeded the v6 nonce page limit for %s", call.escrowID)
+		require.Equal(t, int(call.to-call.from+1), call.records, "incomplete journal page for %s", call.escrowID)
+	}
+	// Check each session independently so an over-read cannot hide behind
+	// another session's missing reads.
+	for _, fixture := range fixtures {
+		var sessionCalls []snapshotRecoveryStressGetDiffsCall
+		tailStarts := 0
+		for _, call := range calls {
+			if call.escrowID == fixture.escrowID {
+				sessionCalls = append(sessionCalls, call)
+				if call.from == snapshotNonce+1 {
+					tailStarts++
+				}
+			}
+		}
+		_, prefix := snapshotRecoveryStressRangeTotals(sessionCalls, 1, snapshotNonce)
+		_, suffix := snapshotRecoveryStressRangeTotals(sessionCalls, snapshotNonce+1, latestNonce)
+		require.Equal(t, 2*tail, suffix, "expected one tail replay and one applied-key scan for %s", fixture.escrowID)
+		require.Equal(t, 1, tailStarts, "expected replay to start immediately after the snapshot for %s", fixture.escrowID)
+		require.GreaterOrEqual(t, prefix, 2*int(snapshotNonce), "height-sync or applied-key scan missed history for %s", fixture.escrowID)
+		require.LessOrEqual(t, prefix, 2*int(snapshotNonce)+numHosts, "snapshot backfill exceeded host cursor lag for %s", fixture.escrowID)
+	}
+	require.Equal(t, expectedTailRecords, tailRecords)
 	require.LessOrEqual(t, totalRecords, maxExpectedRecords, "total GetDiffs budget suggests snapshots were ignored")
 }
 
@@ -179,7 +203,7 @@ func buildSnapshotRecoveryStressSession(
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	ctx := context.Background()
@@ -244,19 +268,10 @@ func snapshotRecoveryStressTotals(calls []snapshotRecoveryStressGetDiffsCall) (c
 
 func snapshotRecoveryStressRangeTotals(calls []snapshotRecoveryStressGetDiffsCall, from, to uint64) (callCount int, recordCount int) {
 	for _, call := range calls {
-		if call.from == from && call.to == to {
+		lo, hi := max(call.from, from), min(call.to, to)
+		if lo <= hi {
 			callCount++
-			recordCount += call.records
-		}
-	}
-	return callCount, recordCount
-}
-
-func snapshotRecoveryStressBackfillTotals(calls []snapshotRecoveryStressGetDiffsCall, snapshotNonce uint64) (callCount int, recordCount int) {
-	for _, call := range calls {
-		if call.to == snapshotNonce && call.from > 1 {
-			callCount++
-			recordCount += call.records
+			recordCount += int(hi - lo + 1)
 		}
 	}
 	return callCount, recordCount
