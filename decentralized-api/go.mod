@@ -322,6 +322,7 @@ require (
 
 replace (
 	common => ../common
+	github.com/CosmWasm/wasmd => github.com/gonka-ai/wasmd v0.54.2-gonka.1
 	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain
