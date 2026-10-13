@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -27,9 +28,17 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	require.NoError(t, err, "host 3 should accept and produce a result")
 
+	// The winner can return before speculative losers finish. Request perf
+	// records are published by the background finalizer in that case.
+	require.Eventually(t, func() bool {
+		return len(env.proxy.perf.RecentRequests()) > 0
+	}, testWaitLimit, 10*time.Millisecond, "background finalizer should record the request")
+
 	requests := env.proxy.perf.RecentRequests()
 	require.NotEmpty(t, requests)
 	last := requests[len(requests)-1]
+	require.Equal(t, 3, last.WinnerHostIdx)
+	require.GreaterOrEqual(t, len(last.Hosts), 3, "both failed hosts and the winner must be recorded")
 
 	// Each host index must appear at most once in the attempt list.
 	seen := map[int]bool{}
