@@ -1315,6 +1315,16 @@ func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseStat
 	}
 
 	bootstrapModelVotingPowers := ComputeModelVotingPowers(bootstrapModelStoreCommitKeys, consensusWeights, bootstrapDelegations)
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("computeStoreCommitVotingPowers: failed to read params, bootstrap models skipped", types.PoC,
+			"context", logContext, "error", err)
+		bootstrapModelVotingPowers = nil
+	} else if caps := am.delegationVotingPowerCapParams(params); !caps.PerModel.IsZero() {
+		for _, modelID := range sortedKeys(bootstrapModelVotingPowers) {
+			capPositiveVotingPowers(bootstrapModelVotingPowers[modelID], caps.PerModel, modelID, am)
+		}
+	}
 	for _, modelID := range sortedKeys(bootstrapModelVotingPowers) {
 		vps := bootstrapModelVotingPowers[modelID]
 		mergedValidationVotingPowers[modelID] = vps
