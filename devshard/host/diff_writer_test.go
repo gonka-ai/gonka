@@ -3,10 +3,12 @@ package host
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
@@ -230,6 +232,96 @@ func TestHost_SharedBatchReportsEachNonceOnce(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("a queued request got no reply")
 		}
+	}
+}
+
+// highS returns the other valid encoding of a secp256k1 signature: s becomes
+// N-s and the recovery id flips. It recovers the same address.
+func highS(t *testing.T, sig []byte) []byte {
+	t.Helper()
+	require.Len(t, sig, 65)
+	n := crypto.S256().Params().N
+	s := new(big.Int).SetBytes(sig[32:64])
+	out := append([]byte(nil), sig...)
+	new(big.Int).Sub(n, s).FillBytes(out[32:64])
+	out[64] ^= 1
+	return out
+}
+
+// Test flow:
+//  1. Hold a batch for nonces 1..10 inside the store.
+//  2. A peer relays nonce 11, then the creator's request for 11..20 queues.
+//  3. Release; the creator's request applies whatever the peer relayed.
+func TestHost_RelayedDiffQueuedFirstDoesNotFailTheCreatorsRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		relay func(t *testing.T, f *writerFixture) types.Diff
+	}{
+		{"signed by another key", func(t *testing.T, f *writerFixture) types.Diff {
+			other := testutil.MustGenerateKey(t)
+			return testutil.SignDiffWithRoot(t, other, "escrow-1", 11, nil, f.diffs[10].PostStateRoot)
+		}},
+		{"high-S copy of the creator's diff", func(t *testing.T, f *writerFixture) types.Diff {
+			d := f.diffs[10]
+			d.UserSig = highS(t, d.UserSig)
+			require.NoError(t, f.host.sm.VerifyDiffUserSig(d), "the copy still recovers the creator")
+			return d
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWriterFixture(t, 20)
+			f.store.gate = make(chan struct{})
+			f.store.entered = make(chan struct{}, 1)
+			relayed := tc.relay(t, f)
+
+			first := make(chan error, 1)
+			go func() {
+				_, err := f.host.HandleRequest(context.Background(), f.request(1, 10))
+				first <- err
+			}()
+			<-f.store.entered
+
+			// The relay either queues behind the held batch or is refused
+			// before it can take a slot.
+			relayDone := make(chan struct{})
+			go func() {
+				defer close(relayDone)
+				f.host.ApplyCatchUpDiffs([]types.Diff{relayed})
+			}()
+			require.Eventually(t, func() bool {
+				select {
+				case <-relayDone:
+					return true
+				default:
+					return f.queued() == 1
+				}
+			}, 2*time.Second, time.Millisecond)
+			ahead := f.queued()
+
+			creator := make(chan error, 1)
+			go func() {
+				_, err := f.host.HandleRequest(context.Background(), f.request(11, 20))
+				creator <- err
+			}()
+			require.Eventually(t, func() bool { return f.queued() == ahead+1 }, 2*time.Second, time.Millisecond)
+
+			f.store.mu.Lock()
+			gate := f.store.gate
+			f.store.gate = nil
+			f.store.mu.Unlock()
+			close(gate)
+
+			require.NoError(t, <-first)
+			<-relayDone
+			select {
+			case err := <-creator:
+				require.NoError(t, err, "a relayed copy must not fail the creator's own request")
+			case <-time.After(5 * time.Second):
+				t.Fatal("the creator's request got no reply")
+			}
+			require.Equal(t, uint64(20), f.host.LatestNonce())
+			require.Equal(t, uint64(20), f.storedLatest(t))
+		})
 	}
 }
 

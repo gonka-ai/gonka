@@ -412,6 +412,12 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
 
+// VerifyDiffUserSig checks that the escrow creator signed diff. It takes no
+// lock: the verifier, creator and escrow id never change.
+func (sm *StateMachine) VerifyDiffUserSig(diff types.Diff) error {
+	return sm.verifyDiffUserSig(diff)
+}
+
 // ApplyLocal applies txs without signature verification. Used by the user
 // to compute the post_state_root before signing the diff.
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {

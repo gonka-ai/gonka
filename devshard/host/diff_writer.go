@@ -45,6 +45,11 @@ type diffWaiter struct {
 //
 // If ctx ends before the worker takes the diffs, nothing is written or applied
 // and ctx.Err() is returned. Once taken, the batch completes even if ctx ends.
+//
+// The creator's signature is checked before a diff is queued, so a diff that
+// another caller relays cannot hold a nonce against the creator's own copy.
+// Diffs before the first bad signature are still applied, and its error is
+// returned once they are.
 func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]types.Diff, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -66,6 +71,19 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		return nil, err
 	}
 
+	h.mu.Unlock()
+	var sigErr error
+	for i, diff := range pending {
+		if err := h.sm.VerifyDiffUserSig(diff); err != nil {
+			pending, sigErr = pending[:i], fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
+			break
+		}
+	}
+	if len(pending) == 0 {
+		h.mu.Lock()
+		return nil, sigErr
+	}
+
 	w := &diffWaiter{ctx: ctx, diffs: pending, done: make(chan struct{})}
 	h.writer.mu.Lock()
 	h.writer.queue = append(h.writer.queue, w)
@@ -73,7 +91,6 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 	h.writer.running = true
 	h.writer.mu.Unlock()
 
-	h.mu.Unlock()
 	if start {
 		go h.runDiffWriter()
 	}
@@ -91,7 +108,10 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		<-w.done
 	}
 	h.mu.Lock()
-	return w.newly, w.err
+	if w.err != nil {
+		return w.newly, w.err
+	}
+	return w.newly, sigErr
 }
 
 // runDiffWriter drains the queue one batch at a time and exits when it is
@@ -333,9 +353,12 @@ func batchContext(ws []*diffWaiter) (context.Context, context.CancelFunc) {
 	}
 }
 
+// sameDiff compares what the creator signed. Every queued diff has a verified
+// creator signature, so two copies that differ only in the signature bytes
+// (a second encoding of the same signature) apply the same state.
 func sameDiff(a, b types.Diff) bool {
 	if a.Nonce != b.Nonce || len(a.Txs) != len(b.Txs) ||
-		string(a.UserSig) != string(b.UserSig) || string(a.PostStateRoot) != string(b.PostStateRoot) {
+		string(a.PostStateRoot) != string(b.PostStateRoot) {
 		return false
 	}
 	for i := range a.Txs {
