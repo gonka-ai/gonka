@@ -7,12 +7,22 @@ services:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
+      # node-config-*-prefill-max.json / *-decode-max.json: run the one for the scheme the chain mines,
+      # and switch (restarting MLNode) when it changes. MiniMax-M2.7 prefill-max needs the minimaxxer
+      # image (MLNODE_IMAGE=ghcr.io/gonka-ai/mlnode:4.0.0-sigma1-minimaxxer@sha256:60e6c6ff9786663b78a94d9e112880068395296144ba7e44c63aff09b5e8703b),
+      # POC_WORKER_MINING=1 and POC_CALLBACK_INTERVAL_SEC=1. It is pipeline-parallel on B200/H100/H200,
+      # and decode PoC does not run pipeline-parallel (the engine stalls and MLNode shuts down), so a node
+      # must not stay on it once the chain mines decode.
+      #
       # PoC batch (set in .env), the batch both prefill mining and validation use. Its forward is
       # batch x 1024 tokens and must fit --max-num-batched-tokens: vLLM sizes its MoE workspace by
       # that at startup, and a larger batch fails (0 nonces) instead of slowing down.
-      # GLM-5.3-Flash: 8 on 8xH100, 16 on H200, 32 on B200/B300. DeepSeek-V4-Flash on 4xH100
-      # (max-num-batched-tokens 16384): 16. Everything else: 32.
+      # GLM-5.3-Flash: 16 on 8xH100 (8 with its decode-max), 16 on H200, 32 on B200/B300; 64 crashes it.
+      # DeepSeek-V4-Flash: 16 on 4xH100, 64 with the NVFP4 prefill-max. MiniMax-M2.7 prefill-max:
+      # 96 on B200/B300, 32 on H100/H200. Everything else: 32.
       - POC_BATCH_SIZE_DEFAULT=${POC_BATCH_SIZE_DEFAULT:-32}
+      - POC_WORKER_MINING=${POC_WORKER_MINING:-0}
+      - POC_CALLBACK_INTERVAL_SEC=${POC_CALLBACK_INTERVAL_SEC:-5}
       # DeepSeek-V4-Flash on 2xH200: set to 0 in .env. vLLM 0.30 otherwise takes its CUDA-graph estimate
       # (6.7 GiB) off the KV cache, which then holds fewer than the 1024 decode-PoC rows x 512 tokens, and
       # mining preempts (383 nonces/min instead of ~640). vLLM reads it as an int: keep a number here.
