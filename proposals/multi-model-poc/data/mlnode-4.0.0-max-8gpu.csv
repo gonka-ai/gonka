@@ -1,0 +1,13 @@
+gpu_type,version,model,nonces_per_min_8gpu,tensor_parallel_size
+H100,0.30.0,zai-org/GLM-5.3-Flash,2550,8
+H200,0.30.0,zai-org/GLM-5.3-Flash,4200,4
+B200,0.30.0,zai-org/GLM-5.3-Flash,7000,4
+B300,0.30.0,zai-org/GLM-5.3-Flash,9600,2
+H100,0.30.0,MiniMax-M2.7 FP8,12500,4
+H200,0.30.0,MiniMax-M2.7 FP8,16000,2
+B200,0.30.0,MiniMax-M2.7 FP8,32500,2
+B300,0.30.0,MiniMax-M2.7 FP8,34000,1
+H100,0.30.0,DeepSeek V4 Flash FP8,3200,4
+H200,0.30.0,DeepSeek V4 Flash FP8,4800,2
+B200,0.30.0,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,15600,2
+B300,0.30.0,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,25600,1

@@ -1,4 +1,4 @@
-"""Simulate from the epoch-424 inventory and static coefficients."""
+"""Simulate from the epoch-424 inventory and existing dynamic coefficients."""
 
 import argparse
 import csv
@@ -35,6 +35,13 @@ def read_csv(name):
 def inputs():
     with (HERE.parent / 'data' / 'mlnode-4.0.0-prefill.csv').open(newline='') as source:
         measurements = list(csv.DictReader(source))
+    reference = {}
+    for row in measurements:
+        if row["gpu_type"] == "H100":
+            m = "MiniMax" if "MiniMax" in row["model"] else "GLM" if "GLM" in row["model"] else "DeepSeek"
+            reference[m] = max(reference.get(m, 0), int(row["nonces_per_min_8gpu"]))
+    with (HERE.parent / "data" / "mlnode-4.0.0-max-8gpu.csv").open(newline="") as source:
+        measurements = list(csv.DictReader(source))
     current_bounds = {}
     for row in read_csv('models.csv'):
         m = IDS[row['model_id']]
@@ -51,7 +58,8 @@ def inputs():
     base = Fraction(str(INITIAL['MiniMax']))
     for m in MODELS:
         parity = {g: q['MiniMax'][g] / q[m][g] for g in GPUS}
-        values = dict(D_i=parity['H100'],
+        # Retain the proposal difficulties from the original measurements.
+        values = dict(D_i=Fraction(reference['MiniMax'], reference[m]),
                       coeff_i_min=base if m == 'MiniMax' else base * min(parity.values()) / Fraction('1.05'),
                       coeff_i_max=base if m == 'MiniMax' else base * max(parity.values()) * Fraction('1.05'))
         # Preserve the full existing range so activation does not force a clamp.
@@ -188,7 +196,7 @@ def run():
         epochs.append(record(epoch, nodes, allocation, coeff, state, passes, switches))
     result = dict(seed=SEED, epsilon=EPSILON, max_passes=MAX_PASSES,
                   params=PARAMS, excluded_gpus=excluded, epochs=epochs)
-    result['measurement'] = 'mlnode-4.0.0-prefill: 8xGPUs nonces/min'
+    result['measurement'] = 'mlnode-4.0.0-max-8gpu: MAX 8xGPUs nonces/min'
     result['snapshot_epoch'] = 424
     path = args.output
     path.write_text(json.dumps(result, indent=2) + '\n')

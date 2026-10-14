@@ -2,9 +2,9 @@
 
 Dynamic PoC coefficients were introduced in the [v0.2.16 upgrade](../governance-artifacts/update-v0.2.16/README.md#dynamic-coefficients-v1) with ranges limited to 10% above or below the existing static coefficients.
 
-This proposal widens the ranges for GLM and DeepSeek so coefficient adjustments can incentivize deployment toward the existing target shares of 33.34% MiniMax, 33.33% GLM, and 33.33% DeepSeek. The new upper bounds and relative difficulties use measured PoC throughput from MLNode v4.0.0 on H100, H200, B200, and B300.
+This proposal widens the ranges for GLM and DeepSeek so coefficient adjustments can incentivize deployment toward the existing target shares of 33.34% MiniMax, 33.33% GLM, and 33.33% DeepSeek. The upper bounds use the highest measured PoC throughput across MLNode v4.0.0 configurations on H100, H200, B200, and B300. Relative difficulties retain the original measurement ratios.
 
-> Lower bounds remain unchanged so coefficients can adjust from their current values without a forced increase at activation. The wider ranges strengthen deployment incentives when a model needs more compute and reduce them when it has excess supply.
+Lower bounds remain unchanged so coefficients can adjust from their current values without a forced increase at activation. The wider ranges strengthen deployment incentives when a model needs more compute and reduce them when it has excess supply.
 
 This document defines the target coefficient bounds and relative difficulties, and simulates applying them from the current first-phase state.
 
@@ -30,23 +30,25 @@ Source: [epoch coefficients](https://node3.gonka.ai/chain-api/productscience/inf
 
 ## 2. Measurements
 
-Each value below is the number of nonces generated per minute by 8 GPUs of the specified class, using measurements from MLNode v4.0.0.
+The table shows throughput for inference optimized configurations, in nonces/min per 8 GPUs.
 
 
 | Model / variant         | H100 | H200 | B200  | B300  |
 | ----------------------- | ---- | ---- | ----- | ----- |
-| MiniMax M2.7 FP8        | 5800 | 10400 | 28000 | 34000 |
-| GLM 5.3 Flash           | 2000 | 3300 | 6000  | 9200  |
-| DeepSeek V4 Flash       | 3400 | 7200 | 15600 | 25600 |
+| MiniMax M2.7 FP8 | 5800 | 10400 | 28000 | 34000 |
+| GLM 5.3 Flash           | 2550 | 4200 | 7000 | 9600 |
+| DeepSeek V4 Flash       | 3200 | 4800 | 15600 | 25600 |
 
 
 For each hardware class, use the fastest supported variant. For DeepSeek, this selects FP8 on H100/H200 and NVFP4 on B200/B300. The calculation assumes both variants can serve the same chain model.
 
-Source: [MLNode v4.0.0 prefill measurements](data/mlnode-4.0.0-prefill.csv), reported as nonces/min per 8 GPUs.
+The table describes inference optimized configurations for all models. Bounds and simulation account for higher PoC throughput observed on chain and achievable with MLNode v4.0.0.
+
+Relative difficulties retain the earlier H100 measurements of 5800 nonces/min for MiniMax, 2000 for GLM, and 3400 for DeepSeek, each per 8 GPUs.
 
 ## 3. Exact formulas
 
-Let `q[i,g]` be model `i` throughput per 8 GPUs of class `g`. Let `b` be MiniMax and `c_b = 0.3024` its fixed coefficient. Let `delta = 0.05` be the desired 5% switching incentive. Take minima and maxima over `g = {H100, H200, B200, B300}`.
+Let `q[i,g]` be the highest measured throughput for model `i` per 8 GPUs of class `g` across configurations. Let `q_ref[i,H100]` be its earlier H100 measurement. Let `b` be MiniMax and `c_b = 0.3024` its fixed coefficient. Let `delta = 0.05` be the desired 5% switching incentive. Take minima and maxima over `g = {H100, H200, B200, B300}`.
 
 The parity coefficient gives a hardware class equal weight on model `i` and MiniMax. Calculate benchmark bounds around the extreme parity values, then widen them to include the existing allowed range. Let `current_min[i]` and `current_max[i]` be the current on-chain bounds.
 
@@ -59,7 +61,7 @@ benchmark_max[i] = max_g(parity[i,g]) * (1 + delta)
 coeff_min[i] = min(current_min[i], benchmark_min[i])
 coeff_max[i] = max(current_max[i], benchmark_max[i])
 
-D[i] = q[b,H100] / q[i,H100]
+D[i] = q_ref[b,H100] / q_ref[i,H100]
 
 coeff_min[b] = coeff_max[b] = c_b
 D[b] = 1
@@ -67,25 +69,25 @@ D[b] = 1
 
 At parity, `q[i,g] * parity[i,g] = q[b,g] * c_b`. At the floor, MiniMax earns at least 5% more PoC weight before dilution on every measured class. The benchmark ceiling gives model `i` at least 5% more on every measured class before dilution, subject to decimal truncation.
 
-`D` converts each model's PoC weight to comparable compute units using an 8xH100 reference server. It depends only on measured throughput ratios.
+`D` converts each model's PoC weight to comparable compute units using an 8xH100 reference server. This update retains its original H100 throughput ratios. Changes in throughput can therefore change the hardware capacity needed to reach a target share.
 
-For GLM, H100 determines the benchmark lower bound. For DeepSeek, B300 determines the benchmark lower bound. B200 determines both benchmark upper bounds.
+B300 determines both benchmark lower bounds. H100 determines both benchmark upper bounds.
 
 
 | Model    | `D`           | `benchmark_min`                   | `benchmark_max`                 |
 | -------- | ------------- | --------------------------------- | ------------------------------- |
-| GLM      | `5800 / 2000` | `0.3024 * (5800 / 2000) / 1.05`  | `0.3024 * (28000 / 6000) * 1.05` |
-| DeepSeek | `5800 / 3400` | `0.3024 * (34000 / 25600) / 1.05` | `0.3024 * (28000 / 15600) * 1.05` |
+| GLM      | `5800 / 2000` | `c_b * q[b,B300] / q[GLM,B300] / 1.05`  | `c_b * q[b,H100] / q[GLM,H100] * 1.05` |
+| DeepSeek | `5800 / 3400` | `c_b * q[b,B300] / q[DeepSeek,B300] / 1.05` | `c_b * q[b,H100] / q[DeepSeek,H100] * 1.05` |
 
 
-The benchmark lower bounds are `0.8352` for GLM and `0.3825` for DeepSeek. Both exceed the current lower bounds, so the proposal retains `0.558` and `0.2214`. The target parameters, truncated to 12 fractional places, are:
+The benchmark lower bounds are `1.02` for GLM and `0.3825` for DeepSeek. Both exceed the current lower bounds, so the proposal retains `0.558` and `0.2214`. The target parameters, truncated to 12 fractional places, are:
 
 
 | Model    | Current coeff (for reference) | `relative_difficulty` | `coeff_min`    | `coeff_max`    |
 | -------- | ----------------------------- | --------------------- | -------------- | -------------- |
 | MiniMax  | 0.3024                        | 1                     | 0.3024         | 0.3024         |
-| GLM      | 0.682                         | 2.9                  | 0.558        | 1.48176 |
-| DeepSeek | 0.2706                        | 1.705882352941        | 0.2214        | 0.569907692307        |
+| GLM      | 0.682                         | 2.9                  | 0.558        | 1.556470588235 |
+| DeepSeek | 0.2706                        | 1.705882352941        | 0.2214        | 1.2403125        |
 
 
 
@@ -162,13 +164,14 @@ Each coefficient cell shows `base / effective`. The effective coefficient includ
 
 | Epoch | MiniMax coeff | GLM coeff | DeepSeek coeff | MiniMax share | GLM share | DeepSeek share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 0.302400 / 0.302400 | 0.682000 / 0.682000 | 0.270600 / 0.270600 | 62.83% | 12.46% | 24.72% |
+| 0 | 0.302400 / 0.302400 | 0.682000 / 0.682000 | 0.270600 / 0.270600 | 69.87% | 10.70% | 19.43% |
 | 1 | 0.302400 / 0.302400 | 0.716100 / 0.716100 | 0.284130 / 0.284130 | 100.00% | 0.00% | 0.00% |
-| 2 | 0.302400 / 0.302400 | 0.787710 / 0.787710 | 0.312543 / 0.312543 | 100.00% | 0.00% | 0.00% |
-| 3 | 0.302400 / 0.302400 | 0.945252 / 0.945252 | 0.375052 / 0.375052 | 83.17% | 16.83% | 0.00% |
-| 4 | 0.302400 / 0.302400 | 0.992515 / 0.992515 | 0.468814 / 0.409663 | 24.02% | 32.18% | 43.80% |
-| 5 | 0.302400 / 0.302400 | 0.992515 / 0.992515 | 0.445374 / 0.410111 | 27.93% | 32.51% | 39.56% |
-| 6-50 | 0.302400 / 0.302400 | 0.992515 / 0.992515 | 0.423105 / 0.408388 | 31.25% | 32.80% | 35.95% |
+| 4 | 0.302400 / 0.302400 | 1.181565 / 1.181565 | 0.468814 / 0.464405 | 41.16% | 24.91% | 33.93% |
+| 6 | 0.302400 / 0.302400 | 1.302675 / 1.245219 | 0.468814 / 0.468814 | 43.46% | 36.12% | 20.43% |
+| 8 | 0.302400 / 0.302400 | 1.302675 / 1.302675 | 0.516868 / 0.498089 | 40.88% | 23.53% | 35.59% |
+| 10 | 0.302400 / 0.302400 | 1.436200 / 1.380783 | 0.516868 / 0.516868 | 41.37% | 35.57% | 23.05% |
+| 11 | 0.302400 / 0.302400 | 1.436200 / 1.434761 | 0.542711 / 0.542711 | 38.50% | 33.38% | 28.12% |
+| 12-50 | 0.302400 / 0.302400 | 1.436200 / 1.419924 | 0.569847 / 0.548172 | 30.50% | 33.96% | 35.54% |
 
 
 
@@ -183,11 +186,12 @@ Each cell lists individual GPU counts assigned to that model. Omitted GPU types 
 | --- | --- | --- | --- |
 | 0 | 196 H100, 185 H200, 51 B200, 60 B300 | 12 H200, 8 B200, 39 B300 | 104 H100, 45 B300 |
 | 1 | 300 H100, 197 H200, 59 B200, 144 B300 | None | None |
-| 2 | 300 H100, 197 H200, 59 B200, 144 B300 | None | None |
-| 3 | 197 H200, 59 B200, 144 B300 | 300 H100 | None |
-| 4 | 59 B200, 31 B300 | 300 H100, 197 H200 | 113 B300 |
-| 5 | 59 B200, 43 B300 | 300 H100, 197 H200 | 101 B300 |
-| 6-50 | 59 B200, 53 B300 | 300 H100, 197 H200 | 91 B300 |
+| 4 | 300 H100, 59 B200 | 197 H200, 37 B300 | 107 B300 |
+| 6 | 300 H100, 59 B200 | 197 H200, 83 B300 | 61 B300 |
+| 8 | 300 H100, 59 B200 | 197 H200, 31 B300 | 113 B300 |
+| 10 | 300 H100, 51 B200 | 197 H200, 8 B200, 75 B300 | 69 B300 |
+| 11 | 300 H100, 41 B200 | 197 H200, 18 B200, 59 B300 | 85 B300 |
+| 12-50 | 300 H100, 8 B200 | 197 H200, 51 B200, 37 B300 | 107 B300 |
 
 ### Consensus weight per 8 GPUs
 
@@ -198,20 +202,20 @@ weight_per_8[g] = 8 * sum(weight of nodes in family g) / GPU_count[g]
 weight_ratio[g] = weight_per_8[g] / weight_per_8[H100]
 ```
 
-H100 is the reference and always has a value of `1.000`. For example, B300 has a value of `5.235` in epochs 6-50. This means 8 B300 GPUs contribute 5.235 times the coefficient-adjusted PoC weight of 8 H100 GPUs on average.
+H100 is the reference and always has a value of `1.000`. For example, B300 has a value of `3.685` in epochs 12-50. This means 8 B300 GPUs contribute 3.685 times the coefficient-adjusted PoC weight of 8 H100 GPUs on average.
 
 
 Start uses the epoch-424 assignments and effective coefficients, calculated with the same benchmarks and weight model.
 
-| GPU | Start | Epoch 1 | Epoch 2 | Epoch 3 | Epoch 4 | Epoch 5 | Epochs 6-50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| H100 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
-| H200 | 2.110 | 1.793 | 1.793 | 1.664 | 1.650 | 1.650 | 1.650 |
-| B200 | 5.375 | 4.828 | 4.828 | 4.479 | 4.266 | 4.266 | 4.266 |
-| B300 | 5.562 | 5.862 | 5.862 | 5.439 | 5.261 | 5.256 | 5.235 |
+| GPU | Start | Epoch 1 | Epoch 4 | Epoch 6 | Epoch 8 | Epoch 10 | Epoch 11 | Epochs 12-50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| H100 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| H200 | 1.703 | 1.280 | 1.313 | 1.384 | 1.447 | 1.534 | 1.594 | 1.578 |
+| B200 | 3.301 | 2.600 | 2.600 | 2.600 | 2.600 | 2.594 | 2.617 | 2.625 |
+| B300 | 2.968 | 2.720 | 3.108 | 3.168 | 3.359 | 3.504 | 3.663 | 3.685 |
 
 
-All three shares enter the target zone at simulated epoch 6: MiniMax 31.25%, GLM 32.80%, and DeepSeek 35.95%. Allocations and coefficients stay unchanged through epoch 50, and an extended run confirms the same outcome through epoch 100. The final shares differ from one third because adjustment stops within 5 percentage points of each target.
+All three shares enter the target zone at simulated epoch 12: MiniMax 30.50%, GLM 33.96%, and DeepSeek 35.54%. Allocations and coefficients stay unchanged through epoch 50, and an extended run confirms the same outcome through epoch 100. The final shares differ from one third because adjustment stops within 5 percentage points of each target.
 
 Reproduce with `python3 proposals/multi-model-poc/simulation/epoch424.py`. [Full results](simulation/epoch424-results.json) include all 50 epochs, GPU allocations, controller state, and switching counts.
 
