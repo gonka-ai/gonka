@@ -249,7 +249,10 @@ var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the H
 
 // classifyPayloadFetchError leaves a failure of this process's closed peer
 // untagged, so the lease is released and another generation can fetch. A
-// payload that is gone or too large is still the executor's result.
+// payload that is gone, too large, or never reached because the executor
+// did not finish Attach is the executor's result. fetchSignedPayloads tags
+// that Attach timeout before it arrives here; a bare ErrPeerNotReady is
+// still this process's own session.
 func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -284,6 +287,12 @@ func fetchSignedPayloads(
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
+		// The executor did not finish Attach within the header budget, so
+		// the payload fetch got no response. A session this process already
+		// closed returns before that budget and stays untagged.
+		if payloadAttachTimedOut(ctx, waitCtx) {
+			return nil, tagExecutorPayloadFault(err)
+		}
 		return nil, err
 	}
 	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
@@ -293,6 +302,13 @@ func fetchSignedPayloads(
 		EpochId:          epochID,
 		Signature:        []byte(signature), // HTTP Authorization header text
 	}, maxBytes)
+}
+
+// payloadAttachTimedOut reports that the handshake wait expired while this
+// validation is still running. A cancelled caller or a released peer
+// generation is this process stopping, not an executor that stayed silent.
+func payloadAttachTimedOut(ctx, waitCtx context.Context) bool {
+	return waitCtx.Err() != nil && ctx.Err() == nil && !transport.OutboundPeersReleased()
 }
 
 func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
