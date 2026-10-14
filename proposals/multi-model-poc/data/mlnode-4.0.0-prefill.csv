@@ -1,0 +1,15 @@
+source_file,source_row,gpu_type,version,model,nonces_per_min,nonces_per_min_8gpu,tensor_parallel_size
+mlnode-4.0.0-prefill,2,H100,0.28.0,zai-org/GLM-5.3-Flash,2000,2000,8
+mlnode-4.0.0-prefill,3,H200,0.28.0,zai-org/GLM-5.3-Flash,1650,3300,4
+mlnode-4.0.0-prefill,4,B200,0.28.0,zai-org/GLM-5.3-Flash,3000,6000,4
+mlnode-4.0.0-prefill,5,B300,0.28.0,zai-org/GLM-5.3-Flash,2300,9200,2
+mlnode-4.0.0-prefill,9,H100,0.20.0,MiniMax-M2.7 FP8,2900,5800,4
+mlnode-4.0.0-prefill,10,H200,0.20.0,MiniMax-M2.7 FP8,2600,10400,2
+mlnode-4.0.0-prefill,11,B200,0.20.0,MiniMax-M2.7 FP8,7000,28000,2
+mlnode-4.0.0-prefill,12,B300,,MiniMax-M2.7 FP8,4250,34000,1
+mlnode-4.0.0-prefill,16,H100,0.25.1,DeepSeek V4 Flash FP8,1700,3400,4
+mlnode-4.0.0-prefill,17,H200,0.25.1,DeepSeek V4 Flash FP8,1800,7200,2
+mlnode-4.0.0-prefill,18,B200,0.25.1,DeepSeek V4 Flash FP8,2304,9216,2
+mlnode-4.0.0-prefill,19,B200,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,3900,15600,2
+mlnode-4.0.0-prefill,20,B300,0.25.1,DeepSeek V4 Flash FP8,1728,13824,1
+mlnode-4.0.0-prefill,21,B300,0.25.1,MJPansa/DeepSeek-V4-Flash-0731-NVFP4,3200,25600,1

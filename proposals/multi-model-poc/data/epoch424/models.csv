@@ -1,0 +1,4 @@
+epoch,model_id,base_coefficient,effective_coefficient,adaptive_step,prev_sign,coeff_min,coeff_max,relative_difficulty,target_share_bps
+424,MiniMaxAI/MiniMax-M2.7,0.3024,0.3024,0.05,-1,0.3024,0.3024,1,3334
+424,deepseek-ai/DeepSeek-V4-Flash-0731,0.2706,0.2706,0.05,1,0.2214,0.2706,1.541666666666,3333
+424,zai-org/GLM-5.3-Flash,0.682,0.682,0.05,1,0.558,0.682,2.668169014084,3333

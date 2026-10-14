@@ -1,0 +1,206 @@
+participant,node_id,model_id,gpu_type,gpu_count
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-DM-5-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-FE-2-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-FE-7-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,B200-ME-1,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,B200-ME-12-GLM,zai-org/GLM-5.3-Flash,NVIDIA B200 | 179GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,B200-ME-4,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,B200-ME-6,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,B200-ME-PAIR-3,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,CA-LA-1,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,CA-LA-2,MiniMaxAI/MiniMax-M2.7,NVIDIA A100-SXM4-80GB | 80GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,CA-LA-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-DM-1-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-DM-2-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-DM-3-day,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,2
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-DM-4-day,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,2
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-FE-1-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-FE-3-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-FE-4-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-LU-1-day,MiniMaxAI/MiniMax-M2.7,NVIDIA RTX PRO 6000 Blackwell Server Edition | 95GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,DA-LU-2-day,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,2
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,EN-H200-PAIR-2,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,EN-H200-PAIR-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,EW-H200-PAIR-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,EW-H200-PAIR-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,KN-LA-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,KN-LA-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,PA-LA-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,PA-LA-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-52,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-55,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-78-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-79-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-80-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-83-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-85-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-87-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-89-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,RI-NS-GLM-PAIR-1,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1gvrrhjmy4w4mayvs2s5l23edj8ertcmtd2v4zr,VR-JS-2,MiniMaxAI/MiniMax-M2.7,NVIDIA A100-SXM4-80GB | 80GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-PR-2-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-PR-3-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,B200-ME-5,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,B200-ME-7,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,B200-ME-PAIR-1,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,B200-ME-PAIR-2,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,CA-LA-3,MiniMaxAI/MiniMax-M2.7,NVIDIA A100-SXM4-80GB | 80GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,CA-LA-5,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-PR-1-day,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-PR-5-day,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,DA-PR-6-day,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,2
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,EN-H200-PAIR-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,EN-H200-PAIR-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,EN-H200-PAIR-5,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,EW-H200-PAIR-2,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,EW-H200-PAIR-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,KN-LA-2,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,KN-LA-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,PA-LA-2,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,PA-LA-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-53,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-54,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-56,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-57,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-58,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-59,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-60,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-61,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-71,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-81-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-82-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-84-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-86-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-88-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,RI-NS-90-SINGLE,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,VR-JS-4,MiniMaxAI/MiniMax-M2.7,NVIDIA A100-SXM4-80GB | 80GB,8
+gonka1scskt6wpnjnumsah6kjphmdu87vjgvcxmn4rxv,VR-JS-5,MiniMaxAI/MiniMax-M2.7,NVIDIA A100-SXM4-80GB | 80GB,8
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2037,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,2
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2304,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2305,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2306,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2328,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2428,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 PC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2589,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 PC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2590,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 PC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2802,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2990,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2991,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2992,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2993,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2994,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2995,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2996,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-2997,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-36,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,2
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-803,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-804,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-805,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-806,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-807,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-808,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-809,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-810,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-811,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 96GB,4
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-989,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka168rtjfkszuhcggg4dfyse4yh7xn9zwfglnkns2,mlnode-999,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1nurzpppvn0lxg20v2c3gf8zfltpdpz599rggst,AM-2,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,4
+gonka1nurzpppvn0lxg20v2c3gf8zfltpdpz599rggst,AM-3,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,8
+gonka1nurzpppvn0lxg20v2c3gf8zfltpdpz599rggst,AM-5,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,8
+gonka1nurzpppvn0lxg20v2c3gf8zfltpdpz599rggst,AM-8,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,8
+gonka1nurzpppvn0lxg20v2c3gf8zfltpdpz599rggst,FTT-1,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,8
+gonka147qfckm9hpdzd9dgfvfj2r5rsv0eeunj4gpvz8,AM-1,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,8
+gonka147qfckm9hpdzd9dgfvfj2r5rsv0eeunj4gpvz8,AM-2,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 AC | 268GB,4
+gonka147qfckm9hpdzd9dgfvfj2r5rsv0eeunj4gpvz8,AM-6,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,8
+gonka147qfckm9hpdzd9dgfvfj2r5rsv0eeunj4gpvz8,AM-7,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,8
+gonka147qfckm9hpdzd9dgfvfj2r5rsv0eeunj4gpvz8,AMM-4,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-1-1,zai-org/GLM-5.3-Flash,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-5,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-6,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-7,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-8,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka16dgkvx7mh609ntkzknckwaskgq9lcdp86j0skk,FTJ-9,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-10,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-14,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-15,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ-19,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ11,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1kvmerzu64094dt9t62ea0cp75larh39ulzldum,FTJ12,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-12,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-2,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-3,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-4,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-5,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-6,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,aa-7,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,mm-37,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,mm-38,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,mm-39,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka133xdfvcyj2ccv38jrl0qjp970u9lz5plptfwuh,mm-40,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,mm-33,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,mm-34,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,mm-35,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,mm-36,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-10,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-11,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-14,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-15,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-16,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-8,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka1s9tqdht34yrdvcstyytmqzaqqup2ms7jjy9589,aa-9,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,4
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,lan2152,MiniMaxAI/MiniMax-M2.7,NVIDIA GeForce RTX 5090 | 32GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x13,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x18,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x19,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x22,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x25,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x38,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x43,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x48,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka10eg5wakkmc0tee3llwj2qwa67knzk48cht38c5,x52,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,lan2217,MiniMaxAI/MiniMax-M2.7,NVIDIA GeForce RTX 5090 | 32GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,n26,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w11,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w23,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w3,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w4,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w5,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka18x6wprs8c4x7awjgvn5t0e04fscrrash8rvmw4,w6,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1a5dgp5cul6tn0jrdzs6usrm3jtg7w63nqaygd8,node10,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1a5dgp5cul6tn0jrdzs6usrm3jtg7w63nqaygd8,node11,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1a5dgp5cul6tn0jrdzs6usrm3jtg7w63nqaygd8,node12,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1a5dgp5cul6tn0jrdzs6usrm3jtg7w63nqaygd8,node13,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1a5dgp5cul6tn0jrdzs6usrm3jtg7w63nqaygd8,node5,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,4xB300,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,2
+gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,inference-2,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,mlnode-2,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,2
+gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,mlnode5,zai-org/GLM-5.3-Flash,NVIDIA B300 SXM6 AC | 268GB,2
+gonka1kx9mca3xm8u8ypzfuhmxey66u0ufxhs7nm6wc5,node-minimax,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node7,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node8,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1u60wtn9dhadweeuq2gywcpx34fpfnuhmu7w0qq,node9,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t,x60,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1rqm2u7lxzn7r68y0drcyhag6xnckpsnfmgd53t,x65,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1ajmhqgvkf76hss5xe35kcnntqqhs7r8jz8s939,node381,MiniMaxAI/MiniMax-M2.7,NVIDIA B200 | 179GB,8
+gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p,A18,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 PCIe | 79GB,8
+gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p,A22,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 PCIe | 79GB,8
+gonka1ym3np7guxart483yfdxnlztuazx22cjt0e4a2p,A5,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 PCIe | 79GB,4
+gonka1xvlfshxznnuftsv2lke98rv9eqkjr0v6z8c3uk,node3,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1xvlfshxznnuftsv2lke98rv9eqkjr0v6z8c3uk,node1,MiniMaxAI/MiniMax-M2.7,NVIDIA B300 SXM6 PC | 268GB,1
+gonka1q60h5av2pxe6gz3edmlcvd8p36vtj7r24fm43v,n24,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA H100 80GB HBM3 | 79GB,8
+gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp,minimax-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1dkl4mah5erqggvhqkpc8j3qs5tyuetgdy552cp,mlnode-4,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl,node1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1qwfrtz9c7kcrfkrrlne2pkcye74mj6ce33xdkl,node5,zai-org/GLM-5.3-Flash,NVIDIA H200 NVL | 140GB,4
+gonka1w63xj0j6wxn5w4yuquuckqwmmdyf930pwdy5wh,BSTN-PL-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le,mlnode-3,deepseek-ai/DeepSeek-V4-Flash-0731,NVIDIA B300 SXM6 AC | 268GB,1
+gonka1y2a9p56kv044327uycmqdexl7zs82fs5ryv5le,node-235b-1,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 80GB HBM3 | 79GB,4
+gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m,node1,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 95GB,4
+gonka1p2lhgng7tcqju7emk989s5fpdr7k2c3ek6h26m,node2,MiniMaxAI/MiniMax-M2.7,NVIDIA H20 | 95GB,4
+gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh,node-mm,MiniMaxAI/MiniMax-M2.7,NVIDIA RTX PRO 6000 Blackwell Server Edition | 95GB,4
+gonka1346p2h8dn4kp98c5e93k5q64g0h7vxjxnd55fh,node2,MiniMaxAI/MiniMax-M2.7,NVIDIA RTX PRO 6000 Blackwell Server Edition | 95GB,4
+gonka1tlvg4kjx7ljd5thgd5fkgh39q6lu8cmxupktgg,node7,MiniMaxAI/MiniMax-M2.7,NVIDIA H200 | 140GB,8
+gonka1gyk0aahvr3qeju4zx0nplfreej6cy4jjk8svc5,node2,MiniMaxAI/MiniMax-M2.7,NVIDIA H100 PCIe | 79GB,4
+gonka1w29nvdy6caqtrw30whz9h6ghl0xszwh3egndah,node1,MiniMaxAI/MiniMax-M2.7,NVIDIA H800 PCIe | 79GB,4

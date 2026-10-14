@@ -173,6 +173,7 @@ def f(share_i, coeff_i, params_i, Z, state):
     for M_i, values in params_i.items():
         if values["T_i"] == 0:
             next_coeff_i[M_i] = values["coeff_i_min"]
+            state[M_i]["s"], state[M_i]["prev_sign"] = s_max / 2, 0
             continue
 
         st = state[M_i]
