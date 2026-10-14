@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"syscall"
 	"time"
 
@@ -95,21 +96,29 @@ func (j refusalJournal) Diffs(from, to uint64) ([]types.Diff, error) {
 	return diffs, nil
 }
 
-// executorUnreachable reports that a refusal probe got no HTTP response.
-// An HTTP status, including 404 and 500, means the executor answered.
+// executorUnreachable reports that a refusal probe got no usable response.
+// A missing peer session and a 429 are that case: the executor did not
+// answer the probe, so the timeout is accepted without resending the
+// journal. Any other HTTP status, including 404 and 500, means the
+// executor answered. A message-size ResourceExhausted is an answer too.
 func executorUnreachable(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, ErrPeerNotReady) {
+		return true
+	}
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
-		return false
+		return status.StatusCode == http.StatusTooManyRequests
 	}
 	var connectErr *connect.Error
 	if errors.As(err, &connectErr) {
 		switch connectErr.Code() {
 		case connect.CodeCanceled, connect.CodeDeadlineExceeded, connect.CodeUnavailable, connect.CodeUnknown:
 			return true
+		case connect.CodeResourceExhausted:
+			return !isConnectMessageTooLarge(err)
 		default:
 			return false
 		}

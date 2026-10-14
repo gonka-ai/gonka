@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -936,6 +937,12 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	readyCtx, cancelReady := context.WithTimeout(ctx, chatReadyTimeout)
 	defer cancelReady()
 	if err := c.WaitReady(readyCtx); err != nil {
+		// The handshake budget expired while the caller is still running:
+		// the executor never became ready. A closed local session returns
+		// before that budget and stays a plain ErrPeerNotReady.
+		if readyCtx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("get payload: %w", ErrPeerPayloadUnanswered)
+		}
 		return nil, fmt.Errorf("get payload: %w", err)
 	}
 	client, err := c.payloadClient(maxBytes)
@@ -948,6 +955,9 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	err = c.rpcAttempt(ctx, rpcpbconnect.PayloadServiceGetPayloadProcedure, func() error {
 		creq, err := tokenRequest(ctx, c, req)
 		if err != nil {
+			if errors.Is(err, ErrPeerNotReady) {
+				return ErrPeerPayloadUnanswered
+			}
 			return err
 		}
 		resp, err := client.GetPayload(ctx, creq)

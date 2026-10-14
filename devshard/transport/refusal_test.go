@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"testing"
@@ -54,4 +55,9 @@ func TestExecutorUnreachableIgnoresAnHTTPAnswer(t *testing.T) {
 	require.True(t, executorUnreachable(context.DeadlineExceeded))
 	require.True(t, executorUnreachable(connect.NewError(connect.CodeUnavailable, errors.New("down"))))
 	require.False(t, executorUnreachable(connect.NewError(connect.CodeInternal, errors.New("boom"))))
+	require.True(t, executorUnreachable(ErrPeerNotReady))
+	require.True(t, executorUnreachable(fmt.Errorf("get payload: %w", ErrPeerPayloadUnanswered)))
+	require.True(t, executorUnreachable(&UpstreamStatusError{StatusCode: http.StatusTooManyRequests}))
+	require.True(t, executorUnreachable(connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded"))))
+	require.False(t, executorUnreachable(connect.NewError(connect.CodeResourceExhausted, errors.New("message size 99 is larger than configured max 10"))))
 }
