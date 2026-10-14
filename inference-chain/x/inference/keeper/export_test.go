@@ -47,3 +47,7 @@ func PruneEpochZeroInferencesForTesting(k Keeper, ctx sdk.Context, currentEpochI
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
 }
+
+func PruneDeveloperStatsWithBudgetForTesting(k Keeper, ctx context.Context, budget *int64) error {
+	return developerStatsPruner{}.prune(ctx, k, 0, budget)
+}
