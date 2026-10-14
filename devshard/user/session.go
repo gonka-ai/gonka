@@ -1723,6 +1723,12 @@ func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse,
 			"escrow", s.escrowID, "nonce", msg.InferenceId, "source", source, "status", rec.Status)
 		return
 	}
+	// The receipt callback queues a confirm; the final response and the host's
+	// mempool carry the same one again. An identical copy is dropped by the
+	// queue anyway, so skip its signature recovery under s.mu.
+	if queued := s.pendingConfirmLocked(msg.InferenceId); queued != nil && proto.Equal(queued.GetConfirmStart(), msg) {
+		return
+	}
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
 	if err := s.sm.CheckEvidence(&rec, tx); err != nil {
 		logging.Warn("rejected executor receipt", "subsystem", "session",
