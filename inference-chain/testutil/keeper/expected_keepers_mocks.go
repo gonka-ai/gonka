@@ -1546,3 +1546,16 @@ func (mr *MockWasmKeeperMockRecorder) GetContractInfo(ctx, contractAddress any) 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetContractInfo", reflect.TypeOf((*MockWasmKeeper)(nil).GetContractInfo), ctx, contractAddress)
 }
+
+func (m *MockBlsKeeper) GetBridgeSigningEpochID(ctx types1.Context, effectiveEpochID uint64) (uint64, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBridgeSigningEpochID", ctx, effectiveEpochID)
+	ret0, _ := ret[0].(uint64)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+func (mr *MockBlsKeeperMockRecorder) GetBridgeSigningEpochID(ctx, effectiveEpochID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBridgeSigningEpochID", reflect.TypeOf((*MockBlsKeeper)(nil).GetBridgeSigningEpochID), ctx, effectiveEpochID)
+}

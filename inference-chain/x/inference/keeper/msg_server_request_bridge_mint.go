@@ -86,6 +86,14 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		}
 		return nil, fmt.Errorf("failed to get current epoch group: %v", err)
 	}
+	signingEpochID, err := k.GetBridgeSigningEpochID(ctx, currentEpochGroup.GroupData.EpochIndex)
+	if err != nil {
+		rollbackErr := k.ReleaseFromEscrow(ctx, userAddr, nativeCoins)
+		if rollbackErr != nil {
+			k.LogError("Bridge mint: Failed to rollback escrow transfer", types.Messages, "rollbackError", rollbackErr)
+		}
+		return nil, fmt.Errorf("failed to select bridge signing epoch: %w", err)
+	}
 
 	// 7. Prepare BLS signature data for WGNK minting on Ethereum
 	// Get numeric chain ID from string chain identifier
@@ -102,10 +110,10 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	// Prepare BLS signature data for WGNK mint command
 	// Only prepare the data portion - BLS system will prepend epochId, gonkaChainId, requestId
 	blsData, err := k.prepareBridgeMintSignatureData(
-		destinationChainId,     // Numeric chain ID (e.g., "1", "137")
-		msg.DestinationAddress, // Ethereum address to receive WGNK
+		destinationChainId,           // Numeric chain ID (e.g., "1", "137")
+		msg.DestinationAddress,       // Ethereum address to receive WGNK
 		msg.DestinationBridgeAddress, // Specific bridge contract
-		msg.Amount,             // Amount as string
+		msg.Amount,                   // Amount as string
 	)
 	if err != nil {
 		// Rollback the escrow transfer
@@ -123,7 +131,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	requestIdHash := keccak256Hash([]byte(requestID))
 
 	signingData := blstypes.SigningData{
-		CurrentEpochId: currentEpochGroup.GroupData.EpochIndex,
+		CurrentEpochId: signingEpochID,
 		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
 		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
 		Data:           blsData,             // The remaining data fields
@@ -157,7 +165,7 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		"destinationBridgeAddress", msg.DestinationBridgeAddress,
 		"chainId", msg.ChainId,
 		"requestId", requestID,
-		"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+		"epochIndex", signingEpochID,
 		"blsRequestId", blsRequestId)
 
 	// 9. Emit bridge mint event for off-chain monitoring
@@ -170,14 +178,14 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 			sdk.NewAttribute("destination_bridge_address", msg.DestinationBridgeAddress),
 			sdk.NewAttribute("chain_id", msg.ChainId),
 			sdk.NewAttribute("request_id", requestID),
-			sdk.NewAttribute("epoch_index", fmt.Sprintf("%d", currentEpochGroup.GroupData.EpochIndex)),
+			sdk.NewAttribute("epoch_index", fmt.Sprintf("%d", signingEpochID)),
 			sdk.NewAttribute("bls_request_id", blsRequestId),
 		),
 	)
 
 	return &types.MsgRequestBridgeMintResponse{
 		RequestId:    requestID,
-		EpochIndex:   currentEpochGroup.GroupData.EpochIndex,
+		EpochIndex:   signingEpochID,
 		BlsRequestId: blsRequestId,
 	}, nil
 }
