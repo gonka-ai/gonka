@@ -25,7 +25,17 @@ func main() {
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
+	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
 	flag.Parse()
+	if *reportDir != "" {
+		report, err := loadtest.WriteReport(*reportDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		return
+	}
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
@@ -64,7 +74,13 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
+		StrictXFail:     *strictXFail,
 	})
+	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
+		log.Printf("loadtest: no report: %v", reportErr)
+	} else {
+		fmt.Println(report)
+	}
 	if err != nil {
 		if result.Summary.Requests > 0 {
 			printSummary(result, false)
@@ -98,6 +114,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  failed:          %d\n", summary.Failed)
 	fmt.Fprintf(os.Stdout, "  dropped:         %d\n", summary.Dropped)
 	fmt.Fprintf(os.Stdout, "  error rate:      %.2f%%\n", summary.ErrorRate*100)
+	fmt.Fprintf(os.Stdout, "  dropped rate:    %.2f%%\n", summary.DroppedRate*100)
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "Latency")

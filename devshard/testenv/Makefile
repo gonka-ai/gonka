@@ -43,6 +43,10 @@ loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENA
 	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
 endif
 
+.PHONY: loadtest-prodlike
+loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-15m.yaml
+
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
 

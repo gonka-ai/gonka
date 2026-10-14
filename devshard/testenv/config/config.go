@@ -135,6 +135,13 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// TTFTP99 and TokenIntervalP99 switch the delays to seeded lognormal draws.
+	TTFTP99          string `yaml:"ttft_p99,omitempty"`
+	TokenIntervalP99 string `yaml:"token_interval_p99,omitempty"`
+	JitterSeed       uint64 `yaml:"jitter_seed,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -198,6 +205,8 @@ type HostCfg struct {
 	// so identity count and router-pool membership follow this field rather
 	// than roster position. Empty keeps the 2-of-N default below.
 	KeyName string `yaml:"key_name"`
+	// Env adds or replaces environment variables of this host's container.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -690,6 +699,10 @@ func (c *File) Validate() error {
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
 	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
+	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
 		if strings.TrimSpace(node.Name) == "" {
@@ -706,6 +719,9 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}
