@@ -437,6 +437,14 @@ func ExecuteValidation(
 		}, nil
 	}
 
+	// Any other non-2xx carries no completion to compare. It is the validator's own node failing,
+	// like a 5xx, so return an error instead of a verdict.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		logging.Warn("validator node refused the replay; no verdict", types.Validation,
+			"inferenceId", inferenceID, "status", resp.StatusCode)
+		return nil, fmt.Errorf("validator node answered HTTP %d", resp.StatusCode)
+	}
+
 	if isEmptySentinel && resp.StatusCode == http.StatusOK {
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
 			"inferenceId", inferenceID)
