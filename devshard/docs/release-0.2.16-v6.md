@@ -201,12 +201,14 @@ sustain `floor(6000 / weight)` calls per minute:
 | `GetSignatures`, `GetState`, gossip `Nonce` | 1 |
 | Gossip `Txs`, seed, repair, verify, challenge | 2 |
 | `GetMempool`, `GetPayload` | 6 |
-| `Chat` | 10 |
+| `Chat` | 1 |
 | `GetDiffs` | 60 |
 | `Attach`, `Watch` | 0 (their own caps above) |
 
-A full burst therefore admits 10 `GetDiffs` or 60 `Chat` calls immediately,
+A full burst therefore admits 10 `GetDiffs` or 600 `Chat` calls immediately,
 then the sustained rate. Peer A exhausting the bucket does not charge peer B.
+`Chat` weighs 1 because every chat already spends a nonce the escrow pays for;
+the budget is there for the RPCs that cost the caller nothing.
 
 ### Per-connection limits (v6 `proxy-router` only)
 
@@ -221,7 +223,7 @@ A second peer (a second address) has its own connection and its own counters.
 | `Attach`, `Watch` | 100 / 10s | Connect: HTTP 429. Native gRPC: HTTP 200, `grpc-status` 8 |
 | Gossip, `GetPayload`, seed / repair / verify / challenge | 200 / 10s | same |
 | `GetDiffs`, `GetMempool` | 400 / 10s | same |
-| `Chat` | 500 / 10s | same |
+| `Chat` | 2000 / 10s | same |
 | `GetSignatures` | 600 / 10s | same |
 
 Path zones are independent. A `GetDiffs` flood must 429 `GetDiffs` without
@@ -351,7 +353,7 @@ next `Chat` from A is `resource_exhausted` and does not spend chat weight.
 **C. One connection, separate path zones (v6 only).** From one address, on
 the one `:9443` connection, send `GetDiffs` past 400 requests in 10 seconds.
 Further `GetDiffs` return 429. A `Chat` on that same connection still
-completes, until its own zone (500/10s) or the child budget. `Attach` from
+completes, until its own zone (2000/10s) or the child budget. `Attach` from
 that address has its own 100/10s zone and is not emptied by the `GetDiffs`
 flood. Confirm the connection count stays 1 for the whole run.
 

@@ -282,8 +282,7 @@ func bodySampleForLog(p []byte, limit int) (string, bool) {
 // the body a host returned out of the error string, where nothing bounds its length.
 func hostFailureLogFields(inf *inflight, session nonceFinishedChecker) []any {
 	fields := []any{"failure_reason", gatewayAttemptFailureReason(inf, session, "")}
-	var upstreamErr *transport.UpstreamStatusError
-	if errors.As(inf.err, &upstreamErr) {
+	if upstreamErr, refused := hostRefusal(inf.err); refused {
 		sample, truncated := bodySampleForLog([]byte(upstreamErr.Body), emptyStreamBodySampleLimit)
 		return append(fields,
 			"http_status", upstreamErr.StatusCode,
@@ -547,6 +546,8 @@ type Redundancy struct {
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
 	stateRewoundAt       map[string]time.Time // when each participant's one catch-up replay was spent
+	refusalPayloadMu     sync.Mutex
+	refusalPayloads      map[uint64]*keptRefusal
 
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
@@ -2698,6 +2699,20 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if race.winnerNonce() != 0 {
 				break
 			}
+			if fallback, released := suspiciousWinnerRelease(attempts); released && failClosedEscalationStage(trigger.stage) {
+				if err := race.promoteFallbackWinner(fallback); err != nil {
+					stopTimer(stallTimer)
+					stopTimer(winnerHardTimeoutTimer)
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, fallback.nonce, raceFinishOptions{clientGone: clientFlag})
+					})
+					return err
+				}
+				trigger.inf.escalated = true
+				logInferenceStage(settleCtx, fallback.escrowID, fallback.nonce, "suspicious_winner_released",
+					"host", fallback.hostID, "stage", trigger.stage, "pending", len(pendingInflights(attempts)))
+				break
+			}
 			if len(attempts) < maxAttempts {
 				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
 					trigger.inf.escalated = true
@@ -3793,6 +3808,9 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		"remaining_ms", time.Until(deadline).Milliseconds(),
 	)
 	e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
+	if reasonLabel == "refused" {
+		e.rememberRefusalPayload(inf.nonce, e.inferenceTimeoutPayload(params))
+	}
 
 	unpinFinish := errorMissEnabledFor(inf)
 	e.raceCleanupWG.Add(1)
@@ -3829,6 +3847,10 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				return
 			}
 
+			releasePost, postErr := acquireTimeoutVotePost(waitCtx, timeoutVotePosts)
+			if postErr != nil {
+				return
+			}
 			var (
 				result    user.TimeoutResult
 				needsWait bool
@@ -3839,12 +3861,16 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				kind = timeoutKindForInflight(inf, false)
 				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
 				result, needsWait, voteErr = e.runVoteTimeout(bgCtx, inf, params, reason)
+				if !needsWait && !timeoutVoteUnjudged(result) {
+					e.forgetRefusalPayload(inf.nonce)
+				}
 				if needsWait {
 					e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 					return
 				}
 				e.recordHandleTimeoutResult(bgCtx, inf, params, result, voteErr, false, failStage)
 			})
+			releasePost()
 			if needsWait {
 				continue
 			}
@@ -4166,8 +4192,8 @@ func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
 	if e == nil || e.perf == nil || inf == nil || inf.probe {
 		return
 	}
-	var upstream *transport.UpstreamStatusError
-	if !errors.As(inf.err, &upstream) || !isVersionRefusal(upstream.Body) {
+	upstream, refused := hostRefusal(inf.err)
+	if !refused || !isVersionRefusal(upstream.Body) {
 		return
 	}
 	if participantKey := e.participantKeyForHost(inf.hostIdx); participantKey != "" {

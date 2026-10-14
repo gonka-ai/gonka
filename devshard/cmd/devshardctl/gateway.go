@@ -85,6 +85,9 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
+	awaitingParticipantMu        sync.Mutex
+	awaitingParticipant          map[string]struct{}
+	awaitingParticipantRetrying  atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
@@ -448,7 +451,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		perf,
 		len(session.Clients()),
 		model,
-		sharedParticipantRequestLimiter.IsBlocked,
+		throttledOrOutOfChatBudget(session.Clients(), session.HostParticipantKeyList(), sharedParticipantRequestLimiter.IsBlocked),
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
 	proxy := &Proxy{
@@ -1020,12 +1023,14 @@ func (g *Gateway) checkBalances() {
 	runtimes := make([]*devshardRuntime, len(g.runtimeOrder))
 	copy(runtimes, g.runtimeOrder)
 	g.mu.Unlock()
+	chainMaxNonce := g.chainMaxNonce()
+	shareChainMaxNonce(runtimes, chainMaxNonce)
+	g.startRetryAwaitingParticipants()
 	if !isRotationEnabled {
 		g.releaseEscrowHolds(runtimes, "rotation_disabled")
 		return
 	}
 
-	chainMaxNonce := g.chainMaxNonce()
 	now := time.Now()
 	for _, rt := range runtimes {
 		if rt == nil || !rt.active.Load() || rt.proxy == nil || rt.proxy.sm == nil {
@@ -5094,7 +5099,7 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 	}
 	// Before the chain call: a replacement that fails to broadcast must not leave the escrow it
 	// replaces resident, holding its session and its series.
-	if !settings.EscrowRotation.SettlementEnabled {
+	if !settlementEnabledForModel(settings, modelID) {
 		g.retireRuntime(id, reason)
 	}
 
