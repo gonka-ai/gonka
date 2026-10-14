@@ -35,8 +35,10 @@ def read_csv(name):
 def inputs():
     with (HERE.parent / 'data' / 'mlnode-4.0.0-prefill.csv').open(newline='') as source:
         measurements = list(csv.DictReader(source))
+    current_bounds = {}
     for row in read_csv('models.csv'):
         m = IDS[row['model_id']]
+        current_bounds[m] = (Fraction(row['coeff_min']), Fraction(row['coeff_max']))
         INITIAL[m] = float(row['base_coefficient'])
         INITIAL_STATE[m] = dict(s=float(row['adaptive_step']), prev_sign=int(row['prev_sign']))
     benchmarks = {}
@@ -52,6 +54,9 @@ def inputs():
         values = dict(D_i=parity['H100'],
                       coeff_i_min=base if m == 'MiniMax' else base * min(parity.values()) / Fraction('1.05'),
                       coeff_i_max=base if m == 'MiniMax' else base * max(parity.values()) * Fraction('1.05'))
+        # Preserve the full existing range so activation does not force a clamp.
+        values['coeff_i_min'] = min(values['coeff_i_min'], current_bounds[m][0])
+        values['coeff_i_max'] = max(values['coeff_i_max'], current_bounds[m][1])
         for key, value in values.items():
             PARAMS[m][key] = (value.numerator * 10**12 // value.denominator) / 10**12
     nodes, excluded = [], Counter()
@@ -100,8 +105,8 @@ def settle(nodes, allocation, coeff, rng):
             own = host_raw[node['host']]
             effective = get_effective_coeff(shares(raw), coeff, PARAMS)
             network_weight = sum(raw[m] * effective[m] for m in MODELS)
-            reward_before = sum(own[m] * effective[m] for m in MODELS) / network_weight
-            # Switching cost equals 1% of this node's current epoch reward.
+            share_before = sum(own[m] * effective[m] for m in MODELS) / network_weight
+            # Switching cost equals 1% of this node's current network-weight share.
             cost = EPSILON * node['rates'][current] * effective[current] / network_weight
             best, best_gain = current, cost
             for candidate in MODELS:
@@ -114,8 +119,8 @@ def settle(nodes, allocation, coeff, rng):
                 own_weight = sum(own[m] * trial_eff[m] for m in MODELS)
                 own_weight -= node['rates'][current] * trial_eff[current]
                 own_weight += node['rates'][candidate] * trial_eff[candidate]
-                reward_after = own_weight / sum(trial[m] * trial_eff[m] for m in MODELS)
-                gain = reward_after - reward_before
+                share_after = own_weight / sum(trial[m] * trial_eff[m] for m in MODELS)
+                gain = share_after - share_before
                 if gain > best_gain + 1e-15:
                     best, best_gain = candidate, gain
             if best != current:
@@ -151,7 +156,7 @@ def record(epoch, nodes, allocation, coeff, state, passes, switches):
                for m in MODELS)
     return dict(epoch=epoch, base_coefficients=coeff.copy(), effective_coefficients=effective,
                 normalized_shares=share, gpu_allocation=hardware,
-                gnk_per_8gpu_relative_to_8h100=relative, allocation_passes=passes,
+                poc_weight_per_8gpu_relative_to_8h100=relative, allocation_passes=passes,
                 switches=switches, controller_state={m: s.copy() for m, s in state.items()})
 
 

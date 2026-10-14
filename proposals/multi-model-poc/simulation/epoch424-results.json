@@ -12,13 +12,13 @@
     "GLM": {
       "T_i": 0.3333,
       "D_i": 2.9,
-      "coeff_i_min": 0.8352,
+      "coeff_i_min": 0.558,
       "coeff_i_max": 1.48176
     },
     "DeepSeek": {
       "T_i": 0.3333,
       "D_i": 1.705882352941,
-      "coeff_i_min": 0.3825,
+      "coeff_i_min": 0.2214,
       "coeff_i_max": 0.569907692307
     }
   },
@@ -68,12 +68,6 @@
           "B300": 45
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 2.1097716082572426,
-        "B200": 5.37529282508968,
-        "B300": 5.562455808646254
-      },
       "allocation_passes": 0,
       "switches": 0,
       "controller_state": {
@@ -89,31 +83,37 @@
           "s": 0.05,
           "prev_sign": 1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 2.1097716082572426,
+        "B200": 5.37529282508968,
+        "B300": 5.562455808646254
       }
     },
     {
       "epoch": 1,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.8769600000000001,
-        "DeepSeek": 0.401625
+        "GLM": 0.7161000000000001,
+        "DeepSeek": 0.28413
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.8769600000000001,
-        "DeepSeek": 0.401625
+        "GLM": 0.7161000000000001,
+        "DeepSeek": 0.28413
       },
       "normalized_shares": {
-        "MiniMax": 0.817565840776409,
+        "MiniMax": 1.0,
         "GLM": 0.0,
-        "DeepSeek": 0.18243415922359094
+        "DeepSeek": 0.0
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 300,
           "H200": 197,
           "B200": 59,
-          "B300": 99
+          "B300": 144
         },
         "GLM": {
           "H100": 0,
@@ -125,17 +125,11 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 45
+          "B300": 0
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.793103448275863,
-        "B200": 4.827586206896555,
-        "B300": 5.862068965517252
-      },
       "allocation_passes": 2,
-      "switches": 25,
+      "switches": 40,
       "controller_state": {
         "MiniMax": {
           "s": 0.05,
@@ -149,35 +143,41 @@
           "s": 0.05,
           "prev_sign": 1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.793103448275863,
+        "B200": 4.827586206896555,
+        "B300": 5.862068965517252
       }
     },
     {
       "epoch": 2,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.42170625
+        "GLM": 0.7877100000000001,
+        "DeepSeek": 0.312543
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40845528704756034
+        "GLM": 0.7877100000000001,
+        "DeepSeek": 0.312543
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 1.0,
+        "GLM": 0.0,
+        "DeepSeek": 0.0
       },
       "gpu_allocation": {
         "MiniMax": {
-          "H100": 0,
-          "H200": 0,
-          "B200": 59,
-          "B300": 12
-        },
-        "GLM": {
           "H100": 300,
           "H200": 197,
+          "B200": 59,
+          "B300": 144
+        },
+        "GLM": {
+          "H100": 0,
+          "H200": 0,
           "B200": 0,
           "B300": 0
         },
@@ -185,17 +185,11 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 0
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.412231961125393
-      },
-      "allocation_passes": 2,
-      "switches": 147,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.05,
@@ -206,38 +200,44 @@
           "prev_sign": 1
         },
         "DeepSeek": {
-          "s": 0.05,
+          "s": 0.1,
           "prev_sign": 1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.793103448275863,
+        "B200": 4.827586206896555,
+        "B300": 5.862068965517252
       }
     },
     {
       "epoch": 3,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.41116359375
+        "GLM": 0.9452520000000001,
+        "DeepSeek": 0.3750516
       },
       "effective_coefficients": {
-        "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40147584705489314
+        "MiniMax": 0.30239999999999995,
+        "GLM": 0.9452520000000001,
+        "DeepSeek": 0.3750516
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.8316693754353378,
+        "GLM": 0.1683306245646622,
+        "DeepSeek": 0.0
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
-          "H200": 0,
+          "H200": 197,
           "B200": 59,
-          "B300": 12
+          "B300": 144
         },
         "GLM": {
           "H100": 300,
-          "H200": 197,
+          "H200": 0,
           "B200": 0,
           "B300": 0
         },
@@ -245,55 +245,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 0
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.327339423356518
-      },
-      "allocation_passes": 1,
-      "switches": 0,
+      "allocation_passes": 2,
+      "switches": 43,
       "controller_state": {
         "MiniMax": {
-          "s": 0.025,
-          "prev_sign": 1
+          "s": 0.05,
+          "prev_sign": -1
         },
         "GLM": {
-          "s": 0.025,
-          "prev_sign": 0
+          "s": 0.2,
+          "prev_sign": 1
         },
         "DeepSeek": {
-          "s": 0.025,
-          "prev_sign": -1
+          "s": 0.2,
+          "prev_sign": 1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6635563849640091,
+        "B200": 4.478805651826179,
+        "B300": 5.438549720074652
       }
     },
     {
       "epoch": 4,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3906054140625
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.46881449999999997
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3906054140625
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.40966313482003275
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.24019031017299103,
+        "GLM": 0.3217884440380793,
+        "DeepSeek": 0.43802124578892965
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 31
         },
         "GLM": {
           "H100": 300,
@@ -305,55 +305,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 113
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 75,
+      "allocation_passes": 4,
+      "switches": 135,
       "controller_state": {
         "MiniMax": {
           "s": 0.05,
-          "prev_sign": 1
+          "prev_sign": -1
         },
         "GLM": {
-          "s": 0.025,
-          "prev_sign": 0
+          "s": 0.05,
+          "prev_sign": 1
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.25,
+          "prev_sign": 1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.260918679318944
       }
     },
     {
       "epoch": 5,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40037054941406247
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.44537377499999997
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.40037054941406247
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4101112065956017
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.279282024990419,
+        "GLM": 0.32513755053870136,
+        "DeepSeek": 0.3955804244708797
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 43
         },
         "GLM": {
           "H100": 300,
@@ -365,55 +365,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 101
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 1,
-      "switches": 0,
+      "allocation_passes": 3,
+      "switches": 11,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 1
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.025,
-          "prev_sign": 1
+          "s": 0.05,
+          "prev_sign": -1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.256333032271393
       }
     },
     {
       "epoch": 6,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4203890768847656
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40758329326347653
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 12
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -425,21 +425,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.4016256996879
-      },
-      "allocation_passes": 2,
-      "switches": 75,
+      "allocation_passes": 3,
+      "switches": 10,
       "controller_state": {
         "MiniMax": {
           "s": 0.05,
-          "prev_sign": -1
+          "prev_sign": 1
         },
         "GLM": {
           "s": 0.025,
@@ -447,33 +441,39 @@
         },
         "DeepSeek": {
           "s": 0.05,
-          "prev_sign": 1
+          "prev_sign": -1
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 7,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40987934996264647
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4006256531154114
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 12
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -485,21 +485,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.316998318454968
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -507,33 +501,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 8,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.38938538246451415
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.38938538246451415
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -545,55 +545,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 75,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 9,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.399120017026127
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.399120017026127
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -605,21 +605,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -627,33 +621,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 10,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.41907601787743337
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4067140230974776
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 12
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -665,55 +665,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.391052566245098
-      },
-      "allocation_passes": 2,
-      "switches": 75,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 11,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40859911743049754
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3997781147035626
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 12
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -725,21 +725,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.306689513348238
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -747,33 +741,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 12,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.38816916155897263
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.38816916155897263
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -785,55 +785,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 75,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 13,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3978733905979469
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3978733905979469
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -845,21 +845,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -867,33 +861,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 14,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.41776706012784426
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40584746804251276
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1799156862280801,
-        "GLM": 0.31662453307077504,
-        "DeepSeek": 0.5034597807011449
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 12
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -905,55 +905,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 132
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.380512457323795
-      },
-      "allocation_passes": 2,
-      "switches": 72,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 15,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40732288362464814
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000003,
-        "DeepSeek": 0.3993895083424435
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.1924437724938603,
-        "GLM": 0.31769785245185195,
-        "DeepSeek": 0.48985837505428775
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 16
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -965,21 +965,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 128
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.302786768232664
-      },
-      "allocation_passes": 2,
-      "switches": 1,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -987,33 +981,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 16,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3869567394434157
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3869567394434157
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1025,55 +1025,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 71,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 17,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.39663065792950103
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.39663065792950103
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1085,21 +1085,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1107,33 +1101,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 18,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4164621908259761
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40577011422062703
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.19558907679119125,
-        "GLM": 0.31796732026920976,
-        "DeepSeek": 0.4864436029395991
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 17
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1145,55 +1145,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 127
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.377661812986617
-      },
-      "allocation_passes": 2,
-      "switches": 68,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 19,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40605063605532665
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3996042983692243
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.220944905948303,
-        "GLM": 0.32013963152890623,
-        "DeepSeek": 0.4589154625227907
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 25
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1205,21 +1205,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 119
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.306995931393629
-      },
-      "allocation_passes": 2,
-      "switches": 1,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1227,33 +1221,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 20,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3857481042525603
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3857481042525603
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1265,55 +1265,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 67,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 21,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.39539180685887426
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.39539180685887426
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1325,21 +1325,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1347,33 +1341,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 22,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.415161397201818
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30240000000000006,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40640183792637935
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.22413876556168608,
-        "GLM": 0.32041325922836156,
-        "DeepSeek": 0.4554479752099524
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 26
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1385,55 +1385,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 118
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.381093075925529
-      },
-      "allocation_passes": 2,
-      "switches": 72,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 23,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40478236227177256
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30240000000000006,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.39880638788493517
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.22413876556168608,
-        "GLM": 0.32041325922836156,
-        "DeepSeek": 0.4554479752099524
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 26
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1445,21 +1445,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 118
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.298506297275092
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1467,33 +1461,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 24,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3845432441581839
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3845432441581839
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1505,55 +1505,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 72,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 25,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.39415682526213847
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.39415682526213847
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1565,21 +1565,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1587,33 +1581,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 26,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4138646665252454
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000003,
-        "DeepSeek": 0.4056292740437484
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.2273380895160615,
-        "GLM": 0.3206873550745847,
-        "DeepSeek": 0.4519745554093539
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 27
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1625,55 +1625,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 117
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.372323864730004
-      },
-      "allocation_passes": 2,
-      "switches": 68,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 27,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40351804986211426
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.39902307115519403
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.25313109182156734,
-        "GLM": 0.3228971202919809,
-        "DeepSeek": 0.4239717878864516
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 35
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1685,21 +1685,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 109
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.303020144513571
-      },
-      "allocation_passes": 2,
-      "switches": 1,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1707,33 +1701,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 28,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3833421473690085
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3833421473690085
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1745,55 +1745,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 67,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 29,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3929257010532337
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3929257010532337
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1805,21 +1805,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1827,33 +1821,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 30,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4125719861058954
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.4055669258650161
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.24341716732757424,
-        "GLM": 0.32206489873758454,
-        "DeepSeek": 0.43451793393484134
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 32
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1865,55 +1865,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 112
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.369835528877695
-      },
-      "allocation_passes": 2,
-      "switches": 66,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 31,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.402257686453248
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000003,
-        "DeepSeek": 0.39843057309386665
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.2628953482893346,
-        "GLM": 0.3237336539401637,
-        "DeepSeek": 0.4133709977705018
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 38
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1925,21 +1925,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 106
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.297952223194341
-      },
-      "allocation_passes": 2,
-      "switches": 3,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -1947,33 +1941,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 32,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3825
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3825
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -1985,55 +1985,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 63,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 33,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3920625
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3920625
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2045,21 +2045,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -2067,33 +2061,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 34,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.411665625
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40581651117041045
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.25963497956536846,
-        "GLM": 0.32345432820224557,
-        "DeepSeek": 0.4169106922323859
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 37
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2105,55 +2105,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 107
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.370480179945227
-      },
-      "allocation_passes": 2,
-      "switches": 65,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 35,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3981207164866572
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.27271032893400216,
-        "GLM": 0.3245745332833712,
-        "DeepSeek": 0.40271513778262663
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 41
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2165,21 +2165,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 103
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.295894430357729
-      },
-      "allocation_passes": 2,
-      "switches": 3,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -2187,33 +2181,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 36,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3825
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3825
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2225,55 +2225,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
-      },
-      "allocation_passes": 2,
-      "switches": 62,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 37,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.3920625
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
-        "MiniMax": 0.30239999999999995,
-        "GLM": 0.9562810473917928,
-        "DeepSeek": 0.3920625
+        "MiniMax": 0.3024,
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.6436462540633364,
-        "GLM": 0.3563537459366636,
-        "DeepSeek": 0.0
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 144
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2285,21 +2285,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 0
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6500000000000001,
-        "B200": 4.42715037754531,
-        "B300": 5.375825458447882
       },
       "allocation_passes": 1,
       "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -2307,33 +2301,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 38,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.411665625
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.40562054935649194
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.25638023225138795,
-        "GLM": 0.3231754840676753,
-        "DeepSeek": 0.4204442836809367
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 36
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2345,55 +2345,55 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 108
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999997,
-        "B200": 4.388714733542319,
-        "B300": 5.368916249753607
-      },
-      "allocation_passes": 2,
-      "switches": 65,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
-          "s": 0.05,
-          "prev_sign": -1
+          "s": 0.025,
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
           "prev_sign": 0
         },
         "DeepSeek": {
-          "s": 0.05,
-          "prev_sign": 1
+          "s": 0.025,
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 39,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2405,21 +2405,15 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
       },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
-      },
-      "allocation_passes": 2,
-      "switches": 4,
+      "allocation_passes": 1,
+      "switches": 0,
       "controller_state": {
         "MiniMax": {
           "s": 0.025,
-          "prev_sign": 1
+          "prev_sign": 0
         },
         "GLM": {
           "s": 0.025,
@@ -2427,33 +2421,39 @@
         },
         "DeepSeek": {
           "s": 0.025,
-          "prev_sign": -1
+          "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 40,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2465,14 +2465,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2489,31 +2483,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 41,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2525,14 +2525,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2549,31 +2543,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 42,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2585,14 +2585,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2609,31 +2603,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 43,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2645,14 +2645,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2669,31 +2663,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 44,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2705,14 +2705,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2729,31 +2723,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 45,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2765,14 +2765,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2789,31 +2783,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 46,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2825,14 +2825,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2849,31 +2843,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 47,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2885,14 +2885,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2909,31 +2903,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 48,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -2945,14 +2945,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -2969,31 +2963,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 49,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -3005,14 +3005,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -3029,31 +3023,37 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     },
     {
       "epoch": 50,
       "base_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000002,
-        "DeepSeek": 0.401373984375
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.42310508624999993
       },
       "effective_coefficients": {
         "MiniMax": 0.3024,
-        "GLM": 0.9646560000000001,
-        "DeepSeek": 0.3993188368366321
+        "GLM": 0.9925146000000001,
+        "DeepSeek": 0.4083882074043766
       },
       "normalized_shares": {
-        "MiniMax": 0.29913462240632227,
-        "GLM": 0.32683838314147556,
-        "DeepSeek": 0.37402699445220217
+        "MiniMax": 0.31248548146303634,
+        "GLM": 0.32798219197832396,
+        "DeepSeek": 0.35953232655863976
       },
       "gpu_allocation": {
         "MiniMax": {
           "H100": 0,
           "H200": 0,
           "B200": 59,
-          "B300": 49
+          "B300": 53
         },
         "GLM": {
           "H100": 300,
@@ -3065,14 +3065,8 @@
           "H100": 0,
           "H200": 0,
           "B200": 0,
-          "B300": 95
+          "B300": 91
         }
-      },
-      "gnk_per_8gpu_relative_to_8h100": {
-        "H100": 1.0,
-        "H200": 1.6499999999999995,
-        "B200": 4.388714733542319,
-        "B300": 5.308965821274225
       },
       "allocation_passes": 1,
       "switches": 0,
@@ -3089,6 +3083,12 @@
           "s": 0.025,
           "prev_sign": 0
         }
+      },
+      "poc_weight_per_8gpu_relative_to_8h100": {
+        "H100": 1.0,
+        "H200": 1.6500000000000012,
+        "B200": 4.265529192215411,
+        "B300": 5.234690586140012
       }
     }
   ],
