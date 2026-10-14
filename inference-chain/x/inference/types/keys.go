@@ -103,6 +103,8 @@ var (
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
+	PocStageRecipesPrefix             = collections.NewPrefix(66)
+	PocSchemeEnabledEpochPrefix       = collections.NewPrefix(67)
 	// Maintenance window collections. Prefixes start at 100 to (a) leave room
 	// for upstream's BridgeTransactionValidators (64) and PreservedNodesSnapshot (65)
 	// which shipped first on gm/microrelease, and (b) avoid colliding with

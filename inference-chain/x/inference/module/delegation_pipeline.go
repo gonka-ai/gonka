@@ -108,6 +108,17 @@ func (am AppModule) resolveEpochCoefficients(
 	var previousScales []*types.ConfirmationWeightScale
 	hasPriorTotals := upcomingEpochIndex > 1
 	if hasPriorTotals {
+		// A regular PREFILL→DECODE switch must not reuse the PREFILL controller.
+		// Tracking confirmation PoC does not reach this path.
+		changed, err := am.regularSchemeChanged(ctx, upcomingEpochIndex)
+		if err != nil {
+			return nil, err
+		}
+		if changed {
+			hasPriorTotals = false
+		}
+	}
+	if hasPriorTotals {
 		previousEpochIndex := upcomingEpochIndex - 1
 		root, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, "")
 		if err != nil {
@@ -151,6 +162,46 @@ func (am AppModule) resolveEpochCoefficients(
 		participantModelIDs,
 		hasPriorTotals,
 	)
+}
+
+// regularSchemeChanged reports that this regular PoC froze a different scheme
+// than the previous epoch. A missing recipe is PREFILL: v0.2.16 epochs have
+// no recipe, and the regular scheme stays PREFILL until governance switches it.
+// Confirmation PoC recipes are stored at the trigger height, not here.
+func (am AppModule) regularSchemeChanged(ctx context.Context, upcomingEpochIndex uint64) (bool, error) {
+	if upcomingEpochIndex == 0 {
+		return false, nil
+	}
+	upcoming, found := am.keeper.GetEpoch(ctx, upcomingEpochIndex)
+	if !found || upcoming == nil {
+		return false, nil
+	}
+	upcomingRecipe, found, err := am.keeper.GetPocStageRecipe(ctx, upcoming.PocStartBlockHeight)
+	if err != nil {
+		return false, fmt.Errorf("dynamic coefficients: read recipe at height %d: %w", upcoming.PocStartBlockHeight, err)
+	}
+	if !found {
+		return false, nil
+	}
+	previousScheme := types.PocScheme_POC_SCHEME_PREFILL
+	previous, found := am.keeper.GetEpoch(ctx, upcomingEpochIndex-1)
+	if found && previous != nil {
+		previousRecipe, recipeFound, err := am.keeper.GetPocStageRecipe(ctx, previous.PocStartBlockHeight)
+		if err != nil {
+			return false, fmt.Errorf("dynamic coefficients: read recipe at height %d: %w", previous.PocStartBlockHeight, err)
+		}
+		if recipeFound {
+			previousScheme = previousRecipe.Scheme
+		}
+	}
+	if upcomingRecipe.Scheme == previousScheme {
+		return false, nil
+	}
+	am.LogInfo("dynamic coefficient history reset on regular scheme change", types.PoC,
+		"upcoming_epoch", upcomingEpochIndex,
+		"previous_scheme", previousScheme.String(),
+		"scheme", upcomingRecipe.Scheme.String())
+	return true, nil
 }
 
 func currentModelRawTotals(

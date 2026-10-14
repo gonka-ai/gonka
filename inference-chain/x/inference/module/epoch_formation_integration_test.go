@@ -24,7 +24,7 @@ func setFrozenCoefficientConfig(
 ) {
 	t.Helper()
 
-	frozen, err := coefficient.Freeze(pocParams)
+	frozen, err := coefficient.Freeze(pocParams, nil)
 	require.NoError(t, err)
 	data, found := k.GetEpochGroupData(ctx, epochIndex, "")
 	if !found {

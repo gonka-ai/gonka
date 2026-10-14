@@ -254,14 +254,17 @@ func (c *NoOpNodeCommand) Execute(ctx context.Context, worker *NodeWorker) NodeR
 }
 
 type StartPoCNodeCommandV2 struct {
-	BlockHeight          int64
-	BlockHash            string
-	PubKey               string
-	CallbackUrl          string
-	TotalNodes           int
-	Model                string
-	SeqLen               int64
-	PocStrongerRng       bool
+	BlockHeight    int64
+	BlockHash      string
+	PubKey         string
+	CallbackUrl    string
+	TotalNodes     int
+	Model          string
+	SeqLen         int64
+	PocStrongerRng bool
+	// DecodeMaxTokens is N when Scheme is DECODE; ignored (must be 0) on PREFILL.
+	DecodeMaxTokens      int64
+	Scheme               types.PocScheme
 	WindDown             bool
 	LastPocV2BlockHeight int64
 	LastPocV2BlockHash   string
@@ -327,15 +330,12 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 	}
 
 	req := mlnodeclient.PoCInitGenerateRequestV2{
-		BlockHash:   c.BlockHash,
-		BlockHeight: c.BlockHeight,
-		PublicKey:   c.PubKey,
-		NodeId:      int(worker.node.Node.NodeNum),
-		NodeCount:   c.TotalNodes,
-		Params: mlnodeclient.PoCParamsV2{
-			Model:  c.Model,
-			SeqLen: c.SeqLen,
-		},
+		BlockHash:      c.BlockHash,
+		BlockHeight:    c.BlockHeight,
+		PublicKey:      c.PubKey,
+		NodeId:         int(worker.node.Node.NodeNum),
+		NodeCount:      c.TotalNodes,
+		Params:         mlnodeclient.PoCParamsForScheme(c.Model, c.SeqLen, c.DecodeMaxTokens, c.Scheme),
 		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
 		PocStrongerRng: c.PocStrongerRng,
 	}

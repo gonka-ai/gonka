@@ -1358,7 +1358,7 @@ func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
 		dynamicModel("a", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 		dynamicModel("b", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 	)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	require.NoError(t, err)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 1,
@@ -1407,7 +1407,7 @@ func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
 	params := dynamicPocParams(
 		dynamicModel("a", dec(12, -1), dec(5, -1), dec(2, 0), dec(1, 0), 10000),
 	)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	require.NoError(t, err)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex:               1,
@@ -1422,6 +1422,55 @@ func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "0.500000000000000000", result.Effective["a"].String())
 	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
+}
+
+func TestResolveEpochCoefficients_SchemeChangeDropsPriorController(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	params := dynamicPocParams(
+		dynamicModel("a", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 10000),
+	)
+	frozen, err := coefficient.Freeze(params, nil)
+	require.NoError(t, err)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 100}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 200}))
+	require.NoError(t, k.PocStageRecipes.Set(ctx, 100, types.PocStageRecipe{
+		StageHeight: 100,
+		Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
+	}))
+	require.NoError(t, k.PocStageRecipes.Set(ctx, 200, types.PocStageRecipe{
+		StageHeight: 200,
+		Scheme:      types.PocScheme_POC_SCHEME_DECODE,
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 1,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{{
+			ModelId:         "a",
+			BaseCoefficient: dec(15, -1),
+			AdaptiveStep:    dec(5, -2),
+			PrevSign:        1,
+		}},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:               2,
+		DynamicCoefficientParams: frozen.Params,
+		ConfirmationWeightScales: frozen.Scales,
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        1,
+		ModelId:           "a",
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: "live", Weight: 1000}},
+	})
+	active := []*types.ActiveParticipant{{
+		Index:   "live",
+		Models:  []string{"a"},
+		MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}}},
+	}}
+
+	result, err := am.resolveEpochCoefficients(ctx, active, 2)
+	require.NoError(t, err)
+	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
+	require.Equal(t, "0.500000000000000000", result.Effective["a"].String())
 }
 
 func TestCurrentModelRawTotalsRejectsOverflow(t *testing.T) {

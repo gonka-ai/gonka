@@ -12,22 +12,30 @@ func testDynamicPocParams() *PocParams {
 			{
 				ModelId:           "a",
 				WeightScaleFactor: &Decimal{Value: 1, Exponent: 0},
-				DynamicCoefficient: &DynamicCoefficientModelConfig{
-					CoeffMin:           &Decimal{Value: 9, Exponent: -1},
-					CoeffMax:           &Decimal{Value: 11, Exponent: -1},
-					RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
-					TargetShareBps:     5000,
-				},
+				Schemes: []*PocSchemeParams{{
+					Scheme: PocScheme_POC_SCHEME_PREFILL,
+					SeqLen: 128,
+					DynamicCoefficient: &DynamicCoefficientModelConfig{
+						CoeffMin:           &Decimal{Value: 9, Exponent: -1},
+						CoeffMax:           &Decimal{Value: 11, Exponent: -1},
+						RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
+						TargetShareBps:     5000,
+					},
+				}},
 			},
 			{
 				ModelId:           "b",
 				WeightScaleFactor: &Decimal{Value: 1, Exponent: 0},
-				DynamicCoefficient: &DynamicCoefficientModelConfig{
-					CoeffMin:           &Decimal{Value: 1, Exponent: 0},
-					CoeffMax:           &Decimal{Value: 1, Exponent: 0},
-					RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
-					TargetShareBps:     5000,
-				},
+				Schemes: []*PocSchemeParams{{
+					Scheme: PocScheme_POC_SCHEME_PREFILL,
+					SeqLen: 128,
+					DynamicCoefficient: &DynamicCoefficientModelConfig{
+						CoeffMin:           &Decimal{Value: 1, Exponent: 0},
+						CoeffMax:           &Decimal{Value: 1, Exponent: 0},
+						RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
+						TargetShareBps:     5000,
+					},
+				}},
 			},
 		},
 		DynamicCoefficientParams: &DynamicCoefficientParams{
@@ -47,14 +55,14 @@ func TestDynamicCoefficientParamsValidate(t *testing.T) {
 
 	t.Run("config presence defines enabled models", func(t *testing.T) {
 		params := testDynamicPocParams()
-		params.Models[0].DynamicCoefficient = nil
-		params.Models[1].DynamicCoefficient.TargetShareBps = 10000
+		params.Models[0].Schemes[0].DynamicCoefficient = nil
+		params.Models[1].Schemes[0].DynamicCoefficient.TargetShareBps = 10000
 		require.NoError(t, params.Validate())
 	})
 
 	t.Run("targets sum exactly", func(t *testing.T) {
 		params := testDynamicPocParams()
-		params.Models[0].DynamicCoefficient.TargetShareBps = 4999
+		params.Models[0].Schemes[0].DynamicCoefficient.TargetShareBps = 4999
 		require.ErrorContains(t, params.Validate(), "must sum to 10000")
 	})
 
@@ -66,7 +74,7 @@ func TestDynamicCoefficientParamsValidate(t *testing.T) {
 
 	t.Run("coeff min must be positive", func(t *testing.T) {
 		params := testDynamicPocParams()
-		params.Models[0].DynamicCoefficient.CoeffMin = &Decimal{Value: 0, Exponent: 0}
+		params.Models[0].Schemes[0].DynamicCoefficient.CoeffMin = &Decimal{Value: 0, Exponent: 0}
 		require.ErrorContains(t, params.Validate(), "must be positive")
 	})
 

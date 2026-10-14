@@ -200,7 +200,10 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 
 	bridge := &MockBrokerChainBridge{}
 	bridge.On("GetBlockHash", int64(100)).Return("regular-hash", nil)
-	bridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil)
+	bridge.On("GetPocStageRecipe", int64(100)).Return(&types.QueryPocStageRecipeResponse{
+		Found:  true,
+		Recipe: &types.PocStageRecipe{StageHeight: 100},
+	}, nil)
 
 	b := &Broker{phaseTracker: tracker, chainBridge: bridge}
 	node := createTestNode("node-1")

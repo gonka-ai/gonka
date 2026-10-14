@@ -58,7 +58,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 				"target", ch.Target(), "start_height", ch.StartHeight())
 			continue
 		}
-		workItems := v.challengeWorkItems(queryClient, ch)
+		workItems := v.challengeWorkItems(queryClient, ch, pocParams)
 		if len(workItems) == 0 {
 			logging.Info("OffChainValidator: no challenge work items", types.PoC,
 				"target", ch.Target(), "start_height", ch.StartHeight())
@@ -70,7 +70,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 	}
 }
 
-func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch *types.OpenPoCChallenge) []participantWork {
+func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch *types.OpenPoCChallenge, pocParams *types.PocParams) []participantWork {
 	workItems := make([]participantWork, 0, len(ch.Commits))
 	for _, commit := range ch.Commits {
 		if commit == nil {
@@ -106,7 +106,7 @@ func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch
 				"address", commit.ParticipantAddress)
 			continue
 		}
-		workItems = append(workItems, participantWork{
+		work := participantWork{
 			address:   commit.ParticipantAddress,
 			modelId:   commit.ModelId,
 			url:       participantResp.Participant.InferenceUrl,
@@ -114,7 +114,13 @@ func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch
 			count:     commit.Count,
 			rootHash:  commit.RootHash,
 			treeDepth: commit.TreeDepth,
-		})
+		}
+		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
+			if steps, ok := mc.MaxTokensForScheme(pocParams.PocScheme); ok {
+				work.decodeMax = steps
+			}
+		}
+		workItems = append(workItems, work)
 	}
 	return workItems
 }
