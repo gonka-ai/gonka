@@ -218,6 +218,88 @@ func TestSession_SendCatchUpReadsEachChunkFromTheStore(t *testing.T) {
 	require.Equal(t, uint64(n), session.hostSyncNonce[0])
 }
 
+// aheadCatchUpClient records catch-up chunks. With jump, the host applies the
+// whole journal before the first chunk is answered, the way a refused-timeout
+// ChallengeReceipt carries another host's journal to a paused executor. With
+// unhashedTip, every answer claims the session tip with no state hash or
+// signature, while the host holds only what the chunks delivered.
+type aheadCatchUpClient struct {
+	*InProcessClient
+	session     *Session
+	jump        bool
+	unhashedTip bool
+	mu          sync.Mutex
+	chunks      [][2]uint64
+}
+
+func (c *aheadCatchUpClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.mu.Lock()
+	c.chunks = append(c.chunks, [2]uint64{req.Diffs[0].Nonce, req.Diffs[len(req.Diffs)-1].Nonce})
+	first := len(c.chunks) == 1
+	c.mu.Unlock()
+	if c.jump && first {
+		c.session.mu.Lock()
+		all := append([]types.Diff(nil), c.session.diffRangeLocked(1, c.session.nonce)...)
+		c.session.mu.Unlock()
+		c.Host.ApplyCatchUpDiffs(all)
+	}
+	resp, err := c.InProcessClient.Send(ctx, req, stream, onReceipt)
+	if err != nil || !c.unhashedTip {
+		return resp, err
+	}
+	c.session.mu.Lock()
+	tip := c.session.nonce
+	c.session.mu.Unlock()
+	claimed := *resp
+	claimed.Nonce = tip
+	claimed.StateHash = nil
+	claimed.StateSig = nil
+	return &claimed, nil
+}
+
+func requireHostAt(t *testing.T, session *Session, h *host.Host, nonce uint64, root []byte) {
+	t.Helper()
+	require.Equal(t, nonce, h.LatestNonce())
+	hostRoot, err := h.StateRoot()
+	require.NoError(t, err)
+	require.Equal(t, root, hostRoot)
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.Equal(t, nonce, session.hostSyncNonce[0])
+}
+
+func TestSession_SendCatchUpSkipsAHostVerifiablyAhead(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize*3 + 50
+	roots := composeEmptyDiffs(t, session, n)
+	client := &aheadCatchUpClient{
+		InProcessClient: session.clients[0].(*InProcessClient),
+		session:         session,
+		jump:            true,
+	}
+
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+
+	require.Equal(t, [][2]uint64{{1, catchUpChunkSize}}, client.chunks,
+		"a hashed tip answer is checked against our root, so the rest is not resent")
+	requireHostAt(t, session, client.Host, n, roots[n])
+}
+
+func TestSession_SendCatchUpDoesNotSkipOnAnUnhashedTip(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize*3 + 50
+	roots := composeEmptyDiffs(t, session, n)
+	client := &aheadCatchUpClient{
+		InProcessClient: session.clients[0].(*InProcessClient),
+		session:         session,
+		unhashedTip:     true,
+	}
+
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+
+	requireHostAt(t, session, client.Host, n, roots[n])
+}
+
 type recordedSend struct {
 	from, to, nonce uint64
 	payload         bool
