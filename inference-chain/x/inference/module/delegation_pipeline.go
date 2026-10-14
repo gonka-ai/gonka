@@ -931,6 +931,25 @@ type votingPowerCapLogger interface {
 	LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{})
 }
 
+// nopCapLogger satisfies votingPowerCapLogger without touching any real logger.
+type nopCapLogger struct{}
+
+func (nopCapLogger) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
+func (nopCapLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
+
+func capPositiveVotingPowers(vpMap map[string]int64, capPct mathsdk.LegacyDec, modelID string, logger votingPowerCapLogger) {
+	positive := make(map[string]int64, len(vpMap))
+	for addr, vp := range vpMap {
+		if vp > 0 {
+			positive[addr] = vp
+		}
+	}
+	capPerModelVotingPowers(positive, capPct, modelID, logger)
+	for addr, vp := range positive {
+		vpMap[addr] = vp
+	}
+}
+
 // sumInt64Safe sums the values of a string-keyed int64 map, returning
 // (sum, true) on success or (0, false) if the sum would overflow int64.
 // Iterates over sorted keys so the accumulation order stays deterministic,
