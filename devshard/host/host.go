@@ -139,6 +139,7 @@ type disappearedFinishObs struct {
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
 	mu                 sync.Mutex
+	writer             diffWriter
 	sm                 *state.StateMachine
 	signer             signing.Signer
 	verifier           signing.Verifier
@@ -632,23 +633,23 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
-	var newlyApplied []types.Diff
-	diffsApplied := false
-	for _, diff := range req.Diffs {
-		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
-			h.mu.Unlock()
+	diffsApplied := len(req.Diffs) > 0
+	if diffsApplied {
+		lastAppliedTxs = req.Diffs[len(req.Diffs)-1].Txs
+	}
+	newlyApplied, err := h.applyDiffsLocked(ctx, req.Diffs)
+	if err != nil {
+		h.mu.Unlock()
+		if errors.Is(err, types.ErrNonceLimitExceeded) {
 			return nil, err
 		}
-		before := h.sm.LatestNonce()
-		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
-			h.mu.Unlock()
-			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
-		}
-		if h.sm.LatestNonce() > before {
-			newlyApplied = append(newlyApplied, diff)
-		}
-		lastAppliedTxs = diff.Txs
-		diffsApplied = true
+		return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
+	}
+	// The diffs stay applied, but a caller that is gone gets no receipt: an
+	// execution nobody will read would only orphan the inference.
+	if err := ctx.Err(); err != nil {
+		h.mu.Unlock()
+		return nil, err
 	}
 
 	needOracle := h.oracleNeededLocked(req, newlyApplied)
@@ -804,76 +805,6 @@ func (h *Host) chainMaxNonce() uint32 {
 	return h.maxNonce.MaxNonce()
 }
 
-// applyAndPersist persists then commits a contiguous next-nonce diff
-// (persist-first). Captures WarmKeyDelta from ValidateDiff for replay.
-//
-// Callers that may see HA catch-up gaps must use applyAndPersistReconciling.
-// AppendDiff is idempotent for identical already-durable rows (Phase 1), so a
-// stale standby that fast-forwarded then re-persists the tip does not fail.
-// Persist uses bounded retry; on exhaustion memory is unchanged (no eviction).
-//
-// Caller must hold h.mu. May unlock briefly during persist backoff.
-func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
-	currentNonce := h.sm.LatestNonce()
-	if diff.Nonce <= currentNonce {
-		return nil
-	}
-	if err := h.checkDiffNonceLimitLocked(diff); err != nil {
-		return err
-	}
-
-	phaseBefore := h.sm.Phase()
-	if h.store != nil {
-		warmBefore := h.sm.WarmKeys()
-		vd, err := h.sm.ValidateDiff(diff)
-		if err != nil {
-			return fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
-		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		rec := types.DiffRecord{Diff: diff, StateHash: vd.Root, WarmKeyDelta: delta}
-		if err := h.persistDiffRetryLocked(ctx, rec); err != nil {
-			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
-		}
-		// CommitValidated installs the precomputed post-state (no second
-		// applyCore) and flushes the buffered obs writes. It returns false when
-		// another request committed this nonce while we unlocked for persist
-		// backoff, in which case the diff is already applied.
-		if !h.sm.CommitValidated(vd) {
-			return nil
-		}
-	} else if _, err := h.sm.ApplyDiff(diff); err != nil {
-		return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
-	}
-	h.mempool.RemoveIncluded(diff.Txs)
-
-	for _, tx := range diff.Txs {
-		if fi := tx.GetFinishInference(); fi != nil {
-			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
-		}
-	}
-
-	if h.store != nil {
-		// Validation obs recording runs only after the diff is committed.
-		// Correctness depends on the trial apply rejecting late/sealed
-		// validations before this runs; do not move recording before commit.
-		h.recordValidationObsFromAppliedDiff(diff.Txs)
-		phaseAfter := h.sm.Phase()
-		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
-		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
-		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
-	}
-	return nil
-}
-
-// persistDiffRetryLocked retries AppendDiff with backoff, unlocking h.mu during
-// waits so other requests can proceed. On exhaustion returns ErrPersistExhausted
-// without mutating host memory (persist-first: ValidateDiff left the SM
-// unchanged, and the commit happens only after this returns nil). Caller must
-// hold h.mu; it is held again on return. See storage.AppendDiffWithRetry.
-func (h *Host) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
-	return storage.AppendDiffWithRetryUnlocked(ctx, h.store, h.escrowID, rec, h.mu.Lock, h.mu.Unlock)
-}
-
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
 // JSON marshaling and storage I/O happen asynchronously outside h.mu.
 // Caller must hold h.mu.
@@ -915,9 +846,7 @@ func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *
 // Already-applied diffs (nonce <= current) are silently skipped.
 func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Lock()
-	for _, diff := range diffs {
-		_ = h.applyAndPersistReconciling(context.Background(), diff)
-	}
+	_, _ = h.applyDiffsLocked(context.Background(), diffs)
 	staleFinishes := h.collectStaleFinishesLocked()
 	h.mu.Unlock()
 
@@ -1291,11 +1220,24 @@ func storedResponseEpochs(epochID uint64) []uint64 {
 // would hold h.executing[id] for the process lifetime and permanently block this
 // inference; engine node-acquire loops also treat ctx as their only exit.
 func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+	execCtx, cancel := h.ExecutionContext(ctx)
 	go func() {
 		defer cancel()
 		_, _ = h.RunExecution(execCtx, job)
 	}()
+}
+
+// ExecutionContext detaches a signed execution from the request that started
+// it. Once the receipt is out the inference is owed: a client that leaves must
+// not stop the model run, the payload store, or the Finish.
+func (h *Host) ExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+}
+
+// RunExecutionDetached runs job in the background with no client attached.
+func (h *Host) RunExecutionDetached(ctx context.Context, job *devshard.ExecuteRequest) {
+	job.ResponseWriter = nil
+	h.executeAsync(ctx, job)
 }
 
 // executionBudget is the wall clock a detached execution may use. Past
@@ -2091,10 +2033,11 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	// An inference this host already held may have been executed by an
 	// earlier process that lost its finish.
 	_, heldBefore := h.sm.GetInference(inferenceID)
-	for _, diff := range diffs {
-		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
-			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
-		}
+	if _, err := h.applyDiffsLocked(ctx, diffs); err != nil {
+		return nil, 0, nil, fmt.Errorf("apply challenge diffs: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, nil, err
 	}
 
 	rec, ok := h.sm.GetInference(inferenceID)

@@ -33,6 +33,9 @@ const (
 	DevshardErrorUndeclaredVersion    = "undeclared_version"
 	DevshardErrorHeightSeedIncomplete = "height_seed_incomplete"
 	DevshardErrorCatalogPending       = "catalog_pending"
+	// DevshardErrorStorageBusy is a diff write that could not reach storage
+	// before the request deadline. Nothing was applied; resending is safe.
+	DevshardErrorStorageBusy = "storage_busy"
 	// DevshardErrorHTTPSessionRetired is Phase 7: the Echo session route is
 	// gone. Callers use Connect /sessions/{id}/rpc/ instead.
 	DevshardErrorHTTPSessionRetired = "http_session_retired"

@@ -370,6 +370,15 @@ func TestMapInferenceError_UnavailableLabel(t *testing.T) {
 	require.ErrorAs(t, err, &ce)
 	require.Equal(t, transport.DevshardErrorRequestsDisabled, ce.Meta().Get(transport.HeaderDevshardError))
 
+	busyErr := fmt.Errorf("persist diff nonce 1..200: %w", storage.ErrStorageBusy)
+	busy := echo.NewHTTPError(http.StatusServiceUnavailable, busyErr.Error()).SetInternal(busyErr)
+	for _, err := range []error{mapInferenceError(busy), mapCoreError(busyErr)} {
+		require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+		require.ErrorAs(t, err, &ce)
+		require.Equal(t, transport.DevshardErrorStorageBusy, ce.Meta().Get(transport.HeaderDevshardError))
+		require.True(t, transport.IsStorageBusy(err))
+	}
+
 	draining := echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
 	err = mapInferenceError(draining)
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))

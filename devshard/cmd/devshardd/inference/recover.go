@@ -11,9 +11,12 @@ import (
 	"strings"
 
 	"common/completionapi"
+	"common/logging"
 	"common/storage/payloads"
 	devshardpkg "devshard"
 	"devshard/observability"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // recoverStoredExecution rebuilds an execution result from a response an
@@ -46,9 +49,12 @@ func recoverStoredExecution(
 	if err != nil {
 		return nil, err
 	}
+	// The bytes are stored and the finish is owed whether or not the caller
+	// is still reading.
 	if req.ResponseWriter != nil {
 		if err := writeStoredResponse(req.ResponseWriter, response); err != nil {
-			return nil, fmt.Errorf("relay stored response: %w", err)
+			logging.Warn("The caller stopped reading the stored response, finishing the inference without it", types.Inferences,
+				"inference_id", req.InferenceID, "error", err)
 		}
 	}
 	return result, nil

@@ -366,6 +366,48 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
+// ValidateDiffs is ValidateDiff for a contiguous run. Each diff is
+// trial-applied on top of the previous one's post-state, and the whole run is
+// undone before return, so the live state is unchanged. It returns a handle
+// for every diff of the valid prefix, in order, and the error that ended it.
+// The handles must be committed in order with CommitValidated.
+func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, error) {
+	var sigErr error
+	for i, diff := range diffs {
+		if err := sm.verifyDiffUserSig(diff); err != nil {
+			diffs, sigErr = diffs[:i], err
+			break
+		}
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	out := make([]*ValidatedDiff, 0, len(diffs))
+	defer func() {
+		for i := len(out) - 1; i >= 0; i-- {
+			sm.undoJournalLocked(out[i].journal)
+		}
+	}()
+	for _, diff := range diffs {
+		var obs []deferredObsWrite
+		var marks []heightsync.AttributableMark
+		sm.obsDeferred = &obs
+		sm.marksDeferred = &marks
+		root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		sm.obsDeferred = nil
+		sm.marksDeferred = nil
+		if err != nil {
+			return out, err
+		}
+		warmAfter := copyStringMap(sm.state.WarmKeys)
+		sm.detachJournalLocked(j)
+		sm.installJournalLocked(j)
+		out = append(out, &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
+	}
+	return out, sigErr
+}
+
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
 }
