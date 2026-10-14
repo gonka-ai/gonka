@@ -491,11 +491,37 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 
 // AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
 // recovery txs from a challenge-receipt response into a verifier's pool.
+//
+// The challenge checked a state snapshot and ran without h.mu. A copy whose
+// record has moved on since is dropped: the diff that carried it was already
+// applied, so RemoveIncluded would never clear it and it would ride every
+// response. Checking under h.mu orders this against that apply.
 func (h *Host) AddTx(tx *types.DevshardTx) {
 	if tx == nil {
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if id, ok := h.settledRecoveryTxLocked(tx); ok {
+		logging.Debug("dropped recovery tx for a settled inference", "subsystem", "host",
+			"escrow", h.escrowID, "inference_id", id, "tx_hash", types.TxHash(tx))
+		return
+	}
 	h.mempool.AddTx(tx)
+}
+
+// settledRecoveryTxLocked reports a ConfirmStart or FinishInference that can no
+// longer apply to its record. Other txs are never settled here.
+func (h *Host) settledRecoveryTxLocked(tx *types.DevshardTx) (uint64, bool) {
+	if cs := tx.GetConfirmStart(); cs != nil {
+		rec, ok := h.sm.GetInference(cs.InferenceId)
+		return cs.InferenceId, !ok || rec.Status != types.StatusPending
+	}
+	if fi := tx.GetFinishInference(); fi != nil {
+		rec, ok := h.sm.GetInference(fi.InferenceId)
+		return fi.InferenceId, !ok || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted)
+	}
+	return 0, false
 }
 
 func (h *Host) EscrowID() string { return h.escrowID }
