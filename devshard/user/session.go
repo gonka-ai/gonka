@@ -922,12 +922,9 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 }
 
 // processResponseWithSyncCap is processResponse with an optional hostSyncNonce
-// ceiling. Catch-up passes syncCap=chunkNonce so a tip-sized resp.Nonce cannot
-// mark the host current past diffs this chunk never sent. A paused host can
-// be advanced by a refused-timeout ChallengeReceipt that carries another
-// host's journal; crediting that nonce used to skip the rest of catch-up and
-// drop it via dropDiffPrefixLocked.
-// syncCap 0 means no ceiling (inference / finalize paths).
+// ceiling. syncCap 0 means no ceiling. Catch-up passes its chunk's last nonce
+// for a response without a state hash: that resp.Nonce is unchecked, so it
+// must not mark the host current past diffs the chunk did not send.
 // Caller must hold s.mu.
 func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostResponse, inferenceNonce uint64, syncCap uint64) error {
 	if resp == nil {
@@ -998,7 +995,6 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 
 	// Update sync nonce -- only advance, never regress. A cursor move can
 	// make a prefix useless to every host; drop it before the next copy.
-	// syncCap keeps catch-up from crediting nonces this chunk did not send.
 	advanceTo := resp.Nonce
 	if syncCap > 0 && advanceTo > syncCap {
 		advanceTo = syncCap
@@ -1909,10 +1905,15 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			"chunk", chunkNum,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
+		// Only a hashed response is checked against our root for resp.Nonce.
+		// Without one, credit no more than this chunk delivered.
+		verified := len(resp.StateHash) > 0
+		var syncCap uint64
+		if !verified {
+			syncCap = chunkNonce
+		}
 		s.mu.Lock()
-		// Cap the cursor at chunkNonce. A host that jumped ahead on another
-		// path still has to be sent the rest of the journal here.
-		err = s.processResponseWithSyncCap(hostIdx, resp, chunkNonce, chunkNonce)
+		err = s.processResponseWithSyncCap(hostIdx, resp, chunkNonce, syncCap)
 		if err == nil {
 			s.logSignatureProgress(resp.Nonce)
 		}
@@ -1922,7 +1923,17 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			return err
 		}
 
+		// Skip forward: a host that is verifiably ahead of this chunk (it
+		// applied later diffs on another path, e.g. a refused-timeout
+		// ChallengeReceipt) does not need them resent.
 		from = chunkNonce + 1
+		if verified && resp.Nonce > chunkNonce {
+			logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
+				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
+				"resp_nonce", resp.Nonce,
+				"skipping_from_nonce", from, "to_nonce", resp.Nonce+1)
+			from = resp.Nonce + 1
+		}
 	}
 
 	s.publishHeightSyncView()
