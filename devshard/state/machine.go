@@ -154,6 +154,10 @@ type StateMachine struct {
 	// state root, and is journaled with the inference map.
 	owedPredicate OwedValidationPredicate
 	owed          map[uint64]struct{}
+
+	// openChallenges counts live Challenged records per address that opened
+	// them. Derived from records (InferenceRecord.Challenger) and journaled.
+	openChallenges map[string]uint32
 }
 
 // deferredObsWrite is a single observability-store write captured during a
@@ -296,6 +300,7 @@ func NewStateMachine(
 		totalSlots:         uint32(len(group)),
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
+		openChallenges:     make(map[string]uint32),
 		inferenceStore:     store,
 		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
 		heightSyncMarks:    heightsync.NewMarkLog(),
@@ -1425,6 +1430,9 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 
 	switch rec.Status {
 	case types.StatusFinished:
+		if !msg.Valid && sm.openChallenges[validatorAddr] >= sm.challengeLimitLocked(validatorAddr) {
+			return fmt.Errorf("%w: %s holds %d", types.ErrChallengeLimit, validatorAddr, sm.openChallenges[validatorAddr])
+		}
 		// Phase A: only the emitting slot is set here (applyValidationVote
 		// sets every slot of the address). Consumers use "any slot of this
 		// address" so the asymmetry is benign.
@@ -1434,6 +1442,8 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			rec.Challenger = msg.ValidatorSlot + 1
+			sm.addOpenChallengeLocked(validatorAddr, 1)
 			// Obs row is not part of post_state_root; a storage blip must not fail
 			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
 			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
@@ -1472,6 +1482,9 @@ func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *t
 		return
 	}
 	threshold := sm.state.Config.VoteThreshold
+	if rec.VotesInvalid > threshold || rec.VotesValid > threshold {
+		sm.releaseChallengeLocked(rec)
+	}
 	if rec.VotesInvalid > threshold {
 		rec.Status = types.StatusInvalidated
 		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
