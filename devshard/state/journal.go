@@ -221,6 +221,13 @@ func (sm *StateMachine) detachJournalLocked(j *mutationJournal) {
 // redoJournalLocked installs a detached journal's post-state. The live state
 // must be the pre-state the journal was recorded against.
 func (sm *StateMachine) redoJournalLocked(j *mutationJournal) {
+	sm.installJournalLocked(j)
+	sm.publishOwedIfTouchedLocked(j)
+}
+
+// installJournalLocked is redoJournalLocked without publishing; a chained
+// trial apply uses it to stand on the previous diff's post-state.
+func (sm *StateMachine) installJournalLocked(j *mutationJournal) {
 	if len(j.sealed.post) > 0 && sm.sealedNonces == nil {
 		sm.sealedNonces = make(map[uint64]uint64, len(j.sealed.post))
 	}
@@ -232,7 +239,6 @@ func (sm *StateMachine) redoJournalLocked(j *mutationJournal) {
 	j.hostStats.redo(sm.state.HostStats)
 	j.warmKeys.redo(sm.state.WarmKeys)
 	sm.writeScalarsLocked(j.post)
-	sm.publishOwedIfTouchedLocked(j)
 }
 
 // ensureOwedMapLocked allocates the owed set before undo or redo writes a key

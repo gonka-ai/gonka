@@ -610,6 +610,11 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 		model:     model,
 	}
 	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.escrowStateBlockReason)
+	if session != nil {
+		e.picker.catchingUp = func(hostIdx int) bool {
+			return session.HostCatchingUp(hostIdx) && session.OtherHostReady(hostIdx)
+		}
+	}
 	e.picker.start()
 	if session != nil {
 		session.SetServedBindingHandler(e.handleServedBinding)
@@ -873,6 +878,12 @@ type inflight struct {
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
 	receiptCh       chan struct{} // closed when receipt arrives
 
+	// catchUpFirst marks an attempt whose SendOnly runs a chunked catch-up
+	// before the request. Its receipt and first-token clocks start at
+	// requestSentNano, when the request itself goes out.
+	catchUpFirst    bool
+	requestSentNano atomic.Int64 // unix nano; 0 while the catch-up runs
+
 	tokenOnce         sync.Once
 	firstTokenNano    atomic.Int64 // unix nano; 0 means no chunk of any kind yet
 	firstTokenCh      chan struct{}
@@ -995,6 +1006,26 @@ func (inf *inflight) receiptAt() time.Time {
 
 func (inf *inflight) hasReceipt() bool {
 	return inf.receiptTimeNano.Load() != 0
+}
+
+// maxCatchUpBeforeSend bounds how long an attempt's own catch-up may hold
+// back its receipt clock.
+const maxCatchUpBeforeSend = 60 * time.Second
+
+// clockStart is when the attempt's receipt and first-token clocks started.
+// ok is false while its catch-up is still running; the clock then starts
+// no later than maxCatchUpBeforeSend after sendTime.
+func (inf *inflight) clockStart(now time.Time) (start time.Time, ok bool) {
+	if !inf.catchUpFirst {
+		return inf.sendTime, true
+	}
+	if n := inf.requestSentNano.Load(); n != 0 {
+		return time.Unix(0, n), true
+	}
+	if limit := inf.sendTime.Add(maxCatchUpBeforeSend); !now.Before(limit) {
+		return limit, true
+	}
+	return now, false
 }
 
 func (inf *inflight) setReceiptAt(t time.Time) {
@@ -2167,6 +2198,14 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// fallback never fires). Setting sendTime here makes the invariant hold
 	// before awaitRace can observe the attempt.
 	inf.sendTime = time.Now()
+	if inf.prepared != nil && inf.prepared.NeedsCatchUp() {
+		inf.catchUpFirst = true
+		inf.prepared.OnSend(func() {
+			now := time.Now()
+			inf.requestSentNano.Store(now.UnixNano())
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "catch_up_done", "host", inf.hostID, "elapsed_ms", now.Sub(inf.sendTime).Milliseconds())
+		})
+	}
 	inf.startedBeforePoCGeneration = !currentPoCGenerationActive()
 	e.recordGatewayAttemptStarted(ctx, inf, params)
 	inf.startDispatchPhase()
@@ -2531,6 +2570,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
+	// A fail-closed put off while another attempt held a receipt. It fires
+	// once no attempt holds a live receipt.
+	var deferredFailClosed *escalationTrigger
 
 	for {
 		winner := race.winnerNonce()
@@ -2595,6 +2637,24 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			stallInf = inf
 			stallTimer = time.NewTimer(wait)
 			stallC = stallTimer.C
+		}
+		var holderTimer *time.Timer
+		var holderC <-chan time.Time
+		if deferredFailClosed != nil && winner == 0 && !allInflightsDone(attempts) {
+			holder, until := e.liveReceiptHolder(attempts, deferredFailClosed.inf, params)
+			if holder == nil {
+				stopTimer(escalationTimer)
+				stopTimer(stallTimer)
+				logInferenceStage(settleCtx, deferredFailClosed.inf.escrowID, deferredFailClosed.inf.nonce, "escalation_fail_closed_resumed",
+					"host", deferredFailClosed.inf.hostID,
+					"stage", deferredFailClosed.stage,
+				)
+				return e.failClosedNoWinner(settleCtx, attempts, params, decision, *deferredFailClosed, clientFlag)
+			}
+			if !until.IsZero() {
+				holderTimer = time.NewTimer(max(time.Until(until), 0))
+				holderC = holderTimer.C
+			}
 		}
 		var winnerHardTimeoutTimer *time.Timer
 		var winnerHardTimeoutC <-chan time.Time
@@ -2693,7 +2753,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			// majority of a healthy run. Skip and let the loop re-schedule
 			// the correct next trigger.
 			current, stillValid := e.escalationForInflight(trigger.inf, params)
-			if !stillValid || current.stage != trigger.stage {
+			if !stillValid || current.stage != trigger.stage || time.Now().Before(current.deadline) {
 				break
 			}
 			if race.winnerNonce() != 0 {
@@ -2722,6 +2782,20 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				}
 			}
 			if failClosedEscalationStage(trigger.stage) {
+				if holder, _ := e.liveReceiptHolder(attempts, trigger.inf, params); holder != nil {
+					trigger.inf.escalated = true
+					if deferredFailClosed == nil {
+						deferred := trigger
+						deferredFailClosed = &deferred
+					}
+					logInferenceStage(settleCtx, trigger.inf.escrowID, trigger.inf.nonce, "escalation_fail_closed_deferred",
+						"host", trigger.inf.hostID,
+						"stage", trigger.stage,
+						"receipt_holder", holder.hostID,
+						"receipt_holder_nonce", holder.nonce,
+					)
+					break
+				}
 				if stallTimer != nil {
 					stopTimer(stallTimer)
 				}
@@ -2792,6 +2866,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if winning.cancel != nil {
 				winning.cancel()
 			}
+		case <-holderC:
 		case <-winnerC:
 		case <-streamCtx.Done():
 			if escalationTimer != nil {
@@ -2820,6 +2895,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		if winnerHardTimeoutTimer != nil {
 			stopTimer(winnerHardTimeoutTimer)
 		}
+		stopTimer(holderTimer)
 	}
 }
 
@@ -2872,6 +2948,27 @@ func failClosedErrorForStage(stage string) error {
 		return errAllHostsReceiptTimeout
 	}
 	return errAllHostsFirstTokenTimeout
+}
+
+// liveReceiptHolder returns a running attempt other than except that holds a
+// receipt and is still inside its first-token budget. While one exists the
+// race is not lost: that host has signed for the work. until is when that
+// budget ends, zero once the holder has a first token.
+func (e *Redundancy) liveReceiptHolder(attempts []*inflight, except *inflight, params user.InferenceParams) (holder *inflight, until time.Time) {
+	now := time.Now()
+	for _, inf := range attempts {
+		if inf == nil || inf == except || inf.probe || !inf.hasReceipt() || inflightDone(inf) {
+			continue
+		}
+		if inf.hasFirstToken() {
+			return inf, time.Time{}
+		}
+		start, _ := inf.clockStart(now)
+		if deadline := start.Add(e.firstTokenFallbackDelay(params)); now.Before(deadline) {
+			return inf, deadline
+		}
+	}
+	return nil, time.Time{}
 }
 
 func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, trigger escalationTrigger, clientFlag *cancelFlag) error {
@@ -2944,10 +3041,11 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	if inf.sendTime.IsZero() {
 		return escalationTrigger{}, false
 	}
+	start, _ := inf.clockStart(time.Now())
 	if !inf.hasReceipt() {
 		return escalationTrigger{
 			inf:      inf,
-			deadline: inf.sendTime.Add(receiptTimeoutForInput(params.InputLength)),
+			deadline: start.Add(receiptTimeoutForInput(params.InputLength)),
 			stage:    "receipt_timeout_wait_elapsed",
 			reason:   "receipt_timeout",
 		}, true
@@ -2957,7 +3055,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	}
 	return escalationTrigger{
 		inf:      inf,
-		deadline: inf.sendTime.Add(e.firstTokenFallbackDelay(params)),
+		deadline: start.Add(e.firstTokenFallbackDelay(params)),
 		stage:    "first_token_timeout_wait_elapsed",
 		reason:   "first_token_timeout",
 	}, true

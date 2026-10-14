@@ -19,41 +19,13 @@ var errStopAfterDiffPage = errors.New("stop after diff page")
 // LatestNonce and the durable store cannot supply a contiguous fill range.
 var ErrReconcileGap = errors.New("cannot reconcile nonce gap from store")
 
-// applyAndPersistReconciling applies a diff after healing any nonce gap from
-// durable storage (HA stale-standby path). Caller must hold h.mu on entry and
-// still holds it on return; the lock may be released briefly for each page read.
-//
-// Happy path (diff.Nonce == memNonce+1 or stale): no store read.
-// Gap path (diff.Nonce > memNonce+1): page (memNonce+1)..(diff.Nonce-1) from
-// the store, apply each page in memory without AppendDiff, then applyAndPersist
-// the incoming diff (Phase 1 makes an already-durable incoming nonce idempotent).
+// applyAndPersistReconciling applies one diff through the writer, healing any
+// nonce gap below it from durable storage (HA stale-standby path). Caller must
+// hold h.mu on entry and still holds it on return; it is released while the
+// diff is queued and written.
 func (h *Host) applyAndPersistReconciling(ctx context.Context, diff types.Diff) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	for {
-		currentNonce := h.sm.LatestNonce()
-		if diff.Nonce <= currentNonce {
-			return nil
-		}
-		if diff.Nonce == currentNonce+1 {
-			return h.applyAndPersist(ctx, diff)
-		}
-
-		// Nonce gap: memory is behind shared durable state.
-		if h.store == nil {
-			return fmt.Errorf("%w: escrow %s mem=%d incoming=%d (no store)",
-				ErrReconcileGap, h.escrowID, currentNonce, diff.Nonce)
-		}
-
-		from := currentNonce + 1
-		to := diff.Nonce - 1
-		if err := h.applyDurablePagesLocked(ctx, from, to, "reconcile", "reconcile_fast_forward", diff.Nonce); err != nil {
-			return err
-		}
-		// Loop: apply the incoming diff, or return nil if a concurrent apply
-		// closed the gap while a page was being read.
-	}
+	_, err := h.applyDiffsLocked(ctx, []types.Diff{diff})
+	return err
 }
 
 // CatchUpFromStore fast-forwards in-memory state to the durable tip. An HA

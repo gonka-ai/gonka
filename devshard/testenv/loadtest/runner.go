@@ -1238,6 +1238,17 @@ func readGhostInferenceIDs(path string) (map[string]struct{}, error) {
 	}
 	ghosts := make(map[string]struct{})
 	for _, line := range strings.Split(string(body), "\n") {
+		if strings.Contains(line, `"stage":"ghost_probe_skipped"`) {
+			start := strings.IndexByte(line, '{')
+			var entry struct {
+				Nonce *uint64 `json:"nonce"`
+			}
+			if start < 0 || json.Unmarshal([]byte(line[start:]), &entry) != nil || entry.Nonce == nil {
+				return nil, fmt.Errorf("parse ghost line in %s: %q", path, line)
+			}
+			ghosts[strconv.FormatUint(*entry.Nonce, 10)] = struct{}{}
+			continue
+		}
 		if !strings.Contains(line, "stage=ghost_probe_skipped") {
 			continue
 		}

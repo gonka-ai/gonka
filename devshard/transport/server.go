@@ -839,6 +839,9 @@ func mapVerifyHTTP(c echo.Context, err error) error {
 	if errors.Is(err, devshard.ErrRequestsDisabled) {
 		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
 	}
+	if errors.Is(err, storage.ErrStorageBusy) {
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorStorageBusy, err.Error())
+	}
 	var cre *clientRequestError
 	if errors.As(err, &cre) {
 		return echo.NewHTTPError(http.StatusBadRequest, cre.Error())

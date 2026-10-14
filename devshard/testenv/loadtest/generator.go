@@ -228,6 +228,9 @@ func runRateProfile(ctx context.Context, cfg GeneratorConfig, started, deadline 
 
 func waitForArrival(ctx context.Context, at time.Time) bool {
 	delay := time.Until(at)
+	if err := ctx.Err(); err != nil {
+		return false
+	}
 	if delay <= 0 {
 		return true
 	}

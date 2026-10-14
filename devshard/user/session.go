@@ -290,6 +290,9 @@ type Session struct {
 	sigsTrimmedThrough uint64
 	// hostCatchUp holds one lock per host index for chunked catch-up.
 	hostCatchUp map[int]*sync.Mutex
+	// catchingUp counts the chunked catch-ups running per host index. It is
+	// read without s.mu (the session picker's chooser runs under s.mu).
+	catchingUp []atomic.Int32
 
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
@@ -299,6 +302,15 @@ type Session struct {
 	laggingSyncCancel context.CancelFunc
 	laggingSyncClosed bool
 	laggingSyncs      sync.WaitGroup
+
+	// Chunked catch-ups started for a send; they outlive the attempt and
+	// stop only at Close. sendCatchUpNext holds, per host, the run queued
+	// behind the one in flight; later sends join it.
+	sendCatchUpCtx    context.Context
+	sendCatchUpCancel context.CancelFunc
+	sendCatchUpClosed bool
+	sendCatchUps      sync.WaitGroup
+	sendCatchUpNext   map[int]*hostCatchUpRun
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -557,6 +569,7 @@ func NewSession(
 		participantKeys: make([]string, len(group)),
 		clients:         clients,
 		hostSyncNonce:   make(map[int]uint64),
+		catchingUp:      make([]atomic.Int32, len(group)),
 		pendingTxKeys:   make(map[string]struct{}),
 		appliedTxKeys:   make(map[string]struct{}),
 		pinnedFinishIDs: make(map[uint64]int),
@@ -635,41 +648,6 @@ func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types
 		return nil, false
 	}
 	return s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1)), true
-}
-
-// catchUpForSend returns the inline catch-up for a request to hostIdx that
-// carries target. A host more than one chunk behind is first sent every nonce
-// before target through chunked catch-up, so no request carries more than
-// one chunk: the host applies target only after every nonce before it.
-// Concurrent sends to the same host share one chunked catch-up.
-func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64) ([]types.Diff, error) {
-	s.mu.Lock()
-	diffs, ok := s.inlineCatchUpLocked(hostIdx, target)
-	s.mu.Unlock()
-	if ok {
-		return diffs, nil
-	}
-
-	hostMu := s.hostCatchUpLock(hostIdx)
-	hostMu.Lock()
-	defer hostMu.Unlock()
-	s.mu.Lock()
-	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
-	s.mu.Unlock()
-	if ok {
-		return diffs, nil
-	}
-	if err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], target-1); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
-	if !ok {
-		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
-			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
-	}
-	return diffs, nil
 }
 
 // hostCatchUpLock serializes chunked catch-up to one host.
@@ -926,8 +904,15 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool, error) {
 // inferenceNonce is the nonce assigned during PrepareInference (the logical inference ID).
 // resp.Nonce may differ when the host has already advanced past inferenceNonce.
 // Caller must hold s.mu.
+//
+// A response without a state hash proves only that the host took the request,
+// which carried diffs through inferenceNonce, so the cursor stops there.
 func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
-	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, 0)
+	var syncCap uint64
+	if resp != nil && len(resp.StateHash) == 0 {
+		syncCap = inferenceNonce
+	}
+	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap)
 }
 
 // processResponseWithSyncCap is processResponse with an optional hostSyncNonce
@@ -1062,7 +1047,17 @@ type PreparedInference struct {
 	farBehind bool
 	params    InferenceParams
 	isProbe   bool
+	// onSend, when set, runs once the catch-up is done, right before the
+	// request goes out.
+	onSend func()
 }
+
+// NeedsCatchUp reports whether SendOnly must first run a chunked catch-up.
+func (p *PreparedInference) NeedsCatchUp() bool { return p.farBehind }
+
+// OnSend registers fn to run once SendOnly has finished any catch-up and is
+// about to send the request. Set it before SendOnly.
+func (p *PreparedInference) OnSend(fn func()) { p.onSend = fn }
 
 // HostBinding describes the host slot that the next nonce will be
 // dispatched to. It is supplied to ParamsForHost so the chooser can make
@@ -1672,6 +1667,9 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			return nil, fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
 	}
+	if p.onSend != nil {
+		p.onSend()
+	}
 	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
 		Diffs:                        catchUp,
@@ -1958,9 +1956,7 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			"chunk_first_nonce", chunk[0].Nonce,
 			"chunk_last_nonce", chunkNonce)
 
-		chunkCtx, cancel := context.WithTimeout(ctx, catchUpChunkTimeout)
-		resp, err := client.Send(chunkCtx, host.HostRequest{Diffs: chunk, Nonce: chunkNonce}, nil, nil)
-		cancel()
+		resp, err := s.sendCatchUpChunk(ctx, hostIdx, client, chunk)
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
@@ -4045,6 +4041,7 @@ func (s *Session) Close() error {
 	s.stopHeightSyncFlush()
 	s.stopQuietSettle()
 	s.stopLaggingSync()
+	s.stopSendCatchUps()
 	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()
