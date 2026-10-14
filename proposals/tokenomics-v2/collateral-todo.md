@@ -217,7 +217,7 @@ Each task includes:
   - `collateral_per_weight_unit`: The collateral required per unit of weight. Default `1`.
   - `slash_fraction_invalid`: Percentage of collateral to slash when a participant is marked `INVALID`. Default `0.20` (20%).
   - `slash_fraction_downtime`: Percentage of collateral to slash for downtime. Default `0.10` (10%).
-  - `downtime_missed_percentage_threshold`: The missed request percentage that triggers a downtime slash. Default `0.05` (5%).
+  - `downtime_missed_percentage_threshold`: **[DEPRECATED - NO EFFECT]** This parameter was declared but never consumed by the actual slashing logic. Default `0.05` (5%).
   Update `params.go` with default values and validation.
 - **Where**:
   - `inference-chain/proto/inference/inference/params.proto`
@@ -225,7 +225,7 @@ Each task includes:
 - **Dependencies**: None
 - **Result**:
   - Grouped the new parameters under a `CollateralParams` message in `params.proto` for better organization.
-  - Added `slash_fraction_invalid`, `slash_fraction_downtime`, and `downtime_missed_percentage_threshold` to the new message.
+  - Added `slash_fraction_invalid`, `slash_fraction_downtime`, and `downtime_missed_percentage_threshold` (deprecated, no effect) to the new message.
   - Implemented default values and validation logic for the new parameters in `params.go`.
   - Successfully built the project.
 
