@@ -249,10 +249,10 @@ var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the H
 
 // classifyPayloadFetchError leaves a failure of this process's closed peer
 // untagged, so the lease is released and another generation can fetch. A
-// payload that is gone, too large, or never reached because the executor
-// did not finish Attach is the executor's result. fetchSignedPayloads tags
-// that Attach timeout before it arrives here; a bare ErrPeerNotReady is
-// still this process's own session.
+// payload that is gone, too large, rate-limited, or never reached because
+// the executor did not finish Attach is the executor's result. A bare
+// ErrPeerNotReady is still this process's own session; ErrPeerPayloadUnanswered
+// is the executor's missing session.
 func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -261,6 +261,9 @@ func classifyPayloadFetchError(ctx context.Context, err error) error {
 		return err
 	}
 	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerPayloadUnanswered) && !transport.OutboundPeersReleased() {
 		return tagExecutorPayloadFault(err)
 	}
 	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
@@ -317,7 +320,14 @@ func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonv
 		case connect.CodeNotFound:
 			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
 		case connect.CodeResourceExhausted:
-			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			// The read cap and a 429 share this code. Only an oversized body
+			// is "too large". A rate limit is the executor not serving the
+			// payload, and classify tags that as a fault.
+			status, _, _, ok := transport.ConnectApplicationStatus(err)
+			if ok && status == http.StatusRequestEntityTooLarge {
+				return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			}
+			return nil, err
 		default:
 			return nil, err
 		}

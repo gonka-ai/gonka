@@ -24,6 +24,10 @@ func TestClassifyPayloadFetchError_ClosedPeerIsNotExecutorFault(t *testing.T) {
 	require.NotErrorIs(t, classifyPayloadFetchError(context.Background(), transport.ErrPeerNotReady), errExecutorPayloadFault)
 	require.ErrorIs(t, classifyPayloadFetchError(context.Background(), transport.ErrPeerNotReady), transport.ErrPeerNotReady)
 
+	unanswered := fmt.Errorf("get payload: %w", transport.ErrPeerPayloadUnanswered)
+	require.ErrorIs(t, classifyPayloadFetchError(context.Background(), unanswered), errExecutorPayloadFault)
+	require.NotErrorIs(t, classifyPayloadFetchError(cancelledCtx(), unanswered), errExecutorPayloadFault)
+
 	connReset := errors.New("connection reset by peer")
 	require.ErrorIs(t, classifyPayloadFetchError(context.Background(), connReset), errExecutorPayloadFault)
 
