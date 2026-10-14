@@ -21,6 +21,9 @@ func (k msgServer) PoCChallengeStoreCommit(goCtx context.Context, msg *types.Msg
 	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
+	if k.IsPoCParticipantBlocked(goCtx, msg.Creator) {
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	}
 	if len(msg.Entries) == 0 {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "entries must not be empty")
 	}
