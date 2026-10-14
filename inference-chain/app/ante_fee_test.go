@@ -1,6 +1,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 
 	"cosmossdk.io/log"
@@ -12,9 +13,14 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	gogoproto "github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/require"
 	protov2 "google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 
+	testkeeper "github.com/productscience/inference/testutil/keeper"
+	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -44,22 +50,31 @@ func (t testFeeTx) FeeGranter() []byte                    { return nil }
 
 // --- NetworkDutyFeeBypassDecorator tests ---
 
-func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
-	exemptMsgs := map[string]sdk.Msg{
-		"MsgSubmitPocBatch":                    &inferencetypes.MsgSubmitPocBatch{},
-		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{},
-		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{},
-		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{},
-		"MsgClaimRewards":                      &inferencetypes.MsgClaimRewards{},
-		"MsgSettleDevshardEscrow":              &inferencetypes.MsgSettleDevshardEscrow{},
-		"MsgSubmitDealerPart":                  &blstypes.MsgSubmitDealerPart{},
-		"MsgSubmitVerificationVector":          &blstypes.MsgSubmitVerificationVector{},
-		"MsgSubmitGroupKeyValidationSignature": &blstypes.MsgSubmitGroupKeyValidationSignature{},
-		"MsgSubmitPartialSignature":            &blstypes.MsgSubmitPartialSignature{},
-		"MsgRespondDealerComplaints":           &blstypes.MsgRespondDealerComplaints{},
+// exemptDutyMsgs is the full fee-exempt duty set, each with its protocol actor
+// field populated so the message is well-formed rather than merely well-typed.
+func exemptDutyMsgs(actor string) map[string]sdk.Msg {
+	return map[string]sdk.Msg{
+		"MsgSubmitPocBatch":                    &inferencetypes.MsgSubmitPocBatch{Creator: actor},
+		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{Creator: actor},
+		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{Creator: actor},
+		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{Creator: actor},
+		"MsgSubmitPoCChallengeValidations":     &inferencetypes.MsgSubmitPoCChallengeValidations{Creator: actor},
+		"MsgClaimRewards":                      &inferencetypes.MsgClaimRewards{Creator: actor},
+		"MsgSettleDevshardEscrow":              &inferencetypes.MsgSettleDevshardEscrow{Settler: actor},
+		"MsgSubmitDealerPart":                  &blstypes.MsgSubmitDealerPart{Creator: actor},
+		"MsgSubmitVerificationVector":          &blstypes.MsgSubmitVerificationVector{Creator: actor},
+		"MsgSubmitGroupKeyValidationSignature": &blstypes.MsgSubmitGroupKeyValidationSignature{Creator: actor},
+		"MsgSubmitPartialSignature":            &blstypes.MsgSubmitPartialSignature{Creator: actor},
+		"MsgRespondDealerComplaints":           &blstypes.MsgRespondDealerComplaints{Creator: actor},
 	}
+}
 
-	for name, msg := range exemptMsgs {
+// TestNetworkDutyBypass_NilKeeperFailsClosed asserts that a well-formed duty
+// message does NOT receive the fee waiver when the keeper is absent: without a
+// keeper the actor's authorization cannot be established, and #1539 requires
+// the waiver be withheld rather than granted on type alone.
+func TestNetworkDutyBypass_NilKeeperFailsClosed(t *testing.T) {
+	for name, msg := range exemptDutyMsgs("gonka1duty") {
 		t.Run(name, func(t *testing.T) {
 			decorator := NetworkDutyFeeBypassDecorator{
 				InferenceKeeper: nil,
@@ -72,14 +87,146 @@ func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
 			nextCalled := false
 			_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
 				nextCalled = true
-				require.True(t, IsNetworkDutyBypassed(ctx), "bypass flag should be set")
-				require.Empty(t, ctx.MinGasPrices(), "min gas prices should be cleared")
+				require.False(t, IsNetworkDutyBypassed(ctx), "bypass flag must not be set without a keeper")
+				require.NotEmpty(t, ctx.MinGasPrices(), "min gas prices must not be cleared without a keeper")
 				return ctx, nil
 			})
-			require.NoError(t, err)
+			require.NoError(t, err, "the tx still passes through; it just pays fees")
 			require.True(t, nextCalled, "next handler should be called")
 		})
 	}
+}
+
+// TestDutyAuthorizationFor asserts the actor is read from the message body and
+// that escrow settlement is routed to the allowlist rather than the participant
+// registry. Reading the signer instead of the body would break the DAPI's
+// warm-key authz path, where the grantee signs but Creator names the cold
+// account (tx_manager.go broadcastMessagesAtAttempt).
+func TestDutyAuthorizationFor(t *testing.T) {
+	const actor = "gonka1actor"
+
+	for name, msg := range exemptDutyMsgs(actor) {
+		t.Run(name, func(t *testing.T) {
+			auth, exempt := dutyAuthorizationFor(msg)
+			require.True(t, exempt, "%s must be recognised as a duty", name)
+			require.Equal(t, actor, auth.actor, "actor must come from the message body")
+			require.Equal(t, name == "MsgSettleDevshardEscrow", auth.escrowAllowList,
+				"only escrow settlement uses the allowlist registry")
+		})
+	}
+
+	// The exempt set here must match inferencetypes.IsNetworkDuty exactly:
+	// that function is the single source of truth for which types are
+	// fee-exempt duties, and dutyAuthorizationFor only adds who may claim it.
+	for name, msg := range exemptDutyMsgs(actor) {
+		_, exempt := dutyAuthorizationFor(msg)
+		require.Equal(t, inferencetypes.IsNetworkDuty(msg), exempt,
+			"dutyAuthorizationFor and inferencetypes.IsNetworkDuty disagree on %s", name)
+	}
+
+	for _, msg := range []sdk.Msg{
+		&banktypes.MsgSend{},
+		&inferencetypes.MsgPoCV2StoreCommit{},
+		&inferencetypes.MsgCreateDevshardEscrow{},
+		&blstypes.MsgRequestThresholdSignature{},
+	} {
+		_, exempt := dutyAuthorizationFor(msg)
+		require.False(t, exempt, "%T must not be a duty", msg)
+	}
+}
+
+// gonkaMsgTypes returns every message type defined by the gonka modules
+// (inference.inference and inference.bls), freshly allocated, keyed by proto full
+// name.
+//
+// The candidate universe is enumerated from the compiled-in protobuf
+// descriptors rather than from a hand-written list. That is the whole point:
+// exemptDutyMsgs is itself a list, so asserting the two against each other can
+// only confirm that the list agrees with itself — it stayed green while
+// MsgSubmitPoCChallengeValidations sat in inferencetypes.IsNetworkDuty with no
+// case in dutyAuthorizationFor. Walking the descriptors means a newly added
+// message type is checked the moment it is registered, with no list to update.
+//
+// Descriptor names are resolved to Go types through cosmos/gogoproto's registry,
+// not google.golang.org/protobuf: these are gogo-generated messages, so they have
+// no ProtoReflect and are absent from the protobuf-go type registry. gogoproto
+// exposes no enumeration of its own, so GlobalFiles provides the names and
+// gogoproto.MessageType does the lookup — each package needs exactly one.
+func gonkaMsgTypes(t *testing.T) map[string]sdk.Msg {
+	t.Helper()
+
+	// gonka's proto packages. Anything outside these is another module's
+	// message and cannot be a gonka network duty.
+	const inferencePkg = "inference.inference"
+	const blsPkg = "inference.bls"
+
+	types := make(map[string]sdk.Msg)
+	protoregistry.GlobalFiles.RangeFiles(func(fd protoreflect.FileDescriptor) bool {
+		pkg := string(fd.Package())
+		if pkg != inferencePkg && pkg != blsPkg {
+			return true
+		}
+		msgs := fd.Messages()
+		for i := 0; i < msgs.Len(); i++ {
+			name := string(msgs.Get(i).FullName())
+			rt := gogoproto.MessageType(name)
+			if rt == nil || rt.Kind() != reflect.Ptr {
+				continue
+			}
+			msg, ok := reflect.New(rt.Elem()).Interface().(sdk.Msg)
+			if !ok {
+				continue
+			}
+			types[name] = msg
+		}
+		return true
+	})
+
+	// A guard against the enumeration silently collapsing (e.g. descriptors no
+	// longer registered): the assertion below is only meaningful over the real
+	// universe, and an empty map would pass vacuously.
+	require.Greater(t, len(types), 50,
+		"expected to enumerate gonka's message types from the protobuf descriptors")
+	require.Contains(t, types, "inference.inference.MsgSubmitPoCChallengeValidations",
+		"enumeration must reach the inference module's duty messages")
+
+	return types
+}
+
+// TestDutyAuthorizationForMatchesIsNetworkDuty is the drift guard for the fee
+// waiver. dutyAuthorizationFor and inferencetypes.IsNetworkDuty are two halves
+// of one rule — the second says which types are exempt duties, the first says who
+// may claim the exemption — and a type present in the first but missing from the
+// second falls into a middle zone: it gets no waiver and no rejection, and
+// GonkaFeeChecker's EnabledPayingPrice still skips it as exempt, which is the
+// free-unsigned-block-space hole of #1539 reopened.
+//
+// This iterates every gonka message type, so a duty added to IsNetworkDuty
+// without a matching case in dutyAuthorizationFor fails here.
+func TestDutyAuthorizationForMatchesIsNetworkDuty(t *testing.T) {
+	types := gonkaMsgTypes(t)
+
+	duties := 0
+	for name, msg := range types {
+		_, authorized := dutyAuthorizationFor(msg)
+		exempt := inferencetypes.IsNetworkDuty(msg)
+
+		require.Equal(t, exempt, authorized,
+			"%s: inferencetypes.IsNetworkDuty=%v but dutyAuthorizationFor=%v — "+
+				"a type exempt from fees must have a dutyAuthorizationFor case, and "+
+				"a non-exempt type must not", name, exempt, authorized)
+
+		if exempt {
+			duties++
+		}
+	}
+
+	// Pin the size of the duty set as well. Without this the test would still
+	// pass if IsNetworkDuty were emptied of every duty and dutyAuthorizationFor
+	// emptied to match — agreement is what matters, but silently losing the
+	// whole exemption list is a different bug.
+	require.GreaterOrEqual(t, duties, 11,
+		"the exempt duty set should cover the PoC, BLS and escrow duties")
 }
 
 func TestNetworkDutyBypass_NonExemptMessages(t *testing.T) {
@@ -142,19 +289,126 @@ func TestNetworkDutyBypass_MixedMessages_NoBypass(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestNetworkDutyBypass_GasCapEnforced(t *testing.T) {
+// dutyActor is a deterministic 20-byte address used as the protocol actor in
+// bypass tests.
+func dutyActor() sdk.AccAddress { return sdk.AccAddress([]byte("duty-actor-000000000")) }
+
+// registeredDutyKeeper returns a real inference keeper with actor registered as
+// a participant. After #1539 the waiver depends on the actor's authorization,
+// so tests that exercise the bypass path (rather than the fail-closed path)
+// need real keeper state instead of a nil keeper.
+func registeredDutyKeeper(t *testing.T, actor sdk.AccAddress) (*inferencemodulekeeper.Keeper, sdk.Context) {
+	t.Helper()
+	k, ctx := testkeeper.InferenceKeeper(t)
+	require.NoError(t, k.Participants.Set(ctx, actor, inferencetypes.Participant{
+		Index:   actor.String(),
+		Address: actor.String(),
+	}))
+	return &k, ctx.WithMinGasPrices(sdk.DecCoins{sdk.NewDecCoin("ngonka", math.NewInt(10))})
+}
+
+// TestNetworkDutyBypass_RegisteredActorIsBypassed asserts the intended
+// behaviour is preserved: a duty message whose actor is a registered
+// participant still gets the fee waiver and the priority boost.
+func TestNetworkDutyBypass_RegisteredActorIsBypassed(t *testing.T) {
+	actor := dutyActor()
+	ik, ctx := registeredDutyKeeper(t, actor)
 	decorator := NetworkDutyFeeBypassDecorator{
-		InferenceKeeper: nil,
+		InferenceKeeper: ik,
 		GasCap:          10_000_000,
 		Priority:        500_000,
 	}
 
-	// Gas exceeds cap: should reject
+	tx := testFeeTx{msgs: []sdk.Msg{&inferencetypes.MsgClaimRewards{Creator: actor.String()}}, gas: 100_000}
+
+	nextCalled := false
+	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		nextCalled = true
+		require.True(t, IsNetworkDutyBypassed(ctx), "registered actor should keep the waiver")
+		require.Empty(t, ctx.MinGasPrices(), "min gas prices should be cleared")
+		require.Equal(t, int64(500_000), ctx.Priority(), "priority boost should be applied")
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
+// TestNetworkDutyBypass_UnregisteredActorNotBypassed is the #1539 fix: a
+// structurally valid duty message from an account that is not a participant
+// does not get the waiver, so GonkaFeeChecker goes on to enforce
+// MinGasPriceNgonka and a zero-fee spam tx fails CheckTx instead of occupying
+// block space for free.
+func TestNetworkDutyBypass_UnregisteredActorNotBypassed(t *testing.T) {
+	actor := dutyActor()
+	ik, ctx := registeredDutyKeeper(t, actor)
+	decorator := NetworkDutyFeeBypassDecorator{
+		InferenceKeeper: ik,
+		GasCap:          10_000_000,
+		Priority:        500_000,
+	}
+
+	attacker := sdk.AccAddress([]byte("attacker-00000000000"))
+	for name, msg := range exemptDutyMsgs(attacker.String()) {
+		if name == "MsgSettleDevshardEscrow" {
+			// Escrow settlement is allowlist-gated, and an empty allowlist
+			// means "everyone" for both ante and handler. Covered separately.
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			tx := testFeeTx{msgs: []sdk.Msg{msg}, gas: 100_000}
+			_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+				require.False(t, IsNetworkDutyBypassed(ctx), "unregistered actor must not get the waiver")
+				require.NotEmpty(t, ctx.MinGasPrices(), "min gas prices must stay enforced")
+				return ctx, nil
+			})
+			require.NoError(t, err, "the tx passes through the decorator; it just pays fees")
+		})
+	}
+}
+
+// TestNetworkDutyBypass_EscrowAllowList asserts escrow settlement is checked
+// against the devshard allowlist, matching EscrowAllowListPermission. With an
+// empty allowlist IsAllowedEscrowCreator admits everyone — the same answer the
+// handler gives — so ante and DeliverTx cannot disagree.
+func TestNetworkDutyBypass_EscrowAllowList(t *testing.T) {
+	actor := dutyActor()
+	ik, ctx := registeredDutyKeeper(t, actor)
+	decorator := NetworkDutyFeeBypassDecorator{
+		InferenceKeeper: ik,
+		GasCap:          10_000_000,
+		Priority:        500_000,
+	}
+
+	settler := sdk.AccAddress([]byte("settler-000000000000"))
+	require.True(t, ik.IsAllowedEscrowCreator(ctx, settler.String()),
+		"precondition: empty allowlist admits everyone, as the handler does")
+
 	tx := testFeeTx{
-		msgs: []sdk.Msg{&inferencetypes.MsgClaimRewards{}},
+		msgs: []sdk.Msg{&inferencetypes.MsgSettleDevshardEscrow{Settler: settler.String()}},
+		gas:  100_000,
+	}
+	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		require.True(t, IsNetworkDutyBypassed(ctx), "allowlisted settler keeps the waiver")
+		return ctx, nil
+	})
+	require.NoError(t, err)
+}
+
+func TestNetworkDutyBypass_GasCapEnforced(t *testing.T) {
+	actor := dutyActor()
+	ik, ctx := registeredDutyKeeper(t, actor)
+	decorator := NetworkDutyFeeBypassDecorator{
+		InferenceKeeper: ik,
+		GasCap:          10_000_000,
+		Priority:        500_000,
+	}
+
+	// Gas exceeds cap: should reject. The cap only applies to txs that qualify
+	// for the bypass, so the actor must be authorized to reach this check.
+	tx := testFeeTx{
+		msgs: []sdk.Msg{&inferencetypes.MsgClaimRewards{Creator: actor.String()}},
 		gas:  20_000_000, // exceeds 10M cap
 	}
-	ctx := newTestContext()
 
 	_, err := decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
 		t.Fatal("next should not be called when gas exceeds cap")
@@ -223,7 +477,7 @@ func TestIsNetworkDuty_MsgExec_FailsClosed(t *testing.T) {
 	execMsg := &authztypes.MsgExec{Grantee: "cosmos1test"}
 
 	// nil keeper: fail closed
-	require.False(t, isNetworkDuty(execMsg, nil),
+	require.False(t, isNetworkDuty(newTestContext(), execMsg, nil),
 		"MsgExec should fail closed with nil keeper")
 }
 
@@ -233,7 +487,7 @@ func TestIsNetworkDuty_EmptyMsgExec_NotDuty(t *testing.T) {
 	authztypes.RegisterInterfaces(ir)
 
 	empty := &authztypes.MsgExec{Grantee: "cosmos1test"}
-	require.False(t, isNetworkDuty(empty, &k),
+	require.False(t, isNetworkDuty(newTestContext(), empty, &k),
 		"empty MsgExec must not be treated as an all-exempt network duty")
 
 	decorator := NetworkDutyFeeBypassDecorator{
@@ -269,31 +523,48 @@ func TestUnwrapFeeMsgs_EmptyMsgExecRejected(t *testing.T) {
 }
 
 func TestIsNetworkDuty_MsgExec_OneLevelDuty(t *testing.T) {
-	k, _ := keepertest.InferenceKeeper(t)
+	k, ctx := keepertest.InferenceKeeper(t)
 	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
 	authztypes.RegisterInterfaces(ir)
 	inferencetypes.RegisterInterfaces(ir)
 
+	// The inner duty's actor must be a registered participant for the waiver to
+	// apply (#1539): classification now requires authorization, not the type
+	// alone.
+	actor := sdk.AccAddress("duty-actor-address__").String()
+	require.NoError(t, k.SetParticipant(ctx, inferencetypes.Participant{
+		Index:   actor,
+		Address: actor,
+		Weight:  10,
+	}))
+
 	grantee := sdk.AccAddress("granteeaddr________")
-	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgClaimRewards{}})
-	require.True(t, isNetworkDuty(&exec, &k), "one-level DAPI MsgExec of a duty must still classify as duty")
+	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgClaimRewards{Creator: actor}})
+	require.True(t, isNetworkDuty(ctx, &exec, &k), "one-level DAPI MsgExec of an authorized duty must classify as duty")
 
 	mixed := authztypes.NewMsgExec(grantee, []sdk.Msg{
-		&inferencetypes.MsgClaimRewards{},
+		&inferencetypes.MsgClaimRewards{Creator: actor},
 		&inferencetypes.MsgPoCV2StoreCommit{},
 	})
-	require.False(t, isNetworkDuty(&mixed, &k), "mixed duty+paying MsgExec must not bypass")
+	require.False(t, isNetworkDuty(ctx, &mixed, &k), "mixed duty+paying MsgExec must not bypass")
 }
 
 func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
 	// Non-MsgExec, non-exempt message
-	require.False(t, isNetworkDuty(&banktypes.MsgSend{}, nil))
-	require.False(t, isNetworkDuty(&inferencetypes.MsgPoCV2StoreCommit{}, nil))
+	require.False(t, isNetworkDuty(newTestContext(), &banktypes.MsgSend{}, nil))
+	require.False(t, isNetworkDuty(newTestContext(), &inferencetypes.MsgPoCV2StoreCommit{}, nil))
 }
 
-func TestIsNetworkDuty_ExemptDirectMessage(t *testing.T) {
-	// Direct exempt message (not wrapped in MsgExec)
-	require.True(t, isNetworkDuty(&blstypes.MsgSubmitDealerPart{}, nil))
+// TestIsNetworkDuty_ExemptTypeAloneIsNotEnough is the regression guard for
+// #1539: an exempt *type* no longer implies the waiver. Authorization of the
+// actor must be established, so a nil keeper fails closed even for a duty type
+// that would previously have been bypassed on type alone.
+func TestIsNetworkDuty_ExemptTypeAloneIsNotEnough(t *testing.T) {
+	require.False(t, isNetworkDuty(newTestContext(), &blstypes.MsgSubmitDealerPart{Creator: "gonka1duty"}, nil),
+		"exempt type must not be bypassed without an authorized actor")
+	_, exempt := dutyAuthorizationFor(&blstypes.MsgSubmitDealerPart{})
+	require.True(t, exempt,
+		"the type itself is still a duty type")
 }
 
 // --- GonkaFeeChecker tests ---
