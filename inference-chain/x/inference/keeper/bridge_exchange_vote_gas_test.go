@@ -37,7 +37,7 @@ func TestValidateBridgeExchange_VoteGasFlatInPriorConfirmations(t *testing.T) {
 			&group.QueryGroupMembersResponse{
 				Members: []*group.GroupMember{{
 					GroupId: 1,
-					Member:  &group.Member{Address: validator, Weight: "10"},
+					Member:  &group.Member{Address: validator, Weight: "100"}, // = TotalWeight: no member removed
 				}},
 			}, nil,
 		).AnyTimes()
