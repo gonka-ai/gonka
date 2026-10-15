@@ -106,12 +106,12 @@ type Server struct {
 	store        storage.Storage
 	gossip       *gossip.Gossip // nil until gossip is wired
 	verifier     signing.Verifier
-	userAddr     string                 // session user address, allowed alongside group members
-	peerClients  map[int]HostPeerClient // slot index -> client, for timeout verification
-	rateLimit    *rateLimiter           // nil = no limiting
-	maxBodySize  int64                  // max request body bytes, 0 = no limit
-	bridge       bridge.MainnetBridge   // optional, for warm key verification
-	receiptDelay time.Duration          // optional test hook before receipt SSE write
+	userAddr     string               // session user address, allowed alongside group members
+	peers        peerRoster           // slot index -> client, for timeout verification and repair
+	rateLimit    *rateLimiter         // nil = no limiting
+	maxBodySize  int64                // max request body bytes, 0 = no limit
+	bridge       bridge.MainnetBridge // optional, for warm key verification
+	receiptDelay time.Duration        // optional test hook before receipt SSE write
 
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncLogOracle blocks.BlockOracle
@@ -155,7 +155,7 @@ func WithServerGossip(g *gossip.Gossip) ServerOption {
 // WithServerPeerClients sets executor clients for timeout verification.
 func WithServerPeerClients(peers map[int]HostPeerClient) ServerOption {
 	return func(s *Server) {
-		s.peerClients = peers
+		s.peers.setClients(peers)
 		if s.host != nil {
 			s.host.SetRepairProbe(s.RepairProbe)
 		}
@@ -199,8 +199,23 @@ func NewServer(
 func (s *Server) Host() *host.Host { return s.host }
 
 // PeerClients is the slot→client roster SetPeerClients stored. Includes this
-// host's slot so timeout verify can reach the executor when it is us.
-func (s *Server) PeerClients() map[int]HostPeerClient { return s.peerClients }
+// host's slot so timeout verify can reach the executor when it is us. Slots
+// the resolver filled later are included; unresolved slots are absent.
+func (s *Server) PeerClients() map[int]HostPeerClient {
+	s.peers.mu.Lock()
+	slots := s.peers.slots
+	s.peers.mu.Unlock()
+	if slots == nil {
+		return nil
+	}
+	out := make(map[int]HostPeerClient, len(slots))
+	for slot, l := range slots {
+		if pc, ok := l.Peek(); ok {
+			out[slot] = pc
+		}
+	}
+	return out
+}
 
 // Gossip is the outbound nonce/tx propagator, or nil if unwired.
 func (s *Server) Gossip() *gossip.Gossip { return s.gossip }
@@ -215,12 +230,14 @@ func (s *Server) CloseOutbound() {
 		s.gossip.Stop()
 		s.gossip = nil
 	}
-	for _, pc := range s.peerClients {
-		if pc != nil {
-			pc.Close()
-		}
+	s.peers.mu.Lock()
+	slots := s.peers.slots
+	s.peers.slots = nil
+	s.peers.closed = true
+	s.peers.mu.Unlock()
+	for _, l := range slots {
+		l.Close()
 	}
-	s.peerClients = nil
 }
 
 // SetGossip attaches a gossip instance for nonce/tx propagation.
@@ -559,7 +576,7 @@ func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFun
 // SelectTransport results so RPC Attach identity matches gossip and
 // RepairProbe CloneWithSigner is identity-preserving.
 func (s *Server) SetPeerClients(peers map[int]HostPeerClient) {
-	s.peerClients = peers
+	s.peers.setClients(peers)
 	if s.host != nil {
 		s.host.SetRepairProbe(s.RepairProbe)
 	}
@@ -629,11 +646,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	localMempool := s.host.MempoolTxs()
 
 	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
-	var executorClient host.ExecutorClient
-	if s.peerClients != nil {
-		if pc, ok := s.peerClients[executorIdx]; ok {
-			executorClient = pc
-		}
+	executorClient, err := s.timeoutExecutor(ctx, executorIdx)
+	if err != nil {
+		return nil, err
 	}
 
 	nowUnix := time.Now().Unix()

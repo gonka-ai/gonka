@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -181,6 +182,85 @@ func TestWaitRouterCatalog_Catalog503KeepsWaiting(t *testing.T) {
 	defer cancel()
 	require.ErrorIs(t, session.WaitRouterCatalog(ctx), context.DeadlineExceeded,
 		"router process /healthz must not count as catalog admission")
+}
+
+func TestWaitRouterCatalog_LateResolvedHostAdmits(t *testing.T) {
+	var staleProbes atomic.Int32
+	stale := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devshard/v2/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		staleProbes.Add(1)
+		http.Error(w, "undeclared", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(stale.Close)
+	var readyProbes atomic.Int32
+	ready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devshard/v2/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		readyProbes.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ready.Close)
+
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/devshard/v2"
+	gate := make(chan struct{})
+	lazy := transport.NewLazy(func() (HostClient, error) {
+		<-gate
+		return transport.NewHTTPClient(ready.URL, "1", nil, cfg), nil
+	}, releaseHostClient, 0, 0)
+	t.Cleanup(func() { lazy.Close() })
+	lazy.Start()
+	session := &Session{clients: []HostClient{
+		transport.NewHTTPClient(stale.URL, "1", nil, cfg),
+		newLazyHostClient(lazy),
+	}, escrowID: "1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- session.WaitRouterCatalog(ctx) }()
+	require.Eventually(t, func() bool { return staleProbes.Load() > 0 }, time.Second, time.Millisecond)
+	close(gate)
+	require.Eventually(t, func() bool { _, ok := lazy.Peek(); return ok }, time.Second, time.Millisecond)
+
+	require.NoError(t, <-done, "catalog must admit the host whose URL resolved after the first probe")
+	require.Greater(t, readyProbes.Load(), int32(0))
+}
+
+func TestWaitRouterCatalog_RetriesFailedLookup(t *testing.T) {
+	var readyProbes atomic.Int32
+	ready := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devshard/v2/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		readyProbes.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(ready.Close)
+
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/devshard/v2"
+	var lookups atomic.Int32
+	lazy := transport.NewLazy(func() (HostClient, error) {
+		if lookups.Add(1) == 1 {
+			return nil, errors.New("host info failed")
+		}
+		return transport.NewHTTPClient(ready.URL, "1", nil, cfg), nil
+	}, releaseHostClient, time.Millisecond, time.Millisecond)
+	t.Cleanup(func() { lazy.Close() })
+	session := &Session{clients: []HostClient{newLazyHostClient(lazy)}, escrowID: "1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	require.NoError(t, session.WaitRouterCatalog(ctx))
+	require.GreaterOrEqual(t, lookups.Load(), int32(2), "a failed lookup must run again before the catalog gives up")
+	require.Greater(t, readyProbes.Load(), int32(0))
 }
 
 func TestWaitRouterCatalog_Canceled(t *testing.T) {
