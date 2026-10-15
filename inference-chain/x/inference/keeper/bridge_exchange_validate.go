@@ -155,13 +155,19 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		}
 
 		liveWeight := liveGroupWeight(epochGroupMembers)
+		votedPower := validatorPower + existingTx.TotalValidationPower
+		if liveWeight != epochGroup.GroupData.TotalWeight {
+			// A member left the group: list the voters to drop its vote.
+			k.hydrateBridgeTransactionValidators(ctx, existingTx)
+			votedPower = validatorPower + liveVotedPower(existingTx.Validators, epochGroupMembers)
+		}
 		return &ValidatedBridgeExchange{
 			ValidatorAddress: addr,
 			ProposedTx:       proposedTx,
 			ExistingTx:       existingTx,
 			ValidatorPower:   validatorPower,
 			TotalEpochPower:  liveWeight,
-			VotedPower:       validatorPower + liveVotedPower(existingTx.Validators, epochGroupMembers),
+			VotedPower:       votedPower,
 			RequiredPower:    bridgeRequiredPower(epochGroup.GroupData.TotalWeight, liveWeight),
 			IsCreate:         false,
 			EpochIndex:       existingTx.EpochIndex,
