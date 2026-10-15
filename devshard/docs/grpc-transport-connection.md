@@ -392,6 +392,15 @@ records a failure strike instead of the `http_quarantine_ms` quarantine. The
 header is host-set, so a host that keeps answering it reaches that quarantine
 at the strike threshold (3).
 
+Validation `GetPayload` is different. A `429`, including
+`escrow_lookup_limited`, is `ErrPayloadRateLimited` and is not a verdict.
+The validator keeps its lease and fetches once more after 30s, or after
+`Retry-After` when that is longer. `escrow_lookup_limited` sends no
+`Retry-After` and its budget is a sliding minute, so that retry waits 1 min.
+The wait is capped at 1 min. A `429` on the retry votes `Valid:false` with
+reason `rate_limited`. The short payload retry (two attempts, 500ms) does
+not run for a `429`. A `/rpc/release` during the wait publishes nothing.
+
 The child **must not** key this on origin IP. Mixed fleets and hop-stamped
 `X-Real-IP` would collapse every client onto one 2/min slot.
 
