@@ -497,7 +497,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if accountingTracker != nil {
 		accountingTracker.SetDispositionSink(dispositionSink{})
 	}
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider), startupSkipped)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider), runtimeParams, startupSkipped)
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
 			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
@@ -505,7 +505,6 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	}
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
-	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
 	return gateway
 }

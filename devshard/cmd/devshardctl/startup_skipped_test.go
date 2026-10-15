@@ -404,16 +404,18 @@ func TestNewManagedGatewayWaitsForSkippedEscrowsBeforeItsWorkersStart(t *testing
 		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
 	})
 
-	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, nil,
+	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, nil, nil,
 		[]startupSkippedEscrow{{EscrowID: "12", Model: "m", Reason: startupSkipReasonRuntimeBuildFailed}})
 	t.Cleanup(gateway.stopEscrowRotator)
 
-	require.Eventually(t, func() bool {
+	registered := func() bool {
 		gateway.mu.Lock()
 		defer gateway.mu.Unlock()
-		_, registered := gateway.runtimes["12"]
-		return registered
-	}, 5*time.Second, 10*time.Millisecond, "the first balance check did not start the skipped escrow")
+		_, ok := gateway.runtimes["12"]
+		return ok
+	}
+	seriesCleared := func() bool { return promtestutil.CollectAndCount(gateway.metrics.startupSkippedEscrows) == 0 }
+	require.Eventually(t, func() bool { return registered() && seriesCleared() },
+		5*time.Second, 10*time.Millisecond, "the first balance check did not start the skipped escrow")
 	require.False(t, gateway.isAwaitingStart("12"))
-	require.Zero(t, promtestutil.CollectAndCount(gateway.metrics.startupSkippedEscrows))
 }
