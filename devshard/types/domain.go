@@ -151,6 +151,7 @@ type SessionConfig struct {
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
+	TimeoutBlockTimeMs        uint32
 }
 
 // EscrowState is the full state of a devshard session.

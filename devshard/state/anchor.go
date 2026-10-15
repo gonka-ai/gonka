@@ -63,14 +63,21 @@ func checkStartStamp(rec *types.InferenceRecord, height uint64, hash []byte) err
 	return nil
 }
 
+func (sm *StateMachine) timeoutBlockTime() time.Duration {
+	if ms := sm.state.Config.TimeoutBlockTimeMs; ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	if sm.heartbeatCfg.BlockTime > 0 {
+		return sm.heartbeatCfg.BlockTime
+	}
+	return heightsync.DefaultBlockTime
+}
+
 func (sm *StateMachine) timeoutBlocks(seconds int64) uint64 {
 	if seconds <= 0 {
 		return 0
 	}
-	blockTime := sm.heartbeatCfg.BlockTime
-	if blockTime <= 0 {
-		blockTime = heightsync.DefaultBlockTime
-	}
+	blockTime := sm.timeoutBlockTime()
 	d := time.Duration(seconds) * time.Second
 	return uint64((d + blockTime - 1) / blockTime)
 }
@@ -158,11 +165,9 @@ func (sm *StateMachine) TimeoutDueHeight(inferenceID uint64, reason types.Timeou
 }
 
 func (sm *StateMachine) BlocksToDuration(n uint64) time.Duration {
-	blockTime := sm.heartbeatCfg.BlockTime
-	if blockTime <= 0 {
-		blockTime = heightsync.DefaultBlockTime
-	}
-	return time.Duration(n) * blockTime
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return time.Duration(n) * sm.timeoutBlockTime()
 }
 
 func addSatUint64(a, b uint64) uint64 {

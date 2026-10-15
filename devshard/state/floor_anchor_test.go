@@ -2,6 +2,7 @@ package state
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -321,4 +322,15 @@ func TestReceiptOutlivesThePrunedFloorHistory(t *testing.T) {
 	require.NoError(t, d.apply(receipt))
 	rec, _ = d.sm.GetInference(id)
 	require.Equal(t, types.StatusStarted, rec.Status)
+}
+
+func TestTimeoutBlocksUseTheEscrowBlockTime(t *testing.T) {
+	d := newFloorDriver(t)
+	require.Equal(t, uint64(60), d.sm.timeoutBlocks(60), "unset falls back to the compiled 1s")
+
+	d.sm.state.Config.TimeoutBlockTimeMs = 5000
+	require.Equal(t, uint64(12), d.sm.timeoutBlocks(60))
+	require.Equal(t, uint64(384), d.sm.timeoutBlocks(1920))
+	require.Equal(t, uint64(1), d.sm.timeoutBlocks(1), "a partial block rounds up")
+	require.Equal(t, 10*time.Second, d.sm.BlocksToDuration(2))
 }

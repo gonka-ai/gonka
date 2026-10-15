@@ -19,3 +19,10 @@ func DevshardExecutionTimeoutForCreate(ep *DevshardEscrowParams) int64 {
 	}
 	return ep.ExecutionTimeout
 }
+
+func DevshardTimeoutBlockTimeMsForCreate(ep *DevshardEscrowParams) uint32 {
+	if ep == nil || ep.TimeoutBlockTimeMs == 0 {
+		return DefaultDevshardTimeoutBlockTimeMs
+	}
+	return ep.TimeoutBlockTimeMs
+}
