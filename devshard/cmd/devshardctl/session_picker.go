@@ -321,6 +321,10 @@ func (p *sessionPicker) run() {
 		// exhaustion check for each request also runs against the
 		// per-request excludeParticipants set.
 		available := p.computeAvailableParticipants()
+		var hostKeys []string
+		if p.catchingUp != nil {
+			hostKeys = p.session.HostParticipantKeyList()
+		}
 
 		// Phase 1: prune canceled and exhausted requests, decide
 		// whether there is anything to dispatch right now.
@@ -393,7 +397,8 @@ func (p *sessionPicker) run() {
 			// Branch 1c: the host is still working through a chunked
 			// catch-up. A real request here would wait out the catch-up;
 			// burning the nonce moves it to the next host instead.
-			if p.catchingUp != nil && len(p.queue) > 0 && p.catchingUp(b.HostIdx) {
+			if p.catchingUp != nil && len(p.queue) > 0 && p.catchingUp(b.HostIdx) &&
+				p.queuedElsewhereLocked(b.HostIdx, hostKeys, available) {
 				ghost = ghostCatchingUp
 				ghostParticipantKey = b.ParticipantKey
 				return ghostProbeParams(p.model), true, p.logCtx, nil
@@ -582,6 +587,33 @@ func (p *sessionPicker) computeAvailableParticipants() map[string]bool {
 		available[key] = true
 	}
 	return available
+}
+
+// queuedElsewhereLocked reports whether some queued request can go to a slot
+// of another participant that is neither PoC-required, throttled, catching up
+// nor state-blocked, and that the request has not excluded. Without one,
+// burning hostIdx's nonce moves no request forward and only spins the nonce.
+// Must be called with p.mu held.
+func (p *sessionPicker) queuedElsewhereLocked(hostIdx int, keys []string, available map[string]bool) bool {
+	if hostIdx < 0 || hostIdx >= len(keys) {
+		return false
+	}
+	for i, key := range keys {
+		if key == "" || key == keys[hostIdx] || !available[key] || p.catchingUp(i) {
+			continue
+		}
+		if p.stateBlocked != nil {
+			if _, blocked := p.stateBlocked(key); blocked {
+				continue
+			}
+		}
+		for _, r := range p.queue {
+			if !r.excludeParticipants[key] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // dropExhaustedLocked removes any queued request whose exclude set
