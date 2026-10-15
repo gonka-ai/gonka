@@ -545,6 +545,18 @@ var testPeerConnBeforeInsert func()
 // stream end and is about to exit.
 var testWatchRecvExit func(*PeerConn)
 
+func livePeerConnLocked(key, endpoint string) *PeerConn {
+	if pc := peerConnRegistry[key]; pc != nil && pc.cfg.endpointKey() == endpoint {
+		return pc
+	}
+	for pc := range peerConnSuperseded {
+		if pc.key == key && pc.cfg.endpointKey() == endpoint {
+			return pc
+		}
+	}
+	return nil
+}
+
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	if outboundPeerReleased.Load() {
 		pc := NewPeerConn(cfg)
@@ -554,7 +566,7 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	key := cfg.registryKey()
 	endpoint := cfg.endpointKey()
 	peerConnMu.Lock()
-	if pc := peerConnRegistry[key]; pc != nil && pc.cfg.endpointKey() == endpoint {
+	if pc := livePeerConnLocked(key, endpoint); pc != nil {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()
 		return pc
@@ -574,14 +586,14 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 		fresh.Close()
 		return fresh
 	}
+	if pc := livePeerConnLocked(key, endpoint); pc != nil {
+		pc.refs.Add(1)
+		peerConnMu.Unlock()
+		// Never Start'ed. Close cancels the unused context.
+		fresh.Close()
+		return pc
+	}
 	if pc := peerConnRegistry[key]; pc != nil {
-		if pc.cfg.endpointKey() == endpoint {
-			pc.refs.Add(1)
-			peerConnMu.Unlock()
-			// Never Start'ed. Close cancels the unused context.
-			fresh.Close()
-			return pc
-		}
 		peerConnSuperseded[pc] = struct{}{}
 		logging.Info("peer rpc endpoint changed; new clients use a new connection",
 			"subsystem", "transport",
@@ -840,6 +852,14 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			// reopen Watch with the same token.
 			if errors.Is(err, errWatchStreamCap) || (!isRPCH2TransportMiss(err) && watchReopen(err)) {
 				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
+				continue
+			}
+			if isServerWatchCap(err) {
+				next := p.attachBackoff(time.Duration(reopenBackoff.Load()))
+				if wait := connectRetryAfter(err); wait > next {
+					next = wait
+				}
+				reopenBackoff.Store(int64(next))
 				continue
 			}
 			p.incReattach(reattachReasonWatch)
@@ -1497,6 +1517,11 @@ func PeerConnRegistered(hostAddress, version string) bool {
 			return true
 		}
 	}
+	for pc := range peerConnSuperseded {
+		if strings.HasPrefix(pc.key, prefix) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1546,6 +1571,11 @@ func watchReopen(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "host shutting down")
+}
+
+func isServerWatchCap(err error) bool {
+	return connect.CodeOf(err) == connect.CodeResourceExhausted &&
+		strings.Contains(err.Error(), "too many concurrent watches")
 }
 
 func nextAttachBackoff(prev, min, max time.Duration) time.Duration {

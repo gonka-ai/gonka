@@ -907,6 +907,47 @@ func TestSelectTransport_ChangedURLGetsNewPeerConn(t *testing.T) {
 	require.Same(t, rpcB.conn, current)
 }
 
+func TestSelectTransport_AlternatingURLsReuseLiveConns(t *testing.T) {
+	host := "gonka1alternating"
+	signer := devtest.MustGenerateKey(t)
+	set := ParseRPCEndpoints(EndpointSignatures)
+	urls := []string{"http://peer-a.example", "http://peer-b.example"}
+	seen := map[string]*PeerConn{}
+	for i := 0; i < 20; i++ {
+		u := urls[i%2]
+		c := SelectTransport(NewHTTPClient(u, fmt.Sprintf("escrow-%d", i), signer), host, set, nil).(*RPCClient)
+		t.Cleanup(c.Close)
+		if prev, ok := seen[u]; ok {
+			require.Same(t, prev, c.conn)
+		} else {
+			seen[u] = c.conn
+		}
+	}
+	peerConnMu.Lock()
+	superseded := 0
+	for pc := range peerConnSuperseded {
+		if strings.HasPrefix(pc.key, host+"@") {
+			superseded++
+		}
+	}
+	peerConnMu.Unlock()
+	require.Equal(t, 1, superseded)
+}
+
+func TestPeerConnRegistered_SeesLiveSupersededConn(t *testing.T) {
+	host := "gonka1registeredsuperseded"
+	signer := devtest.MustGenerateKey(t)
+	set := ParseRPCEndpoints(EndpointSignatures)
+	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
+	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcA.Close)
+	rpcB := SelectTransport(NewHTTPClient("http://peer-b.example", "escrow-2", signer), host, set, nil).(*RPCClient)
+	rpcB.Close()
+	require.True(t, PeerConnRegistered(host, peerConnConfigFromClient(a, host, nil).version()))
+	rpcA.Close()
+	require.False(t, PeerConnRegistered(host, peerConnConfigFromClient(a, host, nil).version()))
+}
+
 func TestReleaseOutboundPeerConns_ClosesSupersededPeerConn(t *testing.T) {
 	t.Cleanup(ResetOutboundPeerReleaseForTest)
 	host := "gonka1supersededrelease"
