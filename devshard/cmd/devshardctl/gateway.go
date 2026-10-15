@@ -87,6 +87,7 @@ type Gateway struct {
 	executionTimeoutSweepRunning atomic.Bool
 	awaitingStartMu              sync.Mutex
 	awaitingStart                map[string]string // escrow id -> startup skip reason
+	startClaims                  map[string]int    // escrow id -> settlements in flight on a waiting escrow
 	awaitingStartRetrying        atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
@@ -715,6 +716,19 @@ func (rt *devshardRuntime) stopRedundancy() {
 		return
 	}
 	rt.proxy.redundancy.Stop()
+}
+
+// discard releases a built runtime that will not be registered: the dispatcher
+// goroutine the builder started, then the session. No snapshot is flushed, as
+// nothing ran on this runtime.
+func (rt *devshardRuntime) discard() {
+	if rt == nil {
+		return
+	}
+	rt.stopRedundancy()
+	if err := rt.close(); err != nil {
+		log.Printf("discard devshard %s: %v", rt.id, err)
+	}
 }
 
 // retireClose flushes a final state snapshot at the current (now frozen) nonce
@@ -3679,7 +3693,7 @@ func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDev
 	}
 	record.Model = rt.model
 	if err := g.store.UpsertDevshard(ctx, record); err != nil {
-		rt.close()
+		rt.discard()
 		return record, err
 	}
 	g.runtimes[record.ID] = rt

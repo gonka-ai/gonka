@@ -196,7 +196,7 @@ func TestASkippedEscrowStartsWithItsPersistedHold(t *testing.T) {
 //     settleDevshardOnChain does for a non-resident escrow.
 //  2. Let the build succeed.
 //  3. Assert the retry drops its runtime instead of registering it, so no requests reach an escrow under settlement,
-//     and the escrow no longer waits.
+//     and the escrow keeps waiting under the claim: it still has no runtime, so rotation must not count it.
 func TestASkippedEscrowIsNotRegisteredOnceSettlementClaimedItWhileBuilding(t *testing.T) {
 	gateway := skippedEscrowGateway(t)
 	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
@@ -210,7 +210,8 @@ func TestASkippedEscrowIsNotRegisteredOnceSettlementClaimedItWhileBuilding(t *te
 
 	_, registered := gateway.runtimes["12"]
 	require.False(t, registered)
-	require.False(t, gateway.isAwaitingStart("12"))
+	require.True(t, gateway.isAwaitingStart("12"))
+	require.False(t, gateway.awaitsRetry("12"))
 }
 
 // Test flow:
@@ -233,13 +234,15 @@ func TestASkippedEscrowIsNotRegisteredOnceDeactivatedWhileBuilding(t *testing.T)
 
 // Test flow:
 //  1. Hold a skipped escrow. Settle it manually while its runtime build still fails.
-//  2. Assert the escrow does not wait while the settlement runs, so the retry cannot register a runtime under it.
-//  3. Assert the settlement fails and the escrow waits again, active in the store, so the retry keeps looking after it
-//     instead of leaving it active with no runtime and no retry.
+//  2. Assert that while the settlement runs the retry may not register a runtime for the escrow, and the escrow
+//     still waits, so rotation does not count it as serving.
+//  3. Assert the settlement fails and the retry looks after the escrow again, active in the store, instead of leaving
+//     it active with no runtime and no retry.
 func TestAFailedSettlementGivesASkippedEscrowBackToTheRetry(t *testing.T) {
 	gateway := skippedEscrowGateway(t)
-	waitingDuringSettlement := true
+	retriableDuringSettlement, waitingDuringSettlement := true, false
 	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+		retriableDuringSettlement = gateway.awaitsRetry(cfg.ID)
 		waitingDuringSettlement = gateway.isAwaitingStart(cfg.ID)
 		return nil, errors.New("recover session: database is locked")
 	})
@@ -247,9 +250,78 @@ func TestAFailedSettlementGivesASkippedEscrowBackToTheRetry(t *testing.T) {
 	_, err := gateway.settleDevshardOnChain(context.Background(), "12", adminSettleEscrowRequest{})
 
 	require.Error(t, err)
-	require.False(t, waitingDuringSettlement)
-	require.True(t, gateway.isAwaitingStart("12"))
+	require.False(t, retriableDuringSettlement)
+	require.True(t, waitingDuringSettlement)
+	require.True(t, gateway.awaitsRetry("12"))
 	require.True(t, devshardIDs(t, gateway.store)["12"].Active)
+}
+
+// Test flow:
+//  1. Hold a skipped escrow. Settle it manually; while that settlement builds its runtime, a second manual settlement
+//     of the same escrow runs and fails (its build fails too).
+//  2. Assert that after the second settlement failed the retry still may not register a runtime: the first settlement
+//     still owns the escrow.
+//  3. Let the first settlement fail as well and assert the retry looks after the escrow again.
+func TestOverlappingSettlementsKeepASkippedEscrowClaimedUntilTheLastOneEnds(t *testing.T) {
+	gateway := skippedEscrowGateway(t)
+	retriableAfterInnerFailure := true
+	builds := 0
+	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+		builds++
+		if builds == 1 {
+			_, innerErr := gateway.settleDevshardOnChain(context.Background(), cfg.ID, adminSettleEscrowRequest{})
+			require.Error(t, innerErr)
+			retriableAfterInnerFailure = gateway.awaitsRetry(cfg.ID)
+		}
+		return nil, errors.New("recover session: database is locked")
+	})
+
+	_, err := gateway.settleDevshardOnChain(context.Background(), "12", adminSettleEscrowRequest{})
+
+	require.Error(t, err)
+	require.Equal(t, 2, builds)
+	require.False(t, retriableAfterInnerFailure)
+	require.True(t, gateway.awaitsRetry("12"))
+}
+
+// Test flow:
+//  1. Hold a skipped escrow and claim it for a settlement.
+//  2. Count the active regular escrows for its model and epoch.
+//  3. Assert the claimed escrow is still not counted: it has no runtime, so a slot that serves nothing must not take a
+//     rotation target.
+func TestAClaimedEscrowTakesNoRotationTarget(t *testing.T) {
+	gateway := skippedEscrowGateway(t)
+	gateway.mu.Lock()
+	gateway.claimAwaitingStart("12")
+	gateway.mu.Unlock()
+
+	count, err := gateway.activeRotationEscrowCount(context.Background(), rotationRoleRegular, 1, "m")
+
+	require.NoError(t, err)
+	require.Zero(t, count)
+}
+
+// Test flow:
+//  1. Hold a skipped escrow whose build now returns a runtime with a running dispatcher, while a settlement claimed the
+//     escrow during the build.
+//  2. Retry.
+//  3. Assert the dropped runtime's dispatcher is stopped, so rejected registrations do not leak a goroutine per tick.
+func TestARejectedRetriedRuntimeStopsItsDispatcher(t *testing.T) {
+	gateway := skippedEscrowGateway(t)
+	env := setupTestProxy(t, 3, nil, true)
+	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+		gateway.mu.Lock()
+		gateway.claimAwaitingStart(cfg.ID)
+		gateway.mu.Unlock()
+		return &devshardRuntime{id: cfg.ID, model: cfg.Model, proxy: env.proxy}, nil
+	})
+	require.False(t, env.proxy.redundancy.picker.isStopped())
+
+	gateway.retrySkippedEscrows(context.Background())
+
+	_, registered := gateway.runtimes["12"]
+	require.False(t, registered)
+	require.True(t, env.proxy.redundancy.picker.isStopped())
 }
 
 // Test flow:

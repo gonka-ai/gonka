@@ -662,9 +662,7 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 	}
 	if firstFatal != nil {
 		for _, rt := range runtimes {
-			if rt != nil {
-				rt.close()
-			}
+			rt.discard()
 		}
 		return nil, nil, firstFatal
 	}

@@ -802,6 +802,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	}
 	// The escrow is inactive in the store now: nothing waits for its start any
 	// more, whatever happens to the broadcast below.
+	g.stopAwaitingStart(id)
 	releaseClaim = nil
 
 	privateKey, privateKeyEnv, err := g.resolveDevshardSettlementKey(ctx, id, req)
