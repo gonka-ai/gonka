@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -381,5 +382,38 @@ func TestARetryThatStartsASkippedEscrowClearsItsSeries(t *testing.T) {
 
 	_, registered := gateway.runtimes["12"]
 	require.True(t, registered)
+	require.Zero(t, promtestutil.CollectAndCount(gateway.metrics.startupSkippedEscrows))
+}
+
+// Test flow:
+//  1. Build a managed gateway with one active escrow in the store that the startup build skipped, with a builder that
+//     now succeeds.
+//  2. Assert the first balance check, which runs as the gateway starts, registers the escrow at once. The waiting set
+//     is filled before the workers start; filled afterwards, the first retry would find nothing and the escrow would
+//     wait for the next tick, and a settlement started by a worker in between would not find it waiting.
+func TestNewManagedGatewayWaitsForSkippedEscrowsBeforeItsWorkersStart(t *testing.T) {
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	settings := GatewaySettings{DefaultModel: "m"}
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
+		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
+		Active:        true,
+	}}))
+	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
+	})
+
+	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, nil,
+		[]startupSkippedEscrow{{EscrowID: "12", Model: "m", Reason: startupSkipReasonRuntimeBuildFailed}})
+	t.Cleanup(gateway.stopEscrowRotator)
+
+	require.Eventually(t, func() bool {
+		gateway.mu.Lock()
+		defer gateway.mu.Unlock()
+		_, registered := gateway.runtimes["12"]
+		return registered
+	}, 5*time.Second, 10*time.Millisecond, "the first balance check did not start the skipped escrow")
+	require.False(t, gateway.isAwaitingStart("12"))
 	require.Zero(t, promtestutil.CollectAndCount(gateway.metrics.startupSkippedEscrows))
 }

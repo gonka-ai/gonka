@@ -911,10 +911,17 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder, maxNonce devshardpkg.MaxNonceProvider) *Gateway {
+// NewManagedGateway builds the gateway and starts its background workers. The
+// escrows the startup build skipped (startupSkipped) are registered as waiting
+// before any worker starts, so a settlement the rotator begins at once finds
+// them waiting and claims them; a worker that saw an empty waiting set could
+// otherwise let the retry publish a runtime under an escrow being settled.
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder, maxNonce devshardpkg.MaxNonceProvider, startupSkipped []startupSkippedEscrow) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
+	recordStartupSkippedEscrows(g.metrics, startupSkipped)
+	g.awaitSkippedEscrows(startupSkipped)
 	g.settings = settings
 	g.baseStorageDir = baseStorageDir
 	g.store = store

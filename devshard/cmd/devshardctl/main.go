@@ -497,25 +497,17 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if accountingTracker != nil {
 		accountingTracker.SetDispositionSink(dispositionSink{})
 	}
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider), startupSkipped)
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
 			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
 		}
 	}
-	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
-	gateway.awaitSkippedEscrows(startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
 	return gateway
-}
-
-func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
-	for _, escrow := range skipped {
-		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
-	}
 }
 
 func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, []startupSkippedEscrow, error) {

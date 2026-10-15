@@ -31,7 +31,7 @@ func TestNewManagedGatewayChecksBalancesWithTheChainMaxNonceFromTheStart(t *test
 	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 	maxNonce := &signalingMaxNonce{read: make(chan struct{})}
 
-	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, maxNonce)
+	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, maxNonce, nil)
 	t.Cleanup(gateway.stopEscrowRotator)
 
 	requireClosedWithin(t, maxNonce.read, "the first balance check ran without the chain max nonce")

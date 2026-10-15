@@ -26,6 +26,12 @@ import (
 // ends when a runtime is registered by any path, when the escrow is
 // deactivated, or when settlement has marked it inactive in the store.
 
+func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
+	for _, escrow := range skipped {
+		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
+	}
+}
+
 func (g *Gateway) awaitSkippedEscrows(skipped []startupSkippedEscrow) {
 	g.awaitingStartMu.Lock()
 	defer g.awaitingStartMu.Unlock()
