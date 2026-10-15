@@ -51,24 +51,28 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 	}
 	unaryOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(maxRecvBytes),
+		transport.WithGzipReadCap(maxRecvBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	largeOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(transport.DefaultRPCLargeReadMaxBytes),
+		transport.WithGzipReadCap(transport.DefaultRPCLargeReadMaxBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	payloadOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
+		transport.WithGzipReadCap(int(transport.DefaultMaxBodySize)),
 		connect.WithSendMaxBytes(transport.DefaultRPCPayloadSendMaxBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	// Chat is 10 MiB (prompt + catch-up). The request envelope is gzipped like
-	// every other RPC, bounded by WithReadMaxBytes while inflating. Responses
+	// every other RPC, bounded by WithGzipReadCap while inflating. Responses
 	// must not use per-frame gzip: chunks are already one application gzip
 	// stream (plan §8.2), so the floor keeps the decompressor registered while
 	// no ChatFrame is ever compressed a second time.
 	chatOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
+		transport.WithGzipReadCap(int(transport.DefaultMaxBodySize)),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 		connect.WithCompressMinBytes(math.MaxInt),
 	}
