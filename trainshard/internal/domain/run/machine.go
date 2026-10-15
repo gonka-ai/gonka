@@ -106,7 +106,10 @@ func (m Machine) drained(ctx context.Context, node vo.NodeRef, shardID vo.ShardI
 	if loadErr != nil {
 		return false, errors.Join(err, loadErr)
 	}
-	return state.For(shardID).Drained, nil
+	if !state.For(shardID).Drained {
+		return false, err
+	}
+	return true, nil
 }
 
 // Sweep goes by what the machine holds, not by the stored state, so a run that outlived its state

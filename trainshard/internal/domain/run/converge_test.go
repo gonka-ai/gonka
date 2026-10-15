@@ -87,9 +87,9 @@ func TestConvergeStandsOnTheLastDrainWhileTheDapiDoesNotAnswer(t *testing.T) {
 			drained:    true,
 		},
 		{
-			name:       "a node the dapi never found drained is drained before anything else",
+			name:       "a node the dapi never found drained waits for the dapi without running out of time",
 			unreadable: unreachable,
-			wantCalls:  []string{"control.drain"},
+			wantErr:    unreachable,
 		},
 		{
 			name:       "a dapi that answers it does not know the node is not stood on",
@@ -140,6 +140,9 @@ func TestConvergeStandsOnTheLastDrainWhileTheDapiDoesNotAnswer(t *testing.T) {
 			}
 			if got := runs.states[nodeA].Drained; got != tc.drained {
 				t.Fatalf("got drained %v, want the last answer %v kept", got, tc.drained)
+			}
+			if at := runs.states[nodeA].UnpreparedAt; !at.IsZero() {
+				t.Fatalf("got the wait started at %v, want no clock running on a dapi that does not answer", at)
 			}
 		})
 	}

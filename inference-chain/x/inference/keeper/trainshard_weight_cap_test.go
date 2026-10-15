@@ -117,6 +117,17 @@ func TestAssembleTrainshard_KeepsAnHonestNodeWeight(t *testing.T) {
 	require.Equal(t, int64(110), assembledWeight(t, k, ms, ctx, honest.addr))
 }
 
+func TestAssembleTrainshard_ACapPastInt64LeavesTheWeight(t *testing.T) {
+	host := weightCapHost{addr: sample.AccAddress(), nodes: h100Nodes(9e18)}
+	k, ms, ctx := setupNodeWeightCap(t, 3,
+		host,
+		weightCapHost{addr: sample.AccAddress(), nodes: h100Nodes(8e18)},
+		weightCapHost{addr: sample.AccAddress(), nodes: h100Nodes(8e18)},
+	)
+
+	require.Equal(t, int64(9e18), assembledWeight(t, k, ms, ctx, host.addr))
+}
+
 func TestAssembleTrainshard_TheMedianCountsEachParticipantOnce(t *testing.T) {
 	cheater := weightCapHost{addr: sample.AccAddress(), nodes: h100Nodes(400, 0, 0, 0)}
 	k, ms, ctx := setupNodeWeightCap(t, 3,

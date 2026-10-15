@@ -190,7 +190,7 @@ func (v *trainingEpochView) capNodeWeights(node *trainingEpochNode, params *type
 	if node.gpuType == "" || node.gpuCount == 0 {
 		return false
 	}
-	caps := make([]int64, len(node.entries))
+	caps := make([]sdkmath.LegacyDec, len(node.entries))
 	for i, e := range node.entries {
 		rate, ok := v.weightRates[e.ModelId][node.gpuType]
 		if !ok || rate.participants < int(params.MinWeightRateParticipants) {
@@ -199,11 +199,12 @@ func (v *trainingEpochView) capNodeWeights(node *trainingEpochNode, params *type
 		caps[i] = rate.median.
 			MulInt64(int64(node.gpuCount)).
 			MulInt64(10000 + int64(params.NodeWeightToleranceBps)).
-			QuoInt64(10000).
-			TruncateInt64()
+			QuoInt64(10000)
 	}
 	for i, e := range node.entries {
-		e.PocWeight = min(e.PocWeight, caps[i])
+		if caps[i].LT(sdkmath.LegacyNewDec(e.PocWeight)) {
+			e.PocWeight = caps[i].TruncateInt64()
+		}
 	}
 	return true
 }

@@ -170,6 +170,20 @@ func TestSetNodeStoppedCommand_LiftingKeepsAReservedNodeStopped(t *testing.T) {
 	assert.Equal(t, types.HardwareNodeStatus_STOPPED, node.State.IntendedStatus)
 }
 
+func TestSetNodeStoppedCommand_LiftingBeforeTheReservationsAreReadKeepsTheNodeStopped(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_STOPPED)
+	node.State.AdminState.Stopped = true
+	broker := &Broker{nodes: map[string]*NodeWithState{"node-1": node}, reconcileTrigger: make(chan struct{}, 1)}
+	broker.awaitingReservations.Store(true)
+
+	start := SetNodeStoppedCommand{NodeId: "node-1", Stopped: false, Response: make(chan error, 1)}
+	start.Execute(broker)
+
+	require.NoError(t, <-start.Response)
+	assert.False(t, node.State.AdminState.Stopped)
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, node.State.IntendedStatus)
+}
+
 func TestGetCommandForState_StopsAReservedNode(t *testing.T) {
 	broker := NewTestBroker()
 	reserved := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, Reserved: true}
