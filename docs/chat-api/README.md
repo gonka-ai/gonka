@@ -69,7 +69,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `enable_thinking` | bool | — | translate to chat_template_kwargs ([why](troubleshooting.md#translate-enable_thinking)) | [[Qwen-3]](references.md#qwen) |
 | `thinking_config` | object | — | silent-strip ([why](troubleshooting.md#strip-thinking_config)) | — |
 | `think` | bool | — | silent-strip ([why](troubleshooting.md#strip-think)) | — |
-| `min_tokens` | int | — | vLLM extension; kept only when the caller sends it (clamped ≤`max_tokens`), never injected; applied identically on inference and validation replay | [[vLLM-1]](references.md#vllm) |
+| `min_tokens` | int | — | vLLM extension; kept only when the caller sends it (clamped ≤`max_tokens`), never injected; **dropped** on grammar-constrained requests (`response_format` `json_object`/`json_schema`/`structural_tag`, `structured_outputs`, `tool_choice` `required` or named): masking EOS after the grammar completes leaves no valid token; applied identically on inference and validation replay | [[vLLM-1]](references.md#vllm) |
 | `bad_words` | string array | — | vLLM extension; ≤64 entries × 128 B per entry | [[vLLM-1]](references.md#vllm) |
 | `stop_token_ids` | int array | — | vLLM extension; every id must be an integer inside the routed model's vocabulary, else 400: with `min_tokens` set, vLLM masks stop-token logits and an out-of-vocab id CUDA-asserts the node | [[vLLM-1]](references.md#vllm) |
 | `skip_special_tokens` | bool | — | vLLM extension; must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)) | [[vLLM-1]](references.md#vllm) |

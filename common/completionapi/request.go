@@ -163,16 +163,48 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 
 // EnforceTokenBudget pins max_tokens/max_completion_tokens to one value and keeps only a caller
 // min_tokens, clamped to it. stop_token_ids pass through: check them with ValidateStopTokenIDs.
+// A [GrammarConstrained] request carries no min_tokens: vLLM masks EOS below min_tokens, and once
+// the grammar allows only EOS every logit is -inf (NaN logprobs).
 // See devshard/docs/proposals/short-output-validation.md.
 func EnforceTokenBudget(requestMap map[string]interface{}) {
 	maxTokens := getMaxTokens(requestMap)
 	requestMap["max_tokens"] = maxTokens
 	requestMap["max_completion_tokens"] = maxTokens
-	if minTokens := getMinTokens(requestMap); minTokens > 0 {
+	if minTokens := getMinTokens(requestMap); minTokens > 0 && !GrammarConstrained(requestMap) {
 		requestMap["min_tokens"] = min(minTokens, maxTokens)
 	} else {
 		delete(requestMap, "min_tokens")
 	}
+}
+
+// GrammarConstrained reports whether the request makes vLLM decode under a structured-output grammar.
+// It reads only client-signed fields, so executor and validator replay decide alike.
+func GrammarConstrained(requestMap map[string]interface{}) bool {
+	if responseFormat, ok := requestMap["response_format"].(map[string]interface{}); ok {
+		switch responseFormat["type"] {
+		case "json_object", "json_schema", "structural_tag":
+			return true
+		}
+	}
+	if structuredOutputs, ok := requestMap["structured_outputs"].(map[string]interface{}); ok {
+		if structuredOutputs["json_object"] == true {
+			return true
+		}
+		for _, key := range []string{"json", "regex", "choice", "grammar", "structural_tag"} {
+			if structuredOutputs[key] != nil {
+				return true
+			}
+		}
+	}
+	switch toolChoice := requestMap["tool_choice"].(type) {
+	case string:
+		return toolChoice == "required"
+	case map[string]interface{}:
+		function, _ := toolChoice["function"].(map[string]interface{})
+		name, _ := function["name"].(string)
+		return name != ""
+	}
+	return false
 }
 
 // ErrStopTokenIDs marks a stop_token_ids field the engine must not be sent.

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
+	"common/completionapi"
 	"devshard"
 )
 
@@ -178,14 +179,19 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 }
 
 // applyCallerMinTokens keeps max_tokens as capped and only a min_tokens the caller sent, clamped to
-// max_tokens. See devshard/docs/proposals/short-output-validation.md.
+// max_tokens; a grammar-constrained request keeps none, as in [completionapi.EnforceTokenBudget].
+// See devshard/docs/proposals/short-output-validation.md.
 func applyCallerMinTokens(ctx *RequestFilterContext) {
 	raw, ok := ctx.Document.Get("min_tokens")
 	if !ok {
 		return
 	}
+	var grammarConstrained bool
+	ctx.Document.RLockedScope(func(document map[string]any) {
+		grammarConstrained = completionapi.GrammarConstrained(document)
+	})
 	minTokens, _ := devshard.JSONNumericUint64(raw)
-	if minTokens == 0 {
+	if minTokens == 0 || grammarConstrained {
 		ctx.Document.Delete("min_tokens")
 		return
 	}

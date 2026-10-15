@@ -37,6 +37,36 @@ func TestExecuteValidation_ReplayRequestKeepsShortMaxTokens(t *testing.T) {
 	require.EqualValues(t, 1, captured["max_tokens"])
 }
 
+// Test flow:
+// 1. Build the executor body for a json_schema request with a caller min_tokens of 16.
+// 2. Replay a stored 10-token output through ExecuteValidation and capture the replay body.
+// 3. Neither body carries min_tokens, both carry the same max_tokens, and the output is compared, not rejected as short.
+func TestExecuteValidation_GrammarConstrainedReplayMatchesExecution(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"min_tokens":16,"max_tokens":32,"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"type":"object"}}}}`)
+	stored := responsePayloadTokens(10, "stop", "")
+
+	executed, err := completionapi.ModifyRequestBodyWithLogprobsMode(prompt, 1, "")
+	require.NoError(t, err)
+	var executedMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(executed.NewBody, &executedMap))
+
+	var replayed map[string]interface{}
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		require.NoError(t, json.Unmarshal(body, &replayed))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
+	}
+	res, err := ExecuteValidation(context.Background(), "inf-grammar", prompt, stored, execute, 0, 0, "", 0)
+	require.NoError(t, err)
+
+	require.NotContains(t, executedMap, "min_tokens")
+	require.NotContains(t, replayed, "min_tokens")
+	require.EqualValues(t, 32, executedMap["max_tokens"])
+	require.Equal(t, executedMap["max_tokens"], replayed["max_tokens"])
+	similarity, ok := res.(*SimilarityValidationResult)
+	require.True(t, ok, "got %T %+v", res, res)
+	require.Equal(t, 1.0, similarity.Value)
+}
+
 // responsePayloadTokens builds a completion response with `count` output tokens and the given
 // finish_reason / stop_reason, for exercising the min_tokens output-length check.
 func responsePayloadTokens(count int, finishReason, stopReason string) []byte {

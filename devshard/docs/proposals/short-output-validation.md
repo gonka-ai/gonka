@@ -16,6 +16,8 @@ Short-output validation is the only behaviour of the new devshard version: one r
 
 The gateway, the executor and the validator replay rewrite the request the same way (`completionapi.EnforceTokenBudget`): `max_tokens` is not raised, no `min_tokens` floor is injected, and only a `min_tokens` the caller sent survives, clamped to `max_tokens`. `stop_token_ids` are kept instead of stripped, after a vocabulary check (below).
 
+A grammar-constrained request (`completionapi.GrammarConstrained`) carries no `min_tokens`, not even the caller's: once the grammar allows only EOS, masking EOS leaves every logit at -inf.
+
 The validator replaces the old "output shorter than the floor" check with two checks: an output shorter than the caller's own `min_tokens` fails, and an output that continues past a requested stop token fails.
 
 ### Scoring policy

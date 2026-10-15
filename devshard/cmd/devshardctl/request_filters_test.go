@@ -250,6 +250,30 @@ func TestNormalizeChatRequestKeepsMinTokensWithinEffectiveMax(t *testing.T) {
 	require.EqualValues(t, 128, raw["min_tokens"])
 }
 
+// Test flow:
+// 1. Normalize grammar-constrained requests that carry a caller min_tokens.
+// 2. The forwarded body carries no min_tokens and keeps max_tokens.
+func TestNormalizeChatRequestDropsMinTokensOnGrammarRequests(t *testing.T) {
+	constraints := map[string]string{
+		"response_format json_schema": `"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"type":"object"}}}`,
+		"response_format json_object": `"response_format":{"type":"json_object"}`,
+		"structured_outputs regex":    `"structured_outputs":{"regex":"[a-z]+"}`,
+		"tool_choice named":           `"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"f"}}`,
+	}
+	for name, fields := range constraints {
+		t.Run(name, func(t *testing.T) {
+			body, req, err := normalizeChatRequest([]byte(`{"max_tokens":100,"min_tokens":16,"messages":[{"role":"user","content":"hi"}],` + fields + `}`))
+			require.NoError(t, err)
+			require.EqualValues(t, 100, req.MaxTokens)
+
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(body, &raw))
+			require.NotContains(t, raw, "min_tokens")
+			require.EqualValues(t, 100, raw["max_tokens"])
+		})
+	}
+}
+
 func TestNormalizeChatRequestStripsTemperatureAboveMax(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
