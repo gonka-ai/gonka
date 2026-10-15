@@ -920,6 +920,7 @@ type inflight struct {
 	pendingReserved         int
 	preludeOverflow         atomic.Bool
 	preludePressure         atomic.Bool
+	pendingOwner            atomic.Int32
 	answerRetention         atomic.Bool
 	participantPendingBytes *atomic.Int64
 	participantAnswerBytes  *atomic.Int64
@@ -1238,6 +1239,7 @@ type raceGroup struct {
 	holdCandidates map[uint64]*inflight
 	decided        atomic.Bool
 	clientDetached atomic.Bool
+	clientFlag     *cancelFlag
 	logCtx         context.Context
 	writeCtx       context.Context
 	escrow         string
@@ -1402,7 +1404,7 @@ func (rg *raceGroup) detachClient() {
 }
 
 func (rg *raceGroup) isClientDetached() bool {
-	return rg != nil && rg.clientDetached.Load()
+	return rg != nil && (rg.clientDetached.Load() || rg.clientFlag.Gone())
 }
 
 const (
@@ -1873,15 +1875,8 @@ func (rw *raceWriter) retainPending(p []byte) bool {
 	if len(p) == 0 || inf.preludeOverflow.Load() {
 		return false
 	}
-	if rw.group.isClientDetached() && !inf.answerRetention.Load() {
-		if len(inf.pendingBuf)+len(p) > emptyStreamBodySampleLimit {
-			return false
-		}
-		if reason := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
-			return false
-		}
-		inf.pendingReserved += len(p)
-		return true
+	if rw.group.isClientDetached() {
+		return inf.retainDetachedSample(p)
 	}
 	answer := inf.answerRetention.Load()
 	attemptCap := maxPendingPreludeBytes
@@ -1889,11 +1884,11 @@ func (rw *raceWriter) retainPending(p []byte) bool {
 		attemptCap = maxPendingAnswerBytes
 	}
 	if attemptCap > 0 && len(inf.pendingBuf)+len(p) > attemptCap {
-		rw.abortPendingPrelude("attempt_cap", len(p))
+		rw.abortPendingPrelude("attempt_cap", int64(attemptCap), len(p))
 		return false
 	}
-	if reason := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
-		rw.abortPendingPrelude(reason, len(p))
+	if reason, limit := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
+		rw.abortPendingPrelude(reason, limit, len(p))
 		return false
 	}
 	if answer {
@@ -1904,7 +1899,22 @@ func (rw *raceWriter) retainPending(p []byte) bool {
 	return true
 }
 
-func (inf *inflight) reserveRetentionBytes(n int64) string {
+func (inf *inflight) retainDetachedSample(p []byte) bool {
+	if inf.answerRetention.Load() {
+		inf.releasePendingBuf()
+		return false
+	}
+	if len(inf.pendingBuf)+len(p) > emptyStreamBodySampleLimit {
+		return false
+	}
+	if reason, _ := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
+		return false
+	}
+	inf.pendingReserved += len(p)
+	return true
+}
+
+func (inf *inflight) reserveRetentionBytes(n int64) (string, int64) {
 	if inf.answerRetention.Load() {
 		return reserveRetentionInto(inf.participantAnswerBytes, &pendingAnswerBytes, n,
 			maxPendingAnswerParticipant, maxPendingAnswerGlobal)
@@ -1913,11 +1923,11 @@ func (inf *inflight) reserveRetentionBytes(n int64) string {
 		maxPendingPreludeParticipant, maxPendingPreludeGlobal)
 }
 
-func reserveRetentionInto(participant, global *atomic.Int64, n, participantCap, globalCap int64) string {
+func reserveRetentionInto(participant, global *atomic.Int64, n, participantCap, globalCap int64) (string, int64) {
 	if participant != nil {
 		if total := participant.Add(n); participantCap > 0 && total > participantCap {
 			participant.Add(-n)
-			return "participant_cap"
+			return "participant_cap", participantCap
 		}
 	}
 	if total := global.Add(n); globalCap > 0 && total > globalCap {
@@ -1925,12 +1935,12 @@ func reserveRetentionInto(participant, global *atomic.Int64, n, participantCap, 
 		if participant != nil {
 			participant.Add(-n)
 		}
-		return "global_cap"
+		return "global_cap", globalCap
 	}
-	return ""
+	return "", 0
 }
 
-func (rw *raceWriter) abortPendingPrelude(reason string, chunk int) {
+func (rw *raceWriter) abortPendingPrelude(reason string, limit int64, chunk int) {
 	inf := rw.inf
 	if inf.preludeOverflow.Swap(true) {
 		return
@@ -1941,12 +1951,17 @@ func (rw *raceWriter) abortPendingPrelude(reason string, chunk int) {
 	if inf.emptyResponseBodySample == "" {
 		inf.emptyResponseBodySample, inf.emptyResponseBodySampleTruncated = bodySampleForLog(inf.pendingBuf, emptyStreamBodySampleLimit)
 	}
+	pool := "prelude"
+	if inf.answerRetention.Load() {
+		pool = "answer"
+	}
 	logInferenceStage(rw.group.logCtx, inf.escrowID, rw.nonce, "pending_prelude_overflow",
 		"host", inf.hostID,
 		"reason", reason,
+		"pool", pool,
+		"limit_bytes", limit,
 		"pending_bytes", len(inf.pendingBuf),
 		"chunk_bytes", chunk,
-		"attempt_cap", maxPendingPreludeBytes,
 		"output_chunks", inf.outputChunks.Load(),
 		"content_chunks", inf.contentChunks.Load(),
 	)
@@ -1997,8 +2012,17 @@ func (rw *raceWriter) appendErrorStreamLines(lines []string) {
 	}
 }
 
+const (
+	pendingOwnedBySender int32 = iota
+	pendingHandedOff
+	pendingOrphaned
+)
+
 func releasePendingBufs(attempts []*inflight) {
 	for _, inf := range attempts {
+		if inf == nil || inf.pendingOwner.CompareAndSwap(pendingOwnedBySender, pendingOrphaned) {
+			continue
+		}
 		inf.releasePendingBuf()
 	}
 }
@@ -2008,10 +2032,15 @@ func (inf *inflight) pendingBufPromotable() bool {
 }
 
 func (inf *inflight) releasePendingBufUnlessPromotable() {
-	if inf == nil || inf.pendingBufPromotable() {
+	if inf == nil {
 		return
 	}
-	inf.releasePendingBuf()
+	if !inf.pendingBufPromotable() {
+		inf.releasePendingBuf()
+	}
+	if !inf.pendingOwner.CompareAndSwap(pendingOwnedBySender, pendingHandedOff) {
+		inf.releasePendingBuf()
+	}
 }
 
 func (inf *inflight) releasePendingBuf() {
@@ -2222,6 +2251,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	}
 	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made", decisionFields...)
 	race := newRaceGroup(settleCtx, ctx, e.devshardID, w)
+	race.clientFlag = clientFlag
 	attempts := []*inflight{primary}
 
 	// Always start the primary.

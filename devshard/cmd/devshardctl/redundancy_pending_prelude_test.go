@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"runtime"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
+	"devshard/user"
 )
 
 const roleOnlyEvent = `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n"
@@ -549,6 +551,9 @@ func TestReleasePendingBufs_DrainsEveryAttemptOnFallbackFailure(t *testing.T) {
 	require.Positive(t, infB.pendingReserved)
 
 	attempts := []*inflight{infA, infB}
+	for _, inf := range attempts {
+		inf.releasePendingBufUnlessPromotable()
+	}
 	fallback := fallbackSuspiciousWinner(attempts)
 	require.NotNil(t, fallback)
 	require.Error(t, rg.promoteFallbackWinner(fallback), "the client write must fail")
@@ -612,6 +617,7 @@ func TestOverflowedAttemptIsNeverASuccessfulSettlement(t *testing.T) {
 	inf.setReceiptAt(time.Now())
 	inf.resp = &host.HostResponse{ConfirmedAt: 1}
 	inf.contentChunks.Add(3)
+	close(inf.done)
 
 	require.False(t, isFailedStreamAttempt(inf), "a content-bearing finished attempt normally succeeds")
 	require.True(t, deliveredWholeAnswer(inf))
@@ -623,4 +629,219 @@ func TestOverflowedAttemptIsNeverASuccessfulSettlement(t *testing.T) {
 		"a discarded overflow must never count as a delivered answer")
 	require.False(t, deliveredWholeAnswer(inf),
 		"zero bytes reached the client, so settlement must not record success")
+}
+
+func TestPreludeOverflowEscalatesAsAttemptFailed(t *testing.T) {
+	inf := &inflight{hostID: "h", escrowID: "e", nonce: 1,
+		done: make(chan struct{}), receiptCh: make(chan struct{}), firstTokenCh: make(chan struct{})}
+	now := time.Now()
+	inf.sendTime = now
+	inf.setReceiptAt(now)
+	inf.setFirstTokenAt(now)
+	inf.preludeOverflow.Store(true)
+	inf.err = errPendingPreludeTooLarge
+	close(inf.done)
+
+	trigger, ok := (&Redundancy{}).escalationForInflight(inf, user.InferenceParams{})
+	require.True(t, ok, "an overflowed attempt must hand the request to another host")
+	require.Equal(t, "attempt_failed", trigger.stage)
+}
+
+func TestRaceWriter_DetachedClientDropsSuspiciousAnswerWithoutAbort(t *testing.T) {
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 1<<20)
+	oldAnswer := maxPendingAnswerBytes
+	maxPendingAnswerBytes = 128 * 1024
+	t.Cleanup(func() { maxPendingAnswerBytes = oldAnswer })
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	rw, inf := newPendingRaceWriter(t, rg, 1)
+	inf.suspicious = true
+	inf.cancel = func() { t.Fatal("a detached client must not cancel the host") }
+
+	_, err := rw.Write([]byte(contentEvent))
+	require.NoError(t, err)
+	require.Positive(t, inf.answerReserved)
+
+	rg.detachClient()
+	for i := 0; i < 16; i++ {
+		_, err := rw.Write(bigContentEvent(64 * 1024))
+		require.NoError(t, err)
+	}
+
+	require.False(t, inf.preludeOverflow.Load(), "the host is not at fault for the client leaving")
+	require.Nil(t, inf.pendingBuf)
+	require.Zero(t, inf.answerReserved)
+	require.Zero(t, inf.participantAnswerBytes.Load())
+}
+
+func TestRaceWriter_OverflowLogNamesTrippedPoolAndLimit(t *testing.T) {
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 1<<20)
+	oldAnswer := maxPendingAnswerBytes
+	maxPendingAnswerBytes = 256 * 1024
+	t.Cleanup(func() { maxPendingAnswerBytes = oldAnswer })
+
+	var logs bytes.Buffer
+	prevLogWriter := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(prevLogWriter) })
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	rw, inf := newPendingRaceWriter(t, rg, 1)
+	inf.suspicious = true
+	inf.cancel = func() {}
+
+	chunk := bigContentEvent(64 * 1024)
+	for i := 0; i < 32 && !inf.preludeOverflow.Load(); i++ {
+		_, err := rw.Write(chunk)
+		require.NoError(t, err)
+	}
+	require.True(t, inf.preludeOverflow.Load())
+
+	out := logs.String()
+	require.Contains(t, out, "stage=pending_prelude_overflow")
+	require.Contains(t, out, "reason=attempt_cap")
+	require.Contains(t, out, "pool=answer")
+	require.Contains(t, out, fmt.Sprintf("limit_bytes=%d", maxPendingAnswerBytes))
+}
+
+func TestRaceWriter_ClientFlagDetachDropsSuspiciousAnswerWithoutAbort(t *testing.T) {
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 1<<20)
+	oldAnswer := maxPendingAnswerBytes
+	maxPendingAnswerBytes = 128 * 1024
+	t.Cleanup(func() { maxPendingAnswerBytes = oldAnswer })
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	flag := newCancelFlag()
+	rg.clientFlag = flag
+	rw, inf := newPendingRaceWriter(t, rg, 1)
+	inf.suspicious = true
+	inf.cancel = func() { t.Fatal("a client that left must not cancel the host") }
+
+	_, err := rw.Write([]byte(contentEvent))
+	require.NoError(t, err)
+	require.Positive(t, inf.answerReserved)
+
+	flag.Trigger()
+	require.True(t, rg.isClientDetached())
+	for i := 0; i < 16; i++ {
+		_, err := rw.Write(bigContentEvent(64 * 1024))
+		require.NoError(t, err)
+	}
+
+	require.False(t, inf.preludeOverflow.Load())
+	require.Nil(t, inf.pendingBuf)
+	require.Zero(t, inf.answerReserved)
+	require.Zero(t, inf.participantAnswerBytes.Load())
+	require.Empty(t, sink.String())
+}
+
+func TestReleasePendingBufs_LeavesALiveSenderToReleaseOnExit(t *testing.T) {
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 1<<20)
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	rw, inf := newPendingRaceWriter(t, rg, 1)
+	inf.suspicious = true
+	_, err := rw.Write([]byte(roleOnlyEvent))
+	require.NoError(t, err)
+	_, err = rw.Write([]byte(contentEvent))
+	require.NoError(t, err)
+	reserved := inf.answerReserved + inf.pendingReserved
+	require.Positive(t, reserved)
+
+	releasePendingBufs([]*inflight{inf})
+	require.Equal(t, reserved, inf.answerReserved+inf.pendingReserved,
+		"cleanup must not touch a buffer its sender still owns")
+	require.NotEmpty(t, inf.pendingBuf)
+
+	_, err = rw.Write([]byte(contentEvent))
+	require.NoError(t, err)
+	require.True(t, inf.pendingBufPromotable())
+	inf.releasePendingBufUnlessPromotable()
+
+	require.Nil(t, inf.pendingBuf, "an orphaned sender releases even a promotable buffer on exit")
+	require.Zero(t, inf.answerReserved)
+	require.Zero(t, inf.pendingReserved)
+}
+
+func TestReleasePendingBufs_ConcurrentWithAbandonedSender(t *testing.T) {
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 1<<20)
+
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+	rw, inf := newPendingRaceWriter(t, rg, 1)
+	inf.suspicious = true
+	inf.cancel = func() {}
+
+	start := make(chan struct{})
+	senderDone := make(chan struct{})
+	go func() {
+		defer close(senderDone)
+		defer inf.releasePendingBufUnlessPromotable()
+		<-start
+		for i := 0; i < 200; i++ {
+			_, _ = rw.Write([]byte(roleOnlyEvent))
+		}
+		_, _ = rw.Write([]byte(contentEvent))
+	}()
+	close(start)
+	releasePendingBufs([]*inflight{inf})
+	<-senderDone
+
+	require.Nil(t, inf.pendingBuf)
+	require.Zero(t, inf.pendingReserved)
+	require.Zero(t, inf.answerReserved)
+	require.Zero(t, inf.participantPendingBytes.Load())
+	require.Zero(t, inf.participantAnswerBytes.Load())
+}
+
+type roleOnlyFloodClient struct {
+	calls atomic.Int32
+}
+
+func (c *roleOnlyFloodClient) Send(ctx context.Context, _ host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.calls.Add(1)
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	for ctx.Err() == nil {
+		if _, err := io.WriteString(stream, roleOnlyEvent); err != nil {
+			return nil, err
+		}
+	}
+	return nil, ctx.Err()
+}
+
+func TestRunInference_PreludeOverflowFailsOverToAHealthyHost(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	shortRefusalWindow(t)
+	assertPendingCountersDrained(t)
+	withPendingPreludeCap(t, 4*1024)
+	env := setupTestProxy(t, 3, nil, true)
+	flood := &roleOnlyFloodClient{}
+	env.killables[1].inner = flood
+	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+
+	require.NoError(t, err, "an overflowed attempt must fail over, not fail the request")
+	require.Equal(t, int32(1), flood.calls.Load(), "the flooding host must have been tried")
+	require.NotEmpty(t, buf.String(), "a healthy host must serve the request")
+	require.Less(t, bytes.Count(buf.Bytes(), []byte(roleOnlyEvent)), 4,
+		"the flooder's discarded prelude must not reach the client")
+	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
 }
