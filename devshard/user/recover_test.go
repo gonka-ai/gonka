@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -43,9 +44,19 @@ func newTestStateMachine(
 
 func newTestStore(t *testing.T) *storage.SQLite {
 	t.Helper()
-	db, err := storage.NewSQLite(filepath.Join(t.TempDir(), "test.db"))
+	// Not t.TempDir: the off-lock signature writer (#1986) of a session the
+	// test never closed can land after db.Close and reopen an epoch file while
+	// the directory is being removed.
+	dir, err := os.MkdirTemp("", "devshard-user-store-")
 	require.NoError(t, err)
-	t.Cleanup(func() { db.Close() })
+	db, err := storage.NewSQLite(filepath.Join(dir, "test.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Close()
+		for i := 0; i < 50 && os.RemoveAll(dir) != nil; i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 	return db
 }
 
