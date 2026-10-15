@@ -81,7 +81,7 @@ func (r *HuggingFaceVocabularyResolver) Resolve(ctx context.Context, epochID uin
 		vocabularySize, err := r.fetchVocabularySize(fetchContext, epochID, model)
 		entry := vocabularyCacheEntry{vocabularySize: vocabularySize}
 		if err != nil {
-			logging.Warn("model vocab size unknown; enforced token ids fall back to the coarse replay limit", types.Validation,
+			logging.Warn("model vocab size unknown; requests with token-id fields cannot execute or validate until it resolves", types.Validation,
 				"epoch", epochID, "model", model, "error", err)
 			entry.retryAt = r.now().Add(vocabularyRetryInterval)
 		}

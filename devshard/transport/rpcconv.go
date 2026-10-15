@@ -247,10 +247,11 @@ func VerifyTimeoutResponseFromProto(r *rpcpb.VerifyTimeoutResponse) *VerifyTimeo
 // VerifyErrorMissRequestToProto is the Connect inner payload for VerifyErrorMiss.
 func VerifyErrorMissRequestToProto(r VerifyErrorMissRequest) *rpcpb.VerifyErrorMissRequest {
 	return &rpcpb.VerifyErrorMissRequest{
-		InferenceId:     r.InferenceID,
-		Diffs:           diffsJSONToProto(r.Diffs),
-		FinishTx:        r.FinishTx,
-		ResponsePayload: r.ResponsePayload,
+		InferenceId:        r.InferenceID,
+		Diffs:              diffsJSONToProto(r.Diffs),
+		FinishTx:           r.FinishTx,
+		ResponsePayload:    r.ResponsePayload,
+		SiblingInferenceId: r.SiblingInferenceID,
 	}
 }
 
@@ -260,10 +261,11 @@ func VerifyErrorMissRequestFromProto(r *rpcpb.VerifyErrorMissRequest) VerifyErro
 		return VerifyErrorMissRequest{}
 	}
 	return VerifyErrorMissRequest{
-		InferenceID:     r.GetInferenceId(),
-		Diffs:           diffsJSONFromProto(r.GetDiffs()),
-		FinishTx:        r.GetFinishTx(),
-		ResponsePayload: r.GetResponsePayload(),
+		InferenceID:        r.GetInferenceId(),
+		Diffs:              diffsJSONFromProto(r.GetDiffs()),
+		FinishTx:           r.GetFinishTx(),
+		ResponsePayload:    r.GetResponsePayload(),
+		SiblingInferenceID: r.GetSiblingInferenceId(),
 	}
 }
 

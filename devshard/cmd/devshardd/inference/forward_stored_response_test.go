@@ -115,7 +115,7 @@ func TestAJSONErrorRelayedToAStreamingClientCannotBeRehashed(t *testing.T) {
 					call, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 					return http.DefaultClient.Do(call)
 				},
-				fixedChainParams{}, false)
+				fixedChainParams{}, false, 0)
 
 			if !testCase.wantFinish {
 				if err == nil || !strings.Contains(err.Error(), testCase.wantErrorIs) {

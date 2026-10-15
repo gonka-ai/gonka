@@ -12,7 +12,7 @@ import (
 
 var refusedWithLogprobsEvents = []string{
 	`data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"logprobs":null}]}`,
-	`data: {"error":{"code":400,"message":"context length exceeded","type":"BadRequestError"},"id":"x"}`,
+	`data: {"error":{"code":500,"message":"EngineCore encountered an issue","type":"InternalServerError"},"id":"x"}`,
 	`data: [DONE]`,
 }
 

@@ -58,6 +58,7 @@ type Engine struct {
 	httpClient                  *http.Client
 	chainParams                 ChainParamsProvider
 	phase                       *chain.Phase
+	vocabularySizes             VocabularyResolver
 	logprobsOptimizationEnabled bool
 }
 
@@ -71,6 +72,7 @@ func NewEngine(
 	payloadStore PayloadStore,
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
+	vocabularySizes VocabularyResolver,
 	logprobsOptimizationEnabled bool,
 ) *Engine {
 	reader, _ := payloadStore.(PayloadReader)
@@ -84,6 +86,7 @@ func NewEngine(
 		httpClient:                  NewNoRedirectClient(mlNodeHTTPTimeout),
 		chainParams:                 chainParams,
 		phase:                       phase,
+		vocabularySizes:             vocabularySizes,
 		logprobsOptimizationEnabled: logprobsOptimizationEnabled,
 	}
 }
@@ -102,12 +105,19 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
 		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
-		}, e.chainParams, e.logprobsOptimizationEnabled)
+		}, e.chainParams, e.logprobsOptimizationEnabled, e.vocabularySize(ctx, req))
 		if err == nil && result != nil && !result.PartialResponse {
 			e.earnValidationCredit(ctx, req.Model)
 		}
 		return result, err
 	})
+}
+
+func (e *Engine) vocabularySize(ctx context.Context, req devshard.ExecuteRequest) int {
+	if e.vocabularySizes == nil {
+		return 0
+	}
+	return e.vocabularySizes.Resolve(ctx, resolveValidationEpoch(e.phase, req.EpochID), req.Model)
 }
 
 func executeWithRecovery(
