@@ -775,6 +775,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 	refreshBackoff := time.Duration(0)
 	var reopenBackoff atomic.Int64
 	var sawBeat atomic.Bool
+	var watchNotBefore time.Time
 	refreshDue := time.Now().Add(p.nextRefreshWait(exp, 0))
 	noteBeat := func() {
 		sawBeat.Store(true)
@@ -813,7 +814,11 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 		var reopenTimer *time.Timer
 		var reopenC <-chan time.Time
 		if cancelWatch == nil {
-			reopenTimer = time.NewTimer(p.reopenWait(time.Duration(reopenBackoff.Load())))
+			wait := p.reopenWait(time.Duration(reopenBackoff.Load()))
+			if d := time.Until(watchNotBefore); d > wait {
+				wait = d
+			}
+			reopenTimer = time.NewTimer(wait)
 			reopenC = reopenTimer.C
 		}
 		refreshWait := time.Until(refreshDue)
@@ -855,11 +860,10 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				continue
 			}
 			if isServerWatchCap(err) {
-				next := p.attachBackoff(time.Duration(reopenBackoff.Load()))
-				if wait := connectRetryAfter(err); wait > next {
-					next = wait
+				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
+				if wait := connectRetryAfter(err); wait > 0 {
+					watchNotBefore = time.Now().Add(wait)
 				}
-				reopenBackoff.Store(int64(next))
 				continue
 			}
 			p.incReattach(reattachReasonWatch)
@@ -893,7 +897,9 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			tok, exp = newTok, newExp
 			refreshBackoff = 0
 			refreshDue = time.Now().Add(p.nextRefreshWait(exp, 0))
-			startWatch(tok)
+			if cancelWatch != nil || !time.Now().Before(watchNotBefore) {
+				startWatch(tok)
+			}
 		}
 	}
 }

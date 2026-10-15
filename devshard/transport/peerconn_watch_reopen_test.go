@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 
+	devtest "devshard/internal/testutil"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -59,12 +61,57 @@ func TestServeWatch_LocalStreamCapWaits(t *testing.T) {
 
 type watchCapAuth struct {
 	rpcpbconnect.UnimplementedPeerAuthServiceHandler
-	watches *atomic.Int32
+	watches    *atomic.Int32
+	attaches   *atomic.Int32
+	retryAfter string
+	mu         *sync.Mutex
+	watchAt    *[]time.Time
+}
+
+func (a watchCapAuth) Attach(context.Context, *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
+	if a.attaches != nil {
+		a.attaches.Add(1)
+	}
+	return connect.NewResponse(&rpcpb.AttachResponse{
+		SessionToken: []byte("token-bytes-renewed"),
+		ExpiresAt:    time.Now().Add(5 * time.Second).Unix(),
+	}), nil
 }
 
 func (a watchCapAuth) Watch(context.Context, *connect.Request[rpcpb.WatchRequest], *connect.ServerStream[rpcpb.SessionEvent]) error {
 	a.watches.Add(1)
-	return connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent watches"))
+	if a.mu != nil {
+		a.mu.Lock()
+		*a.watchAt = append(*a.watchAt, time.Now())
+		a.mu.Unlock()
+	}
+	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent watches"))
+	if a.retryAfter != "" {
+		err.Meta().Set("Retry-After", a.retryAfter)
+	}
+	return err
+}
+
+func startWatchCapServer(t *testing.T, auth watchCapAuth) *httptest.Server {
+	t.Helper()
+	path, h := rpcpbconnect.NewPeerAuthServiceHandler(auth)
+	mux := http.NewServeMux()
+	mux.Handle(path, h)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func secondWatchGap(t *testing.T, mu *sync.Mutex, at *[]time.Time) time.Duration {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(*at) >= 2
+	}, 3*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	return (*at)[1].Sub((*at)[0])
 }
 
 func TestIsServerWatchCap(t *testing.T) {
@@ -76,11 +123,7 @@ func TestIsServerWatchCap(t *testing.T) {
 
 func TestServeWatch_ServerWatchCapKeepsSession(t *testing.T) {
 	var watches atomic.Int32
-	path, h := rpcpbconnect.NewPeerAuthServiceHandler(watchCapAuth{watches: &watches})
-	mux := http.NewServeMux()
-	mux.Handle(path, h)
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
+	srv := startWatchCapServer(t, watchCapAuth{watches: &watches})
 
 	pc := NewPeerConn(PeerConnConfig{
 		BaseURL:     srv.URL,
@@ -109,4 +152,49 @@ func TestServeWatch_ServerWatchCapKeepsSession(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("serveWatch did not return after Close")
 	}
+}
+
+func TestServeWatch_ServerWatchCapHonorsRetryAfterAcrossJitter(t *testing.T) {
+	var watches atomic.Int32
+	var mu sync.Mutex
+	var at []time.Time
+	srv := startWatchCapServer(t, watchCapAuth{watches: &watches, retryAfter: "1", mu: &mu, watchAt: &at})
+
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     srv.URL,
+		HostAddress: "host",
+		DirectMux:   true,
+		BackoffMin:  10 * time.Millisecond,
+		BackoffMax:  20 * time.Millisecond,
+		WatchStale:  time.Minute,
+		Jitter:      func(d time.Duration) time.Duration { return d / 2 },
+	})
+	t.Cleanup(pc.Close)
+	go func() { _, _ = pc.serveWatch([]byte("token-bytes-012345"), time.Now().Add(time.Hour)) }()
+
+	require.GreaterOrEqual(t, secondWatchGap(t, &mu, &at), 950*time.Millisecond)
+}
+
+func TestServeWatch_RenewalWaitsForWatchRetryAfter(t *testing.T) {
+	var watches, attaches atomic.Int32
+	var mu sync.Mutex
+	var at []time.Time
+	srv := startWatchCapServer(t, watchCapAuth{watches: &watches, attaches: &attaches, retryAfter: "1", mu: &mu, watchAt: &at})
+
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      srv.URL,
+		HostAddress:  "host",
+		DoorEscrowID: "9801",
+		Signer:       devtest.MustGenerateKey(t),
+		DirectMux:    true,
+		BackoffMin:   10 * time.Millisecond,
+		BackoffMax:   20 * time.Millisecond,
+		WatchStale:   time.Minute,
+		MinTTL:       time.Second,
+	})
+	t.Cleanup(pc.Close)
+	go func() { _, _ = pc.serveWatch([]byte("token-bytes-012345"), time.Now()) }()
+
+	require.Eventually(t, func() bool { return attaches.Load() >= 1 }, 2*time.Second, 5*time.Millisecond)
+	require.GreaterOrEqual(t, secondWatchGap(t, &mu, &at), 950*time.Millisecond)
 }
