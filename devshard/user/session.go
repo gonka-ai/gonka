@@ -633,7 +633,7 @@ func txPriority(tx *types.DevshardTx) int {
 
 // diffsForHost returns catch-up diffs for a host (from its last sync nonce to current).
 // Caller must hold s.mu.
-func (s *Session) diffsForHost(hostIdx int) []types.Diff {
+func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 	return s.diffRangeLocked(s.hostSyncNonce[hostIdx]+1, s.nonce)
 }
 
@@ -642,12 +642,16 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
 // the lock. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool) {
+func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
-		return nil, false
+		return nil, false, nil
 	}
-	return s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1)), true
+	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	if err != nil {
+		return nil, false, err
+	}
+	return diffs, true, nil
 }
 
 // hostCatchUpLock serializes chunked catch-up to one host.
@@ -680,12 +684,12 @@ func (s *Session) firstRetainedNonceLocked() uint64 {
 }
 
 // diffRangeLocked returns the diffs in [from, to] in nonce order. Nonces below
-// the retained suffix come from the store. A failed store read keeps the
-// contiguous prefix it returned, so the host stops at the gap.
-// Caller must hold s.mu.
-func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
+// the retained suffix come from the store. A failed store read returns the
+// error and no diffs: the in-memory tail starts above from, and sending it
+// would be a gap. The caller retries once the store answers. Caller must hold s.mu.
+func (s *Session) diffRangeLocked(from, to uint64) ([]types.Diff, error) {
 	if from > to {
-		return nil
+		return nil, nil
 	}
 	var out []types.Diff
 	if first := s.firstRetainedNonceLocked(); s.store != nil && from < first {
@@ -698,7 +702,8 @@ func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
 		})
 		if err != nil {
 			logging.Warn("read trimmed diffs from store", "subsystem", "session",
-				"escrow", s.escrowID, "from", from, "to", storeTo, "read", len(out), "error", err)
+				"escrow", s.escrowID, "from", from, "to", storeTo, "error", err)
+			return nil, err
 		}
 	}
 	for _, d := range s.diffs {
@@ -706,7 +711,7 @@ func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
 			out = append(out, d)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // dropDiffPrefixLocked drops diffs at or below every tracked host cursor.
@@ -1618,7 +1623,10 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline := s.inlineCatchUpLocked(hostIdx, nonce)
+	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
+	if err != nil {
+		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
+	}
 	if inline {
 		// TODO: remove this when we are sure that there is no bug in CatchUp
 		s.validateCatchUp(catchUp, nonce, hostIdx)
@@ -1942,8 +1950,11 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 		}
 
 		s.mu.Lock()
-		chunk := s.diffRangeLocked(from, min(from+catchUpChunkSize-1, nonce))
+		chunk, readErr := s.diffRangeLocked(from, min(from+catchUpChunkSize-1, nonce))
 		s.mu.Unlock()
+		if readErr != nil {
+			return fmt.Errorf("catch-up chunk %d to host %s: read diffs from nonce %d: %w", chunkNum, hostLabel, from, readErr)
+		}
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
 		}
