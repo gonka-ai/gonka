@@ -1,6 +1,7 @@
 package types
 
 import (
+	"maps"
 	"math/big"
 	"slices"
 
@@ -42,6 +43,38 @@ func EffectiveConfirmedWeight(weight, confirmationWeight, rawConfirmationTotal i
 
 func ConfirmationWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	return confirmationCoefficients(scales)
+}
+
+func ModelWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
+	coefficients := make(map[string]mathsdk.LegacyDec, len(scales))
+	for _, scale := range scales {
+		if scale == nil || scale.ModelId == "" {
+			continue
+		}
+		coefficients[scale.ModelId] = confirmationScaleFactor(scale)
+	}
+	return coefficients
+}
+
+func WeightOfModelNodesWithCoefficients(
+	modelNodes map[string][]*MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
+) int64 {
+	total := int64(0)
+	for _, modelID := range slices.Sorted(maps.Keys(modelNodes)) {
+		coeff, ok := coefficients[modelID]
+		if !ok {
+			coeff = mathsdk.LegacyOneDec()
+		}
+		rawModel := int64(0)
+		for _, node := range modelNodes[modelID] {
+			if node != nil {
+				rawModel += node.PocWeight
+			}
+		}
+		total += coeff.MulInt64(rawModel).TruncateInt64()
+	}
+	return total
 }
 
 func ConfirmationWeightOfParticipant(p *ActiveParticipant, scales []*ConfirmationWeightScale) int64 {

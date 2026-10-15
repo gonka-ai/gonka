@@ -132,7 +132,22 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	ParamsKey                      = []byte("p_inference")
+	PoCChallengeProvenPrefix       = collections.NewPrefix(114)
+	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
+	TrainshardsPrefix               = collections.NewPrefix(130)
+	TrainshardCounterPrefix         = collections.NewPrefix(131)
+	TrainshardActiveIndexPrefix     = collections.NewPrefix(132)
+	TrainshardExpiryIndexPrefix     = collections.NewPrefix(133)
+	TrainshardClosedIndexPrefix     = collections.NewPrefix(134)
+	TrainshardReservationsPrefix    = collections.NewPrefix(135)
+	TrainingNodeOptInsPrefix        = collections.NewPrefix(136)
+	TrainshardProposalsPrefix       = collections.NewPrefix(137)
+	TrainshardProposalCounterPrefix = collections.NewPrefix(138)
+	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
+	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
+	TrainshardAutokickRequestPrefix = collections.NewPrefix(141)
+	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
+	ParamsKey                       = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

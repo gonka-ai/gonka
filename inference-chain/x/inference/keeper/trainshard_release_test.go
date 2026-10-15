@@ -1,0 +1,627 @@
+package keeper_test
+
+import (
+	"testing"
+
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/stretchr/testify/require"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/testutil/sample"
+	"github.com/productscience/inference/x/inference/keeper"
+	"github.com/productscience/inference/x/inference/types"
+)
+
+func TestAutokickTrainshardNode_ClosesShardWithoutActiveNodes(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	node := shard.Nodes[0].NodeId
+
+	kick := &types.MsgAutokickTrainshardNode{
+		Creator:      creator,
+		TrainshardId: resp.TrainshardId,
+		Participant:  creator,
+		NodeId:       node,
+		Reason:       "nccl timeout",
+		RequestId:    "req-1",
+	}
+	_, err = ms.AutokickTrainshardNode(ctx, kick)
+	require.NoError(t, err)
+
+	closed, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_EXPIRED, closed.Status)
+	require.Equal(t, types.TrainshardCloseReason_TRAINSHARD_CLOSE_REASON_NO_ACTIVE_NODES, closed.CloseReason)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, closed.Nodes[0].Status)
+	require.Equal(t, "nccl timeout", closed.Nodes[0].ReleaseReason)
+
+	require.True(t, k.IsNodeReserved(ctx, creator, node))
+	require.False(t, k.HasActiveTrainReservation(ctx, creator))
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(closed.Nodes[0].ReservedUntilHeight))
+	require.False(t, k.IsNodeReserved(ctx, creator, node))
+}
+
+func TestTrainingNodeReservations_ListsANodeUntilItsReturnEnds(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	_, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{})
+	require.Error(t, err)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	node := shard.Nodes[0].NodeId
+
+	held := func(height int64) []string {
+		answer, err := k.TrainingNodeReservations(ctx.WithBlockHeight(height), &types.QueryTrainingNodeReservationsRequest{Participant: creator})
+		require.NoError(t, err)
+		return answer.NodeIds
+	}
+	require.Equal(t, []string{node}, held(ctx.BlockHeight()))
+	other, err := k.TrainingNodeReservations(ctx, &types.QueryTrainingNodeReservationsRequest{Participant: sample.AccAddress()})
+	require.NoError(t, err)
+	require.Empty(t, other.NodeIds)
+
+	_, err = ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      creator,
+		TrainshardId: resp.TrainshardId,
+		Participant:  creator,
+		NodeId:       node,
+		Reason:       "nccl timeout",
+		RequestId:    "req-1",
+	})
+	require.NoError(t, err)
+	closed, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	until := closed.Nodes[0].ReservedUntilHeight
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until - 1))
+	require.Equal(t, []string{node}, held(until-1))
+
+	require.True(t, k.IsNodeReserved(ctx, creator, node), "cleanup is behind")
+	require.Empty(t, held(until), "the chain stops shielding the node at its next block")
+	require.Contains(t, k.CollectReservedNodeIdsAt(ctx, until)[creator], node)
+	require.NotContains(t, k.CollectReservedNodeIdsAt(ctx, until+1)[creator], node)
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(until))
+	require.Empty(t, held(until))
+}
+
+func TestAutokickTrainshardNode_IdempotentPerRequestId(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+
+	kick := &types.MsgAutokickTrainshardNode{
+		Creator:      creator,
+		TrainshardId: resp.TrainshardId,
+		Participant:  creator,
+		NodeId:       shard.Nodes[0].NodeId,
+		RequestId:    "req-1",
+	}
+	_, err = ms.AutokickTrainshardNode(ctx, kick)
+	require.NoError(t, err)
+	first, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+
+	_, err = ms.AutokickTrainshardNode(ctx, kick)
+	require.NoError(t, err)
+	second, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, first, second)
+}
+
+func TestAutokickTrainshardNode_RejectsForeignSigner(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+
+	_, err = ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      sample.AccAddress(),
+		TrainshardId: resp.TrainshardId,
+		Participant:  creator,
+		NodeId:       shard.Nodes[0].NodeId,
+		RequestId:    "req-1",
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardAutokickNotAllowed)
+
+	unchanged, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, unchanged.Status)
+}
+
+func TestAutokickTrainshardNode_RejectsRequestIdReusedForAnotherNode(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	host := sample.AccAddress()
+
+	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
+		TrainshardId:    9,
+		Creator:         creator,
+		GpuProfileId:    trainshardTestProfile,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: ctx.BlockHeight(),
+		ExpiresAtHeight: ctx.BlockHeight() + 100,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "node-h1", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+			{Participant: host, NodeId: "node-h2", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+		},
+	}))
+
+	kick := func(nodeId string) error {
+		_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+			Creator:      host,
+			TrainshardId: 9,
+			Participant:  host,
+			NodeId:       nodeId,
+			RequestId:    "req-1",
+		})
+		return err
+	}
+	require.NoError(t, kick("node-h1"))
+	require.ErrorIs(t, kick("node-h2"), types.ErrTrainshardAutokickRequestReused)
+	require.NoError(t, kick("node-h1"))
+
+	shard, err := k.Trainshards.Get(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, shard.Nodes[0].Status)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE, shard.Nodes[1].Status)
+}
+
+func TestAutokickTrainshardNode_AllowsHostForOwnNode(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	host := sample.AccAddress()
+
+	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
+		TrainshardId:    9,
+		Creator:         creator,
+		GpuProfileId:    trainshardTestProfile,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: ctx.BlockHeight(),
+		ExpiresAtHeight: ctx.BlockHeight() + 100,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "node-h", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+		},
+	}))
+
+	_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      host,
+		TrainshardId: 9,
+		Participant:  host,
+		NodeId:       "node-h",
+		Reason:       "gpu fell off the bus",
+		RequestId:    "req-host",
+	})
+	require.NoError(t, err)
+
+	shard, err := k.Trainshards.Get(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, shard.Nodes[0].Status)
+}
+
+func TestAssembleTrainshard_RejectsProfileDisallowedAfterVote(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	params := types.DefaultParams()
+	params.TrainingParams.TrainingEnabled = true
+	params.TrainingParams.AllowedGpuProfileIds = []string{"NVIDIA A100 x8"}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardProfileNotAllowed)
+}
+
+func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	const epoch = uint64(7)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 100}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 1, PocStartBlockHeight: 200}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 2, PocStartBlockHeight: 300}))
+
+	host := sample.AccAddress()
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 100,
+		ClosedAtHeight:  195,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant:         host,
+			NodeId:              "node-a",
+			ModelId:             "model1",
+			PocWeight:           100,
+			Status:              types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
+			ReleasedAtHeight:    195,
+			ReservedUntilHeight: 215,
+		}},
+	}))
+
+	_, rewardNext := k.CollectEpochReservedWeightTotals(ctx, epoch+1, keeper.ReservationScopeReward)
+	require.Zero(t, rewardNext[host])
+
+	_, shieldNext := k.CollectEpochReservedWeightTotals(ctx, epoch+1, keeper.ReservationScopeShield)
+	require.Equal(t, int64(100), shieldNext[host])
+
+	_, rewardClosing := k.CollectEpochReservedWeightTotals(ctx, epoch, keeper.ReservationScopeReward)
+	require.Equal(t, int64(100), rewardClosing[host])
+
+	_, shieldInBuffer := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch+1, 210, keeper.ReservationScopeShield)
+	require.Equal(t, int64(100), shieldInBuffer[host])
+
+	_, shieldAfterBuffer := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch+1, 220, keeper.ReservationScopeShield)
+	require.Zero(t, shieldAfterBuffer[host])
+}
+
+type leaseSpan struct {
+	created, released int64
+	models            []string
+}
+
+func setLeases(t *testing.T, k keeper.Keeper, ctx sdk.Context, host string, leases ...leaseSpan) {
+	t.Helper()
+	for i, lease := range leases {
+		models := lease.models
+		if len(models) == 0 {
+			models = []string{"model1"}
+		}
+		shard := types.Trainshard{TrainshardId: uint64(i + 1), Status: types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, CreatedAtHeight: lease.created}
+		if lease.released > 0 {
+			shard.Status = types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED
+			shard.ClosedAtHeight = lease.released
+		}
+		for _, model := range models {
+			node := &types.TrainshardReservedNode{
+				Participant: host, NodeId: "node-a", ModelId: model, PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+			}
+			if lease.released > 0 {
+				node.Status = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE
+				node.ReleasedAtHeight = lease.released
+				node.ReservedUntilHeight = lease.released + 20
+			}
+			shard.Nodes = append(shard.Nodes, node)
+		}
+		require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
+	}
+}
+
+func TestCollectEpochReservations_CountsTheLeasedBlocksOfTheEpoch(t *testing.T) {
+	cases := []struct {
+		name   string
+		leases []leaseSpan
+		want   int64
+	}{
+		{"a lease inside the epoch, return buffer excluded", []leaseSpan{{created: 150, released: 159}}, 10},
+		{"an active lease runs to the epoch end", []leaseSpan{{created: 150}}, 50},
+		{"a lease from the previous epoch counts from the epoch start", []leaseSpan{{created: 50, released: 119}}, 20},
+		{"an active lease over the whole epoch is the whole epoch", []leaseSpan{{created: 50}}, 100},
+		{"consecutive shards sharing a block count it once", []leaseSpan{{created: 110, released: 130}, {created: 130, released: 139}}, 30},
+		{"a node leased under two models counts once", []leaseSpan{{created: 150, released: 159, models: []string{"model1", "model2"}}}, 10},
+		{"a lease after the epoch counts nothing", []leaseSpan{{created: 250, released: 260}}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 8, PocStartBlockHeight: 200}))
+			host := sample.AccAddress()
+			setLeases(t, k, ctx, host, tc.leases...)
+
+			reservations := k.CollectEpochReservations(ctx, 7)
+
+			require.Equal(t, int64(100), reservations.EpochBlocks)
+			require.Equal(t, tc.want, reservations.LeasedBlocks[host]["node-a"])
+		})
+	}
+}
+
+func TestCollectEpochReservations_UsesThePlannedLengthBeforeTheNextEpoch(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	length := params.EpochParams.EpochLength
+	require.Greater(t, length, int64(10))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: 110})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Equal(t, length, reservations.EpochBlocks)
+	require.Equal(t, length-10, reservations.LeasedBlocks[host]["node-a"])
+}
+
+func TestCollectEpochReservations_LeavesOutALeaseAfterThePlannedEnd(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	plannedEnd := 100 + params.EpochParams.EpochLength - 1
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: plannedEnd + 10, released: plannedEnd + 20})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Empty(t, reservations.Nodes[host])
+	require.Zero(t, reservations.LeasedBlocks[host]["node-a"])
+}
+
+func TestCollectEpochReservations_AnUnknownEpochLeavesTheSpanOpen(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: 110, released: 120})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Zero(t, reservations.EpochBlocks)
+	require.Len(t, reservations.Nodes[host], 1)
+}
+
+func TestAssembleTrainshard_IgnoresNodesWithoutId(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	setTrainshardEpochNodes(t, k, ctx, creator, []*types.MLNodeInfo{
+		{NodeId: "node-a", PocWeight: 100},
+		{NodeId: "", PocWeight: 100},
+	})
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
+func TestAssembleTrainshard_DedupsRepeatedNodeIdCapacity(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	setTrainshardEpochNodes(t, k, ctx, creator, []*types.MLNodeInfo{
+		{NodeId: "node-a", PocWeight: 100},
+		{NodeId: "node-a", PocWeight: 100},
+	})
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
+func setTrainshardEpochNodes(t *testing.T, k keeper.Keeper, ctx sdk.Context, creator string, model1Nodes []*types.MLNodeInfo) {
+	t.Helper()
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 7,
+		Participants: []*types.ActiveParticipant{{
+			Index:  creator,
+			Models: []string{"model1", "model2"},
+			MlNodes: []*types.ModelMLNodes{
+				{MlNodes: model1Nodes},
+				{MlNodes: []*types.MLNodeInfo{{NodeId: "node-b", PocWeight: 100}}},
+			},
+		}},
+	}))
+}
+
+func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	ttl := types.DefaultParams().TrainingParams.OptInTtlBlocks
+
+	resp, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator,
+		NodeIds: []string{"node-a"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, ctx.BlockHeight()+ttl, resp.ExpiresAtHeight)
+
+	expiresAt, err := k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
+	require.NoError(t, err)
+	require.Equal(t, resp.ExpiresAtHeight, expiresAt)
+
+	untouched, err := k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-b"))
+	require.NoError(t, err)
+	require.Equal(t, trainshardOptInExpiry, untouched)
+}
+
+func TestRefreshTrainingNodeOptIn_PublishesTheEndpointIntoTheShard(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	published := map[string]string{
+		"node-a": "https://a.example.com/trainshard-node-a",
+		"node-b": "https://a.example.com/trainshard-node-b",
+	}
+	for nodeId, endpoint := range published {
+		_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+			Creator: creator, NodeIds: []string{nodeId}, Endpoint: endpoint,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes, 1)
+	require.Equal(t, published[shard.Nodes[0].NodeId], shard.Nodes[0].Endpoint)
+}
+
+func TestAssembleTrainshard_SkipsANodeThatPublishedNoEndpoint(t *testing.T) {
+	// the node the selection would take first, so that dropping its endpoint has to change the pick
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	first := shard.Nodes[0].NodeId
+	other := map[string]string{"node-a": "node-b", "node-b": "node-a"}[first]
+
+	k, ms, ctx, creator = setupTrainshardFlow(t, 1)
+	require.NoError(t, k.TrainingNodeEndpoints.Remove(ctx, collections.Join(creator, first)))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	shard, err = k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes, 1)
+	require.Equal(t, other, shard.Nodes[0].NodeId)
+	require.NotEmpty(t, shard.Nodes[0].Endpoint)
+}
+
+func TestRefreshTrainingNodeOptIn_EmptyEndpointWithdrawsIt(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"},
+	})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestSetTrainingNodeOptIn_OptOutClearsTheEndpoint(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.SetTrainingNodeOptIn(ctx, &types.MsgSetTrainingNodeOptIn{Creator: creator, NodeId: "node-a", OptIn: false})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestSetTrainingNodeOptIn_OptInIsRejectedAndStoresNothing(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	hardware, found := k.GetHardwareNodes(ctx, creator)
+	require.True(t, found)
+	hardware.HardwareNodes = append(hardware.HardwareNodes, &types.HardwareNode{
+		LocalId:  "node-c",
+		Hardware: []*types.Hardware{{Type: "NVIDIA H100", Count: 8}},
+	})
+	require.NoError(t, k.SetHardwareNodes(ctx, hardware))
+
+	_, err := ms.SetTrainingNodeOptIn(ctx, &types.MsgSetTrainingNodeOptIn{Creator: creator, NodeId: "node-c", OptIn: true})
+	require.ErrorIs(t, err, types.ErrTrainshardOptInRequest)
+	require.ErrorContains(t, err, "no manual opt-in")
+
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestRefreshTrainingNodeOptIn_HandlerHoldsTheEndpointToTheGrammar(t *testing.T) {
+	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com/",
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardOptInRequest)
+}
+
+func TestRefreshTrainingNodeOptIn_LeavesTheAddressOfAReservedNodeAlone(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	reserved := shard.Nodes[0]
+
+	_, err = ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{reserved.NodeId}, Endpoint: "https://moved.example.com",
+	})
+	require.NoError(t, err)
+
+	shard, err = k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, reserved.Endpoint, shard.Nodes[0].Endpoint, "a shard keeps the address it was assembled with")
+	published, err := k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, reserved.NodeId))
+	require.NoError(t, err)
+	require.Equal(t, "https://moved.example.com", published, "the next shard takes the new one")
+}
+
+func TestSubmitHardwareDiff_RemovingTheNodeClearsTheEndpoint(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node-a"}, Endpoint: "https://a.example.com",
+	})
+	require.NoError(t, err)
+
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator: creator, Removed: []*types.HardwareNode{{LocalId: "node-a"}},
+	})
+	require.NoError(t, err)
+
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestRefreshTrainingNodeOptIn_RejectsForeignNode(t *testing.T) {
+	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator,
+		NodeIds: []string{"node-a", "node-x"},
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardNodeNotOwned)
+}
+
+func TestAssembleTrainshard_SkipsAHostUnderPoCChallenge(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	epoch, ok := k.GetEffectiveEpochIndex(ctx)
+	require.True(t, ok)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 0}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.EpochLength = 2000
+	params.EpochParams.ConfirmationPocSafetyWindow = 50
+	require.NoError(t, k.SetParams(ctx, params))
+	ctx = ctx.WithBlockHeight(types.TrainshardAssemblyOpensAt(ctx.BlockHeight(), types.Epoch{Index: epoch}, *params.EpochParams, nil))
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex:  epoch,
+		Target:      creator,
+		StartHeight: ctx.BlockHeight(),
+		State:       types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.ErrorContains(t, err, "2 under a PoC challenge")
+
+	ch, found, err := k.GetPoCChallenge(ctx, creator)
+	require.NoError(t, err)
+	require.True(t, found)
+	ch.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+	require.NoError(t, k.SetPoCChallenge(ctx, ch))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+}
+
+func TestAssembleTrainshard_SkipsExpiredOptIn(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, "node-a"), ctx.BlockHeight()))
+	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, "node-b"), ctx.BlockHeight()))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+}

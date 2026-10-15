@@ -1,6 +1,8 @@
 package keeper_test
 
 import (
+	"context"
+
 	"github.com/productscience/inference/testutil/sample"
 	"github.com/productscience/inference/x/collateral/types"
 	inftypes "github.com/productscience/inference/x/inference/types"
@@ -10,6 +12,12 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"go.uber.org/mock/gomock"
 )
+
+type fakeTrainReservationChecker struct{ reserved map[string]bool }
+
+func (f fakeTrainReservationChecker) HasActiveTrainReservation(_ context.Context, participant string) bool {
+	return f.reserved[participant]
+}
 
 func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 	// Setup participants and their unbonding amounts
@@ -61,6 +69,39 @@ func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 	// Verify the future-dated entry is still there
 	_, found = s.k.GetUnbondingCollateral(s.ctx, futureParticipant, futureEpoch)
 	s.Require().True(found, "future-dated unbonding entry should not be processed")
+}
+
+func (s *KeeperTestSuite) TestEpochProcessing_DefersUnbondingForActiveReservation() {
+	reservedStr := sample.AccAddress()
+	reserved, _ := sdk.AccAddressFromBech32(reservedStr)
+	freeStr := sample.AccAddress()
+	free, _ := sdk.AccAddressFromBech32(freeStr)
+
+	completedEpoch := uint64(42)
+	reservedCoin := sdk.NewInt64Coin(inftypes.BaseCoin, 100)
+	freeCoin := sdk.NewInt64Coin(inftypes.BaseCoin, 200)
+
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, reserved, completedEpoch, reservedCoin))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, free, completedEpoch, freeCoin))
+
+	s.k.SetTrainReservationChecker(fakeTrainReservationChecker{reserved: map[string]bool{reservedStr: true}})
+
+	s.bankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(s.ctx, types.ModuleName, free, gomock.Eq(sdk.NewCoins(freeCoin)), gomock.Any()).
+		Return(nil).Times(1)
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(s.ctx, freeStr, types.ModuleName, types.SubAccountUnbonding, gomock.Eq(freeCoin), gomock.Any()).Times(1)
+
+	s.Require().NoError(s.k.AdvanceEpoch(s.ctx, completedEpoch))
+
+	_, found := s.k.GetUnbondingCollateral(s.ctx, reserved, completedEpoch)
+	s.Require().False(found, "reserved entry must leave the completed epoch")
+	deferred, found := s.k.GetUnbondingCollateral(s.ctx, reserved, completedEpoch+1)
+	s.Require().True(found, "reserved entry must be re-queued to the next epoch")
+	s.Require().Equal(reservedCoin, deferred.Amount)
+
+	_, found = s.k.GetUnbondingCollateral(s.ctx, free, completedEpoch)
+	s.Require().False(found, "free participant should be fully released")
 }
 
 func (s *KeeperTestSuite) TestEpochProcessing_SlashBeforeUnbondingRelease() {

@@ -44,6 +44,7 @@ type BrokerChainBridge interface {
 	GetCurrentEpochGroupData() (*types.QueryCurrentEpochGroupDataResponse, error)
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
+	GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
 }
 
@@ -117,6 +118,11 @@ func (b *BrokerChainBridgeImpl) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return queryClient.PreservedNodesSnapshot(b.client.GetContext(), &types.QueryPreservedNodesSnapshotRequest{})
 }
 
+func (b *BrokerChainBridgeImpl) GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.TrainingNodeReservations(b.client.GetContext(), &types.QueryTrainingNodeReservationsRequest{Participant: participant})
+}
+
 func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) {
 	queryClient := b.client.NewInferenceQueryClient()
 	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
@@ -144,6 +150,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	awaitingReservations atomic.Bool
 }
 
 type lockEntry struct {
@@ -242,6 +249,7 @@ type NodeWithState struct {
 type AdminState struct {
 	Enabled bool   `json:"enabled"`
 	Epoch   uint64 `json:"epoch"`
+	Stopped bool   `json:"stopped"`
 }
 
 type NodeState struct {
@@ -257,6 +265,8 @@ type NodeState struct {
 	FailureReason   string     `json:"failure_reason"`
 	StatusTimestamp time.Time  `json:"status_timestamp"`
 	AdminState      AdminState `json:"admin_state"`
+	// Reserved is whether an active trainshard holds the node, read from the chain every block
+	Reserved bool `json:"reserved"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion string `json:"ml_node_version"`
 	// Self-reported by the node. Informational only - can serve inference while PoC validation runs inside vLLM.
@@ -327,6 +337,18 @@ func (s *NodeState) Failure(reason string) {
 	s.UpdateStatusNow(types.HardwareNodeStatus_FAILED)
 }
 
+// pinStopped holds the node at STOPPED and out of PoC through every epoch command
+func (s *NodeState) pinStopped() {
+	s.IntendedStatus = types.HardwareNodeStatus_STOPPED
+	s.PocIntendedStatus = PocStatusIdle
+}
+
+// HeldOut is whether the node stays stopped, out of inference, PoC and validation: the operator
+// stopped it, or a trainshard reserves it
+func (s *NodeState) HeldOut() bool {
+	return s.AdminState.Stopped || s.Reserved
+}
+
 func (s *NodeState) IsOperational() bool {
 	return s.CurrentStatus != types.HardwareNodeStatus_FAILED
 }
@@ -382,6 +404,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
 	}
+	broker.awaitingReservations.Store(true)
 
 	// Initialize NodeWorkGroup
 	broker.nodeWorkGroup = NewNodeWorkGroup()
@@ -477,6 +500,8 @@ func (b *Broker) executeCommand(command Command) {
 		command.Execute(b)
 	case SetNodeAdminStateCommand:
 		command.Execute(b)
+	case SetNodeStoppedCommand:
+		command.Execute(b)
 	case UpdateNodeHardwareCommand:
 		command.Execute(b)
 	case InferenceUpAllCommand:
@@ -516,7 +541,7 @@ func (b *Broker) commandQueue(command Command) (chan Command, error) {
 	}
 
 	switch command.(type) {
-	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, SyncNodesCommand:
+	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, SetNodeStoppedCommand, RegisterNode, RemoveNode, SyncNodesCommand:
 		return b.highPriorityCommands, nil
 	default:
 		return b.lowPriorityCommands, nil
@@ -661,11 +686,15 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 			released = true
 		}
 	}
+	stopPending := ok && released && node.State.LockCount == 0 && node.State.HeldOut()
 	b.mu.Unlock()
 
 	if !ok {
 		command.Response <- false
 		return
+	}
+	if stopPending {
+		b.TriggerReconciliation()
 	}
 	if released && !command.Outcome.IsSuccess() {
 		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
@@ -1412,6 +1441,14 @@ func (b *Broker) getCommandForState(
 			return nil // No action for other phases if status is POC
 		}
 	case types.HardwareNodeStatus_STOPPED:
+		if !nodeState.HeldOut() {
+			return nil
+		}
+		if nodeState.LockCount > 0 {
+			logging.Info("Deferring node stop until in-flight inference finishes", types.Nodes,
+				"node_id", nodeId, "lock_count", nodeState.LockCount)
+			return nil
+		}
 		return StopNodeCommand{}
 	default:
 		logging.Info("Reconciliation for state not yet implemented", types.Nodes,
@@ -1809,6 +1846,60 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 		}
 	}
 	return nil
+}
+
+// EnsureReservedNodesCached holds every node the chain still reserves for training, return buffer
+// included, out of inference and PoC, read from the chain before the block's phase commands. The trainshard daemon stops it too,
+// but only once it polls: a phase command in between would start PoC on the cards the run takes.
+// A node whose reservation ends goes back to inference unless the operator still holds it stopped
+func (b *Broker) EnsureReservedNodesCached() error {
+	participantAddr := b.GetParticipantAddress()
+	if participantAddr == "" {
+		return fmt.Errorf("participant address unavailable for trainshard reservations")
+	}
+	resp, err := b.chainBridge.GetTrainingNodeReservations(participantAddr)
+	if err != nil {
+		return err
+	}
+
+	reserved := make(map[string]bool)
+	for _, id := range resp.GetNodeIds() {
+		reserved[id] = true
+	}
+
+	changed := false
+	b.mu.Lock()
+	for id, node := range b.nodes {
+		held := reserved[id]
+		if node.State.Reserved == held {
+			continue
+		}
+		node.State.Reserved = held
+		changed = true
+		switch {
+		case held:
+			node.State.pinStopped()
+		case !node.State.AdminState.Stopped:
+			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+			node.State.PocIntendedStatus = PocStatusIdle
+		}
+		logging.Info("Trainshard reservation changed", types.Nodes, "node_id", id, "reserved", held)
+	}
+	b.mu.Unlock()
+	b.awaitingReservations.Store(false)
+
+	if changed {
+		b.TriggerReconciliation()
+	}
+	return nil
+}
+
+func (b *Broker) holdsForReservations(command string) bool {
+	if !b.awaitingReservations.Load() {
+		return false
+	}
+	logging.Warn(command+": skipping until the trainshard reservations are read", types.Nodes)
+	return true
 }
 
 // PopulateSingleNodeEpochData populates epoch data for a specific node.

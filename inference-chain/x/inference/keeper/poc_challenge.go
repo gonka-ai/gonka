@@ -227,7 +227,26 @@ func (k Keeper) DeletePoCChallenge(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
+	if err := k.PoCChallengeProven.Remove(ctx, addr); err != nil {
+		return err
+	}
 	return k.PoCChallenges.Remove(ctx, addr)
+}
+
+func (k Keeper) MarkChallengeProven(ctx context.Context, target string) error {
+	addr, err := sdk.AccAddressFromBech32(target)
+	if err != nil {
+		return err
+	}
+	return k.PoCChallengeProven.Set(ctx, addr)
+}
+
+func (k Keeper) ChallengeProven(ctx context.Context, target string) (bool, error) {
+	addr, err := sdk.AccAddressFromBech32(target)
+	if err != nil {
+		return false, err
+	}
+	return k.PoCChallengeProven.Has(ctx, addr)
 }
 
 // MarkChallengeAborted closes a challenge without a failure.
@@ -390,6 +409,9 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 	if blockingMaintenance(ctx, k, msg.Target, nextEpoch.SetNewValidators()) {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "target has current or scheduled maintenance")
 	}
+	if k.BuildEpochReservationView(ctx, epoch.Index).FullyReservedAt(msg.Target, height) {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "every node of the target is reserved by training")
+	}
 
 	open, err := k.CountPoCChallenges(ctx)
 	if err != nil {
@@ -409,6 +431,7 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 			targetWeight = vw.Weight
 		}
 	}
+	targetWeight = k.FreeShareOfWeightBetween(ctx, epoch.Index, msg.Target, targetWeight, startHeight, safetyHeight-1)
 	if targetWeight <= 0 || totalWeight <= 0 {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "target has no current-epoch weight")
 	}

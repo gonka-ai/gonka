@@ -32,6 +32,9 @@ func (c StartPocCommand) Execute(b *Broker) {
 		logging.Warn("StartPocCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
 		return
 	}
+	if b.holdsForReservations("StartPocCommand") {
+		return
+	}
 
 	// Check if we should run PoC (regular OR confirmation OR challenge generation)
 	shouldRunPoC := epochState.CurrentPhase == types.PoCGeneratePhase
@@ -71,6 +74,10 @@ func (c StartPocCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			node.State.pinStopped()
+			continue
+		}
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node. Defaulting to INFERENCE state", types.PoC,
@@ -103,6 +110,12 @@ func (c StartPocCommand) shouldMutateState(b *Broker, epochState *chainphase.Epo
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
+				return true
+			}
+			continue
+		}
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
 			node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 
@@ -146,6 +159,9 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
 		return
 	}
+	if b.holdsForReservations("InitValidateCommand") {
+		return
+	}
 
 	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase
 	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
@@ -179,6 +195,10 @@ func (c InitValidateCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			node.State.pinStopped()
+			continue
+		}
 		// Check if node should be operational based on admin state
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
 			logging.Info("Skipping PoC for administratively disabled node. Defaulting to INFERENCE state", types.PoC,
@@ -210,6 +230,12 @@ func (c InitValidateCommand) shouldMutateState(b *Broker, epochState *chainphase
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
+				return true
+			}
+			continue
+		}
 		if !node.State.ShouldBeOperational(epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) &&
 			node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			return true
@@ -252,6 +278,9 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. epoch state is nil or not synced", types.Nodes)
 		return
 	}
+	if b.holdsForReservations("InferenceUpAllCommand") {
+		return
+	}
 
 	if overlayGeneratingChallengeWork(epochState) != nil {
 		logging.Info("InferenceUpAllCommand: no-op while generating challenge work", types.PoC,
@@ -282,6 +311,10 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 
 	b.mu.Lock()
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			node.State.pinStopped()
+			continue
+		}
 		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			logging.Info("Setting node status to Inference", types.PoC,
 				"node_id", node.Node.Id,
@@ -302,6 +335,12 @@ func (c InferenceUpAllCommand) shouldMutateState(b *Broker, epochState *chainpha
 	defer b.mu.RUnlock()
 
 	for _, node := range b.nodes {
+		if node.State.HeldOut() {
+			if node.State.IntendedStatus != types.HardwareNodeStatus_STOPPED {
+				return true
+			}
+			continue
+		}
 		if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
 			return true
 		}

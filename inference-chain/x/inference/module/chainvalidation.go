@@ -280,6 +280,15 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 	}
 	thresholdBps := wc.validationVoteThresholdBps()
 
+	if wc.TotalNetworkWeight <= 0 {
+		// no enforceable weight left in scope: accept rather than slash or divide by zero.
+		// Training reservations must never be what empties this scope, which is why
+		// selectTrainshardNodes always leaves at least one free node per model.
+		wc.Logger.LogWarn("Calculate: zero enforceable network weight, accepting", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID)
+		return true
+	}
+
 	if wc.ValidationSlots > 0 {
 		// Slot-based: sample validators, count per-slot (each slot = 1 weight).
 		// Preserves duplicates -- a validator with 2 slots gets their vote counted twice.
@@ -841,31 +850,41 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		am.LogError("getInferenceServingNodeIds: Unable to get preserved nodes snapshot", types.PoC, "error", err.Error())
-		return inferenceServingNodeIds
-	}
-	if !found {
-		return inferenceServingNodeIds
 	}
 
 	totalNodes := 0
-	for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
-		for _, p := range modelNodes.Participants {
-			if p == nil {
-				continue
-			}
-			nodeSet, ok := inferenceServingNodeIds[p.ParticipantId]
-			if !ok {
-				nodeSet = make(map[string]struct{})
-				inferenceServingNodeIds[p.ParticipantId] = nodeSet
-			}
-			for _, nodeID := range p.NodeIds {
-				if _, exists := nodeSet[nodeID]; !exists {
-					nodeSet[nodeID] = struct{}{}
-					totalNodes++
+	if err == nil && found {
+		for _, modelNodes := range preservedSnapshot.ModelPreservedNodes {
+			for _, p := range modelNodes.Participants {
+				if p == nil {
+					continue
+				}
+				nodeSet, ok := inferenceServingNodeIds[p.ParticipantId]
+				if !ok {
+					nodeSet = make(map[string]struct{})
+					inferenceServingNodeIds[p.ParticipantId] = nodeSet
+				}
+				for _, nodeID := range p.NodeIds {
+					if _, exists := nodeSet[nodeID]; !exists {
+						nodeSet[nodeID] = struct{}{}
+						totalNodes++
+					}
 				}
 			}
 		}
 	}
+
+	for participant, nodes := range am.reservedAtPoCStart(ctx, upcomingEpoch) {
+		nodeSet, ok := inferenceServingNodeIds[participant]
+		if !ok {
+			nodeSet = make(map[string]struct{})
+			inferenceServingNodeIds[participant] = nodeSet
+		}
+		for _, n := range nodes {
+			nodeSet[n.NodeId] = struct{}{}
+		}
+	}
+
 	am.LogInfo("getInferenceServingNodeIds: preserved snapshot loaded", types.PoC,
 		"epoch", upcomingEpoch.Index,
 		"participantCount", len(inferenceServingNodeIds),
@@ -903,6 +922,115 @@ func participantNodeIDs(participants []*types.ActiveParticipant) map[string]map[
 	return nodeIDs
 }
 
+// reservedAtPoCStart is the nodes that could not run the upcoming PoC: reserved, or still returning,
+// when it starts. Assembly is closed through PoC, so none becomes reserved later in it. The frozen
+// weight carry and the dropped fresh PoC both read it, so a node is counted exactly once. A returning
+// node keeps its frozen weight even if it made the PoC: taking whichever exists would let the host
+// pick the higher of the two by skipping it
+func (am AppModule) reservedAtPoCStart(ctx context.Context, upcomingEpoch types.Epoch) map[string][]*types.TrainshardReservedNode {
+	return am.keeper.CollectCarriedReservedNodeWeights(ctx, upcomingEpoch)
+}
+
+func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, upcomingEpoch types.Epoch, preserved []*types.ActiveParticipant) []*types.ActiveParticipant {
+	reserved := am.reservedAtPoCStart(ctx, upcomingEpoch)
+	if len(reserved) == 0 {
+		return preserved
+	}
+
+	byAddr := make(map[string]*types.ActiveParticipant, len(preserved))
+	for _, p := range preserved {
+		byAddr[p.Index] = p
+	}
+
+	addrs := make([]string, 0, len(reserved))
+	for addr := range reserved {
+		addrs = append(addrs, addr)
+	}
+	slices.Sort(addrs)
+
+	for _, addr := range addrs {
+		p, ok := byAddr[addr]
+		if !ok {
+			participant, found := am.keeper.GetParticipant(ctx, addr)
+			if !found {
+				am.LogError("mergeReservedNodesIntoPreserved: participant not found", types.Training,
+					"participant", addr)
+				continue
+			}
+			p = &types.ActiveParticipant{
+				Index:        addr,
+				ValidatorKey: participant.ValidatorKey,
+				InferenceUrl: participant.InferenceUrl,
+				Seed:         nil,
+			}
+			byAddr[addr] = p
+			preserved = append(preserved, p)
+		}
+
+		nodes := reserved[addr]
+		slices.SortFunc(nodes, func(a, b *types.TrainshardReservedNode) int {
+			if a.ModelId != b.ModelId {
+				return strings.Compare(a.ModelId, b.ModelId)
+			}
+			return strings.Compare(a.NodeId, b.NodeId)
+		})
+		for _, n := range nodes {
+			// one node seats in one model; a second model would pick its weight by model name
+			if model, found := modelHoldingNode(p, n.NodeId); found && model != n.ModelId {
+				am.LogWarn("mergeReservedNodesIntoPreserved: node already counted under another model", types.Training,
+					"participant", addr, "node_id", n.NodeId, "model_id", n.ModelId, "counted_under", model)
+				continue
+			}
+			addReservedNodeToParticipant(p, n)
+		}
+		p.Weight = RecalculateWeight(p)
+	}
+	return preserved
+}
+
+func modelHoldingNode(p *types.ActiveParticipant, nodeId string) (string, bool) {
+	for i, model := range p.Models {
+		if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+			continue
+		}
+		for _, existing := range p.MlNodes[i].MlNodes {
+			if existing != nil && existing.NodeId == nodeId {
+				return model, true
+			}
+		}
+	}
+	return "", false
+}
+
+func addReservedNodeToParticipant(p *types.ActiveParticipant, n *types.TrainshardReservedNode) {
+	modelIdx := -1
+	for i, m := range p.Models {
+		if m == n.ModelId {
+			modelIdx = i
+			break
+		}
+	}
+	if modelIdx == -1 {
+		p.Models = append(p.Models, n.ModelId)
+		p.MlNodes = append(p.MlNodes, &types.ModelMLNodes{})
+		modelIdx = len(p.Models) - 1
+	}
+	if p.MlNodes[modelIdx] == nil {
+		p.MlNodes[modelIdx] = &types.ModelMLNodes{}
+	}
+	for _, existing := range p.MlNodes[modelIdx].MlNodes {
+		if existing != nil && existing.NodeId == n.NodeId {
+			// keep the frozen snapshot weight used by rewards
+			existing.PocWeight = n.PocWeight
+			return
+		}
+	}
+	p.MlNodes[modelIdx].MlNodes = append(p.MlNodes[modelIdx].MlNodes, &types.MLNodeInfo{
+		NodeId:    n.NodeId,
+		PocWeight: n.PocWeight,
+	})
+}
+
 // ComputeNewWeights computes new weights for active participants using off-chain store commits.
 func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
 	return am.computeNewWeights(ctx, upcomingEpoch).participants
@@ -918,6 +1046,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	preservedParticipants := am.PreservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
 		"numPreservedParticipants", len(preservedParticipants))
+
+	if upcomingEpoch.Index > 1 {
+		preservedParticipants = am.mergeReservedNodesIntoPreserved(ctx, upcomingEpoch, preservedParticipants)
+	}
 
 	// Get off-chain store commits (replaces on-chain batches)
 	allStoreCommits, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, epochStartBlockHeight)
@@ -942,7 +1074,7 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	// Build inference-serving node IDs for filtering
 	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
 	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
-		"inferenceServingNodeIds", inferenceServingNodeIds)
+		"participantCount", len(inferenceServingNodeIds))
 
 	// Filter out store commits with distributions that only have inference-serving nodes
 	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(allStoreCommits, allWeightDistributions, inferenceServingNodeIds)
@@ -962,17 +1094,20 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"error", err)
 	}
 
-	validators := make([]string, len(validations))
-	var i = 0
+	const maxValidatorSample = 20
+	validatorSample := make([]string, 0, len(validations))
 	for key := range validations {
-		validators[i] = key.ParticipantAddress + ":" + key.ModelID
-		i++
+		validatorSample = append(validatorSample, key.ParticipantAddress+":"+key.ModelID)
+	}
+	slices.Sort(validatorSample)
+	if len(validatorSample) > maxValidatorSample {
+		validatorSample = validatorSample[:maxValidatorSample]
 	}
 	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
 		"len(validations)", len(validations),
-		"validators", validators)
+		"validatorSample", validatorSample)
 
 	// Collect participants and seeds
 	participants := make(map[string]types.Participant)
@@ -1156,6 +1291,11 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 				"combinedWeight", mergedParticipant.Weight,
 				"models", mergedModels)
 		} else {
+			if preservedParticipant.Seed == nil {
+				am.LogWarn("ComputeNewWeights: Dropping preserved-only participant without seed", types.PoC,
+					"participantAddress", participantAddress)
+				continue
+			}
 			allActiveParticipants = append(allActiveParticipants, preservedParticipant)
 
 			am.LogInfo("ComputeNewWeights: Added preserved-only participant", types.PoC,

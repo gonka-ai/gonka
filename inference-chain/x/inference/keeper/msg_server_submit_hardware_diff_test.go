@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"cosmossdk.io/collections"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -216,6 +217,78 @@ func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 	hardwareNodes, found = k.GetHardwareNodes(sdkCtx, testutil.Creator)
 	require.True(t, found)
 	require.Equal(t, 0, len(hardwareNodes.HardwareNodes))
+}
+
+func TestMsgServer_SubmitHardwareDiff_ReservedNodeAllowsStatusAndVersionUpdate(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	mockCreator := NewMockAccount(testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	registerTestModels(t, k, ms, ctx, "model1")
+
+	base := &types.HardwareNode{
+		LocalId:  "node1",
+		Status:   types.HardwareNodeStatus_INFERENCE,
+		Models:   []string{"model1"},
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 1}},
+		Host:     "localhost",
+		Port:     "8080",
+		Version:  "v1",
+	}
+	_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{base},
+	})
+	require.NoError(t, err)
+
+	const shardID uint64 = 7
+	require.NoError(t, k.Trainshards.Set(ctx, shardID, types.Trainshard{
+		TrainshardId: shardID,
+		Status:       types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: testutil.Creator,
+			NodeId:      "node1",
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(testutil.Creator, "node1"), shardID))
+
+	updatedRuntime := &types.HardwareNode{
+		LocalId:  "node1",
+		Status:   types.HardwareNodeStatus_STOPPED,
+		Models:   []string{"model1"},
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 1}},
+		Host:     "localhost",
+		Port:     "8080",
+		Version:  "v2",
+	}
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{updatedRuntime},
+	})
+	require.NoError(t, err)
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	stored, found := k.GetHardwareNodes(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	require.Len(t, stored.HardwareNodes, 1)
+	require.Equal(t, types.HardwareNodeStatus_STOPPED, stored.HardwareNodes[0].Status)
+	require.Equal(t, "v2", stored.HardwareNodes[0].Version)
+
+	changedHardware := &types.HardwareNode{
+		LocalId:  "node1",
+		Status:   types.HardwareNodeStatus_STOPPED,
+		Models:   []string{"model1"},
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 2}},
+		Host:     "localhost",
+		Port:     "8080",
+		Version:  "v2",
+	}
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{changedHardware},
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardNodeReserved)
 }
 
 // TestHardwareNodesUnchanged is a focused unit test for the helper that

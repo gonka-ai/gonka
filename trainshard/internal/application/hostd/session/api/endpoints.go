@@ -1,0 +1,91 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	usecases "trainshard/internal/application/hostd/session/use_cases"
+	"trainshard/internal/contract"
+	"trainshard/internal/domain/shared"
+	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/utils/httpx"
+	"trainshard/internal/utils/signedhttp"
+)
+
+var errBadJSON = shared.New("BAD_BODY", shared.ErrValidation, "cannot decode request body")
+
+type UseCases struct {
+	Logs  *usecases.StreamLogsUseCase
+	Shell *usecases.OpenShellUseCase
+}
+
+type Endpoints struct {
+	host vo.Host
+	uc   UseCases
+	once *signedhttp.Once
+}
+
+func NewEndpoints(host vo.Host, uc UseCases, once *signedhttp.Once) *Endpoints {
+	return &Endpoints{host: host, uc: uc, once: once}
+}
+
+// a stream cannot be recorded and replayed like a command's answer, so each request id is served once
+func (e *Endpoints) Mount(mux *http.ServeMux, boundary func(http.Handler) http.Handler) {
+	served := func(h http.HandlerFunc) http.Handler { return boundary(e.once.Wrap(h)) }
+	mux.Handle("POST "+contract.PathLogs, served(e.streamLogs))
+	mux.Handle("POST "+contract.PathShell, served(e.openShell))
+}
+
+func (e *Endpoints) streamLogs(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(r.Context())
+
+	var dto contract.LogsRequest
+	if err := decode(r, &dto); err != nil {
+		httpx.WriteError(w, requestID, err)
+		return
+	}
+	cmd, err := toLogsCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"), dto)
+	if err != nil {
+		httpx.WriteError(w, requestID, err)
+		return
+	}
+
+	out := &stream{writer: w}
+	if err := e.uc.Logs.Execute(r.Context(), cmd, out); err != nil && !out.started {
+		httpx.WriteError(w, requestID, err)
+	}
+}
+
+func (e *Endpoints) openShell(w http.ResponseWriter, r *http.Request) {
+	requestID := requestIDFrom(r.Context())
+
+	if !asksForShell(r) {
+		httpx.WriteError(w, requestID, errNoUpgrade)
+		return
+	}
+	cmd, err := toSessionCommand(e.host, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"))
+	if err != nil {
+		httpx.WriteError(w, requestID, err)
+		return
+	}
+
+	// a caller that half-closes its side looks like a hang up, so the shell outlives the request context
+	session := &duplex{writer: w}
+	defer session.close()
+	if err := e.uc.Shell.Execute(context.WithoutCancel(r.Context()), cmd, session); err != nil && !session.started {
+		httpx.WriteError(w, requestID, err)
+	}
+}
+
+func decode(r *http.Request, dto any) error {
+	if r.ContentLength == 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(dto); err != nil {
+		return errBadJSON
+	}
+	return nil
+}
