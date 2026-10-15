@@ -406,6 +406,38 @@ func mustBootstrapGatewayState(ctx context.Context, gatewayStore GatewayStore, o
 	if err := gatewayStore.Initialize(ctx, opts.bootstrapSettings, devshards); err != nil {
 		log.Fatalf("initialize gateway state: %v", err)
 	}
+	if err := applyBootstrapEnvOverrides(ctx, gatewayStore, opts.bootstrapSettings); err != nil {
+		log.Fatalf("apply env overrides to gateway state: %v", err)
+	}
+}
+
+// applyBootstrapEnvOverrides re-applies the env values that are meant to win
+// on every start. Initialize seeds the settings row only when it is missing,
+// so a changed GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE was ignored on restart
+// (#2016). An unset env leaves the stored value, and the admin API, alone.
+func applyBootstrapEnvOverrides(ctx context.Context, store GatewayStore, bootstrap GatewaySettings) error {
+	override := bootstrap.LogprobsOptimizationOverride
+	if override == nil {
+		return nil
+	}
+	state, ok, err := store.LoadState(ctx)
+	if err != nil {
+		return fmt.Errorf("load gateway state: %w", err)
+	}
+	if !ok {
+		return nil
+	}
+	if cur := state.Settings.LogprobsOptimizationOverride; cur != nil && *cur == *override {
+		return nil
+	}
+	enabled := *override
+	settings := state.Settings
+	settings.LogprobsOptimizationOverride = &enabled
+	if err := store.UpdateSettings(ctx, settings); err != nil {
+		return fmt.Errorf("apply GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE=%t: %w", enabled, err)
+	}
+	log.Printf("gateway_settings_env_override logprobs_optimization_override=%t", enabled)
+	return nil
 }
 
 // effectiveChainGRPC resolves the chain gRPC endpoint the gateway stores in its
