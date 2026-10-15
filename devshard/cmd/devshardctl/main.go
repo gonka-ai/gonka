@@ -20,6 +20,7 @@ import (
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
+	"devshard/internal/e2econfig"
 	"devshard/observability"
 	"devshard/profiling"
 	"devshard/runtimeparams"
@@ -567,6 +568,12 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 	if err := deps.validate(); err != nil {
 		return nil, nil, err
 	}
+	// Configuration read from the environment is the same for every escrow. An
+	// invalid value is the process's problem, not one escrow's: it must stop the
+	// start here instead of being retried for every escrow forever.
+	if err := validateRuntimeEnvironment(); err != nil {
+		return nil, nil, err
+	}
 	// Cap concurrent builders (see resolveMaxConcurrentRuntimeBuilds); results are
 	// still collected per-index below, so ordering and error handling are unchanged.
 	buildSem := make(chan struct{}, resolveMaxConcurrentRuntimeBuilds())
@@ -710,6 +717,19 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 			len(retryIDs), startupSkipReasonRuntimeBuildFailed, strings.Join(retryIDs, ","))
 	}
 	return out, startupSkipped, nil
+}
+
+// validateRuntimeEnvironment parses the environment settings that every runtime
+// build reads (buildRuntime), so a value that would fail each build fails the
+// start once, with the process-wide reason.
+func validateRuntimeEnvironment() error {
+	if _, err := e2econfig.SessionTimeoutOverridesFromEnv(); err != nil {
+		return fmt.Errorf("session timeout overrides: %w", err)
+	}
+	if _, err := extraClientConfigFromEnv(); err != nil {
+		return fmt.Errorf("height sync: %w", err)
+	}
+	return nil
 }
 
 func markDevshardInactive(gatewayState *GatewayState, id string) {

@@ -295,17 +295,28 @@ func (g *Gateway) restoreEscrowHolds() {
 		if !devshard.Active || devshard.OnHoldSince == "" {
 			continue
 		}
-		since, err := time.Parse(time.RFC3339Nano, devshard.OnHoldSince)
-		if err != nil {
-			log.Printf("escrow_hold_restore_unparseable escrow=%s on_hold_since=%q error=%v", devshard.ID, devshard.OnHoldSince, err)
-			since = time.Now().UTC()
-		}
 		g.mu.Lock()
 		runtime, isResident := g.runtimes[devshard.ID]
 		g.mu.Unlock()
 		if isResident {
-			runtime.holdSince.Store(since.UnixNano())
-			log.Printf("escrow_hold_restored escrow=%s on_hold_since=%s", devshard.ID, devshard.OnHoldSince)
+			restoreHoldFromRecord(runtime, devshard)
 		}
 	}
+}
+
+// restoreHoldFromRecord puts a hold persisted in the store record back on a
+// runtime that is being registered, so routing and rotation agree on the
+// escrow again. An escrow that was skipped at startup and registered later by
+// the background retry goes through here too.
+func restoreHoldFromRecord(runtime *devshardRuntime, devshard GatewayDevshardState) {
+	if runtime == nil || !devshard.Active || devshard.OnHoldSince == "" {
+		return
+	}
+	since, err := time.Parse(time.RFC3339Nano, devshard.OnHoldSince)
+	if err != nil {
+		log.Printf("escrow_hold_restore_unparseable escrow=%s on_hold_since=%q error=%v", devshard.ID, devshard.OnHoldSince, err)
+		since = time.Now().UTC()
+	}
+	runtime.holdSince.Store(since.UnixNano())
+	log.Printf("escrow_hold_restored escrow=%s on_hold_since=%s", devshard.ID, devshard.OnHoldSince)
 }

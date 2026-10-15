@@ -3686,6 +3686,11 @@ func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDev
 	g.runtimeOrder = append(g.runtimeOrder, rt)
 	g.attachRuntimeSharedState(rt)
 	g.sortRuntimeOrderLocked()
+	// An escrow skipped at startup may be activated by the operator before the
+	// background retry gets to it; the retry must not build it again, and the
+	// startup-skipped series must not keep reporting it.
+	g.stopAwaitingStart(record.ID)
+	g.metrics.ClearStartupSkippedEscrow(record.ID)
 	startEscrowWarmup(rt, g.accounting, g.metrics)
 	return record, nil
 }

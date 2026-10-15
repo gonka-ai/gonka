@@ -199,6 +199,50 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	require.True(t, reloaded.Devshards[0].Active)
 }
 
+// Test flow:
+//  1. Initialize a store with one active escrow and set an environment value every runtime build reads to something
+//     unparseable.
+//  2. Build the runtimes.
+//  3. Assert the start fails with that reason before any escrow is built, instead of skipping every escrow and
+//     retrying the same environment error in the background forever.
+func TestBuildGatewayRuntimesFailsOnAnInvalidEnvironmentSetting(t *testing.T) {
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+	state, ok, err := store.LoadState(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+	t.Setenv(envHeightSyncK, "xyz")
+	builds := 0
+	savedBuilder := gatewayRuntimeBuilder
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
+		builds++
+		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
+	}
+	t.Cleanup(func() {
+		gatewayRuntimeBuilder = savedBuilder
+	})
+
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+
+	require.ErrorContains(t, err, envHeightSyncK)
+	require.Empty(t, runtimes)
+	require.Empty(t, skipped)
+	require.Zero(t, builds)
+}
+
 func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

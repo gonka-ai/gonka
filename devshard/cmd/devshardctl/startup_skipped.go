@@ -15,6 +15,13 @@ import (
 // step that did not finish). Such an escrow waits for its start here. The
 // balance-check tick retries the build; a start registers the runtime, a final
 // reason deactivates the escrow, anything else waits for the next tick.
+//
+// Ownership: the retry registers its runtime only while the escrow is still in
+// the waiting set and still active in the store, and it checks both under g.mu
+// in the same critical section that registers. Every path that takes an escrow
+// away from the retry (settlement of a non-resident escrow, activation by the
+// operator) removes it from the waiting set under g.mu first, so a runtime that
+// the retry built in the meantime is dropped instead of registered.
 
 func (g *Gateway) awaitSkippedEscrows(skipped []startupSkippedEscrow) {
 	g.awaitingStartMu.Lock()
@@ -45,6 +52,30 @@ func (g *Gateway) stopAwaitingStart(escrowID string) {
 	g.awaitingStartMu.Lock()
 	defer g.awaitingStartMu.Unlock()
 	delete(g.awaitingStart, escrowID)
+}
+
+// claimAwaitingStart takes a waiting escrow away from the retry for the
+// duration of another operation on it. The returned function gives the escrow
+// back with its reason, for the case where that operation fails and leaves the
+// escrow active without a runtime; it does nothing for an escrow that was not
+// waiting. The caller holds g.mu, so the claim and the retry's registration
+// check cannot interleave.
+func (g *Gateway) claimAwaitingStart(escrowID string) func() {
+	g.awaitingStartMu.Lock()
+	defer g.awaitingStartMu.Unlock()
+	reason, waiting := g.awaitingStart[escrowID]
+	if !waiting {
+		return func() {}
+	}
+	delete(g.awaitingStart, escrowID)
+	return func() {
+		g.awaitingStartMu.Lock()
+		defer g.awaitingStartMu.Unlock()
+		if g.awaitingStart == nil {
+			g.awaitingStart = make(map[string]string)
+		}
+		g.awaitingStart[escrowID] = reason
+	}
 }
 
 func (g *Gateway) awaitingStartReasons() map[string]string {
@@ -103,21 +134,51 @@ func (g *Gateway) retrySkippedEscrows(ctx context.Context) {
 			log.Printf("devshard %s start retry failed (%s), will retry: %v", escrowID, reason, buildErr)
 			continue
 		}
-		shareChainMaxNonce([]*devshardRuntime{runtime}, g.chainMaxNonce())
-		g.mu.Lock()
-		if _, exists := g.runtimes[escrowID]; exists {
-			g.mu.Unlock()
-			runtime.close()
-			g.stopAwaitingStart(escrowID)
-			continue
-		}
-		g.runtimes[escrowID] = runtime
-		g.runtimeOrder = append(g.runtimeOrder, runtime)
-		g.attachRuntimeSharedState(runtime)
-		g.sortRuntimeOrderLocked()
+		g.registerRetriedRuntime(ctx, escrowID, reason, runtime)
+	}
+}
+
+// registerRetriedRuntime publishes a runtime the retry built, unless the escrow
+// was taken away while the build ran: started by another path, settled,
+// deactivated or removed. Checks and registration share one g.mu section.
+func (g *Gateway) registerRetriedRuntime(ctx context.Context, escrowID, reason string, runtime *devshardRuntime) {
+	shareChainMaxNonce([]*devshardRuntime{runtime}, g.chainMaxNonce())
+	g.mu.Lock()
+	if _, exists := g.runtimes[escrowID]; exists {
 		g.mu.Unlock()
+		runtime.close()
 		g.stopAwaitingStart(escrowID)
 		g.metrics.ClearStartupSkippedEscrow(escrowID)
-		log.Printf("devshard %s runtime started after a startup skip (%s)", escrowID, reason)
+		log.Printf("devshard %s started by another path while the retry was building, dropping the retried runtime", escrowID)
+		return
 	}
+	if !g.isAwaitingStart(escrowID) {
+		g.mu.Unlock()
+		runtime.close()
+		log.Printf("devshard %s was taken away while the retry was building, dropping the retried runtime", escrowID)
+		return
+	}
+	record, found, err := g.store.GetDevshard(ctx, escrowID)
+	if err != nil {
+		g.mu.Unlock()
+		runtime.close()
+		log.Printf("devshard %s start retry: read record: %v", escrowID, err)
+		return
+	}
+	if !found || !record.Active {
+		g.stopAwaitingStart(escrowID)
+		g.mu.Unlock()
+		runtime.close()
+		log.Printf("devshard %s was deactivated or removed while the retry was building, dropping the retried runtime", escrowID)
+		return
+	}
+	restoreHoldFromRecord(runtime, record)
+	g.runtimes[escrowID] = runtime
+	g.runtimeOrder = append(g.runtimeOrder, runtime)
+	g.attachRuntimeSharedState(runtime)
+	g.sortRuntimeOrderLocked()
+	g.stopAwaitingStart(escrowID)
+	g.mu.Unlock()
+	g.metrics.ClearStartupSkippedEscrow(escrowID)
+	log.Printf("devshard %s runtime started after a startup skip (%s)", escrowID, reason)
 }
