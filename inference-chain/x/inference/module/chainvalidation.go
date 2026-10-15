@@ -551,47 +551,52 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 		return nil
 	}
 
-	// Get current epoch group data (the epoch that's about to end)
-	// At this point in the flow, we're still in the current epoch - the transition happens later in onSetNewValidatorsStage
-	currentEpochGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
-	if err != nil {
-		am.LogError("PreservedParticipantsFromCurrentEpoch: Unable to get current epoch group", types.PoC, "error", err.Error())
-		return nil
-	}
-	if currentEpochGroup.GroupData.EpochIndex != upcomingEpoch.Index-1 {
-		am.LogError("PreservedParticipantsFromCurrentEpoch: Current epoch group does not match upcoming epoch", types.PoC,
-			"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
-			"upcomingEpoch.Index", upcomingEpoch.Index)
-		return nil
-	}
-
-	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Processing current epoch group (about to end)", types.PoC,
-		"currentEpochGroup.EpochIndex", currentEpochGroup.GroupData.EpochIndex,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
-		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
-
+	// No snapshot means no preserved carry-over. Avoid a live-membership read
+	// in that case; the fallback loads its own live set if it is needed.
 	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
 		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes snapshot", types.PoC,
-			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+			"epochIndex", upcomingEpoch.Index-1,
 			"error", err)
 		return nil
 	}
 	if !found {
 		am.LogWarn("PreservedParticipantsFromCurrentEpoch: Preserved nodes snapshot not found", types.PoC,
-			"epochIndex", currentEpochGroup.GroupData.EpochIndex)
+			"epochIndex", upcomingEpoch.Index-1)
 		return nil
 	}
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, &preservedSnapshot)
+	// The epoch transition happens later in onSetNewValidatorsStage. Read live
+	// membership now: ValidationWeights and the snapshot can outlive a removal.
+	rootData, liveSet, err := am.keeper.GetRootGroupDataWithLiveMembers(ctx)
+	if err != nil {
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Unable to get current epoch group", types.PoC, "error", err.Error())
+		return nil
+	}
+	if rootData.EpochIndex != upcomingEpoch.Index-1 {
+		am.LogError("PreservedParticipantsFromCurrentEpoch: Current epoch group does not match upcoming epoch", types.PoC,
+			"currentEpochGroup.EpochIndex", rootData.EpochIndex,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+		return nil
+	}
+
+	am.LogInfo("PreservedParticipantsFromCurrentEpoch: Processing current epoch group (about to end)", types.PoC,
+		"currentEpochGroup.EpochIndex", rootData.EpochIndex,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"pocStartBlockHeight", rootData.PocStartBlockHeight,
+		"len(validationWeight)", len(rootData.ValidationWeights))
+
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, rootData.EpochIndex, &preservedSnapshot)
 	if err != nil {
 		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes by participant", types.PoC, "error", err)
 		return nil
 	}
 
 	// Iterate through all validation weights in current epoch to find inference-serving MLNodes
-	for _, validationWeight := range currentEpochGroup.GroupData.ValidationWeights {
+	for _, validationWeight := range rootData.ValidationWeights {
+		if validationWeight == nil || validationWeight.MemberAddress == "" {
+			continue
+		}
 		participantAddress := validationWeight.MemberAddress
 
 		modelBuckets, ok := preservedNodesByParticipant[participantAddress]
@@ -599,10 +604,8 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 			continue
 		}
 
-		participant, found := am.keeper.GetParticipant(ctx, participantAddress)
-		if !found {
-			am.LogError("PreservedParticipantsFromCurrentEpoch: Participant not found", types.PoC,
-				"participantAddress", participantAddress)
+		participant, carryable := am.carryableParticipant(ctx, rootData.EpochIndex, participantAddress, liveSet)
+		if !carryable {
 			continue
 		}
 
