@@ -6,6 +6,8 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -205,12 +207,17 @@ func TestChat_OwnerAtPeerCapDoesNotBlockAnotherOwner(t *testing.T) {
 	_ = otherChat.Close()
 }
 
-// floodChatCore writes incompressible events until a send fails.
-type floodChatCore struct {
+// holdAfterDropCore writes until a send fails, then stays inside
+// ServeInference until hold is closed. The slot must already be free.
+type holdAfterDropCore struct {
 	stubCore
+	entered chan struct{}
+	hold    chan struct{}
+	once    sync.Once
+	holds   atomic.Int32
 }
 
-func (floodChatCore) ServeInference(ctx context.Context, call transport.InferenceCall) error {
+func (c *holdAfterDropCore) ServeInference(ctx context.Context, call transport.InferenceCall) error {
 	raw := make([]byte, 48<<10)
 	for i := 0; i < 4096; i++ {
 		if _, err := rand.Read(raw); err != nil {
@@ -218,6 +225,12 @@ func (floodChatCore) ServeInference(ctx context.Context, call transport.Inferenc
 		}
 		event := "data: " + base64.StdEncoding.EncodeToString(raw) + "\n\n"
 		if _, err := call.Sink.Write([]byte(event)); err != nil {
+			c.holds.Add(1)
+			c.once.Do(func() { close(c.entered) })
+			select {
+			case <-c.hold:
+			case <-ctx.Done():
+			}
 			return err
 		}
 		call.Sink.Flush()
@@ -233,14 +246,21 @@ func TestChat_SendDeadlineFreesSlotWhenGatewayStopsReading(t *testing.T) {
 }
 
 func testChatSendDeadlineFreesSlot(t *testing.T, h2c bool) {
+	core := &holdAfterDropCore{
+		stubCore: stubCore{owner: true},
+		entered:  make(chan struct{}),
+		hold:     make(chan struct{}),
+	}
+	stop := sync.OnceFunc(func() { close(core.hold) })
+	t.Cleanup(stop)
 	e := startLimitEnvProto(t, h2c, PeerAuthConfig{
 		Heartbeat:       time.Hour,
 		ChatSendTimeout: 100 * time.Millisecond,
 		Limits: &transport.ChannelLimitConfig{
-			MaxStreams:     8,
+			MaxStreams:     2,
 			MessagesPerMin: transport.UnlimitedRPCLimit,
 		},
-	}, stubLookup{core: floodChatCore{stubCore{owner: true}}})
+	}, stubLookup{core: core})
 	counter := observability.PeerRPCChatDroppedForTest(observability.PeerRPCChatDroppedSendTimeout)
 	before := promtest.ToFloat64(counter)
 
@@ -250,9 +270,27 @@ func testChatSendDeadlineFreesSlot(t *testing.T, h2c bool) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = stream.Close() })
 
+	select {
+	case <-core.entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a Chat nobody reads must hit ChatSendTimeout")
+	}
+	require.Equal(t, int32(1), core.holds.Load(), "ServeInference is still inside the dropped Chat")
+	waitChatCounts(t, e.auth.limiter, 0, 0)
+	require.GreaterOrEqual(t, promtest.ToFloat64(counter)-before, 1.0)
+
+	// MaxStreams 2 leaves one Chat. The dropped handler still holds its
+	// stream, and the same peer can take the freed slot.
+	second, err := e.session.Chat(ctx, withSession(connect.NewRequest(signedChat(t, e.signer)), e.token))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = second.Close() })
 	require.Eventually(t, func() bool {
-		return promtest.ToFloat64(counter)-before >= 1
-	}, 10*time.Second, 10*time.Millisecond, "a Chat nobody reads must hit ChatSendTimeout")
+		return core.holds.Load() == 2
+	}, 10*time.Second, 10*time.Millisecond, "the freed slot must admit another Chat while the first generation is still running")
+	waitChatCounts(t, e.auth.limiter, 0, 0)
+
+	stop()
+	cancel()
 	waitChatCounts(t, e.auth.limiter, 0, 0)
 }
 

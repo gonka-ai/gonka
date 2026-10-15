@@ -34,8 +34,9 @@ const (
 	// the proxy's client timeout.
 	defaultChatReadTimeout = 15 * time.Second
 	// defaultChatSendTimeout bounds one ChatFrame send. A gateway that
-	// stops reading blocks Send; the deadline resets the stream and frees
-	// its Chat slot. It is per frame, not per inference.
+	// stops reading blocks Send; the deadline fails that Send and frees
+	// the Chat slot. The generation may still be running. It is per frame,
+	// not per inference.
 	defaultChatSendTimeout = 30 * time.Second
 	minAttachNonceBytes    = 16
 	// maxAttachNonceBytes is a UUID or 256-bit id. The token carries only

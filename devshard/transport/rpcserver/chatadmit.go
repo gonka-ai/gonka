@@ -23,6 +23,11 @@ type chatGate struct {
 	pendingOnce sync.Once
 	deadline    time.Time
 	read        bool
+
+	// releaseSlot frees the Chat stream slot. releaseOnce makes the send
+	// path and Chat's defer safe to both call it.
+	releaseSlot func()
+	releaseOnce sync.Once
 }
 
 type chatGateKey struct{}
@@ -79,7 +84,9 @@ func chatEnvelopeRead(ctx context.Context) {
 
 // admitChat takes the Chat stream slot, then the weight, for a peer that
 // passed the owner check. A stream-cap refusal does not spend weight.
-// release frees the slot; call it when the Chat ends.
+// release frees the slot. Chat calls it when the handler returns, and
+// sendChatFrame calls it when the stream stops accepting frames. Both are
+// safe: the slot is released once.
 func admitChat(ctx context.Context) (release func(), err error) {
 	g := chatGateFromContext(ctx)
 	if g == nil || g.auth == nil {
@@ -99,15 +106,31 @@ func admitChat(ctx context.Context) (release func(), err error) {
 	}
 	auth.observeRPC(ctx, procedure, peer, false, false, false, false)
 	g.releasePending()
-	return func() { auth.limiter.releaseStream(peer, procedure) }, nil
+	g.releaseSlot = func() { auth.limiter.releaseStream(peer, procedure) }
+	return g.releaseChatSlot, nil
+}
+
+// releaseChatSlot frees this Chat's stream slot. A second call is a no-op,
+// so a failed send and the handler's defer do not drop a sibling's slot.
+func (g *chatGate) releaseChatSlot() {
+	if g == nil || g.releaseSlot == nil {
+		return
+	}
+	g.releaseOnce.Do(g.releaseSlot)
 }
 
 // sendChatFrame bounds one ChatFrame send by ChatSendTimeout. The deadline
 // is cleared after Send so time spent waiting on the model is not counted.
+// A failed Send is a stream that will not deliver another frame. The Chat
+// slot is released then. ServeInference may keep running the generation.
 func sendChatFrame(ctx context.Context, send func() error) error {
 	g := chatGateFromContext(ctx)
 	if g == nil || g.auth == nil || g.auth.cfg.ChatSendTimeout <= 0 {
-		return send()
+		err := send()
+		if err != nil {
+			g.releaseChatSlot()
+		}
+		return err
 	}
 	d := g.auth.cfg.ChatSendTimeout
 	start := time.Now()
@@ -118,6 +141,7 @@ func sendChatFrame(ctx context.Context, send func() error) error {
 		if time.Since(start) >= d {
 			observability.IncPeerRPCChatDropped(observability.PeerRPCChatDroppedSendTimeout)
 		}
+		g.releaseChatSlot()
 		return err
 	}
 	return writeDeadline(ctx, time.Time{})
