@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/observability"
+	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 const (
@@ -19,6 +20,10 @@ const (
 	RPCZoneStreams = "streams"
 	// RPCZoneAttachFloor is the process-wide Attach floor.
 	RPCZoneAttachFloor = "attach_floor"
+	// RPCZoneAttachRenew is the live-token Attach bucket. Snapshots record
+	// Attach on RPCZoneAttachFloor; this name stays classified so a host
+	// that reports it is not folded into the overflow label.
+	RPCZoneAttachRenew = "attach_renew"
 
 	rpcTrafficClosedMinutes = 5
 	rpcTrafficPeerCap       = 1000
@@ -41,7 +46,71 @@ const (
 	ReconnectWatch = "watch"
 	// ReconnectTTL is a token-refresh re-Attach.
 	ReconnectTTL = "ttl"
+
+	// RPCStatsOtherLabel is the snapshot label for an endpoint, zone, or
+	// reconnect reason outside the classified set.
+	RPCStatsOtherLabel = rpcTrafficOtherKey
 )
+
+// knownRPCStatEndpoints is every Connect method the snapshot labels by
+// (the last path segment), plus the overflow bucket. The gateway refuses
+// any other endpoint string so a polled host cannot mint a series per name.
+var knownRPCStatEndpoints = func() map[string]struct{} {
+	procs := []string{
+		rpcpbconnect.PeerAuthServiceAttachProcedure,
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		rpcpbconnect.SessionServiceChatProcedure,
+		rpcpbconnect.SessionServiceSeedHeightSyncProcedure,
+		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
+		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
+		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
+		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetMempoolProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
+		rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		rpcpbconnect.GossipServiceNonceProcedure,
+		rpcpbconnect.GossipServiceTxsProcedure,
+		rpcpbconnect.PayloadServiceGetPayloadProcedure,
+	}
+	m := make(map[string]struct{}, len(procs)+1)
+	for _, p := range procs {
+		m[RPCEndpointName(p)] = struct{}{}
+	}
+	m[RPCStatsOtherLabel] = struct{}{}
+	return m
+}()
+
+// RPCStatsEndpointLabel is the Prometheus endpoint label for a snapshot row.
+// Names outside the classified Connect methods become RPCStatsOtherLabel.
+func RPCStatsEndpointLabel(name string) string {
+	if _, ok := knownRPCStatEndpoints[name]; ok {
+		return name
+	}
+	return RPCStatsOtherLabel
+}
+
+// RPCStatsZoneLabel is the Prometheus zone label for a snapshot row.
+// Names outside the rate-limit zones become RPCStatsOtherLabel.
+func RPCStatsZoneLabel(zone string) string {
+	switch zone {
+	case RPCZoneShared, RPCZoneStreams, RPCZoneAttachFloor, RPCZoneAttachRenew, RPCStatsOtherLabel:
+		return zone
+	default:
+		return RPCStatsOtherLabel
+	}
+}
+
+// RPCStatsReconnectReason is the Prometheus reason label for an outbound
+// re-attach. Reasons outside the recorded set become RPCStatsOtherLabel.
+func RPCStatsReconnectReason(reason string) string {
+	switch reason {
+	case ReconnectFirstAttach, ReconnectWatch, ReconnectTTL:
+		return reason
+	default:
+		return RPCStatsOtherLabel
+	}
+}
 
 // RPCStatsSnapshot is GET /devshard/stats/rpc. Last closed minute.
 type RPCStatsSnapshot struct {

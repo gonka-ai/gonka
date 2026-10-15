@@ -1,6 +1,8 @@
 package main
 
 import (
+	"sort"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"devshard/transport"
@@ -35,22 +37,22 @@ func newRPCStatsDescs() rpcStatsDescs {
 		),
 		endpointRequests: prometheus.NewDesc(
 			"devshard_gateway_rpc_endpoint_requests_last_minute",
-			"Inbound RPCs in the last closed minute by classified endpoint.",
+			"Inbound RPCs in the last closed minute by classified endpoint. Unknown names sum into other.",
 			[]string{"host", "escrow", "endpoint"}, nil,
 		),
 		endpointBanned: prometheus.NewDesc(
 			"devshard_gateway_rpc_endpoint_banned_last_minute",
-			"Banned RPCs in the last closed minute by classified endpoint.",
+			"Banned RPCs in the last closed minute by classified endpoint. Unknown names sum into other.",
 			[]string{"host", "escrow", "endpoint"}, nil,
 		),
 		zoneRequests: prometheus.NewDesc(
 			"devshard_gateway_rpc_zone_requests_last_minute",
-			"Inbound RPCs in the last closed minute by rate-limit zone.",
+			"Inbound RPCs in the last closed minute by rate-limit zone. Unknown names sum into other.",
 			[]string{"host", "zone"}, nil,
 		),
 		zoneBanned: prometheus.NewDesc(
 			"devshard_gateway_rpc_zone_banned_last_minute",
-			"Banned RPCs in the last closed minute by rate-limit zone.",
+			"Banned RPCs in the last closed minute by rate-limit zone. Unknown names sum into other.",
 			[]string{"host", "zone"}, nil,
 		),
 		attachAttempts: prometheus.NewDesc(
@@ -65,7 +67,7 @@ func newRPCStatsDescs() rpcStatsDescs {
 		),
 		reconnects: prometheus.NewDesc(
 			"devshard_gateway_rpc_reconnects_last_minute",
-			"Outbound Attach / re-attach attempts in the last closed minute.",
+			"Outbound Attach / re-attach attempts in the last closed minute. Rows past the per-snapshot cap, and unknown reasons, sum into other.",
 			[]string{"host", "peer", "reason"}, nil,
 		),
 		statsUp: prometheus.NewDesc(
@@ -124,10 +126,9 @@ func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostSta
 			ch <- prometheus.MustNewConstMetric(d.endpointRequests, prometheus.GaugeValue, float64(c.requests), host, rpcStatsProcessEscrow, ep)
 			ch <- prometheus.MustNewConstMetric(d.endpointBanned, prometheus.GaugeValue, float64(c.banned), host, rpcStatsProcessEscrow, ep)
 		}
-		for _, z := range snap.Host.Zones {
-			zone := z.Zone
-			ch <- prometheus.MustNewConstMetric(d.zoneRequests, prometheus.GaugeValue, float64(z.Requests), host, zone)
-			ch <- prometheus.MustNewConstMetric(d.zoneBanned, prometheus.GaugeValue, float64(z.Banned), host, zone)
+		for zone, c := range foldZoneCounts(snap.Host.Zones) {
+			ch <- prometheus.MustNewConstMetric(d.zoneRequests, prometheus.GaugeValue, float64(c.requests), host, zone)
+			ch <- prometheus.MustNewConstMetric(d.zoneBanned, prometheus.GaugeValue, float64(c.banned), host, zone)
 		}
 		ch <- prometheus.MustNewConstMetric(d.minuteUnix, prometheus.GaugeValue, float64(snap.MinuteUnix), host)
 		partial := 0.0
@@ -140,7 +141,7 @@ func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostSta
 		if other := attachOtherBanned(snap.Host.Attach); other > 0 {
 			ch <- prometheus.MustNewConstMetric(d.attachBanned, prometheus.GaugeValue, float64(other), host, rpcStatsAttachOther)
 		}
-		for _, r := range snap.Host.Reconnects {
+		for _, r := range foldReconnects(snap.Host.Reconnects) {
 			ch <- prometheus.MustNewConstMetric(d.reconnects, prometheus.GaugeValue, float64(r.Attempts), host, r.Peer, r.Reason)
 		}
 		for escrow, sh := range foldShards(snap.Shards) {
@@ -179,23 +180,48 @@ func attachOtherBanned(a transport.RPCStatsAttach) uint64 {
 func foldEndpointCounts(rows []transport.RPCStatsEndpoint) map[string]rpcCount {
 	out := make(map[string]rpcCount, len(rows))
 	for _, e := range rows {
-		cur := out[e.Endpoint]
+		name := transport.RPCStatsEndpointLabel(e.Endpoint)
+		cur := out[name]
 		cur.requests += e.Requests
 		cur.banned += e.Banned
-		out[e.Endpoint] = cur
+		out[name] = cur
 	}
 	return out
+}
+
+func foldZoneCounts(rows []transport.RPCStatsZone) map[string]rpcCount {
+	out := make(map[string]rpcCount, len(rows))
+	for _, z := range rows {
+		name := transport.RPCStatsZoneLabel(z.Zone)
+		cur := out[name]
+		cur.requests += z.Requests
+		cur.banned += z.Banned
+		out[name] = cur
+	}
+	return out
+}
+
+func foldReconnects(rows []transport.RPCStatsReconnect) []transport.RPCStatsReconnect {
+	merged := make(map[[2]string]uint64, len(rows))
+	for _, r := range rows {
+		peer := r.Peer
+		if peer == "" {
+			peer = transport.RPCStatsOtherLabel
+		}
+		reason := transport.RPCStatsReconnectReason(r.Reason)
+		merged[[2]string{peer, reason}] += r.Attempts
+	}
+	return capPairs(merged, rpcStatsMaxReconnectRows, transport.RPCStatsOtherLabel, transport.RPCStatsOtherLabel)
 }
 
 func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 	out := make(map[string]*foldedShard, len(shards))
 	for _, sh := range shards {
-		cur := out[sh.EscrowID]
+		id := shardLabel(sh.EscrowID)
+		cur := out[id]
 		if cur == nil {
-			cur = &foldedShard{
-				endpoints: make(map[string]rpcCount),
-			}
-			out[sh.EscrowID] = cur
+			cur = &foldedShard{endpoints: make(map[string]rpcCount)}
+			out[id] = cur
 		}
 		cur.requests += sh.Requests
 		cur.banned += sh.Banned
@@ -205,6 +231,121 @@ func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 			x.banned += c.banned
 			cur.endpoints[ep] = x
 		}
+	}
+	if len(out) <= rpcStatsMaxShardRows {
+		return out
+	}
+	type row struct {
+		id string
+		sh *foldedShard
+	}
+	list := make([]row, 0, len(out))
+	var overflow *foldedShard
+	for id, sh := range out {
+		if id == transport.RPCStatsOtherLabel {
+			overflow = sh
+			continue
+		}
+		list = append(list, row{id: id, sh: sh})
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].sh.requests != list[j].sh.requests {
+			return list[i].sh.requests > list[j].sh.requests
+		}
+		return list[i].id < list[j].id
+	})
+	keep := rpcStatsMaxShardRows - 1
+	if keep < 0 {
+		keep = 0
+	}
+	if len(list) > keep {
+		if overflow == nil {
+			overflow = &foldedShard{endpoints: make(map[string]rpcCount)}
+		}
+		for _, extra := range list[keep:] {
+			mergeShard(overflow, extra.sh)
+		}
+		list = list[:keep]
+	}
+	kept := make(map[string]*foldedShard, len(list)+1)
+	for _, r := range list {
+		kept[r.id] = r.sh
+	}
+	if overflow != nil {
+		kept[transport.RPCStatsOtherLabel] = overflow
+	}
+	return kept
+}
+
+// shardLabel is the escrow label for one snapshot row. "_" is the process
+// total, emitted separately, so a shard that reuses it would duplicate the
+// series and fail the scrape.
+func shardLabel(id string) string {
+	if id == "" || id == rpcStatsProcessEscrow {
+		return transport.RPCStatsOtherLabel
+	}
+	return id
+}
+
+func mergeShard(dst, src *foldedShard) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.requests += src.requests
+	dst.banned += src.banned
+	if dst.endpoints == nil {
+		dst.endpoints = make(map[string]rpcCount, len(src.endpoints))
+	}
+	for ep, c := range src.endpoints {
+		x := dst.endpoints[ep]
+		x.requests += c.requests
+		x.banned += c.banned
+		dst.endpoints[ep] = x
+	}
+}
+
+func capPairs(merged map[[2]string]uint64, cap int, overflowA, overflowB string) []transport.RPCStatsReconnect {
+	if len(merged) == 0 {
+		return nil
+	}
+	if len(merged) <= cap {
+		return reconnectSlice(merged)
+	}
+	overflowKey := [2]string{overflowA, overflowB}
+	overflow := merged[overflowKey]
+	delete(merged, overflowKey)
+	list := reconnectSlice(merged)
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].Attempts != list[j].Attempts {
+			return list[i].Attempts > list[j].Attempts
+		}
+		if list[i].Peer != list[j].Peer {
+			return list[i].Peer < list[j].Peer
+		}
+		return list[i].Reason < list[j].Reason
+	})
+	keep := cap - 1
+	if keep < 0 {
+		keep = 0
+	}
+	if len(list) > keep {
+		for _, extra := range list[keep:] {
+			overflow += extra.Attempts
+		}
+		list = list[:keep]
+	}
+	if overflow > 0 {
+		list = append(list, transport.RPCStatsReconnect{
+			Peer: overflowA, Reason: overflowB, Attempts: overflow,
+		})
+	}
+	return list
+}
+
+func reconnectSlice(merged map[[2]string]uint64) []transport.RPCStatsReconnect {
+	out := make([]transport.RPCStatsReconnect, 0, len(merged))
+	for k, n := range merged {
+		out = append(out, transport.RPCStatsReconnect{Peer: k[0], Reason: k[1], Attempts: n})
 	}
 	return out
 }
