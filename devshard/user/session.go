@@ -710,18 +710,48 @@ func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
 	}
 	var out []types.Diff
 	if first := s.firstRetainedNonceLocked(); s.store != nil && from < first {
-		storeTo := min(to, first-1)
-		err := storage.ReadDiffPages(s.store, s.escrowID, from, storeTo, func(page []types.DiffRecord) error {
-			for _, rec := range page {
-				out = append(out, rec.Diff)
-			}
-			return nil
-		})
-		if err != nil {
-			logging.Warn("read trimmed diffs from store", "subsystem", "session",
-				"escrow", s.escrowID, "from", from, "to", storeTo, "read", len(out), "error", err)
-		}
+		out = s.storedDiffs(from, min(to, first-1))
 	}
+	return s.appendRetainedLocked(out, from, to)
+}
+
+// diffRange is diffRangeLocked with the store read done after s.mu is
+// released. A nonce below the retained suffix was persisted before it was
+// retained and is never rewritten, so that read needs no lock.
+func (s *Session) diffRange(from, to uint64) []types.Diff {
+	if from > to {
+		return nil
+	}
+	s.mu.Lock()
+	first := s.firstRetainedNonceLocked()
+	retained := s.appendRetainedLocked(nil, from, to)
+	s.mu.Unlock()
+	if s.store == nil || from >= first {
+		return retained
+	}
+	return append(s.storedDiffs(from, min(to, first-1)), retained...)
+}
+
+// storedDiffs reads [from, to] from the store, keeping the contiguous prefix
+// on a failed read.
+func (s *Session) storedDiffs(from, to uint64) []types.Diff {
+	var out []types.Diff
+	err := storage.ReadDiffPages(s.store, s.escrowID, from, to, func(page []types.DiffRecord) error {
+		for _, rec := range page {
+			out = append(out, rec.Diff)
+		}
+		return nil
+	})
+	if err != nil {
+		logging.Warn("read trimmed diffs from store", "subsystem", "session",
+			"escrow", s.escrowID, "from", from, "to", to, "read", len(out), "error", err)
+	}
+	return out
+}
+
+// appendRetainedLocked appends the in-memory diffs in [from, to] to out.
+// Caller must hold s.mu.
+func (s *Session) appendRetainedLocked(out []types.Diff, from, to uint64) []types.Diff {
 	for _, d := range s.diffs {
 		if d.Nonce >= from && d.Nonce <= to {
 			out = append(out, d)
@@ -2038,9 +2068,7 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			return nil
 		}
 
-		s.mu.Lock()
-		chunk := s.diffRangeLocked(from, min(from+catchUpChunkSize-1, nonce))
-		s.mu.Unlock()
+		chunk := s.diffRange(from, min(from+catchUpChunkSize-1, nonce))
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
 		}
