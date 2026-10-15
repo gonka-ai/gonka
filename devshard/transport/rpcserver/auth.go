@@ -28,7 +28,16 @@ const (
 	defaultSessionTTL        = 2 * time.Minute
 	defaultHeartbeat         = 30 * time.Second
 	defaultWatchWriteTimeout = 10 * time.Second
-	minAttachNonceBytes      = 16
+	// defaultChatReadTimeout is how long a Chat may take to deliver its
+	// envelope (10 MiB at most). The child has no server ReadTimeout and
+	// the proxy streams the body, so without it an unread Chat waits for
+	// the proxy's client timeout.
+	defaultChatReadTimeout = 15 * time.Second
+	// defaultChatSendTimeout bounds one ChatFrame send. A gateway that
+	// stops reading blocks Send; the deadline resets the stream and frees
+	// its Chat slot. It is per frame, not per inference.
+	defaultChatSendTimeout = 30 * time.Second
+	minAttachNonceBytes    = 16
 	// maxAttachNonceBytes is a UUID or 256-bit id. The token carries only
 	// its SHA-256, so the bound is about request size, not token size.
 	maxAttachNonceBytes = 32
@@ -71,6 +80,12 @@ type PeerAuthConfig struct {
 	SessionTTL        time.Duration
 	Heartbeat         time.Duration
 	WatchWriteTimeout time.Duration
+	// ChatReadTimeout bounds reading a Chat envelope. Zero means
+	// defaultChatReadTimeout; negative disables it.
+	ChatReadTimeout time.Duration
+	// ChatSendTimeout bounds one ChatFrame send. Zero means
+	// defaultChatSendTimeout; negative disables it.
+	ChatSendTimeout time.Duration
 	// MaxSessions caps concurrent Watch streams. Zero means
 	// defaultMaxSessions. It does not cap Attach or live tokens.
 	MaxSessions int
@@ -135,6 +150,12 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	}
 	if cfg.WatchWriteTimeout == 0 {
 		cfg.WatchWriteTimeout = defaultWatchWriteTimeout
+	}
+	if cfg.ChatReadTimeout == 0 {
+		cfg.ChatReadTimeout = defaultChatReadTimeout
+	}
+	if cfg.ChatSendTimeout == 0 {
+		cfg.ChatSendTimeout = defaultChatSendTimeout
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now

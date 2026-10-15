@@ -35,6 +35,12 @@ const (
 	// ECDSA work one peer can buy without the anonymous floor.
 	renewalBurst  = 4
 	renewalPerMin = 4
+	// maxPendingChatsPerPeer and maxPendingChatsTotal bound Chats whose
+	// envelope is still being read. Those hold an HTTP/2 stream and a
+	// goroutine but no Chat slot yet, and ChatReadTimeout ends each one.
+	// A gateway's burst only waits here for the envelope upload.
+	maxPendingChatsPerPeer = 512
+	maxPendingChatsTotal   = 2048
 )
 
 type rateLimitZone string
@@ -116,6 +122,12 @@ type channelLimiter struct {
 	procWatches int
 	maxWatches  int
 	peerWatches map[string]int
+	// pendingChats / procPendingChats count Chats still reading their
+	// envelope. They do not spend procChats.
+	pendingChats      map[string]int
+	procPendingChats  int
+	maxPendingPerPeer int
+	maxPendingTotal   int
 	// evictVisited is how many keys the last at-cap idle walk inspected.
 	evictVisited int
 
@@ -142,6 +154,10 @@ func newChannelLimiter(cfg transport.ChannelLimitConfig, now func() time.Time) *
 		streams:     make(map[string]peerStreamCount),
 		maxWatches:  defaultMaxSessions,
 		peerWatches: make(map[string]int),
+
+		pendingChats:      make(map[string]int),
+		maxPendingPerPeer: maxPendingChatsPerPeer,
+		maxPendingTotal:   maxPendingChatsTotal,
 	}
 }
 
@@ -299,6 +315,53 @@ func (l *channelLimiter) acquireWatch(ctx context.Context, peer, procedure strin
 	l.procWatches++
 	l.streamMu.Unlock()
 	return nil
+}
+
+// acquirePendingChat counts one Chat whose envelope is not read yet. The
+// count is released when that Chat takes its stream slot or the request
+// ends, whichever is first.
+func (l *channelLimiter) acquirePendingChat(ctx context.Context, peer string) error {
+	if l == nil || l.cfg.Disabled || peer == "" {
+		return nil
+	}
+	procedure := rpcpbconnect.SessionServiceChatProcedure
+	perPeerUnlimited := transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams())
+	_, _, procUnlimited := l.cfg.ProcessStreamCaps()
+	l.streamMu.Lock()
+	if !perPeerUnlimited && l.pendingChats[peer] >= l.maxPendingPerPeer {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, peer)
+		return rateLimitExhausted("too many pending chats", time.Second)
+	}
+	if !procUnlimited && l.procPendingChats >= l.maxPendingTotal {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, "process")
+		return rateLimitExhausted("too many pending chats", time.Second)
+	}
+	l.pendingChats[peer]++
+	l.procPendingChats++
+	l.streamMu.Unlock()
+	return nil
+}
+
+func (l *channelLimiter) releasePendingChat(peer string) {
+	if l == nil || peer == "" {
+		return
+	}
+	l.streamMu.Lock()
+	defer l.streamMu.Unlock()
+	n, ok := l.pendingChats[peer]
+	if !ok {
+		return
+	}
+	if l.procPendingChats > 0 {
+		l.procPendingChats--
+	}
+	if n <= 1 {
+		delete(l.pendingChats, peer)
+		return
+	}
+	l.pendingChats[peer] = n - 1
 }
 
 func (l *channelLimiter) releaseStream(peer, procedure string) {

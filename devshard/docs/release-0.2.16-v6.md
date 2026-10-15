@@ -73,7 +73,7 @@ listen. The nginx image does not publish it.
 | --- | --- |
 | **Peer RPC and authentication** | Connect on `/devshard/{version}/sessions/{id}/rpc/...`. `Attach` opens a session; `Watch` keeps it. Admission after that is the session token. The signed envelope still covers dispute-bearing bodies |
 | **gzip** | Chat responses are one gzip stream for the whole completion (compression window kept across events, not one gzip per frame). Request gzip is inflated only up to a decoded cap, and a body past that cap is rejected before the handler. `GET /devshard/stats/rpc` is gzip when the caller sends `Accept-Encoding: gzip` |
-| **Per-peer rate limits** | After `Attach`, the child charges the authenticated peer: 6000 weight/min, burst 600. Concurrent chats per peer default to 10240. `GetDiffs` is expensive (weight 60) so it cannot spend the chat budget. Anonymous `Attach` is capped before the signature check |
+| **Per-peer rate limits** | After `Attach`, the child charges the authenticated peer: 6000 weight/min, burst 600. Concurrent chats per peer default to 2560, a quarter of the 10240 process cap. Only the escrow owner takes a chat slot. `GetDiffs` is expensive (weight 60) so it cannot spend the chat budget. Anonymous `Attach` is capped before the signature check |
 | **Per-connection rate limits** | v6 `proxy-router` only. One HTTP/2 connection per peer. That connection is limited per client address: 200 new connections/s, 400 new sessions/s, plus a separate request budget per RPC path |
 | **Gateway Postgres** | `DEVSHARD_STORAGE_MODE=hybrid` or `postgres` keeps gateway management state in Postgres. `sqlite` stays on local `gateway.db` and ignores `PGHOST`. The same mode applies to `perf.db` |
 | **Load testing** | YAML scenarios drive the gateway through an isolated Docker testenv: concurrent traffic, mock ML-node faults, host pause, catch-up, escrow rotation, and miss-rate checks. In-process `loadsim` remains for gateway and `perf.db` profiles |
@@ -185,7 +185,11 @@ loopback). Defaults:
 | --- | --- | --- |
 | Weight per minute | 6000 | `DEVSHARD_RPC_MSGS_PER_MIN` |
 | Burst | 600 (10% of the minute) | `DEVSHARD_RPC_MSGS_BURST` |
-| Concurrent chats per peer | 10240 | `DEVSHARD_RPC_MAX_STREAMS_PER_PEER` (streams = chats + 1, so Watch still fits) |
+| Concurrent chats per peer | 2560 | `DEVSHARD_RPC_MAX_STREAMS_PER_PEER` (streams = chats + 1, so Watch still fits) |
+| Concurrent chats per process | 10240 | `DEVSHARD_RPC_MAX_STREAMS_TOTAL` (streams = chats + 1) |
+| Chats whose envelope is not read yet | 512 per peer, 2048 per process | fixed. Off when the matching stream cap is unlimited |
+| Envelope read deadline | 15s | `PeerAuthConfig.ChatReadTimeout` |
+| Deadline per chat frame write | 30s | `PeerAuthConfig.ChatSendTimeout` |
 | Watch streams per peer | 8 | fixed |
 | `Attach` renewal, before the signature check | burst 4, 4/min | fixed |
 | Anonymous `Attach` floor | 50 tokens, refilled at 50/s | `DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` |
@@ -214,6 +218,16 @@ A full burst therefore admits 10 `GetDiffs` or 600 `Chat` calls immediately,
 then the sustained rate. Peer A exhausting the bucket does not charge peer B.
 `Chat` weighs 1 because every chat already spends a nonce the escrow pays for;
 the budget is there for the RPCs that cost the caller nothing.
+
+A chat slot and its charge are taken only after the child has read the
+envelope and resolved the caller as the escrow owner, and before the envelope
+signature check. A non-owner, or a caller that never finishes sending the
+envelope, holds no chat slot and spends no budget. Until its envelope is read,
+a chat counts only against the pending caps above. The child drops it at the
+15s read deadline. Once streaming, a chat whose gateway stops reading is dropped
+when one frame write passes 30s, and its slot is freed.
+`devshard_peer_rpc_chat_dropped_total{reason}` counts these drops
+(`pending_cap`, `read_timeout`, `send_timeout`).
 
 ### Per-connection limits (v6 `proxy-router` only)
 
@@ -332,7 +346,7 @@ suddenly requires `:9443` is a failure.
 Run A and B on both wrappings. Run C–G only after section 2, on a v6
 `proxy-router` cell (SR and HR). Two source addresses, two keys.
 
-The production chat cap (10240) and the 6000/min budget are the wrong size
+The production chat cap (2560 per peer) and the 6000/min budget are the wrong size
 to hit by hand. For A and B, on a non-production child only:
 
 ```bash

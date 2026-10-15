@@ -33,6 +33,9 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	require.Equal(t, DefaultRPCMaxChatsTotal, cfg.MaxChatsTotal)
 	require.Less(t, cfg.MaxChatsTotal, cfg.MaxStreamsTotal)
 	require.Less(t, cfg.MaxStreamsTotal, DefaultH2MaxConcurrentStreams)
+	require.LessOrEqual(t, 4*DefaultRPCMaxChatsPerPeer, DefaultRPCMaxChatsTotal,
+		"one peer must not be able to fill the child's Chat ceiling")
+	require.Equal(t, DefaultRPCMaxChatsPerPeer+1, cfg.EffectiveMaxStreams())
 	streams, chats, unlimited := cfg.ProcessStreamCaps()
 	require.False(t, unlimited)
 	require.Equal(t, DefaultRPCMaxStreamsTotal, streams)
