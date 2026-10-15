@@ -108,11 +108,11 @@ test files because they exercise different lifecycle contracts.
 
 | ID | Name | What we validate | Test | Status |
 |----|------|------------------|------|--------|
-| **A1** | Lost first SSE chunk | `mock-openai` `drop_first_chunk` → gateway stream still completes; assembled text missing first rune | `TestA1_LostFirstChunk` | ✅ |
-| **A2** | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | `TestA2_MLUpstream5xx` | ✅ |
-| **A3** | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | `TestA3_StaleEscrow` | ✅ |
-| **A4** | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | `TestA4_BadWarmKey` | ✅ |
-| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `MsgErrorMiss`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestA5_ErrorFinishMiss` | ✅ |
+| **A1** | Lost first SSE chunk | `mock-openai` `drop_first_chunk` → gateway stream still completes; assembled text missing first rune | `TestLostFirstChunk` | ✅ |
+| **A2** | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | `TestMLUpstream5xx` | ✅ |
+| **A3** | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | `TestStaleEscrow` | ✅ |
+| **A4** | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | `TestBadWarmKey` | ✅ |
+| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `MsgErrorMiss`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestErrorFinishMiss` | ✅ |
 
 A1–A4 boot the standard 2× versiond stack. A5 boots a **3-host** stack so two
 non-executor verifiers can exceed `VoteThreshold` (step 10 of
@@ -126,10 +126,10 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 
 | ID | Name | What we validate | Test | Status |
 |----|------|------------------|------|--------|
-| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestG1_GatewayEscrowCreateGRPC` | ✅ |
-| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestG2_GatewayEscrowReadGRPC` | ✅ |
-| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestG3_GatewayChatGRPCOnly` | ✅ |
-| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
+| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestGatewayEscrowCreateGRPC` | ✅ |
+| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestGatewayEscrowReadGRPC` | ✅ |
+| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestGatewayChatGRPCOnly` | ✅ |
+| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestNoRESTChainClientsInGatewayProduction` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
 
@@ -773,10 +773,10 @@ See [`README.md`](../README.md) for adversarial and observability detail.
 **What we test:** `common/chain/tx` creates a devshard escrow via mock-chain gRPC
 (`BroadcastTx` + `GetTx` + auth `Account` query) — no LCD for the tx path.
 
-**How:** `TestG1_GatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
+**How:** `TestGatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
 calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG1_`).
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayEscrowCreateGRPC`).
 
 ---
 
@@ -784,7 +784,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Escrow read via `bridge.GRPCBridge` / `common/chain.Client` against dockerized mock-chain (no LCD).
 
-**Test:** `TestG2_GatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
+**Test:** `TestGatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
 
 ---
 
@@ -792,13 +792,13 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Gateway chat (non-stream + SSE) with gRPC-only chain transport.
 
-**How:** `TestG3_GatewayChatGRPCOnly` — full standard stack with
+**How:** `TestGatewayChatGRPCOnly` — full standard stack with
 `docker compose up --build`; the compose gate asserts that devshardctl has no
 `DEVSHARD_CHAIN_REST` or `DEVSHARD_TX_QUERY_REST`.
 
 **Pass criteria:** Non-stream + stream chat return 200.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG3_`).
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayChatGRPCOnly`).
 
 ---
 
@@ -806,7 +806,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Production gateway code must not call REST chain clients.
 
-**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
+**How:** `TestNoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
 
@@ -821,7 +821,7 @@ client response does not.
 Specified as step 10 of
 [`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md).
 
-**How:** `TestA5_ErrorFinishMiss` boots a 3-host stack
+**How:** `TestErrorFinishMiss` boots a 3-host stack
 (`BootErrorMissAdversarialStack`) so two non-executor verifiers can exceed
 `VoteThreshold`. `POST /testenv/fault` sets mock-openai `stream_error_envelope`;
 the test then posts a non-stream chat through the gateway.
@@ -836,7 +836,7 @@ the test then posts a non-stream chat through the gateway.
 - No validation votes (`VotesValid` / `VotesInvalid` stay 0) and
   `CompletedValidations` unchanged.
 
-**Run:** `make citest-adversarial` (or `-run TestA5_`).
+**Run:** `make citest-adversarial` (or `-run TestErrorFinishMiss`).
 
 ---
 
