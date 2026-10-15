@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"common/storage/mode"
+	"devshard/heightsync"
 	"devshard/storage"
 )
 
@@ -15,6 +16,7 @@ const (
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
 	printChildH2CFlag        = "--print-child-h2c"
+	printFleetCompatFlag     = "--print-fleet-compat"
 	initializePostgresFlag   = "--initialize-postgres-schema"
 	childH2CAdvertise        = "h2c"
 )
@@ -54,6 +56,9 @@ func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 		return 0, true
 	case printChildH2CFlag:
 		fmt.Fprintln(stdout, childH2CAdvertise)
+		return 0, true
+	case printFleetCompatFlag:
+		fmt.Fprintln(stdout, heightsync.FleetCompat())
 		return 0, true
 	default:
 		return 0, false

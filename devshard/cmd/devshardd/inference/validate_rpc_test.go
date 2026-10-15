@@ -87,6 +87,18 @@ func TestFetchSignedPayloads_RPCNotFoundIsGone(t *testing.T) {
 	require.ErrorIs(t, err, commonvalidation.ErrPayloadGone)
 }
 
+func TestPayloadResponseFromRPC_RateLimitIsNotTooLarge(t *testing.T) {
+	_, err := payloadResponseFromRPC(nil, connect.NewError(connect.CodeResourceExhausted, errors.New("rate limit exceeded")))
+	require.Error(t, err)
+	require.NotErrorIs(t, err, commonvalidation.ErrPayloadTooLarge)
+	classified := classifyPayloadFetchError(context.Background(), err)
+	require.ErrorIs(t, classified, errExecutorPayloadFault)
+	require.NotErrorIs(t, classified, commonvalidation.ErrPayloadTooLarge)
+
+	_, tooBig := payloadResponseFromRPC(nil, connect.NewError(connect.CodeResourceExhausted, errors.New("message size 99 is larger than configured max 10")))
+	require.ErrorIs(t, tooBig, commonvalidation.ErrPayloadTooLarge)
+}
+
 func TestPayloadRPCFetchDone(t *testing.T) {
 	require.True(t, payloadRPCFetchDone(nil))
 	require.True(t, payloadRPCFetchDone(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)))
@@ -161,7 +173,7 @@ func TestFetchSignedPayloads_RPCRespectsMaxBytes(t *testing.T) {
 }
 
 func TestValidator_PayloadRPCRequiresPayloadEndpoint(t *testing.T) {
-	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, false)
+	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
 	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
 
 	signer := testutil.MustGenerateKey(t)

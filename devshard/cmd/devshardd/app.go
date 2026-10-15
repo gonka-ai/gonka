@@ -23,6 +23,7 @@ import (
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/host"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -30,6 +31,7 @@ import (
 	devshardstorage "devshard/storage"
 	"devshard/transport"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 )
 
@@ -123,13 +125,16 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
 		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot, func() {
+			// Stop taking leases before the peers close, and cancel fetches
+			// still on those peers. A validation that already has the
+			// payload keeps its context and may vote.
+			host.StopValidationEnqueue()
 			transport.ReleaseOutboundPeerConns()
 			manager.ClosePeerRPC()
 		})
-		registerPeerRPCMembers(admin, manager.SetPeerRPCMembers)
 	}
 	manager.Register(e.Group(""))
-	lifecycle.SetPeerRPCReady(manager.PeerRPCSessionsReady)
+	startMemoryLog(ctx, manager)
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)
@@ -178,7 +183,16 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("chain id: %w", err)
 	}
 
-	identity, err := newChainIdentity(chainClient, apiAccount, kr)
+	infoPath, err := signerInfoPath(nodeConfig, apiAccount.SignerRecord.Name)
+	if err != nil {
+		return nil, fmt.Errorf("keyring file: %w", err)
+	}
+	payloadSigner, err := signing.NewCachedCosmosSigner(kr, apiAccount.SignerRecord.Name, infoPath)
+	if err != nil {
+		return nil, fmt.Errorf("payload signer: %w", err)
+	}
+
+	identity, err := newChainIdentity(chainClient, apiAccount, payloadSigner)
 	if err != nil {
 		return nil, fmt.Errorf("chain identity: %w", err)
 	}
@@ -193,7 +207,10 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	chainEvents, err := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	if err != nil {
+		return nil, fmt.Errorf("chain events: %w", err)
+	}
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -233,6 +250,23 @@ func buildMLNodeCapacityCache(ctx context.Context, mlClient *mlnodeclient.Client
 	return cache
 }
 
+func newLeaseOwner(address string) (devshardstorage.LeaseOwner, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return devshardstorage.LeaseOwner{}, fmt.Errorf("validation lease identity: %w", err)
+	}
+	hostname, err := os.Hostname()
+	if err != nil {
+		slog.Warn("devshardd: hostname unavailable for validation leases", "error", err)
+		hostname = ""
+	}
+	return devshardstorage.LeaseOwner{
+		Address:    address,
+		InstanceID: id.String(),
+		Hostname:   hostname,
+	}, nil
+}
+
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -255,9 +289,18 @@ func buildHostManager(
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
 	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.LogprobsOptimizationEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
+	leaseOwner, err := newLeaseOwner(instanceAddr)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("devshardd: validation lease identity",
+		"instance_address", leaseOwner.Address,
+		"instance_id", leaseOwner.InstanceID,
+		"hostname", leaseOwner.Hostname,
+	)
 
 	hostInfoCached := shardbridge.NewCachingHostInfo(chainBridge)
 	thresholds := inference.NewValidationThresholdResolver(paramsSetup.Provider, chainBridge)
@@ -269,6 +312,7 @@ func buildHostManager(
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		inference.NewVocabularyResolver(chainBridge),
 		cfg.VoteFalseOnFetchFailure,
 	)
 	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
@@ -280,8 +324,12 @@ func buildHostManager(
 	}
 	store := devshardstorage.NewManagedStorage(innerStore, sessionEpochRetain, chainParams)
 	closers.Add(func() { _ = store.Close() })
+	if credits, ok := devshardstorage.AsValidationCreditStore(store); ok {
+		eng.UseSharedValidationCredits(credits, instanceAddr)
+		slog.Info("devshardd: validation credits are shared across replicas", "participant", instanceAddr)
+	}
 
-	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
+	leaseValidator := inference.NewLeaseValidator(validator, phase, store, leaseOwner, cfg.ValidationLeaseTTL)
 
 	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
 	// host-events long-poll warm) when the live chain escrow query is
@@ -305,7 +353,6 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
-	manager.SetRPCServerEnabled(cfg.RPCServerEnabled)
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}
@@ -371,7 +418,7 @@ func buildHostManager(
 	// leaves those rows empty, and recovery will not retry once a snapshot exists.
 	closers.Add(manager.WaitRecoveryRepairs)
 
-	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, leaseOwner)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
 	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
 	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)

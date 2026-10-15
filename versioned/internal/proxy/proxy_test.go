@@ -84,6 +84,46 @@ func TestTargetRetireWaitsForAcquiredRequest(t *testing.T) {
 	}
 }
 
+func TestProxy_EncodedRPCPathRejected(t *testing.T) {
+	var hits atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	encoded := srv.URL + "/v1/sessions/1/rpc/devshard.transport.v1.PeerAuthService/%41ttach"
+	resp, err := http.Get(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("encoded attach status = %d body %q, want 400", resp.StatusCode, body)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("encoded rpc path was forwarded to the child")
+	}
+
+	clean := srv.URL + "/v1/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	resp, err = http.Get(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("plain attach status = %d, want 204", resp.StatusCode)
+	}
+	if hits.Load() != 1 {
+		t.Fatalf("plain attach hits = %d, want 1", hits.Load())
+	}
+}
+
 func TestProxy_PeerAuthWatchDoesNotHoldDrain(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})

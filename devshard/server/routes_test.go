@@ -155,6 +155,39 @@ func TestPayloadsRouteIsRetired(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), "Connect")
 }
 
+func TestRetiredPeerHTTPAnswersBeforeDrainAndCanonicalID(t *testing.T) {
+	e := echo.New()
+	e.Use(RetiredPeerHTTPMiddleware())
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
+		}
+	})
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil)
+
+	chat := httptest.NewRequest(http.MethodPost, "/sessions/not-an-id/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, chat)
+	require.Equal(t, http.StatusGone, rec.Code)
+	require.Equal(t, transport.DevshardErrorHTTPSessionRetired, rec.Header().Get(transport.HeaderDevshardError))
+
+	diffs := httptest.NewRequest(http.MethodGet, "/sessions/1/diffs", nil)
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, diffs)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Empty(t, rec.Header().Get(transport.HeaderDevshardError))
+}
+
+func TestIsRetiredPeerHTTP(t *testing.T) {
+	require.True(t, IsRetiredPeerHTTP(http.MethodPost, "/sessions/1/chat/completions"))
+	require.True(t, IsRetiredPeerHTTP(http.MethodPost, "/devshard/v5/sessions/1/height-sync"))
+	require.True(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/payloads"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/diffs"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/sessions/1/signatures"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodPost, "/sessions/1/rpc/devshard.transport.v1.SessionService/Chat"))
+	require.False(t, IsRetiredPeerHTTP(http.MethodGet, "/healthz"))
+}
+
 func TestChatRouteIsRetired(t *testing.T) {
 	e := echo.New()
 	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: compressedRequestEscrowID}, countingBinder{n: new(int)}, nil)

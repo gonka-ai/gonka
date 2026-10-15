@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
-.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
+.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render test-h2-backend-h1-check
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -54,10 +54,10 @@ test-pool-status:
 test-endpoints-render:
 	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
 
-# The membership document the router posts to versiond. DNS discovery and an
-# explicit endpoint file must both list exactly the ready members per version.
-test-publish-members:
-	@./publish-members_test.sh
+# proto h2 toward versiond, with the health check kept on HTTP/1.1. An
+# HTTP/1.1 /readyz becomes UP. A proto h2 line with no check stays "no check".
+test-h2-backend-h1-check:
+	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./h2-backend-h1-check_test.sh
 
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
@@ -1319,7 +1319,7 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
-	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_[0-9]*$$' \
 		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
 		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
@@ -1473,7 +1473,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-publish-members test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -1514,8 +1514,15 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		inside && /stick-table/ {found=1} END{exit !found}' "$$tmpdir/mixed.cfg"; then \
 		fail "per-IP zones must not be keyed on versiond-router RemoteAddr"; \
 	fi; \
-	grep -q '^[[:space:]]*server-template versiond .* proto h2' "$$tmpdir/mixed.cfg" \
-		|| fail "backend lines to versiond are not proto h2"; \
+	awk ' \
+		$$1 == "backend" { json = ($$2 !~ /_rpc$$/); rpc = ($$2 ~ /_rpc$$/); next } \
+		$$1 == "server" || $$1 == "server-template" { \
+			if (json && /proto h2/) json_h2 = 1; \
+			if (rpc) { rpc_n++; if ($$0 !~ /proto h2 check-proto h1/) rpc_plain = 1 } \
+		} \
+		END { if (json_h2 || rpc_plain || rpc_n == 0) exit 1 } \
+	' "$$tmpdir/mixed.cfg" \
+		|| fail "JSON backends must stay HTTP/1.1 and peer-RPC twins must enable proto h2 with an HTTP/1.1 check"; \
 	grep -q '^[[:space:]]*nameserver dns 10.96.0.10:53$$' "$$tmpdir/mixed.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^[[:space:]]*server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
@@ -1586,7 +1593,7 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "declared versions lack the pre-v5 route-health fallback"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
-	[ "$$(grep -c '^backend versiond_dynamic_' "$$tmpdir/mixed.cfg")" -eq 32 ] \
+	[ "$$(grep -c '^backend versiond_dynamic_[0-9]*$$' "$$tmpdir/mixed.cfg")" -eq 32 ] \
 		|| fail "the default dynamic governance capacity is not pre-rendered"; \
 	[ "$$(grep -c '^versiond_dynamic_.* __unassigned__$$' \
 		"$$tmpdir/mixed.cfg.version-slots.map")" -eq 32 ] \
@@ -1953,6 +1960,8 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 	./h2-watch-drain_test.sh || fail "http/2 watch drain"; \
 	echo "test-render: ok"
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
@@ -1978,8 +1987,11 @@ endef
 
 all: build-docker
 
+# Local builds follow scripts/blst-portable.mk, same as inference-chain:
+# Apple Silicon -> linux/arm64, any other host -> linux/amd64.
+# DOCKER_PLATFORM= overrides detection. Release stays multi-arch via PLATFORMS.
 build-docker:
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=$(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/arm64))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/versiond-router:$(VERSION))
 	$(DOCKER_BUILD)

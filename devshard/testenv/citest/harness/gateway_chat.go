@@ -83,7 +83,7 @@ func PostGatewayChatCompletion(t *testing.T, client *http.Client, gatewayURL, ad
 		client = GatewayChatClient()
 	}
 	var resp ChatCompletionResponse
-	require.NoError(t, postGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp))
+	require.NoError(t, PostGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp))
 	require.NotEmpty(t, resp.Choices, "gateway chat returned no choices")
 	require.NotEmpty(t, resp.Choices[0].Message.Content, "empty assistant content")
 	return resp
@@ -96,7 +96,7 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 		client = GatewayChatClient()
 	}
 	var resp ChatCompletionResponse
-	if err := postGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp); err != nil {
+	if err := PostGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp); err != nil {
 		return resp, err
 	}
 	if len(resp.Choices) == 0 {
@@ -209,6 +209,107 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 	return content, sawDone
 }
 
+// StreamChatTimed is the result of an incremental SSE chat: FirstToken is set
+// when the first content delta arrives (gateway first-token floor signal).
+type StreamChatTimed struct {
+	Content    string
+	FirstToken time.Duration // 0 if no content delta was seen
+	SawDone    bool
+}
+
+// GatewayFirstTokenFloor is the default redundancy first-token timeout floor
+// (~1s). Timed stream probes under SlowMockOpenAI should land well under this.
+const GatewayFirstTokenFloor = time.Second
+
+// TryPostGatewayChatCompletionStream is the worker-safe stream variant of
+// PostGatewayChatCompletionStream. Under SlowMockOpenAI, latency_ms delays
+// Validate only; with stream_ttft_ms=0 the first SSE chunk flushes immediately
+// so the gateway first-token floor stays green (client stream or non-stream).
+func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, err error) {
+	res, err := TryPostGatewayChatCompletionStreamTimed(client, gatewayURL, adminAPIKey, req)
+	return res.Content, err
+}
+
+// TryPostGatewayChatCompletionStreamTimed streams the response incrementally
+// and records time-to-first-content-delta before draining to [DONE].
+func TryPostGatewayChatCompletionStreamTimed(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (StreamChatTimed, error) {
+	var out StreamChatTimed
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	req.Stream = true
+	data, err := json.Marshal(req)
+	if err != nil {
+		return out, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return out, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if adminAPIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	start := time.Now()
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return out, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return out, fmt.Errorf("POST %s: %d %s", gatewayURL+"/v1/chat/completions", resp.StatusCode, string(body))
+	}
+	var assembled strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "data: [DONE]" {
+			out.SawDone = true
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			continue
+		}
+		if s, ok := delta["content"].(string); ok && s != "" {
+			if out.FirstToken == 0 {
+				out.FirstToken = time.Since(start)
+			}
+			assembled.WriteString(s)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return out, err
+	}
+	out.Content = assembled.String()
+	if !out.SawDone {
+		return out, fmt.Errorf("stream missing data: [DONE]")
+	}
+	if out.Content == "" {
+		return out, fmt.Errorf("stream assembled empty content")
+	}
+	if out.FirstToken == 0 {
+		return out, fmt.Errorf("stream completed without a content delta")
+	}
+	return out, nil
+}
+
 // PostGatewayChatHTTP posts /v1/chat/completions and returns status, headers, and body.
 // Unlike PostGatewayChatCompletion it does not require HTTP 200.
 func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) GatewayChatHTTPResult {
@@ -305,7 +406,8 @@ func RequireMockOpenAIContent(t *testing.T, content string) {
 	require.True(t, strings.HasPrefix(content, "mock-openai:"), "expected mock-openai echo, got %q", content)
 }
 
-func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
+// PostGatewayJSON posts an authenticated JSON request to a gateway endpoint and decodes the response.
+func PostGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err

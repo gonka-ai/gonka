@@ -113,7 +113,6 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, es
 	}
 	lookup := e2eHostLookup{escrowID: escrowID, core: core}
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddress, rpcserver.PeerAuthConfig{})
-	auth.StartSweeper()
 	devshardserver.RegisterLazySessionRoutes(g, e2eSessionResolver{escrowID: escrowID, srv: srv}, nil, nil,
 		devshardserver.WithPeerRPC(
 			auth,
@@ -328,6 +327,33 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 	if sseErrorMessage != "" {
 		inferenceEngine = sseErrorInferenceEngine{message: sseErrorMessage}
 	}
+	errorMissMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceErrorMissMessageEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	processedStream, err := e2econfig.StringFromEnv(e2econfig.StubInferenceProcessedStreamEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsedProcessedStream, err := boolvalue.Parse(processedStream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", e2econfig.StubInferenceProcessedStreamEnv, err)
+	}
+	tamperedStream, err := e2econfig.StringFromEnv(e2econfig.StubInferenceTamperedStreamEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	parsedTamperedStream, err := boolvalue.Parse(tamperedStream)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", e2econfig.StubInferenceTamperedStreamEnv, err)
+	}
+	if errorMissMessage != "" || parsedProcessedStream || parsedTamperedStream {
+		inferenceEngine = processedStreamEngine{
+			terminalErrorMessage:        errorMissMessage,
+			logprobsOptimizationEnabled: logprobsOptimizationEnabled(),
+			tamperedStream:              parsedTamperedStream,
+		}
+	}
 	inferenceDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.StubInferenceDelayMillisEnv)
 	if err != nil {
 		return nil, nil, err
@@ -432,19 +458,21 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 		return nil
 	}
 
-	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
+		for _, rec := range page {
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+			root, err := sm.ApplyDiff(rec.Diff)
+			if err != nil {
+				return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
+			}
+			if len(rec.StateHash) > 0 && len(root) > 0 && !bytes.Equal(root, rec.StateHash) {
+				return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return fmt.Errorf("get diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
-	}
-	for _, rec := range records {
-		sm.InjectWarmKeys(rec.WarmKeyDelta)
-		root, err := sm.ApplyDiff(rec.Diff)
-		if err != nil {
-			return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
-		}
-		if len(rec.StateHash) > 0 && len(root) > 0 && !bytes.Equal(root, rec.StateHash) {
-			return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
-		}
+		return fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
 	}
 	return nil
 }

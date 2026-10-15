@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -12,6 +13,67 @@ import (
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
+
+func TestGetPayload_ReadyTimeout(t *testing.T) {
+	prev := chatReadyTimeout
+	chatReadyTimeout = 40 * time.Millisecond
+	t.Cleanup(func() { chatReadyTimeout = prev })
+
+	signer := devtest.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: "gonka1payloadready",
+		Signer:      signer,
+		DirectMux:   true,
+	})
+	t.Cleanup(pc.Close)
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer), pc, ParseRPCEndpoints(EndpointPayload))
+
+	start := time.Now()
+	_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+	elapsed := time.Since(start)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+	require.GreaterOrEqual(t, elapsed, chatReadyTimeout)
+	require.Less(t, elapsed, time.Second)
+}
+
+func TestGetPayload_ReadyTimeoutIsUnanswered(t *testing.T) {
+	prev := chatReadyTimeout
+	chatReadyTimeout = 40 * time.Millisecond
+	t.Cleanup(func() { chatReadyTimeout = prev })
+
+	signer := devtest.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1payloadunanswered",
+		Signer:       signer,
+		DirectMux:    true,
+		DoorEscrowID: "escrow-1",
+	})
+	t.Cleanup(pc.Close)
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer), pc, ParseRPCEndpoints(EndpointPayload))
+
+	_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+	require.ErrorIs(t, err, ErrPeerPayloadUnanswered)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+}
+
+func TestGetPayload_ClosedConnIsNotUnanswered(t *testing.T) {
+	signer := devtest.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{
+		BaseURL:      "http://127.0.0.1:1",
+		HostAddress:  "gonka1payloadclosed",
+		Signer:       signer,
+		DirectMux:    true,
+		DoorEscrowID: "escrow-1",
+	})
+	pc.Close()
+	rpc := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer), pc, ParseRPCEndpoints(EndpointPayload))
+
+	_, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{InferenceId: "1"}, 512)
+	require.ErrorIs(t, err, ErrPeerNotReady)
+	require.NotErrorIs(t, err, ErrPeerPayloadUnanswered)
+}
 
 func TestPayloadReadBucket(t *testing.T) {
 	require.Equal(t, DefaultRPCPayloadMaxBytes, payloadReadBucket(0), "unknown tokens default to 64 MiB")

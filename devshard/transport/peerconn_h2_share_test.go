@@ -134,7 +134,7 @@ func waitPeerReadyTimeout(t *testing.T, pc *transport.PeerConn, d time.Duration)
 }
 
 // TestPeerConn_TenEscrowsShareOneH2Conn is one process in 10 escrows talking to
-// one host. Sessions stay per (host, version, BaseURL, signer); the TCP+h2
+// one host. Sessions stay per (host, version, signer); the TCP+h2
 // mux to that host is shared.
 func TestPeerConn_TenEscrowsShareOneH2Conn(t *testing.T) {
 	const n = 10
@@ -166,8 +166,12 @@ func TestPeerConn_TenEscrowsShareOneH2Conn(t *testing.T) {
 	}
 	require.Len(t, tokens, n)
 
+	// Ready is published after Attach, before Watch starts asynchronously.
+	// Wait for server-side stream registration before checking the shared mux.
+	require.Eventually(t, func() bool {
+		return host.watches.Load() == int32(n)
+	}, 5*time.Second, 10*time.Millisecond, "each escrow keeps its own Watch stream")
 	require.Equal(t, int32(1), host.accepts.Load(), "10 escrows to one host must share one TCP")
-	require.Equal(t, int32(n), host.watches.Load(), "each escrow keeps its own Watch stream")
 	require.Equal(t, "HTTP/2.0", host.proto.Load())
 
 	for _, i := range []int{0, 3, 7} {

@@ -24,7 +24,7 @@ func H2CServer() *http2.Server {
 // http.Server tracks those connections, so Shutdown sends GOAWAY and waits
 // for the handler. h2c.NewHandler hijacks the conn without that tracking,
 // and Shutdown returns while the stream is still running.
-// MaxConcurrentStreams is applied by ConfigureServer (4096).
+// MaxConcurrentStreams is applied by ConfigureServer (16384).
 func ConfigureCleartextHTTP2(srv *http.Server) error {
 	if srv == nil {
 		return errors.New("nil http server")

@@ -65,9 +65,6 @@ func TestMixedFleetNoProxy(t *testing.T) {
 
 func requireVersiondRPC(t *testing.T, stack *harness.Stack, service string) {
 	t.Helper()
-	out, err := stack.ComposeExecOutput(service, "printenv", "DEVSHARD_RPC_SERVER_ENABLED")
-	require.NoError(t, err)
-	require.Equal(t, "true", strings.TrimSpace(out))
 	h2, err := stack.ComposeExecOutput(service, "printenv", "DEVSHARD_RPC_H2_PORT")
 	if err == nil && strings.TrimSpace(h2) != "" {
 		t.Fatalf("%s DEVSHARD_RPC_H2_PORT=%q", service, strings.TrimSpace(h2))

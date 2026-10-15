@@ -12,7 +12,7 @@ const (
 	RPCWeightRepair        = 2
 	RPCWeightVerify        = 2
 	RPCWeightChallenge     = 2
-	RPCWeightChat          = 10
+	RPCWeightChat          = 1
 	RPCWeightGetMempool    = 6
 	RPCWeightGetPayload    = 6
 	RPCWeightGetDiffs      = 60
@@ -38,6 +38,7 @@ func RPCProcedureWeight(procedure string) int {
 	case rpcpbconnect.GossipServiceTxsProcedure:
 		return RPCWeightGossipTxs
 	case rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.GossipServiceNonceProcedure:
 		return RPCWeightGetSignatures
 	case rpcpbconnect.SessionServiceGetMempoolProcedure:

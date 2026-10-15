@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -31,6 +32,14 @@ type HTTPSessionConfig struct {
 	// returns a host-signed Anchor. Default false in this library; the
 	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
 	RequireHeightSeed bool
+	// DisableHeightSyncHeartbeat skips the quiet-session cadence. Default
+	// false in this library so tests can call MaybeHeartbeat. The gateway
+	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
+	DisableHeightSyncHeartbeat bool
+	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
+	// receipt/Finish compose. Zero keeps the session default (5m). The
+	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
+	QuietSettleDelay time.Duration
 	// ExtraClientConfig: only its HeightSync fields reach each host client.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
@@ -60,6 +69,7 @@ func hostClientConfig(
 		clientConfig.Admission = cfg.RequestAdmission
 	}
 	if cfg.ExtraClientConfig != nil {
+		clientConfig.AllowRetiredHTTPSession = cfg.ExtraClientConfig.AllowRetiredHTTPSession
 		if cfg.ExtraClientConfig.HeightSync != nil {
 			clientConfig.HeightSync = cfg.ExtraClientConfig.HeightSync
 			clientConfig.HeightSyncPeerTips = sharedPeerTips
@@ -222,7 +232,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 	endpoints := transport.RPCEndpointsFromEnv()
 	if cfg.ExtraClientConfig != nil && !cfg.ExtraClientConfig.RPCEndpoints.Empty() {
-		endpoints = cfg.ExtraClientConfig.RPCEndpoints
+		if cfg.ExtraClientConfig.AllowRetiredHTTPSession {
+			endpoints = cfg.ExtraClientConfig.RPCEndpoints
+		} else {
+			endpoints = transport.ResolveRPCEndpoints(cfg.ExtraClientConfig.RPCEndpoints)
+		}
 	}
 	for i, slot := range group {
 		participantKeys[i] = slot.ValidatorAddress
@@ -258,6 +272,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
+		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
+		if cfg.QuietSettleDelay > 0 {
+			session.SetQuietSettleDelay(cfg.QuietSettleDelay)
+		}
 		if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 			hs := cfg.ExtraClientConfig.HeightSync
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
@@ -331,6 +349,12 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 	}
 	if cfg.RequireHeightSeed {
 		extra = append(extra, WithRequireHeightSeed(true))
+	}
+	if cfg.DisableHeightSyncHeartbeat {
+		extra = append(extra, WithDisableHeightSyncHeartbeat(true))
+	}
+	if cfg.QuietSettleDelay > 0 {
+		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
 	}
 	return extra
 }

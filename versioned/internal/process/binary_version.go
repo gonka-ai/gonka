@@ -19,8 +19,9 @@ const (
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
 	printChildH2CFlag        = "--print-child-h2c"
-	childH2CAdvertise        = "h2c"
+	printFleetCompatFlag     = "--print-fleet-compat"
 	initializePostgresFlag   = "--initialize-postgres-schema"
+	childH2CAdvertise        = "h2c"
 	envHADeployment          = "GONKA_HA"
 	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
 )
@@ -38,6 +39,9 @@ type childPreflight struct {
 	binaryLogVersion  string
 	adminAPISupported bool
 	storageMode       string
+	// fleetCompat is empty when the binary has no --print-fleet-compat.
+	// Overlap requires the running and incoming values to be equal.
+	fleetCompat string
 	// haDeployment overrides GONKA_HA for this child. It is nil for binaries
 	// other than devshard, false for legacy-pinned versions, and true for
 	// devshard versions that can be routed across the HA pool.
@@ -96,6 +100,7 @@ func preflightChildWithAdminProbeContext(
 
 	adminSupported := false
 	storageMode := ""
+	fleetCompat := ""
 	var childHA *bool
 	if probeAdmin {
 		ha, err := childHADeployment(slotName)
@@ -138,6 +143,20 @@ func preflightChildWithAdminProbeContext(
 				slotName, storageModePostgres, storageMode,
 			)
 		}
+
+		compat, compatErr := readFleetCompatContext(ctx, binPath)
+		if compatErr != nil {
+			if !errors.Is(compatErr, errVersionFlagUnsupported) {
+				slog.Warn(
+					"--print-fleet-compat unavailable, treating fleet compat as empty",
+					"slot", slotName,
+					"bin", binPath,
+					"error", compatErr,
+				)
+			}
+		} else {
+			fleetCompat = compat
+		}
 	}
 
 	childH2C, err := readChildH2CContext(ctx, binPath)
@@ -154,6 +173,7 @@ func preflightChildWithAdminProbeContext(
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
 		storageMode:       storageMode,
+		fleetCompat:       fleetCompat,
 		haDeployment:      childHA,
 		childH2C:          childH2C,
 	}, nil
@@ -271,6 +291,10 @@ func readChildH2CContext(ctx context.Context, binPath string) (bool, error) {
 		return false, fmt.Errorf("%s %s: got %q, want %q", binPath, printChildH2CFlag, v, childH2CAdvertise)
 	}
 	return true, nil
+}
+
+func readFleetCompatContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printFleetCompatFlag)
 }
 
 func initializePostgresSchemaContext(ctx context.Context, binPath string, env []string) (bool, error) {

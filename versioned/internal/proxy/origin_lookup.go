@@ -2,6 +2,8 @@ package proxy
 
 import (
 	"container/list"
+	"crypto/sha256"
+	"encoding/hex"
 	"net"
 	"net/http"
 	"net/netip"
@@ -12,22 +14,49 @@ import (
 
 const (
 	originIPHeader                  = "X-Real-IP"
+	sessionHeader                   = "X-Devshard-Session"
 	headerDevshardError             = "X-Devshard-Error"
 	errorEscrowNotFound             = "escrow_not_found"
 	errorEscrowLookupLimited        = "escrow_lookup_limited"
 	errorInvalidSessionToken        = "invalid_session_token"
+	invalidSessionTokenBody         = "handshake required"
 	peerAuthAttachSuffix            = "/devshard.transport.v1.PeerAuthService/Attach"
 	defaultUnknownEscrowPerIPPerMin = 2
 	maxOriginLookupIPs              = 4096
 	originLookupEvictBatch          = 32
+	// staleSessionTokenTTL coalesces a burst of calls that still carry one
+	// dead token. The first invalid_session_token starts the entry and is
+	// one miss. Repeats in the window are rejected locally and are not
+	// charged. After the window a later use of that token is a new miss.
+	staleSessionTokenTTL = 15 * time.Second
+	// maxStaleSessionTokens bounds the remembered set. A full table drops
+	// one entry so a new dead token can still be coalesced.
+	maxStaleSessionTokens = 4096
+	// sessionTokenKeyMax is above the 64-char hex Attach token. Longer
+	// values are hashed so a huge header cannot sit in the map.
+	sessionTokenKeyMax = 128
+	// maxAttachInFlightPerIP caps concurrent Attach per origin IP. A miss is
+	// recorded only when the child answers, so without this cap one parallel
+	// burst from a fresh IP reaches the child before the 2/min budget sees it.
+	maxAttachInFlightPerIP = 16
+	// attachInFlightWait is how long an Attach over the cap queues for a
+	// slot. A queued call re-checks the miss budget when it wakes, so a burst
+	// of misses stops at the cap while a burst of real binds just queues.
+	attachInFlightWait = 5 * time.Second
 )
 
 // originLookupLimiter is the per origin-IP cap for unknown-escrow first bind
 // (owner chat, height-sync seed, Attach) and for a presented session token
-// the child rejects. Both misses share the 2/min budget. It keys on inbound
+// the child rejects. On the bind paths both misses share the 2/min budget;
+// session-token RPCs are refused only on invalid-token misses. It keys on inbound
 // X-Real-IP from versiond-router, not the child's RemoteAddr. Missing header
 // skips the bucket so an old hop that does not forward the client IP cannot
 // collapse the host.
+//
+// A burst of invalid_session_token for one X-Devshard-Session counts once
+// for staleSessionTokenTTL. Unknown-escrow misses are not part of that cache.
+// Attach also holds an in-flight slot per IP (attaching) until the child's
+// headers arrive.
 // order is last-miss time, front = oldest. At cap, idle IPs (a prefix of
 // that list) go first; the oldest under-budget IP is then O(1). The table
 // is never replaced, and an IP at its 2/min budget is not evicted.
@@ -35,14 +64,28 @@ type originLookupLimiter struct {
 	mu           sync.Mutex
 	byIP         map[string]*originIPNode
 	order        *list.List
+	staleTokens  map[string]time.Time
+	attaching    map[string]*attachGate
 	evictVisited int
 	now          func() time.Time
 }
 
+// originIPNode holds one IP's recent misses. times is every miss and gates
+// the bind paths. tokenTimes is the invalid_session_token subset and alone
+// gates session-token RPCs, so an unknown-escrow miss on one escrow cannot
+// refuse that IP's live sessions on others.
 type originIPNode struct {
-	ip    string
-	times []time.Time
-	el    *list.Element
+	ip         string
+	times      []time.Time
+	tokenTimes []time.Time
+	el         *list.Element
+}
+
+// attachGate is the in-flight Attach count for one origin IP. wake is closed
+// on every release. An entry exists only while n > 0.
+type attachGate struct {
+	n    int
+	wake chan struct{}
 }
 
 func newOriginLookupLimiter() *originLookupLimiter {
@@ -57,6 +100,22 @@ func (l *originLookupLimiter) clock() time.Time {
 		return l.now()
 	}
 	return time.Now()
+}
+
+// cachedInvalidToken reports a session token already rejected inside
+// staleSessionTokenTTL. The caller rejects it locally and does not charge.
+func (l *originLookupLimiter) cachedInvalidToken(r *http.Request, rest string) bool {
+	if l == nil || r == nil || !isSessionTokenPath(r.Method, rest) {
+		return false
+	}
+	token := sessionTokenKey(r.Header)
+	if token == "" {
+		return false
+	}
+	now := l.clock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.tokenCachedLocked(token, now)
 }
 
 func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
@@ -74,7 +133,79 @@ func (l *originLookupLimiter) blocked(r *http.Request, rest string) bool {
 	if node == nil {
 		return false
 	}
+	if isSessionTokenPath(r.Method, rest) {
+		return countRecent(node.tokenTimes, now) >= defaultUnknownEscrowPerIPPerMin
+	}
 	return countRecent(node.times, now) >= defaultUnknownEscrowPerIPPerMin
+}
+
+// admit is blocked plus the Attach in-flight slot. ok=false is the 429.
+// release is safe to call more than once; the slot must be released after
+// observe so a woken caller sees the miss that call recorded.
+func (l *originLookupLimiter) admit(r *http.Request, rest string) (release func(), ok bool) {
+	release = func() {}
+	if l.blocked(r, rest) {
+		return release, false
+	}
+	if l == nil || r == nil || !isUnknownEscrowBindPath(r.Method, rest) || !isAttachPath(rest) {
+		return release, true
+	}
+	ip := originIP(r.Header)
+	if ip == "" {
+		return release, true
+	}
+	timer := time.NewTimer(attachInFlightWait)
+	defer timer.Stop()
+	for {
+		l.mu.Lock()
+		if node := l.byIP[ip]; node != nil && countRecent(node.times, l.clock()) >= defaultUnknownEscrowPerIPPerMin {
+			l.mu.Unlock()
+			return release, false
+		}
+		if l.attaching == nil {
+			l.attaching = make(map[string]*attachGate)
+		}
+		gate := l.attaching[ip]
+		if gate == nil {
+			gate = &attachGate{wake: make(chan struct{})}
+			l.attaching[ip] = gate
+		}
+		if gate.n < maxAttachInFlightPerIP {
+			gate.n++
+			l.mu.Unlock()
+			return l.attachRelease(ip), true
+		}
+		wake := gate.wake
+		l.mu.Unlock()
+		select {
+		case <-wake:
+		case <-timer.C:
+			return release, false
+		case <-r.Context().Done():
+			return release, false
+		}
+	}
+}
+
+func (l *originLookupLimiter) attachRelease(ip string) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			l.mu.Lock()
+			defer l.mu.Unlock()
+			gate := l.attaching[ip]
+			if gate == nil {
+				return
+			}
+			gate.n--
+			close(gate.wake)
+			if gate.n <= 0 {
+				delete(l.attaching, ip)
+				return
+			}
+			gate.wake = make(chan struct{})
+		})
+	}
 }
 
 func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.Response) {
@@ -86,8 +217,16 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 		return
 	}
 	now := l.clock()
+	token := ""
+	tokenMiss := isSessionTokenPath(r.Method, rest) && isInvalidSessionToken(resp.Header)
+	if tokenMiss {
+		token = sessionTokenKey(r.Header)
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if token != "" && l.noteStaleTokenLocked(token, now) {
+		return
+	}
 	if l.byIP == nil {
 		l.byIP = make(map[string]*originIPNode)
 	}
@@ -105,8 +244,55 @@ func (l *originLookupLimiter) observe(r *http.Request, rest string, resp *http.R
 		l.byIP[ip] = node
 	}
 	node.times = appendRecent(node.times, now)
+	if tokenMiss {
+		node.tokenTimes = appendRecent(node.tokenTimes, now)
+	}
 	if node.el != nil {
 		l.order.MoveToBack(node.el)
+	}
+}
+
+// noteStaleTokenLocked returns true when the token is already inside the
+// window, so the caller must not charge again. The first sight records the
+// window and returns false.
+func (l *originLookupLimiter) noteStaleTokenLocked(token string, now time.Time) bool {
+	if l.tokenCachedLocked(token, now) {
+		return true
+	}
+	if l.staleTokens == nil {
+		l.staleTokens = make(map[string]time.Time)
+	}
+	l.evictExpiredTokensLocked(now)
+	if len(l.staleTokens) >= maxStaleSessionTokens {
+		for key := range l.staleTokens {
+			delete(l.staleTokens, key)
+			break
+		}
+	}
+	l.staleTokens[token] = now.Add(staleSessionTokenTTL)
+	return false
+}
+
+func (l *originLookupLimiter) tokenCachedLocked(token string, now time.Time) bool {
+	if l.staleTokens == nil {
+		return false
+	}
+	until, ok := l.staleTokens[token]
+	if !ok {
+		return false
+	}
+	if !until.After(now) {
+		delete(l.staleTokens, token)
+		return false
+	}
+	return true
+}
+
+func (l *originLookupLimiter) evictExpiredTokensLocked(now time.Time) {
+	for token, until := range l.staleTokens {
+		if !until.After(now) {
+			delete(l.staleTokens, token)
+		}
 	}
 }
 
@@ -200,6 +386,26 @@ func isSessionTokenPath(method, rest string) bool {
 	return !strings.HasSuffix(rest, peerAuthAttachSuffix)
 }
 
+func sessionTokenKey(h http.Header) string {
+	if h == nil {
+		return ""
+	}
+	token := strings.TrimSpace(h.Get(sessionHeader))
+	if token == "" {
+		return ""
+	}
+	if len(token) <= sessionTokenKeyMax {
+		return token
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func writeInvalidSessionToken(w http.ResponseWriter) {
+	w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+	http.Error(w, invalidSessionTokenBody, http.StatusUnauthorized)
+}
+
 func isInvalidSessionToken(h http.Header) bool {
 	if h == nil {
 		return false
@@ -222,20 +428,23 @@ func isUnknownEscrowBindPath(method, rest string) bool {
 	case "height-sync":
 		return len(parts) == 3
 	case "rpc":
-		return strings.HasSuffix(rest, peerAuthAttachSuffix)
+		return isAttachPath(rest)
 	}
 	return false
 }
 
+func isAttachPath(rest string) bool {
+	return strings.HasSuffix(rest, peerAuthAttachSuffix)
+}
+
+// isUnknownEscrowMiss is a bind the child answered escrow_not_found: that
+// caller named an id the chain does not have. escrow_lookup_limited is the
+// child's process floor and says nothing about the caller, so it is not one.
 func isUnknownEscrowMiss(h http.Header) bool {
 	if h == nil {
 		return false
 	}
-	switch strings.ToLower(strings.TrimSpace(h.Get(headerDevshardError))) {
-	case errorEscrowNotFound, errorEscrowLookupLimited:
-		return true
-	}
-	return false
+	return strings.EqualFold(strings.TrimSpace(h.Get(headerDevshardError)), errorEscrowNotFound)
 }
 
 func originIP(h http.Header) string {

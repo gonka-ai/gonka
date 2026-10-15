@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"common/logging"
+	"common/storage/pgpool"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -33,10 +34,20 @@ type PostgresStorage struct {
 }
 
 // NewPostgresStorage creates a new PostgreSQL storage using standard libpq env vars.
-// Environment variables: PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD
+// Environment variables: PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD.
+// PG_POOL_MAX_CONNS caps the pool (default 4), matching devshard session storage.
 func NewPostgresStorage(ctx context.Context) (*PostgresStorage, error) {
-	// pgxpool.New automatically reads from environment variables
-	pool, err := pgxpool.New(ctx, "")
+	// pgxpool.ParseConfig reads the standard libpq env vars. The pool cap
+	// matches the devshard session pool so a CPU-sized default cannot exhaust
+	// max_connections.
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}

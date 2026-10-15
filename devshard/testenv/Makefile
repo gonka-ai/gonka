@@ -11,7 +11,7 @@ PROXY_OVERLAY := $(COMPOSE_BASE) -f docker-compose.proxy.yml
 help: ## Show this help.
 	@awk 'BEGIN{FS=":.*##"; printf "Usage:\n"} /^[a-zA-Z0-9_.%-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring
+.PHONY: gen-compose build-devshardd build-devshardd-local test-compose clean-keyring loadtest
 gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from config.yaml.
 	go run ./cmd/gencompose -config config/config.yaml
 
@@ -33,6 +33,15 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	cd .. && go build -tags '$(TESTENV_BUILD_TAGS)' -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
+
+ifeq ($(strip $(SCENARIO)),)
+loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
+	@false
+else
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+endif
 
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
@@ -74,26 +83,29 @@ dev-logs: ## Follow dev overlay logs.
 	docker compose $(DEV_OVERLAY) logs -f
 
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
-.PHONY: citest-validation-lease-race citest-escrow-longpoll
+.PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat test-gateway-smoke
-.PHONY: build-baseline-infra
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat test-gateway-smoke
+.PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites. citest-baseline-smoke, citest-mixed-fleet,
 # citest-peerrpc-cross-version-compat, and
-# citest-height-sync-dapi-compat are manual only (pinned images). All four
-# stay out of the auto-discovered CI matrix.
+# citest-height-sync-dapi-compat are manual only (pinned images).
+# citest-dapi-correlation is a focused subset of citest-observability.
+# All of those stay out of the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-cross-version-compat|citest-height-sync-dapi-compat' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-cross-version-compat|citest-height-sync-dapi-compat|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 # Pin previous participant images with TESTENV_VERSIOND_IMAGE +
 # TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl
+# gencompose names the pool mock-openai-0 … mock-openai-{N-1}. Every member
+# shares image devshard-mock-openai:latest, so building the first service is enough.
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl
 CITEST_BUILD_INFRA := versiond-router versiond-0
 # Rolling-update and warm-cutover stay in their own targets. Versiond.* used to
 # pull them into this suite as well.
@@ -106,11 +118,38 @@ PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-
 # Native gRPC on the no-proxy stack. versiond-router binds proto h2 on 8081.
 # :8080 stays healthz, catalog, and ops. Do not set DEVSHARD_RPC_H2_HOST (that
 # name is the proxy overlay). Pin targets must not inherit this.
-CITEST_RPC_ENV := DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) DEVSHARD_RPC_H2_PORT=8081 DEVSHARD_RPC_H2_UPGRADE=true DEVSHARD_RPC_H2_FRONT_HOST=versiond-router DEVSHARD_RPC_GRPC=true
+CITEST_RPC_ENV := DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) DEVSHARD_RPC_H2_PORT=8081 DEVSHARD_RPC_H2_UPGRADE=true DEVSHARD_RPC_H2_FRONT_HOST=versiond-router DEVSHARD_RPC_GRPC=true
 CITEST_RPC_RUN := env -u TESTENV_PROXY_OVERLAY -u DEVSHARD_RPC_H2_HOST $(CITEST_RPC_ENV) TESTENV_CITEST=1 go test -tags=testenvci ./citest/
 
 build-baseline-infra: ## Build versiond + versiond-router from branch devshard-0.2.15-v5.
 	./scripts/build-baseline-infra.sh
+
+# No-proxy peer-RPC limits pin versiond and versiond-router to devshard/v5.
+# A GitHub checkout is one commit, so fetch that branch when it is not local.
+# Docker tags cannot contain '/'.
+LIMITS_PIN_BRANCH := devshard/v5
+LIMITS_VERSIOND_IMAGE := devshard-versiond:devshard-v5
+LIMITS_VERSIOND_ROUTER_IMAGE := devshard-versiond-router:devshard-v5
+
+fetch-limits-pin:
+	@if git rev-parse --verify "$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "origin/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "upstream/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1 \
+		|| git rev-parse --verify "product-science/$(LIMITS_PIN_BRANCH)^{commit}" >/dev/null 2>&1; then \
+		echo "limits pin $(LIMITS_PIN_BRANCH) is already local"; \
+	else \
+		git fetch --depth=1 origin "$(LIMITS_PIN_BRANCH):refs/remotes/origin/$(LIMITS_PIN_BRANCH)" \
+			|| git fetch --depth=1 upstream "$(LIMITS_PIN_BRANCH):refs/remotes/upstream/$(LIMITS_PIN_BRANCH)"; \
+	fi
+
+build-limits-pin: fetch-limits-pin
+	BASELINE_BRANCH=$(LIMITS_PIN_BRANCH) \
+	BASELINE_VERSIOND_IMAGE=$(LIMITS_VERSIOND_IMAGE) \
+	BASELINE_VERSIOND_ROUTER_IMAGE=$(LIMITS_VERSIOND_ROUTER_IMAGE) \
+	BASELINE_SKIP_DEVSHARDD=1 \
+	BASELINE_PIN_FILE=$(CURDIR)/baselines/devshard-v5.txt \
+	BASELINE_CHECKOUT=$(CURDIR)/baselines/checkout-devshard-v5 \
+		$(MAKE) build-baseline-infra
 
 citest-images: gen-compose ## Pull hub images and build compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
@@ -148,9 +187,16 @@ citest-payload-withholding: citest-images ## Executor payload 500 → challenge/
 	$(MAKE) build-devshardd
 	$(CITEST_RPC_RUN) -run '^TestPayloadWithholding' -count=1 -v -timeout 45m
 
+citest-timeout-evidence: citest-images ## Refusal and execution timeouts against honest and forging executors.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^TestTimeoutEvidence$$' -count=1 -v -timeout 45m
+
 citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference without live escrow fetch (v4-deploy-test-plan §6).
 	$(MAKE) build-devshardd
 	$(CITEST_RPC_RUN) -run '^TestEscrowLongPollWarm' -count=1 -v -timeout 30m
+
+citest-escrow-funding-fallback: citest-images ## Escrow funding fallback: an oversized request moves to another escrow; 503 only once every escrow refuses.
+	$(CITEST_RPC_RUN) -run '^TestGateway(MovesOversizedRequest|ReturnsRetryable503)' -count=1 -v -timeout 30m
 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	$(CITEST_RPC_RUN) -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
@@ -171,9 +217,17 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	$(CITEST_RPC_RUN) -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 (isolated overlay; host histogram scrape).
+citest-observability: citest-images ## O1 smoke plus trace, disposition, payload, and shadow-host correlation.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
+	$(CITEST_RPC_RUN) -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
+
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
+
+citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run 'TestMLNodePool_' -count=1 -v -timeout 45m
 
 citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi chainoracle (no heightsyncd).
 	$(MAKE) build-devshardd
@@ -196,29 +250,33 @@ citest-peerrpc-ha-session: citest-images ## HA session spread: height seed + cha
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 	$(CITEST_RPC_RUN) -run '^TestPeerRPCHASessionSpread$$' -count=1 -v -timeout 45m
 
+# HAProxy only, on haproxy-rpc.cfg. No compose stack.
+citest-proxy-h2-idle: ## HTTP/2 PING alone does not hold an idle mux through HAProxy; an open Watch-style stream does.
+	TESTENV_CITEST=1 go test ./citest/harness/ -run '^TestProxyHAProxy_H2IdleConnection$$' -count=1 -v -timeout 5m
+
 # Current versiond and versiond-router only. A parent B1 pin has no proto h2
 # listen, so the same-make citest-images ifeq must not see it.
-citest-peerrpc-overlay: ## §8.3 proxy overlay hop completeness (HTTP/2).
+citest-peerrpc-overlay: ## §8.3 proxy overlay hop and escrow stickiness (HTTP/2).
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
-	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
 	TESTENV_PROXY_OVERLAY=1 \
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCOverlayHop$$' -count=1 -v -timeout 30m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestPeerRPCOverlayHop|TestH2EscrowStickiness)$$' -count=1 -v -timeout 45m
 
 # Current images only. Same pin drop as the overlay hop.
 citest-peerrpc-parity: ## §8.4 JSON / Connect HTTP/2 / native gRPC parity.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
-	DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+	DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 	DEVSHARD_RPC_H2_PORT=8443 DEVSHARD_RPC_H2_HOST=proxy DEVSHARD_RPC_H2_UPGRADE=true \
 	TESTENV_PROXY_OVERLAY=1 \
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPeerRPCParity$$' -count=1 -v -timeout 45m
 
-# Current images for the overlay half. The no-proxy half pins 0.2.15-v5 itself.
-citest-peerrpc-limits: ## §9 R1–R8 child budget and proxy zones.
+# Overlay half uses current images. The no-proxy half pins versiond from devshard/v5.
+citest-peerrpc-limits: build-limits-pin ## §9 R1–R8 child budget and proxy zones.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
@@ -233,7 +291,7 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, HTTP/1.1, no proxy.
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
 		-u DEVSHARD_RPC_H2_PORT -u DEVSHARD_RPC_H2_HOST -u DEVSHARD_RPC_H2_UPGRADE \
 		-u TESTENV_PROXY_OVERLAY \
-		DEVSHARD_RPC_SERVER_ENABLED=true DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
+		DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
 
 # Manual compatibility gate: it needs both baseline images and a baseline child

@@ -2,7 +2,9 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,7 @@ import (
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
@@ -180,7 +183,7 @@ func (c *RPCClient) WithoutAdmission() any {
 	return &out
 }
 
-func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
+func tokenRequest[T any](ctx context.Context, c *RPCClient, msg *T) (*connect.Request[T], error) {
 	if c.conn == nil || !c.conn.Ready() {
 		return nil, ErrPeerNotReady
 	}
@@ -190,12 +193,17 @@ func tokenRequest[T any](c *RPCClient, msg *T) (*connect.Request[T], error) {
 	}
 	req := connect.NewRequest(msg)
 	SetSessionHeader(req.Header(), tok)
+	// W3C traceparent + X-Request-Id so versiond EchoMiddleware joins the
+	// gateway span. Connect/gRPC carries these as HTTP/2 headers through the
+	// router; without them the host opens a new root trace.
+	observability.InjectOutboundHeaders(ctx, req.Header())
 	return req, nil
 }
 
-// unauthenticatedRetryDelay is the single Unauthenticated retry. It sits
-// past a barrier timeout (1s is the server cap; this delay only has to
-// clear the usual apply lag) and inside the 100–250ms window.
+// unauthenticatedRetryDelay is the pause before the single Unauthenticated
+// retry when the token is still live. It covers the usual apply lag. A
+// cleared token does not use this pause as its deadline: the retry waits
+// for the next Attach inside the non-inference budget.
 const unauthenticatedRetryDelay = 200 * time.Millisecond
 
 func rpcRetry(ctx context.Context, fn func() error) error {
@@ -258,9 +266,45 @@ func (c *RPCClient) withPeerBudget(ctx context.Context, procedure string, fn fun
 }
 
 func (c *RPCClient) rpcAttempt(ctx context.Context, procedure string, fn func() error) error {
-	return rpcRetry(ctx, func() error {
+	// Same admission as HTTP doPostRaw: one check for the logical call, then
+	// the limiter sees only the final result. A local rejection is not a
+	// host fault.
+	path := ""
+	if c != nil && c.HTTPClient != nil {
+		path = connectAdmissionPath(c.escrowID, procedure)
+		if err := c.allowRequest(path); err != nil {
+			return err
+		}
+	}
+	attempt := 0
+	err := rpcRetry(ctx, func() error {
+		attempt++
+		// The 200ms pause already ran. If Watch cleared the token during
+		// that pause, wait for the replacement Attach instead of failing
+		// the retry with ErrPeerNotReady.
+		if attempt > 1 && c != nil && c.conn != nil && !c.conn.Ready() {
+			if err := c.waitReadyForRetry(ctx); err != nil {
+				return err
+			}
+		}
 		return c.withPeerBudget(ctx, procedure, fn)
 	})
+	if c != nil && c.HTTPClient != nil {
+		if err != nil {
+			c.observeConnect(path, err)
+		} else {
+			c.observeResult(path, http.StatusOK)
+		}
+	}
+	return err
+}
+
+// waitReadyForRetry blocks until Attach publishes a token or the
+// non-inference retry budget runs out. The caller's deadline still applies.
+func (c *RPCClient) waitReadyForRetry(ctx context.Context) error {
+	waitCtx, cancel := context.WithDeadline(ctx, nonInferenceRetryDeadline(ctx))
+	defer cancel()
+	return c.WaitReady(waitCtx)
 }
 
 const maxUnauthenticatedRPCRetries = 1
@@ -357,7 +401,7 @@ func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32
 	defer cancel()
 	var out map[uint32][]byte
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetSignaturesProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetSignaturesRequest{Nonce: nonce})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetSignaturesRequest{Nonce: nonce})
 		if err != nil {
 			return err
 		}
@@ -385,7 +429,7 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	defer cancel()
 	var diffs []types.Diff
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetDiffsRequest{From: from, To: to})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetDiffsRequest{From: from, To: to})
 		if err != nil {
 			return err
 		}
@@ -410,6 +454,40 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 	return diffs, nil
 }
 
+// SessionHead is the executor tip read for a refused-timeout retry. It calls
+// SessionService.GetState on the peer session, using the gRPC codec when the
+// connection has it. The session token and AllowsSender gate that RPC.
+func (c *RPCClient) SessionHead(ctx context.Context) (uint64, []byte, error) {
+	if c == nil || !c.Uses(EndpointState) {
+		return 0, nil, fmt.Errorf("session head requires the state rpc")
+	}
+	timeout := c.config.QueryTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var nonce uint64
+	var root []byte
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetStateProcedure, func() error {
+		req, err := tokenRequest(ctx, c, &rpcpb.GetStateRequest{})
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionClient().GetState(ctx, req)
+		if err != nil {
+			return err
+		}
+		nonce = resp.Msg.GetNonce()
+		root = append([]byte(nil), resp.Msg.GetStateRoot()...)
+		return nil
+	})
+	if err != nil {
+		return 0, nil, fmt.Errorf("get state: %w", err)
+	}
+	return nonce, root, nil
+}
+
 func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error) {
 	if !c.Uses(EndpointMempool) {
 		return c.HTTPClient.GetMempool(ctx)
@@ -418,7 +496,7 @@ func (c *RPCClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 	defer cancel()
 	var txs []*types.DevshardTx
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetMempoolProcedure, func() error {
-		req, err := tokenRequest(c, &rpcpb.GetMempoolRequest{})
+		req, err := tokenRequest(ctx, c, &rpcpb.GetMempoolRequest{})
 		if err != nil {
 			return err
 		}
@@ -484,7 +562,7 @@ func (c *RPCClient) gossipSigned(ctx context.Context, timeout time.Duration, pro
 		if err != nil {
 			return err
 		}
-		req, err := tokenRequest(c, env)
+		req, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -508,12 +586,18 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.heightSeedTimeout())
 	defer cancel()
+	// HTTP seed admits once and does not retry. Status results stay off the
+	// limiter (height-sync path); a dial failure is still a transport fault.
+	path := connectAdmissionPath(c.escrowID, rpcpbconnect.SessionServiceSeedHeightSyncProcedure)
+	if err := c.allowRequest(path); err != nil {
+		return false, err
+	}
 	err = c.withPeerBudget(ctx, rpcpbconnect.SessionServiceSeedHeightSyncProcedure, func() error {
 		env, err := c.signEnvelope(nil)
 		if err != nil {
 			return err
 		}
-		req, err := tokenRequest(c, env)
+		req, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -533,6 +617,11 @@ func (c *RPCClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		)
 		return nil
 	})
+	if err != nil {
+		c.observeConnect(path, err)
+	} else {
+		c.observeResult(path, http.StatusOK)
+	}
 	return ok, err
 }
 
@@ -556,7 +645,7 @@ func (c *RPCClient) HeightSyncRepair(ctx context.Context, req *heightsync.Repair
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -589,7 +678,7 @@ func (c *RPCClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutRequ
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -622,7 +711,7 @@ func (c *RPCClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMiss
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -670,7 +759,7 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		if err != nil {
 			return err
 		}
-		creq, err := tokenRequest(c, env)
+		creq, err := tokenRequest(ctx, c, env)
 		if err != nil {
 			return err
 		}
@@ -710,7 +799,7 @@ func (c *RPCClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reaso
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
 		InferenceID: inferenceID,
 		Reason:      TimeoutReasonToString(reason),
-		Payload:     PayloadToJSON(payload),
+		Payload:     timeoutVotePayload(reason, payload),
 		Diffs:       djList,
 	})
 	if err != nil {
@@ -845,7 +934,15 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	// Signature must be the HTTP Authorization header value (base64 text)
 	// as UTF-8 bytes, not raw ECDSA. The server adapter does
 	// string(req.GetSignature()) then base64-decodes that string.
-	if err := c.WaitReady(ctx); err != nil {
+	readyCtx, cancelReady := context.WithTimeout(ctx, chatReadyTimeout)
+	defer cancelReady()
+	if err := c.WaitReady(readyCtx); err != nil {
+		// The handshake budget expired while the caller is still running:
+		// the executor never became ready. A closed local session returns
+		// before that budget and stays a plain ErrPeerNotReady.
+		if readyCtx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("get payload: %w", ErrPeerPayloadUnanswered)
+		}
 		return nil, fmt.Errorf("get payload: %w", err)
 	}
 	client, err := c.payloadClient(maxBytes)
@@ -856,8 +953,11 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	defer cancel()
 	var out *rpcpb.GetPayloadResponse
 	err = c.rpcAttempt(ctx, rpcpbconnect.PayloadServiceGetPayloadProcedure, func() error {
-		creq, err := tokenRequest(c, req)
+		creq, err := tokenRequest(ctx, c, req)
 		if err != nil {
+			if errors.Is(err, ErrPeerNotReady) {
+				return ErrPeerPayloadUnanswered
+			}
 			return err
 		}
 		resp, err := client.GetPayload(ctx, creq)

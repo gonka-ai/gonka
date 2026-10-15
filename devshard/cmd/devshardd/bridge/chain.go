@@ -102,7 +102,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, bridge.ClassifyQueryError(fmt.Errorf("DevshardEscrow %s: %w", escrowID, err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, bridge.ErrEscrowNotFound
@@ -115,7 +115,7 @@ func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, bridge.ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}
 
 	return &bridge.HostInfo{
@@ -125,7 +125,30 @@ func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 }
 
 func (b *ChainBridge) GetValidationThreshold(epochID uint64, modelID string) (*bridge.Decimal, error) {
-	resp, err := b.client.InferenceQueryClient().EpochGroupData(context.Background(),
+	snapshot, err := b.modelSnapshot(context.Background(), epochID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot.ValidationThreshold == nil {
+		return nil, fmt.Errorf("validation threshold not found for epoch %d model %s", epochID, modelID)
+	}
+	return &bridge.Decimal{
+		Value:    snapshot.ValidationThreshold.Value,
+		Exponent: snapshot.ValidationThreshold.Exponent,
+	}, nil
+}
+
+// GetModelSource returns the Hugging Face repo and commit the chain pins for the model in the epoch.
+func (b *ChainBridge) GetModelSource(ctx context.Context, epochID uint64, modelID string) (hfRepo, hfCommit string, err error) {
+	snapshot, err := b.modelSnapshot(ctx, epochID, modelID)
+	if err != nil {
+		return "", "", err
+	}
+	return snapshot.HfRepo, snapshot.HfCommit, nil
+}
+
+func (b *ChainBridge) modelSnapshot(ctx context.Context, epochID uint64, modelID string) (*inferencetypes.Model, error) {
+	resp, err := b.client.InferenceQueryClient().EpochGroupData(ctx,
 		&inferencetypes.QueryGetEpochGroupDataRequest{
 			EpochIndex: epochID,
 			ModelId:    modelID,
@@ -133,18 +156,10 @@ func (b *ChainBridge) GetValidationThreshold(epochID uint64, modelID string) (*b
 	if err != nil {
 		return nil, fmt.Errorf("EpochGroupData epoch=%d model=%s: %w", epochID, modelID, err)
 	}
-	if resp == nil {
-		return nil, fmt.Errorf("validation threshold not found for epoch %d model %s", epochID, modelID)
+	if resp == nil || resp.EpochGroupData.ModelSnapshot == nil {
+		return nil, fmt.Errorf("model snapshot not found for epoch %d model %s", epochID, modelID)
 	}
-	egd := resp.EpochGroupData
-	if egd.ModelSnapshot == nil || egd.ModelSnapshot.ValidationThreshold == nil {
-		return nil, fmt.Errorf("validation threshold not found for epoch %d model %s", epochID, modelID)
-	}
-	threshold := egd.ModelSnapshot.ValidationThreshold
-	return &bridge.Decimal{
-		Value:    threshold.Value,
-		Exponent: threshold.Exponent,
-	}, nil
+	return resp.EpochGroupData.ModelSnapshot, nil
 }
 
 func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {

@@ -586,15 +586,67 @@ func (x *_GenesisState_5_list) IsValid() bool {
 	return x.list != nil
 }
 
+var _ protoreflect.List = (*_GenesisState_8_list)(nil)
+
+type _GenesisState_8_list struct {
+	list *[]*DevshardApprovedVersion
+}
+
+func (x *_GenesisState_8_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_GenesisState_8_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
+}
+
+func (x *_GenesisState_8_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*DevshardApprovedVersion)
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_GenesisState_8_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Message()
+	concreteValue := valueUnwrapped.Interface().(*DevshardApprovedVersion)
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_GenesisState_8_list) AppendMutable() protoreflect.Value {
+	v := new(DevshardApprovedVersion)
+	*x.list = append(*x.list, v)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_8_list) Truncate(n int) {
+	for i := n; i < len(*x.list); i++ {
+		(*x.list)[i] = nil
+	}
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_GenesisState_8_list) NewElement() protoreflect.Value {
+	v := new(DevshardApprovedVersion)
+	return protoreflect.ValueOfMessage(v.ProtoReflect())
+}
+
+func (x *_GenesisState_8_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_GenesisState                     protoreflect.MessageDescriptor
-	fd_GenesisState_params              protoreflect.FieldDescriptor
-	fd_GenesisState_genesis_only_params protoreflect.FieldDescriptor
-	fd_GenesisState_model_list          protoreflect.FieldDescriptor
-	fd_GenesisState_cosm_wasm_params    protoreflect.FieldDescriptor
-	fd_GenesisState_participant_list    protoreflect.FieldDescriptor
-	fd_GenesisState_mlnode_version      protoreflect.FieldDescriptor
-	fd_GenesisState_bridge              protoreflect.FieldDescriptor
+	md_GenesisState                            protoreflect.MessageDescriptor
+	fd_GenesisState_params                     protoreflect.FieldDescriptor
+	fd_GenesisState_genesis_only_params        protoreflect.FieldDescriptor
+	fd_GenesisState_model_list                 protoreflect.FieldDescriptor
+	fd_GenesisState_cosm_wasm_params           protoreflect.FieldDescriptor
+	fd_GenesisState_participant_list           protoreflect.FieldDescriptor
+	fd_GenesisState_mlnode_version             protoreflect.FieldDescriptor
+	fd_GenesisState_bridge                     protoreflect.FieldDescriptor
+	fd_GenesisState_devshard_approved_versions protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -607,6 +659,7 @@ func init() {
 	fd_GenesisState_participant_list = md_GenesisState.Fields().ByName("participant_list")
 	fd_GenesisState_mlnode_version = md_GenesisState.Fields().ByName("mlnode_version")
 	fd_GenesisState_bridge = md_GenesisState.Fields().ByName("bridge")
+	fd_GenesisState_devshard_approved_versions = md_GenesisState.Fields().ByName("devshard_approved_versions")
 }
 
 var _ protoreflect.Message = (*fastReflection_GenesisState)(nil)
@@ -716,6 +769,12 @@ func (x *fastReflection_GenesisState) Range(f func(protoreflect.FieldDescriptor,
 			return
 		}
 	}
+	if len(x.DevshardApprovedVersions) != 0 {
+		value := protoreflect.ValueOfList(&_GenesisState_8_list{list: &x.DevshardApprovedVersions})
+		if !f(fd_GenesisState_devshard_approved_versions, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -745,6 +804,8 @@ func (x *fastReflection_GenesisState) Has(fd protoreflect.FieldDescriptor) bool 
 		return x.MlnodeVersion != nil
 	case "inference.inference.GenesisState.bridge":
 		return x.Bridge != nil
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		return len(x.DevshardApprovedVersions) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -775,6 +836,8 @@ func (x *fastReflection_GenesisState) Clear(fd protoreflect.FieldDescriptor) {
 		x.MlnodeVersion = nil
 	case "inference.inference.GenesisState.bridge":
 		x.Bridge = nil
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		x.DevshardApprovedVersions = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -818,6 +881,12 @@ func (x *fastReflection_GenesisState) Get(descriptor protoreflect.FieldDescripto
 	case "inference.inference.GenesisState.bridge":
 		value := x.Bridge
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		if len(x.DevshardApprovedVersions) == 0 {
+			return protoreflect.ValueOfList(&_GenesisState_8_list{})
+		}
+		listValue := &_GenesisState_8_list{list: &x.DevshardApprovedVersions}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -856,6 +925,10 @@ func (x *fastReflection_GenesisState) Set(fd protoreflect.FieldDescriptor, value
 		x.MlnodeVersion = value.Message().Interface().(*MLNodeVersion)
 	case "inference.inference.GenesisState.bridge":
 		x.Bridge = value.Message().Interface().(*Bridge)
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		lv := value.List()
+		clv := lv.(*_GenesisState_8_list)
+		x.DevshardApprovedVersions = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -913,6 +986,12 @@ func (x *fastReflection_GenesisState) Mutable(fd protoreflect.FieldDescriptor) p
 			x.Bridge = new(Bridge)
 		}
 		return protoreflect.ValueOfMessage(x.Bridge.ProtoReflect())
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		if x.DevshardApprovedVersions == nil {
+			x.DevshardApprovedVersions = []*DevshardApprovedVersion{}
+		}
+		value := &_GenesisState_8_list{list: &x.DevshardApprovedVersions}
+		return protoreflect.ValueOfList(value)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -947,6 +1026,9 @@ func (x *fastReflection_GenesisState) NewField(fd protoreflect.FieldDescriptor) 
 	case "inference.inference.GenesisState.bridge":
 		m := new(Bridge)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.GenesisState.devshard_approved_versions":
+		list := []*DevshardApprovedVersion{}
+		return protoreflect.ValueOfList(&_GenesisState_8_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.GenesisState"))
@@ -1048,6 +1130,12 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 			l = options.Size(x.Bridge)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if len(x.DevshardApprovedVersions) > 0 {
+			for _, e := range x.DevshardApprovedVersions {
+				l = options.Size(e)
+				n += 1 + l + runtime.Sov(uint64(l))
+			}
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -1076,6 +1164,22 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.DevshardApprovedVersions) > 0 {
+			for iNdEx := len(x.DevshardApprovedVersions) - 1; iNdEx >= 0; iNdEx-- {
+				encoded, err := options.Marshal(x.DevshardApprovedVersions[iNdEx])
+				if err != nil {
+					return protoiface.MarshalOutput{
+						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+						Buf:               input.Buf,
+					}, err
+				}
+				i -= len(encoded)
+				copy(dAtA[i:], encoded)
+				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+				i--
+				dAtA[i] = 0x42
+			}
 		}
 		if x.Bridge != nil {
 			encoded, err := options.Marshal(x.Bridge)
@@ -1476,6 +1580,40 @@ func (x *fastReflection_GenesisState) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 8:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DevshardApprovedVersions", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.DevshardApprovedVersions = append(x.DevshardApprovedVersions, &DevshardApprovedVersion{})
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.DevshardApprovedVersions[len(x.DevshardApprovedVersions)-1]); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1581,10 +1719,11 @@ type GenesisState struct {
 	// Deprecated: kept for backward compatibility with existing genesis data. This field is ignored during InitGenesis.
 	//
 	// Deprecated: Do not use.
-	CosmWasmParams  *CosmWasmParams `protobuf:"bytes,4,opt,name=cosm_wasm_params,json=cosmWasmParams,proto3" json:"cosm_wasm_params,omitempty"`
-	ParticipantList []*Participant  `protobuf:"bytes,5,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
-	MlnodeVersion   *MLNodeVersion  `protobuf:"bytes,6,opt,name=mlnode_version,json=mlnodeVersion,proto3" json:"mlnode_version,omitempty"`
-	Bridge          *Bridge         `protobuf:"bytes,7,opt,name=bridge,proto3" json:"bridge,omitempty"`
+	CosmWasmParams           *CosmWasmParams            `protobuf:"bytes,4,opt,name=cosm_wasm_params,json=cosmWasmParams,proto3" json:"cosm_wasm_params,omitempty"`
+	ParticipantList          []*Participant             `protobuf:"bytes,5,rep,name=participant_list,json=participantList,proto3" json:"participant_list,omitempty"`
+	MlnodeVersion            *MLNodeVersion             `protobuf:"bytes,6,opt,name=mlnode_version,json=mlnodeVersion,proto3" json:"mlnode_version,omitempty"`
+	Bridge                   *Bridge                    `protobuf:"bytes,7,opt,name=bridge,proto3" json:"bridge,omitempty"`
+	DevshardApprovedVersions []*DevshardApprovedVersion `protobuf:"bytes,8,rep,name=devshard_approved_versions,json=devshardApprovedVersions,proto3" json:"devshard_approved_versions,omitempty"`
 }
 
 func (x *GenesisState) Reset() {
@@ -1657,6 +1796,13 @@ func (x *GenesisState) GetBridge() *Bridge {
 	return nil
 }
 
+func (x *GenesisState) GetDevshardApprovedVersions() []*DevshardApprovedVersion {
+	if x != nil {
+		return x.DevshardApprovedVersions
+	}
+	return nil
+}
+
 var File_inference_inference_genesis_proto protoreflect.FileDescriptor
 
 var file_inference_inference_genesis_proto_rawDesc = []byte{
@@ -1708,7 +1854,7 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x6f, 0x64, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c, 0x52, 0x08, 0x63, 0x77, 0x32, 0x30, 0x43,
 	0x6f, 0x64, 0x65, 0x12, 0x20, 0x0a, 0x0c, 0x63, 0x77, 0x32, 0x30, 0x5f, 0x63, 0x6f, 0x64, 0x65,
 	0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x63, 0x77, 0x32, 0x30, 0x43,
-	0x6f, 0x64, 0x65, 0x49, 0x64, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x9d, 0x04, 0x0a, 0x0c,
+	0x6f, 0x64, 0x65, 0x49, 0x64, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x89, 0x05, 0x0a, 0x0c,
 	0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x53, 0x74, 0x61, 0x74, 0x65, 0x12, 0x3e, 0x0a, 0x06,
 	0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69,
 	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
@@ -1742,19 +1888,26 @@ var file_inference_inference_genesis_proto_rawDesc = []byte{
 	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x33, 0x0a, 0x06, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65,
 	0x18, 0x07, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1b, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x42, 0x72, 0x69,
-	0x64, 0x67, 0x65, 0x52, 0x06, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x42, 0xba, 0x01, 0x0a, 0x17,
-	0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73,
-	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
-	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03,
-	0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2,
-	0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74,
-	0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x64, 0x67, 0x65, 0x52, 0x06, 0x62, 0x72, 0x69, 0x64, 0x67, 0x65, 0x12, 0x6a, 0x0a, 0x1a, 0x64,
+	0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64,
+	0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x18, 0x08, 0x20, 0x03, 0x28, 0x0b, 0x32,
+	0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70,
+	0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x52, 0x18, 0x64,
+	0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56,
+	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x42, 0xba, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x42, 0x0c, 0x47, 0x65, 0x6e, 0x65, 0x73, 0x69, 0x73, 0x50, 0x72, 0x6f, 0x74,
+	0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69,
+	0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa,
+	0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -1771,14 +1924,15 @@ func file_inference_inference_genesis_proto_rawDescGZIP() []byte {
 
 var file_inference_inference_genesis_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_inference_inference_genesis_proto_goTypes = []interface{}{
-	(*CosmWasmParams)(nil),    // 0: inference.inference.CosmWasmParams
-	(*GenesisState)(nil),      // 1: inference.inference.GenesisState
-	(*Params)(nil),            // 2: inference.inference.Params
-	(*GenesisOnlyParams)(nil), // 3: inference.inference.GenesisOnlyParams
-	(*Model)(nil),             // 4: inference.inference.Model
-	(*Participant)(nil),       // 5: inference.inference.Participant
-	(*MLNodeVersion)(nil),     // 6: inference.inference.MLNodeVersion
-	(*Bridge)(nil),            // 7: inference.inference.Bridge
+	(*CosmWasmParams)(nil),          // 0: inference.inference.CosmWasmParams
+	(*GenesisState)(nil),            // 1: inference.inference.GenesisState
+	(*Params)(nil),                  // 2: inference.inference.Params
+	(*GenesisOnlyParams)(nil),       // 3: inference.inference.GenesisOnlyParams
+	(*Model)(nil),                   // 4: inference.inference.Model
+	(*Participant)(nil),             // 5: inference.inference.Participant
+	(*MLNodeVersion)(nil),           // 6: inference.inference.MLNodeVersion
+	(*Bridge)(nil),                  // 7: inference.inference.Bridge
+	(*DevshardApprovedVersion)(nil), // 8: inference.inference.DevshardApprovedVersion
 }
 var file_inference_inference_genesis_proto_depIdxs = []int32{
 	2, // 0: inference.inference.GenesisState.params:type_name -> inference.inference.Params
@@ -1788,11 +1942,12 @@ var file_inference_inference_genesis_proto_depIdxs = []int32{
 	5, // 4: inference.inference.GenesisState.participant_list:type_name -> inference.inference.Participant
 	6, // 5: inference.inference.GenesisState.mlnode_version:type_name -> inference.inference.MLNodeVersion
 	7, // 6: inference.inference.GenesisState.bridge:type_name -> inference.inference.Bridge
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	8, // 7: inference.inference.GenesisState.devshard_approved_versions:type_name -> inference.inference.DevshardApprovedVersion
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_genesis_proto_init() }

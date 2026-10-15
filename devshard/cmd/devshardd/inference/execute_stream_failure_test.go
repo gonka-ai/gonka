@@ -36,7 +36,7 @@ func TestExecuteInferenceRefusesATruncatedStream(t *testing.T) {
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{})
+		fixedChainParams{}, true)
 
 	if err == nil {
 		t.Fatal("a cut stream was accepted as a finished inference")
@@ -74,7 +74,7 @@ func TestACallerThatStopsReadingStillFinishesTheInference(t *testing.T) {
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(requestBody)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{})
+		fixedChainParams{}, true)
 
 	if err != nil {
 		t.Fatalf("a finished inference was thrown away because the caller left: %v", err)

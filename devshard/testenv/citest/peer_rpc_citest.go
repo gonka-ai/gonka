@@ -20,9 +20,6 @@ const peerRPCEndpoints = "signatures,mempool,diffs,gossip,repair,height-sync,ver
 
 func requireNoProxyRPC(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) != "true" {
-		t.Fatalf("set DEVSHARD_RPC_SERVER_ENABLED=true (make citest-peerrpc-chat / citest-mixed-fleet)")
-	}
 	got := os.Getenv("DEVSHARD_RPC_ENDPOINTS")
 	for _, name := range strings.Split(peerRPCEndpoints, ",") {
 		if !rpcEndpointListed(got, name) {
@@ -54,9 +51,6 @@ func requireNoProxyRPC(t *testing.T) {
 // versiond-router:8081. No proxy container. :8080 stays healthz and ops.
 func requireNoProxyGRPC(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_SERVER_ENABLED")) != "true" {
-		t.Fatal("set DEVSHARD_RPC_SERVER_ENABLED=true")
-	}
 	got := os.Getenv("DEVSHARD_RPC_ENDPOINTS")
 	for _, name := range strings.Split(peerRPCEndpoints, ",") {
 		if !rpcEndpointListed(got, name) {

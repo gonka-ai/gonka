@@ -23,6 +23,7 @@ import (
 	"net"
 
 	nmgen "common/nodemanager/gen"
+	commonobs "common/observability"
 	"decentralized-api/nodemanager"
 
 	"google.golang.org/grpc"
@@ -30,6 +31,7 @@ import (
 
 	"common/httpguard"
 	"common/logging"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -107,6 +109,26 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
+	}
+
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+
+	// Init installs the W3C propagator even with OTel disabled, which is what
+	// lets inbound traceparent metadata reach the acquire/release log lines.
+	shutdownObs, err := observability.Init(context.Background(), observability.Config{
+		ServiceName: observability.ServiceName,
+	})
+	if err != nil {
+		log.Printf("observability init: %v", err)
+	}
+	if shutdownObs != nil {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownObs(shutdownCtx); err != nil {
+				log.Printf("observability shutdown: %v", err)
+			}
+		}()
 	}
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
@@ -247,6 +269,23 @@ func main() {
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
+	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
+	if err != nil {
+		logging.Error("Failed to create chainoracle", types.Server, "error", err)
+	}
+	listenerOpts := []event_listener.EventListenerOption{
+		event_listener.WithStatsStorage(statsStore),
+		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+	}
+	if chainOracle != nil {
+		o := chainOracle
+		listenerOpts = append(listenerOpts, event_listener.WithOnNewBlockHeader(func(info chainphase.BlockInfo) {
+			if err := o.ObserveHex(info.Height, info.Hash, info.Time, info.ChainID); err != nil {
+				logging.Warn("chainoracle observe", types.EventProcessing, "error", err, "height", info.Height)
+			}
+		}))
+	}
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -255,9 +294,7 @@ func main() {
 		chainPhaseTracker,
 		cancel,
 		blsManager,
-		event_listener.WithStatsStorage(statsStore),
-		event_listener.WithHostEventRing(hostEventRing),
-		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
+		listenerOpts...,
 	)
 	go listener.Start(ctx)
 
@@ -297,6 +334,13 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
+	publicOpts := []pserver.ServerOption{
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	}
+	if chainOracle != nil {
+		publicOpts = append(publicOpts, pserver.WithChainOracle(chainOracle))
+	}
 	publicServer := pserver.NewServer(
 		nodeBroker,
 		configManager,
@@ -304,8 +348,7 @@ func main() {
 		blockQueue,
 		chainPhaseTracker,
 		payloadStore,
-		pserver.WithArtifactStore(artifactStore),
-		pserver.WithStatsStorage(statsStore),
+		publicOpts...,
 	)
 
 	publicServer.Start(addr)
@@ -326,11 +369,22 @@ func main() {
 	}
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
-		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
+		// Same interceptor mock-dapi registers: continue the caller's trace and
+		// bind x-request-id so stage=mlnode_acquire/release lines join Loki.
+		nmGrpcServer := grpc.NewServer(
+			grpc.ChainUnaryInterceptor(commonobs.UnaryServerTraceInterceptor("decentralized-api.nodemanager")),
+		)
+		nmOpts := []nodemanager.ServerOption{
 			nodemanager.WithHostEventRing(hostEventRing),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
-		))
+		}
+		// Guard like the HTTP mount below: a nil *observer.Oracle passed as an
+		// interface is not nil, so GetBlockHeader would answer NotFound for a
+		// disabled oracle instead of FailedPrecondition.
+		if chainOracle != nil {
+			nmOpts = append(nmOpts, nodemanager.WithBlockOracle(chainOracle))
+		}
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nmOpts...))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

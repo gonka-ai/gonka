@@ -27,7 +27,7 @@ client
 
 peer RPC (skips nginx)
   -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
-       HA:     versiond-router-fleet:8081 proto h2
+       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
        non-HA: versiond:8080 proto h2
 ```
 

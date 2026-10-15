@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+
+	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 // Non-inference 429/503 (and transient dial failures) retry with exponential
@@ -73,6 +75,42 @@ func UndeclaredVersionFromError(err error) *UpstreamStatusError {
 	return nil
 }
 
+// IsEscrowLookupLimited is a 429 from a host (or its versiond) whose
+// unknown-escrow lookup budget refused a first bind. The budget refills over
+// a minute, so the call is not retried inside the 5 s non-inference budget.
+func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
+	return statusCode == http.StatusTooManyRequests &&
+		strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorEscrowLookupLimited)
+}
+
+// IsStorageBusy reports a host 503 storage_busy: the host could not persist
+// the request's diffs in time and applied none of them, so the same request
+// may be resent.
+func IsStorageBusy(err error) bool {
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return status.StatusCode == http.StatusServiceUnavailable &&
+			strings.EqualFold(strings.TrimSpace(status.DevshardError), DevshardErrorStorageBusy)
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) && ce.Code() == connect.CodeUnavailable {
+		return strings.EqualFold(strings.TrimSpace(ce.Meta().Get(HeaderDevshardError)), DevshardErrorStorageBusy)
+	}
+	return false
+}
+
+func isEscrowLookupLimitedError(err error) bool {
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return IsEscrowLookupLimited(status.StatusCode, status.DevshardError)
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) && ce.Code() == connect.CodeResourceExhausted {
+		return IsEscrowLookupLimited(http.StatusTooManyRequests, ce.Meta().Get(HeaderDevshardError))
+	}
+	return false
+}
+
 func isInferencePath(path string) bool {
 	return strings.Contains(path, "/chat/completions")
 }
@@ -91,11 +129,12 @@ func isContextFinished(err error) bool {
 // ResourceExhausted from a message-size cap is not retryable: connect-go
 // uses that code for WithReadMaxBytes / WithSendMaxBytes, the same code
 // Phase 4 uses for real rate limits. See isConnectMessageTooLarge.
+// escrow_lookup_limited is not retryable: see IsEscrowLookupLimited.
 func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false
 	}
-	if isContextFinished(err) {
+	if isContextFinished(err) || isEscrowLookupLimitedError(err) {
 		return false
 	}
 	var status *UpstreamStatusError
@@ -153,40 +192,87 @@ func shouldObserveUpstreamStatus(path string, statusCode int, _, _, routerError 
 	return statusCode > 0
 }
 
+// connectAdmissionPath is the path the participant limiter already classifies
+// for HTTP. Connect procedure names are not those paths.
+func connectAdmissionPath(escrowID, procedure string) string {
+	switch procedure {
+	case rpcpbconnect.SessionServiceChatProcedure:
+		return "/sessions/" + escrowID + "/chat/completions"
+	case rpcpbconnect.SessionServiceGetDiffsProcedure:
+		return "/sessions/" + escrowID + "/diffs"
+	case rpcpbconnect.SessionServiceGetMempoolProcedure:
+		return "/sessions/" + escrowID + "/mempool"
+	case rpcpbconnect.SessionServiceGetStateProcedure:
+		return "/sessions/" + escrowID + "/state"
+	case rpcpbconnect.SessionServiceGetSignaturesProcedure:
+		return "/sessions/" + escrowID + "/signatures"
+	case rpcpbconnect.SessionServiceVerifyTimeoutProcedure:
+		return "/sessions/" + escrowID + "/verify-timeout"
+	case rpcpbconnect.SessionServiceVerifyErrorMissProcedure:
+		return "/sessions/" + escrowID + "/verify-error-miss"
+	case rpcpbconnect.SessionServiceChallengeReceiptProcedure:
+		return "/sessions/" + escrowID + "/challenge-receipt"
+	case rpcpbconnect.SessionServiceSeedHeightSyncProcedure:
+		return "/sessions/" + escrowID + "/height-sync"
+	case rpcpbconnect.SessionServiceRepairHeightSyncProcedure:
+		return "/sessions/" + escrowID + "/heightsync/repair"
+	case rpcpbconnect.GossipServiceNonceProcedure:
+		return "/sessions/" + escrowID + "/gossip/nonce"
+	case rpcpbconnect.GossipServiceTxsProcedure:
+		return "/sessions/" + escrowID + "/gossip/txs"
+	case rpcpbconnect.PayloadServiceGetPayloadProcedure:
+		return "/sessions/" + escrowID + "/payloads"
+	default:
+		return procedure
+	}
+}
+
 // connectResultStatus maps a server Connect error back to the HTTP status
 // mapInferenceError started from, plus X-Devshard-Error when the server set it.
 // Dial, reset, EOF, and deadlines are not application results.
 func connectResultStatus(err error) (status int, devshardCode string, ok bool) {
+	status, devshardCode, _, ok = ConnectApplicationStatus(err)
+	return status, devshardCode, ok
+}
+
+// ConnectApplicationStatus reads a *connect.Error the way an HTTP status line
+// is read: the Connect code, X-Devshard-Error, and the message. Dial, reset,
+// EOF, and a deadline are not application results. Classifiers use this so a
+// Connect refusal is the same decision as the HTTP status it replaced.
+func ConnectApplicationStatus(err error) (status int, devshardCode, message string, ok bool) {
 	var ce *connect.Error
 	if !errors.As(err, &ce) {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	if ce.Code() == connect.CodeDeadlineExceeded || isChatTransportFault(err) {
-		return 0, "", false
+		return 0, "", "", false
 	}
 	devshardCode = ce.Meta().Get(HeaderDevshardError)
+	message = ce.Message()
 	switch ce.Code() {
 	case connect.CodeResourceExhausted:
 		if isConnectMessageTooLarge(err) {
-			return http.StatusRequestEntityTooLarge, devshardCode, true
+			return http.StatusRequestEntityTooLarge, devshardCode, message, true
 		}
-		return http.StatusTooManyRequests, devshardCode, true
+		return http.StatusTooManyRequests, devshardCode, message, true
 	case connect.CodeUnavailable:
-		return http.StatusServiceUnavailable, devshardCode, true
+		return http.StatusServiceUnavailable, devshardCode, message, true
 	case connect.CodePermissionDenied:
-		return http.StatusForbidden, devshardCode, true
+		return http.StatusForbidden, devshardCode, message, true
 	case connect.CodeInvalidArgument:
-		return http.StatusBadRequest, devshardCode, true
+		return http.StatusBadRequest, devshardCode, message, true
 	case connect.CodeUnauthenticated:
-		return http.StatusUnauthorized, devshardCode, true
+		return http.StatusUnauthorized, devshardCode, message, true
 	case connect.CodeNotFound:
-		return http.StatusNotFound, devshardCode, true
+		return http.StatusNotFound, devshardCode, message, true
+	case connect.CodeUnimplemented:
+		return http.StatusNotImplemented, devshardCode, message, true
 	case connect.CodeAlreadyExists:
-		return http.StatusConflict, devshardCode, true
+		return http.StatusConflict, devshardCode, message, true
 	case connect.CodeFailedPrecondition:
-		return http.StatusPreconditionFailed, devshardCode, true
+		return http.StatusPreconditionFailed, devshardCode, message, true
 	default:
-		return http.StatusInternalServerError, devshardCode, true
+		return http.StatusInternalServerError, devshardCode, message, true
 	}
 }
 

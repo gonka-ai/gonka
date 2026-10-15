@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -94,7 +95,7 @@ func rpch2ClientKey(h2URL *url.URL, serverName string) string {
 	return scheme + "://" + host + "\x00" + strings.ToLower(serverName)
 }
 
-func (p *rpch2ClientPool) get(h2URL *url.URL, serverName string, dial func(context.Context, string, string) (net.Conn, error), readIdle, ping time.Duration) *http2.Transport {
+func (p *rpch2ClientPool) get(h2URL *url.URL, serverName string, dial func(context.Context, string, string) (net.Conn, error), readIdle, ping, probe time.Duration) *http2.Transport {
 	if p == nil || h2URL == nil {
 		return nil
 	}
@@ -104,7 +105,7 @@ func (p *rpch2ClientPool) get(h2URL *url.URL, serverName string, dial func(conte
 	if tr := p.m[key]; tr != nil {
 		return tr
 	}
-	tr := newRPCH2Transport(dial, h2cOrigin(h2URL), serverName, readIdle, ping)
+	tr := newRPCH2Transport(dial, h2cOrigin(h2URL), serverName, readIdle, ping, probe)
 	p.m[key] = tr
 	return tr
 }
@@ -129,7 +130,7 @@ func ResetRPCH2ClientPoolForTest() {
 	rpch2Clients.reset()
 }
 
-func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, error), h2c bool, serverName string, readIdle, ping time.Duration) *http2.Transport {
+func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, error), h2c bool, serverName string, readIdle, ping, probe time.Duration) *http2.Transport {
 	if dial == nil {
 		var d net.Dialer
 		dial = d.DialContext
@@ -139,6 +140,9 @@ func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, err
 	}
 	if ping <= 0 {
 		ping = DefaultRPCH2PingTimeout
+	}
+	if probe <= 0 {
+		probe = DefaultRPCH2ProbeTimeout
 	}
 	tlsCfg := &tls.Config{}
 	if serverName != "" {
@@ -151,18 +155,22 @@ func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, err
 		ReadIdleTimeout: readIdle,
 		PingTimeout:     ping,
 		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
-			conn, err := dial(ctx, network, addr)
+			// Probe covers dial and TLS only. The Attach RPC keeps the
+			// caller's deadline (DefaultAttachTimeout).
+			dialCtx, cancel := context.WithTimeout(ctx, probe)
+			defer cancel()
+			conn, err := dial(dialCtx, network, addr)
 			if err != nil {
-				return nil, err
+				return nil, rpch2ProbeTimeoutError(err)
 			}
 			if h2c {
 				return conn, nil
 			}
 			cfg = rpch2TLSConfig(cfg, serverName)
 			tlsConn := tls.Client(conn, cfg)
-			if err := tlsConn.HandshakeContext(ctx); err != nil {
+			if err := tlsConn.HandshakeContext(dialCtx); err != nil {
 				_ = conn.Close()
-				return nil, err
+				return nil, rpch2ProbeTimeoutError(err)
 			}
 			if err := rpch2RequireALPN(tlsConn.ConnectionState()); err != nil {
 				_ = tlsConn.Close()
@@ -171,6 +179,16 @@ func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, err
 			return tlsConn, nil
 		},
 	}
+}
+
+// rpch2ProbeTimeoutError turns a probe-context deadline into a dial error.
+// The Attach RPC's own context deadline must stay a deadline so it is not
+// an h2 miss. Parent cancel is left unchanged.
+func rpch2ProbeTimeoutError(err error) error {
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("h2 probe timeout")}
 }
 
 // rpch2TLSConfig clones cfg and sets ServerName to InferenceUrl's hostname.

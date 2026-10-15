@@ -35,19 +35,20 @@ const (
 	limitMsgsPerMin = "600"
 	limitBurst      = "80"
 	limitFloor      = "200"
-	baselineVersion = "devshard-versiond:0.2.15-v5"
-	baselineRouter  = "devshard-versiond-router:0.2.15-v5"
+	// Built by `make build-limits-pin` from branch devshard/v5. Tags cannot contain '/'.
+	baselineVersion = "devshard-versiond:devshard-v5"
+	baselineRouter  = "devshard-versiond-router:devshard-v5"
 )
 
-// TestPeerRPCLimitsNoProxy is §9 R8 (defaults), R1, and R2 on the 0.2.15-v5
-// pin. Peer RPC is Connect over HTTP/1.1. There is no proxy zone.
+// TestPeerRPCLimitsNoProxy is §9 R8 (defaults), R1, and R2 on versiond and
+// versiond-router built from branch devshard/v5. Peer RPC is Connect over
+// HTTP/1.1. There is no proxy zone.
 func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	requireImage(t, baselineVersion)
 	requireImage(t, baselineRouter)
 	t.Setenv(harness.EnvVersiondImage, baselineVersion)
 	t.Setenv(harness.EnvVersiondRouterImage, baselineRouter)
-	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "true")
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
 	t.Setenv("DEVSHARD_RPC_H2_PORT", "")
 	t.Setenv("DEVSHARD_RPC_H2_HOST", "")
@@ -81,6 +82,7 @@ func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	patchChildLimits(t, stack)
 	recreateHosts(t, stack, cfg)
 	harness.WaitGETOK(t, harness.GatewayChatClient(), eps.RouterHTTP+"/"+version+"/healthz", 5*time.Minute, "devshardd health after limit drop", stack)
+	requireChildLimitEnv(t, stack, cfg)
 
 	t.Log("R1: GetDiffs flood exhausts one peer; Chat still fits; the other peer does not")
 	proveChildPie(t, eps.RouterHTTP, "", escrow, version, user, peerB, cfg)
@@ -95,7 +97,6 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 	if os.Getenv(harness.EnvVersiondImage) != "" || os.Getenv(harness.EnvVersiondRouterImage) != "" {
 		t.Fatal("overlay limits use current versiond and versiond-router; unset TESTENV_VERSIOND_IMAGE and TESTENV_VERSIOND_ROUTER_IMAGE")
 	}
-	t.Setenv("DEVSHARD_RPC_SERVER_ENABLED", "true")
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
 	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
 	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
@@ -129,6 +130,7 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 	patchChildLimits(t, stack)
 	recreateHosts(t, stack, cfg)
 	harness.WaitGETOK(t, harness.GatewayChatClient(), eps.RouterHTTP+"/"+version+"/healthz", 5*time.Minute, "devshardd health after limit drop", stack)
+	requireChildLimitEnv(t, stack, cfg)
 
 	t.Log("R3/R7: child pie matches R1, and the GetDiffs zone is independent of Chat")
 	proveChildPie(t, eps.RouterHTTP, proxy, escrow, version, user, peerB, cfg)
@@ -317,9 +319,25 @@ func proveSpoofedIPSharesSrc(t *testing.T, proxy, version, escrow string) {
 
 func patchChildLimits(t *testing.T, stack *harness.Stack) {
 	t.Helper()
-	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_MSGS_PER_MIN", `"`+limitMsgsPerMin+`"`)
-	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_MSGS_BURST", `"`+limitBurst+`"`)
-	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL", `"`+limitFloor+`"`)
+	// Boot cleared these so R8 sees the default budget. Recreate
+	// interpolates the compose file from this process, so the tight
+	// budget is set here too: 600/min and burst 80, as plain digits.
+	t.Setenv("DEVSHARD_RPC_MSGS_PER_MIN", limitMsgsPerMin)
+	t.Setenv("DEVSHARD_RPC_MSGS_BURST", limitBurst)
+	t.Setenv("DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL", limitFloor)
+	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_MSGS_PER_MIN", limitMsgsPerMin)
+	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_MSGS_BURST", limitBurst)
+	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL", limitFloor)
+}
+
+func requireChildLimitEnv(t *testing.T, stack *harness.Stack, cfg *config.File) {
+	t.Helper()
+	for _, h := range cfg.Hosts {
+		burst := strings.TrimSpace(stack.ComposeExec(t, h.ID, "printenv", "DEVSHARD_RPC_MSGS_BURST"))
+		require.Equal(t, limitBurst, burst, "%s DEVSHARD_RPC_MSGS_BURST", h.ID)
+		perMin := strings.TrimSpace(stack.ComposeExec(t, h.ID, "printenv", "DEVSHARD_RPC_MSGS_PER_MIN"))
+		require.Equal(t, limitMsgsPerMin, perMin, "%s DEVSHARD_RPC_MSGS_PER_MIN", h.ID)
+	}
 }
 
 func recreateHosts(t *testing.T, stack *harness.Stack, cfg *config.File) {

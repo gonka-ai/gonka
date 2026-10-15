@@ -17,6 +17,7 @@ const (
 	EndpointDiffs            = "diffs"
 	EndpointSignatures       = "signatures"
 	EndpointMempool          = "mempool"
+	EndpointState            = "state"
 	EndpointSeed             = "height-sync"
 	EndpointRepair           = "repair"
 	EndpointVerifyTimeout    = "verify-timeout"
@@ -26,10 +27,11 @@ const (
 )
 
 // DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
-// PeerConn. Matches DefaultRPCMaxStreams so Watch + concurrent Chats are
-// not queued behind the HTTP/1.1 pool (finding 5). Advertised max_streams
-// is still min(MaxStreams, MaxConns) if either env is lowered.
-const DefaultRPCMaxConnsPerPeer = 256
+// PeerConn. Matches DefaultRPCMaxStreams so concurrent Chats are not
+// queued behind the HTTP/1.1 pool, and so EffectiveMaxStreams is not
+// clamped below the chat cap. Advertised max_streams is still
+// min(MaxStreams, MaxConns) if either env is lowered.
+const DefaultRPCMaxConnsPerPeer = int(DefaultRPCMaxStreams)
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so
@@ -69,6 +71,7 @@ var attachRPCEndpoints = []string{
 	EndpointChat,
 	EndpointSignatures,
 	EndpointMempool,
+	EndpointState,
 	EndpointDiffs,
 	EndpointGossip,
 	EndpointRepair,
@@ -85,6 +88,7 @@ var knownRPCEndpoints = map[string]struct{}{
 	EndpointDiffs:            {},
 	EndpointSignatures:       {},
 	EndpointMempool:          {},
+	EndpointState:            {},
 	EndpointSeed:             {},
 	EndpointRepair:           {},
 	EndpointVerifyTimeout:    {},
@@ -130,7 +134,46 @@ func AllRPCEndpoints() EndpointSet {
 	return set
 }
 
-var endpointsIgnoredOnce sync.Once
+var (
+	endpointsIgnoredOnce sync.Once
+	partialRPCWarnOnce   sync.Once
+)
+
+// ResolveRPCEndpoints returns every Connect method. An empty set is "not
+// set". A partial list, "off", or an unknown name is logged and replaced
+// with the full set so a retired Echo route is not the transport.
+func ResolveRPCEndpoints(set EndpointSet) EndpointSet {
+	if set.Empty() || endpointSetCoversAttach(set) {
+		if set.Empty() {
+			return AllRPCEndpoints()
+		}
+		return set
+	}
+	partialRPCWarnOnce.Do(func() {
+		names := make([]string, 0, len(set))
+		for name := range set {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		logging.Warn("peer RPC endpoint list is incomplete; every Connect method is used",
+			"subsystem", "transport",
+			"configured", strings.Join(names, ","),
+		)
+	})
+	return AllRPCEndpoints()
+}
+
+func endpointSetCoversAttach(set EndpointSet) bool {
+	if len(set) != len(attachRPCEndpoints) {
+		return false
+	}
+	for _, name := range attachRPCEndpoints {
+		if !set.Has(name) {
+			return false
+		}
+	}
+	return true
+}
 
 // RPCEndpointsFromEnv is every Connect method. DEVSHARD_RPC_ENDPOINTS is
 // ignored: a partial list or "off" used to send those methods to the retired

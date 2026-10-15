@@ -237,26 +237,23 @@ func TestPeerConn_ReconnectOnWatchClose(t *testing.T) {
 
 	stealSession(t, srv, hostAddr, peer)
 
-	require.Eventually(t, func() bool {
-		tok := pc.LiveToken()
-		return pc.Ready() && len(tok) > 0 && string(tok) != string(first)
-	}, 3*time.Second, 10*time.Millisecond)
-	require.Greater(t, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "watch")), before)
+	time.Sleep(400 * time.Millisecond)
+	require.True(t, pc.Ready())
+	require.Equal(t, string(first), string(pc.LiveToken()), "another Attach must not replace the live token")
+	require.Equal(t, before, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "watch")))
 }
 
 func TestPeerConn_TokenRefresh(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	// expires_at is unix seconds. A sub-second SessionTTL truncates remaining
-	// TTL to 0 on the client and re-attaches immediately, which drops the
-	// grace token on the second replace. Keep TTL in whole seconds so 75%
-	// refresh happens while the predecessor is still inside TokenGrace.
+	// TTL to 0 on the client and re-attaches immediately. Keep TTL in whole
+	// seconds so the 75% refresh lands while the first token is still live.
 	// MinTTL is lowered so this 4s session is not rejected by the 30s
 	// production floor; refresh still uses a real timer.
 	srv, auth := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 4 * time.Second,
-		TokenGrace: 5 * time.Second,
 	}, nil)
 	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
 		WatchStale: time.Minute,
@@ -272,10 +269,80 @@ func TestPeerConn_TokenRefresh(t *testing.T) {
 	second := pc.LiveToken()
 	require.NotEqual(t, first, second)
 	_, ok := auth.LookupToken(first)
-	require.True(t, ok, "old token must still admit for TokenGrace")
+	require.True(t, ok, "a renewal adds a token; the old one admits until its own expiry")
 	_, ok = auth.LookupToken(second)
 	require.True(t, ok)
 	require.Greater(t, testutil.ToFloat64(observability.PeerReattachCounter(directMuxPeer(hostAddr), "ttl")), 0.0)
+}
+
+func TestPeerConn_WatchFailureBackoffGrowsUntilHeartbeat(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
+		Heartbeat: 50 * time.Millisecond,
+	})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	var allowWatch atomic.Bool
+	var killWatch atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "PeerAuthService/Watch") && !allowWatch.Load() {
+			ew := connect.NewErrorWriter()
+			_ = ew.Write(w, r, connect.NewError(connect.CodeUnavailable, errors.New("watch down")))
+			return
+		}
+		ctx := r.Context()
+		if strings.Contains(r.URL.Path, "PeerAuthService/Watch") {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			killWatch.Store(cancel)
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(ctx, "escrow-1")))
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(auth.Close)
+
+	min := 50 * time.Millisecond
+	var mu sync.Mutex
+	var slept []time.Duration
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		BackoffMin: min,
+		BackoffMax: time.Second,
+		Jitter:     func(d time.Duration) time.Duration { return d },
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			mu.Lock()
+			slept = append(slept, d)
+			mu.Unlock()
+			return nil
+		},
+	})
+	pc.Start()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(slept) >= 4 && slept[1] == min && slept[2] == 2*min && slept[3] == 4*min
+	}, 3*time.Second, 5*time.Millisecond, "fast Watch failures must grow the backoff")
+
+	allowWatch.Store(true)
+	waitPeerReady(t, pc)
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	n := len(slept)
+	mu.Unlock()
+	killWatch.Load().(context.CancelFunc)()
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(slept) > n
+	}, 3*time.Second, 5*time.Millisecond)
+	mu.Lock()
+	got := slept[n]
+	mu.Unlock()
+	require.Equal(t, min, got, "a Watch heartbeat resets the backoff")
 }
 
 func TestPeerConn_RefreshAttachFailureKeepsWatch(t *testing.T) {
@@ -284,7 +351,6 @@ func TestPeerConn_RefreshAttachFailureKeepsWatch(t *testing.T) {
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 4 * time.Second,
-		TokenGrace: 5 * time.Second,
 	})
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
 	var attachN atomic.Int32
@@ -348,7 +414,6 @@ func TestPeerConn_RefreshAttachTimeoutKeepsWatch(t *testing.T) {
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
 		Heartbeat:  50 * time.Millisecond,
 		SessionTTL: 20 * time.Second,
-		TokenGrace: 5 * time.Second,
 	})
 	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
 	var attachN atomic.Int32
@@ -500,6 +565,76 @@ func TestRPCClient_GetSignaturesRoundTrip(t *testing.T) {
 	got, err := rpc.GetSignatures(context.Background(), 7)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
+}
+
+func TestRPCClient_GetSignaturesUnauthenticatedWaitsForReattach(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	want := map[uint32][]byte{1: []byte("sig-after-reattach")}
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(sigLookup{sigs: want}))
+	var holdFirst sync.Once
+	held := make(chan struct{})
+	release := make(chan struct{})
+	var killWatch atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "GetSignatures") {
+			var first bool
+			holdFirst.Do(func() { first = true })
+			if first {
+				close(held)
+				<-release
+				ew := connect.NewErrorWriter()
+				_ = ew.Write(w, r, connect.NewError(connect.CodeUnauthenticated, errors.New("session expired")))
+				return
+			}
+		}
+		ctx := r.Context()
+		if strings.Contains(r.URL.Path, "PeerAuthService/Watch") {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithCancel(ctx)
+			killWatch.Store(cancel)
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(ctx, "escrow-1")))
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(auth.Close)
+
+	pc := newTestPeerConn(t, srv, hostAddr, peer, transport.PeerConnConfig{
+		BackoffMin: 2 * time.Second,
+		Jitter:     func(d time.Duration) time.Duration { return d },
+	})
+	pc.Start()
+	old := waitPeerReady(t, pc)
+	rpc := transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
+
+	errCh := make(chan error, 1)
+	gotCh := make(chan map[uint32][]byte, 1)
+	go func() {
+		got, err := rpc.GetSignatures(context.Background(), 1)
+		gotCh <- got
+		errCh <- err
+	}()
+	select {
+	case <-held:
+	case <-time.After(3 * time.Second):
+		t.Fatal("GetSignatures did not reach the server")
+	}
+	killWatch.Load().(context.CancelFunc)()
+	require.Eventually(t, func() bool { return !pc.Ready() }, 3*time.Second, 10*time.Millisecond, "ending Watch must clear the token so the retry waits for Attach")
+	start := time.Now()
+	close(release)
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+		require.Equal(t, want, <-gotCh)
+	case <-time.After(6 * time.Second):
+		t.Fatal("GetSignatures did not return")
+	}
+	require.GreaterOrEqual(t, time.Since(start), time.Second, "the retry must wait for re-Attach, not return at 200ms")
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.NotEqual(t, string(old), string(pc.LiveToken()))
+	require.True(t, pc.Ready())
 }
 
 func TestRPCClient_GetSignaturesUnauthenticatedFailsFast(t *testing.T) {
@@ -1152,27 +1287,6 @@ func (c largeRPCCore) ServeGossipTxs([]*types.DevshardTx) {
 	if c.gossipTxsRan != nil {
 		c.gossipTxsRan.Store(true)
 	}
-}
-
-func TestPeerConn_SecondSessionReplacedStopsDialing(t *testing.T) {
-	hostAddr := devtest.MustGenerateKey(t).Address()
-	signer := devtest.MustGenerateKey(t)
-	srv, _ := startPeerRPCServer(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: time.Hour}, nil)
-	incumbent := newTestPeerConn(t, srv, hostAddr, signer, transport.PeerConnConfig{})
-	challenger := newTestPeerConn(t, srv, hostAddr, signer, transport.PeerConnConfig{})
-	incumbent.Start()
-	waitPeerReady(t, incumbent)
-	challenger.Start()
-
-	// Two losses are a few Attach round-trips. Wait them out, then the
-	// winner's Watch must stay up and the loser must not resume.
-	time.Sleep(time.Second)
-	incumbentReady := incumbent.Ready()
-	challengerReady := challenger.Ready()
-	require.NotEqual(t, incumbentReady, challengerReady, "both generations still dialing, or both stopped")
-	time.Sleep(400 * time.Millisecond)
-	require.Equal(t, incumbentReady, incumbent.Ready(), "generation changed Attach state after the identity settled")
-	require.Equal(t, challengerReady, challenger.Ready(), "generation changed Attach state after the identity settled")
 }
 
 func (c largeRPCCore) ServeHeightSyncRepair(context.Context, string, *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {

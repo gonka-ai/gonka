@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/transport"
@@ -76,6 +77,7 @@ func (r sessionResolver) resolveSession(ctx context.Context, route string, bind 
 	}
 	if bind == bindOwner {
 		if err := requireOwner(srv, peer); err != nil {
+			recordChatNoReceipt(ctx, route, escrow, observability.ReasonOwnerErr)
 			return "", "", nil, err
 		}
 	}
@@ -95,18 +97,24 @@ func (r sessionResolver) openSignedBound(ctx context.Context, env *rpcpb.SignedE
 	if err != nil {
 		return "", nil, nil, err
 	}
+	reject := func(reason observability.Reason, err error) (string, SessionCore, []byte, error) {
+		if bind == bindOwner {
+			recordChatNoReceipt(ctx, route, escrow, reason)
+		}
+		return "", nil, nil, err
+	}
 	if env == nil {
-		return "", nil, nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil signed envelope"))
+		return reject(observability.ReasonParseErr, connect.NewError(connect.CodeInvalidArgument, errors.New("nil signed envelope")))
 	}
 	if env.GetEscrowId() != escrow {
-		return "", nil, nil, connect.NewError(connect.CodeInvalidArgument, errors.New("escrow mismatch"))
+		return reject(observability.ReasonInvalidEscrowID, connect.NewError(connect.CodeInvalidArgument, errors.New("escrow mismatch")))
 	}
 	addr, vErr := transport.VerifyEnvelope(r.verifier, env, r.now())
 	if vErr != nil {
-		return "", nil, nil, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid envelope signature"))
+		return reject(observability.ReasonInvalidSignature, connect.NewError(connect.CodeUnauthenticated, errors.New("invalid envelope signature")))
 	}
 	if addr != peer {
-		return "", nil, nil, connect.NewError(connect.CodePermissionDenied, errors.New("envelope signer does not match handshake"))
+		return reject(observability.ReasonOwnerErr, connect.NewError(connect.CodePermissionDenied, errors.New("envelope signer does not match handshake")))
 	}
 	return peer, srv, env.GetPayload(), nil
 }

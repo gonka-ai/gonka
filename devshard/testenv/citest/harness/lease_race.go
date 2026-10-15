@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"devshard/storage"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
@@ -152,11 +154,84 @@ func RequireLeaseExclusivityPass(t *testing.T, snap LeaseSnapshot, minLeases int
 	t.Helper()
 	require.Equal(t, 0, snap.DuplicateGroups,
 		"duplicate (epoch_id, escrow_id, inference_id) groups: %+v", snap)
+	RequireLeaseOneOwnerPerInference(t, snap)
 	require.GreaterOrEqual(t, snap.Total, minLeases,
 		"lease rows=%d < min=%d (pending=%d submitted=%d skipped=%d)",
 		snap.Total, minLeases, snap.Pending, snap.Submitted, snap.Skipped)
 	t.Logf("citest: lease exclusivity PASS total=%d pending=%d submitted=%d skipped=%d",
 		snap.Total, snap.Pending, snap.Submitted, snap.Skipped)
+}
+
+// RequireLeaseOneOwnerPerInference asserts each inference_id in the snapshot
+// rows maps to a single instance_address (pending and terminal alike).
+func RequireLeaseOneOwnerPerInference(t *testing.T, snap LeaseSnapshot) {
+	t.Helper()
+	if err := leaseOneOwnerConflict(snap); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+func leaseOneOwnerConflict(snap LeaseSnapshot) error {
+	owners := make(map[uint64]string, len(snap.Rows))
+	for _, r := range snap.Rows {
+		if prev, ok := owners[r.InferenceID]; ok {
+			if prev != r.InstanceAddress {
+				return fmt.Errorf("citest: inference_id=%d has multiple owners %q and %q (status=%s)",
+					r.InferenceID, prev, r.InstanceAddress, r.Status)
+			}
+			return fmt.Errorf("citest: inference_id=%d appears more than once in lease snapshot (owner=%s)",
+				r.InferenceID, r.InstanceAddress)
+		}
+		owners[r.InferenceID] = r.InstanceAddress
+	}
+	return nil
+}
+
+// invalidMockVoteMarkers are the versiond log lines of a validator that voted
+// against an honest mock reply: refused before the replay, or replayed and
+// found invalid.
+var invalidMockVoteMarkers = []string{
+	"not sent to the validator node",
+	"validation_result=invalid",
+}
+
+// RequireMockValidationsPassed fails when any versiond voted invalid on a
+// fault-free run. Lease waits only cover in-flight Validate while every mock
+// reply reaches the ML replay and passes it.
+func RequireMockValidationsPassed(t *testing.T, stack *Stack, cfg *config.File) {
+	t.Helper()
+	services := make([]string, 0, len(cfg.Hosts))
+	for _, host := range cfg.Hosts {
+		services = append(services, host.ID)
+	}
+	logs, err := stack.ComposeLogsAll(services...)
+	require.NoError(t, err)
+	lines := strings.Split(logs, "\n")
+	for _, line := range lines {
+		for _, marker := range invalidMockVoteMarkers {
+			if strings.Contains(line, marker) {
+				t.Fatalf("citest: validator voted invalid on a mock reply: %s\n%s", line, validationLinesFor(lines, line))
+			}
+		}
+	}
+}
+
+var voteInferenceID = regexp.MustCompile(`\binference_?[iI]d=(\d+)\b`)
+
+// validationLinesFor returns the versiond lines that name the same inference as
+// vote, so the failure shows that inference's validation and vote.
+func validationLinesFor(lines []string, vote string) string {
+	m := voteInferenceID.FindStringSubmatch(vote)
+	if m == nil {
+		return ""
+	}
+	var out []string
+	for _, line := range lines {
+		if id := voteInferenceID.FindStringSubmatch(line); id != nil && id[1] == m[1] {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // SetValidationRate posts chain params validation_rate (bps) via mock-dapi.
@@ -215,6 +290,10 @@ func WarmEscrowOnHost(t *testing.T, stack *Stack, cfg *config.File, hostID, escr
 	t.Logf("citest: warm %s → %s (%d bytes)", hostID, url, len(lastOut))
 }
 
+// hostDiffProbeCeil is how far WaitHostDurableNonce walks the journal.
+// One GET covers at most DiffPageMaxNonces nonces, so the walk is paged.
+const hostDiffProbeCeil uint64 = 10000
+
 // WaitHostDurableNonce polls GET /sessions/{escrow}/diffs on a versiond host
 // until the highest durable nonce is at least want. Mempool byte length is not
 // a catch-up signal (empty can mean caught-up or still at the seed nonce).
@@ -223,7 +302,6 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 	require.NotEmpty(t, escrowID)
 	require.NotEmpty(t, hostID)
 	ver := cfg.Versiond.VersionName
-	url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/diffs?from=1&to=10000", hostID, ver, escrowID)
 	deadline := time.Now().Add(timeout)
 	var (
 		attempts int
@@ -232,16 +310,9 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 	)
 	for time.Now().Before(deadline) {
 		attempts++
-		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		n, err := hostDurableNonce(stack, ver, hostID, escrowID, want)
 		if err != nil {
 			lastErr = err.Error()
-			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
-			time.Sleep(2 * time.Second)
-			continue
-		}
-		n, parseErr := maxDiffNonceJSON(out)
-		if parseErr != nil {
-			lastErr = parseErr.Error()
 			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
 			time.Sleep(2 * time.Second)
 			continue
@@ -255,9 +326,39 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 		time.Sleep(2 * time.Second)
 	}
 	DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
-	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts) → %s: %s",
-		hostID, last, want, timeout, attempts, url, lastErr)
+	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts): %s",
+		hostID, last, want, timeout, attempts, lastErr)
 	return last
+}
+
+// hostDurableNonce walks GET /diffs in windows the server will accept.
+// A request with to-from >= DiffPageMaxNonces is HTTP 400, so the old
+// from=1&to=10000 probe could never observe a caught-up host.
+func hostDurableNonce(stack *Stack, ver, hostID, escrowID string, want uint64) (uint64, error) {
+	var max uint64
+	for from := uint64(1); from <= hostDiffProbeCeil; {
+		to := from + uint64(storage.DiffPageMaxNonces) - 1
+		if to > hostDiffProbeCeil {
+			to = hostDiffProbeCeil
+		}
+		url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/diffs?from=%d&to=%d", hostID, ver, escrowID, from, to)
+		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", url, err)
+		}
+		n, err := maxDiffNonceJSON(out)
+		if err != nil {
+			return 0, err
+		}
+		if n > max {
+			max = n
+		}
+		if max >= want || n == 0 {
+			return max, nil
+		}
+		from = to + 1
+	}
+	return max, nil
 }
 
 func maxDiffNonceJSON(raw string) (uint64, error) {
@@ -336,11 +437,89 @@ func PauseMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string) {
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{HTTPStatus: &status})
 }
 
-// SlowMockOpenAI stretches Validate (non-stream JSON) so leases stay pending.
-// Streaming inference is not delayed: the gateway first-token floor is 1s.
+// SlowMockOpenAI stretches Validate so leases stay pending without delaying
+// Execute's first stream chunk. Two knobs (see FaultPatch):
+//
+//   - latency_ms → non-stream JSON only (ExecuteValidation sets stream=false)
+//   - stream_chunk_delay_ms / stream_ttft_ms → 0 so gateway first-token stays green
+//
+// Under always-stream upstream, client stream and non-stream are interchangeable:
+// both talk stream to ML, so load must not rely on "client stream avoids latency."
 func SlowMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string, latencyMs int) {
 	t.Helper()
-	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{LatencyMs: &latencyMs})
+	zero := 0
+	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
+		LatencyMs:        &latencyMs,
+		StreamChunkDelay: &zero,
+		StreamTTFTMs:     &zero,
+	})
+}
+
+// HoldLeasePendingStretch requires pending to stay ≥ minPending for hold while
+// load is still running, sampling exclusivity each tick. Returns the peak
+// pending snapshot observed in the window.
+//
+// onTick runs each sample (including the initial one) while pending is still
+// elevated — use it to observe Execute success concurrent with the Validate hold.
+func HoldLeasePendingStretch(t *testing.T, stack *Stack, cfg *config.File, minPending int, hold, tick time.Duration, onTick func(LeaseSnapshot)) LeaseSnapshot {
+	t.Helper()
+	if tick <= 0 {
+		tick = 500 * time.Millisecond
+	}
+	if hold <= 0 {
+		hold = 2 * time.Second
+	}
+	deadline := time.Now().Add(hold)
+	peak := stack.PostgresLeaseSnapshot(t, cfg)
+	require.GreaterOrEqual(t, peak.Pending, minPending, "stretch requires pending already elevated")
+	require.Equal(t, 0, peak.DuplicateGroups)
+	RequireLeaseOneOwnerPerInference(t, peak)
+	if onTick != nil {
+		onTick(peak)
+	}
+	for time.Now().Before(deadline) {
+		time.Sleep(tick)
+		snap := stack.PostgresLeaseSnapshot(t, cfg)
+		require.Equal(t, 0, snap.DuplicateGroups, "duplicates during pending stretch: %+v", snap)
+		RequireLeaseOneOwnerPerInference(t, snap)
+		require.GreaterOrEqual(t, snap.Pending, minPending,
+			"pending dropped during stretch (got %d want >=%d); not a sustained Validate hold",
+			snap.Pending, minPending)
+		if snap.Pending > peak.Pending ||
+			(snap.Pending == peak.Pending && snap.Submitted > peak.Submitted) {
+			peak = snap
+		}
+		if onTick != nil {
+			onTick(snap)
+		}
+	}
+	t.Logf("citest: pending stretch held >=%d for %s (peak pending=%d submitted=%d)",
+		minPending, hold, peak.Pending, peak.Submitted)
+	return peak
+}
+
+// WaitLeasePendingDrain waits until pending==0 and terminal rows (submitted+
+// skipped) grew by at least pendingAtHold — Validate finished rather than stuck.
+// Skipped counts too: a completed Validate that votes skip still drains the hold.
+func WaitLeasePendingDrain(t *testing.T, stack *Stack, cfg *config.File, terminalAtHold, pendingAtHold int, timeout time.Duration) LeaseSnapshot {
+	t.Helper()
+	floor := terminalAtHold + pendingAtHold
+	deadline := time.Now().Add(timeout)
+	var last LeaseSnapshot
+	for time.Now().Before(deadline) {
+		last = stack.PostgresLeaseSnapshot(t, cfg)
+		require.Equal(t, 0, last.DuplicateGroups, "duplicates while draining pending")
+		terminal := last.Submitted + last.Skipped
+		if last.Pending == 0 && terminal >= floor {
+			t.Logf("citest: pending drained terminal=%d (submitted=%d skipped=%d floor=%d)",
+				terminal, last.Submitted, last.Skipped, floor)
+			return last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("citest: pending drain incomplete after %s (pending=%d submitted=%d skipped=%d want terminal>=%d)",
+		timeout, last.Pending, last.Submitted, last.Skipped, floor)
+	return last
 }
 
 // WaitLeasePending polls until at least minPending leases are pending (or timeout).
@@ -355,7 +534,8 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
-	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d)", last.Pending, minPending, timeout, last.Total)
+	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d submitted=%d skipped=%d)",
+		last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
 	return last
 }
 
@@ -417,7 +597,8 @@ func WaitLeasePendingUnderLoad(t *testing.T, stack *Stack, cfg *config.File, min
 	mu.Lock()
 	defer mu.Unlock()
 	if !found {
-		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d)", last.Pending, minPending, timeout, last.Total)
+		t.Fatalf("citest: pending leases=%d < %d after %s under load (total=%d submitted=%d skipped=%d)",
+			last.Pending, minPending, timeout, last.Total, last.Submitted, last.Skipped)
 	}
 	return hit
 }

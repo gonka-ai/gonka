@@ -1,5 +1,5 @@
 use cosmwasm_schema::{cw_serde, QueryResponses};
-use cosmwasm_std::{Binary, Coin, Uint128};
+use cosmwasm_std::{Binary, Coin, Uint256};
 use std::collections::HashMap;
 
 #[cw_serde]
@@ -7,15 +7,15 @@ pub struct InstantiateMsg {
     /// Optional admin address that can pause/unpause and update config. If None, contract is governance-only.
     pub admin: Option<String>,
     /// Daily selling limit in basis points (1-10000, where 10000 = 100%)
-    pub daily_limit_bp: Option<Uint128>,
+    pub daily_limit_bp: Option<Uint256>,
     /// Optional base price per token in USD (with 6 decimals for USD, so 25000 = $0.025). Defaults to 25000.
-    pub base_price_usd: Option<Uint128>,
+    pub base_price_usd: Option<Uint256>,
     /// Optional tokens per tier with 9 decimals (default: 3_000_000_000_000_000 for 3 million tokens)
-    pub tokens_per_tier: Option<Uint128>,
+    pub tokens_per_tier: Option<Uint256>,
     /// Optional price multiplier for each tier (1300 = 1.3x, default: 1300)
-    pub tier_multiplier: Option<Uint128>,
+    pub tier_multiplier: Option<Uint256>,
     /// Initial total supply of native tokens (defaults to 0 if not provided)
-    pub total_supply: Option<Uint128>,
+    pub total_supply: Option<Uint256>,
     /// Optional native token denomination (defaults to "ngonka" if not provided)
     pub native_denom: Option<String>,
 }
@@ -31,27 +31,35 @@ pub enum ExecuteMsg {
     /// Admin: Resume the contract
     Resume {},
     /// Admin: Update daily limit in basis points
-    UpdateDailyLimit { daily_limit_bp: Option<Uint128> },
+    UpdateDailyLimit { daily_limit_bp: Option<Uint256> },
     /// Admin: Withdraw native tokens (Gonka) from contract
-    WithdrawNative { amount: Uint128, recipient: String },
+    WithdrawNative { amount: Uint256, recipient: String },
     /// Admin: Withdraw IBC/other native tokens (e.g. USDC)
-    WithdrawIbc { denom: String, amount: Uint128, recipient: String },
+    WithdrawIbc {
+        denom: String,
+        amount: Uint256,
+        recipient: String,
+    },
     /// Admin: Withdraw CW20 tokens
-    WithdrawCw20 { contract_addr: String, amount: Uint128, recipient: String },
+    WithdrawCw20 {
+        contract_addr: String,
+        amount: Uint256,
+        recipient: String,
+    },
     /// Admin: Emergency withdraw all funds
     EmergencyWithdraw { recipient: String },
     /// Admin: Update pricing configuration
     UpdatePricingConfig {
-        base_price_usd: Option<Uint128>,
-        tokens_per_tier: Option<Uint128>,
-        tier_multiplier: Option<Uint128>,
+        base_price_usd: Option<Uint256>,
+        tokens_per_tier: Option<Uint256>,
+        tier_multiplier: Option<Uint256>,
     },
 }
 
 #[cw_serde]
 pub struct Cw20ReceiveMsg {
     pub sender: String,
-    pub amount: Uint128,
+    pub amount: Uint256,
     pub msg: Binary,
 }
 
@@ -77,7 +85,7 @@ pub enum QueryMsg {
     PricingInfo {},
     /// Calculate how many tokens can be bought with given USD amount
     #[returns(TokenCalculationResponse)]
-    CalculateTokens { usd_amount: Uint128 },
+    CalculateTokens { usd_amount: Uint256 },
     /// Test bridge validation with a provided CW20 contract address
     #[returns(TestBridgeValidationResponse)]
     TestBridgeValidation { cw20_contract: String },
@@ -93,24 +101,24 @@ pub enum QueryMsg {
 pub struct ConfigResponse {
     pub admin: String,
     pub native_denom: String,
-    pub daily_limit_bp: Uint128,
+    pub daily_limit_bp: Uint256,
     pub is_paused: bool,
-    pub total_tokens_sold: Uint128,
+    pub total_tokens_sold: Uint256,
 }
 
 #[cw_serde]
 pub struct DailyStatsResponse {
     pub current_day: u64,
-    pub usd_received_today: Uint128,
-    pub tokens_sold_today: Uint128,
-    pub tokens_available_today: Uint128,
-    pub daily_token_limit: Uint128,
-    pub total_supply: Uint128,
+    pub usd_received_today: Uint256,
+    pub tokens_sold_today: Uint256,
+    pub tokens_available_today: Uint256,
+    pub daily_token_limit: Uint256,
+    pub total_supply: Uint256,
 }
 
 #[cw_serde]
 pub struct AcceptedTokensResponse {
-    pub tokens: HashMap<String, Uint128>,
+    pub tokens: HashMap<String, Uint256>,
 }
 
 #[cw_serde]
@@ -121,22 +129,21 @@ pub struct NativeBalanceResponse {
 #[cw_serde]
 pub struct PricingInfoResponse {
     pub current_tier: u32,
-    pub current_price_usd: Uint128,
-    pub total_tokens_sold: Uint128,
-    pub tokens_per_tier: Uint128,
-    pub base_price_usd: Uint128,
-    pub tier_multiplier: Uint128,
-    pub next_tier_at: Uint128,
-    pub next_tier_price: Uint128,
+    pub current_price_usd: Uint256,
+    pub total_tokens_sold: Uint256,
+    pub tokens_per_tier: Uint256,
+    pub base_price_usd: Uint256,
+    pub tier_multiplier: Uint256,
+    pub next_tier_at: Uint256,
+    pub next_tier_price: Uint256,
 }
 
 #[cw_serde]
 pub struct TokenCalculationResponse {
-    pub tokens: Uint128,
-    pub current_price: Uint128,
+    pub tokens: Uint256,
+    pub current_price: Uint256,
     pub current_tier: u32,
 }
-
 
 #[cw_serde]
 pub struct TestBridgeValidationResponse {

@@ -407,7 +407,7 @@ def collect_from_server(
         time.sleep(warmup_seconds)
 
     receiver.clear()
-    measured_started_at = time.time()
+    measured_started_at = time.monotonic()
     measured_started_at_iso = datetime.now().isoformat()
 
     elapsed = 0
@@ -418,8 +418,9 @@ def collect_from_server(
         stats = receiver.stats()
         print(f"  [{elapsed:>2d}s] {stats['total_nonces']} nonces")
 
-    measured_finished_at = time.time()
+    measured_finished_at = time.monotonic()
     measured_finished_at_iso = datetime.now().isoformat()
+    measured_artifacts = receiver.collected_artifacts()
 
     stop_generation(server_url)
     time.sleep(1.0)
@@ -434,7 +435,10 @@ def collect_from_server(
 
     stats = receiver.stats()
     elapsed_seconds = max(0.0, measured_finished_at - measured_started_at)
-    nonces_per_min = (len(artifacts) / elapsed_seconds * 60.0) if elapsed_seconds > 0 else 0.0
+    # Callbacks keep arriving while pow/stop drains, after the interval above
+    # has been closed. Rate them against the interval that produced them.
+    measured_nonce_count = len(measured_artifacts)
+    nonces_per_min = (measured_nonce_count / elapsed_seconds * 60.0) if elapsed_seconds > 0 else 0.0
 
     return {
         "collection_mode": "init_generate_callback",
@@ -459,6 +463,8 @@ def collect_from_server(
             "started_at": measured_started_at_iso,
             "finished_at": measured_finished_at_iso,
             "elapsed_seconds": elapsed_seconds,
+            "measured_nonce_count": measured_nonce_count,
+            "post_boundary_nonces": len(artifacts) - measured_nonce_count,
             "nonces_per_min": nonces_per_min,
         },
     }

@@ -6,15 +6,22 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/logging"
+	"devshard/observability"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
@@ -120,7 +127,7 @@ func TestObserveChat_ApplicationStatusNotTransportFault(t *testing.T) {
 			cfg.ParticipantKey = "shared-host"
 			cfg.Admission = admission
 			rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
-			rpc.observeChat(path, tc.err)
+			rpc.observeConnect(path, tc.err)
 			if tc.silent {
 				require.Empty(t, admission.results)
 				require.Empty(t, admission.faults)
@@ -139,13 +146,52 @@ func TestObserveChat_ApplicationStatusNotTransportFault(t *testing.T) {
 
 type chatStatusHandler struct {
 	rpcpbconnect.UnimplementedSessionServiceHandler
-	err   error
-	calls int
+	err     error
+	calls   int
+	headers http.Header
 }
 
-func (h *chatStatusHandler) Chat(context.Context, *connect.Request[rpcpb.SignedEnvelope], *connect.ServerStream[rpcpb.ChatFrame]) error {
+func (h *chatStatusHandler) Chat(_ context.Context, req *connect.Request[rpcpb.SignedEnvelope], _ *connect.ServerStream[rpcpb.ChatFrame]) error {
 	h.calls++
+	if req != nil {
+		h.headers = req.Header().Clone()
+	}
 	return h.err
+}
+
+func TestRPCClient_Send_InjectsTraceparentAndRequestID(t *testing.T) {
+	prevTP := otel.GetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	handler := &chatStatusHandler{
+		err: connect.NewError(connect.CodeUnavailable, errors.New("requests disabled")),
+	}
+	handler.err.(*connect.Error).Meta().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
+	_, h := rpcpbconnect.NewSessionServiceHandler(handler)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	rpc := readyChatClient(t, srv.URL, &bodyAdmission{})
+	ctx, reqID := logging.WithRequestID(context.Background(), "req-peer-trace-1")
+	ctx, span := observability.StartGatewayRequest(ctx)
+	defer span.End()
+	wantTrace := trace.SpanContextFromContext(ctx).TraceID().String()
+
+	_, err := rpc.Send(ctx, chatRequest(), nil, nil)
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+	require.Equal(t, 1, handler.calls)
+	require.Equal(t, reqID, handler.headers.Get(observability.RequestIDHeader))
+	tpHeader := handler.headers.Get("traceparent")
+	require.NotEmpty(t, tpHeader, "Connect Chat must carry W3C traceparent")
+	require.Contains(t, tpHeader, wantTrace)
 }
 
 func readyChatClient(t *testing.T, base string, admission RequestAdmissionController) *RPCClient {
@@ -196,6 +242,55 @@ func TestRPCClient_Send_RequestsDisabledIsUpstreamStatus(t *testing.T) {
 	require.Equal(t, 1, handler.calls)
 	require.Empty(t, admission.faults)
 	require.Equal(t, []string{"503 " + DevshardErrorRequestsDisabled + " requests disabled"}, admission.results)
+}
+
+func escrowLookupLimitedError() *connect.Error {
+	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many escrow lookups"))
+	err.Meta().Set(HeaderDevshardError, DevshardErrorEscrowLookupLimited)
+	return err
+}
+
+func TestRPCClient_Send_EscrowLookupLimitedReachesLimiterOnce(t *testing.T) {
+	handler := &chatStatusHandler{err: escrowLookupLimitedError()}
+	_, h := rpcpbconnect.NewSessionServiceHandler(handler)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	admission := &bodyAdmission{}
+	rpc := readyChatClient(t, srv.URL, admission)
+	_, err := rpc.Send(context.Background(), chatRequest(), nil, nil)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, 1, handler.calls, "chat is not retried on the same host")
+	require.Empty(t, admission.faults)
+	require.Equal(t, []string{"429 " + DevshardErrorEscrowLookupLimited + " too many escrow lookups"}, admission.results,
+		"the limiter needs the devshard code to tell this apart from a host 429")
+}
+
+func TestRPCAttempt_EscrowLookupLimitedIsNotRetried(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	cfg := DefaultClientConfig()
+	cfg.ParticipantKey = "shared-host"
+	admission := &bodyAdmission{}
+	cfg.Admission = admission
+	rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+
+	calls := 0
+	err := rpc.rpcAttempt(context.Background(), rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		return escrowLookupLimitedError()
+	})
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.Equal(t, 1, calls)
+	require.Equal(t, []string{"429 " + DevshardErrorEscrowLookupLimited + " too many escrow lookups"}, admission.results)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	calls = 0
+	_ = rpc.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		return connect.NewError(connect.CodeResourceExhausted, errors.New("too many diffs requests"))
+	})
+	require.Greater(t, calls, 1, "a plain rate limit still retries")
 }
 
 func TestRPCClient_Send_ReadyTimeoutIsTransportFault(t *testing.T) {
@@ -260,6 +355,42 @@ func TestRPCClient_Send_UnauthenticatedRetriesOnce(t *testing.T) {
 	require.Len(t, admission.results, 2)
 }
 
+func TestRPCAttempt_AdmitsOnceAndObservesTheFinalStatus(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	cfg := DefaultClientConfig()
+	cfg.ParticipantKey = "shared-host"
+	admission := &bodyAdmission{}
+	cfg.Admission = admission
+	rpc := &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	calls := 0
+	err := rpc.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetDiffsProcedure, func() error {
+		calls++
+		disabled := connect.NewError(connect.CodeUnavailable, errors.New("requests disabled"))
+		disabled.Meta().Set(HeaderDevshardError, DevshardErrorRequestsDisabled)
+		return disabled
+	})
+	require.Error(t, err)
+	require.GreaterOrEqual(t, calls, 1)
+	require.Empty(t, admission.faults)
+	require.Equal(t, []string{"503 " + DevshardErrorRequestsDisabled + " requests disabled"}, admission.results)
+
+	blocked := &bodyAdmission{allowErr: errors.New("participant request budget exhausted")}
+	cfg.Admission = blocked
+	rpc = &RPCClient{HTTPClient: NewHTTPClient("http://127.0.0.1", "escrow-1", signer, cfg)}
+	calls = 0
+	err = rpc.rpcAttempt(context.Background(), rpcpbconnect.GossipServiceNonceProcedure, func() error {
+		calls++
+		return nil
+	})
+	require.ErrorContains(t, err, "participant request budget exhausted")
+	require.Equal(t, 0, calls)
+	require.Empty(t, blocked.results)
+	require.Empty(t, blocked.faults)
+}
+
 func TestRPCClient_Send_AllowRequestSkipsTheHost(t *testing.T) {
 	handler := &chatStatusHandler{err: connect.NewError(connect.CodeInternal, errors.New("should not run"))}
 	_, h := rpcpbconnect.NewSessionServiceHandler(handler)
@@ -273,4 +404,27 @@ func TestRPCClient_Send_AllowRequestSkipsTheHost(t *testing.T) {
 	require.Equal(t, 0, handler.calls)
 	require.Empty(t, admission.results)
 	require.Empty(t, admission.faults)
+}
+
+// Test flow:
+//  1. Build a chat client on a connection whose host advertised the default budget with one chat left in it, and one that sends chat over HTTP.
+//  2. Read the chat wait before and after a chat spends the burst.
+//  3. Assert the wait is zero until the burst is spent, then one chat's refill, and always zero for a client that does not send chat over the connection.
+func TestRPCClient_ChatBudgetWaitReportsTheAdvertisedBudget(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	pc := NewPeerConn(PeerConnConfig{BaseURL: "http://127.0.0.1:1", HostAddress: "gonka1chatbudget", Signer: signer, DirectMux: true})
+	t.Cleanup(pc.Close)
+	pc.budget.apply(&rpcpb.RateLimits{MessagesPerMin: DefaultRPCMessagesPerMin, MessagesBurst: DefaultRPCMessagesBurst}, time.Now())
+	pc.budget.bucket.tokens = RPCWeightChat
+	chat := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, DefaultClientConfig()), pc, ParseRPCEndpoints(EndpointChat))
+	chatOverHTTP := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "escrow-1", signer, DefaultClientConfig()), pc, ParseRPCEndpoints(EndpointDiffs))
+
+	before := chat.ChatBudgetWait()
+	require.NoError(t, pc.takePeerBudget(context.Background(), rpcpbconnect.SessionServiceChatProcedure))
+	after := chat.ChatBudgetWait()
+
+	require.Zero(t, before)
+	require.Greater(t, after, time.Duration(0))
+	require.LessOrEqual(t, after, RPCWeightChat*time.Minute/time.Duration(DefaultRPCMessagesPerMin))
+	require.Zero(t, chatOverHTTP.ChatBudgetWait())
 }

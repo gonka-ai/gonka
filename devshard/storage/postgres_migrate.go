@@ -211,7 +211,42 @@ ALTER TABLE devshard_storage_identity
 	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
 	},
 	{
+		// IDs 15–17 are already recorded on devshard-0.2.x-v6. ApplyPG skips a
+		// recorded ID, so a new step must not reuse one.
 		ID:   15,
+		Name: "devshard_validation_lease_identity",
+		Statements: []string{`
+ALTER TABLE devshard_validation_leases
+    ADD COLUMN IF NOT EXISTS instance_id TEXT NOT NULL DEFAULT '',
+    ADD COLUMN IF NOT EXISTS hostname    TEXT NOT NULL DEFAULT ''`},
+	},
+	{
+		ID:   16,
+		Name: "devshard_sessions_obs_rebuild_pending",
+		Statements: []string{`
+ALTER TABLE devshard_sessions
+    ADD COLUMN IF NOT EXISTS obs_rebuild_pending BOOLEAN NOT NULL DEFAULT FALSE`},
+	},
+	{
+		// Credits are participant-scoped, not epoch-scoped: an HA replica must
+		// spend a credit its sibling earned, and epoch prune must not drop it.
+		ID:   17,
+		Name: "devshard_validation_credits",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_validation_credits (
+    id           BIGSERIAL   PRIMARY KEY,
+    participant  TEXT        NOT NULL,
+    model        TEXT        NOT NULL,
+    expires_at   TIMESTAMPTZ NOT NULL
+)`,
+			`CREATE INDEX IF NOT EXISTS devshard_validation_credits_live
+    ON devshard_validation_credits (participant, model, expires_at, id)`,
+		},
+	},
+	// 18 and 19 are unused: peer RPC session tokens are stateless. They stay
+	// so migration IDs are stable; the DDL check forbids a DROP.
+	{
+		ID:   18,
 		Name: "devshard_peer_rpc_sessions",
 		Statements: []string{`
 CREATE SEQUENCE IF NOT EXISTS devshard_peer_rpc_session_seq`, `
@@ -241,6 +276,24 @@ CREATE TABLE IF NOT EXISTS devshard_peer_rpc_members (
     ready         BOOLEAN     NOT NULL
 )`,
 		},
+	},
+	{
+		ID:   19,
+		Name: "devshard_peer_rpc_session_last_seen",
+		Statements: []string{`
+ALTER TABLE devshard_peer_rpc_sessions
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ`},
+	},
+	{
+		// A reserved credit stays in the table under a hold. A replica that
+		// dies holding it stops renewing, and the credit becomes spendable
+		// again once reserved_until passes.
+		ID:   20,
+		Name: "devshard_validation_credit_holds",
+		Statements: []string{`
+ALTER TABLE devshard_validation_credits
+    ADD COLUMN IF NOT EXISTS hold_token     UUID,
+    ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
 	},
 }
 

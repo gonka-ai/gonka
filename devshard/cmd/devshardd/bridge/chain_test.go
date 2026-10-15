@@ -1,6 +1,7 @@
 package bridge_test
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -66,6 +67,21 @@ func TestChainBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	require.Equal(t, int64(17), info.ExecutionTimeout)
 }
 
+func TestBridge_GetEscrow_TransientQueryError(t *testing.T) {
+	st := seed.Defaults()
+	st.SetEscrowQueryFault(true)
+
+	_, err := newTestBridgeWithStore(t, st, nil).GetEscrow("1")
+	require.ErrorIs(t, err, shardbridge.ErrChainUnavailable)
+}
+
+func TestBridge_NotificationsNoop(t *testing.T) {
+	b := newTestBridge(t, nil)
+	assert.NoError(t, b.OnEscrowCreated(shardbridge.EscrowInfo{}))
+	assert.NoError(t, b.OnSettlementProposed("1", nil, 0))
+	assert.NoError(t, b.OnSettlementFinalized("1"))
+}
+
 func TestBridge_OnEscrowCreatedHandler(t *testing.T) {
 	b := newTestBridge(t, nil)
 	var got shardbridge.EscrowInfo
@@ -103,4 +119,28 @@ type stubSubmitter struct {
 
 func (s *stubSubmitter) SubmitDisputeState(id uint64, root []byte, nonce uint64, sigs map[uint32][]byte) error {
 	return s.fn(id, root, nonce, sigs)
+}
+
+// Test flow:
+// 1. The chain pins a Hugging Face repo and commit on the epoch's model snapshot.
+// 2. GetModelSource returns that pair.
+// 3. For an epoch without the model both GetModelSource and GetValidationThreshold, which share the snapshot lookup, fail.
+func TestChainBridge_GetModelSource_ReadsModelSnapshot(t *testing.T) {
+	chainState := seed.Defaults()
+	epochGroupData := chainState.GetEpochGroupData(1, "test-model")
+	require.NotNil(t, epochGroupData)
+	epochGroupData.ModelSnapshot.HfRepo = "org/model"
+	epochGroupData.ModelSnapshot.HfCommit = "abc123"
+	chainState.EpochGroupData[store.EpochGroupKey{EpochIndex: 1, ModelID: "test-model"}] = epochGroupData
+	chainBridge := newTestBridgeWithStore(t, chainState, nil)
+
+	hfRepo, hfCommit, err := chainBridge.GetModelSource(context.Background(), 1, "test-model")
+	require.NoError(t, err)
+	assert.Equal(t, "org/model", hfRepo)
+	assert.Equal(t, "abc123", hfCommit)
+
+	_, _, err = chainBridge.GetModelSource(context.Background(), 99, "test-model")
+	require.Error(t, err)
+	_, err = chainBridge.GetValidationThreshold(99, "test-model")
+	require.Error(t, err)
 }

@@ -24,7 +24,6 @@ func TestRPCChallenge_BindsColdEscrowOnLiveHandshake(t *testing.T) {
 	const escrowA = "9720"
 	const escrowB = "9721"
 	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowA, 1)
-	mgr.SetRPCServerEnabled(true)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 	ts := httptest.NewServer(e)
@@ -95,7 +94,6 @@ func TestRPCChat_SlotMemberDoesNotBindColdEscrow(t *testing.T) {
 	const escrowA = "9722"
 	const escrowB = "9723"
 	mgr, store, _, hosts := setupBindTestGroupSignedBy(t, escrowA, 1)
-	mgr.SetRPCServerEnabled(true)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 	ts := httptest.NewServer(e)
@@ -119,7 +117,6 @@ func TestRPCChat_OwnerBindsColdEscrowOnLiveHandshake(t *testing.T) {
 	const escrowA = "9724"
 	const escrowB = "9725"
 	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowA, 1)
-	mgr.SetRPCServerEnabled(true)
 	e := echo.New()
 	mgr.Register(e.Group(""))
 	ts := httptest.NewServer(e)

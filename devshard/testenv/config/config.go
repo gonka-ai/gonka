@@ -28,9 +28,12 @@ type File struct {
 	Grantees     []GranteeBinding    `yaml:"grantees"`
 	EpochGroups  []EpochGroupBinding `yaml:"epoch_groups"`
 
-	MockChain      MockChainCfg      `yaml:"mock_chain"`
-	MockDapi       MockDapiCfg       `yaml:"mock_dapi"`
-	MockOpenAI     MockOpenAICfg     `yaml:"mock_openai"`
+	MockChain  MockChainCfg  `yaml:"mock_chain"`
+	MockDapi   MockDapiCfg   `yaml:"mock_dapi"`
+	MockOpenAI MockOpenAICfg `yaml:"mock_openai"`
+	// MLNodes is the number of mock-openai instances (T7). Default 1.
+	// Services are named mock-openai-0 … mock-openai-{N-1}.
+	MLNodes        int               `yaml:"ml_nodes"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
@@ -116,20 +119,36 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int    `yaml:"http_port"`
-	Host     string `yaml:"host"`
+	HTTPPort   int                 `yaml:"http_port"`
+	Host       string              `yaml:"host"`
+	ReplayFile string              `yaml:"replay_file,omitempty"`
+	Nodes      []MockOpenAINodeCfg `yaml:"nodes"`
+}
+
+// MockOpenAINodeCfg configures one independently-behaving Mock ML container.
+type MockOpenAINodeCfg struct {
+	Name          string  `yaml:"name"`
+	TTFT          string  `yaml:"ttft,omitempty"`
+	TokenInterval string  `yaml:"token_interval,omitempty"`
+	Workers       int     `yaml:"workers,omitempty"`
+	Queue         int     `yaml:"queue,omitempty"`
+	Hang          bool    `yaml:"hang,omitempty"`
+	FailureRate   float64 `yaml:"failure_rate,omitempty"`
+	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode            string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName     string `yaml:"version_name"`
-	HostBinaryMount string `yaml:"host_binary_mount"`
-	OverridePath    string `yaml:"override_path"`
-	PollInterval    string `yaml:"poll_interval"`
-	BinaryVersion   string `yaml:"binary_version"`
-	KeyringDir      string `yaml:"keyring_dir"`
-	KeyringPassword string `yaml:"keyring_password"`
+	Mode                     string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName              string `yaml:"version_name"`
+	HostBinaryMount          string `yaml:"host_binary_mount"`
+	OverridePath             string `yaml:"override_path"`
+	PollInterval             string `yaml:"poll_interval"`
+	BinaryVersion            string `yaml:"binary_version"`
+	KeyringDir               string `yaml:"keyring_dir"`
+	KeyringPassword          string `yaml:"keyring_password"`
+	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
+	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
@@ -141,20 +160,22 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	IP   string `yaml:"ip"`
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	StatsPort int    `yaml:"stats_port"`
+	IP        string `yaml:"ip"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
 type PostgresCfg struct {
-	Enabled  bool   `yaml:"enabled"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	IP       string `yaml:"ip"`
+	Enabled        bool   `yaml:"enabled"`
+	PerParticipant bool   `yaml:"per_participant"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	Database       string `yaml:"database"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	IP             string `yaml:"ip"`
 }
 
 // EscrowMeta describes slot layout gencompose owns (distinct from escrows[] seed).
@@ -209,19 +230,22 @@ const (
 	DefaultMockDapiHTTPPort     = 9100
 	DefaultMockDapiHost         = "mock-dapi"
 	DefaultMockOpenAIHTTPPort   = 8088
-	DefaultMockOpenAIHost       = "mock-openai"
-	DefaultVersionName          = "v2"
-	DefaultBinaryVersion        = "0.2.13-v2-r2"
-	VersiondModeSingle          = "single"
-	VersiondModeMulti           = "multi"
-	DefaultVersiondModeMulti    = VersiondModeMulti
-	DefaultDevsharddHostMount   = "../../build/devshardd"
-	DefaultDevsharddOverride    = "/opt/devshard/devshardd"
-	DefaultVersiondPoll         = "5s"
-	DefaultKeyringDir           = "/keyring"
-	DefaultKeyringPassword      = "testenv1"
-	DefaultVersiondRouterHost   = "versiond-router"
-	DefaultVersiondRouterPort   = 8080
+	DefaultMockOpenAIHost       = "mock-openai-0"
+	DefaultMLNodes              = 1
+	// MLNodeIPBase is the first host octet offset for mock-openai-0 (BaseIP.40+i).
+	MLNodeIPBase              = 40
+	DefaultVersionName        = "v2"
+	DefaultBinaryVersion      = "0.2.13-v2-r2"
+	VersiondModeSingle        = "single"
+	VersiondModeMulti         = "multi"
+	DefaultVersiondModeMulti  = VersiondModeMulti
+	DefaultDevsharddHostMount = "../../build/devshardd"
+	DefaultDevsharddOverride  = "/opt/devshard/devshardd"
+	DefaultVersiondPoll       = "5s"
+	DefaultKeyringDir         = "/keyring"
+	DefaultKeyringPassword    = "testenv1"
+	DefaultVersiondRouterHost = "versiond-router"
+	DefaultVersiondRouterPort = 8080
 	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
 	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
 	// on DefaultVersiondRouterPort.
@@ -243,12 +267,17 @@ const (
 	DefaultEscrowAmount  = uint64(1_000_000)
 	DefaultTokenPrice    = uint64(100)
 	DefaultUserPort      = 8081
+	DefaultStatsPort     = 9091
 	DefaultHostPort      = 8080
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
 	DefaultModelID       = "test-model"
-	DefaultAdminAPIKey   = "testenv-citest-admin"
-	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	// The chain stores the similarity pass bar as value * 10^exponent, like
+	// production's 958e-3; 50e-2 is a 0.50 bar.
+	DefaultValidationThresholdValue    = int64(50)
+	DefaultValidationThresholdExponent = int32(-2)
+	DefaultAdminAPIKey                 = "testenv-citest-admin"
+	DefaultAppHash                     = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -330,8 +359,12 @@ func (c *File) ApplyDefaults() {
 	if c.MockOpenAI.HTTPPort == 0 {
 		c.MockOpenAI.HTTPPort = DefaultMockOpenAIHTTPPort
 	}
-	if c.MockOpenAI.Host == "" {
-		c.MockOpenAI.Host = DefaultMockOpenAIHost
+	if c.MLNodes <= 0 {
+		c.MLNodes = DefaultMLNodes
+	}
+
+	if c.MockOpenAI.Host == "" || c.MockOpenAI.Host == "mock-openai" {
+		c.MockOpenAI.Host = c.PrimaryMLNodeID()
 	}
 
 	if c.Versiond.VersionName == "" {
@@ -375,6 +408,9 @@ func (c *File) ApplyDefaults() {
 	}
 	if c.Devshardctl.Port == 0 {
 		c.Devshardctl.Port = DefaultUserPort
+	}
+	if c.Devshardctl.StatsPort == 0 {
+		c.Devshardctl.StatsPort = DefaultStatsPort
 	}
 
 	if c.Postgres.Host == "" {
@@ -432,6 +468,63 @@ func RouterBaseURL(c *File) string {
 		host = DefaultVersiondRouterHost
 	}
 	return fmt.Sprintf("http://%s:%d", host, DefaultHostPort)
+}
+
+// ResolvedMLNodes returns the effective mock-openai pool size (at least 1).
+func (c *File) ResolvedMLNodes() int {
+	if c == nil || c.MLNodes <= 0 {
+		return DefaultMLNodes
+	}
+	return c.MLNodes
+}
+
+// MLNodeID returns the compose service / AcquireMLNode id for pool index i.
+func MLNodeID(i int) string {
+	return fmt.Sprintf("mock-openai-%d", i)
+}
+
+// PrimaryMLNodeID is mock-openai-0 (the PatchMockOpenAIFault alias target).
+func (c *File) PrimaryMLNodeID() string {
+	return MLNodeID(0)
+}
+
+// MLNodeIDs returns mock-openai-0 … mock-openai-{N-1}.
+func (c *File) MLNodeIDs() []string {
+	n := c.ResolvedMLNodes()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = MLNodeID(i)
+	}
+	return ids
+}
+
+// MLNodeEndpoint is the in-compose HTTP base URL for a pool member.
+func (c *File) MLNodeEndpoint(nodeID string) string {
+	port := DefaultMockOpenAIHTTPPort
+	if c != nil && c.MockOpenAI.HTTPPort > 0 {
+		port = c.MockOpenAI.HTTPPort
+	}
+	return fmt.Sprintf("http://%s:%d", nodeID, port)
+}
+
+// PrimaryMLEndpoint is MOCK_ML_ENDPOINT shorthand (first pool member).
+func (c *File) PrimaryMLEndpoint() string {
+	return c.MLNodeEndpoint(c.PrimaryMLNodeID())
+}
+
+// MockMLNodesEnv formats MOCK_ML_NODES: "id=url,id=url".
+func (c *File) MockMLNodesEnv() string {
+	ids := c.MLNodeIDs()
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id + "=" + c.MLNodeEndpoint(id)
+	}
+	return strings.Join(parts, ",")
+}
+
+// MLNodeIPOffset is the fourth octet offset for mock-openai-i (40+i).
+func MLNodeIPOffset(i int) int {
+	return MLNodeIPBase + i
 }
 
 // PrimaryEscrowID returns the seeded escrow id for single-escrow gateway bootstrap.
@@ -596,6 +689,25 @@ func (c *File) Validate() error {
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
+	for i, node := range c.MockOpenAI.Nodes {
+		if strings.TrimSpace(node.Name) == "" {
+			return fmt.Errorf("mock_openai.nodes[%d].name must not be empty", i)
+		}
+		if _, exists := seenMLNodes[node.Name]; exists {
+			return fmt.Errorf("mock_openai.nodes contains duplicate name %q", node.Name)
+		}
+		if node.Workers < 0 || node.Queue < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		if node.FailureRate < 0 || node.FailureRate > 1 {
+			return fmt.Errorf("mock_openai.nodes[%d] failure_rate must be between 0 and 1", i)
+		}
+		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
+			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		seenMLNodes[node.Name] = struct{}{}
 	}
 	return nil
 }

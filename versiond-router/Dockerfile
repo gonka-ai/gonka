@@ -4,7 +4,8 @@ ARG PLACEMENT_PROTOCOL_VERSION=1
 ARG CATALOG_CACHE_PROTOCOL_VERSION=2
 LABEL ai.gonka.component="versiond-router" \
       ai.gonka.placement-protocol-version="${PLACEMENT_PROTOCOL_VERSION}" \
-      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}"
+      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}" \
+      ai.gonka.peer-rpc-h2="1"
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes
@@ -30,12 +31,10 @@ COPY versiond-router/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Internal diagnostic, deliberately off PATH: it is a formatter over the
 # Runtime API that the citest harness parses, not an operator CLI.
 COPY versiond-router/pool-status /usr/local/lib/versiond-router/pool-status
-COPY versiond-router/publish-members /usr/local/lib/versiond-router/publish-members
 COPY versiond-router/h2-watch-drain.sh /usr/local/lib/versiond-router/h2-watch-drain.sh
 COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status router-runtime/version-contract /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/versiond-router/pool-status \
-    /usr/local/lib/versiond-router/publish-members \
     /usr/local/lib/versiond-router/h2-watch-drain.sh \
     /usr/local/lib/router-runtime/catalog-cache \
     /usr/local/lib/router-runtime/catalog-reconciler \

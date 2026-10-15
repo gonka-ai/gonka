@@ -133,6 +133,13 @@ message GetMempoolResponse {
   repeated bytes txs = 1; // proto bytes of types.DevshardTx
 }
 
+message GetStateRequest {}
+
+message GetStateResponse {
+  uint64 nonce      = 1;
+  bytes  state_root = 2;
+}
+
 message GetSignaturesRequest {
   uint64 nonce = 1;
 }
@@ -150,5 +157,6 @@ service SessionService {
   rpc ChallengeReceipt(SignedEnvelope) returns (ChallengeReceiptResponse);
   rpc GetDiffs(GetDiffsRequest) returns (GetDiffsResponse);
   rpc GetMempool(GetMempoolRequest) returns (GetMempoolResponse);
+  rpc GetState(GetStateRequest) returns (GetStateResponse);
   rpc GetSignatures(GetSignaturesRequest) returns (GetSignaturesResponse);
 }

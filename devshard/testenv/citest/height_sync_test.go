@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/heightsync"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
@@ -65,7 +66,8 @@ func TestHeightSync_CadenceEmitsAnchor(t *testing.T) {
 	postHeightSyncChat(t, cfg, eps, "citest height-sync cadence")
 	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heightsync: emit",
 		"devshardctl", "versiond-0", "versiond-1")
-	require.Contains(t, logs, "mode=anchor", "first inference is a sync-turn / session-start Anchor")
+	require.True(t, harness.LogsContainFields(logs, harness.LogStringField("mode", "anchor")),
+		"first inference is a sync-turn / session-start Anchor")
 }
 
 func TestHeightSync_LostFirstChunk(t *testing.T) {
@@ -125,7 +127,7 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	harness.Step(t, "pause mock-dapi (oracle feed stop)")
 	stack.PauseService(t, "mock-dapi")
 	paused = true
-	time.Sleep(12 * time.Second)
+	time.Sleep(24 * time.Second)
 
 	postHeightSyncChat(t, cfg, eps, "citest height-sync while feed stopped")
 	var stopped string
@@ -135,7 +137,7 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 			return false
 		}
 		stopped = out
-		return strings.Contains(out, "mode=omit") || strings.Contains(out, "tip_stale_after_ms")
+		return harness.LogsContainFields(out, harness.LogStringField("mode", "omit")) || strings.Contains(out, "tip_stale_after_ms")
 	})
 	require.True(t, ok, "paused oracle should Omit or emit a degraded Anchor; logs:\n%s", stopped)
 
@@ -147,8 +149,16 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	postHeightSyncChat(t, cfg, eps, "citest height-sync after feed recover")
-	recovered := stack.WaitComposeLogsContain(t, 2*time.Minute, "mode=anchor",
-		"devshardctl", "versiond-0", "versiond-1")
+	var recovered string
+	ok = harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
+		out, err := stack.ComposeLogsTail(400, "devshardctl", "versiond-0", "versiond-1")
+		if err != nil {
+			return false
+		}
+		recovered = out
+		return harness.LogsContainFields(out, harness.LogStringField("mode", "anchor"))
+	})
+	require.True(t, ok, "compose logs missing mode=anchor within 2m\n%s", recovered)
 	require.Contains(t, recovered, "heightsync: emit")
 }
 
@@ -290,9 +300,10 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	})
 }
 
-// TestContainerE2E_HeightSync_BusyEscrowDischarge is H42 on compose: stamped
-// inference traffic must show up as discharged_by_inference rather than an
-// absence of heartbeats.
+// TestContainerE2E_HeightSync_BusyEscrowDischarge is H42 on compose. The
+// producer sleeps until lastTurnover+Interval, so stamped traffic keeps that
+// deadline ahead of the clock and heartbeat_opened stays put. A quiet interval
+// after the stamps is when the next heartbeat opens.
 func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -312,38 +323,28 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
-	// Do not wait for heartbeat_opened: that spends the Interval on ack Q
-	// (plan H42 is substitution, heartbeat_opened stays zero in the unit).
-	// Two back-to-back chats address nonce%2 == both slots, like
-	// TestHeartbeat_BusySessionWithStampsEmitsNone, then the ticker's next
-	// due-check should see lastTurnoverFromStamp.
-	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
-	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
+	interval := heightsync.DefaultHeartbeatInterval
+	// One pair stamps both slots (nonce%2) and arms the deadline at
+	// lastTurnover+Interval. Sample after that, then keep both slots stamped
+	// for a full interval. Boot may already have opened quiet heartbeats, so
+	// the assertion is that this counter does not move.
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge seed slot-a")
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge seed slot-b")
+	opened := heartbeatOpenedCount(t, client, metricsURL)
 
-	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+	busyUntil := time.Now().Add(interval)
+	for time.Now().Before(busyUntil) {
+		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
+		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
+	}
+	require.Equal(t, opened, heartbeatOpenedCount(t, client, metricsURL),
+		"stamped traffic must keep the heartbeat deadline ahead of the clock")
+
+	harness.WaitMetricsPredicate(t, client, metricsURL, interval+20*time.Second, func(b string) bool {
 		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
-			map[string]string{"event": "discharged_by_inference"})
-		return ok && v >= 1
+			map[string]string{"event": "heartbeat_opened"})
+		return ok && v > opened
 	})
-	discharged, _ := harness.MetricLineValue(body, "devshard_gateway_heightsync_cadence_events_total",
-		map[string]string{"event": "discharged_by_inference"})
-	require.GreaterOrEqual(t, discharged, 1.0)
-
-	var debug struct {
-		Escrows []struct {
-			CadenceEvents []map[string]any `json:"cadence_events"`
-		} `json:"escrows"`
-	}
-	harness.GetDebugHeightSync(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, &debug)
-	require.NotEmpty(t, debug.Escrows)
-	found := false
-	for _, ev := range debug.Escrows[0].CadenceEvents {
-		if ev["event"] == "discharged_by_inference" {
-			found = true
-			break
-		}
-	}
-	require.True(t, found, "debug ring must record the substitution explicitly")
 }
 
 // TestContainerE2E_HeightSync_StaleClaimSpread is H40: after a host stops
@@ -375,9 +376,9 @@ func TestContainerE2E_HeightSync_StaleClaimSpread(t *testing.T) {
 	harness.Step(t, "stop versiond-1 so its tip goes stale past F")
 	stack.StopService(t, "versiond-1")
 
-	// DefaultOriginatorFreshness is 60s. Keep the live host talking so the
+	// DefaultOriginatorFreshness is 120s. Keep the live host talking so the
 	// gateway tip and the remaining claim stay fresh.
-	deadline := time.Now().Add(90 * time.Second)
+	deadline := time.Now().Add(150 * time.Second)
 	for time.Now().Before(deadline) {
 		postHeightSyncChat(t, cfg, eps, "citest height-sync keep live tip fresh")
 		time.Sleep(5 * time.Second)
@@ -480,6 +481,14 @@ func seedHeightSyncFloor(t *testing.T, cfg *config.File, eps harness.Endpoints) 
 	t.Helper()
 	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor a")
 	postHeightSyncChat(t, cfg, eps, "citest height-sync seed floor b")
+}
+
+func heartbeatOpenedCount(t *testing.T, client *http.Client, metricsURL string) float64 {
+	t.Helper()
+	body := harness.GetMetricsBody(t, client, metricsURL)
+	v, _ := harness.MetricLineValue(body, "devshard_gateway_heightsync_cadence_events_total",
+		map[string]string{"event": "heartbeat_opened"})
+	return v
 }
 
 func waitHeartbeatOpened(t *testing.T, client *http.Client, metricsURL string) string {

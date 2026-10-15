@@ -8,7 +8,8 @@ rollout mechanics see [rolling-update.md](./rolling-update.md).
 
 Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
-[storage-design.md](./storage-design.md) (storage-mode selection).
+[storage-design.md](./storage-design.md) (storage-mode selection),
+[gateway.md](./gateway.md) (gateway + epoch-accounting HA merge framework).
 Authenticated peer RPC hops (Connect over HTTP/1.1 today, HTTP/2 in phase 6):
 [grpc-transport-connection.md](./grpc-transport-connection.md). The shared
 peer-RPC token is [below](#peer-rpc-sessions-under-ha).
@@ -316,6 +317,34 @@ which drains every old router
 before exposing the new generation and restores exact old image+env snapshots
 if the required live routes do not return.
 
+Known limitations of this hop, recorded in
+[grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations):
+
+- The placement contract does not include `VERSIOND_ROUTER_H2_PORT` or
+  `VERSIOND_ROUTER_BACKEND_H2`. A direct `fleet apply` may mix a pre-h2
+  router image with a current one. While a current slot remains, redispatch
+  covers the refused connect. When the last current slot leaves and the
+  proxy still publishes `{DEVSHARD_RPC_H2_PORT}`, every slot refuses peer
+  RPC and clients fail closed. `update-devshard.sh` avoids that order: a
+  rollback off images labeled `ai.gonka.peer-rpc-h2=1` replaces the proxy
+  before the fleet. A direct fleet apply does not.
+- `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
+  not prove the HTTP/2 data ports agree. The `_rpc` health check is
+  HTTP/1.1 `GET /readyz` on router admin `:8404`. The slot compose does not
+  pass `VERSIOND_ROUTER_H2_PORT`, so it stays `8081` unless the image
+  default changes, while `DEVSHARD_RPC_H2_ROUTER_PORT` can move the proxy
+  dial alone. Stock defaults match (`9443` once in `config.env`, `8081` on
+  both sides of the router hop). A remote endpoint `{id, host, port}` is
+  the versiond listen (`8080`); that process has to speak h2c, and a remote
+  `config.env` with a different `DEVSHARD_RPC_H2_PORT` is not visible to
+  the updater on the network node.
+- Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only
+  enabled servers that DNS has resolved are probed. On a stock join that is
+  on the order of 20 extra `/readyz` plus `/healthz` requests per second
+  per versiond, and about 2 extra admin-port checks per second per router.
+  The interval stays: `fall 1` is what withdraws a failed server in about
+  a second.
+
 ### Multiple versiond instances (multi-host)
 
 This is the **key capability**: versiond instances can run on **separate
@@ -406,43 +435,38 @@ peer's calls are different keys:
 | `Watch` and live token renewal | `_` (`HostRPCEscrowID`) | whichever child `_` hashes to |
 | Later data call | that call's escrow | the child that owns that escrow |
 
-The token is one per peer per host and version, not per escrow. Handshake
+A token is bound to the peer, host, and version, not to an escrow. Handshake
 and renewal are in
 [grpc-transport-connection.md](./grpc-transport-connection.md#handshake-on-that-path).
-A map that exists only inside the child that served `Attach` rejects every
-call the hash sends elsewhere. JSON has no such token: one
+A token that only the child that served `Attach` can check would be rejected
+on every call the hash sends elsewhere. JSON has no such token: one
 `POST /sessions/{id}/height-sync` is handled by the child that owns that
 escrow.
 
-The shared store is on only when `GONKA_HA` is true, the child has a Postgres
-pool, and `boundVersion` is set (`peerRPCSharedEnabled` in
-`devshard/cmd/devshardd/session/manager.go`). versiond copies `GONKA_HA` into
-the child for a version that is not listed in `VERSIOND_NON_HA_VERSIONS`.
-SQLite, and `GONKA_HA` unset or false, keep the in-memory map. Sessions are
-not shared across versions or across participants. The escrow hash is
-unchanged.
+The token is a stateless HMAC tag, so every child of one host and version can
+check it without a shared table. Nothing is written per `Attach`, and HA mode,
+Postgres, and the router play no part in admission. Sessions are not shared
+across versions or across participants. The escrow hash is unchanged.
 
 | Mechanism | Behaviour |
 |-----------|-----------|
-| **Shared row** | Table `devshard_peer_rpc_sessions`. Primary key `token_hash` is `sha256(attach_nonce)`; the raw token is not stored. Columns: `host_address`, `version`, `peer`, `attached_unix`, `expires_at`, `grace_until`, `state` (`live`, `replaced`, `invalidated`, `evicted`), `seq`, `origin`. One transaction holds `pg_advisory_xact_lock` on `hashtextextended` of host, version, and peer joined by `\x1f` (a NUL in that key is invalid UTF-8). Commit, then `NOTIFY`. A replaced token stays admissible until `grace_until` (`TokenGrace`, 5s). A non-`live` `token_hash` blocks nonce replay. |
-| **Memory admission** | Each child `LISTEN`s on its own connection, loads rows still inside `expires_at` or `grace_until`, then applies notifications in `seq` order. A gap or a dropped listen rereads from the last applied `seq`; a 5s poll is the backstop. `admitSession` hashes `X-Devshard-Session` and looks up memory. An unknown or junk token does not query Postgres. `/healthz` waits until that load finishes while the RPC server is enabled. A child applies only its own `host_address` and `version`. |
-| **Attach barrier** | After commit, `Attach` waits until every barrier member has applied `seq`, capped at 1s. Timeout still returns the token; the row is committed and the late child applies it. Progress is `devshard_peer_rpc_members.applied_seq`, with `heartbeat_at` every 1s and `ready` after the initial load. |
-| **Who is in the barrier** | A current router publishes `{id, addr, ready_versions}` to each versiond (`versiond-router/publish-members`, every change and every 10s). versiond keeps the latest snapshot per router and forwards the union to each child at `PUT /internal/peer-rpc/members` on `DEVSHARD_ADMIN_ADDR`, with `instance_id` of `id@version` (`versioned/internal/peerrpcmembers`). The union can only add waiters. The 0.2.15-v5 router does not publish; the child waits on member-table rows with `ready` and a heartbeat under 3s. A published id with no row is waited for once, then marked absent so a mixed fleet does not add 1s to every later `Attach`. A registered member whose `applied_seq` is behind is waited for on every `Attach`. |
-| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`, because every child has the row. The child that holds the stream ends it on `session replaced` or `session expired` from that row. Shutdown of one child ends only its streams; it does not invalidate the row, and `/rpc/release` does not delete it. The client reopens `Watch` on shutdown or EOF with the same token. `session replaced`, expiry, and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. |
+| **Token** | `version ‖ keyID ‖ host ‖ version ‖ peer ‖ attached_unix ‖ expires_unix ‖ sha256(attach_nonce) ‖ HMAC-SHA256`. The three strings are length-prefixed. `attached_unix` is the earlier of the signed Attach timestamp and the host clock, and `expires_unix` adds `SessionTTL` (2 minutes). |
+| **Key** | HKDF-SHA256 over the host's secp256k1 key, with info `devshard/peer-rpc-session/v1|<host>|<version>|<keyID>`. Each child of one host and version derives the same key; another version or host derives a different one. The key never leaves the process. Bumping `SessionKeyID` logs out every peer of that host at once. |
+| **Admission** | `handshakeGate` in the devshardd child opens `X-Devshard-Session`: constant-time MAC check, then key id, host, version, and expiry with a 5s replica skew. Neither the router nor versiond inspects the token. Data RPCs still run `AllowsSender` for their escrow. |
+| **Renewal** | A renewal adds a token; earlier tokens stay valid until their own expiry. The same signed request returns the same bytes. An `Attach` that presents a live token skips the door and the anonymous floor, and spends a per-peer renewal bucket (burst 4, 4/min) before ECDSA. |
+| **Watch** | Any child can serve `Watch` on `/sessions/_/rpc`. It is liveness only and ends on client cancel, `host shutting down`, or `session expired`. A peer holds at most two concurrent Watches per child. The client reopens `Watch` on shutdown or EOF with the same token. Expiry and other `Unauthenticated` clear the token and `Attach` again. TTL refresh runs on its own timer, including while `Watch` is down. `/rpc/release` ends this generation's streams and stops its outbound dials. |
 
-These do not replace the shared row. Attaching once per escrow needs the client
-to know the hash target, and two escrows on one child would replace each
-other's session. Returning a child id from `Attach` fixes `Watch` only.
-A Postgres read on a token miss spends a query per guess. A signed token
-still needs replication for replacement and revocation, and it changes
-`Attach`. The router never takes the hash key from a request header.
+Worst-case lifetime of a captured token is `SessionTTL` plus the replica skew,
+about two minutes. There is no per-token logout short of the key id.
+The router never takes the hash key from a request header.
 
-A wrong presented token is still a memory miss. This tree's versiond counts
-`X-Devshard-Error: invalid_session_token` in the same per-origin budget as an
-unknown escrow; the pin's versiond does not. See
+A forged or expired token fails in the child with
+`X-Devshard-Error: invalid_session_token`. This tree's versiond counts that
+header in the same per-origin budget as an unknown escrow; the pin's versiond
+does not. See
 [grpc-transport-connection.md](./grpc-transport-connection.md#wrong-escrow-id-by-origin-ip-versiond).
-Citest notes for the store:
-[grpc-session-ha.md](./grpc-session-ha.md).
+Citest: `TestPeerRPCHASessionSpread` (`make citest-peerrpc-ha-session`) in
+[scenarios.md](../testenv/docs/scenarios.md).
 
 ---
 
@@ -475,6 +499,17 @@ two consecutive successes admit it again. The index-rebuild gate remains an
 independent prerequisite. This keeps a child whose database connection was lost
 out of every per-version hash ring without making a single transient probe flap
 the whole pool.
+
+A validation lease row records the process that claimed it (`instance_id`) and
+the container hostname beside the participant address. Ownership matches the
+address and the process id. A binary from before that column existed writes a
+blank `instance_id`; a current binary will not complete or release that row,
+and `AcquireOneStale` reclaims it after the lease TTL. versiond allows blue/green overlap only when both binaries print the same
+`--print-fleet-compat` token (`D_ack`, originator freshness, and lease
+identity). A binary from before that flag prints nothing, so the swap falls
+back to stop/start and the two builds do not serve one escrow together. An
+operator who runs them together anyway still has the older binary matching
+leases on the address alone, so it can release a row a current binary holds.
 
 Every versiond replica of one participant must point at the same PostgreSQL:
 the same `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`, with
@@ -536,6 +571,64 @@ volume used by v4. If that source was detached while versiond artifacts remain,
 startup fails instead of initializing an empty shared database (see
 [release-0.2.15-v5.md](./release-0.2.15-v5.md)).
 
+### Gateway + epoch accounting under HA
+
+`devshardctl` (gateway) is a separate process from `devshardd`. When several
+gateway replicas share Postgres, two persistence planes matter:
+
+| Plane | Merge | HA requirement |
+|-------|-------|----------------|
+| Gateway store (settings, devshards, throttles, …) | Last-writer-wins per primary key | Shared Postgres; configuration, not additive traffic |
+| Epoch accounting | Per-field merge (below) | Shared Postgres **and** a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
+
+**`DEVSHARD_ACCOUNTING_WRITER_ID` is required for HA gateways.** It partitions
+request-local accounting rows. Resolution is env → hostname → `"default"`.
+Defaulting is only safe when hostnames are unique and stable. Two replicas that
+share an id overwrite each other's request-local shares. SQLite mode has a
+single writer and ignores the variable.
+
+Full operator env table: [gateway.md](./gateway.md#configuration). Field table
+and factory markers: [storage-design.md](./storage-design.md#epoch-accounting).
+
+#### How accounting fields are stored (merge framework)
+
+There is no single merge rule. Each field is classified by: *if two instances
+are live on the same escrow, do both produce this value?*
+
+| Class | Test | Merge | Storage |
+| --- | --- | --- | --- |
+| Request-local | Needs a local dispatch signal (`RecordGhost` / `RecordRealSend` / `RecordUsage`) | `SUM` across `writer_id` | `(escrow_id, writer_id, key)` absolute share |
+| Replicated | Read off the committed diff / verdict — every instance derives it | Set union; flags with monotonic `OR` | One row per nonce, **no** `writer_id` |
+| Absolute mirror | Chain already publishes the total | `GREATEST` | Shared row |
+| Ordered / identity | Fixed rank or registration identity | Highest rank / identity write | Shared row |
+
+Worked examples:
+
+- `finished_used` → request-local (passive replica never learns usage).
+- Protocol-only nonce, challenge, invalidation → replicated sets (never store a
+  *count* of these; sum double-counts overlap, max drops disjoint observations).
+  Challenges keep resolved nonces (`Resolved` flag) rather than deleting them;
+  `ChallengeBySlot` is only a legacy carry — see
+  [gateway.md](./gateway.md#challenges-and-the-legacy-challengebyslot-carry).
+- Host stats / `latest` → absolute mirrors.
+- Escrow phase → ordered; slots / timeouts → identity.
+
+Invariants on every class: flush is replay-safe (absolute values or
+insert-if-absent, never `count = count + delta`); a writer never updates a
+peer’s rows; values are monotonic (resolved challenges are flagged, not deleted).
+
+**Migration of older data.** Pre-row Postgres blobs (`accounting_escrows`) convert
+once under frozen writer `_legacy_blob` (marker `blob_to_rows`). Local SQLite
+imports once when Postgres is empty (marker `sqlite_import`). Old blobs had no
+producer tag — that is why conversion invents `_legacy_blob`. Live writers treat
+those rows as a peer baseline and only publish their own share on top.
+
+**SQLite-only evolution** (no HA): new fields are new JSON keys inside the blob
+payload; missing keys decode as zero and the next flush rewrites the file. No
+`writer_id`, no SQL column migration. Checklist:
+[gateway.md](./gateway.md#ha-merge-framework) and
+[gateway.md](./gateway.md#staying-on-sqlite-how-new-fields-appear).
+
 ---
 
 ## 5. decentralized-api (dapi) — current responsibilities
@@ -585,6 +678,7 @@ highly-available edge-api.
 | `edge-api` | yes | **yes**, balanced directly by `proxy-router` | none |
 | `versiond-router` | yes | **yes**, independent fixed slots | none |
 | `versiond` + `devshardd` | per-escrow state | **yes**, sticky hash behind router fleet | **shared Postgres** |
+| `devshardctl` (gateway) | per-escrow state | operator-scaled | **shared Postgres** plus a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
 | `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
 
 ---

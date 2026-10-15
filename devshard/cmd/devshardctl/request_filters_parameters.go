@@ -495,6 +495,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						MaxSize:  ChatTemplateKwargsMaxSize,
 						MaxNodes: ChatTemplateKwargsMaxNodes,
 					},
+				}).
+				// GLM-5.3-Flash always thinks; a false thinking kwarg only turns vLLM's parser off (vLLM #54744).
+				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
+					Models:  []string{glm53FlashModelID},
+					Handler: DocumentValidatorHandler{Validator: paramvalidators.AlwaysOnThinkingValidator{}},
 				}),
 			newParameter("thinking_token_budget").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
@@ -660,6 +665,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			"stream",
 		}),
 		// The remaining boolean flags are pass-through fields, so validate their type here.
+		// Without tools, the earlier ToolsValidator has already dropped parallel_tool_calls.
 		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),

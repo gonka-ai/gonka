@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"fmt"
+	"sort"
 	"sync"
 
 	"devshard/types"
@@ -56,6 +58,7 @@ type sessionData struct {
 	inferences             map[uint64]InferenceRow
 	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
 	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
+	obsRebuildPending      bool
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -166,6 +169,51 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	return nil
+}
+
+// AppendDiffBatch implements DiffBatchWriter: every record is checked before
+// any is written, so a fork leaves the session unchanged.
+func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	}
+	for i, rec := range recs {
+		if i > 0 && rec.Nonce <= recs[i-1].Nonce {
+			return fmt.Errorf("diff batch nonces must ascend: %d after %d", rec.Nonce, recs[i-1].Nonce)
+		}
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			if err := checkDiffReplayIdentity(escrowID, rec, s.diffs[idx]); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rec := range recs {
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			existing := s.diffs[idx]
+			if existing.Signatures == nil {
+				existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
+			}
+			for slotID, sig := range rec.Signatures {
+				existing.Signatures[slotID] = append([]byte(nil), sig...)
+			}
+			s.diffs[idx] = existing
+			continue
+		}
+		rec.Signatures = copySignatures(rec.Signatures)
+		rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
+		s.diffs = append(s.diffs, rec)
+		s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	}
 	return nil
 }
 
@@ -381,6 +429,34 @@ func (m *Memory) ClearValidationObs(escrowID string) error {
 	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	return nil
+}
+
+func (m *Memory) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.obsRebuildPending = pending
+	return nil
+}
+
+func (m *Memory) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return false, fmt.Errorf("session %s not found", escrowID)
+	}
+	return s.obsRebuildPending, nil
+}
+
+// LockValidationObsRebuild always succeeds: a Memory store has one owner.
+func (m *Memory) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
 }
 
 // ImportValidationObs replaces live/sealed validation-obs maps for an escrow
@@ -620,15 +696,62 @@ func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	}
 
 	var result []types.DiffRecord
-	for _, d := range s.diffs {
-		if d.Nonce < fromNonce || d.Nonce > toNonce {
-			continue
-		}
-		dc := d
+	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
+		dc := *d
 		dc.Signatures = copySignatures(d.Signatures)
 		dc.WarmKeyDelta = copyWarmKeyDelta(d.WarmKeyDelta)
 		result = append(result, dc)
-	}
-
+		return true
+	})
 	return result, nil
+}
+
+func (m *Memory) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	if limit <= 0 {
+		return nil, nil
+	}
+	var out []DiffSize
+	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
+		out = append(out, DiffSize{Nonce: d.Nonce, Bytes: diffTxsProtoSize(*d)})
+		return len(out) < limit
+	})
+	return out, nil
+}
+
+// eachDiffInRange visits stored diffs in [from, to] in ascending nonce order
+// until fn returns false. A range no wider than the journal is walked through
+// nonceToIndex, so a point or page read does not scan every diff.
+func (s *sessionData) eachDiffInRange(from, to uint64, fn func(*types.DiffRecord) bool) {
+	if from > to || len(s.diffs) == 0 {
+		return
+	}
+	if to-from < uint64(len(s.diffs)) {
+		for n := from; ; n++ {
+			if idx, ok := s.nonceToIndex[n]; ok && !fn(&s.diffs[idx]) {
+				return
+			}
+			if n == to {
+				return
+			}
+		}
+	}
+	idxs := make([]int, 0, len(s.diffs))
+	for i := range s.diffs {
+		if n := s.diffs[i].Nonce; n >= from && n <= to {
+			idxs = append(idxs, i)
+		}
+	}
+	sort.Slice(idxs, func(a, b int) bool { return s.diffs[idxs[a]].Nonce < s.diffs[idxs[b]].Nonce })
+	for _, i := range idxs {
+		if !fn(&s.diffs[i]) {
+			return
+		}
+	}
 }

@@ -31,6 +31,7 @@ type ConfigManager struct {
 	WriterProvider            WriteCloserProvider
 	sqlDb                     SqlDatabase
 	modelValidationThresholds []ModelValidationThreshold
+	devshardVersionOverrides  []DevshardVersionOverride
 	mutex                     sync.RWMutex
 	runtimePublishMu          sync.RWMutex
 	runtimePublished          runtimePublishedMarker
@@ -949,6 +950,9 @@ func (cm *ConfigManager) HydrateFromDB(_ context.Context) error {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	if db := cm.sqlDb.GetDb(); db != nil {
+		if _, err := KVGetJSON(ctx, db, kvKeyDevshardVersionOverrides, &cm.devshardVersionOverrides); err != nil {
+			return err
+		}
 		if nodes, err := ReadNodes(ctx, db); err == nil && len(nodes) >= 0 {
 			logging.Info("Reading nodes from DB", types.Config, "nodes", nodes)
 			cm.currentConfig.Nodes = nodes

@@ -38,7 +38,7 @@ func TestLoadChannelLimitConfig_Defaults(t *testing.T) {
 	require.Equal(t, DefaultRPCMaxStreamsTotal, streams)
 	require.Equal(t, DefaultRPCMaxChatsTotal, chats)
 	require.Equal(t, DefaultRPCLimiterMaxEntries, cfg.MaxEntries)
-	require.Equal(t, uint32(4096), DefaultH2MaxConcurrentStreams)
+	require.Equal(t, uint32(16384), DefaultH2MaxConcurrentStreams)
 	require.NotEqual(t, DefaultRPCMaxStreams, DefaultH2MaxConcurrentStreams)
 }
 

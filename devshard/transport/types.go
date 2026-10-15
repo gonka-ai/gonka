@@ -34,7 +34,8 @@ type InferenceRequest struct {
 	Payload *PayloadJSON `json:"payload,omitempty"`
 	Stream  bool         `json:"stream,omitempty"` // hint: stream SSE deltas vs single JSON event
 	// ForceHeightSyncAnchor triggers manual-force Anchor on this message (policy hook).
-	ForceHeightSyncAnchor bool `json:"force_height_sync_anchor,omitempty"`
+	ForceHeightSyncAnchor        bool  `json:"force_height_sync_anchor,omitempty"`
+	LogprobsOptimizationOverride *bool `json:"logprobs_optimization_override,omitempty"`
 }
 
 // InferenceResponse is the JSON body returned by the inference endpoint.
@@ -180,9 +181,10 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 	}
 
 	ir := InferenceRequest{
-		Diffs:                 diffs,
-		Nonce:                 req.Nonce,
-		ForceHeightSyncAnchor: req.ForceHeightSyncAnchor,
+		Diffs:                        diffs,
+		Nonce:                        req.Nonce,
+		ForceHeightSyncAnchor:        req.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
 	}
 	ir.Payload = PayloadToJSON(req.Payload)
 	return ir, nil
@@ -200,9 +202,10 @@ func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
 	}
 
 	req := host.HostRequest{
-		Diffs:                 diffs,
-		Nonce:                 ir.Nonce,
-		ForceHeightSyncAnchor: ir.ForceHeightSyncAnchor,
+		Diffs:                        diffs,
+		Nonce:                        ir.Nonce,
+		ForceHeightSyncAnchor:        ir.ForceHeightSyncAnchor,
+		LogprobsOptimizationOverride: ir.LogprobsOptimizationOverride,
 	}
 	req.Payload = PayloadFromJSON(ir.Payload)
 	return req, nil
@@ -284,6 +287,17 @@ func TimeoutReasonToString(r types.TimeoutReason) string {
 	default:
 		return "unknown"
 	}
+}
+
+// timeoutVotePayload is the prompt a verify-timeout message carries.
+// An execution vote checks status and the mempool, so the prompt stays off
+// the wire. A refused vote hashes it against the start diff and challenges
+// the executor with it.
+func timeoutVotePayload(reason types.TimeoutReason, payload *host.InferencePayload) *PayloadJSON {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return nil
+	}
+	return PayloadToJSON(payload)
 }
 
 // PayloadToJSON converts a domain InferencePayload to its JSON wire format.

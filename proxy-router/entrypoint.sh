@@ -13,9 +13,12 @@ if [ -z "$runtime_contract" ]; then
 fi
 # shellcheck disable=SC1090,SC1091
 . "$runtime_contract"
+# shellcheck disable=SC1091
+. "$entrypoint_dir/rpc-h2-cert.sh"
 
 TEMPLATE="${PROXY_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 BACKEND_TEMPLATE="${PROXY_ROUTER_BACKEND_TEMPLATE:-/etc/haproxy/versiond-backend.cfg.template}"
+RPC_BACKEND_TEMPLATE="${PROXY_ROUTER_RPC_BACKEND_TEMPLATE:-$(CDPATH='' cd -- "$(dirname -- "$BACKEND_TEMPLATE")" && pwd)/rpc-h2-backend.cfg.template}"
 OUT="${PROXY_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 VERSION_MAP="${PROXY_ROUTER_VERSION_MAP:-/etc/haproxy/version-router.map}"
 SLOT_MAP="${OUT}.version-slots.map"
@@ -260,9 +263,9 @@ case "$NGINX_MODE" in
             echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for DEVSHARD_RPC_H2_PORT (looked in $RPC_H2_CERT_DIR)" >&2
             exit 1
         fi
-        mkdir -p "$(dirname "$RPC_H2_PEM")"
-        cat "$cert" "$key" > "$RPC_H2_PEM"
-        chmod 600 "$RPC_H2_PEM"
+        # nginx renewal later replaces cert.pem and private.key. watch_rpc_h2_cert
+        # rebuilds this PEM and commits it on the admin socket.
+        write_rpc_h2_pem "$cert" "$key" "$RPC_H2_PEM"
         # ssl+alpn is HTTP/2 over TLS. proto h2 would be cleartext h2c.
         RPC_H2_BIND=":${RPC_H2_PORT} ssl crt ${RPC_H2_PEM} alpn h2"
         ;;
@@ -317,11 +320,12 @@ backend_name() {
 BACKENDS_FILE=$(mktemp)
 ADMIN_RULES_FILE=$(mktemp)
 VERSION_READY_RULES_FILE=$(mktemp)
+RPC_H2_RULES_FILE=$(mktemp)
 STATIC_VERSIONS_FILE=$(mktemp)
 CACHED_VERSIONS_FILE=$(mktemp)
 CACHED_DYNAMIC_VERSIONS_FILE=$(mktemp)
 CATALOG_PROXY_FILE=$(mktemp)
-trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
+trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$RPC_H2_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
 if [ -n "$CATALOG_BIND_HOST" ]; then
     cat > "$CATALOG_PROXY_FILE" <<EOF
 frontend routing_catalog
@@ -395,6 +399,25 @@ render_router_backend() {
         "$BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
 
+# The catalog reconciler enables ${backend}_rpc beside the JSON backend. The
+# twin is the peer-RPC pool for that same version: proto h2 to the router,
+# readiness still /readyz?version= over HTTP/1.1.
+render_rpc_backend() {
+    [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ] || return 0
+    backend=$1
+    ready_check=$2
+    server_state=$3
+    sed \
+        -e "s|\${BACKEND_NAME}|${backend}_rpc|g" \
+        -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
+        -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
+        -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
+        -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
+        -e "s|\${RPC_H2_ROUTER_PORT}|$RPC_H2_ROUTER_PORT|g" \
+        -e "s|\${SERVER_STATE}|$server_state|g" \
+        "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
+}
+
 render_router_backend versiond_router_coarse \
     "http-check send meth GET uri /healthz hdr Host $ROUTER_POOL_HOST" \
     "http-check send meth GET uri /readyz hdr Host $ROUTER_POOL_HOST" ''
@@ -412,6 +435,8 @@ declare_version() {
         printf '%s %s\n' "$version" "$backend" >> "$VERSION_MAP"
         render_router_backend "$backend" \
             "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST" \
+            "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
+        render_rpc_backend "$backend" \
             "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
@@ -458,6 +483,9 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz hdr Host $ROUTER_POOL_HOST" \
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
         "$server_state"
+    render_rpc_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,regsub(_rpc\$,),map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
+        "$server_state"
     printf '%s\n' \
         "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
         "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
@@ -474,6 +502,17 @@ elif [ -s "$VERSION_MAP" ]; then
 else
     UNDECLARED_VERSION_GUARD="# No version catalog: use the coarse router pool."
     DYNAMIC_READY_GUARD="# Dynamic version readiness is disabled."
+fi
+
+if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+    cat > "$RPC_H2_RULES_FILE" <<EOF
+    http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
+    acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)\$|^/stats(/|\$)|^/sessions/[^/]+/(diffs|mempool|signatures)\$
+    $UNDECLARED_VERSION_GUARD
+    use_backend %[var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc)] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }
+EOF
+else
+    printf '%s\n' '    # Non-HA peer RPC dials one versiond. Version pools belong to the router fleet.' > "$RPC_H2_RULES_FILE"
 fi
 
 case "$NGINX_MODE" in
@@ -525,6 +564,10 @@ sed \
     -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \
     -e "s|\${RPC_H2_CHECK_EXPECT}|$RPC_H2_CHECK_EXPECT|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
+    -e "/\${RPC_H2_VERSION_RULES}/{
+        r $RPC_H2_RULES_FILE
+        d
+    }" \
 	-e "/\${CATALOG_PROXY_CONFIG}/{
 		r $CATALOG_PROXY_FILE
 		d
@@ -577,5 +620,17 @@ run_catalog_reconciler() {
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
+
+case "$NGINX_MODE" in
+    https | both)
+        case "${DEVSHARD_RPC_H2_CERT_POLL_SECONDS:-30}" in
+            ''|*[!0-9]*|0)
+                echo "proxy-router: DEVSHARD_RPC_H2_CERT_POLL_SECONDS must be a positive integer" >&2
+                exit 1
+                ;;
+        esac
+        watch_rpc_h2_cert &
+        ;;
+esac
 
 exec "$HAPROXY_BIN" -W -db -f "$OUT"

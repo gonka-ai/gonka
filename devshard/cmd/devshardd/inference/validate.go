@@ -13,11 +13,10 @@ import (
 	"strings"
 	"time"
 
+	"common/completionapi"
 	commonvalidation "common/validation"
 
 	"connectrpc.com/connect"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	chaintypes "github.com/productscience/inference/x/inference/types"
 
@@ -59,15 +58,7 @@ func signPayloadRequest(
 		ExecutorAddress: "",
 	}
 
-	signerAddress, err := sdk.AccAddressFromBech32(recorder.GetSignerAddress())
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: recorder.GetKeyring(),
-	}
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+	return calculations.Sign(recorder, components, calculations.Developer)
 }
 
 func resolveExecutorPubKeys(ctx context.Context, recorder PayloadAuthClient, executorAddress string) ([]string, error) {
@@ -133,10 +124,7 @@ func fetchPayloadsFromExecutor(
 		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
-		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
-			return nil, nil, err
-		}
-		return nil, nil, tagExecutorPayloadFault(err)
+		return nil, nil, classifyPayloadFetchError(ctx, err)
 	}
 
 	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
@@ -155,17 +143,32 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
 	}
 
-	promptHash := sha256.Sum256(payloadResp.PromptPayload)
-	if !bytes.Equal(promptHash[:], req.PromptHash) {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
+	if err := verifyFetchedPayloadHashes(req, payloadResp.PromptPayload, payloadResp.ResponsePayload); err != nil {
+		return nil, nil, err
 	}
-
-	responseHash := sha256.Sum256(payloadResp.ResponsePayload)
-	if !bytes.Equal(responseHash[:], req.ResponseHash) {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
-	}
-
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
+}
+
+func verifyFetchedPayloadHashes(req devshardpkg.ValidateRequest, promptPayload, responsePayload []byte) error {
+	promptHash := sha256.Sum256(promptPayload)
+	if !bytes.Equal(promptHash[:], req.PromptHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
+	}
+
+	responseHash := sha256.Sum256(responsePayload)
+	if !bytes.Equal(responseHash[:], req.ResponseHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
+	}
+
+	served, err := completionapi.StripForGateway(responsePayload)
+	if err != nil {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served view: %w", commonvalidation.ErrHashMismatch, err))
+	}
+	servedHash := sha256.Sum256(served)
+	if !bytes.Equal(servedHash[:], req.ServedHash) {
+		return tagExecutorPayloadFault(fmt.Errorf("%w: served expected %x got %x", commonvalidation.ErrHashMismatch, req.ServedHash, servedHash[:]))
+	}
+	return nil
 }
 
 const payloadFetchAttempts = 2
@@ -244,6 +247,31 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 // Valid:false on that would punish an honest executor.
 var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
 
+// classifyPayloadFetchError leaves a failure of this process's closed peer
+// untagged, so the lease is released and another generation can fetch. A
+// payload that is gone, too large, rate-limited, or never reached because
+// the executor did not finish Attach is the executor's result. A bare
+// ErrPeerNotReady is still this process's own session; ErrPeerPayloadUnanswered
+// is the executor's missing session.
+func classifyPayloadFetchError(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
+		return err
+	}
+	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerPayloadUnanswered) && !transport.OutboundPeersReleased() {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
+		return err
+	}
+	return tagExecutorPayloadFault(err)
+}
+
 func fetchSignedPayloads(
 	ctx context.Context,
 	client *http.Client,
@@ -254,12 +282,20 @@ func fetchSignedPayloads(
 	signature string,
 	maxBytes int64,
 ) (*commonvalidation.PayloadResponse, error) {
+	ctx, stopFetch := transport.WithPayloadFetchCancel(ctx)
+	defer stopFetch()
 	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
 		return nil, errPayloadRPCUnavailable
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
+		// The executor did not finish Attach within the header budget, so
+		// the payload fetch got no response. A session this process already
+		// closed returns before that budget and stays untagged.
+		if payloadAttachTimedOut(ctx, waitCtx) {
+			return nil, tagExecutorPayloadFault(err)
+		}
 		return nil, err
 	}
 	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
@@ -271,13 +307,27 @@ func fetchSignedPayloads(
 	}, maxBytes)
 }
 
+// payloadAttachTimedOut reports that the handshake wait expired while this
+// validation is still running. A cancelled caller or a released peer
+// generation is this process stopping, not an executor that stayed silent.
+func payloadAttachTimedOut(ctx, waitCtx context.Context) bool {
+	return waitCtx.Err() != nil && ctx.Err() == nil && !transport.OutboundPeersReleased()
+}
+
 func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
 	if err != nil {
 		switch connect.CodeOf(err) {
 		case connect.CodeNotFound:
 			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
 		case connect.CodeResourceExhausted:
-			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			// The read cap and a 429 share this code. Only an oversized body
+			// is "too large". A rate limit is the executor not serving the
+			// payload, and classify tags that as a fault.
+			status, _, _, ok := transport.ConnectApplicationStatus(err)
+			if ok && status == http.StatusRequestEntityTooLarge {
+				return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			}
+			return nil, err
 		default:
 			return nil, err
 		}
@@ -391,8 +441,8 @@ func sleepPayloadFetchRetry(ctx context.Context) error {
 }
 
 func classifyExecuteValidationErr(err error) error {
-	if err == nil {
-		return nil
+	if err == nil || errors.Is(err, devshardpkg.ErrValidationDeferred) {
+		return err
 	}
 	var classified *observability.ClassifiedError
 	if errors.As(err, &classified) {

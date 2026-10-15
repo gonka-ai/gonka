@@ -279,3 +279,42 @@ func TestRPCBudgetEndpoint(t *testing.T) {
 	require.Equal(t, "other", rpcBudgetEndpoint(""))
 	require.Equal(t, "GetDiffs", rpcBudgetEndpoint("GetDiffs"))
 }
+
+// Test flow:
+//  1. Advertise the network default budget and leave exactly one chat in the bucket.
+//  2. Read the chat wait twice, take the chat, then read the wait again.
+//  3. Assert reading never spends the budget, the spent bucket reports one chat's refill, and an unadvertised budget never waits.
+func TestPeerRPCBudget_WaitReadsTheBudgetWithoutSpendingIt(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	now := func() time.Time { return clock }
+	var budget peerRPCBudget
+	budget.apply(&rpcpb.RateLimits{MessagesPerMin: DefaultRPCMessagesPerMin, MessagesBurst: DefaultRPCMessagesBurst}, now())
+	budget.bucket.tokens = RPCWeightChat
+
+	firstRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	secondRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	require.NoError(t, budget.take(context.Background(), rpcpbconnect.SessionServiceChatProcedure, now, nil))
+	spentRead := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+	var unadvertised peerRPCBudget
+
+	require.Zero(t, firstRead, "a bucket holding a chat sends it at once")
+	require.Zero(t, secondRead, "reading the wait must not spend the budget")
+	require.Equal(t, RPCWeightChat*time.Minute/time.Duration(DefaultRPCMessagesPerMin), spentRead, "a spent bucket waits one chat's refill at the default rate")
+	require.Zero(t, unadvertised.wait(now(), rpcpbconnect.SessionServiceChatProcedure))
+}
+
+// Test flow:
+//  1. Advertise a budget below the network default: 10 a minute with a burst of one chat.
+//  2. Spend it with one chat and read the chat wait.
+//  3. Assert the wait reads zero, so a host cannot turn a budget it set low into nonces the gateway burns for it without a send.
+func TestPeerRPCBudget_WaitIgnoresABudgetBelowTheNetworkDefault(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	now := func() time.Time { return clock }
+	var budget peerRPCBudget
+	budget.apply(&rpcpb.RateLimits{MessagesPerMin: 10, MessagesBurst: RPCWeightChat}, now())
+	require.NoError(t, budget.take(context.Background(), rpcpbconnect.SessionServiceChatProcedure, now, nil))
+
+	wait := budget.wait(now(), rpcpbconnect.SessionServiceChatProcedure)
+
+	require.Zero(t, wait)
+}

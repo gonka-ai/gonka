@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Parser checks, then one HAProxy process: a held inference keeps Watch open,
-# and finishing that inference lets SIGUSR1 close Watch.
+# Parser checks, then one HAProxy process: Chat sends headers and holds the
+# body, and SIGUSR1 closes only Watch. The body still arrives. The helper
+# opens its runtime CLI only after SIGUSR1, so an idle gap longer than
+# `stats timeout` still drains. If that CLI cannot be opened, soft-stop is
+# not forwarded.
 set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
@@ -42,42 +45,66 @@ cleanup() {
 }
 
 expect_ids() {
-    local name=$1 table=$2 sess=$3 want=$4 got=
-    got=$("$drain" --select "$table" "$sess" | sort)
+    local name=$1 sess=$2 want=$3 got=
+    got=$("$drain" --select "$sess" | sort)
     want=$(printf '%s\n' "$want" | sed '/^$/d' | sort)
     [[ $got == "$want" ]] || fail "$name: got [$got] want [$want]"
 }
 
 mkdir -p "$tmpdir/fix"
-cat >"$tmpdir/fix/table" <<'EOF'
-# table: h2_stream_acct, type: string, size:200000, used:3
-0x1: key=10.0.0.2:4000 use=1 exp=1 shard=0 gpc0=1 gpc1=0
-0x2: key=10.0.0.3:4001 use=1 exp=1 shard=0 gpc0=1 gpc1=1
-0x3: key=10.0.0.4:4002 use=0 exp=1 shard=0 gpc0=0 gpc1=0
-0x4: key=10.0.0.5:4003 use=1 exp=1 shard=0 gpc0=2 gpc1=1
-EOF
 cat >"$tmpdir/fix/sess" <<'EOF'
-0xffffa48c9aa0: id=0 proto=tcpv4 source=10.0.0.2:4000
-  h2c=0xffffa17f1550 mux=H2
-0xffffa48c9bb0: id=1 proto=tcpv4 source=10.0.0.2:4000
-  h2c=0xffffa17f1550 mux=H2
-0xffffa48c9cc0: id=2 proto=tcpv4 source=10.0.0.3:4001
+0xffffa48c9aa0: [ts] id=1 proto=tcpv4 source=10.0.0.2:4000
+  txn=0x1 flags=0x0 meth=3 status=200 req.st=MSG_DATA rsp.st=MSG_DATA uri="POST /v1/sessions/x/rpc/ChatService/Chat HTTP/2.0"
+  h2c=0xffffa17f1550 mux=H2 h2s.id=1
+0xffffa48c9bb0: [ts] id=3 proto=tcpv4 source=10.0.0.2:4000
+  txn=0x2 flags=0x0 meth=3 status=-1 req.st=MSG_DONE rsp.st=MSG_RPBEFORE uri="POST /v1/sessions/x/rpc/devshard.transport.v1.PeerAuthService/Watch HTTP/2.0"
+  h2c=0xffffa17f1550 mux=H2 h2s.id=3
+0xffffa48c9cc0: [ts] id=3 proto=tcpv4 source=10.0.0.3:4001
+  txn=0x3 uri="POST /v1/sessions/x/rpc/devshard.transport.v1.PeerAuthService/Watch HTTP/1.1"
   mux=H1
-0xffffa48c9dd0: id=3 proto=tcpv4 source=10.0.0.3:4001
-  h2c=0xffffa17f1660 mux=H2
-0xffffa48c9ee0: id=4 proto=tcpv4 source=10.0.0.4:4002 h2c=0xffffa17f1770 mux=H2
-0xffffa48c9ff0: id=5 proto=tcpv4 source=10.0.0.5:4003
-  h2c=0xffffa17f1880 mux=H2
-0xffffa48ca000: id=6 proto=unix_stream frontend=GLOBAL
+0xffffa48c9dd0: [ts] id=4 proto=tcpv4 source=10.0.0.4:4002 h2c=0xffffa17f1770 mux=H2
+  txn=0x4 uri="POST http://router/v1/sessions/e/rpc/devshard.transport.v1.PeerAuthService/Watch HTTP/2.0"
+0xffffa48c9ee0: [ts] id=9 proto=tcpv4 source=10.0.0.5:4003
+  txn=0x5 uri="POST /v1/sessions/x/rpc/devshard.transport.v1.PeerAuthService/Watch HTTP/2.0"
+  backend=app
+0xffffa48ca000: [ts] id=6 proto=unix_stream frontend=GLOBAL
+0xffffa48ca110: [ts] id=7 proto=tcpv4 source=10.0.0.6:4004
+  txn=0x6 uri="POST /v1/sessions/x/rpc/devshard.transport.v1.PeerAuthService/Watchdog HTTP/2.0"
+  h2c=0xffffa17f1880 mux=H2 h2s.id=7
 EOF
 
-# 10.0.0.2 still has inference in flight. 10.0.0.5 started two and finished
-# one, so the Watch stays. 10.0.0.3 is idle but its HTTP/1.1 session is kept.
-expect_ids "idle watches only" "$tmpdir/fix/table" "$tmpdir/fix/sess" \
-    $'0xffffa48c9dd0\n0xffffa48c9ee0'
+# id=1 is a Chat on the same connection as Watch id=3. The HTTP/1.1 Watch
+# shares the path and must be kept. id=9 has the Watch line but is not HTTP/2.
+# Watchdog contains the Watch prefix and must be kept.
+expect_ids "watch streams only" "$tmpdir/fix/sess" \
+    $'0xffffa48c9bb0\n0xffffa48c9dd0'
 
 runtime_show() {
     printf '%s\n' "$1" | docker exec -i "$proxy" socat -t 1 stdio /var/run/haproxy/reconciler.sock
+}
+
+launch_proxy() {
+    proxy=gonka-h2-watch-drain-$1
+    docker rm -f "$proxy" >/dev/null 2>&1 || true
+    docker run -d --name "$proxy" --user root \
+        --add-host=host.docker.internal:host-gateway \
+        -p 127.0.0.1::8080 \
+        -v "$drain:/usr/local/lib/versiond-router/h2-watch-drain.sh:ro" \
+        -v "$tmpdir/haproxy.cfg:/tmp/haproxy.cfg:ro" \
+        "$haproxy_image" \
+        /bin/sh -c 'apk add --no-cache socat >/dev/null && mkdir -p /var/run/haproxy && exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$(command -v haproxy)" /tmp/haproxy.cfg' \
+        >/dev/null
+}
+
+wait_haproxy() {
+    local _
+    for _ in $(seq 1 300); do
+        if runtime_show 'show info' 2>/dev/null | grep -q '^Name: HAProxy$'; then
+            return 0
+        fi
+        sleep 0.2
+    done
+    return 1
 }
 
 command -v python3 >/dev/null || fail "python3 is required for the backend"
@@ -97,13 +124,19 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("PeerAuthService/Watch"):
             time.sleep(60)
             body = b"watch-ok"
-        else:
-            time.sleep(8)
-            body = b"chat-ok"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = b"chat-ok"
         self.send_response(200)
         self.send_header("content-type", "text/plain")
         self.send_header("content-length", str(len(body)))
         self.end_headers()
+        self.wfile.flush()
+        time.sleep(8)
         self.wfile.write(body)
 
     def log_message(self, fmt, *args):
@@ -123,14 +156,17 @@ python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1).clo
 
 cat >"$tmpdir/haproxy.cfg" <<EOF
 global
+    log stdout format raw local0
     stats socket /var/run/haproxy/reconciler.sock level admin mode 600
-    # Shorter than the idle below. The helper must raise its own CLI timeout
-    # or this session is gone before SIGUSR1 and Watch never closes.
+    # Shorter than the idle below. The helper must not keep a CLI open across
+    # this gap. It opens one when SIGUSR1 arrives, then soft-stops HAProxy.
     stats timeout 2s
     tune.h2.max-concurrent-streams 100
 
 defaults
     mode http
+    option httplog
+    log global
     timeout connect 3s
     timeout client 60s
     timeout server 60s
@@ -138,42 +174,40 @@ defaults
 
 frontend fe
     bind :8080 proto h2
-    http-request set-var(txn.h2watch) str(1) if { path_reg PeerAuthService/Watch\$\$ }
-    http-request set-var-fmt(txn.ckey) %[src]:%[src_port]
-    http-request track-sc0 var(txn.ckey) table h2_stream_acct
-    http-request sc-inc-gpc0(0) if !{ var(txn.h2watch) -m str 1 }
-    http-after-response sc-inc-gpc1(0) if !{ var(txn.h2watch) -m str 1 }
     default_backend app
 
 backend app
     server app host.docker.internal:${port}
-
-backend h2_stream_acct
-    stick-table type string len 80 size 1000 expire 1h store gpc0,gpc1
 EOF
 
 suffix=$$
-proxy=gonka-h2-watch-drain-$suffix
-docker rm -f "$proxy" >/dev/null 2>&1 || true
-docker run -d --name "$proxy" --user root \
-    --add-host=host.docker.internal:host-gateway \
-    -p 127.0.0.1::8080 \
-    -v "$drain:/usr/local/lib/versiond-router/h2-watch-drain.sh:ro" \
-    -v "$tmpdir/haproxy.cfg:/tmp/haproxy.cfg:ro" \
-    "$haproxy_image" \
-    /bin/sh -c 'apk add --no-cache socat >/dev/null && mkdir -p /var/run/haproxy && exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$(command -v haproxy)" /tmp/haproxy.cfg' \
-    >/dev/null
+# Unlink the stats socket after the idle gap. A CLI opened at process start
+# would still be connected to the inode and would still forward SIGUSR1.
+# Opening at stop time fails, and the listener has to stay up.
+launch_proxy "held-$suffix"
+wait_haproxy || fail "haproxy did not open the runtime socket for the hold check"
+sleep 3
+docker exec "$proxy" rm -f /var/run/haproxy/reconciler.sock
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+sleep 2
+[[ $(docker inspect --format '{{.State.Running}}' "$proxy") == true ]] \
+    || fail "proxy exited when the runtime CLI could not be opened"
+held_port=$(docker port "$proxy" 8080 | head -n 1 | awk -F: '{print $NF}')
+[[ -n $held_port ]] || fail "hold-check haproxy published no host port"
+python3 -c "import socket; socket.create_connection(('127.0.0.1', int('$held_port')), 2).close()" \
+    || fail "listener closed when the runtime CLI could not be opened"
+held_logs=$(docker logs "$proxy" 2>&1 || true)
+grep -q 'runtime CLI did not open; soft-stop held' <<<"$held_logs" \
+    || fail "soft-stop hold was not logged: $held_logs"
+if grep -E '^h2-watch-drain: soft-stop$' <<<"$held_logs"; then
+    fail "soft-stop was forwarded without a runtime CLI"
+fi
+docker rm -f "$proxy" >/dev/null
 
-# apk add socat runs inside the container before HAProxy listens.
-for _ in $(seq 1 300); do
-    if runtime_show 'show info' 2>/dev/null | grep -q '^Name: HAProxy$'; then
-        break
-    fi
-    sleep 0.2
-done
-runtime_show 'show info' 2>/dev/null | grep -q '^Name: HAProxy$' || fail "haproxy did not open the runtime socket"
-# The helper opened its CLI at process start. Sit past stats timeout before
-# any stream exists, which is the gap a cold `go mod tidy` hits in CI.
+launch_proxy "$suffix"
+wait_haproxy || fail "haproxy did not open the runtime socket"
+# Sit past stats timeout before any stream exists. A CLI opened at process
+# start would already be gone, which is the gap a cold `go mod tidy` hits in CI.
 sleep 3
 
 hostport=$(docker port "$proxy" 8080 | head -n 1)
@@ -244,6 +278,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer resp.Body.Close()
+	note(status, "chat-headers")
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "chat body:", err)
@@ -272,33 +307,46 @@ client_pid=$!
 
 ready=0
 for _ in $(seq 1 250); do
-    if [[ -f $tmpdir/paths ]] && grep -q '/v1/chat' "$tmpdir/paths" && grep -q 'PeerAuthService/Watch' "$tmpdir/paths"; then
-        table=$(runtime_show 'show table h2_stream_acct' 2>/dev/null || true)
-        runtime_show 'show sess all' >"$tmpdir/sess.dump" 2>/dev/null || true
+    if [[ -f $tmpdir/paths ]] && grep -q '/v1/chat' "$tmpdir/paths" && grep -q 'PeerAuthService/Watch' "$tmpdir/paths" \
+        && grep -q 'chat-headers' "$tmpdir/client.status" && ! grep -q 'chat-ok' "$tmpdir/client.status"; then
+        runtime_show 'show sess all show-uri' >"$tmpdir/sess.dump" 2>/dev/null || true
         streams=$(grep -c 'h2c=' "$tmpdir/sess.dump" || true)
-        if [[ $table == *'gpc0=1 '* && $table == *'gpc1=0'* && $streams -ge 2 ]]; then
+        if grep -q 'PeerAuthService/Watch HTTP/' "$tmpdir/sess.dump" && [[ $streams -ge 2 ]]; then
             ready=1
             break
         fi
-        if [[ $table == *'gpc1=0'* ]]; then
-            fail "inference was in flight but not both streams were visible (streams=$streams) table=[$table] sess=[$(cat "$tmpdir/sess.dump")]"
-        fi
-        fail "response was counted before the backend finished holding it (streams=$streams) table=[$table] sess=[$(cat "$tmpdir/sess.dump")]"
+    fi
+    if grep -q 'chat-ok' "$tmpdir/client.status" 2>/dev/null; then
+        fail "chat body finished before the drain was signaled: $(cat "$tmpdir/client.status")"
     fi
     if [[ -s $tmpdir/client.err ]] && ! kill -0 "$client_pid" 2>/dev/null; then
         break
     fi
     sleep 0.2
 done
-[[ $ready == 1 ]] || fail "inference and watch were not both in flight: paths=[$(cat "$tmpdir/paths" 2>/dev/null)] table=[$(runtime_show 'show table h2_stream_acct' 2>/dev/null || true)] client=[$(cat "$tmpdir/client.err" 2>/dev/null)]"
+[[ $ready == 1 ]] || fail "chat headers and watch were not both in flight: paths=[$(cat "$tmpdir/paths" 2>/dev/null)] sess=[$(cat "$tmpdir/sess.dump" 2>/dev/null)] client=[$(cat "$tmpdir/client.err" 2>/dev/null)] status=[$(cat "$tmpdir/client.status" 2>/dev/null)]"
+if docker exec "$proxy" test -e /tmp/h2-watch-drain.in; then
+    fail "runtime CLI was opened before soft-stop"
+fi
 
 docker kill --signal SIGUSR1 "$proxy" >/dev/null
-sleep 1
-[[ $(docker inspect --format '{{.State.Running}}' "$proxy") == true ]] \
-    || fail "proxy exited while the inference was still held"
-if grep -q 'chat-ok' "$tmpdir/client.status" || grep -q 'watch-done' "$tmpdir/client.status"; then
-    fail "a stream finished during the in-flight window: $(cat "$tmpdir/client.status")"
+watch_closed=0
+for _ in $(seq 1 20); do
+    if grep -q 'watch-done' "$tmpdir/client.status"; then
+        watch_closed=1
+        break
+    fi
+    if grep -q 'chat-ok' "$tmpdir/client.status"; then
+        fail "chat body arrived before Watch was closed: $(cat "$tmpdir/client.status")"
+    fi
+    sleep 0.25
+done
+[[ $watch_closed == 1 ]] || fail "Watch stayed open while the chat body was streaming: $(cat "$tmpdir/client.status")"
+if grep -q 'chat-ok' "$tmpdir/client.status"; then
+    fail "chat body was cut off with Watch: $(cat "$tmpdir/client.status")"
 fi
+[[ $(docker inspect --format '{{.State.Running}}' "$proxy") == true ]] \
+    || fail "proxy exited while the chat body was still held"
 
 chat_ok=0
 for _ in $(seq 1 40); do
@@ -329,5 +377,11 @@ for _ in $(seq 1 40); do
     sleep 0.25
 done
 [[ $stopped == 1 ]] || fail "soft-stop did not finish after watch was released"
+stop_logs=$(docker logs "$proxy" 2>&1 || true)
+grep -q '^h2-watch-drain: soft-stop$' <<<"$stop_logs" \
+    || fail "soft-stop was not forwarded after the runtime CLI opened: $stop_logs"
+if grep -F 'soft-stop held' <<<"$stop_logs"; then
+    fail "soft-stop was held on the success path: $stop_logs"
+fi
 
 echo "h2-watch-drain_test: ok"

@@ -160,14 +160,16 @@ func (r *StreamedCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error)
 				return EnforcedTokens{}, errors.New("StreamedCompletionResponse: choice has no logprobs content")
 			}
 
-			var topTokens []string
-			for _, topToken := range choice.Logprobs.Content[0].TopLogprobs {
-				topTokens = append(topTokens, topToken.Token)
+			for _, content := range choice.Logprobs.Content {
+				var topTokens []string
+				for _, topToken := range content.TopLogprobs {
+					topTokens = append(topTokens, topToken.Token)
+				}
+				enforcedTokens.Tokens = append(enforcedTokens.Tokens, EnforcedToken{
+					Token:     content.Token,
+					TopTokens: topTokens,
+				})
 			}
-			enforcedTokens.Tokens = append(enforcedTokens.Tokens, EnforcedToken{
-				Token:     choice.Logprobs.Content[0].Token,
-				TopTokens: topTokens,
-			})
 		}
 	}
 

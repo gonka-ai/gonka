@@ -1,6 +1,8 @@
 package transport
 
 import (
+	"errors"
+
 	"github.com/labstack/echo/v4"
 )
 
@@ -31,6 +33,9 @@ const (
 	DevshardErrorUndeclaredVersion    = "undeclared_version"
 	DevshardErrorHeightSeedIncomplete = "height_seed_incomplete"
 	DevshardErrorCatalogPending       = "catalog_pending"
+	// DevshardErrorStorageBusy is a diff write that could not reach storage
+	// before the request deadline. Nothing was applied; resending is safe.
+	DevshardErrorStorageBusy = "storage_busy"
 	// DevshardErrorHTTPSessionRetired is Phase 7: the Echo session route is
 	// gone. Callers use Connect /sessions/{id}/rpc/ instead.
 	DevshardErrorHTTPSessionRetired = "http_session_retired"
@@ -38,6 +43,10 @@ const (
 
 // HTTPSessionRetiredMessage is the 410 body for a decommissioned Echo session route.
 const HTTPSessionRetiredMessage = "peer HTTP session route retired; use Connect /sessions/{id}/rpc/"
+
+// ErrHTTPSessionRetired is returned by HTTPClient before it posts a session
+// method whose Echo route answers 410. Connect is the live path.
+var ErrHTTPSessionRetired = errors.New(HTTPSessionRetiredMessage)
 
 // HTTPError returns an echo HTTP error and sets X-Devshard-Error when devshardCode is non-empty.
 func HTTPError(c echo.Context, code int, devshardCode, message string) error {

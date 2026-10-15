@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,13 +20,10 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"common/logging"
-	"common/storage/mode"
 	"common/storage/payloads"
 	"common/utils"
 	validationpkg "common/validation"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
@@ -36,7 +32,6 @@ import (
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
-	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -58,6 +53,9 @@ type HostManager struct {
 	escrowLookups      map[string]escrowLookupEntry
 	escrowLookupPeer   map[string][]time.Time
 	escrowLookupFloor  []time.Time
+	// knownCreators are signers that own a session here or proved creatorship
+	// on a lookup. Their lookups skip escrowLookupFloor.
+	knownCreators map[string]time.Time
 	// rosterEscrows keeps chain escrows inside retention (current epoch and
 	// the two before it). Unknown ids stay in escrowLookups. peers on each
 	// entry is the unbound GetPayload warm-key decision for that escrow.
@@ -115,22 +113,21 @@ type HostManager struct {
 	// scheduler without racing the chain-events goroutine.
 	cometLiveness func(bool)
 
-	rpcServerEnabled bool
-	rpcAuth          atomic.Pointer[rpcserver.PeerAuthHandler]
-	rpcAuthOnce      sync.Once
-	rpcAuthClosed    atomic.Bool
-
-	peerPushMu   sync.Mutex
-	peerPushSet  bool
-	peerInstance string
-	peerMembers  []string
+	rpcAuth       atomic.Pointer[rpcserver.PeerAuthHandler]
+	rpcAuthOnce   sync.Once
+	rpcAuthClosed atomic.Bool
 }
 
 const (
 	recoverSessionsConcurrency = 8
 	resolutionFailureTTL       = 30 * time.Second
-	permanentFailureTTL        = 10 * time.Minute
-	maxResolutionFailures      = 1024
+	// notFoundResolutionTTL bounds a miss that another replica may have
+	// filled in. Five seconds still collapses a retry onto one GetSessionMeta.
+	// Other failures stay on resolutionFailureTTL; settled and conflicts stay
+	// on permanentFailureTTL.
+	notFoundResolutionTTL = 5 * time.Second
+	permanentFailureTTL   = 10 * time.Minute
+	maxResolutionFailures = 1024
 	// resolutionFailureLowWater is the size the tombstone map is trimmed to
 	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
 	// the eviction sort over many inserts; trimming exactly to the cap would
@@ -380,6 +377,7 @@ func NewHostManager(
 		resolutionFailures: make(map[string]resolutionFailure),
 		escrowLookups:      make(map[string]escrowLookupEntry),
 		escrowLookupPeer:   make(map[string][]time.Time),
+		knownCreators:      make(map[string]time.Time),
 		rosterEscrows:      make(map[string]*rosterEscrow),
 		store:              gate,
 		obsGate:            gate,
@@ -403,10 +401,6 @@ func NewHostManager(
 // SetAvailabilityProvider gates completion requests on devshard_requests_enabled.
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
-}
-
-func (m *HostManager) SetRPCServerEnabled(enabled bool) {
-	m.rpcServerEnabled = enabled
 }
 
 func (m *HostManager) hostRPCAddress() string {
@@ -622,10 +616,29 @@ func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
 	observability.DeleteEscrowMetrics(escrowID)
 }
 
+// ownerEscrow is the chain record for an owner bind with no local session.
+// A fresh escrow_cache row decides the lane before any charge: a row naming
+// another creator refuses without a query, and a row naming addr takes the
+// uncharged fetchOwnerEscrow. Only an id with no row goes through the
+// unknown-id budget.
+func (m *HostManager) ownerEscrow(escrowID, addr string) (*bridge.EscrowInfo, error) {
+	warmed := m.warmedEscrow(escrowID)
+	switch {
+	case warmed == nil || warmed.CreatorAddress == "":
+		return m.fetchEscrowForBind(escrowID, addr)
+	case warmed.CreatorAddress != addr:
+		return nil, nil
+	default:
+		return m.fetchOwnerEscrow(escrowID, addr)
+	}
+}
+
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
-// get (nil, nil). Chat, height-sync seed, and owner-only verify use this.
-// ChallengeReceipt must use sessionForStartProof so a peer cannot pick the version.
+// get (nil, nil). Chat and height-sync seed use this.
+// ChallengeReceipt, VerifyTimeout, and VerifyErrorMiss use sessionForStartProof
+// so a peer cannot pick the version: a cold host binds only from the
+// creator-signed MsgStartInference in the diffs.
 func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
 	srv, err := m.SessionServerExisting(escrowID)
 	if err == nil {
@@ -638,7 +651,11 @@ func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server,
 		return nil, err
 	}
 
-	escrow, err := m.fetchEscrowForBind(escrowID, addr)
+	escrow, err := m.ownerEscrow(escrowID, addr)
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		logging.Warn("owner escrow lookup limited", inferenceTypes.System,
+			"escrow_id", escrowID, "owner", addr)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
@@ -821,8 +838,11 @@ func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now 
 		return
 	}
 	ttl := resolutionFailureTTL
-	if isPermanentResolutionFailure(err) {
+	switch {
+	case isPermanentResolutionFailure(err):
 		ttl = permanentFailureTTL
+	case errors.Is(err, storage.ErrSessionNotFound):
+		ttl = notFoundResolutionTTL
 	}
 	m.sessionsMutex.Lock()
 	m.resolutionFailures[escrowID] = resolutionFailure{err: err, expiresAt: now.Add(ttl)}
@@ -893,6 +913,7 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 	if installed != srv {
 		closeTransportServer(srv)
 	}
+	m.noteKnownCreator(installed.OwnerAddress(), time.Now())
 	return installed, nil
 }
 
@@ -1333,8 +1354,13 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					if sm, err = newStateMachine(); err != nil {
 						return nil, nil, fmt.Errorf("recreate state machine after snapshot restore failure: %w", err)
 					}
+				} else if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+					logging.Error("devshard snapshot committed entries failed audit, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", commitErr)
+					if sm, err = newStateMachine(); err != nil {
+						return nil, nil, fmt.Errorf("recreate state machine after committed-entry audit: %w", err)
+					}
 				} else {
-					sm.RestoreCommittedEntries(committedEntries)
 					sm.RestoreSealedNonces(sealedNonces)
 					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
 						// Restore already mutated sm, so the rejected state has to
@@ -1356,23 +1382,26 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				"escrow_id", escrowID, "error", snapErr)
 		}
 
-		var records []types.DiffRecord
+		var replayed int
 		if replayFrom <= meta.LatestNonce {
-			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
-			if err != nil {
-				return nil, nil, fmt.Errorf("get diffs: %w", err)
-			}
-			for _, rec := range records {
-				sm.InjectWarmKeys(rec.WarmKeyDelta)
-				root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-				if applyErr != nil {
-					return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
-				}
-				if len(rec.StateHash) > 0 && len(root) > 0 {
-					if !bytes.Equal(root, rec.StateHash) {
-						return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
+				for _, rec := range page {
+					sm.InjectWarmKeys(rec.WarmKeyDelta)
+					root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+					if applyErr != nil {
+						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+					}
+					if len(rec.StateHash) > 0 && len(root) > 0 {
+						if !bytes.Equal(root, rec.StateHash) {
+							return fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+						}
 					}
 				}
+				replayed += len(page)
+				return nil
+			})
+			if err != nil {
+				return nil, nil, err
 			}
 		}
 
@@ -1387,14 +1416,16 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		//
 		// Hand it to the gate instead of running it here: it is the expensive
 		// half of recovery (a write transaction per historical seal) and it
-		// would otherwise keep the caller of a cold bind waiting. Reuse the
-		// journal already in hand, whose last nonce the seal set matches;
-		// seals landing later reach the rebuild through the gate queue.
+		// would otherwise keep the caller of a cold bind waiting. The replay
+		// loop does not keep the journal. The job pages it from the store
+		// after the session is published; seals landing later reach the
+		// rebuild through the gate queue.
 		if replayFrom == 1 {
 			obsRepair = &obsRepairJob{
-				records: records,
-				sealed:  storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-				sm:      sm,
+				from:   1,
+				to:     meta.LatestNonce,
+				sealed: storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				sm:     sm,
 			}
 		} else {
 			fillStarted := time.Now()
@@ -1406,9 +1437,25 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 				"escrow_id", escrowID, "inserted", inserted,
 				"sealed_ids", sm.SealedNonceCount(),
 				"duration", time.Since(fillStarted))
+			// The rows a snapshot covers are on disk unless an earlier
+			// rebuild cleared them and never finished, which the mark records.
+			pending, pendingErr := m.store.ValidationObsRebuildPending(escrowID)
+			if pendingErr != nil {
+				logging.Warn("failed to read validation obs rebuild mark", inferenceTypes.System,
+					"escrow_id", escrowID, "error", pendingErr)
+			} else if pending {
+				logging.Info("validation obs rebuild did not finish before restart; repeating it", inferenceTypes.System,
+					"escrow_id", escrowID, "latest_nonce", meta.LatestNonce)
+				obsRepair = &obsRepairJob{
+					from:   1,
+					to:     meta.LatestNonce,
+					sealed: storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+					sm:     sm,
+				}
+			}
 		}
 
-		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+		if replayFrom == 1 || uint64(replayed) >= host.SnapshotInterval {
 			if saveErr := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); saveErr != nil {
 				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
 					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", saveErr)
@@ -1435,9 +1482,10 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 }
 
 // hostRPCLookup is the Connect session resolver. Observability GETs and
-// gossip/repair use Existing (no CreateSession). ChallengeReceipt binds via
-// SessionForStartProof (gateway-signed start + version). Chat, seed, and
-// owner-only verify use SessionForOwner (creator only).
+// gossip/repair use Existing (no CreateSession). ChallengeReceipt,
+// VerifyTimeout, and VerifyErrorMiss bind via SessionForStartProof
+// (creator-signed start + version). Chat and seed use SessionForOwner
+// (creator only).
 type hostRPCLookup struct{ m *HostManager }
 
 func (l hostRPCLookup) SessionServerExisting(id string) (rpcserver.SessionCore, error) {
@@ -1491,22 +1539,20 @@ func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
 	g.GET("/stats/rpc", m.handleStatsRPC)
+	if m.hostRPCAddress() == "" {
+		panic("devshard: peer RPC requires a host address (signer or recorder)")
+	}
 	var opts []devshardserver.RouteOption
-	if m.rpcServerEnabled {
-		if m.hostRPCAddress() == "" {
-			panic("devshard: DEVSHARD_RPC_SERVER_ENABLED requires a host address (signer or recorder)")
-		}
-		if auth := m.peerAuthHandler(); auth != nil {
-			lookup := hostRPCLookup{m: m}
-			payloads := rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)
-			payloads.SetUnboundGetPayload(m.ServeUnboundGetPayload)
-			opts = append(opts, devshardserver.WithPeerRPC(
-				auth,
-				rpcserver.NewSessionHandler(lookup),
-				rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
-				rpcserver.WithPayloadService(payloads),
-			))
-		}
+	if auth := m.peerAuthHandler(); auth != nil {
+		lookup := hostRPCLookup{m: m}
+		payloads := rpcserver.NewPayloadHandler(lookup, m.ServeRPCGetPayload)
+		payloads.SetUnboundGetPayload(m.ServeUnboundGetPayload)
+		opts = append(opts, devshardserver.WithPeerRPC(
+			auth,
+			rpcserver.NewSessionHandler(lookup),
+			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
+			rpcserver.WithPayloadService(payloads),
+		))
 	}
 	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
 }
@@ -1521,6 +1567,16 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			slog.Error("devshardd: peer RPC host address is empty; refusing to construct handler")
 			return
 		}
+		if m.signer == nil {
+			slog.Error("devshardd: host signer is required to derive the peer session key; refusing peer RPC")
+			return
+		}
+		version := strings.TrimSpace(m.boundVersion)
+		sessionKey, err := m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		if err != nil {
+			slog.Error("devshardd: peer session key", "err", err)
+			return
+		}
 		limits := transport.LoadChannelLimitConfig()
 		h := rpcserver.NewPeerAuthHandler(m.verifier, hostAddr, rpcserver.PeerAuthConfig{
 			Allow: m.allowRPCPeer,
@@ -1528,76 +1584,18 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 				_, ok := m.existingServer(id)
 				return ok
 			},
-			Limits: &limits,
+			Limits:     &limits,
+			SessionKey: sessionKey,
+			Version:    version,
+			KeyID:      rpcserver.SessionKeyID,
 		})
-		if pool := storage.PeerRPCPool(m.store); peerRPCSharedEnabled(pool != nil, m.boundVersion) {
-			h.EnableShared(rpcserver.OpenSharedSessions(pool, rpcserver.SharedConfig{
-				HostAddress: hostAddr,
-				Version:     strings.TrimSpace(m.boundVersion),
-			}))
-			slog.Info("devshardd: peer rpc sessions are shared", "version", m.boundVersion)
-		}
-		h.StartSweeper()
 		m.rpcAuth.Store(h)
-		m.applyStoredPeerPush(h)
 	})
 	return m.rpcAuth.Load()
 }
 
-// peerRPCSharedEnabled is the in-memory versus shared switch. One process
-// keeps the memory map. GONKA_HA means another devshardd of this version can
-// receive the next call, so the token has to be in Postgres.
-func peerRPCSharedEnabled(hasPool bool, version string) bool {
-	if !hasPool || strings.TrimSpace(version) == "" {
-		return false
-	}
-	ha, err := boolvalue.Parse(os.Getenv(mode.EnvHADeployment))
-	return err == nil && ha
-}
-
-// SetPeerRPCMembers installs the membership versiond forwarded from the
-// router. A process that never receives a list keeps the member-table barrier.
-func (m *HostManager) SetPeerRPCMembers(instanceID string, ids []string) {
-	if m == nil {
-		return
-	}
-	cp := append([]string(nil), ids...)
-	m.peerPushMu.Lock()
-	m.peerPushSet = true
-	m.peerInstance = instanceID
-	m.peerMembers = cp
-	m.peerPushMu.Unlock()
-	if h := m.rpcAuth.Load(); h != nil {
-		h.SetPublishedBarrier(instanceID, cp)
-	}
-}
-
-func (m *HostManager) applyStoredPeerPush(h *rpcserver.PeerAuthHandler) {
-	if m == nil || h == nil {
-		return
-	}
-	m.peerPushMu.Lock()
-	defer m.peerPushMu.Unlock()
-	if !m.peerPushSet {
-		return
-	}
-	h.SetPublishedBarrier(m.peerInstance, append([]string(nil), m.peerMembers...))
-}
-
-// PeerRPCSessionsReady is true unless this process is still loading the
-// shared peer-session table. SQLite and RPC-off stay ready.
-func (m *HostManager) PeerRPCSessionsReady() bool {
-	if m == nil || !m.rpcServerEnabled {
-		return true
-	}
-	h := m.rpcAuth.Load()
-	if h == nil {
-		return true
-	}
-	return h.SessionsReady()
-}
-
-// ClosePeerRPC stops the host-level session sweeper. Safe if RPC was never mounted.
+// ClosePeerRPC closes the peer auth handler and ends open Watches.
+// Safe if RPC was never mounted.
 func (m *HostManager) ClosePeerRPC() {
 	m.rpcAuthClosed.Store(true)
 	m.rpcAuthOnce.Do(func() {})
@@ -2026,17 +2024,54 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 		ExecutorAddress: "",
 	}
 
-	signerAddressStr := m.recorder.GetSignerAddress()
-	signerAddress, err := sdk.AccAddressFromBech32(signerAddressStr)
-	if err != nil {
-		return "", err
-	}
-	accountSigner := &cmd.AccountSigner{
-		Addr:    signerAddress,
-		Keyring: m.recorder.GetKeyring(),
-	}
+	return calculations.Sign(m.recorder, components, calculations.Developer)
+}
 
-	return calculations.Sign(accountSigner, components, calculations.Developer)
+// SessionMemory is the retained-map sizes across loaded sessions.
+type SessionMemory struct {
+	Sessions    int
+	Live        int
+	Sealed      int
+	Mempool     int
+	Executing   int
+	Validating  int
+	Fattest     string
+	FattestLive int
+}
+
+// SessionMemoryCounts sums map lengths across loaded sessions. It copies the
+// server list under the session lock, then reads each host after releasing it,
+// so a large live map is never walked and the session lock is not held across
+// host locks.
+func (m *HostManager) SessionMemoryCounts() SessionMemory {
+	if m == nil {
+		return SessionMemory{}
+	}
+	m.sessionsMutex.RLock()
+	servers := make([]*transport.Server, 0, len(m.sessions))
+	for _, srv := range m.sessions {
+		servers = append(servers, srv)
+	}
+	m.sessionsMutex.RUnlock()
+
+	var out SessionMemory
+	out.Sessions = len(servers)
+	for _, srv := range servers {
+		if srv == nil || srv.Host() == nil {
+			continue
+		}
+		c := srv.Host().MemoryCounts()
+		out.Live += c.Live
+		out.Sealed += c.Sealed
+		out.Mempool += c.Mempool
+		out.Executing += c.Executing
+		out.Validating += c.Validating
+		if c.Live > out.FattestLive {
+			out.FattestLive = c.Live
+			out.Fattest = c.EscrowID
+		}
+	}
+	return out
 }
 
 // ActiveEscrowIDs returns the escrow IDs of all currently loaded sessions.
@@ -2111,13 +2146,15 @@ func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID 
 }
 
 // obsRepairJob carries the inputs for a deferred validation-obs rebuild: the
-// journal the recovery already read, and the seal set as of that journal's last
-// nonce. Anything the live path writes while the rebuild runs is queued by the
-// gate and applied after it, so the two never overlap.
+// nonce range of the journal, and the seal set as of that journal's last
+// nonce. The replay loop does not retain the diffs. startObsRepair pages the
+// range after the session is published. Anything the live path writes while
+// the rebuild runs is queued by the gate and applied after it, so the two
+// never overlap.
 type obsRepairJob struct {
-	records []types.DiffRecord
-	sealed  []uint64
-	sm      *state.StateMachine
+	from, to uint64
+	sealed   []uint64
+	sm       *state.StateMachine
 }
 
 // startObsRepair rebuilds validation obs and the sealed-inference index for a
@@ -2129,6 +2166,10 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 	if job == nil || m.obsGate == nil {
 		return
 	}
+	diffs := 0
+	if job.to >= job.from {
+		diffs = int(job.to - job.from + 1)
+	}
 	m.obsRepairWG.Add(1)
 	m.recoveryCounts.repairs.Add(1)
 	m.publishRecoveryProgress()
@@ -2139,30 +2180,39 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 			m.publishRecoveryProgress()
 		}()
 		startedAt := time.Now()
-		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
-			if err := storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed); err != nil {
-				return err
-			}
-			if job.sm == nil {
-				return nil
-			}
-			return job.sm.RebuildSealedInferenceIndexFromDiffs(inner, job.records)
+		// The mark is cleared only after the queued live writes are flushed,
+		// so a restart at any point before that repeats the whole repair.
+		err := storage.RunValidationObsRebuild(m.store, escrowID, func() error {
+			return m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
+				if err := storage.RebuildValidationObsFromJournal(inner, escrowID, job.from, job.to, job.sealed, nil); err != nil {
+					return err
+				}
+				if job.sm == nil {
+					return nil
+				}
+				return job.sm.RebuildSealedInferenceIndexFromRange(inner, job.from, job.to)
+			})
 		})
+		if errors.Is(err, storage.ErrValidationObsRebuildBusy) {
+			logging.Info("validation obs rebuild skipped; another instance is running it", inferenceTypes.System,
+				"escrow_id", escrowID)
+			return
+		}
 		if err != nil {
 			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
 				"escrow_id", escrowID, "duration", time.Since(startedAt), "error", err)
 			return
 		}
 		logging.Info("rebuilt validation obs", inferenceTypes.System,
-			"escrow_id", escrowID, "diffs", len(job.records),
+			"escrow_id", escrowID, "diffs", diffs,
 			"sealed_inferences", len(job.sealed), "duration", time.Since(startedAt))
 	}()
 }
 
 // WaitRecoveryRepairs blocks until background recovery rebuilds finish
-// (validation obs and the sealed-inference index). Shutdown must call it: a
-// rebuild interrupted after its clear leaves those rows empty, and recovery
-// will not retry once a snapshot exists.
+// (validation obs and the sealed-inference index). Shutdown should call it: a
+// rebuild interrupted after its clear leaves those rows empty until the next
+// recovery repeats it from the pending mark.
 func (m *HostManager) WaitRecoveryRepairs() {
 	m.obsRepairWG.Wait()
 }
@@ -2193,6 +2243,22 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		sp := m.params.SessionParams()
 		opts = append(opts, host.WithHeartbeatConfig(sp.Heartbeat), host.WithRepairConfig(sp.Repair))
 	}
+	if m.payloadStore != nil {
+		ps := m.payloadStore
+		// One epoch per call. The host probes the neighboring epochs itself,
+		// matching the boundary between the escrow epoch and the phase epoch
+		// used when the payload was stored.
+		opts = append(opts, host.WithStoredResponse(func(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, error) {
+			_, response, err := ps.Retrieve(ctx, escrowID, inferenceID, epochID)
+			if err != nil {
+				if errors.Is(err, payloads.ErrNotFound) {
+					return nil, nil
+				}
+				return nil, err
+			}
+			return response, nil
+		}))
+	}
 	return m.appendChainOracleOpt(opts)
 }
 
@@ -2214,9 +2280,9 @@ func closeTransportServer(srv *transport.Server) {
 }
 
 // wireHostToHost stores host-signed SelectTransport clients so repair probes
-// and timeout verify exist on a production child. Refused and execution
-// timeouts both ChallengeReceipt the executor with the creator-signed diffs,
-// so a cold host can CreateSession. Attach identity is m.signer. Gossip stays
+// and timeout verify exist on a production child. A refused timeout reads the
+// executor tip with GetState and ChallengeReceipt sends the missing diffs.
+// Both go through the peer RPC client. Attach identity is m.signer. Gossip stays
 // unwired: s.gossip is nil, so inbound gossip nonces and txs are dropped and
 // nothing is broadcast.
 func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {

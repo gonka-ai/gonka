@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"net"
@@ -10,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -52,10 +50,12 @@ func TestHTTP2CleartextFailsClosedWithoutH2C(t *testing.T) {
 	}
 }
 
+// baselineVersiondPin is the devshard-0.2.15-v5 source revision.
+// testenv/baselines/ is a local build and is not committed.
+const baselineVersiondPin = "be2b7c08f53a51a1b57b3ba0a3f45e7885a1455c"
+
 func TestBaselinePinVersiondHasNoH2C(t *testing.T) {
-	pinPath := filepath.Join("..", "..", "baselines", "0.2.15-v5.txt")
-	sha := baselinePinSHA(t, pinPath)
-	require.NotEmpty(t, sha)
+	sha := baselineVersiondPin
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", "..", ".."))
 	require.NoError(t, err)
@@ -69,23 +69,6 @@ func TestBaselinePinVersiondHasNoH2C(t *testing.T) {
 	require.NotContains(t, proxyGo, "http2.Transport")
 	require.NotContains(t, proxyGo, "ForceAttemptHTTP2")
 	require.NotContains(t, proxyGo, "h2c")
-}
-
-func baselinePinSHA(t *testing.T, path string) string {
-	t.Helper()
-	f, err := os.Open(path)
-	require.NoError(t, err)
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if strings.HasPrefix(line, "sha:") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "sha:"))
-		}
-	}
-	require.NoError(t, sc.Err())
-	t.Fatalf("no sha: in %s", path)
-	return ""
 }
 
 func gitShow(t *testing.T, repoRoot, sha, path string) string {

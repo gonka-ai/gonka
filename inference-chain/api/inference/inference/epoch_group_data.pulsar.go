@@ -231,6 +231,7 @@ var (
 	fd_EpochGroupData_model_snapshot             protoreflect.FieldDescriptor
 	fd_EpochGroupData_total_throughput           protoreflect.FieldDescriptor
 	fd_EpochGroupData_confirmation_weight_scales protoreflect.FieldDescriptor
+	fd_EpochGroupData_dynamic_coefficient_params protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -254,6 +255,7 @@ func init() {
 	fd_EpochGroupData_model_snapshot = md_EpochGroupData.Fields().ByName("model_snapshot")
 	fd_EpochGroupData_total_throughput = md_EpochGroupData.Fields().ByName("total_throughput")
 	fd_EpochGroupData_confirmation_weight_scales = md_EpochGroupData.Fields().ByName("confirmation_weight_scales")
+	fd_EpochGroupData_dynamic_coefficient_params = md_EpochGroupData.Fields().ByName("dynamic_coefficient_params")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -429,6 +431,12 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
+	if x.DynamicCoefficientParams != nil {
+		value := protoreflect.ValueOfMessage(x.DynamicCoefficientParams.ProtoReflect())
+		if !f(fd_EpochGroupData_dynamic_coefficient_params, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -480,6 +488,8 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 		return x.TotalThroughput != int64(0)
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		return len(x.ConfirmationWeightScales) != 0
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		return x.DynamicCoefficientParams != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -532,6 +542,8 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 		x.TotalThroughput = int64(0)
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		x.ConfirmationWeightScales = nil
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		x.DynamicCoefficientParams = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -614,6 +626,9 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		}
 		listValue := &_EpochGroupData_19_list{list: &x.ConfirmationWeightScales}
 		return protoreflect.ValueOfList(listValue)
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		value := x.DynamicCoefficientParams
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -678,6 +693,8 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_19_list)
 		x.ConfirmationWeightScales = *clv.list
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		x.DynamicCoefficientParams = value.Message().Interface().(*DynamicCoefficientParams)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -732,6 +749,11 @@ func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor)
 		}
 		value := &_EpochGroupData_19_list{list: &x.ConfirmationWeightScales}
 		return protoreflect.ValueOfList(value)
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		if x.DynamicCoefficientParams == nil {
+			x.DynamicCoefficientParams = new(DynamicCoefficientParams)
+		}
+		return protoreflect.ValueOfMessage(x.DynamicCoefficientParams.ProtoReflect())
 	case "inference.inference.EpochGroupData.poc_start_block_height":
 		panic(fmt.Errorf("field poc_start_block_height of message inference.inference.EpochGroupData is not mutable"))
 	case "inference.inference.EpochGroupData.epoch_group_id":
@@ -811,6 +833,9 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		list := []*ConfirmationWeightScale{}
 		return protoreflect.ValueOfList(&_EpochGroupData_19_list{list: &list})
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		m := new(DynamicCoefficientParams)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -950,6 +975,10 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				n += 2 + l + runtime.Sov(uint64(l))
 			}
 		}
+		if x.DynamicCoefficientParams != nil {
+			l = options.Size(x.DynamicCoefficientParams)
+			n += 2 + l + runtime.Sov(uint64(l))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -978,6 +1007,22 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.DynamicCoefficientParams != nil {
+			encoded, err := options.Marshal(x.DynamicCoefficientParams)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0xa2
 		}
 		if len(x.ConfirmationWeightScales) > 0 {
 			for iNdEx := len(x.ConfirmationWeightScales) - 1; iNdEx >= 0; iNdEx-- {
@@ -1645,6 +1690,42 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 20:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DynamicCoefficientParams", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.DynamicCoefficientParams == nil {
+					x.DynamicCoefficientParams = &DynamicCoefficientParams{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.DynamicCoefficientParams); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -1681,9 +1762,15 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_ConfirmationWeightScale                     protoreflect.MessageDescriptor
-	fd_ConfirmationWeightScale_model_id            protoreflect.FieldDescriptor
-	fd_ConfirmationWeightScale_weight_scale_factor protoreflect.FieldDescriptor
+	md_ConfirmationWeightScale                           protoreflect.MessageDescriptor
+	fd_ConfirmationWeightScale_model_id                  protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_weight_scale_factor       protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_effective_coefficient     protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_config                    protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_base_coefficient          protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_adaptive_step             protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_prev_sign                 protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_exclude_from_confirmation protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1691,6 +1778,12 @@ func init() {
 	md_ConfirmationWeightScale = File_inference_inference_epoch_group_data_proto.Messages().ByName("ConfirmationWeightScale")
 	fd_ConfirmationWeightScale_model_id = md_ConfirmationWeightScale.Fields().ByName("model_id")
 	fd_ConfirmationWeightScale_weight_scale_factor = md_ConfirmationWeightScale.Fields().ByName("weight_scale_factor")
+	fd_ConfirmationWeightScale_effective_coefficient = md_ConfirmationWeightScale.Fields().ByName("effective_coefficient")
+	fd_ConfirmationWeightScale_config = md_ConfirmationWeightScale.Fields().ByName("config")
+	fd_ConfirmationWeightScale_base_coefficient = md_ConfirmationWeightScale.Fields().ByName("base_coefficient")
+	fd_ConfirmationWeightScale_adaptive_step = md_ConfirmationWeightScale.Fields().ByName("adaptive_step")
+	fd_ConfirmationWeightScale_prev_sign = md_ConfirmationWeightScale.Fields().ByName("prev_sign")
+	fd_ConfirmationWeightScale_exclude_from_confirmation = md_ConfirmationWeightScale.Fields().ByName("exclude_from_confirmation")
 }
 
 var _ protoreflect.Message = (*fastReflection_ConfirmationWeightScale)(nil)
@@ -1770,6 +1863,42 @@ func (x *fastReflection_ConfirmationWeightScale) Range(f func(protoreflect.Field
 			return
 		}
 	}
+	if x.EffectiveCoefficient != nil {
+		value := protoreflect.ValueOfMessage(x.EffectiveCoefficient.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_effective_coefficient, value) {
+			return
+		}
+	}
+	if x.Config != nil {
+		value := protoreflect.ValueOfMessage(x.Config.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_config, value) {
+			return
+		}
+	}
+	if x.BaseCoefficient != nil {
+		value := protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_base_coefficient, value) {
+			return
+		}
+	}
+	if x.AdaptiveStep != nil {
+		value := protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_adaptive_step, value) {
+			return
+		}
+	}
+	if x.PrevSign != int32(0) {
+		value := protoreflect.ValueOfInt32(x.PrevSign)
+		if !f(fd_ConfirmationWeightScale_prev_sign, value) {
+			return
+		}
+	}
+	if x.ExcludeFromConfirmation != false {
+		value := protoreflect.ValueOfBool(x.ExcludeFromConfirmation)
+		if !f(fd_ConfirmationWeightScale_exclude_from_confirmation, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -1789,6 +1918,18 @@ func (x *fastReflection_ConfirmationWeightScale) Has(fd protoreflect.FieldDescri
 		return x.ModelId != ""
 	case "inference.inference.ConfirmationWeightScale.weight_scale_factor":
 		return x.WeightScaleFactor != nil
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		return x.EffectiveCoefficient != nil
+	case "inference.inference.ConfirmationWeightScale.config":
+		return x.Config != nil
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		return x.BaseCoefficient != nil
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		return x.AdaptiveStep != nil
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		return x.PrevSign != int32(0)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		return x.ExcludeFromConfirmation != false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1809,6 +1950,18 @@ func (x *fastReflection_ConfirmationWeightScale) Clear(fd protoreflect.FieldDesc
 		x.ModelId = ""
 	case "inference.inference.ConfirmationWeightScale.weight_scale_factor":
 		x.WeightScaleFactor = nil
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		x.EffectiveCoefficient = nil
+	case "inference.inference.ConfirmationWeightScale.config":
+		x.Config = nil
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		x.BaseCoefficient = nil
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		x.AdaptiveStep = nil
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		x.PrevSign = int32(0)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		x.ExcludeFromConfirmation = false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1831,6 +1984,24 @@ func (x *fastReflection_ConfirmationWeightScale) Get(descriptor protoreflect.Fie
 	case "inference.inference.ConfirmationWeightScale.weight_scale_factor":
 		value := x.WeightScaleFactor
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		value := x.EffectiveCoefficient
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		value := x.Config
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		value := x.BaseCoefficient
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		value := x.AdaptiveStep
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		value := x.PrevSign
+		return protoreflect.ValueOfInt32(value)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		value := x.ExcludeFromConfirmation
+		return protoreflect.ValueOfBool(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1855,6 +2026,18 @@ func (x *fastReflection_ConfirmationWeightScale) Set(fd protoreflect.FieldDescri
 		x.ModelId = value.Interface().(string)
 	case "inference.inference.ConfirmationWeightScale.weight_scale_factor":
 		x.WeightScaleFactor = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		x.EffectiveCoefficient = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.config":
+		x.Config = value.Message().Interface().(*DynamicCoefficientModelConfig)
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		x.BaseCoefficient = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		x.AdaptiveStep = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		x.PrevSign = int32(value.Int())
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		x.ExcludeFromConfirmation = value.Bool()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1880,8 +2063,32 @@ func (x *fastReflection_ConfirmationWeightScale) Mutable(fd protoreflect.FieldDe
 			x.WeightScaleFactor = new(Decimal)
 		}
 		return protoreflect.ValueOfMessage(x.WeightScaleFactor.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		if x.EffectiveCoefficient == nil {
+			x.EffectiveCoefficient = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.EffectiveCoefficient.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		if x.Config == nil {
+			x.Config = new(DynamicCoefficientModelConfig)
+		}
+		return protoreflect.ValueOfMessage(x.Config.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		if x.BaseCoefficient == nil {
+			x.BaseCoefficient = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		if x.AdaptiveStep == nil {
+			x.AdaptiveStep = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
 	case "inference.inference.ConfirmationWeightScale.model_id":
 		panic(fmt.Errorf("field model_id of message inference.inference.ConfirmationWeightScale is not mutable"))
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		panic(fmt.Errorf("field prev_sign of message inference.inference.ConfirmationWeightScale is not mutable"))
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		panic(fmt.Errorf("field exclude_from_confirmation of message inference.inference.ConfirmationWeightScale is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1900,6 +2107,22 @@ func (x *fastReflection_ConfirmationWeightScale) NewField(fd protoreflect.FieldD
 	case "inference.inference.ConfirmationWeightScale.weight_scale_factor":
 		m := new(Decimal)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		m := new(DynamicCoefficientModelConfig)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		return protoreflect.ValueOfInt32(int32(0))
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1977,6 +2200,28 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 			l = options.Size(x.WeightScaleFactor)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.EffectiveCoefficient != nil {
+			l = options.Size(x.EffectiveCoefficient)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.Config != nil {
+			l = options.Size(x.Config)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.BaseCoefficient != nil {
+			l = options.Size(x.BaseCoefficient)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.AdaptiveStep != nil {
+			l = options.Size(x.AdaptiveStep)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.PrevSign != 0 {
+			n += 1 + runtime.Soz(uint64(x.PrevSign))
+		}
+		if x.ExcludeFromConfirmation {
+			n += 2
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -2005,6 +2250,77 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ExcludeFromConfirmation {
+			i--
+			if x.ExcludeFromConfirmation {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.PrevSign != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64((uint32(x.PrevSign)<<1)^uint32((x.PrevSign>>31))))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.AdaptiveStep != nil {
+			encoded, err := options.Marshal(x.AdaptiveStep)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x32
+		}
+		if x.BaseCoefficient != nil {
+			encoded, err := options.Marshal(x.BaseCoefficient)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if x.Config != nil {
+			encoded, err := options.Marshal(x.Config)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x22
+		}
+		if x.EffectiveCoefficient != nil {
+			encoded, err := options.Marshal(x.EffectiveCoefficient)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x1a
 		}
 		if x.WeightScaleFactor != nil {
 			encoded, err := options.Marshal(x.WeightScaleFactor)
@@ -2144,6 +2460,191 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 3:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field EffectiveCoefficient", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.EffectiveCoefficient == nil {
+					x.EffectiveCoefficient = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.EffectiveCoefficient); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 4:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Config", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.Config == nil {
+					x.Config = &DynamicCoefficientModelConfig{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Config); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 5:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BaseCoefficient", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.BaseCoefficient == nil {
+					x.BaseCoefficient = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.BaseCoefficient); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 6:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field AdaptiveStep", wireType)
+				}
+				var msglen int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					msglen |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				if msglen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + msglen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if x.AdaptiveStep == nil {
+					x.AdaptiveStep = &Decimal{}
+				}
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.AdaptiveStep); err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				iNdEx = postIndex
+			case 7:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PrevSign", wireType)
+				}
+				var v int32
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				v = int32((uint32(v) >> 1) ^ uint32(((v&1)<<31)>>31))
+				x.PrevSign = v
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExcludeFromConfirmation", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.ExcludeFromConfirmation = bool(v != 0)
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -4179,6 +4680,7 @@ type EpochGroupData struct {
 	ModelSnapshot            *Model                     `protobuf:"bytes,17,opt,name=model_snapshot,json=modelSnapshot,proto3" json:"model_snapshot,omitempty"`
 	TotalThroughput          int64                      `protobuf:"varint,18,opt,name=total_throughput,json=totalThroughput,proto3" json:"total_throughput,omitempty"`
 	ConfirmationWeightScales []*ConfirmationWeightScale `protobuf:"bytes,19,rep,name=confirmation_weight_scales,json=confirmationWeightScales,proto3" json:"confirmation_weight_scales,omitempty"`
+	DynamicCoefficientParams *DynamicCoefficientParams  `protobuf:"bytes,20,opt,name=dynamic_coefficient_params,json=dynamicCoefficientParams,proto3" json:"dynamic_coefficient_params,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -4327,13 +4829,27 @@ func (x *EpochGroupData) GetConfirmationWeightScales() []*ConfirmationWeightScal
 	return nil
 }
 
+func (x *EpochGroupData) GetDynamicCoefficientParams() *DynamicCoefficientParams {
+	if x != nil {
+		return x.DynamicCoefficientParams
+	}
+	return nil
+}
+
 type ConfirmationWeightScale struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ModelId           string   `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	WeightScaleFactor *Decimal `protobuf:"bytes,2,opt,name=weight_scale_factor,json=weightScaleFactor,proto3" json:"weight_scale_factor,omitempty"`
+	ModelId string `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	// Deprecated: Do not use.
+	WeightScaleFactor       *Decimal                       `protobuf:"bytes,2,opt,name=weight_scale_factor,json=weightScaleFactor,proto3" json:"weight_scale_factor,omitempty"` // Historical snapshots only.
+	EffectiveCoefficient    *Decimal                       `protobuf:"bytes,3,opt,name=effective_coefficient,json=effectiveCoefficient,proto3" json:"effective_coefficient,omitempty"`
+	Config                  *DynamicCoefficientModelConfig `protobuf:"bytes,4,opt,name=config,proto3" json:"config,omitempty"`
+	BaseCoefficient         *Decimal                       `protobuf:"bytes,5,opt,name=base_coefficient,json=baseCoefficient,proto3" json:"base_coefficient,omitempty"`
+	AdaptiveStep            *Decimal                       `protobuf:"bytes,6,opt,name=adaptive_step,json=adaptiveStep,proto3" json:"adaptive_step,omitempty"`
+	PrevSign                int32                          `protobuf:"zigzag32,7,opt,name=prev_sign,json=prevSign,proto3" json:"prev_sign,omitempty"`
+	ExcludeFromConfirmation bool                           `protobuf:"varint,8,opt,name=exclude_from_confirmation,json=excludeFromConfirmation,proto3" json:"exclude_from_confirmation,omitempty"`
 }
 
 func (x *ConfirmationWeightScale) Reset() {
@@ -4363,11 +4879,54 @@ func (x *ConfirmationWeightScale) GetModelId() string {
 	return ""
 }
 
+// Deprecated: Do not use.
 func (x *ConfirmationWeightScale) GetWeightScaleFactor() *Decimal {
 	if x != nil {
 		return x.WeightScaleFactor
 	}
 	return nil
+}
+
+func (x *ConfirmationWeightScale) GetEffectiveCoefficient() *Decimal {
+	if x != nil {
+		return x.EffectiveCoefficient
+	}
+	return nil
+}
+
+func (x *ConfirmationWeightScale) GetConfig() *DynamicCoefficientModelConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+func (x *ConfirmationWeightScale) GetBaseCoefficient() *Decimal {
+	if x != nil {
+		return x.BaseCoefficient
+	}
+	return nil
+}
+
+func (x *ConfirmationWeightScale) GetAdaptiveStep() *Decimal {
+	if x != nil {
+		return x.AdaptiveStep
+	}
+	return nil
+}
+
+func (x *ConfirmationWeightScale) GetPrevSign() int32 {
+	if x != nil {
+		return x.PrevSign
+	}
+	return 0
+}
+
+func (x *ConfirmationWeightScale) GetExcludeFromConfirmation() bool {
+	if x != nil {
+		return x.ExcludeFromConfirmation
+	}
+	return false
 }
 
 type ValidationWeight struct {
@@ -4571,7 +5130,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61,
 	0x72, 0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x1f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x8a, 0x08, 0x0a, 0x0e,
+	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xf7, 0x08, 0x0a, 0x0e,
 	0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x12, 0x33,
 	0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63,
 	0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13,
@@ -4634,64 +5193,96 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x6e,
 	0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53,
 	0x63, 0x61, 0x6c, 0x65, 0x52, 0x18, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x73, 0x4a, 0x04,
-	0x08, 0x07, 0x10, 0x08, 0x52, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73, 0x22, 0x82, 0x01, 0x0a, 0x17, 0x43, 0x6f, 0x6e,
-	0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53,
-	0x63, 0x61, 0x6c, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64,
-	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12,
-	0x4c, 0x0a, 0x13, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x5f,
-	0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x11, 0x77, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x22, 0x81, 0x02,
-	0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67,
-	0x68, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62,
-	0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16, 0x0a, 0x06, 0x77, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18,
-	0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x12, 0x3a, 0x0a, 0x08, 0x6d, 0x6c, 0x5f, 0x6e, 0x6f, 0x64, 0x65, 0x73, 0x18, 0x04, 0x20,
-	0x03, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x4c, 0x4e, 0x6f, 0x64, 0x65,
-	0x49, 0x6e, 0x66, 0x6f, 0x52, 0x07, 0x6d, 0x6c, 0x4e, 0x6f, 0x64, 0x65, 0x73, 0x12, 0x2f, 0x0a,
-	0x13, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x77, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52, 0x12, 0x63, 0x6f, 0x6e, 0x66,
-	0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x21,
-	0x0a, 0x0c, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x6f, 0x77, 0x65, 0x72, 0x18, 0x06,
-	0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65,
-	0x72, 0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75,
-	0x72, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x5f, 0x61, 0x64, 0x64,
-	0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62,
-	0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67,
-	0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x09, 0x73, 0x69,
-	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x99, 0x01, 0x0a, 0x0a, 0x4d, 0x4c, 0x4e, 0x6f,
-	0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69,
-	0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f, 0x64, 0x65, 0x49, 0x64, 0x12,
-	0x1e, 0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70, 0x75, 0x74, 0x12,
-	0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x03, 0x20,
-	0x01, 0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x33,
-	0x0a, 0x13, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x63,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x03, 0x28, 0x08, 0x42, 0x02, 0x18, 0x01, 0x52,
-	0x12, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x41, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x2a, 0x2e, 0x0a, 0x0c, 0x54, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x54,
-	0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x0c, 0x50, 0x52, 0x45, 0x5f, 0x50, 0x4f, 0x43, 0x5f, 0x53,
-	0x4c, 0x4f, 0x54, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f,
-	0x54, 0x10, 0x01, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42,
-	0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x50,
-	0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64,
-	0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49,
-	0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02,
-	0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61,
-	0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x73, 0x12, 0x6b,
+	0x0a, 0x1a, 0x64, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69,
+	0x63, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x14, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63,
+	0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x72, 0x61, 0x6d,
+	0x73, 0x52, 0x18, 0x64, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69,
+	0x63, 0x69, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x4a, 0x04, 0x08, 0x07, 0x10,
+	0x08, 0x52, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x73, 0x22, 0x8a, 0x04, 0x0a, 0x17, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72,
+	0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c,
+	0x65, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x50, 0x0a, 0x13,
+	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x5f, 0x66, 0x61, 0x63,
+	0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
+	0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x42, 0x02, 0x18, 0x01, 0x52, 0x11, 0x77, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x51,
+	0x0a, 0x15, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66,
+	0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x14, 0x65, 0x66, 0x66,
+	0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e,
+	0x74, 0x12, 0x4a, 0x0a, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43,
+	0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x43,
+	0x6f, 0x6e, 0x66, 0x69, 0x67, 0x52, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x47, 0x0a,
+	0x10, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e,
+	0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65,
+	0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0f, 0x62, 0x61, 0x73, 0x65, 0x43, 0x6f, 0x65, 0x66, 0x66,
+	0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x12, 0x41, 0x0a, 0x0d, 0x61, 0x64, 0x61, 0x70, 0x74, 0x69,
+	0x76, 0x65, 0x5f, 0x73, 0x74, 0x65, 0x70, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0c, 0x61, 0x64, 0x61,
+	0x70, 0x74, 0x69, 0x76, 0x65, 0x53, 0x74, 0x65, 0x70, 0x12, 0x1b, 0x0a, 0x09, 0x70, 0x72, 0x65,
+	0x76, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x11, 0x52, 0x08, 0x70, 0x72,
+	0x65, 0x76, 0x53, 0x69, 0x67, 0x6e, 0x12, 0x3a, 0x0a, 0x19, 0x65, 0x78, 0x63, 0x6c, 0x75, 0x64,
+	0x65, 0x5f, 0x66, 0x72, 0x6f, 0x6d, 0x5f, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x18, 0x08, 0x20, 0x01, 0x28, 0x08, 0x52, 0x17, 0x65, 0x78, 0x63, 0x6c, 0x75,
+	0x64, 0x65, 0x46, 0x72, 0x6f, 0x6d, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x22, 0x81, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65,
+	0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16,
+	0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06,
+	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75,
+	0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x3a, 0x0a, 0x08, 0x6d, 0x6c, 0x5f, 0x6e, 0x6f, 0x64,
+	0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d,
+	0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x07, 0x6d, 0x6c, 0x4e, 0x6f, 0x64,
+	0x65, 0x73, 0x12, 0x2f, 0x0a, 0x13, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x12, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x6f,
+	0x77, 0x65, 0x72, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x76, 0x6f, 0x74, 0x69, 0x6e,
+	0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69,
+	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65,
+	0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c,
+	0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x99, 0x01, 0x0a,
+	0x0a, 0x4d, 0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x6e,
+	0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f,
+	0x64, 0x65, 0x49, 0x64, 0x12, 0x1e, 0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70,
+	0x75, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67,
+	0x68, 0x70, 0x75, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x33, 0x0a, 0x13, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x5f,
+	0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x03, 0x28, 0x08,
+	0x42, 0x02, 0x18, 0x01, 0x52, 0x12, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x41, 0x6c,
+	0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2a, 0x2e, 0x0a, 0x0c, 0x54, 0x69, 0x6d, 0x65,
+	0x73, 0x6c, 0x6f, 0x74, 0x54, 0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x0c, 0x50, 0x52, 0x45, 0x5f,
+	0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x50, 0x4f,
+	0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x01, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -4709,29 +5300,36 @@ func file_inference_inference_epoch_group_data_proto_rawDescGZIP() []byte {
 var file_inference_inference_epoch_group_data_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
 var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_inference_inference_epoch_group_data_proto_goTypes = []interface{}{
-	(TimeslotType)(0),               // 0: inference.inference.TimeslotType
-	(*EpochGroupData)(nil),          // 1: inference.inference.EpochGroupData
-	(*ConfirmationWeightScale)(nil), // 2: inference.inference.ConfirmationWeightScale
-	(*ValidationWeight)(nil),        // 3: inference.inference.ValidationWeight
-	(*SeedSignature)(nil),           // 4: inference.inference.SeedSignature
-	(*MLNodeInfo)(nil),              // 5: inference.inference.MLNodeInfo
-	(*ValidationParams)(nil),        // 6: inference.inference.ValidationParams
-	(*Model)(nil),                   // 7: inference.inference.Model
-	(*Decimal)(nil),                 // 8: inference.inference.Decimal
+	(TimeslotType)(0),                     // 0: inference.inference.TimeslotType
+	(*EpochGroupData)(nil),                // 1: inference.inference.EpochGroupData
+	(*ConfirmationWeightScale)(nil),       // 2: inference.inference.ConfirmationWeightScale
+	(*ValidationWeight)(nil),              // 3: inference.inference.ValidationWeight
+	(*SeedSignature)(nil),                 // 4: inference.inference.SeedSignature
+	(*MLNodeInfo)(nil),                    // 5: inference.inference.MLNodeInfo
+	(*ValidationParams)(nil),              // 6: inference.inference.ValidationParams
+	(*Model)(nil),                         // 7: inference.inference.Model
+	(*DynamicCoefficientParams)(nil),      // 8: inference.inference.DynamicCoefficientParams
+	(*Decimal)(nil),                       // 9: inference.inference.Decimal
+	(*DynamicCoefficientModelConfig)(nil), // 10: inference.inference.DynamicCoefficientModelConfig
 }
 var file_inference_inference_epoch_group_data_proto_depIdxs = []int32{
-	4, // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
-	3, // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
-	6, // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
-	7, // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
-	2, // 4: inference.inference.EpochGroupData.confirmation_weight_scales:type_name -> inference.inference.ConfirmationWeightScale
-	8, // 5: inference.inference.ConfirmationWeightScale.weight_scale_factor:type_name -> inference.inference.Decimal
-	5, // 6: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
-	7, // [7:7] is the sub-list for method output_type
-	7, // [7:7] is the sub-list for method input_type
-	7, // [7:7] is the sub-list for extension type_name
-	7, // [7:7] is the sub-list for extension extendee
-	0, // [0:7] is the sub-list for field type_name
+	4,  // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
+	3,  // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
+	6,  // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
+	7,  // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
+	2,  // 4: inference.inference.EpochGroupData.confirmation_weight_scales:type_name -> inference.inference.ConfirmationWeightScale
+	8,  // 5: inference.inference.EpochGroupData.dynamic_coefficient_params:type_name -> inference.inference.DynamicCoefficientParams
+	9,  // 6: inference.inference.ConfirmationWeightScale.weight_scale_factor:type_name -> inference.inference.Decimal
+	9,  // 7: inference.inference.ConfirmationWeightScale.effective_coefficient:type_name -> inference.inference.Decimal
+	10, // 8: inference.inference.ConfirmationWeightScale.config:type_name -> inference.inference.DynamicCoefficientModelConfig
+	9,  // 9: inference.inference.ConfirmationWeightScale.base_coefficient:type_name -> inference.inference.Decimal
+	9,  // 10: inference.inference.ConfirmationWeightScale.adaptive_step:type_name -> inference.inference.Decimal
+	5,  // 11: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_epoch_group_data_proto_init() }

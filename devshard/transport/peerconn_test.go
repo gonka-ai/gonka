@@ -225,7 +225,7 @@ func TestPeerConn_ReadyGatesOnExpiry(t *testing.T) {
 
 	httpClient := NewHTTPClient("http://127.0.0.1:1", "escrow-1", devtest.MustGenerateKey(t))
 	rpc := NewRPCClient(httpClient, pc, ParseRPCEndpoints(EndpointSignatures))
-	_, err := tokenRequest(rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
+	_, err := tokenRequest(context.Background(), rpc, &rpcpb.GetSignaturesRequest{Nonce: 1})
 	require.ErrorIs(t, err, ErrPeerNotReady)
 }
 
@@ -612,9 +612,17 @@ func TestSelectTransport_UnwiredNamesWarnOnce(t *testing.T) {
 	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints("typo"), nil)
 	require.Len(t, capLog.warns, 1, "unwired-name warn is one-shot")
 
+	// A wired name starts the attach loop. A refused dial logs its own
+	// warning, so only the unwired-name warning is forbidden here.
 	resetUnwiredRPCWarnForTest()
-	_ = SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointSignatures), nil)
-	require.Len(t, capLog.warns, 1, "wired names must not warn")
+	before := len(capLog.warns)
+	wired := SelectTransport(httpClient, "gonka1warn", ParseRPCEndpoints(EndpointSignatures), nil)
+	client, ok := wired.(*RPCClient)
+	require.True(t, ok)
+	client.Close()
+	for _, line := range capLog.warns[before:] {
+		require.NotContains(t, line, "not served over Connect", "wired names must not warn: %s", line)
+	}
 }
 
 func TestIsRetryableNonInference_ConnectCodes(t *testing.T) {
@@ -742,6 +750,25 @@ func TestRPCRetry_UnauthenticatedThenOK(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second)
 }
 
+func TestAcquirePeerConn_ReleaseDuringBuildDoesNotRegister(t *testing.T) {
+	t.Cleanup(ResetOutboundPeerReleaseForTest)
+	testPeerConnBeforeInsert = func() { outboundPeerReleased.Store(true) }
+	t.Cleanup(func() { testPeerConnBeforeInsert = nil })
+
+	peer := devtest.MustGenerateKey(t)
+	host := "gonka1releaseduringbuild"
+	pc := acquirePeerConn(PeerConnConfig{
+		BaseURL:     "http://127.0.0.1:1",
+		HostAddress: host,
+		Signer:      peer,
+		DirectMux:   true,
+	})
+	t.Cleanup(pc.Close)
+	require.Error(t, pc.ctx.Err())
+	require.Zero(t, pc.refs.Load())
+	require.False(t, PeerConnRegistered(host, "direct"))
+}
+
 func TestPeerConn_ReleaseSharedKeepsRegistry(t *testing.T) {
 	peer := devtest.MustGenerateKey(t)
 	host := "gonka1relshare"
@@ -829,7 +856,7 @@ func TestSelectTransport_DifferentSignersDoNotSharePeerConn(t *testing.T) {
 	require.Equal(t, b.signer.Address(), rpcB.conn.cfg.Signer.Address())
 }
 
-func TestSelectTransport_DifferentBaseURLDoNotSharePeerConn(t *testing.T) {
+func TestSelectTransport_SameSignerSharesPeerConnAcrossBaseURL(t *testing.T) {
 	host := "gonka1twourls"
 	signer := devtest.MustGenerateKey(t)
 	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
@@ -839,11 +866,10 @@ func TestSelectTransport_DifferentBaseURLDoNotSharePeerConn(t *testing.T) {
 	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
 	t.Cleanup(rpcA.Close)
 	t.Cleanup(rpcB.Close)
-	require.NotSame(t, rpcA.conn, rpcB.conn)
+	require.Same(t, rpcA.conn, rpcB.conn)
 	require.Equal(t, a.BaseURL(), rpcA.conn.cfg.BaseURL)
-	require.Equal(t, b.BaseURL(), rpcB.conn.cfg.BaseURL)
+	require.Equal(t, a.BaseURL(), rpcB.conn.cfg.BaseURL)
 	require.Contains(t, rpcA.conn.cfg.connectBase(a.escrowID), "peer-a.example")
-	require.Contains(t, rpcB.conn.cfg.connectBase(b.escrowID), "peer-b.example")
 }
 
 func TestPeerConn_AcquireReleaseRace(t *testing.T) {

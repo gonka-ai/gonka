@@ -109,15 +109,6 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 		t.Fatalf("reconcile_fast_forward delta want 1")
 	}
 
-	SetPeerRPCSessionCounts(3, 2)
-	if got := testutil.ToFloat64(peerRPCSessions); got != 3 {
-		t.Fatalf("peer_rpc_sessions = %v, want 3", got)
-	}
-	if got := testutil.ToFloat64(peerRPCPeers); got != 2 {
-		t.Fatalf("peer_rpc_peers = %v, want 2", got)
-	}
-	SetPeerRPCSessionCounts(0, 0)
-
 	beforeAttach := testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))
 	IncPeerRPCAttach("ok")
 	if testutil.ToFloat64(peerRPCAttachTotal.WithLabelValues("ok"))-beforeAttach != 1 {
@@ -205,6 +196,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	const escrowID = "escrow-metrics-prune"
 
 	SetValidationQueueDepth(escrowID, 3)
+	SetValidationOwed(escrowID, 4)
 	SetMempoolSize(escrowID, 7)
 
 	DeleteEscrowMetrics(escrowID)
@@ -215,7 +207,7 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	}
 	for _, family := range mf {
 		switch family.GetName() {
-		case "devshard_validation_queue_depth", "devshard_mempool_size":
+		case "devshard_validation_queue_depth", "devshard_validation_owed", "devshard_mempool_size":
 			for _, m := range family.Metric {
 				for _, lp := range m.Label {
 					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {

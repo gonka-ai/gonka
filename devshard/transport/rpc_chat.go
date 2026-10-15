@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"connectrpc.com/connect"
@@ -16,9 +17,10 @@ import (
 	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
-// chatReadyTimeout caps WaitReady on Chat. A dead origin must not hold the
-// attempt until InferenceTimeout. Same scale as the validator's
-// payloadFetchHeaderTimeout. Tests shorten it.
+// chatReadyTimeout caps WaitReady for Chat and GetPayload. A dead origin
+// must not hold the attempt until InferenceTimeout or the caller's deadline.
+// The validator's HTTP payload client keeps payloadFetchHeaderTimeout for
+// dial, TLS, and response headers. Tests shorten this.
 var chatReadyTimeout = 10 * time.Second
 
 // Send implements user.HostClient. Opted-in Chat uses Connect frames that
@@ -36,7 +38,12 @@ func (c *RPCClient) Send(ctx context.Context, req host.HostRequest, stream io.Wr
 
 	// Attach is async with SelectTransport / Start. A token-race Unauthenticated
 	// retries once after WaitReady, before that attempt takes budget.
+	// Admission is once per Send, matching HTTP: the retry must not spend a
+	// second limiter token.
 	path := "/sessions/" + c.escrowID + "/chat/completions"
+	if err := c.allowRequest(path); err != nil {
+		return nil, err
+	}
 	var last error
 	for attempt := 0; attempt < 2; attempt++ {
 		if err := c.waitChatReady(ctx, path); err != nil {
@@ -84,9 +91,6 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	if err != nil {
 		return nil, err
 	}
-	if err := c.allowRequest(path); err != nil {
-		return nil, err
-	}
 	if err := c.conn.takePeerBudget(ctx, rpcpbconnect.SessionServiceChatProcedure); err != nil {
 		return nil, err
 	}
@@ -96,7 +100,7 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	}
 	defer c.conn.releaseChatStream()
 
-	creq, err := tokenRequest(c, env)
+	creq, err := tokenRequest(ctx, c, env)
 	if err != nil {
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 		return nil, err
@@ -113,6 +117,10 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	result, err := c.parseChatStream(ctx, cs, stream, receiptHandler)
 	if err != nil && !errors.Is(err, ErrSSEStreamTruncated) && !errors.Is(err, ErrSSEEventTooLarge) && !errors.Is(err, ErrSSEStreamTooLarge) {
 		c.finishChatError(path, err)
+		return result, err
+	}
+	if err == nil {
+		c.observeResult(path, http.StatusOK)
 	}
 	return result, err
 }
@@ -124,10 +132,13 @@ func (c *RPCClient) finishChatError(path string, err error) {
 	if isQuotaResourceExhausted(err) && c.conn != nil {
 		c.conn.refundPeerBudget(rpcpbconnect.SessionServiceChatProcedure)
 	}
-	c.observeChat(path, err)
+	c.observeConnect(path, err)
 }
 
-func (c *RPCClient) observeChat(path string, err error) {
+// observeConnect grades a Connect error the way HTTP grades a status line.
+// A *connect.Error becomes that HTTP status. Dial, reset, and EOF stay a
+// transport fault. A deadline is not a host fault.
+func (c *RPCClient) observeConnect(path string, err error) {
 	if err == nil || c == nil || c.HTTPClient == nil {
 		return
 	}
@@ -203,4 +214,12 @@ func (r *chatFrameReader) Read(p []byte) (int, error) {
 	n := copy(p, r.buf)
 	r.buf = r.buf[n:]
 	return n, nil
+}
+
+// ChatBudgetWait reports how long a chat to this host would wait for the peer budget the host advertised; zero when it would go at once, chat does not use this connection, or the host advertised less than the network default.
+func (c *RPCClient) ChatBudgetWait() time.Duration {
+	if c == nil || c.conn == nil || !c.Uses(EndpointChat) {
+		return 0
+	}
+	return c.conn.budget.wait(time.Now(), rpcpbconnect.SessionServiceChatProcedure)
 }

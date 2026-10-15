@@ -27,11 +27,12 @@ import (
 const doorChatSSE = "data: {\"devshard_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\ndata: [DONE]\n\n"
 
 type routedPeerRPC struct {
-	srv     *httptest.Server
-	auth    *rpcserver.PeerAuthHandler
-	mu      sync.Mutex
-	settled map[string]error
-	allows  []string
+	srv         *httptest.Server
+	auth        *rpcserver.PeerAuthHandler
+	mu          sync.Mutex
+	settled     map[string]error
+	allows      []string
+	watchCancel context.CancelFunc
 }
 
 func startRoutedPeerRPC(t *testing.T, hostAddr string, lookup rpcserver.SessionLookup) *routedPeerRPC {
@@ -64,13 +65,37 @@ func startRoutedPeerRPC(t *testing.T, hostAddr string, lookup rpcserver.SessionL
 		}
 		u := *r.URL
 		u.Path = procedure
-		r2 := r.WithContext(rpcserver.WithEscrowID(r.Context(), escrow))
+		ctx := r.Context()
+		if strings.Contains(procedure, "PeerAuthService/Watch") {
+			ctx = h.armWatch(ctx)
+		}
+		r2 := r.WithContext(rpcserver.WithEscrowID(ctx, escrow))
 		r2.URL = &u
 		mux.ServeHTTP(w, r2)
 	}))
 	t.Cleanup(h.srv.Close)
 	t.Cleanup(h.auth.Close)
 	return h
+}
+
+func (h *routedPeerRPC) armWatch(parent context.Context) context.Context {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.watchCancel != nil {
+		h.watchCancel()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	h.watchCancel = cancel
+	return ctx
+}
+
+func (h *routedPeerRPC) killWatch() {
+	h.mu.Lock()
+	cancel := h.watchCancel
+	h.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 func (h *routedPeerRPC) settle(id string, err error) {
@@ -199,7 +224,7 @@ func TestPeerConn_ReattachAfterWatchKillUsesLiveEscrow(t *testing.T) {
 	require.Equal(t, []string{"42"}, h.attachDoors(), "first handshake uses the creator door")
 
 	h.settle("42", bridge.ErrEscrowSettled)
-	h.auth.InvalidateToken(first)
+	h.killWatch()
 
 	require.Eventually(t, func() bool {
 		tok := pc.LiveToken()
@@ -259,14 +284,13 @@ func TestPeerConn_ReattachWhileLiveSessionRechecksSettledDoor(t *testing.T) {
 	h.settle("42", bridge.ErrEscrowSettled)
 	stealSessionOnDoor(t, h.srv, hostAddr, "99", peer)
 
-	require.Eventually(t, func() bool {
-		tok := pc.LiveToken()
-		return pc.Ready() && len(tok) > 0 && string(tok) != string(first)
-	}, 3*time.Second, 10*time.Millisecond)
+	time.Sleep(400 * time.Millisecond)
+	require.True(t, pc.Ready())
+	require.Equal(t, string(first), string(pc.LiveToken()), "another Attach must not drop the live token")
 
 	allows := h.attachDoors()
-	require.Equal(t, []string{"42", "99", "42", "99"}, allows,
-		"steal keeps the host session live; re-Attach on 42 must still run AllowsSender and rotate to 99")
+	require.Equal(t, []string{"42", "99"}, allows,
+		"the live process must not re-Attach when its door settles")
 
 	got, err := rpc99.GetSignatures(context.Background(), 1)
 	require.NoError(t, err)
@@ -286,7 +310,7 @@ func TestPeerConn_WaitReadyOwnEscrowIsNextDoor(t *testing.T) {
 	require.NoError(t, rpc99.WaitReady(context.Background()))
 
 	h.settle("42", bridge.ErrEscrowSettled)
-	h.auth.InvalidateToken(first)
+	h.killWatch()
 
 	require.Eventually(t, func() bool {
 		tok := pc.LiveToken()
@@ -307,11 +331,11 @@ func TestPeerConn_WaitReadyFailsWhenEveryDoorSettled(t *testing.T) {
 
 	pc, _, rpc99 := newSharedDoorClients(t, h.srv, hostAddr, peer, "42", "99")
 	pc.Start()
-	tok := append([]byte(nil), waitPeerReady(t, pc)...)
+	waitPeerReady(t, pc)
 
 	h.settle("42", bridge.ErrEscrowSettled)
 	h.settle("99", bridge.ErrEscrowNotFound)
-	h.auth.InvalidateToken(tok)
+	h.killWatch()
 
 	require.Eventually(t, func() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -211,10 +212,102 @@ func TestProxy_TokenAndEscrowMissesShareOriginBudget(t *testing.T) {
 		t.Fatal("token miss should reach the child")
 	}
 	if post(chat) != http.StatusTooManyRequests {
-		t.Fatal("third miss of either kind should be limited")
+		t.Fatal("on a bind path, the third miss of either kind should be limited")
 	}
 	if forwarded.Load() != 2 {
 		t.Fatalf("forwarded = %d, want 2", forwarded.Load())
+	}
+	if post(rpc) != http.StatusUnauthorized {
+		t.Fatal("one token miss must not refuse session RPCs; the escrow miss does not count there")
+	}
+	if post(rpc) != http.StatusTooManyRequests {
+		t.Fatal("the second token miss refuses session RPCs")
+	}
+}
+
+// escrow_lookup_limited is the child's full process floor. A gateway that
+// binds a cold escrow while strangers hold that floor must not lose its IP.
+func TestProxy_EscrowLookupLimitedIsNotAMiss(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
+		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
+	}))
+	t.Cleanup(backend.Close)
+	srv := httptest.NewServer(Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")})))
+	t.Cleanup(srv.Close)
+
+	for i, path := range []string{
+		"/v1/sessions/50/rpc/devshard.transport.v1.PeerAuthService/Attach",
+		"/v1/sessions/51/rpc/devshard.transport.v1.PeerAuthService/Attach",
+		"/v1/sessions/52/chat/completions",
+		"/v1/sessions/53/height-sync",
+		"/v1/sessions/54/rpc/devshard.transport.v1.PeerAuthService/Attach",
+	} {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, "203.0.113.20")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		if forwarded.Load() != int32(i+1) {
+			t.Fatalf("request %d stopped at versiond: escrow_lookup_limited must not fill the IP bucket", i)
+		}
+	}
+}
+
+// An unknown-escrow miss refuses that IP's next bind, not its live sessions.
+func TestProxy_EscrowMissesDoNotBlockSessionRPCs(t *testing.T) {
+	var forwarded atomic.Int32
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		if strings.Contains(r.URL.Path, "/rpc/") && !strings.HasSuffix(r.URL.Path, peerAuthAttachSuffix) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set(headerDevshardError, errorEscrowNotFound)
+		http.Error(w, "escrow is not open on this host", http.StatusPreconditionFailed)
+	}))
+	t.Cleanup(backend.Close)
+	srv := httptest.NewServer(Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")})))
+	t.Cleanup(srv.Close)
+
+	post := func(path string) int {
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, "203.0.113.21")
+		req.Header.Set(sessionHeader, "live-token")
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	attach := "/v1/sessions/%d/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	post(fmt.Sprintf(attach, 60))
+	post(fmt.Sprintf(attach, 61))
+	if got := post(fmt.Sprintf(attach, 62)); got != http.StatusTooManyRequests {
+		t.Fatalf("third unknown-escrow bind = %d, want 429", got)
+	}
+	for _, rpc := range []string{
+		"/v1/sessions/1/rpc/devshard.transport.v1.SessionService/Chat",
+		"/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures",
+		"/v1/sessions/2/rpc/devshard.transport.v1.PeerAuthService/Watch",
+	} {
+		if got := post(rpc); got != http.StatusOK {
+			t.Fatalf("%s = %d, want 200: escrow misses must not refuse live session RPCs", rpc, got)
+		}
 	}
 }
 
@@ -468,4 +561,150 @@ func unknownEscrowMissResponse() *http.Response {
 
 func testOriginIP(i int) string {
 	return fmt.Sprintf("10.%d.%d.%d", (i>>16)&0xff, (i>>8)&0xff, i&0xff)
+}
+
+func TestProxy_SameInvalidTokenChargesOnce(t *testing.T) {
+	var forwarded atomic.Int32
+	var entered atomic.Int32
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	openRelease := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(openRelease)
+	backend := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		forwarded.Add(1)
+		entered.Add(1)
+		<-release
+		w.Header().Set(headerDevshardError, errorInvalidSessionToken)
+		http.Error(w, invalidSessionTokenBody, http.StatusUnauthorized)
+	}))
+	t.Cleanup(backend.Close)
+
+	handler := Handler(newRoutes(map[string]string{"v1": strings.TrimPrefix(backend.URL, "http://")}))
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+
+	const path = "/v1/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	post := func(token, ip string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set(originIPHeader, ip)
+		if token != "" {
+			req.Header.Set(sessionHeader, token)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(strings.NewReader(string(body)))
+		return resp
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := post("dead-token", "203.0.113.9")
+			if resp.StatusCode != http.StatusUnauthorized {
+				errCh <- fmt.Errorf("burst status = %d", resp.StatusCode)
+			}
+		}()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for entered.Load() < 4 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	openRelease()
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
+	if forwarded.Load() != 4 {
+		t.Fatalf("in-flight burst forwarded = %d, want 4", forwarded.Load())
+	}
+
+	repeat := post("dead-token", "203.0.113.9")
+	if repeat.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("cached repeat status = %d", repeat.StatusCode)
+	}
+	if repeat.Header.Get(headerDevshardError) != errorInvalidSessionToken {
+		t.Fatalf("cached repeat header = %q", repeat.Header.Get(headerDevshardError))
+	}
+	body, _ := io.ReadAll(repeat.Body)
+	if !strings.Contains(string(body), invalidSessionTokenBody) {
+		t.Fatalf("cached repeat body = %q", body)
+	}
+	if forwarded.Load() != 4 {
+		t.Fatalf("cached repeat forwarded = %d, want 4", forwarded.Load())
+	}
+
+	if post("other-token", "203.0.113.9").StatusCode != http.StatusUnauthorized {
+		t.Fatal("a different token must still reach the child")
+	}
+	if forwarded.Load() != 5 {
+		t.Fatalf("second token forwarded = %d, want 5", forwarded.Load())
+	}
+	limited := post("third-token", "203.0.113.9")
+	if limited.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("third distinct token status = %d, want 429", limited.StatusCode)
+	}
+	if forwarded.Load() != 5 {
+		t.Fatalf("budget forwarded = %d, want 5", forwarded.Load())
+	}
+	// The cached token stays a re-Attach signal after the IP budget is spent.
+	again := post("dead-token", "203.0.113.9")
+	if again.StatusCode != http.StatusUnauthorized || again.Header.Get(headerDevshardError) != errorInvalidSessionToken {
+		t.Fatalf("cached token after budget status=%d header=%q", again.StatusCode, again.Header.Get(headerDevshardError))
+	}
+}
+
+func TestStaleSessionTokenExpiresIntoANewMiss(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	l := newOriginLookupLimiter()
+	l.now = func() time.Time { return now }
+	rest := "/sessions/1/rpc/devshard.transport.v1.SessionService/GetSignatures"
+	req := func(token string) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "http://versiond/v1"+rest, nil)
+		r.Header.Set(originIPHeader, "203.0.113.9")
+		r.Header.Set(sessionHeader, token)
+		return r
+	}
+	miss := func(token string) *http.Response {
+		h := make(http.Header)
+		h.Set(headerDevshardError, errorInvalidSessionToken)
+		return &http.Response{Header: h, Request: req(token)}
+	}
+
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	if l.blocked(req("tok-b"), rest) {
+		t.Fatal("one token must count as one miss")
+	}
+	if !l.cachedInvalidToken(req("tok-a"), rest) {
+		t.Fatal("repeat must be cached")
+	}
+
+	now = now.Add(staleSessionTokenTTL)
+	if l.cachedInvalidToken(req("tok-a"), rest) {
+		t.Fatal("token entry must expire")
+	}
+	l.observe(req("tok-a"), rest, miss("tok-a"))
+	if !l.blocked(req("tok-c"), rest) {
+		t.Fatal("the same token after the window is a second miss")
+	}
+
+	escrow := "/sessions/1/chat/completions"
+	escrowReq := originBindRequest("203.0.113.10")
+	l.observe(escrowReq, escrow, unknownEscrowMissResponse())
+	l.observe(escrowReq, escrow, unknownEscrowMissResponse())
+	if !l.blocked(escrowReq, escrow) {
+		t.Fatal("unknown-escrow misses must still each count")
+	}
 }

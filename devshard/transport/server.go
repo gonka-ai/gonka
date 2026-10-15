@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -83,6 +85,9 @@ var (
 	ErrGossipMissingStateSig = errors.New("missing state signature")
 	// ErrGossipInvalidSlot is GossipNonce with a slot outside the group.
 	ErrGossipInvalidSlot = errors.New("invalid slot id")
+	// ErrGossipInvalidStateHash is GossipNonce whose state root is not a
+	// SHA-256 digest. The same bytes fail again, so this is not a conflict.
+	ErrGossipInvalidStateHash = errors.New("state hash must be 32 bytes")
 	// ErrGossipInvalidStateSig is a state signature that does not recover
 	// to the claimed slot (or a warm key for that slot).
 	ErrGossipInvalidStateSig = errors.New("invalid gossip state signature")
@@ -305,6 +310,11 @@ func (s *Server) IsOwner(addr string) bool {
 	return s.isOwner(addr)
 }
 
+// OwnerAddress is the escrow creator for this session.
+func (s *Server) OwnerAddress() string {
+	return s.userAddr
+}
+
 // InjectAuthContext stores a verified sender and request body for handlers
 // that run after auth (HandleInference, gossip, etc.).
 func InjectAuthContext(c echo.Context, sender string, body []byte) {
@@ -480,6 +490,33 @@ func flushSSE(w http.ResponseWriter) error {
 	return nil
 }
 
+// flushSSENow sends bytes held under the chat gzip cut. Token flushes stay
+// on flushSSE. The receipt uses this so the frame is on the wire before execution.
+func flushSSENow(w http.ResponseWriter) error {
+	if f, ok := w.(interface{ FlushNow() error }); ok {
+		return f.FlushNow()
+	}
+	return flushSSE(w)
+}
+
+// divergenceHTTPBody is the 500 body for a post_state_root mismatch.
+// message keeps the phrase gateways already match; host_state is this
+// process's root inputs so the gateway can name the field that differs.
+type divergenceHTTPBody struct {
+	Message   string           `json:"message"`
+	HostState state.RootInputs `json:"host_state"`
+}
+
+func inferenceHTTPError(err error) error {
+	if div := state.AsRootDivergence(err); div != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, divergenceHTTPBody{
+			Message:   err.Error(),
+			HostState: div.Inputs,
+		}).SetInternal(err)
+	}
+	return echo.NewHTTPError(http.StatusInternalServerError, err.Error()).SetInternal(err)
+}
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 // The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
@@ -567,7 +604,8 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 }
 
 // ServeVerifyTimeout is the transport-neutral core behind POST .../verify-timeout
-// and SessionService.VerifyTimeout. Callers enforce owner-only.
+// and SessionService.VerifyTimeout. Callers allow the escrow owner or a group
+// member. A cold host CreateSession requires a creator-signed start in diffs.
 func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
 	if !s.host.CompletionRequestsEnabled() {
 		logging.Debug("ServeVerifyTimeout: devshard_requests_enabled=false", "subsystem", "server")
@@ -600,25 +638,12 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 
 	nowUnix := time.Now().Unix()
 
-	// Creator-signed diffs (the gateway start lives in nonce 1). Both timeout
-	// checks forward them so a cold executor can CreateSession.
-	var storedDiffs []types.Diff
-	if s.store != nil && st.LatestNonce > 0 {
-		records, dErr := s.store.GetDiffs(s.host.EscrowID(), 1, st.LatestNonce)
-		if dErr == nil {
-			storedDiffs = make([]types.Diff, len(records))
-			for i, r := range records {
-				storedDiffs[i] = r.Diff
-			}
-		}
-	}
-
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
@@ -653,7 +678,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		Reason:      reason,
 		Accept:      true,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -671,7 +696,7 @@ func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signe
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	voteData, err := types.CanonicalSignedBytes(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}
@@ -713,7 +738,8 @@ func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
 }
 
 // ServeVerifyErrorMiss is the transport-neutral core behind POST .../verify-error-miss
-// and SessionService.VerifyErrorMiss. Callers enforce owner-only.
+// and SessionService.VerifyErrorMiss. Callers allow the escrow owner or a group
+// member. A cold host CreateSession requires a creator-signed start in diffs.
 func (s *Server) ServeVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
 	_ = ctx
 	if !s.host.CompletionRequestsEnabled() {
@@ -789,6 +815,9 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 // ServeChallengeReceipt is the transport-neutral core behind POST .../challenge-receipt
 // and SessionService.ChallengeReceipt. Callers enforce owner-or-group.
 func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceiptRequest) (*ChallengeReceiptResponse, error) {
+	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
+		return forged, nil
+	}
 	diffs, err := decodeDiffsJSON(req.Diffs)
 	if err != nil {
 		return nil, err
@@ -809,6 +838,9 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 func mapVerifyHTTP(c echo.Context, err error) error {
 	if errors.Is(err, devshard.ErrRequestsDisabled) {
 		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
+	}
+	if errors.Is(err, storage.ErrStorageBusy) {
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorStorageBusy, err.Error())
 	}
 	var cre *clientRequestError
 	if errors.As(err, &cre) {
@@ -884,12 +916,16 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if len(req.StateSig) == 0 {
 		return ErrGossipMissingStateSig
 	}
+	// A state root is a SHA-256 digest. The gossip seen map keeps this value.
+	if len(req.StateHash) != sha256.Size {
+		return ErrGossipInvalidStateHash
+	}
 	if req.SlotID >= uint32(len(s.host.Group())) {
 		return ErrGossipInvalidSlot
 	}
 
-	expectedAddr := s.host.Group()[req.SlotID].ValidatorAddress
-
+	// Verify stateSig recovers to an actor for the claimed slot.
+	// SlotIDs are compact 0..len(group)-1 so direct index is safe after bounds check above.
 	sigContent := &types.StateSignatureContent{
 		StateRoot: req.StateHash,
 		EscrowId:  s.host.EscrowID(),
@@ -903,10 +939,8 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if addr != expectedAddr {
-		if !s.host.IsWarmKeyForSlot(addr, req.SlotID) {
-			return ErrGossipInvalidStateSig
-		}
+	if !s.host.SlotActors().Allows(req.SlotID, addr) {
+		return ErrGossipInvalidStateSig
 	}
 
 	if s.gossip != nil {
@@ -964,7 +998,7 @@ func (s *Server) ServeGossipTxs(txs []*types.DevshardTx) {
 
 func mapGossipHTTP(err error) error {
 	switch {
-	case errors.Is(err, ErrGossipMissingStateSig), errors.Is(err, ErrGossipInvalidSlot), errors.Is(err, ErrGossipInvalidStateSig):
+	case errors.Is(err, ErrGossipMissingStateSig), errors.Is(err, ErrGossipInvalidSlot), errors.Is(err, ErrGossipInvalidStateHash), errors.Is(err, ErrGossipInvalidStateSig):
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	case errors.Is(err, errGossipMarshal):
 		return echo.NewHTTPError(http.StatusInternalServerError, "marshal sig content")
@@ -1002,6 +1036,12 @@ func (s *Server) ServeGetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return s.host.GetSignatures(nonce)
 }
 
+// ServeGetState is the applied tip behind SessionService.GetState.
+// The peer session and AllowsSender gate that RPC.
+func (s *Server) ServeGetState() (uint64, []byte, error) {
+	return s.host.StateHead()
+}
+
 func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 	op, finish := startHandlerSpan(c, "get_diffs")
 	defer finish(&err)
@@ -1020,6 +1060,9 @@ func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 	observability.Request.SetDiffsRange(op, from, to)
 
 	records, err := s.ServeGetDiffs(from, to)
+	if errors.Is(err, storage.ErrDiffPageLimit) {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	if err != nil {
 		if errors.Is(err, ErrNoStorage) {
 			return echo.NewHTTPError(http.StatusNotFound, err.Error())
@@ -1051,7 +1094,7 @@ func (s *Server) ServeGetDiffs(from, to uint64) ([]types.DiffRecord, error) {
 	if s.store == nil {
 		return nil, ErrNoStorage
 	}
-	return s.store.GetDiffs(s.host.EscrowID(), from, to)
+	return storage.LoadBoundedDiffs(s.store, s.host.EscrowID(), from, to)
 }
 
 func (s *Server) HandleGetMempool(c echo.Context) (err error) {

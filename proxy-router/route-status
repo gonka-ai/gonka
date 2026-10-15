@@ -75,11 +75,37 @@ if ! grep -q '^# pxname,svname,' "$tmpdir/stats"; then
     echo "route-status: HAProxy Runtime API returned invalid show stat output" >&2
     exit 1
 fi
-awk -F, -v backend="$backend" -v server="$server" '
+if ! awk -F, -v backend="$backend" -v server="$server" '
         $1 == backend && $2 == server {
             found = 1
             if ($18 ~ /^UP/) exit 0
             exit 1
         }
         END { if (!found) exit 1 }
-    ' "$tmpdir/stats"
+    ' "$tmpdir/stats"; then
+    exit 1
+fi
+
+# Peer RPC is the _rpc twin of this version backend. A fleet that rendered
+# the twin is admitted only when that server is UP too. Non-HA has no twin.
+rpc_backend="${backend}_rpc"
+if awk -F, -v backend="$rpc_backend" -v server="$server" '
+        $1 == backend { backend_found = 1 }
+        $1 == backend && $2 == server {
+            found = 1
+            if ($18 ~ /^UP/) exit 0
+            exit 1
+        }
+        END {
+            if (!backend_found) exit 2
+            if (!found) exit 1
+        }
+    ' "$tmpdir/stats"; then
+    exit 0
+else
+    status=$?
+    if [ "$status" -eq 2 ]; then
+        exit 0
+    fi
+    exit 1
+fi
