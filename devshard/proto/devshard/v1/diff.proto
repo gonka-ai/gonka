@@ -103,14 +103,16 @@ message ExecutorReceiptContent {
   string model = 3;
   uint64 input_length = 4;
   uint64 max_tokens = 5;
-  int64  started_at = 6;
+  reserved 6, 8;
+  reserved "started_at", "confirmed_at";
   string escrow_id = 7;
-  int64  confirmed_at = 8;
   uint64 observed_height = 9;
   bytes  observed_block_hash = 10;
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
+// CanonicalSignedBytes prefixes "devshard.timeoutvote.v1" so this cannot be
+// replayed as ErrorMissVoteContent (proto3 would otherwise omit field 4).
 message TimeoutVoteContent {
   string escrow_id = 1;
   uint64 inference_id = 2;
@@ -120,6 +122,7 @@ message TimeoutVoteContent {
 }
 
 // ErrorMissVoteContent is what a host signs for an ErrorMissVote.
+// CanonicalSignedBytes prefixes "devshard.errormissvote.v1".
 message ErrorMissVoteContent {
   string escrow_id = 1;
   uint64 inference_id = 2;

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"common/storage/payloads"
@@ -14,22 +15,29 @@ import (
 )
 
 type memoryPayloads struct {
+	mu    sync.Mutex
 	rows  map[uint64][2][]byte
 	reads []uint64
 	err   error
 }
 
+// Store keeps the first payload per epoch and reports a conflict, as Postgres does.
 func (m *memoryPayloads) Store(_ context.Context, _ string, _, epochID uint64, prompt, response []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if m.rows == nil {
 		m.rows = map[uint64][2][]byte{}
 	}
-	if _, exists := m.rows[epochID]; !exists {
-		m.rows[epochID] = [2][]byte{prompt, response}
+	if _, exists := m.rows[epochID]; exists {
+		return payloads.ErrAlreadyStored
 	}
+	m.rows[epochID] = [2][]byte{prompt, response}
 	return nil
 }
 
 func (m *memoryPayloads) Retrieve(_ context.Context, _ string, _, epochID uint64) ([]byte, []byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.reads = append(m.reads, epochID)
 	if m.err != nil {
 		return nil, nil, m.err
@@ -106,6 +114,9 @@ func TestRecoveryRebuildsTheResultTheFirstExecutionCommitted(t *testing.T) {
 	if string(result.ResponseHash) != string(original.ResponseHash) {
 		t.Fatal("the recovered hash differs from the one the first execution committed")
 	}
+	if len(result.ServedHash) != sha256.Size || string(result.ServedHash) != string(original.ServedHash) {
+		t.Fatalf("recovered served hash %x, first execution %x: checkFinishLocked needs both hashes", result.ServedHash, original.ServedHash)
+	}
 	if result.InputTokens != original.InputTokens || result.OutputTokens != original.OutputTokens {
 		t.Fatalf("recovered usage %d/%d, first execution %d/%d", result.InputTokens, result.OutputTokens, original.InputTokens, original.OutputTokens)
 	}
@@ -118,6 +129,30 @@ func TestRecoveryRebuildsTheResultTheFirstExecutionCommitted(t *testing.T) {
 	}
 	if strings.Count(streamed, "[DONE]") != 1 {
 		t.Fatalf("replay must end with exactly one [DONE]: %q", streamed)
+	}
+}
+
+type goneWriter struct{ header http.Header }
+
+func (w *goneWriter) Header() http.Header       { return w.header }
+func (w *goneWriter) Write([]byte) (int, error) { return 0, errors.New("client gone") }
+func (w *goneWriter) WriteHeader(int)           {}
+
+func TestRecoveryFinishesWhenTheStoredResponseCannotBeRelayed(t *testing.T) {
+	store := &memoryPayloads{}
+	original := streamedExecution(t, store, 5)
+
+	req := recoveryRequest(t, devshardpkg.RecoveryStoredFirst, 5)
+	req.ResponseWriter = &goneWriter{header: http.Header{}}
+	result, err := executeWithRecovery(context.Background(), req, store, 5, func(context.Context) (*devshardpkg.ExecuteResult, error) {
+		t.Fatal("a stored response must not run the model again")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("a relay failure must not fail a stored execution: %v", err)
+	}
+	if result == nil || string(result.ResponseHash) != string(original.ResponseHash) {
+		t.Fatal("the stored result is still returned so the Finish is queued")
 	}
 }
 

@@ -82,6 +82,18 @@ func TestBridge_NotificationsNoop(t *testing.T) {
 	assert.NoError(t, b.OnSettlementFinalized("1"))
 }
 
+func TestBridge_OnEscrowCreatedHandler(t *testing.T) {
+	b := newTestBridge(t, nil)
+	var got shardbridge.EscrowInfo
+	b.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
+		got = info
+		return nil
+	})
+	require.NoError(t, b.OnEscrowCreated(shardbridge.EscrowInfo{EscrowID: "9", CreatorAddress: "gonka1owner"}))
+	assert.Equal(t, "9", got.EscrowID)
+	assert.Equal(t, "gonka1owner", got.CreatorAddress)
+}
+
 func TestBridge_SubmitDisputeState_DelegatesToSubmitter(t *testing.T) {
 	var called bool
 	submitter := &stubSubmitter{fn: func(escrowID uint64, _ []byte, _ uint64, _ map[uint32][]byte) error {

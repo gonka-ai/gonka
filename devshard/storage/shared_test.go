@@ -371,25 +371,25 @@ func runSealedInferenceBatchInsert(t *testing.T, store Storage) {
 	require.NoError(t, store.CreateSession(defaultParams()))
 
 	rich := InferenceRow{
-		InferenceID:        7,
-		SealedNonce:        11,
-		ObsPresent:         true,
-		SealedStatus:       3,
-		SealedExecutorSlot: 2,
-		SealedVotesValid:   4,
-		SealedVotesInvalid: 1,
-		SealedValidatedBy:  []byte{0x0f, 0xf0},
-		SealedModel:        "llama",
-		SealedPromptHash:   []byte("prompt"),
-		SealedResponseHash: []byte("response"),
-		SealedInputLength:  100,
-		SealedMaxTokens:    50,
-		SealedInputTokens:  10,
-		SealedOutputTokens: 20,
-		SealedReservedCost: 150,
-		SealedActualCost:   30,
-		SealedStartedAt:    1000,
-		SealedConfirmedAt:  2000,
+		InferenceID:             7,
+		SealedNonce:             11,
+		ObsPresent:              true,
+		SealedStatus:            3,
+		SealedExecutorSlot:      2,
+		SealedVotesValid:        4,
+		SealedVotesInvalid:      1,
+		SealedValidatedBy:       []byte{0x0f, 0xf0},
+		SealedModel:             "llama",
+		SealedPromptHash:        []byte("prompt"),
+		SealedResponseHash:      []byte("response"),
+		SealedInputLength:       100,
+		SealedMaxTokens:         50,
+		SealedInputTokens:       10,
+		SealedOutputTokens:      20,
+		SealedReservedCost:      150,
+		SealedActualCost:        30,
+		SealedStartedAtHeight:   1000,
+		SealedConfirmedAtHeight: 2000,
 	}
 	bare := InferenceRow{InferenceID: 8, SealedNonce: 12}
 	require.NoError(t, store.InsertSealedInference("escrow-1", InferenceRow{InferenceID: 8, SealedNonce: 1}))
@@ -502,6 +502,33 @@ func runValidationObsBatchDrain(t *testing.T, store Storage) {
 	require.Equal(t, rows, again)
 
 	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", nil))
+}
+
+// runValidationObsRebuildPending pins the durable rebuild mark: absent on a new
+// session, set and cleared on the session row, and an error for an unknown
+// escrow rather than a silent false.
+func runValidationObsRebuildPending(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending, "a new session has no unfinished rebuild")
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", true))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.True(t, pending)
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", false))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	require.Error(t, store.SetValidationObsRebuildPending("escrow-missing", true))
+	_, err = store.ValidationObsRebuildPending("escrow-missing")
+	require.Error(t, err)
 }
 
 func runAddSignature(t *testing.T, store Storage) {

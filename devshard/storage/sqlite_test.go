@@ -144,6 +144,10 @@ func TestSQLite_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestSQLite(t))
 }
 
+func TestSQLite_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, newTestSQLite(t))
+}
+
 func TestSQLite_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestSQLite(t))
 }
@@ -371,7 +375,7 @@ func TestSQLite_LargeSession(t *testing.T) {
 			}})
 		case 1:
 			txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
-				ConfirmStart: &types.MsgConfirmStart{InferenceId: i, ExecutorSig: []byte("exec-sig"), ConfirmedAt: int64(i)},
+				ConfirmStart: &types.MsgConfirmStart{InferenceId: i, ExecutorSig: []byte("exec-sig")},
 			}})
 		case 2:
 			txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{

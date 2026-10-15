@@ -37,6 +37,8 @@ type NodeManagerClient interface {
 	GetRuntimeConfig(ctx context.Context, in *GetRuntimeConfigRequest, opts ...grpc.CallOption) (*GetRuntimeConfigResponse, error)
 	GetHostEvents(ctx context.Context, in *GetHostEventsRequest, opts ...grpc.CallOption) (*GetHostEventsResponse, error)
 	ListNodeCapacity(ctx context.Context, in *ListNodeCapacityRequest, opts ...grpc.CallOption) (*ListNodeCapacityResponse, error)
+	// Unary twins of HTTP GET /block/:height and GET /block/:height/prove.
+	// Live tip remains Comet NewBlock, not a gRPC stream.
 	GetBlockHeader(ctx context.Context, in *GetBlockHeaderRequest, opts ...grpc.CallOption) (*GetBlockHeaderResponse, error)
 	ProveBlockPath(ctx context.Context, in *ProveBlockPathRequest, opts ...grpc.CallOption) (*ProveBlockPathResponse, error)
 }
@@ -121,6 +123,8 @@ type NodeManagerServer interface {
 	GetRuntimeConfig(context.Context, *GetRuntimeConfigRequest) (*GetRuntimeConfigResponse, error)
 	GetHostEvents(context.Context, *GetHostEventsRequest) (*GetHostEventsResponse, error)
 	ListNodeCapacity(context.Context, *ListNodeCapacityRequest) (*ListNodeCapacityResponse, error)
+	// Unary twins of HTTP GET /block/:height and GET /block/:height/prove.
+	// Live tip remains Comet NewBlock, not a gRPC stream.
 	GetBlockHeader(context.Context, *GetBlockHeaderRequest) (*GetBlockHeaderResponse, error)
 	ProveBlockPath(context.Context, *ProveBlockPathRequest) (*ProveBlockPathResponse, error)
 	mustEmbedUnimplementedNodeManagerServer()

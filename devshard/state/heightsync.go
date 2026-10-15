@@ -119,13 +119,11 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	return nil
 }
 
-// applyHeightAck accepts MsgHeightAck into Diff while Active. Signature/causality
-// checks run in applyCore. Compose skips these once Finalizing.
-//
-// A first-time warm ack is admitted by L2 via AcceptWarm (CheckWarmKey) before
-// this runs. Cache the binding here so WarmKeyDelta captures it for replay,
-// matching ResolveWarmKey on confirm/finish/vote. Failure to cache is not an
-// apply error: L2 already accepted the signer (sibling binding or live authz).
+// applyHeightAck accepts MsgHeightAck into Diff while Active. Log-plane L0–L7
+// still run in applyCore / compose; this is the same apply-path identity check
+// confirm, finish, and votes use (hostSignerAllowedLocked). L2 admits with
+// CheckWarmKey and must not bind: compose trials it on prefixes that can still
+// be dropped. The binding is written here, on a tx that is actually applied.
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -139,10 +137,10 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	}
 	recovered, err := heightsync.RecoverAckSigner(sm.verifier, msg)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %v", heightsync.ErrAckSigInvalid, err)
 	}
-	if recovered != expected {
-		sm.ResolveWarmKey(msg.SlotId, recovered, expected)
+	if !sm.hostSignerAllowedLocked(msg.SlotId, recovered) {
+		return fmt.Errorf("%w: expected %s, got %s", heightsync.ErrAckSigInvalid, expected, recovered)
 	}
 	return nil
 }
@@ -191,8 +189,10 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
 		WarmKeys: sm.state.WarmKeys,
-		AcceptWarm: func(slotID uint32, recovered, expected string) bool {
-			_ = slotID
+		// Non-binding: L2 runs on compose trial prefixes that may still be
+		// dropped. Apply writes the binding via hostSignerAllowedLocked, the
+		// same AcceptWarm as confirm/finish/vote.
+		AcceptWarm: func(_ uint32, recovered, expected string) bool {
 			return sm.CheckWarmKey(recovered, expected)
 		},
 		Verifier: sm.verifier,
@@ -242,6 +242,7 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	if sm.turnTracker == nil {
 		return
 	}
+	sm.journalHeightSyncLocked(txs)
 	observeHeightSync(sm.state, sm.turnTracker, sm.heightSyncFloor, nonce, txs)
 }
 
@@ -465,15 +466,4 @@ func (sm *StateMachine) HeightSyncMarks() []heightsync.AttributableMark {
 		return nil
 	}
 	return sm.heightSyncMarks.All()
-}
-
-// verifyExecutorEvidenceLogPlaneLocked checks the same replay-stable stamp
-// rules as diff application. Authentication alone cannot make a regressing
-// ConfirmStart or Finish usable as timeout-blocking evidence.
-func (sm *StateMachine) verifyExecutorEvidenceLogPlaneLocked(tx *types.DevshardTx) error {
-	if !sm.floorReady {
-		return types.ErrFloorNotRestored
-	}
-	_, err := sm.logPlaneErrLocked(sm.state.LatestNonce+1, []*types.DevshardTx{tx})
-	return err
 }

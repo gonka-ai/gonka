@@ -217,7 +217,13 @@ func (s *Session) guardCompletion(ctx context.Context) error {
 			}
 			return fmt.Errorf("%w: nonce %d has no completion evidence", ErrInferenceCompletionPending, entry.Nonce)
 		}
-		if err := host.VerifyPayload(&entry.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+		if s.timeoutUnarmed(entry.Nonce) {
+			if err := store.DeleteInferenceCompletion(s.escrowID, entry.Nonce); err != nil {
+				return fmt.Errorf("%w: clear unanchored nonce %d: %v", ErrInferenceCompletionPending, entry.Nonce, err)
+			}
+			continue
+		}
+		if err := host.VerifyPayload(&entry.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 			return fmt.Errorf("%w: nonce %d retry payload: %v", ErrInferenceCompletionPending, entry.Nonce, err)
 		}
 		result, retryErr := s.HandleTimeout(retryCtx, entry.Nonce, time.Unix(0, entry.PreparedAt), &entry.Payload)

@@ -77,11 +77,15 @@ type MsgStartInference struct {
 	Model             string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	InputLength       uint64                 `protobuf:"varint,4,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
 	MaxTokens         uint64                 `protobuf:"varint,5,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	StartedAt         int64                  `protobuf:"varint,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,7,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,8,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// protocol_version is the destshard runtime the gateway bound for this
+	// escrow (approved_versions.name / route prefix). It is inside the
+	// user-signed Diff so a later ChallengeReceipt can prove which version
+	// may CreateSession on a host the gateway never pinged.
+	ProtocolVersion string `protobuf:"bytes,9,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *MsgStartInference) Reset() {
@@ -149,13 +153,6 @@ func (x *MsgStartInference) GetMaxTokens() uint64 {
 	return 0
 }
 
-func (x *MsgStartInference) GetStartedAt() int64 {
-	if x != nil {
-		return x.StartedAt
-	}
-	return 0
-}
-
 func (x *MsgStartInference) GetObservedHeight() uint64 {
 	if x != nil {
 		return x.ObservedHeight
@@ -170,11 +167,17 @@ func (x *MsgStartInference) GetObservedBlockHash() []byte {
 	return nil
 }
 
+func (x *MsgStartInference) GetProtocolVersion() string {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ""
+}
+
 type MsgConfirmStart struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 	ExecutorSig       []byte                 `protobuf:"bytes,2,opt,name=executor_sig,json=executorSig,proto3" json:"executor_sig,omitempty"`
-	ConfirmedAt       int64                  `protobuf:"varint,3,opt,name=confirmed_at,json=confirmedAt,proto3" json:"confirmed_at,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,4,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -223,13 +226,6 @@ func (x *MsgConfirmStart) GetExecutorSig() []byte {
 		return x.ExecutorSig
 	}
 	return nil
-}
-
-func (x *MsgConfirmStart) GetConfirmedAt() int64 {
-	if x != nil {
-		return x.ConfirmedAt
-	}
-	return 0
 }
 
 func (x *MsgConfirmStart) GetObservedHeight() uint64 {
@@ -600,12 +596,15 @@ func (x *ErrorMissVote) GetSignature() []byte {
 }
 
 type MsgValidation struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	ValidatorSlot uint32                 `protobuf:"varint,2,opt,name=validator_slot,json=validatorSlot,proto3" json:"validator_slot,omitempty"`
-	Valid         bool                   `protobuf:"varint,3,opt,name=valid,proto3" json:"valid,omitempty"`
-	ProposerSig   []byte                 `protobuf:"bytes,4,opt,name=proposer_sig,json=proposerSig,proto3" json:"proposer_sig,omitempty"`
-	EscrowId      string                 `protobuf:"bytes,5,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Proposer_sig is over CanonicalSignedBytes with domain
+	// "devshard.validation.v1". Field layout matches MsgValidationVote; the
+	// domain tag is what keeps the signatures from being interchangeable.
+	InferenceId   uint64 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ValidatorSlot uint32 `protobuf:"varint,2,opt,name=validator_slot,json=validatorSlot,proto3" json:"validator_slot,omitempty"`
+	Valid         bool   `protobuf:"varint,3,opt,name=valid,proto3" json:"valid,omitempty"`
+	ProposerSig   []byte `protobuf:"bytes,4,opt,name=proposer_sig,json=proposerSig,proto3" json:"proposer_sig,omitempty"`
+	EscrowId      string `protobuf:"bytes,5,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -676,12 +675,14 @@ func (x *MsgValidation) GetEscrowId() string {
 }
 
 type MsgValidationVote struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	VoterSlot     uint32                 `protobuf:"varint,2,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
-	VoteValid     bool                   `protobuf:"varint,3,opt,name=vote_valid,json=voteValid,proto3" json:"vote_valid,omitempty"`
-	ProposerSig   []byte                 `protobuf:"bytes,4,opt,name=proposer_sig,json=proposerSig,proto3" json:"proposer_sig,omitempty"`
-	EscrowId      string                 `protobuf:"bytes,5,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Proposer_sig is over CanonicalSignedBytes with domain
+	// "devshard.validationvote.v1". See MsgValidation.
+	InferenceId   uint64 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	VoterSlot     uint32 `protobuf:"varint,2,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
+	VoteValid     bool   `protobuf:"varint,3,opt,name=vote_valid,json=voteValid,proto3" json:"vote_valid,omitempty"`
+	ProposerSig   []byte `protobuf:"bytes,4,opt,name=proposer_sig,json=proposerSig,proto3" json:"proposer_sig,omitempty"`
+	EscrowId      string `protobuf:"bytes,5,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -860,7 +861,7 @@ var File_devshard_v1_tx_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
-	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xa7\x02\n" +
+	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xc5\x02\n" +
 	"\x11MsgStartInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -868,17 +869,16 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12!\n" +
 	"\finput_length\x18\x04 \x01(\x04R\vinputLength\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12\x1d\n" +
-	"\n" +
-	"started_at\x18\x06 \x01(\x03R\tstartedAt\x12'\n" +
+	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12'\n" +
 	"\x0fobserved_height\x18\a \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\b \x01(\fR\x11observedBlockHash\"\xd3\x01\n" +
+	"\x13observed_block_hash\x18\b \x01(\fR\x11observedBlockHash\x12)\n" +
+	"\x10protocol_version\x18\t \x01(\tR\x0fprotocolVersionJ\x04\b\x06\x10\aR\n" +
+	"started_at\"\xc4\x01\n" +
 	"\x0fMsgConfirmStart\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12!\n" +
-	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12!\n" +
-	"\fconfirmed_at\x18\x03 \x01(\x03R\vconfirmedAt\x12'\n" +
+	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12'\n" +
 	"\x0fobserved_height\x18\x04 \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHash\"\x83\x03\n" +
+	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHashJ\x04\b\x03\x10\x04R\fconfirmed_at\"\x83\x03\n" +
 	"\x12MsgFinishInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12#\n" +
 	"\rresponse_hash\x18\x02 \x01(\fR\fresponseHash\x12!\n" +

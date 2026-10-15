@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -31,7 +30,7 @@ type slotClaimingVerifier struct {
 }
 
 func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	data, err := proto.Marshal(&types.TimeoutVoteContent{
+	data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    m.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
@@ -53,6 +52,7 @@ type timeoutVoteFixture struct {
 	signers []*signing.Secp256k1Signer
 	group   []types.SlotAssignment
 	config  types.SessionConfig
+	id      uint64
 }
 
 func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
@@ -62,7 +62,6 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 	for i := range signers {
 		signers[i] = testutil.MustGenerateKey(t)
 	}
-	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 4, 1})
 	config := types.SessionConfig{
 		RefusalTimeout:   60,
@@ -71,35 +70,31 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 		FeePerNonce:      5,
 		VoteThreshold:    uint32(len(group)) / 2, // 7/2 = 3, need >3
 	}
-	verifier := signing.NewSecp256k1Verifier()
-
-	clients := make([]HostClient, len(group))
-	for i, slot := range group {
-		var slotSigner *signing.Secp256k1Signer
-		for _, s := range signers {
-			if s.Address() == slot.ValidatorAddress {
-				slotSigner = s
-				break
-			}
-		}
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
-		h, err := host.NewHost(sm, slotSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+	session, _, rig := armedSessionFor(t, group, signers, config, 100000, 100)
+	ctx := context.Background()
+	for (session.Nonce()+1)%uint64(len(group)) != 1 {
+		_, err := session.sendPendingDiff(ctx, nil, nil)
 		require.NoError(t, err)
-		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
-	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
-	require.NoError(t, err)
-
-	_, err = session.SendInference(context.Background(), InferenceParams{
+	id := session.Nonce() + 1
+	for i, c := range session.clients {
+		session.clients[i] = noReceiptClient{c}
+	}
+	_, err := session.SendInference(ctx, InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
-	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
+	userSM := session.StateMachine()
+	session.mu.Lock()
+	session.clearPendingTxs()
+	session.mu.Unlock()
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
+	rig.raise(t, session, 100_000)
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
 
-	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config}
+	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config, id: id}
 }
 
 func (f *timeoutVoteFixture) dropHostReceipts() {
@@ -110,7 +105,7 @@ func (f *timeoutVoteFixture) dropHostReceipts() {
 
 func (f *timeoutVoteFixture) collect(t *testing.T, verifiers map[int]TimeoutVerifier) []*types.TimeoutVote {
 	t.Helper()
-	votes, _, _, err := f.session.CollectTimeoutVotes(context.Background(), 1,
+	votes, _, _, err := f.session.CollectTimeoutVotes(context.Background(), f.id,
 		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
@@ -188,10 +183,10 @@ func TestCollectTimeoutVotes_SpoofedVoteDoesNotDisplaceHonestQuorum(t *testing.T
 	require.True(t, f.session.HasSufficientTimeoutVotes(votes), "honest weight exceeds threshold 3")
 
 	before := f.userSM.SnapshotState()
-	_, applied, err := f.userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
+	_, applied, err := f.userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(f.id, votes)})
 	require.NoError(t, err)
 	require.Len(t, applied, 1, "timeout tx applies")
-	require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[1].Status)
+	require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[f.id].Status)
 }
 
 func TestCollectTimeoutVotes_AcceptsPrimarySlotOfMultiSlotHost(t *testing.T) {
@@ -259,10 +254,11 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 		VoteThreshold: uint32(len(group)) / 2, // 3
 	}
 	verifier := signing.NewSecp256k1Verifier()
+	id := uint64(len(group)) + 1
 
 	signVote := func(s *signing.Secp256k1Signer, slot uint32) *types.TimeoutVote {
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
-			EscrowId: "escrow-1", InferenceId: 1,
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
+			EscrowId: "escrow-1", InferenceId: id,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})
 		require.NoError(t, err)
@@ -272,13 +268,20 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	}
 
 	seed := func(sm *state.StateMachine) {
-		_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+		raiseRawFloor(t, sm, signers[0], uint64(len(group)), 100)
+		for sm.LatestNonce()+1 < id {
+			_, _, err := sm.ApplyLocalBestEffort(sm.LatestNonce()+1, nil)
+			require.NoError(t, err)
+		}
+		_, applied, err := sm.ApplyLocalBestEffort(id, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-				InferenceId: 1, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+				InferenceId: id, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+				ObservedHeight: 100, ObservedBlockHash: []byte{0xaa},
 			}},
 		}})
 		require.NoError(t, err)
 		require.Len(t, applied, 1)
+		raiseRawFloor(t, sm, signers[0], uint64(len(group)), 100_000)
 	}
 
 	// signers[2] (slot 2, weight 4) + signers[3] (slot 6, weight 1) = 5 > 3.
@@ -287,21 +290,21 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 
 	clean := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 	seed(clean)
-	_, applied, err := clean.ApplyLocalBestEffort(2, []*types.DevshardTx{timeoutTxFor(1, honest)})
+	_, applied, err := clean.ApplyLocalBestEffort(clean.LatestNonce()+1, []*types.DevshardTx{timeoutTxFor(id, honest)})
 	require.NoError(t, err)
 	require.Len(t, applied, 1, "honest quorum alone applies")
-	require.Equal(t, types.StatusTimedOut, clean.SnapshotState().Inferences[1].Status)
+	require.Equal(t, types.StatusTimedOut, clean.SnapshotState().Inferences[id].Status)
 
 	poisoned := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
 	seed(poisoned)
 	before := poisoned.SnapshotState()
 	all := append(append([]*types.TimeoutVote{}, honest...), spoofed)
-	_, applied, err = poisoned.ApplyLocalBestEffort(2, []*types.DevshardTx{timeoutTxFor(1, all)})
+	_, applied, err = poisoned.ApplyLocalBestEffort(poisoned.LatestNonce()+1, []*types.DevshardTx{timeoutTxFor(id, all)})
 	require.NoError(t, err, "the surrounding best-effort diff still commits")
 	require.Empty(t, applied, "one spoofed vote rejects the entire timeout tx")
 
 	after := poisoned.SnapshotState()
-	require.Equal(t, types.StatusPending, after.Inferences[1].Status, "inference not timed out")
+	require.Equal(t, types.StatusPending, after.Inferences[id].Status, "inference not timed out")
 	require.Equal(t, before.LatestNonce+1, after.LatestNonce, "nonce still consumed")
 	require.Equal(t, before.Balance-config.FeePerNonce, after.Balance, "fee still charged")
 }
@@ -310,24 +313,24 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 	t.Run("dropped", func(t *testing.T) {
 		f := newTimeoutVoteFixture(t)
 		f.dropHostReceipts()
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
-			EscrowId: "escrow-1", InferenceId: 1,
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
+			EscrowId: "escrow-1", InferenceId: f.id,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})
 		require.NoError(t, err)
 		sig, err := f.signers[0].Sign(data)
 		require.NoError(t, err)
 
-		f.session.AddPendingTimeoutTx(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		f.session.AddPendingTimeoutTx(f.id, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 			[]*types.TimeoutVote{{VoterSlot: 2, Accept: true, Signature: sig}})
 
 		before := f.userSM.SnapshotState()
 		diff, err := f.session.sendPendingDiff(context.Background(), nil, nil)
 		require.NoError(t, err)
-		require.False(t, HasMsgTimeout(diff.Txs, 1), "rejected timeout tx is not in the diff")
+		require.False(t, HasMsgTimeout(diff.Txs, f.id), "rejected timeout tx is not in the diff")
 
 		after := f.userSM.SnapshotState()
-		require.Equal(t, types.StatusPending, after.Inferences[1].Status)
+		require.Equal(t, types.StatusPending, after.Inferences[f.id].Status)
 		require.Equal(t, before.LatestNonce+1, after.LatestNonce, "nonce consumed anyway")
 	})
 
@@ -340,11 +343,11 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 		})
 		require.True(t, f.session.HasSufficientTimeoutVotes(votes))
 
-		f.session.AddPendingTimeoutTx(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
+		f.session.AddPendingTimeoutTx(f.id, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
 		diff, err := f.session.sendPendingDiff(context.Background(), nil, nil)
 		require.NoError(t, err)
-		require.True(t, HasMsgTimeout(diff.Txs, 1))
-		require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[1].Status)
+		require.True(t, HasMsgTimeout(diff.Txs, f.id))
+		require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[f.id].Status)
 	})
 }
 

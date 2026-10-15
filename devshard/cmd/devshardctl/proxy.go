@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"devshard/accounting"
-	"devshard/logging"
 	"devshard/state"
 	"devshard/transport"
 	"devshard/types"
@@ -201,14 +200,30 @@ type Proxy struct {
 	logprobsOptimizationOverride func() *bool
 }
 
-// detachedInferenceContext drops the client's cancellation but keeps its request id, so the
-// inference stages join to the id the client was handed instead of minting one of their own.
+// detachedInferenceContext drops the client's cancel and deadline but keeps
+// its values, so a host stream still drains after a disconnect on the same
+// request id and trace.
 func detachedInferenceContext(clientCtx context.Context) context.Context {
-	return logging.PropagateRequestID(context.Background(), clientCtx)
+	if clientCtx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(clientCtx)
+}
+
+// settleInferenceContext is the parent for peer Send and race settlement.
+// It must keep the OTel span: InjectOutboundHeaders reads it for traceparent.
+// Using Background()+request_id only left the host on a new root trace.
+func settleInferenceContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
 }
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := ensureRequestLogContext(r.Context())
+	ctx, endSpan := bindGatewayRequestSpan(ctx)
+	defer endSpan()
 	r = r.WithContext(ctx)
 	if r.Method != http.MethodPost {
 		logRequestStage(ctx, "proxy_method_not_allowed", "method", r.Method)
@@ -407,10 +422,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	defer stopClientWatch()
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
-	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
-	// drained through devshard_meta even if the client disconnects.
-	// metaDrainTimeout (via withMetaDrain in redundancy) bounds how long
-	// upstream may run after the client is gone.
+	// Upstream redundancy must not cancel with the client (host SSE still
+	// drains through devshard_meta), but must keep request_id + OTel span so
+	// gateway→host injects the same traceparent. WithoutCancel preserves
+	// values; metaDrainTimeout (via withMetaDrain) bounds post-disconnect work.
 	var doneWriteErr error
 	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, dw, flag)
 	if flag.Gone() {
@@ -626,7 +641,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		defer closer.Close()
 	}
 	intent, _ := clientResponseIntentFromContext(r.Context())
-	assembled := filterClientInternalFields(aggregateSSEStreamReader(src, intent), intent)
+	// The reader strips internal fields itself; decoding its output again here
+	// would rebuild the whole logprobs tree the fold keeps out of RAM (R4).
+	assembled := aggregateSSEStreamReader(src, intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
@@ -661,7 +678,11 @@ func (p *Proxy) handBackToGateway(ctx context.Context, err error) bool {
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		return SettlementJSON{}, err
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
@@ -671,7 +692,12 @@ func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 func (p *Proxy) writeSettlement(w http.ResponseWriter) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -860,6 +886,19 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (p *Proxy) handleDebugStateSizes(w http.ResponseWriter, r *http.Request) {
+	sizes := p.session.StateSizes()
+	writeJSON(w, map[string]any{
+		"diffs":            sizes.Diffs,
+		"diffs_bytes":      sizes.DiffBytes,
+		"diffs_mb":         float64(sizes.DiffBytes) / (1024 * 1024),
+		"signature_nonces": sizes.SignatureNonces,
+		"nonce_states":     sizes.NonceStates,
+		"pending_txs":      sizes.PendingTxs,
+		"applied_tx_keys":  sizes.AppliedTxKeys,
+	})
+}
+
 func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -918,23 +957,23 @@ type requestAccountingCostResponse struct {
 }
 
 type requestAccountingAttemptResponse struct {
-	Nonce          uint64 `json:"nonce"`
-	HostIdx        int    `json:"host_idx"`
-	ParticipantKey string `json:"participant_key,omitempty"`
-	Probe          bool   `json:"probe"`
-	Winner         bool   `json:"winner"`
-	Status         string `json:"status"`
-	Model          string `json:"model,omitempty"`
-	ExecutorSlot   uint32 `json:"executor_slot,omitempty"`
-	InputLength    uint64 `json:"input_length,omitempty"`
-	MaxTokens      uint64 `json:"max_tokens,omitempty"`
-	InputTokens    uint64 `json:"input_tokens,omitempty"`
-	OutputTokens   uint64 `json:"output_tokens,omitempty"`
-	ReservedCost   uint64 `json:"reserved_cost,omitempty"`
-	ActualCost     uint64 `json:"actual_cost,omitempty"`
-	StartedAt      int64  `json:"started_at,omitempty"`
-	ConfirmedAt    int64  `json:"confirmed_at,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
+	Nonce           uint64 `json:"nonce"`
+	HostIdx         int    `json:"host_idx"`
+	ParticipantKey  string `json:"participant_key,omitempty"`
+	Probe           bool   `json:"probe"`
+	Winner          bool   `json:"winner"`
+	Status          string `json:"status"`
+	Model           string `json:"model,omitempty"`
+	ExecutorSlot    uint32 `json:"executor_slot,omitempty"`
+	InputLength     uint64 `json:"input_length,omitempty"`
+	MaxTokens       uint64 `json:"max_tokens,omitempty"`
+	InputTokens     uint64 `json:"input_tokens,omitempty"`
+	OutputTokens    uint64 `json:"output_tokens,omitempty"`
+	ReservedCost    uint64 `json:"reserved_cost,omitempty"`
+	ActualCost      uint64 `json:"actual_cost,omitempty"`
+	StartedHeight   uint64 `json:"started_at_height,omitempty"`
+	ConfirmedHeight uint64 `json:"confirmed_at_height,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
 }
 
 type requestAccountingResponse struct {
@@ -967,7 +1006,7 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":{"message":"request accounting unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	rec, ok, err := p.perf.FindAccountingRequest(requestID, p.escrowID)
+	rec, ok, err := p.perf.FindAccountingRequest(r.Context(), requestID, p.escrowID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -1022,8 +1061,8 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 			view.OutputTokens = inf.OutputTokens
 			view.ReservedCost = inf.ReservedCost
 			view.ActualCost = inf.ActualCost
-			view.StartedAt = inf.StartedAt
-			view.ConfirmedAt = inf.ConfirmedAt
+			view.StartedHeight = inf.StartedAtHeight
+			view.ConfirmedHeight = inf.ConfirmedAtHeight
 			if view.Winner {
 				resp.Cost.WinnerActualCost += inf.ActualCost
 			} else {
@@ -1226,22 +1265,22 @@ func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
 		}
 		inferences[fmt.Sprintf("%d", id)] = map[string]any{
-			"status":        name,
-			"executor_slot": rec.ExecutorSlot,
-			"model":         rec.Model,
-			"prompt_hash":   hex.EncodeToString(rec.PromptHash),
-			"response_hash": hex.EncodeToString(rec.ResponseHash),
-			"input_length":  rec.InputLength,
-			"max_tokens":    rec.MaxTokens,
-			"input_tokens":  rec.InputTokens,
-			"output_tokens": rec.OutputTokens,
-			"reserved_cost": rec.ReservedCost,
-			"actual_cost":   rec.ActualCost,
-			"started_at":    rec.StartedAt,
-			"confirmed_at":  rec.ConfirmedAt,
-			"votes_valid":   rec.VotesValid,
-			"votes_invalid": rec.VotesInvalid,
-			"validated_by":  rec.ValidatedBy.SetBits(),
+			"status":              name,
+			"executor_slot":       rec.ExecutorSlot,
+			"model":               rec.Model,
+			"prompt_hash":         hex.EncodeToString(rec.PromptHash),
+			"response_hash":       hex.EncodeToString(rec.ResponseHash),
+			"input_length":        rec.InputLength,
+			"max_tokens":          rec.MaxTokens,
+			"input_tokens":        rec.InputTokens,
+			"output_tokens":       rec.OutputTokens,
+			"reserved_cost":       rec.ReservedCost,
+			"actual_cost":         rec.ActualCost,
+			"started_at_height":   rec.StartedAtHeight,
+			"confirmed_at_height": rec.ConfirmedAtHeight,
+			"votes_valid":         rec.VotesValid,
+			"votes_invalid":       rec.VotesInvalid,
+			"validated_by":        rec.ValidatedBy.SetBits(),
 		}
 	}
 

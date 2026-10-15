@@ -3,7 +3,9 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -164,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -533,7 +535,7 @@ func TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, composed)
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), seedNonce)
+	confirmNonce, confirmH, ok := firstRaisingFinish(session.Diffs(), seedNonce)
 	require.True(t, ok)
 	require.Equal(t, uint64(150), confirmH)
 	span := heartbeatDiffsAfter(session.Diffs(), seedNonce)
@@ -681,7 +683,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	session.dispatchHeartbeatSpan(ctx, span[:1])
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 1)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Len(t, heightAcksInDiffs([]types.Diff{ackDiff}), 1,
@@ -791,7 +793,7 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, ackHostIdx, err := session.composeDiffLocked(nil)
+	ackDiff, ackHostIdx, err := session.composeDiffLocked(context.Background(), nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, base+4, ackDiff.Nonce)
@@ -1163,7 +1165,7 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	require.Len(t, heightAcksInTxs(recovered.PendingTxs()), 1)
 
 	recovered.mu.Lock()
-	lateAckDiff, _, err := recovered.composeDiffLocked(nil)
+	lateAckDiff, _, err := recovered.composeDiffLocked(context.Background(), nil)
 	recovered.mu.Unlock()
 	require.NoError(t, err)
 	require.Equal(t, finalNonce+1, lateAckDiff.Nonce)
@@ -1658,11 +1660,11 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	txs1 := []*types.DevshardTx{
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: confirmSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: confirmSig,
 		}}},
 	}
 	root1, err := sm.ApplyLocal(1, txs1)
@@ -1866,7 +1868,7 @@ func TestRecoverSession_SnapshotOnly_ReseedsTrimmedPrefixKeys(t *testing.T) {
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
 	session.mu.Lock()
-	ackDiff, _, err := session.composeDiffLocked(nil)
+	ackDiff, _, err := session.composeDiffLocked(context.Background(), nil)
 	for i := range hosts {
 		session.hostSyncNonce[i] = ackDiff.Nonce
 	}
@@ -2003,12 +2005,12 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	appendAppliedDiff(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{
 			InferenceId: 1, PromptHash: promptHash, Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		},
 	}}})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens)
 	appendAppliedDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{
-		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig},
 	}}})
 	finish := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
@@ -2270,34 +2272,78 @@ func TestRecoverSession_BareSnapshotIsIgnored(t *testing.T) {
 	require.Equal(t, honest.Balance, blob.State.Balance, "the replay save replaces the bare blob")
 }
 
-// A wrapped snapshot with no host_sync_nonce is the same miss: the cursor is
-// not unknown-zero, and recovery does not restore the blob.
-func TestRecoverSession_SnapshotWithoutCursorIsIgnored(t *testing.T) {
-	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
-		honest.Balance++
-		blob, err := json.Marshal(sessionSnapshot{State: &honest})
-		require.NoError(t, err)
-		return blob
-	})
-	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
-	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+// A snapshot taken before any host answered has no host_sync_nonce. It is
+// restored with every host at 0, and the backfill starts at nonce 1.
+func TestRecoverSession_SnapshotWithoutCursorIsRestored(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	saveHonestSnapshot(t, store, group, user, n, nil)
+
+	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+		group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, map[int]uint64{0: 0, 1: 0, 2: 0}, hostCursorOf(session))
+	require.Len(t, session.Diffs(), n)
 	require.Equal(t, uint64(1), session.Diffs()[0].Nonce)
 }
 
-// A cursor that skips a host is incomplete. Recovery must not treat the
-// missing host as cursor 0 and backfill 1..snapshot under the restored blob.
-func TestRecoverSession_IncompleteCursorIsIgnored(t *testing.T) {
-	session, recSM, honest := recoverIgnoringSnapshot(t, func(honest types.EscrowState) []byte {
-		honest.Balance++
-		blob, err := json.Marshal(sessionSnapshot{
-			State:         &honest,
-			HostSyncNonce: map[int]uint64{0: honest.LatestNonce},
-		})
+// A host that never answered is missing from the cursor. The snapshot is still
+// restored, the hosts that answered keep their cursors, and the snapshot on
+// disk is not replaced, so every later restart restores it again.
+func TestRecoverSession_SilentHostKeepsTheSnapshot(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	answered := map[int]uint64{0: n, 1: n}
+	saveHonestSnapshot(t, store, group, user, n, answered)
+
+	for restart := range 2 {
+		session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+			group, buildRecoveryClients(t, hosts, group, user))
 		require.NoError(t, err)
-		return blob
-	})
-	require.Equal(t, honest.Balance, recSM.SnapshotState().Balance)
-	require.Len(t, session.Diffs(), int(honest.LatestNonce))
+		require.Equal(t, map[int]uint64{0: n, 1: n, 2: 0}, hostCursorOf(session), "restart %d", restart)
+		require.Len(t, session.Diffs(), n, "restart %d: the silent host is backfilled from nonce 1", restart)
+
+		_, data, err := store.LoadSnapshot("escrow-1")
+		require.NoError(t, err)
+		_, cursor, _, _, _, err := decodeSnapshot(data)
+		require.NoError(t, err)
+		require.Equal(t, answered, cursor, "restart %d: the snapshot keeps the answering hosts' cursors", restart)
+	}
+}
+
+// A cursor past the snapshot nonce is a host claim the journal cannot back.
+func TestRecoverSession_CursorPastSnapshotIsClamped(t *testing.T) {
+	const n = 5
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, n, store)
+	saveHonestSnapshot(t, store, group, user, n, map[int]uint64{0: n + 50, 1: n, 2: n})
+
+	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+		group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, map[int]uint64{0: n, 1: n, 2: n}, hostCursorOf(session))
+}
+
+// saveHonestSnapshot replays the journal through 1..nonce and saves that state
+// with cursor.
+func saveHonestSnapshot(t *testing.T, store storage.Storage, group []types.SlotAssignment, user *signing.Secp256k1Signer, nonce uint64, cursor map[int]uint64) {
+	t.Helper()
+	sm := newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(group)), group, 100000, user.Address(), signing.NewSecp256k1Verifier())
+	records, err := store.GetDiffs("escrow-1", 1, nonce)
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	saveSnapshot(store, sm, "escrow-1", nonce, cursor)
+}
+
+func hostCursorOf(session *Session) map[int]uint64 {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	return maps.Clone(session.hostSyncNonce)
 }
 
 func recoverIgnoringSnapshot(t *testing.T, encode func(types.EscrowState) []byte) (*Session, *state.StateMachine, types.EscrowState) {
@@ -2445,6 +2491,125 @@ func TestRecoverSession_SnapshotPathSkipsObsRebuild(t *testing.T) {
 	session.mu.Unlock()
 	require.True(t, prefix, "a tx only in the trimmed prefix is re-seeded from the journal")
 	require.True(t, suffix, "a tx in the backfill suffix is re-seeded")
+}
+
+// obsFaultStore fails the rebuild's final drain, after the clear has run, or
+// the clear itself.
+type obsFaultStore struct {
+	storage.Storage
+	failDrain bool
+	failClear bool
+}
+
+func (s *obsFaultStore) DrainInferenceValidationObsBatch(escrowID string, ids []uint64) error {
+	if s.failDrain {
+		return fmt.Errorf("drain refused")
+	}
+	return s.Storage.DrainInferenceValidationObsBatch(escrowID, ids)
+}
+
+func (s *obsFaultStore) ClearValidationObs(escrowID string) error {
+	if s.failClear {
+		return fmt.Errorf("clear refused")
+	}
+	return s.Storage.ClearValidationObs(escrowID)
+}
+
+func requireObsRebuildPending(t *testing.T, store storage.Storage, want bool) {
+	t.Helper()
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, want, pending)
+}
+
+// A full replay saves its snapshot before the obs rebuild. A rebuild that
+// fails after its clear must not leave the next start trusting that snapshot's
+// obs rows: the mark makes the snapshot restore repeat the rebuild.
+func TestRecoverSession_FailedObsRebuildRepeatsAfterRestart(t *testing.T) {
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 3, 4, store)
+	verifier := signing.NewSecp256k1Verifier()
+
+	faulty := &obsFaultStore{Storage: store, failDrain: true}
+	_, _, err := RecoverSession(faulty, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.ErrorContains(t, err, "drain refused")
+	requireObsRebuildPending(t, store, true)
+	snapNonce, _, err := store.LoadSnapshot("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), snapNonce, "the snapshot landed before the rebuild failed")
+
+	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), session.Nonce())
+	require.Equal(t, 1, spy.clearCalls(), "the snapshot restore repeats the unfinished rebuild")
+	requireObsRebuildPending(t, store, false)
+
+	again := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+	_, _, err = RecoverSession(again, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Zero(t, again.clearCalls(), "a finished rebuild is not repeated")
+}
+
+// The retry rebuilds from the whole journal, not just the snapshot tail, and
+// a retry that fails keeps the mark without stopping the session.
+func TestRecoverSession_PendingObsRebuildOnSnapshotPath(t *testing.T) {
+	setup := func(t *testing.T) (*storage.SQLite, []types.SlotAssignment, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+		t.Helper()
+		store := newTestStore(t)
+		hosts := make([]*signing.Secp256k1Signer, 3)
+		for i := range hosts {
+			hosts[i] = testutil.MustGenerateKey(t)
+		}
+		user := testutil.MustGenerateKey(t)
+		group := testutil.MakeGroup(hosts)
+		config := testutil.DefaultConfig(len(hosts))
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       "escrow-1",
+			Version:        testutil.RuntimeTestVersion,
+			CreatorAddr:    user.Address(),
+			Config:         config,
+			Group:          group,
+			InitialBalance: 100000,
+		}))
+		require.NoError(t, store.AppendDiff("escrow-1", validationRecord(1, 1, 0)))
+		require.NoError(t, store.AppendDiff("escrow-1", validationRecord(2, 2, 0)))
+		snap := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), signing.NewSecp256k1Verifier()).ExportState()
+		snap.LatestNonce = 2
+		writeSnapshot(store, "escrow-1", 2, snap, map[int]uint64{0: 2, 1: 2, 2: 2}, nil, nil, nil)
+		// The state a rebuild leaves when it dies right after its clear.
+		require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", true))
+		return store, group, hosts, user
+	}
+
+	t.Run("rebuilds the cleared rows", func(t *testing.T) {
+		store, group, hosts, user := setup(t)
+		spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
+		_, _, err := RecoverSession(spy, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		require.NoError(t, err)
+		require.Equal(t, 1, spy.clearCalls())
+		requireObsRebuildPending(t, store, false)
+
+		rows, err := store.GetValidationObservability("escrow-1")
+		require.NoError(t, err)
+		require.Len(t, rows, 1)
+		require.Equal(t, uint32(0), rows[0].SlotID)
+		require.Equal(t, uint32(2), rows[0].CompletedValidations, "both journal validations are counted again")
+	})
+
+	t.Run("a failed retry keeps the mark and recovers", func(t *testing.T) {
+		store, group, hosts, user := setup(t)
+		faulty := &obsFaultStore{Storage: store, failClear: true}
+		session, _, err := RecoverSession(faulty, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), session.Nonce())
+		requireObsRebuildPending(t, store, true)
+
+		session.mu.Lock()
+		_, applied := session.appliedTxKeys["validation:1:0"]
+		session.mu.Unlock()
+		require.True(t, applied, "applied keys are still re-seeded when the retry fails")
+	})
 }
 
 func validationRecord(nonce, inferenceID uint64, slot uint32) types.DiffRecord {
@@ -2674,7 +2839,6 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   1,
-			StartedAt:   1000,
 		},
 	}}}
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)

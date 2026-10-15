@@ -17,6 +17,9 @@ type spanNames struct {
 	Inference spanID
 	// ML node call (vLLM /v1/chat/completions).
 	MLNode spanID
+	// NodeManager AcquireMLNode / ReleaseMLNode gRPC calls to dapi.
+	MLNodeAcquire spanID
+	MLNodeRelease spanID
 	// Validation re-execution span on the validator side.
 	Validation spanID
 }
@@ -27,8 +30,10 @@ var tracerName = tracerNames{
 }
 
 var spanName = spanNames{
-	Request:    "devshardd.request",
-	Inference:  "devshardd.inference",
-	MLNode:     "devshardd.mlnode.chat.completions",
-	Validation: "devshardd.validation",
+	Request:       "devshardd.request",
+	Inference:     "devshardd.inference",
+	MLNode:        "devshardd.mlnode.chat.completions",
+	MLNodeAcquire: "devshardd.mlnode.acquire",
+	MLNodeRelease: "devshardd.mlnode.release",
+	Validation:    "devshardd.validation",
 }

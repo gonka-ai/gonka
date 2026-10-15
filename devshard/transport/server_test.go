@@ -36,6 +36,16 @@ type serverTestEnv struct {
 	hostSigner *signing.Secp256k1Signer
 	group      []types.SlotAssignment
 	config     types.SessionConfig
+	sm         *state.StateMachine
+}
+
+func (e *serverTestEnv) flooredStartTx(id uint64) *types.DevshardTx {
+	tx := testutil.StartTx(id)
+	h, hash, _ := e.sm.HeightSyncFloorAsOf(id)
+	if h > 0 {
+		tx.GetStartInference().ObservedHeight, tx.GetStartInference().ObservedBlockHash = h, hash
+	}
+	return tx
 }
 
 // registerServer wires srv's handlers onto g using the same auth + rate-limit
@@ -66,6 +76,10 @@ func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
 }
 
 func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
+	return setupServerEnvEngine(t, nil, hostOpts, opts...)
+}
+
+func setupServerEnvEngine(t *testing.T, engine devshard.InferenceEngine, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -75,7 +89,9 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
-	engine := stub.NewInferenceEngine()
+	if engine == nil {
+		engine = stub.NewInferenceEngine()
+	}
 	store := storage.NewMemory()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
@@ -105,6 +121,7 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 		hostSigner: hostSigner,
 		group:      group,
 		config:     config,
+		sm:         sm,
 	}
 }
 
@@ -418,9 +435,9 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// inference 1 % 1 = 0, executor = slot 0.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff2)
@@ -658,7 +675,6 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 	env.server.host.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 99,
 		ExecutorSig: []byte("other"),
-		ConfirmedAt: 1,
 	}}})
 
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)

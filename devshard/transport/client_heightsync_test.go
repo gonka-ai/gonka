@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"common/chainoracle/blocks"
 	"devshard/heightsync"
@@ -59,7 +61,7 @@ func setupClientTestEnvWithHeightSync(t *testing.T) (*HTTPClient, *httptest.Serv
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.RoutePrefix = testRoutePrefix
 	cfg.HeightSync = clientSched
 	cfg.HeightSyncLogOracle = or
@@ -149,7 +151,7 @@ func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	clientSched := heightsync.MustNewAnchorScheduler(8, 4, src)
 
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.RoutePrefix = testRoutePrefix
 	cfg.HeightSync = clientSched
 	cfg.HeightSyncPeerTips = peerTips
@@ -158,7 +160,7 @@ func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
 	require.True(t, peerTips.ShouldPropagateTo(ts.URL, 51))
 
 	ctx := context.Background()
-	plainCfg := DefaultClientConfig()
+	plainCfg := allowRetiredHTTP(DefaultClientConfig())
 	plainCfg.RoutePrefix = testRoutePrefix
 	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner, plainCfg)
 	payload := &host.InferencePayload{
@@ -200,7 +202,7 @@ func TestHostRequest_ForceHeightSyncAnchor_TransportJSONRoundTrip(t *testing.T) 
 }
 
 func TestHTTPClient_ParseSSE_InboundHeightSyncAudit(t *testing.T) {
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	client := &HTTPClient{
 		config:          cfg,
 		baseURL:         "http://executor-host",
@@ -225,7 +227,7 @@ func TestObservedHeightNow_CacheEmpty(t *testing.T) {
 	peerTips := NewHeightSyncPeerTips()
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSync = sched
 	cfg.HeightSyncPeerTips = peerTips
 	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
@@ -247,7 +249,7 @@ func TestObservedHeightNow_FreshTip(t *testing.T) {
 	}, []byte("blob"), []byte{1})
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSync = sched
 	cfg.HeightSyncPeerTips = peerTips
 	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
@@ -264,7 +266,7 @@ func TestObservedHeightNow_IgnoresLogOracle(t *testing.T) {
 	or := &heightSyncTestOracle{hdr: &blocks.Header{
 		Height: 99, ChainID: "test-chain", BlockHash: []byte{0x01},
 	}}
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSync = sched
 	cfg.HeightSyncPeerTips = peerTips
 	cfg.HeightSyncLogOracle = or
@@ -319,7 +321,7 @@ func TestHTTPClient_SeedHeightSync_RecordsOrigin(t *testing.T) {
 	peerTips := NewHeightSyncPeerTips()
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	clientSched := heightsync.MustNewAnchorScheduler(8, 4, src)
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.RoutePrefix = testRoutePrefix
 	cfg.HeightSync = clientSched
 	cfg.HeightSyncPeerTips = peerTips
@@ -347,9 +349,10 @@ func TestHTTPClient_SeedHeightSync_DoesNotRetry503(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
-		QueryTimeout:       5 * time.Second,
-		RoutePrefix:        "/",
-		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+		AllowRetiredHTTPSession: true,
+		QueryTimeout:            5 * time.Second,
+		RoutePrefix:             "/",
+		HeightSyncPeerTips:      NewHeightSyncPeerTips(),
 	})
 	ok, err := client.SeedHeightSync(context.Background())
 	require.Error(t, err)
@@ -373,10 +376,11 @@ func TestHTTPClient_SeedHeightSync_UsesHeightSeedTimeout(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 
 	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
-		QueryTimeout:       30 * time.Second,
-		HeightSeedTimeout:  50 * time.Millisecond,
-		RoutePrefix:        "/",
-		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+		AllowRetiredHTTPSession: true,
+		QueryTimeout:            30 * time.Second,
+		HeightSeedTimeout:       50 * time.Millisecond,
+		RoutePrefix:             "/",
+		HeightSyncPeerTips:      NewHeightSyncPeerTips(),
 	})
 	start := time.Now()
 	ok, err := client.SeedHeightSync(context.Background())
@@ -407,7 +411,7 @@ func TestClient_ResponseAnchor_VerifiesOriginSignature(t *testing.T) {
 	sec.SenderSignature = sig
 
 	peerTips := NewHeightSyncPeerTips()
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSyncPeerTips = peerTips
 	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
 
@@ -433,7 +437,7 @@ func TestClient_ResponseAnchor_DropsOnInvalidSig(t *testing.T) {
 	sec.SenderSignature = []byte{0, 1, 2}
 
 	peerTips := NewHeightSyncPeerTips()
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSyncPeerTips = peerTips
 	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
 
@@ -458,7 +462,7 @@ func TestClient_ResponseAnchor_ZeroTimestampNotCached(t *testing.T) {
 	sec.SenderSignature = sig
 
 	peerTips := NewHeightSyncPeerTips()
-	cfg := DefaultClientConfig()
+	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.HeightSyncPeerTips = peerTips
 	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
 
@@ -487,4 +491,31 @@ func TestClient_RequestLeg_OmitsSenderSignature(t *testing.T) {
 	}
 	peerTips.Carry(outbound)
 	require.Nil(t, outbound.SenderSignature)
+}
+
+func TestWrapInferenceRequest_PromptIsProtobufBytes(t *testing.T) {
+	prompt := []byte("<<<chat prompt that must not be base64>>>")
+	client := &HTTPClient{}
+	ir := InferenceRequest{
+		Nonce: 4,
+		Payload: &PayloadJSON{
+			Prompt: prompt,
+			Model:  "Qwen/Test",
+		},
+	}
+
+	body, contentType, hs, err := client.wrapInferenceRequest(context.Background(), host.HostRequest{}, ir)
+	require.NoError(t, err)
+	require.Nil(t, hs)
+	require.Equal(t, "application/x-protobuf", contentType)
+
+	var env types.InferenceRequestEnvelope
+	require.NoError(t, proto.Unmarshal(body, &env))
+	require.Equal(t, prompt, env.GetPrompt())
+	require.NotContains(t, string(env.GetInferenceRequestJson()), base64.StdEncoding.EncodeToString(prompt))
+
+	got, err := UnwrapInferenceRequestBody(body)
+	require.NoError(t, err)
+	require.Equal(t, prompt, got.Request.Payload.Prompt)
+	require.Equal(t, "Qwen/Test", got.Request.Payload.Model)
 }

@@ -125,9 +125,9 @@ func applyInferenceTo(t *testing.T, h *Host, hosts []*signing.Secp256k1Signer, u
 	}
 
 	nonce++
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff2 := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2}})
@@ -674,6 +674,86 @@ func TestHost_ChallengedInferencePublishesValidationVote(t *testing.T) {
 	require.Equal(t, 1, mark)
 	_, onCooldown := cooldownUntil(h, 1)
 	require.False(t, onCooldown)
+}
+
+type gateValidationEngine struct {
+	entered chan struct{}
+	release chan struct{}
+	result  *devshard.ValidateResult
+	calls   atomic.Int32
+}
+
+func (e *gateValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	e.calls.Add(1)
+	if e.entered != nil {
+		close(e.entered)
+	}
+	if e.release != nil {
+		<-e.release
+	}
+	if e.result != nil {
+		return e.result, nil
+	}
+	return &devshard.ValidateResult{Valid: true}, nil
+}
+
+func TestHost_StopValidationEnqueue_SkipsNewWork(t *testing.T) {
+	t.Cleanup(resetValidationEnqueueForTest)
+	engine := &gateValidationEngine{}
+	h, hosts, user := newTwoHostValidationHost(t, engine)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	StopValidationEnqueue()
+	require.Empty(t, collectValidationJobsLocked(h))
+	h.validateAsync(context.Background(), testValidateJob())
+	require.Equal(t, int32(0), engine.calls.Load())
+
+	resetValidationEnqueueForTest()
+	require.NotEmpty(t, collectValidationJobsLocked(h))
+}
+
+func TestHost_InFlightValidationVotesAfterEnqueueStop(t *testing.T) {
+	t.Cleanup(resetValidationEnqueueForTest)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	engine := &gateValidationEngine{
+		entered: entered,
+		release: release,
+		result:  &devshard.ValidateResult{Valid: true},
+	}
+	h, hosts, user := newTwoHostValidationHost(t, engine)
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	done := make(chan struct{})
+	go func() {
+		h.validateAsync(context.Background(), testValidateJob())
+		close(done)
+	}()
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not enter Validate")
+	}
+	StopValidationEnqueue()
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not finish")
+	}
+	require.Equal(t, int32(1), engine.calls.Load())
+	var valid bool
+	var found bool
+	for _, tx := range h.MempoolTxs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			valid = v.Valid
+			found = true
+		}
+	}
+	require.True(t, found)
+	require.True(t, valid)
 }
 
 func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {

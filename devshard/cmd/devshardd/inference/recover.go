@@ -11,9 +11,12 @@ import (
 	"strings"
 
 	"common/completionapi"
+	"common/logging"
 	"common/storage/payloads"
 	devshardpkg "devshard"
 	"devshard/observability"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 // recoverStoredExecution rebuilds an execution result from a response an
@@ -42,6 +45,49 @@ func recoverStoredExecution(
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute,
 			fmt.Errorf("stored prompt at epoch %d does not match the inference: expected %x got %x", epoch, req.PromptHash, promptHash[:]))
 	}
+	result, err := resultFromStoredResponse(response)
+	if err != nil {
+		return nil, err
+	}
+	// The bytes are stored and the finish is owed whether or not the caller
+	// is still reading.
+	if req.ResponseWriter != nil {
+		if err := writeStoredResponse(req.ResponseWriter, response); err != nil {
+			logging.Warn("The caller stopped reading the stored response, finishing the inference without it", types.Inferences,
+				"inference_id", req.InferenceID, "error", err)
+		}
+	}
+	return result, nil
+}
+
+// storedExecutionResult is the result of a run whose Store lost to an earlier
+// execution of the same inference. This run has already streamed its own
+// response, so nothing is written to the client.
+func storedExecutionResult(
+	ctx context.Context,
+	req devshardpkg.ExecuteRequest,
+	reader PayloadReader,
+	payloadEpoch uint64,
+) (*devshardpkg.ExecuteResult, error) {
+	if reader == nil {
+		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute,
+			fmt.Errorf("store payloads: %w, and the store cannot read it back", payloads.ErrAlreadyStored))
+	}
+	prompt, response, err := reader.Retrieve(ctx, req.EscrowID, req.InferenceID, payloadEpoch)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute, fmt.Errorf("read the payload stored first: %w", err))
+	}
+	if promptHash := sha256.Sum256(prompt); len(req.PromptHash) > 0 && !bytes.Equal(promptHash[:], req.PromptHash) {
+		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeExecute,
+			fmt.Errorf("the payload stored first at epoch %d is for another prompt: expected %x got %x", payloadEpoch, req.PromptHash, promptHash[:]))
+	}
+	return resultFromStoredResponse(response)
+}
+
+// resultFromStoredResponse derives the finish fields from the stored bytes the
+// way verifyFetchedPayloadHashes checks them: the response hash over the bytes,
+// the served hash over their gateway view, usage from the stored response.
+func resultFromStoredResponse(response []byte) (*devshardpkg.ExecuteResult, error) {
 	parsed, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(response)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, fmt.Errorf("parse stored response: %w", err))
@@ -50,14 +96,15 @@ func recoverStoredExecution(
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, fmt.Errorf("stored response usage: %w", err))
 	}
-	if req.ResponseWriter != nil {
-		if err := writeStoredResponse(req.ResponseWriter, response); err != nil {
-			return nil, fmt.Errorf("relay stored response: %w", err)
-		}
+	served, err := completionapi.StripForGateway(response)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, fmt.Errorf("stored response served view: %w", err))
 	}
 	hash := sha256.Sum256(response)
+	servedHash := sha256.Sum256(served)
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: hash[:],
+		ServedHash:   servedHash[:],
 		InputTokens:  usage.PromptTokens,
 		OutputTokens: usage.CompletionTokens,
 		ResponseBody: response,

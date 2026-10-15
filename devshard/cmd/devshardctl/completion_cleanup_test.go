@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,9 +14,9 @@ import (
 
 func TestCompletionEscrowCleanupDeletesPayloads(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gateway.db")
-	store, err := NewGatewayStore(path)
+	store, err := NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "llama"}.WithTuningDefaults(), []GatewayDevshardState{{RuntimeConfig: RuntimeConfig{ID: "42", Model: "llama"}}, {RuntimeConfig: RuntimeConfig{ID: "43", Model: "llama"}}}))
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "llama"}.WithTuningDefaults(), []GatewayDevshardState{{RuntimeConfig: RuntimeConfig{ID: "42", Model: "llama"}}, {RuntimeConfig: RuntimeConfig{ID: "43", Model: "llama"}}}))
 	entry := user.InferenceCompletion{Nonce: 1, PreparedAt: time.Now().UnixNano(), Payload: host.InferencePayload{Prompt: []byte(`{"messages":[{"role":"user","content":"sensitive user prompt"}]}`), Model: "llama"}}
 	require.NoError(t, store.SaveInferenceCompletion("42", entry))
 	require.NoError(t, store.SaveInferenceCompletion("43", entry))
@@ -25,9 +26,9 @@ func TestCompletionEscrowCleanupDeletesPayloads(t *testing.T) {
 	exists, err = store.HasInferenceCompletion("42", 2)
 	require.NoError(t, err)
 	require.False(t, exists)
-	require.NoError(t, store.DeleteDevshard(" 42 "))
+	require.NoError(t, store.DeleteDevshard(context.Background(), " 42 "))
 	require.NoError(t, store.Close())
-	store, err = NewGatewayStore(path)
+	store, err = NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	defer store.Close()
 	entries, err := store.ListInferenceCompletions("42")
@@ -39,16 +40,16 @@ func TestCompletionEscrowCleanupDeletesPayloads(t *testing.T) {
 }
 
 func TestCompletionEscrowCleanupRollsBackOnPayloadFailure(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "llama"}.WithTuningDefaults(), []GatewayDevshardState{{RuntimeConfig: RuntimeConfig{ID: "42", Model: "llama"}}}))
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "llama"}.WithTuningDefaults(), []GatewayDevshardState{{RuntimeConfig: RuntimeConfig{ID: "42", Model: "llama"}}}))
 	entry := user.InferenceCompletion{Nonce: 1, PreparedAt: time.Now().UnixNano()}
 	require.NoError(t, store.SaveInferenceCompletion("42", entry))
 	_, err = store.db.Exec(`CREATE TRIGGER fail_completion_delete BEFORE DELETE ON gateway_inference_completions BEGIN SELECT RAISE(ABORT, 'temporary payload deletion failure'); END`)
 	require.NoError(t, err)
-	require.ErrorContains(t, store.DeleteDevshard("42"), "temporary payload deletion failure")
-	state, ok, err := store.LoadState()
+	require.ErrorContains(t, store.DeleteDevshard(context.Background(), "42"), "temporary payload deletion failure")
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, state.Devshards, 1)
@@ -57,5 +58,5 @@ func TestCompletionEscrowCleanupRollsBackOnPayloadFailure(t *testing.T) {
 	require.Len(t, entries, 1)
 	_, err = store.db.Exec(`DROP TRIGGER fail_completion_delete`)
 	require.NoError(t, err)
-	require.NoError(t, store.DeleteDevshard("42"))
+	require.NoError(t, store.DeleteDevshard(context.Background(), "42"))
 }

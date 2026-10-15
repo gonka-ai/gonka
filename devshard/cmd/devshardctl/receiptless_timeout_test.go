@@ -16,16 +16,16 @@ import (
 	"devshard/stub"
 	"devshard/types"
 	"devshard/user"
+
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
 
 func TestLongContentStillResolvesThroughProtocolTimeout(t *testing.T) {
 	for _, cleanup := range []string{"winner", "failed"} {
 		for _, receipt := range []bool{false, true} {
 			t.Run(cleanup+map[bool]string{false: "_refused", true: "_execution"}[receipt], func(t *testing.T) {
-				env := setupTestProxy(t, 16, nil, true)
-				store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+				env := setupManualFloorProxy(t, 16, nil, true)
+				store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 				require.NoError(t, err)
 				defer store.Close()
 				env.session.SetInferenceCompletionStore(store)
@@ -33,13 +33,15 @@ func TestLongContentStillResolvesThroughProtocolTimeout(t *testing.T) {
 				old := time.Now().Add(-10 * time.Minute)
 				params.StartedAt = old.Unix()
 				initial := env.sm.SnapshotState().Balance
-				p, err := env.session.PrepareInference(params)
+				p, err := env.session.PrepareInference(context.Background(), params)
 				require.NoError(t, err)
 				if receipt {
-					sig := testutil.SignExecutorReceipt(t, env.verifiers[p.HostIdx()].signer, "escrow-proxy", p.Nonce(), testutil.TestPromptHash[:], params.Model, params.InputLength, params.MaxTokens, params.StartedAt, old.Unix())
-					require.NoError(t, env.session.ProcessResponse(p.HostIdx(), &host.HostResponse{Receipt: sig, ConfirmedAt: old.Unix()}, p.Nonce()))
+					require.NoError(t, env.session.ProcessResponse(p.HostIdx(), env.floorReceipt(t, p.Nonce(), old.Unix()), p.Nonce()))
 					require.NoError(t, env.session.SendPendingDiff(context.Background()))
 				}
+				started, ok := env.sm.Inference(p.Nonce())
+				require.True(t, ok)
+				env.raiseFloor(t, started.StartedAtHeight+100_000)
 				inf := &inflight{hostIdx: p.HostIdx(), hostID: env.session.HostLabel(p.HostIdx()), nonce: p.Nonce(), escrowID: "escrow-proxy", sendTime: old, resp: &host.HostResponse{Nonce: p.Nonce()}, done: make(chan struct{}), contentSource: "delta.content"}
 				inf.outputChunks.Store(1)
 				inf.contentChunks.Store(1)
@@ -53,6 +55,10 @@ func TestLongContentStillResolvesThroughProtocolTimeout(t *testing.T) {
 					inf.err = errors.New("stream failed")
 					env.proxy.redundancy.voteTimeoutsForFailedRequest(context.Background(), []*inflight{inf}, params)
 				}
+				require.Eventually(t, func() bool {
+					rec, _ := env.sm.Inference(p.Nonce())
+					return rec.Status == types.StatusTimedOut
+				}, testWaitLimit, 10*time.Millisecond)
 				rec, ok := env.sm.Inference(p.Nonce())
 				require.True(t, ok)
 				require.Equal(t, types.StatusTimedOut, rec.Status)
@@ -76,12 +82,12 @@ func TestLongContentStillResolvesThroughProtocolTimeout(t *testing.T) {
 
 func TestCompletionStoreSurvivesRestartAndRejectsConflicts(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gateway.db")
-	store, err := NewGatewayStore(path)
+	store, err := NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	entry := user.InferenceCompletion{Nonce: 7, PreparedAt: time.Now().UnixNano(), Payload: host.InferencePayload{Prompt: testutil.TestPrompt, Model: "llama", StartedAt: 1000}}
 	require.NoError(t, store.SaveInferenceCompletion("escrow", entry))
 	require.NoError(t, store.Close())
-	store, err = NewGatewayStore(path)
+	store, err = NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	defer store.Close()
 	entries, err := store.ListInferenceCompletions("escrow")
@@ -110,7 +116,7 @@ func TestCompletionStoreSurvivesRestartAndRejectsConflicts(t *testing.T) {
 	require.Error(t, err)
 }
 
-func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.SlotAssignment, string) {
+func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.SlotAssignment, string, uint32) {
 	t.Helper()
 	const escrowID = "42"
 	signers := make([]*signing.Secp256k1Signer, 16)
@@ -126,26 +132,56 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	db, err := storage.NewSQLite(sessionPath)
 	require.NoError(t, err)
 	require.NoError(t, db.CreateSession(storage.CreateSessionParams{EscrowID: escrowID, Version: testutil.RuntimeTestVersion, CreatorAddr: creator.Address(), Config: config, Group: group, InitialBalance: 1000000}))
+	chain := &testChain{start: time.Now()}
+	chain.manual.Store(100)
+	chain.clock.Store(time.Now().UnixNano())
 	clients := make([]user.HostClient, 16)
 	voters := make([]*numericCompletionClient, 16)
 	for i := range clients {
 		sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier)
-		h, err := host.NewHost(sm, signers[i], stub.NewInferenceEngine(), escrowID, group, nil, host.WithGrace(10))
+		h, err := host.NewHost(sm, signers[i], stub.NewInferenceEngine(), escrowID, group, nil, host.WithGrace(10), host.WithChainOracle(chain))
 		require.NoError(t, err)
 		voters[i] = &numericCompletionClient{InProcessClient: &user.InProcessClient{Host: h}, signer: signers[i], slot: group[i].SlotID}
 		clients[i] = voters[i]
 	}
 	sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier)
-	session, err := user.NewSession(sm, creator, escrowID, group, clients, verifier, user.WithStorage(db))
+	session, err := user.NewSession(sm, creator, escrowID, group, clients, verifier, user.WithStorage(db),
+		user.WithHeightSyncCadence(10, 16),
+		user.WithObservedHeight(func() (uint64, []byte, bool) { return uint64(chain.height()), []byte{0xaa}, true }),
+		user.WithHeartbeatClock(func() time.Time { return time.Unix(0, chain.clock.Load()) }),
+	)
 	require.NoError(t, err)
+	raise := func(height uint64) {
+		chain.manual.Store(int64(height))
+		for range 8 {
+			chain.clock.Add(int64(time.Hour))
+			_ = session.MaybeHeartbeat(context.Background())
+			_ = session.SendPendingDiff(context.Background())
+			if f, _, _ := sm.HeightSyncFloorAsOf(session.Nonce() + 1); f >= height {
+				return
+			}
+		}
+		f, _, _ := sm.HeightSyncFloorAsOf(session.Nonce() + 1)
+		require.GreaterOrEqual(t, f, height)
+	}
+	_, err = session.SendInference(context.Background(), defaultParams())
+	require.NoError(t, err)
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+	raise(100)
+	bootstrap := sm.SnapshotState()
 	path := filepath.Join(t.TempDir(), "gateway.db")
-	journal, err := NewGatewayStore(path)
+	journal, err := NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	session.SetInferenceCompletionStore(journal)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-time.Hour).Unix()
-	p, err := session.PrepareInference(params)
+	p, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	armed, ok := sm.Inference(p.Nonce())
+	require.True(t, ok)
+	require.NotZero(t, armed.StartedAtHeight)
+	require.Zero(t, bootstrap.HostStats[armed.ExecutorSlot].Cost)
+	raise(armed.StartedAtHeight + 100_000)
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
 	require.ErrorIs(t, session.Finalize(canceled), user.ErrInferenceCompletionPending)
@@ -155,7 +191,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	db, err = storage.NewSQLite(sessionPath)
 	require.NoError(t, err)
 	defer db.Close()
-	journal, err = NewGatewayStore(path)
+	journal, err = NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	defer journal.Close()
 	recovered, recoveredSM, err := user.RecoverSession(db, creator, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
@@ -169,8 +205,8 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	require.NoError(t, recovered.Finalize(ctx))
 	after := recoveredSM.SnapshotState()
 	require.Equal(t, types.PhaseSettlement, after.Phase)
-	require.Equal(t, uint64(1000000), after.Balance)
-	require.Zero(t, after.HostStats[uint32(p.HostIdx())].Cost)
+	require.Equal(t, bootstrap.Balance, after.Balance)
+	require.Equal(t, bootstrap.HostStats[uint32(p.HostIdx())].Cost, after.HostStats[uint32(p.HostIdx())].Cost)
 	require.Equal(t, uint32(1), after.HostStats[uint32(p.HostIdx())].Missed)
 	entries, err := journal.ListInferenceCompletions(escrowID)
 	require.NoError(t, err)
@@ -179,7 +215,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	require.NoError(t, err)
 	_, err = state.VerifySettlement(*payload, group, verifier, after.WarmKeys)
 	require.NoError(t, err)
-	return payload, group, creator.Address()
+	return payload, group, creator.Address(), uint32(p.HostIdx())
 }
 
 type numericCompletionClient struct {
@@ -193,7 +229,7 @@ func (c *numericCompletionClient) VerifyTimeout(_ context.Context, id uint64, re
 	if !c.accept {
 		return false, nil, 0, nil, "", nil
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.TimeoutVoteContent{EscrowId: "42", InferenceId: id, Reason: reason, Accept: true})
+	data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{EscrowId: "42", InferenceId: id, Reason: reason, Accept: true})
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -207,13 +243,14 @@ func (c *numericCompletionClient) VerifyErrorMiss(context.Context, uint64, []typ
 func TestCompletionRestartReconcilesBeforeSettlement(t *testing.T) { completionRestartFixture(t) }
 
 func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	env := setupLiveFloorProxy(t, 3, nil, true)
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()
 	env.session.SetInferenceCompletionStore(store)
 	params := defaultParams()
-	p, err := env.session.PrepareInference(params)
+	baseline := env.sm.SnapshotState().HostStats
+	p, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	resp, err := env.session.SendOnly(context.Background(), p, nil, nil)
 	require.NoError(t, err)
@@ -229,8 +266,9 @@ func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
 	env.proxy.redundancy.voteTimeoutsForFailedRequest(context.Background(), []*inflight{inf}, params)
 	require.NoError(t, env.session.Finalize(context.Background()))
 	stats := env.sm.SnapshotState().HostStats[rec.ExecutorSlot]
-	require.Equal(t, rec.ActualCost, stats.Cost)
-	require.LessOrEqual(t, stats.Cost, rec.ReservedCost)
+	before := baseline[rec.ExecutorSlot]
+	require.Equal(t, rec.ActualCost, stats.Cost-before.Cost)
+	require.LessOrEqual(t, stats.Cost-before.Cost, rec.ReservedCost)
 	require.Zero(t, stats.Missed)
 	entries, err := store.ListInferenceCompletions("escrow-proxy")
 	require.NoError(t, err)
@@ -238,17 +276,17 @@ func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
 }
 
 func TestCompletionRehydratedSettlementKeepsPendingObligation(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, false)
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	env := setupLiveFloorProxy(t, 3, nil, false)
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()
 	env.session.SetInferenceCompletionStore(store)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-time.Hour).Unix()
-	p, err := env.session.PrepareInference(params)
+	p, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	cfg := RuntimeConfig{ID: "42", Model: "llama", StoragePath: filepath.Join(t.TempDir(), "escrow-42")}
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "llama"}, []GatewayDevshardState{{RuntimeConfig: cfg, Active: false, SettlementPending: true}}))
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "llama"}, []GatewayDevshardState{{RuntimeConfig: cfg, Active: false, SettlementPending: true}}))
 	g := NewGateway(nil, NewGatewayLimiter(0, 0), "llama")
 	g.store = store
 	oldBuilder := gatewayRuntimeBuilder
@@ -266,7 +304,7 @@ func TestCompletionRehydratedSettlementKeepsPendingObligation(t *testing.T) {
 	rec, ok := env.sm.Inference(p.Nonce())
 	require.True(t, ok)
 	require.Equal(t, types.StatusPending, rec.Status)
-	record, ok, err := store.GetDevshard("42")
+	record, ok, err := store.GetDevshard(context.Background(), "42")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, record.SettlementPending)

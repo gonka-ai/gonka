@@ -28,13 +28,23 @@ class DelegationTests : TestermintTest() {
                         PoCModelConfig(
                             modelId = defaultModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffA),
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffA),
+                                coeffMax = Decimal.fromDouble(coeffA),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                         PoCModelConfig(
                             modelId = secondModel,
                             seqLen = 256L,
-                            weightScaleFactor = Decimal.fromDouble(coeffB),
                             penaltyStartEpoch = secondModelPenaltyStartEpoch,
+                            dynamicCoefficient = DynamicCoefficientModelConfig(
+                                coeffMin = Decimal.fromDouble(coeffB),
+                                coeffMax = Decimal.fromDouble(coeffB),
+                                relativeDifficulty = Decimal.fromDouble(1.0),
+                                targetShareBps = 5000,
+                            ),
                         ),
                     )
                     this[PocParams::pocV2Enabled] = true
@@ -127,6 +137,9 @@ class DelegationTests : TestermintTest() {
 
         logSection("Waiting for PoC cycles to stabilize (genesis PoC lags ~1 epoch behind joins)")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, 3)
+        // Voting power uses CapWeight, which is last epoch's confirmed weight.
+        // The 50 -> 60 increase is proven above; one more epoch lets 60 become the cap.
+        genesis.waitForNextEpoch()
 
         logSection("Verifying weights and voting powers")
         val participants = genesis.api.getActiveParticipants().activeParticipants.participants
@@ -255,6 +268,9 @@ class DelegationTests : TestermintTest() {
 
         logSection("Waiting for PoC cycles to stabilize with bootstrap pre-eligibility")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, 3)
+        // Voting power uses CapWeight. Wait one more epoch so the 50 -> 60
+        // increase is proven and then counts toward governance/validation VP.
+        genesis.waitForNextEpoch()
 
         val participants = genesis.api.getActiveParticipants().activeParticipants.participants
         val pA = participants.first { it.index == nodeA.node.getColdAddress() }
@@ -375,6 +391,9 @@ class DelegationTests : TestermintTest() {
         // --- Weight verification ---
         logSection("Waiting for PoC cycles to stabilize with delegation active")
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, 3)
+        // Voting power uses CapWeight. Wait one more epoch so the 50 -> 60
+        // increase is proven and then counts toward delegated VP totals.
+        genesis.waitForNextEpoch()
 
         logSection("Verifying weights and voting powers")
         val activeResp = genesis.api.getActiveParticipants()

@@ -1803,6 +1803,48 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
 	})
 }
 
+func TestCalculateParticipantBitcoinRewards_UsesFullModelDenominator(t *testing.T) {
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      "participant1",
+			Weight:             100,
+			ConfirmationWeight: 10,
+		}},
+	}
+	participants := []types.Participant{{
+		Address:           "participant1",
+		Status:            types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{},
+	}}
+	modelNodes := map[string]map[string][]*types.MLNodeInfo{
+		"participant1": {
+			"model-a": {{PocWeight: 10}},
+			"model-b": {{PocWeight: 90}},
+		},
+	}
+
+	results, _, err := CalculateParticipantBitcoinRewards(
+		participants,
+		epochGroupData,
+		&types.BitcoinRewardParams{
+			GenesisEpoch:       1,
+			InitialEpochReward: 100,
+			DecayRate:          types.DecimalFromFloat(0),
+		},
+		nil,
+		modelNodes,
+		createTestLogger(t),
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, uint64(10), results[0].Settle.RewardCoins)
+}
+
 // Test confirmation capping WITH power capping
 func TestCalculateParticipantBitcoinRewards_ConfirmationAndPowerCapping(t *testing.T) {
 	t.Run("Power capping applies after confirmation capping", func(t *testing.T) {
@@ -2218,6 +2260,56 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 		require.Equal(t, uint64(200), results[1].Settle.RewardCoins)
 		require.Equal(t, uint64(250), results[2].Settle.RewardCoins)
 	})
+}
+
+func TestCalculateParticipantBitcoinRewards_SkipsExcludedCoefficientState(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		GenesisEpoch:       1,
+		InitialEpochReward: 1000,
+		DecayRate:          types.DecimalFromFloat(0),
+	}
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{
+				ModelId:              "included",
+				EffectiveCoefficient: types.DecimalFromFloat(1),
+			},
+			{
+				ModelId:                 "excluded",
+				EffectiveCoefficient:    types.DecimalFromFloat(1),
+				ExcludeFromConfirmation: true,
+			},
+		},
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      "participant",
+			Weight:             100,
+			ConfirmationWeight: 100,
+		}},
+	}
+	participants := []types.Participant{{
+		Address: "participant",
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 100,
+		},
+	}}
+	modelNodes := map[string]map[string][]*types.MLNodeInfo{
+		"participant": {
+			"included": {{PocWeight: 100}},
+			"excluded": {{PocWeight: 1000}},
+		},
+	}
+	results, _, err := CalculateParticipantBitcoinRewards(
+		participants,
+		epochGroupData,
+		bitcoinParams,
+		nil,
+		modelNodes,
+		createTestLogger(t),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1000), results[0].Settle.RewardCoins)
 }
 
 func TestGetDynamicP0(t *testing.T) {

@@ -51,7 +51,7 @@ type WeightParams struct {
 // and per-group voting power.
 type DelegationWeightCalculator struct {
 	Groups                     map[string]*GroupData        // model_id -> group data
-	ConsensusWeights           map[string]int64             // participant -> ActiveParticipant.Weight from N-1
+	ConsensusWeights           map[string]int64             // participant -> confirmed effective weight from N-1
 	UpcomingActiveParticipants map[string]bool              // post-PoC-validation upcoming active participant set
 	TotalNetworkWeight         int64                        // sum(ConsensusWeights)
 	Delegations                map[string]map[string]string // model_id -> (delegator -> delegate_to)
@@ -59,8 +59,8 @@ type DelegationWeightCalculator struct {
 	Params                     WeightParams
 }
 
-// participates returns true if p has positive N-1 consensus weight or is in
-// the upcoming-epoch active participant set.
+// participates returns true if p has positive N-1 confirmed effective weight
+// or is in the upcoming-epoch active participant set.
 func (wc *DelegationWeightCalculator) participates(p string) bool {
 	if w, ok := wc.ConsensusWeights[p]; ok && w > 0 {
 		return true
@@ -167,8 +167,8 @@ func (wc *DelegationWeightCalculator) MeetsReachabilityThreshold(modelID string)
 }
 
 // IsGroupEligible checks post-PoC eligibility. VMin counts only established
-// members: those who committed this epoch (pocWeight > 0) AND had consensus
-// weight in the previous epoch (ConsensusWeights > 0).
+// members: those who committed this epoch (pocWeight > 0) AND had confirmed
+// effective weight in the previous epoch (ConsensusWeights > 0).
 //
 // For the initial model at genesis, VMin is not enforced until the model has
 // previously had >= VMin members with consensus weight. Once reached, VMin is
@@ -182,7 +182,7 @@ func (wc *DelegationWeightCalculator) IsGroupEligible(modelID string) bool {
 	}
 	g := wc.Groups[modelID]
 	if wc.Params.VMin > 0 {
-		// Count established members: committed this epoch AND had weight in N-1.
+		// Count established members: committed this epoch AND confirmed weight in N-1.
 		count := int64(0)
 		for _, m := range g.Members {
 			if g.MemberPocWeights[m] > 0 && wc.ConsensusWeights[m] > 0 {
@@ -202,7 +202,7 @@ func (wc *DelegationWeightCalculator) IsGroupEligible(modelID string) bool {
 }
 
 // isGenesisBootstrap returns true if the total chain has fewer than VMin
-// participants with previous consensus weight. At genesis nobody has N-1
+// participants with previous confirmed weight. At genesis nobody has N-1
 // weight, so VMin cannot be enforced until the network has grown enough.
 func (wc *DelegationWeightCalculator) isGenesisBootstrap() bool {
 	prevWithWeight := int64(0)
@@ -215,7 +215,7 @@ func (wc *DelegationWeightCalculator) isGenesisBootstrap() bool {
 }
 
 // ResolveGroupParticipation returns participation mode for each participant
-// in the union of N-1 ConsensusWeights and N UpcomingActiveParticipants, for
+// in the union of N-1 confirmed weights and N UpcomingActiveParticipants, for
 // one model group.
 //
 // Bootstrap direct intent is handled earlier by the bootstrap snapshot and never
@@ -274,7 +274,7 @@ func (wc *DelegationWeightCalculator) ResolveGroupParticipation(modelID string) 
 }
 
 // ComputeGroupCap returns the maximum consensus weight a non-initial group can
-// contribute, expressed as a fraction of the N-1 total network weight.
+// contribute, expressed as a fraction of the N-1 total confirmed effective weight.
 // Returns -1 (uncapped) for the initial model.
 func (wc *DelegationWeightCalculator) ComputeGroupCap(modelID string) int64 {
 	g, ok := wc.Groups[modelID]

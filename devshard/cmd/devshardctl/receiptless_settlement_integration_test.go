@@ -13,7 +13,7 @@ import (
 
 func TestReceiptlessRestartSettlementChainVerifier(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
-	payload, group, creator := completionRestartFixture(t)
+	payload, group, creator, timedOut := completionRestartFixture(t)
 	jsonSettlement, err := buildSettlementJSON(payload)
 	require.NoError(t, err)
 	params, err := settleParamsFromJSON(jsonSettlement)
@@ -30,8 +30,10 @@ func TestReceiptlessRestartSettlementChainVerifier(t *testing.T) {
 		slots[i] = slot.ValidatorAddress
 	}
 	escrow := chainTypes.DevshardEscrow{Id: 42, Creator: creator, Amount: 1000000, Slots: slots}
-	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, &chainTypes.DevshardEscrowParams{MaxNonce: chainTypes.DefaultDevshardMaxNonce}, nil))
+	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, &chainTypes.DevshardEscrowParams{MaxNonce: chainTypes.DefaultDevshardMaxNonce}, nil, nil))
 	for _, hs := range msg.HostStats {
-		require.Zero(t, hs.Cost)
+		if hs.SlotId == timedOut {
+			require.Zero(t, hs.Cost)
+		}
 	}
 }

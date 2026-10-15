@@ -32,10 +32,20 @@ global
     # sockets live inside the same unprivileged container.
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
+    # SETTINGS_MAX_CONCURRENT_STREAMS on proto-h2 frontends and backend
+    # proto h2 to versiond. HAProxy default is 100; overlay muxes every
+    # peer Watch onto one TCP. Must match DefaultH2MaxConcurrentStreams
+    # (16384) on versiond and the child. Per-peer non-Watch streams stay 10241.
+    tune.h2.max-concurrent-streams 16384
+    # normalize-uri is experimental on HAProxy 3.2. The frontend uses it
+    # before canonpath and the :8080 peer-RPC deny.
+    expose-experimental-directives
 
 defaults
     log     global
     mode    http
+    # The soft-stop helper finds Watch from this request line
+    # (`show sess all show-uri`). It is kept until the stream ends.
     option  httplog
     option  dontlognull
     # Append the client address to X-Forwarded-For, as the nginx router did:
@@ -78,11 +88,18 @@ resolvers docker
 
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080
+    bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
     # below either stamp the deployment value or deliberately leave it absent.
     http-request del-header Devshard-Ha
+
+    # Decode before canonpath and the :8080 deny. HAProxy otherwise matches
+    # the raw path, and versiond routes the decoded one.
+    http-request normalize-uri percent-decode-unreserved strict
+    http-request normalize-uri percent-to-uppercase
+    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
 
     # Normalised path: the optional /devshard/ prefix is present only when
     # genesis-proxy is not in front, and must not change routing. Field 2 is
@@ -101,6 +118,10 @@ frontend versiond_in
     # non-session traffic still spreads. Derived here and never taken from a
     # client header: it selects the upstream, so an attacker could otherwise
     # pin themselves to a chosen host.
+    #
+    # ^/[^/]+/sessions/[^/]+ also matches /{version}/sessions/{escrow}/rpc/…
+    # (Connect). Do not add a second regex for /rpc/; field 4 is still the
+    # escrow. Per-IP zones stay on the published hop (proxy), not here.
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
     http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
@@ -117,6 +138,12 @@ frontend versiond_in
     # requests and direct deployments without the public nginx proxy.
     http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
 
+    # Peer RPC is the proto-h2 bind only. :8080 stays JSON, healthz, and
+    # catalog. Connect on this listen would be the HTTP/1.1 fallback a
+    # current hop must not answer. /stats/rpc is not a session procedure.
+    # Anchored on the decoded canonpath: /{version}/sessions/{id}/rpc/.
+    http-request deny deny_status 404 if { dst_port 8080 } { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/ }
+
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
     # refuse /metrics, /stats and the session observability routes.
@@ -128,16 +155,23 @@ frontend versiond_in
     # Versionless endpoints are part of versiond's own API namespace. Resolve
     # them before consulting any version map so a governance name can never
     # shadow health, metrics, stats, or session-observability routes.
+    # Peer RPC is the h2 bind. Its backends are the JSON pools with _rpc
+    # appended, and their check is /readyz?peer-rpc=1. A child that did not
+    # advertise h2c stays in the JSON pool and out of this one.
+    use_backend versiond_ha_pool_rpc if versionless_request { dst_port ${H2_PORT} }
     use_backend versiond_ha_pool if versionless_request
 
     # Legacy pinning wins: the map yields that version's backend on the one host
     # that owns its SQLite data.
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     # Then the version's own pool. The map yields a backend name; with no entry
     # there is no match and the request falls through to the host-level pool,
     # which the guard above has already restricted to non-version paths whenever
     # any version is declared.
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
+    use_backend versiond_ha_pool_rpc if { dst_port ${H2_PORT} }
     default_backend versiond_ha_pool
 
 ${POOL_BACKENDS}

@@ -34,10 +34,10 @@ func applyStartedInference(t *testing.T, env *serverTestEnv, inferenceID uint64)
 	_, err := env.server.host.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{start}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, env.hostSigner, "escrow-1", inferenceID, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, env.hostSigner, "escrow-1", inferenceID, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirm := testutil.SignDiff(t, env.userSigner, "escrow-1", 2, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+			InferenceId: inferenceID, ExecutorSig: execSig,
 		}}},
 	})
 	_, err = env.server.host.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{confirm}})
@@ -82,7 +82,7 @@ func TestServer_VerifyErrorMiss_AcceptsAndBindsHash(t *testing.T) {
 		Accept:       true,
 		ResponseHash: sum[:],
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	verifier := signing.NewSecp256k1Verifier()
 	recovered, err := verifier.RecoverAddress(data, resp.Signature)

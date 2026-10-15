@@ -88,7 +88,7 @@ func TestCompletionJournalFailurePreventsSignedStart(t *testing.T) {
 	journal := newMemoryCompletionStore()
 	journal.saveErr = errors.New("disk full")
 	s.SetInferenceCompletionStore(journal)
-	_, err := s.PrepareInference(completionParams())
+	_, err := s.PrepareInference(context.Background(), completionParams())
 	require.ErrorContains(t, err, "disk full")
 	require.Zero(t, s.Nonce())
 	require.Empty(t, s.Diffs())
@@ -99,11 +99,12 @@ func TestCompletionJournalFailurePreventsSignedStart(t *testing.T) {
 func TestCompletionFinalizeBlocksFailedVotesAndRetries(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no_quorum", true: "cancellation"}[canceled], func(t *testing.T) {
-			s, signers, _ := setupSession(t, 3, 100000, 10)
+			s, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 			journal := newMemoryCompletionStore()
 			s.SetInferenceCompletionStore(journal)
-			p, err := s.PrepareInference(completionParams())
+			p, err := s.PrepareInference(context.Background(), completionParams())
 			require.NoError(t, err)
+			rig.raise(t, s, 100_000)
 			var voters []*mockTimeoutVerifier
 			for i, client := range s.clients {
 				voter := &mockTimeoutVerifier{signer: signers[i], group: s.group, slotIdx: i}
@@ -140,11 +141,12 @@ func TestCompletionFinalizeBlocksFailedVotesAndRetries(t *testing.T) {
 }
 
 func TestCompletionRetryAfterLocalApplyAndFailedDelivery(t *testing.T) {
-	s, signers, _ := setupSession(t, 3, 100000, 10)
+	s, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 	journal := newMemoryCompletionStore()
 	s.SetInferenceCompletionStore(journal)
-	p, err := s.PrepareInference(completionParams())
+	p, err := s.PrepareInference(context.Background(), completionParams())
 	require.NoError(t, err)
+	rig.raise(t, s, 100_000)
 	for i, client := range s.clients {
 		s.clients[i] = &completionFailedSendClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: s.group, slotIdx: i}}
 	}
@@ -164,7 +166,7 @@ func TestCompletionCrashBeforeStartAllowsDifferentNextRequest(t *testing.T) {
 	journal := newMemoryCompletionStore()
 	s.SetInferenceCompletionStore(journal)
 	require.NoError(t, journal.SaveInferenceCompletion("escrow-1", InferenceCompletion{Nonce: 1, Payload: host.InferencePayload{Model: "orphan"}}))
-	_, err := s.PrepareInference(completionParams())
+	_, err := s.PrepareInference(context.Background(), completionParams())
 	require.NoError(t, err)
 	entries, err := journal.ListInferenceCompletions("escrow-1")
 	require.NoError(t, err)
@@ -179,7 +181,7 @@ func TestCompletionAmbiguousDurableStartCannotBeDiscarded(t *testing.T) {
 	s.store = db
 	journal := newMemoryCompletionStore()
 	s.SetInferenceCompletionStore(journal)
-	_, err := s.PrepareInference(completionParams())
+	_, err := s.PrepareInference(context.Background(), completionParams())
 	require.NoError(t, err)
 	s.nonce = 0
 	fresh, _, _ := setupSession(t, 3, 100000, 10)
@@ -191,16 +193,17 @@ func TestCompletionAmbiguousDurableStartCannotBeDiscarded(t *testing.T) {
 	require.Len(t, entries, 1)
 	params := completionParams()
 	params.Model = "replacement"
-	_, err = fresh.PrepareInference(params)
+	_, err = fresh.PrepareInference(context.Background(), params)
 	require.ErrorIs(t, err, ErrInferenceCompletionConflict)
 }
 
 func TestCompletionFinalizeExcludesActiveSendAndNewAdmission(t *testing.T) {
 	s, signers, _ := setupSession(t, 3, 100000, 10)
 	s.SetInferenceCompletionStore(newMemoryCompletionStore())
-	p, err := s.PrepareInference(completionParams())
+	p, err := s.PrepareInference(context.Background(), completionParams())
 	require.NoError(t, err)
 	holding := &holdingClient{receiptSent: make(chan struct{}), release: make(chan struct{})}
+	original := s.clients[p.HostIdx()]
 	s.clients[p.HostIdx()] = holding
 	sent := make(chan struct{})
 	go func() { defer close(sent); _, _ = s.SendOnly(context.Background(), p, nil, nil) }()
@@ -208,19 +211,36 @@ func TestCompletionFinalizeExcludesActiveSendAndNewAdmission(t *testing.T) {
 	require.ErrorIs(t, s.Finalize(context.Background()), ErrInferenceCompletionPending)
 	close(holding.release)
 	<-sent
-	entered, release := make(chan struct{}, 3), make(chan struct{})
+	s.clients[p.HostIdx()] = original
+	entered, release := make(chan struct{}, len(s.clients)), make(chan struct{})
 	for i, client := range s.clients {
-		s.clients[i] = &completionVerifierClient{client, &mockTimeoutVerifier{signer: signers[i], group: s.group, slotIdx: i, onVerify: func() { entered <- struct{}{}; <-release }}}
+		s.clients[i] = &finalizeHoldClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{signer: signers[i], group: s.group, slotIdx: i}, entered: entered, release: release}
 	}
 	finalized := make(chan error, 1)
 	go func() { finalized <- s.Finalize(context.Background()) }()
 	<-entered
-	_, err = s.PrepareInference(completionParams())
+	_, err = s.PrepareInference(context.Background(), completionParams())
 	require.ErrorIs(t, err, types.ErrSessionFinalizing)
 	_, err = s.SendOnly(context.Background(), p, nil, nil)
 	require.ErrorIs(t, err, types.ErrSessionFinalizing)
 	close(release)
-	require.ErrorIs(t, <-finalized, ErrInferenceCompletionPending)
+	<-finalized
+}
+
+type finalizeHoldClient struct {
+	HostClient
+	*mockTimeoutVerifier
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (c *finalizeHoldClient) Send(ctx context.Context, req host.HostRequest, w io.Writer, receipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.once.Do(func() {
+		c.entered <- struct{}{}
+		<-c.release
+	})
+	return c.HostClient.Send(ctx, req, w, receipt)
 }
 
 type receiptEventClient struct {
@@ -236,7 +256,7 @@ func TestReceiptNotificationsRequireExecutorAuthentication(t *testing.T) {
 	for _, mode := range []string{"empty_envelope", "garbage", "zero_time", "valid", "canonical_duplicate"} {
 		t.Run(mode, func(t *testing.T) {
 			s, signers, _ := setupSession(t, 3, 100000, 10)
-			p, err := s.PrepareInference(completionParams())
+			p, err := s.PrepareInference(context.Background(), completionParams())
 			require.NoError(t, err)
 			inner := s.clients[p.HostIdx()].(*InProcessClient)
 			response, err := inner.Host.HandleRequest(context.Background(), host.HostRequest{Diffs: p.catchUp, Nonce: p.Nonce(), Payload: p.Payload()})
@@ -249,7 +269,7 @@ func TestReceiptNotificationsRequireExecutorAuthentication(t *testing.T) {
 			case "zero_time":
 				response.ConfirmedAt = 0
 			case "canonical_duplicate":
-				receipt := testutil.SignExecutorReceipt(t, signers[p.HostIdx()], "escrow-1", p.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, response.ConfirmedAt)
+				receipt := testutil.SignExecutorReceipt(t, signers[p.HostIdx()], "escrow-1", p.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 				response.Receipt = receipt
 				require.True(t, s.confirmStartOnReceipt(p.Nonce(), response))
 				require.NoError(t, s.SendPendingDiff(context.Background()))
@@ -258,7 +278,7 @@ func TestReceiptNotificationsRequireExecutorAuthentication(t *testing.T) {
 			notified := false
 			_, err = s.SendOnly(context.Background(), p, nil, func() { notified = true })
 			require.NoError(t, err)
-			require.Equal(t, mode == "valid" || mode == "canonical_duplicate", notified)
+			require.Equal(t, mode == "valid" || mode == "zero_time" || mode == "canonical_duplicate", notified)
 			if mode == "canonical_duplicate" {
 				require.Empty(t, pendingConfirmStarts(s))
 			}

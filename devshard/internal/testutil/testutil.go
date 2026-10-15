@@ -124,7 +124,7 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ type ReceiptStamp struct {
 	Hash   []byte
 }
 
-func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64, stamp ...ReceiptStamp) []byte {
+func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, stamp ...ReceiptStamp) []byte {
 	t.Helper()
 	content := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -145,9 +145,7 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		Model:       model,
 		InputLength: inputLength,
 		MaxTokens:   maxTokens,
-		StartedAt:   startedAt,
 		EscrowId:    escrowID,
-		ConfirmedAt: confirmedAt,
 	}
 	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
 		content.ObservedHeight = stamp[0].Height
@@ -168,7 +166,7 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 		Reason:      reason,
 		Accept:      accept,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -186,7 +184,7 @@ func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inf
 		Accept:       accept,
 		ResponseHash: responseHash,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -244,8 +242,14 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   TestMaxTokens,
-		StartedAt:   1000,
 	}}}
+}
+
+// StartTxVersioned is StartTx with protocol_version set (gateway start proof).
+func StartTxVersioned(inferenceID uint64, version string) *types.DevshardTx {
+	tx := StartTx(inferenceID)
+	tx.GetStartInference().ProtocolVersion = version
+	return tx
 }
 
 // MustGzip compresses body the way a sender puts it on the wire.

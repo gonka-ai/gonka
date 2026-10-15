@@ -45,7 +45,9 @@ func TestCompletionRestartClearsOrphanBeforeDrainOrProbe(t *testing.T) {
 			if probe {
 				params := completionParams()
 				params.Prompt = []byte(`{"messages":[{"role":"user","content":"probe"}]}`)
-				p, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return params, true, nil })
+				p, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+					return params, true, context.Background(), nil
+				})
 				require.NoError(t, err)
 				require.True(t, p.IsProbe())
 			} else {
@@ -67,7 +69,9 @@ func TestCompletionOrphanDeletionFailurePreventsNonceReuse(t *testing.T) {
 			s, journal := restartWithCompletionOrphan(t)
 			journal.deleteErr = errors.New("temporary journal failure")
 			if probe {
-				_, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return completionParams(), true, nil })
+				_, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+					return completionParams(), true, context.Background(), nil
+				})
 				require.ErrorIs(t, err, ErrInferenceCompletionPending)
 			} else {
 				require.ErrorIs(t, s.SendPendingDiff(context.Background()), ErrInferenceCompletionPending)
@@ -169,7 +173,9 @@ func TestCompletionOrphanRequiresExactHistory(t *testing.T) {
 func TestCompletionHistoryReadFailurePreventsProbeReuse(t *testing.T) {
 	s, journal := restartWithCompletionOrphan(t)
 	s.store = &completionHistoryFault{Storage: s.store, err: errors.New("history unavailable")}
-	_, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return completionParams(), true, nil })
+	_, err := s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+		return completionParams(), true, context.Background(), nil
+	})
 	require.ErrorIs(t, err, ErrInferenceCompletionPending)
 	require.Zero(t, s.Nonce())
 	entries, err := journal.ListInferenceCompletions("escrow-1")

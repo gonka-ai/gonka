@@ -271,27 +271,24 @@ func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
 			divStartTx(4, 180, hash),
 		}))
-		require.NoError(t, err)
+		require.ErrorIs(t, err, types.ErrStampNotFloor, "a start must carry exactly F")
 	}
 
 	for _, sm := range []*StateMachine{applySM, gossipSM} {
-		floor, _, known := sm.HeightSyncFloorAsOf(5)
+		floor, _, known := sm.HeightSyncFloorAsOf(4)
 		require.True(t, known)
-		require.Equal(t, uint64(100), floor, "heartbeat and start above F must not raise")
+		require.Equal(t, uint64(100), floor, "a heartbeat above F must not raise")
 
 		marks := sm.HeightSyncMarks()
-		require.Len(t, marks, 2, "the heartbeat and the start each invented a height")
-		for _, m := range marks {
-			require.Equal(t, heightsync.MarkHeightUnbacked, m.Kind)
-		}
+		require.Len(t, marks, 1, "the heartbeat invented a height")
+		require.Equal(t, heightsync.MarkHeightUnbacked, marks[0].Kind)
 		require.Equal(t, uint64(3), marks[0].Nonce)
-		require.Equal(t, uint64(4), marks[1].Nonce)
 	}
 
-	_, err := applySM.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{
+	_, err := applySM.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
 		divAckTx(t, hosts[1], 2, 3, 1, 180, hash, types.SyncState_SYNCED),
 	}))
 	require.NoError(t, err)
-	floor, _, _ := applySM.HeightSyncFloorAsOf(6)
+	floor, _, _ := applySM.HeightSyncFloorAsOf(5)
 	require.Equal(t, uint64(180), floor, "a host ack at that H does raise")
 }

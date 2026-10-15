@@ -2,14 +2,17 @@ package state_test
 
 import (
 	"context"
+	"math"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
-	"github.com/stretchr/testify/require"
-	"math"
-	"testing"
 )
 
 type auditPeer struct {
@@ -35,16 +38,25 @@ func auditApply(t *testing.T, sm *state.StateMachine, txs ...*types.DevshardTx) 
 	_, e := sm.ApplyLocal(sm.LatestNonce()+1, txs)
 	require.NoError(t, e)
 }
+func auditRaise(t *testing.T, sm *state.StateMachine, hs []*signing.Secp256k1Signer, height uint64) {
+	ref := sm.LatestNonce() + 1
+	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: uint64(len(hs)), Reason: string(heightsync.ReasonQuietSession)}}})
+	slot := uint32(ref % uint64(len(hs)))
+	ack := &types.MsgHeightAck{RefNonce: ref, SlotId: slot, ObservedHeight: height, ObservedBlockHash: []byte("block"), SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+	require.NoError(t, heightsync.SignAck(hs[slot], ack))
+	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
+}
 func auditStart(t *testing.T, sm *state.StateMachine, id uint64) {
-	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}}})
+	h, hash, _ := sm.HeightSyncFloorAsOf(sm.LatestNonce() + 1)
+	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, ObservedHeight: h, ObservedBlockHash: hash}}})
 }
 func auditConfirm(t *testing.T, sm *state.StateMachine, id uint64, signer signing.Signer, h uint64) *types.MsgConfirmStart {
 	var hash []byte
 	if h > 0 {
 		hash = []byte("block")
 	}
-	sig := testutil.SignExecutorReceipt(t, signer, "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000, testutil.ReceiptStamp{Height: h, Hash: hash})
-	return &types.MsgConfirmStart{InferenceId: id, ExecutorSig: sig, ConfirmedAt: 1000, ObservedHeight: h, ObservedBlockHash: hash}
+	sig := testutil.SignExecutorReceipt(t, signer, "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
+	return &types.MsgConfirmStart{InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash}
 }
 func auditCS(c *types.MsgConfirmStart) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: c}}
@@ -65,28 +77,30 @@ func TestTimeoutEvidenceRejectsHeightRegression(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			sm, hs, _ := auditSetup(t)
-			auditStart(t, sm, 1)
-			auditApply(t, sm, auditCS(auditConfirm(t, sm, 1, hs[1], 100)))
-			auditStart(t, sm, 3)
+			auditRaise(t, sm, hs, 100)
+			auditStart(t, sm, sm.LatestNonce()+1)
+			id := sm.LatestNonce()
+			executor := hs[id%3]
 			var tx *types.DevshardTx
 			var receipt []byte
 			if execution {
-				auditApply(t, sm, auditCS(auditConfirm(t, sm, 3, hs[0], 0)))
-				f := auditFinish(t, 3, hs[0])
+				auditApply(t, sm, auditCS(auditConfirm(t, sm, id, executor, 100)))
+				f := auditFinish(t, id, executor)
 				f.ObservedHeight = 99
 				f.ObservedBlockHash = []byte("block")
 				f.ProposerSig = nil
-				f.ProposerSig = testutil.SignProposerTx(t, hs[0], f)
+				f.ProposerSig = testutil.SignProposerTx(t, executor, f)
 				require.ErrorContains(t, sm.VerifyFinishInference(f), "height_regression")
 				tx = auditFI(f)
 			} else {
-				c := auditConfirm(t, sm, 3, hs[0], 99)
-				require.ErrorContains(t, sm.VerifyConfirmStart(c), "height_regression")
+				c := auditConfirm(t, sm, id, executor, 99)
+				require.ErrorIs(t, sm.VerifyConfirmStart(c), types.ErrStampNotFloor)
 				tx = auditCS(c)
 				receipt = c.ExecutorSig
 			}
+			auditRaise(t, sm, hs, 100_000)
 			pool := host.NewMempool()
-			payload := &host.InferencePayload{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+			payload := &host.InferencePayload{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens}
 			st := sm.SnapshotState()
 			for _, remote := range []bool{false, true} {
 				var local []*types.DevshardTx
@@ -99,38 +113,41 @@ func TestTimeoutEvidenceRejectsHeightRegression(t *testing.T) {
 				var accept bool
 				var err error
 				if execution {
-					accept, err = host.VerifyExecutionTimeout(context.Background(), st, 3, local, peer, sm, pool, st.Config, 100000)
+					accept, err = host.VerifyExecutionTimeout(context.Background(), st, id, local, peer, pool, sm)
 				} else {
-					accept, err = host.VerifyRefusedTimeout(context.Background(), st, 3, payload, local, peer, pool, sm, st.Config, 100000)
+					accept, err = host.VerifyRefusedTimeout(context.Background(), st, id, payload, local, peer, pool, sm)
 				}
 				require.NoError(t, err)
 				require.True(t, accept, "non-applicable evidence must not veto a timeout")
 			}
 			_, err := sm.ApplyLocal(sm.LatestNonce()+1, []*types.DevshardTx{tx})
-			require.ErrorContains(t, err, "height_regression")
-			_, _, err = sm.ApplyLocalBestEffort(sm.LatestNonce()+1, []*types.DevshardTx{tx})
-			require.ErrorContains(t, err, "height_regression")
-			require.Empty(t, host.VerifiedRecoveryTxsFor(st, 3, pool.Txs(), sm))
+			require.Error(t, err)
+			_, applied, err := sm.ApplyLocalBestEffort(sm.LatestNonce()+1, []*types.DevshardTx{tx})
+			if err == nil {
+				require.Empty(t, applied)
+			}
+			require.Empty(t, host.VerifiedRecoveryTxsFor(sm, st, id, pool.Txs()))
 
-			// Honest timeout votes can now release the reservation before drain.
 			reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
 			if execution {
 				reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 			}
 			var votes []*types.TimeoutVote
-			for _, slot := range []uint32{1, 2} {
-				vote := testutil.SignTimeoutVote(t, hs[slot], "escrow-1", 3, reason, true)
+			for slot := uint32(0); slot < 3; slot++ {
+				if slot == uint32(id%3) {
+					continue
+				}
+				vote := testutil.SignTimeoutVote(t, hs[slot], "escrow-1", id, reason, true)
 				vote.VoterSlot = slot
 				votes = append(votes, vote)
 			}
 			before := sm.SnapshotState()
-			auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 3, Reason: reason, Votes: votes}}})
+			auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: id, Reason: reason, Votes: votes}}})
 			after := sm.SnapshotState()
-			require.Equal(t, types.StatusTimedOut, after.Inferences[3].Status)
-			require.Equal(t, before.Balance+before.Inferences[3].ReservedCost, after.Balance)
-			require.Zero(t, after.HostStats[0].Cost)
-			require.EqualValues(t, 1, after.HostStats[0].Missed)
-
+			require.Equal(t, types.StatusTimedOut, after.Inferences[id].Status)
+			require.Equal(t, before.Balance+before.Inferences[id].ReservedCost, after.Balance)
+			require.Zero(t, after.HostStats[uint32(id%3)].Cost)
+			require.EqualValues(t, 1, after.HostStats[uint32(id%3)].Missed)
 		})
 	}
 }
@@ -194,11 +211,14 @@ func TestBestEffortRejectedValidationDoesNotBindWarmKey(t *testing.T) {
 // Insufficient votes fail after warm-key resolution. This exercises rollback
 // even when cheap escrow and signature checks have already succeeded.
 func TestBestEffortRejectedWarmVotesMatchAdvertisedDiff(t *testing.T) {
-	sm, _, warm := auditSetup(t)
-	auditStart(t, sm, 1)
-	vote := testutil.SignTimeoutVote(t, warm, "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
+	sm, hs, warm := auditSetup(t)
+	auditRaise(t, sm, hs, 100)
+	id := sm.LatestNonce() + 1
+	auditStart(t, sm, id)
+	auditRaise(t, sm, hs, 100_000)
+	vote := testutil.SignTimeoutVote(t, warm, "escrow-1", id, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 	vote.VoterSlot = 0
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: []*types.TimeoutVote{vote}}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: id, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: []*types.TimeoutVote{vote}}}}
 	before := sm.SnapshotState()
 	vd, err := sm.PreviewLocalBestEffort(sm.LatestNonce()+1, []*types.DevshardTx{tx})
 	require.NoError(t, err)

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -52,8 +51,8 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
 	t.Run("insufficient votes", func(t *testing.T) {
-		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		env := setupLiveFloorProxy(t, 3, nil, false)
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -66,13 +65,11 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	})
 
 	t.Run("verifier errors", func(t *testing.T) {
-		clients := []user.HostClient{
-			timeoutErrorClient{},
-			timeoutErrorClient{},
-			timeoutErrorClient{},
+		env := setupLiveFloorProxy(t, 3, nil, false)
+		for _, v := range env.verifiers {
+			v.failWith = errors.New("verifier unavailable")
 		}
-		env := setupTestProxyWithClients(t, clients)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -85,8 +82,8 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	})
 
 	t.Run("canceled wait", func(t *testing.T) {
-		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		env := setupManualFloorProxy(t, 3, nil, false)
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -102,37 +99,6 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 		require.Empty(t, result.Reason,
 			"the deadline was never reached, so this must not count as an inference timeout")
 	})
-}
-
-type timeoutErrorClient struct{}
-
-func (timeoutErrorClient) Send(
-	context.Context,
-	host.HostRequest,
-	io.Writer,
-	func(*host.HostResponse),
-) (*host.HostResponse, error) {
-	return nil, errors.New("send not expected")
-}
-
-func (timeoutErrorClient) VerifyTimeout(
-	context.Context,
-	uint64,
-	types.TimeoutReason,
-	*host.InferencePayload,
-	[]types.Diff,
-	host.TimeoutArtifacts,
-) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	return false, nil, 0, nil, "", errors.New("verifier unavailable")
-}
-
-func (timeoutErrorClient) VerifyErrorMiss(
-	context.Context,
-	uint64,
-	[]types.Diff,
-	host.TimeoutArtifacts,
-) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	return false, nil, 0, nil, "", errors.New("verifier unavailable")
 }
 
 func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
@@ -152,7 +118,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	require.NoError(t, err)
 	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
 	recorder.Usage("escrow-proxy", 1, 1, "")
-	_, err = env.session.PrepareInference(defaultParams())
+	_, err = env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	var finished uint64
@@ -163,7 +129,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 }
 
 func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
@@ -178,7 +144,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	sentAt := time.Now().Add(-2 * time.Second)
 	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
@@ -220,7 +186,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 		TimeoutBuffer: user.TimeoutBuffer,
 	}, env.session, env.sm)
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	record := accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Equal(t, uint64(1), record.PendingClassification)
@@ -252,6 +218,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostThrottled,
 		ghostThrottled.reason(),
@@ -291,6 +258,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostStateDiverged,
 		"escrow_state_root_diverged",
@@ -320,7 +288,7 @@ func TestAccountingCarriesTheRequestIDFromTheDispatchContext(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt := &inflight{
 		escrowID: "escrow-proxy",
@@ -355,7 +323,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 	params := defaultParams()
 
-	prepared1, err := env.session.PrepareInference(params)
+	prepared1, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt1 := &inflight{
 		escrowID: "escrow-proxy",
@@ -368,7 +336,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
 
-	prepared2, err := env.session.PrepareInference(params)
+	prepared2, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt2 := &inflight{
 		escrowID: "escrow-proxy",
@@ -380,7 +348,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))
-	_, err = env.session.PrepareInference(params)
+	_, err = env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true, nil)
@@ -438,7 +406,6 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	apply(1, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: start}})
 	executorSlot := uint32(1)
@@ -453,10 +420,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 			start.Model,
 			start.InputLength,
 			start.MaxTokens,
-			start.StartedAt,
-			1000,
 		),
-		ConfirmedAt: 1000,
 	}
 	apply(2, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
 	finish := &types.MsgFinishInference{

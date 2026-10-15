@@ -35,7 +35,9 @@ type UnwrappedInferenceResponse struct {
 }
 
 // MarshalWrappedInferenceRequest protobuf-encodes schema_version, optional height_sync, and nested JSON InferenceRequest bytes.
+// The chat prompt is envelope field 4 (raw bytes). The nested JSON carries a null prompt so the JSON marshaler does not base64 it.
 func MarshalWrappedInferenceRequest(schemaVersion int, hs *heightsync.HeightSyncSection, req InferenceRequest) ([]byte, error) {
+	req, prompt := detachChatPrompt(req)
 	inner, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference request json: %w", err)
@@ -44,6 +46,7 @@ func MarshalWrappedInferenceRequest(schemaVersion int, hs *heightsync.HeightSync
 		SchemaVersion:        int32(schemaVersion),
 		HeightSync:           heightSyncToProto(hs),
 		InferenceRequestJson: inner,
+		Prompt:               prompt,
 	}
 	out, err := proto.Marshal(env)
 	if err != nil {
@@ -109,12 +112,53 @@ func UnwrapInferenceRequestBody(raw []byte) (UnwrappedInferenceRequest, error) {
 	if err := json.Unmarshal(env.InferenceRequestJson, &req); err != nil {
 		return UnwrappedInferenceRequest{}, fmt.Errorf("decode inference request json: %w", err)
 	}
+	if len(env.Prompt) > 0 {
+		if req.Payload == nil {
+			req.Payload = &PayloadJSON{}
+		}
+		req.Payload.Prompt = env.Prompt
+	}
 	return UnwrappedInferenceRequest{
 		SchemaVersion: int(env.SchemaVersion),
 		HeightSync:    heightSyncFromProto(env.HeightSync),
 		Request:       req,
 		WholeBodyJSON: false,
 	}, nil
+}
+
+// marshalChatBody is the chat wire body shared by HTTP POST and Connect Chat.
+// A non-empty prompt, or any height-sync section, is an InferenceRequestEnvelope:
+// the prompt is raw protobuf bytes. A catch-up with neither stays whole-body JSON.
+func marshalChatBody(hs *heightsync.HeightSyncSection, ir InferenceRequest) (body []byte, contentType string, err error) {
+	promptLen := 0
+	if ir.Payload != nil {
+		promptLen = len(ir.Payload.Prompt)
+	}
+	if hs == nil && promptLen == 0 {
+		body, err = json.Marshal(ir)
+		if err != nil {
+			return nil, "", fmt.Errorf("marshal json: %w", err)
+		}
+		return body, "application/json", nil
+	}
+	body, err = MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, hs, ir)
+	if err != nil {
+		return nil, "", err
+	}
+	return body, "application/x-protobuf", nil
+}
+
+// detachChatPrompt copies the prompt out of the JSON document. A nil payload is unchanged.
+// The returned request has a nil prompt so json.Marshal emits "prompt":null instead of a base64 string.
+func detachChatPrompt(req InferenceRequest) (InferenceRequest, []byte) {
+	if req.Payload == nil || len(req.Payload.Prompt) == 0 {
+		return req, nil
+	}
+	prompt := req.Payload.Prompt
+	cloned := *req.Payload
+	cloned.Prompt = nil
+	req.Payload = &cloned
+	return req, prompt
 }
 
 // UnwrapInferenceResponseBody decodes legacy whole-body JSON InferenceResponse or protobuf InferenceResponseEnvelope.

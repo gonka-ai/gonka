@@ -37,16 +37,16 @@ func (c *failedRecoverySendClient) VerifyTimeout(ctx context.Context, id uint64,
 func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 	for _, scenario := range []string{"queued_receipt", "queued_invalid_finish", "recovered_receipt"} {
 		t.Run(scenario, func(t *testing.T) {
-			session, signers, _ := setupSession(t, 3, 100000, 10)
+			session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 			params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
-			prepared, err := session.PrepareInference(params)
+			prepared, err := session.PrepareInference(context.Background(), params)
 			require.NoError(t, err)
+			rig.raise(t, session, 100_000)
 			nonce := prepared.Nonce()
 			executor := int(nonce % 3)
-			receipt := testutil.SignExecutorReceipt(t, signers[executor], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-			confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: nonce, ExecutorSig: receipt, ConfirmedAt: 1000}}}
+			receiptResp, confirm := stampedReceiptResponse(t, session, signers[executor], nonce)
 			if scenario != "recovered_receipt" {
-				session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: receipt, ConfirmedAt: 1000})
+				session.confirmStartOnReceipt(nonce, receiptResp)
 			}
 			if scenario == "queued_invalid_finish" {
 				require.NoError(t, session.SendPendingDiff(context.Background()))
@@ -66,7 +66,9 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
+			raised := rig.raiseOnceStarted(session, nonce, 200_000)
 			result, err := session.HandleTimeout(ctx, nonce, time.Unix(1000, 0), payload)
+			<-raised
 			require.Error(t, err, "an applied timeout is reported as an inference error")
 			require.Equal(t, "execution", result.Reason)
 			require.True(t, result.Applied, "a failed recovery send must not abandon the timeout")
@@ -77,27 +79,30 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 }
 
 func TestHandleTimeoutRefusalVoteRaceContinuesAsExecution(t *testing.T) {
-	session, signers, _ := setupSession(t, 3, 100000, 10)
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 	nonce := prepared.Nonce()
-	receipt := testutil.SignExecutorReceipt(t, signers[nonce%3], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	receiptResp, _ := stampedReceiptResponse(t, session, signers[nonce%3], nonce)
 	var once sync.Once
 	for i, client := range session.clients {
 		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{
 			accept: true, signer: signers[i], group: session.group, slotIdx: i,
 			onVerify: func() {
-				once.Do(func() { session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: receipt, ConfirmedAt: 1000}) })
+				once.Do(func() { session.confirmStartOnReceipt(nonce, receiptResp) })
 			},
 		}}
 	}
 	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	raised := rig.raiseOnceStarted(session, nonce, 200_000)
 	result, err := session.HandleTimeout(ctx, nonce, time.Unix(1000, 0), payload)
+	<-raised
 	require.Error(t, err)
 	require.Equal(t, "execution", result.Reason)
-	require.True(t, result.Applied)
+	require.True(t, result.Applied, "a receipt racing the refusal vote must not abandon the timeout")
 	require.Equal(t, types.StatusTimedOut, session.sm.SnapshotState().Inferences[nonce].Status)
 }

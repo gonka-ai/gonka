@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -80,7 +81,7 @@ func TestEveryWayAnEscrowLeavesServiceForgetsItsSeries(t *testing.T) {
 			name:            "finalized",
 			isActiveInStore: true,
 			takeOutOfService: func(t *testing.T, gateway *Gateway, rt *devshardRuntime) {
-				gateway.markDevshardInactiveAfterFinalize(rt.id, rt)
+				gateway.markDevshardInactiveAfterFinalize(context.Background(), rt.id, rt)
 			},
 		},
 		{
@@ -154,10 +155,10 @@ func TestAnEscrowLeavesTheRegistryAndForgetsItsSeriesInOnePlaceEach(t *testing.T
 // store row so the admin routes accept it.
 func newEscrowMetricsGateway(t *testing.T, escrowID string, isActiveInStore bool) (*Gateway, *devshardRuntime) {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: metricsLifetimeModel}, []GatewayDevshardState{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: metricsLifetimeModel}, []GatewayDevshardState{
 		{RuntimeConfig: RuntimeConfig{ID: escrowID, PrivateKeyHex: "secret", Model: metricsLifetimeModel}, Active: isActiveInStore},
 	}))
 
