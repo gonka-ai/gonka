@@ -64,8 +64,9 @@ var (
 )
 
 var (
-	peerConnMu       sync.Mutex
-	peerConnRegistry = map[string]*PeerConn{}
+	peerConnMu         sync.Mutex
+	peerConnRegistry   = map[string]*PeerConn{}
+	peerConnSuperseded = map[*PeerConn]struct{}{}
 )
 
 // PeerConnConfig is one Attach/Watch session to a (host, version, URL, signer) child.
@@ -152,11 +153,17 @@ func (c PeerConnConfig) signerAddress() string {
 }
 
 // registryKey is the PeerConn map identity: host child + signer.
-// The server keeps one session per peer address, so two InferenceUrls for
-// the same child and signer share one Watch. Different signers do not.
+// The server keeps one session per peer address, so one child and signer
+// share one Watch. Different signers do not.
 // Prometheus still uses childID.
 func (c PeerConnConfig) registryKey() string {
 	return c.childID() + "|" + c.signerAddress()
+}
+
+func (c PeerConnConfig) endpointKey() string {
+	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	h2 := strings.TrimRight(strings.TrimSpace(c.DialSet.H2URL), "/")
+	return base + "|" + h2
 }
 
 func (c PeerConnConfig) connectBase(escrowID string) string {
@@ -509,9 +516,13 @@ func ReleaseOutboundPeerConns() {
 	signalPeerRelease()
 	cancelInflightPayloadFetches()
 	peerConnMu.Lock()
-	conns := make([]*PeerConn, 0, len(peerConnRegistry))
+	conns := make([]*PeerConn, 0, len(peerConnRegistry)+len(peerConnSuperseded))
 	for key, pc := range peerConnRegistry {
 		delete(peerConnRegistry, key)
+		conns = append(conns, pc)
+	}
+	for pc := range peerConnSuperseded {
+		delete(peerConnSuperseded, pc)
 		conns = append(conns, pc)
 	}
 	peerConnMu.Unlock()
@@ -541,8 +552,9 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 		return pc
 	}
 	key := cfg.registryKey()
+	endpoint := cfg.endpointKey()
 	peerConnMu.Lock()
-	if pc := peerConnRegistry[key]; pc != nil {
+	if pc := peerConnRegistry[key]; pc != nil && pc.cfg.endpointKey() == endpoint {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()
 		return pc
@@ -563,11 +575,20 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 		return fresh
 	}
 	if pc := peerConnRegistry[key]; pc != nil {
-		pc.refs.Add(1)
-		peerConnMu.Unlock()
-		// Never Start'ed. Close cancels the unused context.
-		fresh.Close()
-		return pc
+		if pc.cfg.endpointKey() == endpoint {
+			pc.refs.Add(1)
+			peerConnMu.Unlock()
+			// Never Start'ed. Close cancels the unused context.
+			fresh.Close()
+			return pc
+		}
+		peerConnSuperseded[pc] = struct{}{}
+		logging.Info("peer rpc endpoint changed; new clients use a new connection",
+			"subsystem", "transport",
+			"peer", cfg.childID(),
+			"old_url", pc.cfg.BaseURL,
+			"new_url", cfg.BaseURL,
+		)
 	}
 	fresh.refs.Store(1)
 	peerConnRegistry[key] = fresh
@@ -1509,6 +1530,7 @@ func (p *PeerConn) Release() {
 	if p.key != "" && peerConnRegistry[p.key] == p {
 		delete(peerConnRegistry, p.key)
 	}
+	delete(peerConnSuperseded, p)
 	peerConnMu.Unlock()
 	p.Close()
 }

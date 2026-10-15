@@ -856,20 +856,82 @@ func TestSelectTransport_DifferentSignersDoNotSharePeerConn(t *testing.T) {
 	require.Equal(t, b.signer.Address(), rpcB.conn.cfg.Signer.Address())
 }
 
-func TestSelectTransport_SameSignerSharesPeerConnAcrossBaseURL(t *testing.T) {
-	host := "gonka1twourls"
+func TestSelectTransport_SameSignerSameURLSharesPeerConn(t *testing.T) {
+	host := "gonka1sameurl"
 	signer := devtest.MustGenerateKey(t)
 	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
-	b := NewHTTPClient("http://peer-b.example", "escrow-1", signer)
+	b := NewHTTPClient("http://peer-a.example/", "escrow-2", signer)
 	set := ParseRPCEndpoints(EndpointSignatures)
 	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
 	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
 	t.Cleanup(rpcA.Close)
 	t.Cleanup(rpcB.Close)
 	require.Same(t, rpcA.conn, rpcB.conn)
-	require.Equal(t, a.BaseURL(), rpcA.conn.cfg.BaseURL)
-	require.Equal(t, a.BaseURL(), rpcB.conn.cfg.BaseURL)
+}
+
+func TestSelectTransport_ChangedURLGetsNewPeerConn(t *testing.T) {
+	host := "gonka1twourls"
+	signer := devtest.MustGenerateKey(t)
+	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
+	b := NewHTTPClient("http://peer-b.example", "escrow-2", signer)
+	set := ParseRPCEndpoints(EndpointSignatures)
+	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
+	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcB.Close)
+	require.NotSame(t, rpcA.conn, rpcB.conn)
 	require.Contains(t, rpcA.conn.cfg.connectBase(a.escrowID), "peer-a.example")
+	require.Contains(t, rpcB.conn.cfg.connectBase(b.escrowID), "peer-b.example")
+
+	c := NewHTTPClient("http://peer-b.example", "escrow-3", signer)
+	rpcC := SelectTransport(c, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcC.Close)
+	require.Same(t, rpcB.conn, rpcC.conn)
+
+	old := rpcA.conn
+	select {
+	case <-old.ctx.Done():
+		t.Fatal("superseded PeerConn closed while an escrow still holds it")
+	default:
+	}
+	rpcA.Close()
+	select {
+	case <-old.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("superseded PeerConn not closed after its last release")
+	}
+	peerConnMu.Lock()
+	_, tracked := peerConnSuperseded[old]
+	current := peerConnRegistry[rpcB.conn.key]
+	peerConnMu.Unlock()
+	require.False(t, tracked)
+	require.Same(t, rpcB.conn, current)
+}
+
+func TestReleaseOutboundPeerConns_ClosesSupersededPeerConn(t *testing.T) {
+	t.Cleanup(ResetOutboundPeerReleaseForTest)
+	host := "gonka1supersededrelease"
+	signer := devtest.MustGenerateKey(t)
+	a := NewHTTPClient("http://peer-a.example", "escrow-1", signer)
+	b := NewHTTPClient("http://peer-b.example", "escrow-2", signer)
+	set := ParseRPCEndpoints(EndpointSignatures)
+	rpcA := SelectTransport(a, host, set, nil).(*RPCClient)
+	rpcB := SelectTransport(b, host, set, nil).(*RPCClient)
+	t.Cleanup(rpcA.Close)
+	t.Cleanup(rpcB.Close)
+	require.NotSame(t, rpcA.conn, rpcB.conn)
+
+	ReleaseOutboundPeerConns()
+	for _, pc := range []*PeerConn{rpcA.conn, rpcB.conn} {
+		select {
+		case <-pc.ctx.Done():
+		case <-time.After(time.Second):
+			t.Fatal("ReleaseOutboundPeerConns left a PeerConn running")
+		}
+	}
+	peerConnMu.Lock()
+	n := len(peerConnSuperseded)
+	peerConnMu.Unlock()
+	require.Zero(t, n)
 }
 
 func TestPeerConn_AcquireReleaseRace(t *testing.T) {
