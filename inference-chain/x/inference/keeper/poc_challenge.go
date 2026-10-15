@@ -409,6 +409,9 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 	if blockingMaintenance(ctx, k, msg.Target, nextEpoch.SetNewValidators()) {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "target has current or scheduled maintenance")
 	}
+	if k.BuildEpochReservationView(ctx, epoch.Index).FullyReservedAt(msg.Target, height) {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "every node of the target is reserved by training")
+	}
 
 	open, err := k.CountPoCChallenges(ctx)
 	if err != nil {
@@ -428,6 +431,7 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 			targetWeight = vw.Weight
 		}
 	}
+	targetWeight = k.FreeShareOfWeightBetween(ctx, epoch.Index, msg.Target, targetWeight, startHeight, safetyHeight-1)
 	if targetWeight <= 0 || totalWeight <= 0 {
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "target has no current-epoch weight")
 	}

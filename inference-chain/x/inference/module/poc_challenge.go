@@ -69,13 +69,16 @@ func (am AppModule) decideCurrentChallengeSegment(
 	snapshotHeight int64,
 	rotate bool,
 ) error {
+	if !rotate && am.keeper.BuildEpochReservationView(ctx, ch.EpochIndex).FullyReservedAt(ch.Target, finish-1) {
+		return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
+	}
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return err
 	}
 	minSegment := types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams)
 	if finish-ch.StartHeight >= minSegment {
-		if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight, rotate); err != nil {
+		if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
 			return err
 		}
 		updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
@@ -122,7 +125,6 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	ch types.PoCChallenge,
 	finish int64,
 	snapshotHeight int64,
-	rotate bool,
 ) error {
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
@@ -178,9 +180,6 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	)
 	expected := fullExpected[ch.Target] - shielded[ch.Target]
 	if shielded[ch.Target] > 0 && expected <= 0 {
-		if !rotate && am.keeper.BuildEpochReservationView(ctx, ch.EpochIndex).FullyReservedAt(ch.Target, finish-1) {
-			return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
-		}
 		return nil
 	}
 	totalExpected := map[string]int64{ch.Target: expected}

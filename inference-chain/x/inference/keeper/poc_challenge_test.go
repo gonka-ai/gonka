@@ -126,6 +126,149 @@ func TestCreatePoCChallenge_RejectsZeroAlpha(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrPoCChallengeWindow)
 }
 
+func TestCreatePoCChallenge_RejectsATargetWhoseEveryNodeIsReservedByTraining(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		leased  []string
+		allowed bool
+	}{
+		{"every node leased", []string{"n1", "n2"}, false},
+		{"a node left free", []string{"n1"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, _ := setupChallengeCreate(t, 500)
+			leaseTargetNodes(t, k, ctx, tc.leased...)
+			_, err := k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{
+				Creator: testutil.Creator,
+				Target:  testutil.Executor,
+			})
+			_, found, getErr := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, getErr)
+			if tc.allowed {
+				require.NoError(t, err)
+				require.True(t, found)
+				return
+			}
+			require.ErrorIs(t, err, types.ErrIllegalState)
+			require.False(t, found)
+		})
+	}
+}
+
+func TestCreatePoCChallenge_LocksOnlyTheFreeShareOfTheTarget(t *testing.T) {
+	lock := func(leased ...string) uint64 {
+		k, ctx, _ := setupChallengeCreate(t, 500)
+		leaseTargetNodes(t, k, ctx, leased...)
+		_, err := k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{
+			Creator: testutil.Creator,
+			Target:  testutil.Executor,
+		})
+		require.NoError(t, err)
+		ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+		require.NoError(t, err)
+		require.True(t, found)
+		return ch.ExpectedReward
+	}
+	full, half := lock(), lock("n1")
+	require.Greater(t, full, uint64(0))
+	require.InDelta(t, float64(full)/2, float64(half), 1)
+}
+
+func TestCreatePoCChallenge_LocksTheFreeShareOverTheWholeChallengeWindow(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lease func(shard *types.Trainshard, buffer int64)
+		share float64
+	}{
+		{"a lease ending halfway frees its node for the second half", func(shard *types.Trainshard, buffer int64) {
+			shard.ExpiresAtHeight = 1225 - buffer
+		}, 0.75},
+		{"a node released before the challenge is free", func(shard *types.Trainshard, _ int64) {
+			shard.Nodes[0].Status = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE
+			shard.Nodes[0].ReleasedAtHeight = 400
+			shard.Nodes[0].ReservedUntilHeight = 450
+		}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, _ := setupChallengeCreate(t, 500)
+			leaseTargetNodes(t, k, ctx)
+			_, err := k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{Creator: testutil.Creator, Target: testutil.Executor})
+			require.NoError(t, err)
+			ch, _, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			full := ch.ExpectedReward
+
+			k, ctx, _ = setupChallengeCreate(t, 500)
+			leaseTargetNodes(t, k, ctx, "n1")
+			shard, err := k.Trainshards.Get(ctx, 1)
+			require.NoError(t, err)
+			tc.lease(&shard, k.GetTrainingParams(ctx).ReleaseBufferBlocks)
+			require.NoError(t, k.Trainshards.Set(ctx, 1, shard))
+			_, err = k.CreatePoCChallenge(ctx, &types.MsgCreatePoCChallenge{Creator: testutil.Creator, Target: testutil.Executor})
+			require.NoError(t, err)
+			ch, _, err = k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.InDelta(t, float64(full)*tc.share, float64(ch.ExpectedReward), float64(full)/100)
+		})
+	}
+}
+
+func TestFreeShareOfWeightBetween_AnOverdueLeaseStaysShieldedFromNow(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 500)
+	leaseTargetNodes(t, k, ctx, "n1")
+	shard, err := k.Trainshards.Get(ctx, 1)
+	require.NoError(t, err)
+	shard.ExpiresAtHeight = 300
+	require.NoError(t, k.Trainshards.Set(ctx, 1, shard))
+	buffer := k.GetTrainingParams(ctx).ReleaseBufferBlocks
+
+	from, to := int64(501), 500+2*buffer
+	free := k.FreeShareOfWeightBetween(ctx, 2, testutil.Executor, 1000, from, to)
+	require.Equal(t, int64(750), free)
+}
+
+func TestFreeShareOfWeightBetween_DropsTheWeightWhenTheHostHasNoEpochWeight(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 500)
+	leaseTargetNodes(t, k, ctx, "n1")
+	require.Equal(t, int64(500), k.FreeShareOfWeightBetween(ctx, 2, testutil.Executor, 1000, 501, 1000))
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{EpochId: 2}))
+	require.Equal(t, int64(0), k.FreeShareOfWeightBetween(ctx, 2, testutil.Executor, 1000, 501, 1000))
+}
+
+func leaseTargetNodes(t *testing.T, k keeper.Keeper, ctx sdk.Context, leased ...string) {
+	t.Helper()
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Models: []string{challengeTestModel},
+			MlNodes: []*types.ModelMLNodes{{
+				MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 50}, {NodeId: "n2", PocWeight: 50}},
+			}},
+		}},
+	}))
+	if len(leased) == 0 {
+		return
+	}
+	nodes := make([]*types.TrainshardReservedNode, 0, len(leased))
+	for _, id := range leased {
+		nodes = append(nodes, &types.TrainshardReservedNode{
+			Participant: testutil.Executor,
+			NodeId:      id,
+			ModelId:     challengeTestModel,
+			PocWeight:   50,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		})
+	}
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 100,
+		Nodes:           nodes,
+	}))
+}
+
 func TestCreatePoCChallenge_RejectsCompletedConfirmationEvent(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 500)
 	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{

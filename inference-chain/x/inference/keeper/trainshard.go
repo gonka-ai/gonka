@@ -840,6 +840,72 @@ func FreeShareOfWeight(weight, reservedRaw, totalRaw int64) int64 {
 	return sdkmath.LegacyNewDec(weight).MulInt64(totalRaw - reservedRaw).QuoInt64(totalRaw).TruncateInt64()
 }
 
+func (k Keeper) FreeShareOfWeightBetween(ctx context.Context, epochIndex uint64, host string, weight, from, to int64) int64 {
+	if weight <= 0 {
+		return 0
+	}
+	if to < from {
+		return weight
+	}
+	windows := k.plannedShieldWindows(ctx, host, from, to)
+	if len(windows) == 0 {
+		return weight
+	}
+	var epochNodes map[string]int64
+	totalRaw := int64(0)
+	if active, found := k.GetActiveParticipants(ctx, epochIndex); found {
+		for _, p := range active.Participants {
+			if p != nil && p.Index == host {
+				epochNodes, totalRaw = hostEpochNodeWeights(p), rawPocWeight(p)
+			}
+		}
+	}
+	if totalRaw <= 0 {
+		return 0
+	}
+	nodeWeights := make(map[string]int64)
+	for _, w := range windows {
+		nodeWeights[w.node.NodeId] = max(nodeWeights[w.node.NodeId], w.node.PocWeight)
+	}
+	reserved := sdkmath.LegacyZeroDec()
+	for nodeId, blocks := range leasedBlocks(windows, from, to)[host] {
+		reserved = reserved.Add(sdkmath.LegacyNewDec(min(nodeWeights[nodeId], epochNodes[nodeId])).MulInt64(blocks))
+	}
+	if !reserved.IsPositive() {
+		return weight
+	}
+	capacity := sdkmath.LegacyNewDec(totalRaw).MulInt64(to - from + 1)
+	if reserved.GTE(capacity) {
+		return 0
+	}
+	return sdkmath.LegacyNewDec(weight).Mul(capacity.Sub(reserved)).Quo(capacity).TruncateInt64()
+}
+
+func (k Keeper) plannedShieldWindows(ctx context.Context, host string, from, to int64) []reservedNodeWindow {
+	buffer := k.GetTrainingParams(ctx).ReleaseBufferBlocks
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	var windows []reservedNodeWindow
+	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
+		for _, n := range shard.Nodes {
+			if n == nil || n.Participant != host {
+				continue
+			}
+			start, end := trainshardNodeWindow(&shard, n, ReservationScopeShield)
+			if isActiveReservedNode(n) && shard.ExpiresAtHeight > 0 {
+				end = max(shard.ExpiresAtHeight, height) + buffer
+			}
+			if end < from || start > to {
+				continue
+			}
+			windows = append(windows, reservedNodeWindow{node: n, start: start, end: end})
+		}
+		return false, nil
+	}); err != nil {
+		k.LogError("planned reservation walk failed", types.Training, "error", err)
+	}
+	return windows
+}
+
 func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, int64) {
 	epoch, found := k.GetEpoch(ctx, epochIndex)
 	if !found {

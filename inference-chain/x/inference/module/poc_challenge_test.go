@@ -586,6 +586,31 @@ func TestDecideCurrentChallengeSegment_FullyReservedHostIsRefundedNotPaid(t *tes
 	}
 }
 
+func TestDecideCurrentChallengeSegment_AFullyReservedHostIsRefundedOnAShortSegment(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "m1", weight: 100},
+	})
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 50,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: testutil.Executor,
+			NodeId:      "m1-n",
+			ModelId:     "m1",
+			PocWeight:   100,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+	require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 323, 180, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, ch.State)
+	require.Equal(t, "fully_reserved_by_training", abortCause(ctx, testutil.Executor))
+}
+
 func TestDecideCurrentChallengeSegment_OnlyAPassedSegmentProvesTheTarget(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
