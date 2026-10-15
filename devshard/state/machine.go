@@ -1926,22 +1926,27 @@ func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
+	if sm.HostSignerBoundAddr(expected, recovered) {
+		return true
+	}
+	return sm.CheckWarmKey(recovered, expected)
+}
+
+func (sm *StateMachine) HostSignerBoundAddr(expected, recovered string) bool {
+	if expected == "" || recovered == "" {
+		return false
+	}
 	if recovered == expected {
 		return true
 	}
 	sm.mu.RLock()
-	cached := false
+	defer sm.mu.RUnlock()
 	for _, slot := range sm.addressToSlots[expected] {
 		if sm.hostSignerCachedLocked(slot, recovered) {
-			cached = true
-			break
+			return true
 		}
 	}
-	sm.mu.RUnlock()
-	if cached {
-		return true
-	}
-	return sm.CheckWarmKey(recovered, expected)
+	return false
 }
 
 // ResolveWarmKey checks if recovered is an authorized warm key for the given slot.

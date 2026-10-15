@@ -2916,6 +2916,9 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 }
 
 func (s *Session) warmKeyAuthorized(warm, cold string) bool {
+	if s.sm.HostSignerBoundAddr(cold, warm) {
+		return true
+	}
 	key := warmCheckKey{warm: warm, cold: cold}
 	for {
 		s.warmCheckMu.Lock()
@@ -2937,7 +2940,7 @@ func (s *Session) warmKeyAuthorized(warm, cold string) bool {
 		s.warmChecks[key] = check
 		s.warmCheckMu.Unlock()
 
-		valid := s.sm.HostSignerAllowedAddr(cold, warm)
+		valid := s.sm.CheckWarmKey(warm, cold)
 		s.warmCheckMu.Lock()
 		check.valid = valid
 		if !check.valid {
@@ -3012,6 +3015,11 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	defer s.mu.Unlock()
 
 	postRoot, err := s.expectedStateRootLocked(nonce)
+	if errors.Is(err, ErrLocalRootUnavailable) {
+		logging.Warn("fetchSignature: read post-state root", "subsystem", "finalize",
+			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
+		return false
+	}
 	if err != nil {
 		logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
 			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)

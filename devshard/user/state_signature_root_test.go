@@ -278,3 +278,31 @@ func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
 	require.False(t, session.HasQuorumAt(1))
 	require.Equal(t, int32(1), calls.Load())
 }
+
+func TestWarmKeyBindingOverridesCachedRejection(t *testing.T) {
+	owner := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{owner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	var calls atomic.Int32
+	resolver := func(_, _ string) (bool, error) {
+		calls.Add(1)
+		return false, errors.New("chain unavailable")
+	}
+	sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier,
+		state.WithWarmKeyResolver(resolver))
+	session, err := NewSession(sm, user, "escrow-1", group, []HostClient{&ErrorClient{}}, verifier)
+	require.NoError(t, err)
+	root := make([]byte, 32)
+	sig := signRootForTest(t, warm, "escrow-1", 1, root)
+
+	require.ErrorIs(t, session.verifyStateSignature(1, root, sig, owner.Address()), types.ErrInvalidStateSig)
+	require.Equal(t, int32(1), calls.Load())
+
+	sm.InjectWarmKeys(map[uint32]string{group[0].SlotID: warm.Address()})
+
+	require.NoError(t, session.verifyStateSignature(1, root, sig, owner.Address()))
+	require.Equal(t, int32(1), calls.Load())
+}
