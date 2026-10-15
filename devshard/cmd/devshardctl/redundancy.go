@@ -2414,7 +2414,9 @@ func (e *Redundancy) firstTokenFallbackDelay(params user.InferenceParams) time.D
 	}
 	if e != nil && e.perf != nil {
 		if delay, ok := e.perf.FirstTokenFallbackDelay(model, params.InputLength); ok {
-			return delay
+			// Learning a fast p95 must not bypass the operator's minimum
+			// first-token budget, including the fail-closed race deadline.
+			return max(delay, FirstTokenTimeoutCap)
 		}
 	}
 	return defaultFirstTokenFallbackDelay(params.InputLength)
