@@ -3,11 +3,13 @@ package epochgroup
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"strconv"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -368,6 +370,10 @@ func (eg *EpochGroup) updateMember(ctx context.Context, address string, weight i
 
 func (eq *EpochGroup) RemoveMember(ctx context.Context, participant *types.Participant) error {
 	err := eq.updateMember(ctx, participant.Address, 0, "")
+	if errors.Is(err, sdkerrors.ErrNotFound) {
+		// Left the group itself (MsgLeaveGroup): already removed, but the validator set must still be recomputed.
+		err = eq.MarkChanged(ctx)
+	}
 	if err != nil {
 		return err
 	}
