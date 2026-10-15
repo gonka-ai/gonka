@@ -265,6 +265,96 @@ func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 	require.Zero(t, shieldAfterBuffer[host])
 }
 
+type leaseSpan struct {
+	created, released int64
+	models            []string
+}
+
+func setLeases(t *testing.T, k keeper.Keeper, ctx sdk.Context, host string, leases ...leaseSpan) {
+	t.Helper()
+	for i, lease := range leases {
+		models := lease.models
+		if len(models) == 0 {
+			models = []string{"model1"}
+		}
+		shard := types.Trainshard{TrainshardId: uint64(i + 1), Status: types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, CreatedAtHeight: lease.created}
+		if lease.released > 0 {
+			shard.Status = types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED
+			shard.ClosedAtHeight = lease.released
+		}
+		for _, model := range models {
+			node := &types.TrainshardReservedNode{
+				Participant: host, NodeId: "node-a", ModelId: model, PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+			}
+			if lease.released > 0 {
+				node.Status = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE
+				node.ReleasedAtHeight = lease.released
+				node.ReservedUntilHeight = lease.released + 20
+			}
+			shard.Nodes = append(shard.Nodes, node)
+		}
+		require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
+	}
+}
+
+func TestCollectEpochReservations_CountsTheLeasedBlocksOfTheEpoch(t *testing.T) {
+	cases := []struct {
+		name   string
+		leases []leaseSpan
+		want   int64
+	}{
+		{"a lease inside the epoch, return buffer excluded", []leaseSpan{{created: 150, released: 159}}, 10},
+		{"an active lease runs to the epoch end", []leaseSpan{{created: 150}}, 50},
+		{"a lease from the previous epoch counts from the epoch start", []leaseSpan{{created: 50, released: 119}}, 20},
+		{"an active lease over the whole epoch is the whole epoch", []leaseSpan{{created: 50}}, 100},
+		{"consecutive shards sharing a block count it once", []leaseSpan{{created: 110, released: 130}, {created: 130, released: 139}}, 30},
+		{"a node leased under two models counts once", []leaseSpan{{created: 150, released: 159, models: []string{"model1", "model2"}}}, 10},
+		{"a lease after the epoch counts nothing", []leaseSpan{{created: 250, released: 260}}, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 8, PocStartBlockHeight: 200}))
+			host := sample.AccAddress()
+			setLeases(t, k, ctx, host, tc.leases...)
+
+			reservations := k.CollectEpochReservations(ctx, 7)
+
+			require.Equal(t, int64(100), reservations.EpochBlocks)
+			require.Equal(t, tc.want, reservations.LeasedBlocks[host]["node-a"])
+		})
+	}
+}
+
+func TestCollectEpochReservations_UsesThePlannedLengthBeforeTheNextEpoch(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	length := params.EpochParams.EpochLength
+	require.Greater(t, length, int64(10))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: 110})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Equal(t, length, reservations.EpochBlocks)
+	require.Equal(t, length-10, reservations.LeasedBlocks[host]["node-a"])
+}
+
+func TestCollectEpochReservations_AnUnknownEpochLeavesTheSpanOpen(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: 110, released: 120})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Zero(t, reservations.EpochBlocks)
+	require.Len(t, reservations.Nodes[host], 1)
+}
+
 func TestAssembleTrainshard_IgnoresNodesWithoutId(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	setTrainshardEpochNodes(t, k, ctx, creator, []*types.MLNodeInfo{

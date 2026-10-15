@@ -2355,7 +2355,7 @@ func TestTakeTrainingReservedShare(t *testing.T) {
 			weights := map[string]uint64{"host": tc.capped}
 
 			share, extra := takeTrainingReservedShare(weights, map[string]uint64{"host": tc.full}, map[string]int64{"host": tc.effective},
-				map[string]map[string][]*types.MLNodeInfo{"host": tc.nodes}, map[string][]*types.TrainshardReservedNode{"host": tc.reserved}, nil)
+				map[string]map[string][]*types.MLNodeInfo{"host": tc.nodes}, leasedWholeEpoch(map[string][]*types.TrainshardReservedNode{"host": tc.reserved}), nil)
 
 			require.Equal(t, tc.wantShare, share["host"], "reserved share")
 			require.Equal(t, tc.wantLeft, weights["host"], "weight left to the free nodes")
@@ -2372,6 +2372,58 @@ func TestTakeTrainingReservedShare(t *testing.T) {
 	})
 }
 
+func leasedWholeEpoch(nodes map[string][]*types.TrainshardReservedNode) *EpochReservations {
+	return leasedFor(100, 100, nodes)
+}
+
+func leasedFor(leased, epochBlocks int64, nodes map[string][]*types.TrainshardReservedNode) *EpochReservations {
+	reservations := &EpochReservations{Nodes: nodes, EpochBlocks: epochBlocks, LeasedBlocks: make(map[string]map[string]int64)}
+	for host, list := range nodes {
+		reservations.LeasedBlocks[host] = make(map[string]int64)
+		for _, n := range list {
+			reservations.LeasedBlocks[host][n.NodeId] = leased
+		}
+	}
+	return reservations
+}
+
+func TestTakeTrainingReservedShare_ProtectsOnlyTheLeasedPartOfTheEpoch(t *testing.T) {
+	reserved := map[string][]*types.TrainshardReservedNode{"host": {{Participant: "host", ModelId: "m", NodeId: "resv", PocWeight: 40}}}
+	withReserved := map[string][]*types.MLNodeInfo{"m": {{NodeId: "free", PocWeight: 60}, {NodeId: "resv", PocWeight: 40}}}
+	withoutReserved := map[string][]*types.MLNodeInfo{"m": {{NodeId: "free", PocWeight: 60}}}
+	cases := []struct {
+		name                       string
+		capped, full               uint64
+		effective                  int64
+		nodes                      map[string][]*types.MLNodeInfo
+		reservations               *EpochReservations
+		wantShare, wantLeft, extra uint64
+	}{
+		{"a tenth of the epoch protects a tenth of the share", 100, 100, 100, withReserved, leasedFor(10, 100, reserved), 4, 96, 0},
+		{"the whole epoch protects the whole share", 100, 100, 100, withReserved, leasedFor(100, 100, reserved), 40, 60, 0},
+		{"no leased time protects nothing", 100, 100, 100, withReserved,
+			&EpochReservations{Nodes: reserved, EpochBlocks: 100}, 0, 100, 0},
+		{"leased time never exceeds the epoch", 100, 100, 100, withReserved, leasedFor(150, 100, reserved), 40, 60, 0},
+		{"an unknown epoch span protects the whole share", 100, 100, 100, withReserved, &EpochReservations{Nodes: reserved}, 40, 60, 0},
+		{"the leased part applies after the epoch weight bound", 70, 70, 70,
+			map[string][]*types.MLNodeInfo{"m": {{NodeId: "free", PocWeight: 60}, {NodeId: "resv", PocWeight: 10}}}, leasedFor(50, 100, reserved), 5, 65, 0},
+		{"a cPoC cut and the power cap scale the leased part like the rest", 30, 100, 60, withReserved, leasedFor(25, 100, reserved), 5, 25, 0},
+		{"a node the epoch does not count joins the denominator in full", 60, 60, 60, withoutReserved, leasedFor(10, 100, reserved), 0, 60, 40},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			weights := map[string]uint64{"host": tc.capped}
+
+			share, extra := takeTrainingReservedShare(weights, map[string]uint64{"host": tc.full}, map[string]int64{"host": tc.effective},
+				map[string]map[string][]*types.MLNodeInfo{"host": tc.nodes}, tc.reservations, nil)
+
+			require.Equal(t, tc.wantShare, share["host"], "reserved share")
+			require.Equal(t, tc.wantLeft, weights["host"], "weight left to the free nodes")
+			require.Equal(t, tc.extra, extra, "denominator addend")
+		})
+	}
+}
+
 func TestBitcoinRewards_AReservedNodeEarnsByFrozenWeight(t *testing.T) {
 	data := &types.EpochGroupData{
 		EpochIndex: 1,
@@ -2383,9 +2435,10 @@ func TestBitcoinRewards_AReservedNodeEarnsByFrozenWeight(t *testing.T) {
 		},
 	}
 	params := &types.BitcoinRewardParams{InitialEpochReward: 1000, DecayRate: types.DecimalFromFloat(0), GenesisEpoch: 1}
-	reserved := map[string][]*types.TrainshardReservedNode{
+	records := map[string][]*types.TrainshardReservedNode{
 		"host": {{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400}},
 	}
+	reserved := leasedWholeEpoch(records)
 	participants := func(hostMissed uint64) []types.Participant {
 		return []types.Participant{
 			{Address: "host", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100 - hostMissed, MissedRequests: hostMissed}},
@@ -2395,16 +2448,18 @@ func TestBitcoinRewards_AReservedNodeEarnsByFrozenWeight(t *testing.T) {
 	cases := []struct {
 		name       string
 		hostMissed uint64
-		reserved   map[string][]*types.TrainshardReservedNode
+		reserved   *EpochReservations
 		want       uint64
 	}{
 		{"a host with a reserved node earns as if it worked", 0, reserved, 500},
 		{"missed requests on the free nodes leave the reserved node its share", 90, reserved, 200},
 		{"without a reservation the missed requests cost the host everything", 90, nil, 0},
-		{"a node reserved under two models is paid once", 0, map[string][]*types.TrainshardReservedNode{"host": {
+		{"a node reserved under two models is paid once", 0, leasedWholeEpoch(map[string][]*types.TrainshardReservedNode{"host": {
 			{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400},
 			{Participant: "host", ModelId: "model-b", NodeId: "resv", PocWeight: 400},
-		}}, 500},
+		}}), 500},
+		{"a node leased for a quarter of the epoch keeps a quarter of its share", 90, leasedFor(25, 100, records), 50},
+		{"a briefly leased node does not change the reward of a host that worked", 0, leasedFor(25, 100, records), 500},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -2430,9 +2485,9 @@ func TestBitcoinRewards_AFailedConfirmationOfTheFreeNodesLeavesTheReservedShare(
 		},
 	}
 	params := &types.BitcoinRewardParams{InitialEpochReward: 1400, DecayRate: types.DecimalFromFloat(0), GenesisEpoch: 1}
-	reserved := map[string][]*types.TrainshardReservedNode{
+	reserved := leasedWholeEpoch(map[string][]*types.TrainshardReservedNode{
 		"host": {{Participant: "host", ModelId: "model-a", NodeId: "resv", PocWeight: 400}},
-	}
+	})
 	participants := []types.Participant{
 		{Address: "host", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 10, MissedRequests: 90}},
 		{Address: "other", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100}},

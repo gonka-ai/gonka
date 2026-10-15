@@ -907,8 +907,81 @@ func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64,
 	}
 }
 
-func (k Keeper) CollectEpochReservedNodeRecords(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
-	return EpochReservedWeightView{windows: k.reservedNodeWindows(ctx, epochIndex, scope)}.nodeWeights(nil)
+type EpochReservations struct {
+	Nodes        map[string][]*types.TrainshardReservedNode
+	LeasedBlocks map[string]map[string]int64
+	EpochBlocks  int64
+}
+
+func (k Keeper) CollectEpochReservations(ctx context.Context, epochIndex uint64) *EpochReservations {
+	windows := k.reservedNodeWindows(ctx, epochIndex, ReservationScopeReward)
+	reservations := &EpochReservations{Nodes: EpochReservedWeightView{windows: windows}.nodeWeights(nil)}
+	start, end, ok := k.rewardEpochSpan(ctx, epochIndex)
+	if !ok {
+		return reservations
+	}
+	reservations.EpochBlocks = end - start + 1
+	reservations.LeasedBlocks = leasedBlocks(windows, start, end)
+	return reservations
+}
+
+func (r *EpochReservations) leasedPart(host, nodeId string, weight int64) int64 {
+	if r == nil || r.EpochBlocks <= 0 || weight <= 0 {
+		return weight
+	}
+	leased := min(r.LeasedBlocks[host][nodeId], r.EpochBlocks)
+	return sdkmath.LegacyNewDec(weight).MulInt64(leased).QuoInt64(r.EpochBlocks).TruncateInt64()
+}
+
+func (k Keeper) rewardEpochSpan(ctx context.Context, epochIndex uint64) (int64, int64, bool) {
+	epoch, found := k.GetEpoch(ctx, epochIndex)
+	if !found {
+		return 0, 0, false
+	}
+	start := epoch.PocStartBlockHeight
+	if next, ok := k.GetEpoch(ctx, epochIndex+1); ok && next.PocStartBlockHeight > start {
+		return start, next.PocStartBlockHeight - 1, true
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil || params.EpochParams == nil || params.EpochParams.EpochLength <= 0 {
+		return 0, 0, false
+	}
+	return start, start + params.EpochParams.EpochLength - 1, true
+}
+
+func leasedBlocks(windows []reservedNodeWindow, start, end int64) map[string]map[string]int64 {
+	type interval struct{ start, end int64 }
+	intervals := make(map[string]map[string][]interval)
+	for _, w := range windows {
+		from, to := max(w.start, start), min(w.end, end)
+		if from > to {
+			continue
+		}
+		host := w.node.Participant
+		if intervals[host] == nil {
+			intervals[host] = make(map[string][]interval)
+		}
+		intervals[host][w.node.NodeId] = append(intervals[host][w.node.NodeId], interval{from, to})
+	}
+	leased := make(map[string]map[string]int64, len(intervals))
+	for host, nodes := range intervals {
+		leased[host] = make(map[string]int64, len(nodes))
+		for nodeId, list := range nodes {
+			sort.Slice(list, func(i, j int) bool { return list[i].start < list[j].start })
+			total := int64(0)
+			from, to := list[0].start, list[0].end
+			for _, iv := range list[1:] {
+				if iv.start > to {
+					total += to - from + 1
+					from, to = iv.start, iv.end
+					continue
+				}
+				to = max(to, iv.end)
+			}
+			leased[host][nodeId] = total + to - from + 1
+		}
+	}
+	return leased
 }
 
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {

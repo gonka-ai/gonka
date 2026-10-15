@@ -240,7 +240,7 @@ func TestReservedWeight_TheEpochWeightBoundsTheRecord(t *testing.T) {
 	require.Equal(t, map[string]int64{"n1": 50, "gone": 0}, weights)
 
 	records := make(map[string]int64)
-	for _, n := range k.CollectEpochReservedNodeRecords(ctx, 7, keeper.ReservationScopeReward)[host] {
+	for _, n := range k.CollectEpochReservations(ctx, 7).Nodes[host] {
 		records[n.NodeId] = n.PocWeight
 	}
 	require.Equal(t, map[string]int64{"n1": 130, "gone": 130}, records)
