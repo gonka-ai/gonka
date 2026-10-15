@@ -20,11 +20,14 @@ import (
 const (
 	channelLimiterIdleFor    = time.Minute
 	channelLimiterEvictBatch = 32
-	// maxWatchesPerPeer bounds concurrent Watch streams for one peer. A
-	// peer may hold many live tokens, so the process cap alone lets one
-	// peer take every slot. Two covers a reopen that lands while the
-	// previous stream is still unwinding on the server.
-	maxWatchesPerPeer = 2
+	// maxWatchesPerPeer bounds concurrent Watch streams for one peer
+	// address. Tokens from the same signer share the cap, so one peer
+	// cannot fill MaxSessions by minting tokens. Eight is two HA replicas,
+	// two generations during a rolling deploy, and two streams per process
+	// while a reopen is still unwinding (2 × 2 × 2). A reconnect holds the
+	// live Watch and the replacement at once. Replicas of one participant
+	// share a signer, so they count as one peer.
+	maxWatchesPerPeer = 8
 	// renewalBurst and renewalPerMin size the per-peer bucket an Attach
 	// with a live token spends before VerifyAttach. A client refreshes at
 	// 75% of a two-minute TTL, so a healthy peer uses well under one per

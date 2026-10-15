@@ -186,9 +186,14 @@ loopback). Defaults:
 | Weight per minute | 6000 | `DEVSHARD_RPC_MSGS_PER_MIN` |
 | Burst | 600 (10% of the minute) | `DEVSHARD_RPC_MSGS_BURST` |
 | Concurrent chats per peer | 10240 | `DEVSHARD_RPC_MAX_STREAMS_PER_PEER` (streams = chats + 1, so Watch still fits) |
-| Watch streams per peer | 2 | fixed |
+| Watch streams per peer | 8 | fixed |
 | `Attach` renewal, before the signature check | burst 4, 4/min | fixed |
 | Anonymous `Attach` floor | 50 tokens, refilled at 50/s | `DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` |
+
+Watch streams per peer is 8: two replicas, two generations during a rolling
+deploy, and two streams per process while a reopen is still unwinding.
+Replicas of one participant share a signer and count as one peer. A second
+token from that signer shares the same cap.
 
 `DEVSHARD_RPC_LIMITS=off` disables the child buckets. Leave it unset in
 production.

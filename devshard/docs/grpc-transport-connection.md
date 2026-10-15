@@ -284,6 +284,12 @@ other `Unauthenticated` clear it and `Attach` again. Refresh does not wait for
 `Watch` to be up. A renewal on `_` spends a per-peer bucket (burst 4, 4/min)
 before ECDSA instead of the anonymous floor.
 
+A child allows eight concurrent Watches per peer address. That is two replicas,
+two generations during a rolling deploy, and two streams per process while a
+reopen is still unwinding. Replicas of one participant share a signer, so they
+count as one peer, and a second token from that signer shares the cap. A
+reconnect holds the live Watch and the replacement at once.
+
 Token layout, key derivation, and lifetime:
 [Peer RPC sessions under HA](./high-availability-architecture.md#peer-rpc-sessions-under-ha).
 
