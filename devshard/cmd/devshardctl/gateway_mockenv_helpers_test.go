@@ -75,10 +75,10 @@ func newGatewayMockEnv(t *testing.T, runtimes []*gatewayMockRuntime, opts ...gat
 
 	g := NewGateway(devshards, cfg.limiter, cfg.settings.DefaultModel)
 	g.settings = cfg.settings
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(cfg.settings, gatewayMockStates(runtimes, devshards)))
+	require.NoError(t, store.Initialize(context.Background(), cfg.settings, gatewayMockStates(runtimes, devshards)))
 	g.store = store
 	handler := buildGatewayHandler(g, runtimeOptions{
 		adminAPIKey: cfg.adminKey,

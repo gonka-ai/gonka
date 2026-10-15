@@ -55,7 +55,7 @@ func TestGhostProbeParams_RefusalDeadlineCanActuallyPass(t *testing.T) {
 	// The verifier reads its own clock, so the deadline has to come from one too.
 	pastDeadline := time.Now().Unix() + ghostDeadlineRefusalTimeout + 1
 	accept, err := host.VerifyRefusedTimeout(
-		context.Background(), state, 1, payload, nil, nil, nil, state.Config, pastDeadline,
+		context.Background(), state, 1, payload, nil, nil, nil, nil, state.Config, pastDeadline,
 	)
 
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestGhostProbeParams_RefusalDeadlineHoldsUntilItPasses(t *testing.T) {
 	state, payload := escrowHoldingGhostNonce(t, params)
 
 	accept, err := host.VerifyRefusedTimeout(
-		context.Background(), state, 1, payload, nil, nil, nil, state.Config, time.Now().Unix(),
+		context.Background(), state, 1, payload, nil, nil, nil, nil, state.Config, time.Now().Unix(),
 	)
 
 	require.NoError(t, err)

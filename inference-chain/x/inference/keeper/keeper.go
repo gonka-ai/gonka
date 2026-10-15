@@ -113,6 +113,7 @@ type (
 		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
 		MaintenanceReservationCounter collections.Item[uint64]
@@ -142,6 +143,9 @@ type (
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
 		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
 	}
 )
 
@@ -585,6 +589,13 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
 		),
+		DevshardApprovedVersionsMap: collections.NewMap(
+			sb,
+			types.DevshardApprovedVersionsPrefix,
+			"devshard_approved_versions",
+			collections.StringKey,
+			codec.CollValue[types.DevshardApprovedVersion](cdc),
+		),
 		// Maintenance window collections
 		MaintenanceReservations: collections.NewMap(
 			sb,
@@ -676,7 +687,29 @@ func NewKeeper(
 			"claim_recipients_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
+		PoCChallenges: collections.NewMap(
+			sb,
+			types.PoCChallengePrefix,
+			"poc_challenge",
+			sdk.AccAddressKey,
+			codec.CollValue[types.PoCChallenge](cdc),
+		),
+		PoCChallengeCommits: collections.NewMap(
+			sb,
+			types.PoCChallengeCommitPrefix,
+			"poc_challenge_commit",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.StringKey),
+			codec.CollValue[types.PoCV2StoreCommit](cdc),
+		),
+		PoCChallengeValidations: collections.NewMap(
+			sb,
+			types.PoCChallengeValidationPrefix,
+			"poc_challenge_validation",
+			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
+			codec.CollValue[types.PoCValidationV2](cdc),
+		),
 	}
+
 	// Build the collections schema
 	schema, err := sb.Build()
 	if err != nil {

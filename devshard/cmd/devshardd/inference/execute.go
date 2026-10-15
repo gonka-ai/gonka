@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 
 	"common/completionapi"
+	"common/storage/payloads"
 	devshardpkg "devshard"
 	"devshard/observability"
 )
@@ -37,8 +39,6 @@ func executeInference(
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
-	// The validator cannot reproduce token-ID sanitization without the pinned bound.
-	// Fail execution rather than turn a local lookup failure into a client-fault Finish.
 	if vocabularySize <= 0 && completionapi.RequestNeedsVocabulary(req.Prompt) {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", completionapi.ErrVocabularyUnknown))
 	}
@@ -68,14 +68,21 @@ func executeInference(
 		return nil, observability.Classify(observability.ReasonCanonicalizePromptErr, observability.WhereRuntimeExecute, fmt.Errorf("canonicalize prompt: %w", err))
 	}
 
-	if err := store.Store(
+	err = store.Store(
 		ctx,
 		req.EscrowID,
 		req.InferenceID,
 		payloadEpoch,
 		promptPayload,
 		processed.responseBody,
-	); err != nil {
+	)
+	if errors.Is(err, payloads.ErrAlreadyStored) {
+		// An earlier run of this inference stored first; validators fetch
+		// those bytes, so the finish commits their hashes.
+		reader, _ := store.(PayloadReader)
+		return storedExecutionResult(ctx, req, reader, payloadEpoch)
+	}
+	if err != nil {
 		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute, fmt.Errorf("store payloads: %w", err))
 	}
 

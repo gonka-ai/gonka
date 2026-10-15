@@ -504,6 +504,33 @@ func runValidationObsBatchDrain(t *testing.T, store Storage) {
 	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", nil))
 }
 
+// runValidationObsRebuildPending pins the durable rebuild mark: absent on a new
+// session, set and cleared on the session row, and an error for an unknown
+// escrow rather than a silent false.
+func runValidationObsRebuildPending(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending, "a new session has no unfinished rebuild")
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", true))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.True(t, pending)
+
+	require.NoError(t, store.SetValidationObsRebuildPending("escrow-1", false))
+	pending, err = store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.False(t, pending)
+
+	require.Error(t, store.SetValidationObsRebuildPending("escrow-missing", true))
+	_, err = store.ValidationObsRebuildPending("escrow-missing")
+	require.Error(t, err)
+}
+
 func runAddSignature(t *testing.T, store Storage) {
 	t.Helper()
 

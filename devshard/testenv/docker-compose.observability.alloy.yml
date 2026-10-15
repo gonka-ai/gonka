@@ -1,0 +1,31 @@
+# Grafana Alloy fragment (jaeger-alloy / tempo-alloy profiles).
+# Apps send OTLP to alloy:4317; Alloy exports traces to the profile backend
+# and ships docker logs to Loki (replaces Promtail on *-alloy profiles).
+
+services:
+  alloy:
+    image: grafana/alloy:v1.15.0
+    user: "0:0"
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      # Alloy accepts a single River file; harness merges base + profile exporter into config.alloy.
+      - /etc/alloy/config.alloy
+    volumes:
+      - ${TESTENV_OBS_CONFIG_DIR:-.}/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - testenv_alloy_data:/var/lib/alloy/data
+    ports:
+      - "127.0.0.1:12345:12345"
+    expose:
+      - "4317"
+    depends_on:
+      - loki
+    networks:
+      - testenv
+    restart: unless-stopped
+
+volumes:
+  testenv_alloy_data:

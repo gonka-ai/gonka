@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	json "github.com/goccy/go-json"
-
 	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
@@ -155,6 +153,9 @@ func (c *HTTPClient) ObservedStampNow() (uint64, []byte, bool) {
 func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if c == nil {
 		return false, nil
+	}
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return false, err
 	}
 	if c.heightSyncPeerTips == nil {
 		logging.Warn("heightsync: seed skipped, peer-tip cache not wired",
@@ -347,13 +348,9 @@ func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSe
 }
 
 func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequest, ir InferenceRequest) (body []byte, contentType string, outboundHS *heightsync.HeightSyncSection, err error) {
-	contentType = "application/json"
 	if c.heightSync == nil {
-		body, err = json.Marshal(ir)
-		if err != nil {
-			return nil, "", nil, fmt.Errorf("marshal json: %w", err)
-		}
-		return body, contentType, nil, nil
+		body, contentType, err = marshalChatBody(nil, ir)
+		return body, contentType, nil, err
 	}
 	h := heightsync.DecideHints{
 		Nonce:       req.Nonce,
@@ -392,18 +389,17 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 		if fn != nil {
 			fn(sec, req.Nonce)
 		}
-		body, err = MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, sec, ir)
+		body, contentType, err = marshalChatBody(sec, ir)
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("marshal inference envelope: %w", err)
+			return nil, "", nil, err
 		}
-		contentType = "application/x-protobuf"
 		c.logEmitUserHeightSync(sec, req.Nonce)
 		c.recordUserOutboundAnchorIfAnchor(sec, "POST /chat/completions")
 		return body, contentType, outboundHS, nil
 	}
-	body, err = json.Marshal(ir)
+	body, contentType, err = marshalChatBody(nil, ir)
 	if err != nil {
-		return nil, "", nil, fmt.Errorf("marshal json: %w", err)
+		return nil, "", nil, err
 	}
 	if c.heightSyncPeerTips != nil {
 		ev := "request_decide_omit"
@@ -418,6 +414,9 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 
 // HeightSyncRepair POSTs a signed repair probe (group-member HTTP auth).
 func (c *HTTPClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
 	path := fmt.Sprintf("/sessions/%s/heightsync/repair", c.escrowID)
 	timeout := c.config.QueryTimeout
 	if timeout <= 0 || timeout > DefaultRepairTimeout {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -295,6 +296,71 @@ func TestControllerForceTransition(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAdmissionWatchSkipsIdleCountAndRejectsWhenDraining(t *testing.T) {
+	c := NewController()
+	if err := c.Transition(StateServing); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler := c.Admission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "PeerAuthService/Watch") && r.URL.Query().Get("hold") == "1" {
+			close(started)
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	watchURL := server.URL + "/v1/devshard.transport.v1.PeerAuthService/Watch"
+	resp, err := http.Get(watchURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("serving watch status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+	if got := c.Snapshot().Inflight; got != 0 {
+		t.Fatalf("watch inflight = %d, want 0", got)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		held, heldErr := http.Get(watchURL + "?hold=1")
+		if heldErr == nil {
+			_ = held.Body.Close()
+		}
+		close(done)
+	}()
+	<-started
+	if err := c.Transition(StateDraining); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WaitIdle(context.Background()); err != nil {
+		t.Fatalf("open watch held WaitIdle: %v", err)
+	}
+
+	rejected, err := http.Get(watchURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rejected.Body.Close()
+	if rejected.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("draining watch status = %d, want %d", rejected.StatusCode, http.StatusServiceUnavailable)
+	}
+	if got := rejected.Header.Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	if got := c.Snapshot().Inflight; got != 0 {
+		t.Fatalf("draining watch inflight = %d, want 0", got)
+	}
+
+	close(release)
+	<-done
 }
 
 func TestAdmissionHoldsLeaseForCompleteRequest(t *testing.T) {

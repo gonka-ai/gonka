@@ -151,4 +151,16 @@ func TestRunInference_ClientFaultEveryHostRejectsChargesNoHost(t *testing.T) {
 	for _, verifier := range env.verifiers {
 		require.Zero(t, verifier.errorMissProof.Load())
 	}
+
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
+	snapshot := env.sm.SnapshotState()
+	require.Len(t, snapshot.Inferences, 2)
+	for nonce, record := range snapshot.Inferences {
+		require.Equal(t, types.StatusFinished, record.Status, "nonce %d: the client-fault Finish must not stay pinned", nonce)
+		require.Zero(t, record.ActualCost, "nonce %d", nonce)
+	}
+	for slot, stats := range snapshot.HostStats {
+		require.Zero(t, stats.Cost, "slot %d", slot)
+	}
+	require.Equal(t, uint64(1_000_000), snapshot.Balance+snapshot.Fees, "every reservation must return to the escrow")
 }

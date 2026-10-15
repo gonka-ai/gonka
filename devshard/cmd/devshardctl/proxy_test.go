@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard"
 	"devshard/host"
@@ -301,14 +300,9 @@ func TestRaceWriterDefersSuspiciousWinnerUntilFallback(t *testing.T) {
 
 func TestRaceWriterLogsSuspiciousWinnerDeferredOncePerAttempt(t *testing.T) {
 	var logs bytes.Buffer
-	oldOutput := log.Writer()
-	oldFlags := log.Flags()
-	log.SetOutput(&logs)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(oldOutput)
-		log.SetFlags(oldFlags)
-	})
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	rec := httptest.NewRecorder()
 	ctx := context.Background()
@@ -541,26 +535,31 @@ type verifierClient struct {
 	group          []types.SlotAssignment
 	slotIdx        int
 	voteGate       <-chan struct{}
+	failWith       error
 	errorMissProof atomic.Uint64
 }
 
 type delayedResultClient struct {
 	response  *host.HostResponse
+	respond   func(nonce uint64) *host.HostResponse
 	releaseCh chan struct{}
 	sendCalls atomic.Int32
 }
 
-func (c *delayedResultClient) Send(ctx context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
+func (c *delayedResultClient) Send(ctx context.Context, req host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	c.sendCalls.Add(1)
 	select {
 	case <-c.releaseCh:
+		if c.respond != nil {
+			return c.respond(req.Nonce), nil
+		}
 		return c.response, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if c.voteGate != nil {
 		select {
 		case <-c.voteGate:
@@ -568,7 +567,10 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 			return false, nil, 0, nil, "", ctx.Err()
 		}
 	}
-	if !c.accept {
+	if c.failWith != nil {
+		return false, nil, 0, nil, "", c.failWith
+	}
+	if !c.accept || (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && payload == nil) {
 		return false, nil, 0, nil, "", nil
 	}
 	voterSlot := c.group[c.slotIdx].SlotID
@@ -578,7 +580,7 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -606,7 +608,7 @@ func (c *verifierClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, 
 		Accept:       true,
 		ResponseHash: hash,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -618,12 +620,13 @@ func (c *verifierClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, 
 }
 
 type testProxyEnv struct {
-	proxy     *Proxy
-	session   *user.Session
-	sm        *state.StateMachine
-	killables []*killableClient
-	verifiers []*verifierClient
-	group     []types.SlotAssignment
+	proxy       *Proxy
+	session     *user.Session
+	sm          *state.StateMachine
+	killables   []*killableClient
+	verifiers   []*verifierClient
+	group       []types.SlotAssignment
+	hostSigners []*signing.Secp256k1Signer
 }
 
 func zeroReceiptTimeout(t *testing.T) {
@@ -631,6 +634,13 @@ func zeroReceiptTimeout(t *testing.T) {
 	saved := ReceiptTimeout
 	ReceiptTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { ReceiptTimeout = saved })
+}
+
+func allowSpeculativeAttemptsOnWholeGroup(t *testing.T) {
+	t.Helper()
+	saved := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(0)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(saved) })
 }
 
 func raceCleanupFinished(redundancy *Redundancy) <-chan struct{} {
@@ -748,6 +758,10 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -760,12 +774,13 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 	}
 
 	return &testProxyEnv{
-		proxy:     p,
-		session:   session,
-		sm:        userSM,
-		killables: killables,
-		verifiers: verifiers,
-		group:     group,
+		proxy:       p,
+		session:     session,
+		sm:          userSM,
+		killables:   killables,
+		verifiers:   verifiers,
+		group:       group,
+		hostSigners: hostSigners,
 	}
 }
 
@@ -791,6 +806,10 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	// Stop the race first. Close then cancels the quiet settle, which otherwise
+	// sends a leftover receipt after the test has returned and the client still
+	// asserts through t.
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
@@ -803,10 +822,45 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	}
 
 	return &testProxyEnv{
-		proxy:   p,
-		session: session,
-		sm:      userSM,
-		group:   group,
+		proxy:       p,
+		session:     session,
+		sm:          userSM,
+		group:       group,
+		hostSigners: hostSigners,
+	}
+}
+
+// applicableFinishTx is a Finish that apply would accept for inferenceID, signed
+// by that inference's executor. An unsigned stub no longer marks the nonce finished.
+func applicableFinishTx(t *testing.T, env *testProxyEnv, inferenceID uint64) *types.DevshardTx {
+	t.Helper()
+	idx := int(inferenceID % uint64(len(env.hostSigners)))
+	msg := &types.MsgFinishInference{
+		InferenceId:  inferenceID,
+		EscrowId:     "escrow-proxy",
+		ExecutorSlot: env.group[idx].SlotID,
+		ResponseHash: testutil.TestResponseHash,
+		ServedHash:   testutil.TestServedHash,
+	}
+	msg.ProposerSig = testutil.SignProposerTx(t, env.hostSigners[idx], msg)
+	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
+}
+
+// applicableResponse is the executor reply that closes a Pending inference:
+// a receipt signed over the live record, then the finish. A finish alone does
+// not apply to a Pending record, so it leaves the nonce open.
+func applicableResponse(t *testing.T, env *testProxyEnv, inferenceID uint64) *host.HostResponse {
+	t.Helper()
+	rec, ok := env.session.StateMachine().Inference(inferenceID)
+	require.True(t, ok, "inference %d not prepared", inferenceID)
+	idx := int(inferenceID % uint64(len(env.hostSigners)))
+	confirmedAt := time.Now().Unix()
+	return &host.HostResponse{
+		Nonce: inferenceID,
+		Receipt: testutil.SignExecutorReceipt(t, env.hostSigners[idx], "escrow-proxy", inferenceID,
+			rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt),
+		ConfirmedAt: confirmedAt,
+		Mempool:     []*types.DevshardTx{applicableFinishTx(t, env, inferenceID)},
 	}
 }
 
@@ -1046,6 +1100,7 @@ func (streamContentThenStallClient) Send(ctx context.Context, req host.HostReque
 type streamContentThenReleaseClient struct {
 	releaseCh chan struct{}
 	err       error
+	respond   func(nonce uint64) *host.HostResponse
 }
 
 func (c *streamContentThenReleaseClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -1067,13 +1122,14 @@ func (c *streamContentThenReleaseClient) Send(ctx context.Context, req host.Host
 		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"late"}}]}`+"\n\n")
 	}
 	nid := req.Nonce
+	if c.respond != nil {
+		return c.respond(nid), nil
+	}
 	return &host.HostResponse{
 		Nonce: nid,
-		Mempool: []*types.DevshardTx{
-			{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: nid},
-			}},
-		},
+		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{
+			FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: nid},
+		}}},
 		ConfirmedAt: time.Now().Unix(),
 	}, nil
 }
@@ -1183,6 +1239,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 		hostIdx:  0,
 		nonce:    7,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}), // open: stall recording only runs while SendOnly is live
 	}
 	inf.contentChunks.Store(1)
 	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
@@ -1227,7 +1284,9 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
 	release := make(chan struct{})
-	env := setupTestProxyWithClients(t, []user.HostClient{&streamContentThenReleaseClient{releaseCh: release}})
+	client := &streamContentThenReleaseClient{releaseCh: release}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	client.respond = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 
 	var buf syncedBuffer
 	errCh := make(chan error, 1)
@@ -1298,6 +1357,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    1,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	first.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	first.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1309,6 +1369,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 		hostIdx:  0,
 		nonce:    2,
 		sendTime: time.Now().Add(-time.Second),
+		done:     make(chan struct{}),
 	}
 	second.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	second.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
@@ -1567,7 +1628,7 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	inf := &inflight{
@@ -1581,13 +1642,7 @@ func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) 
 	require.False(t, skip)
 	require.Empty(t, reason)
 
-	inf.resp.Mempool = []*types.DevshardTx{
-		{
-			Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: prepared.Nonce()},
-			},
-		},
-	}
+	inf.resp = applicableResponse(t, env, prepared.Nonce())
 	require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), inf.resp, prepared.Nonce()))
 
 	reason, skip = emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
@@ -1607,7 +1662,7 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	body := []byte(modelNotFoundErrorEvent + "data: [DONE]\n\n")
@@ -1648,7 +1703,11 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 
 	releaseVote()
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[prepared.Nonce()].Status, "the open nonce never reached a timeout vote")
+	// Protocol timeout votes sleep/vote off the outer barrier; TimedOut can land
+	// after the outer cleanup Done once the vote gate opens.
+	require.Eventually(t, func() bool {
+		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
+	}, testWaitLimit, 20*time.Millisecond, "the open nonce never reached a timeout vote")
 }
 
 func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
@@ -1686,6 +1745,7 @@ func TestRunInference_ADeterministicRejectionStopsOnceASecondHostAgrees(t *testi
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+			allowSpeculativeAttemptsOnWholeGroup(t)
 			shortRefusalWindow(t)
 			rejectingHost := &errorStreamWithoutFinishClient{errorEvent: testCase.errorEvent}
 			env := setupTestProxyWithClients(t, []user.HostClient{rejectingHost, rejectingHost, rejectingHost})
@@ -1706,6 +1766,7 @@ func TestRunInference_ADeterministicRejectionStopsOnceASecondHostAgrees(t *testi
 
 func TestRunInference_OneContextLengthRejectionStillTriesAnotherHost(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	setSpeculativeTiming(t, 500*time.Millisecond, FirstTokenTimeoutCap, PerInputTokenFirstTokenLag, SecondaryWaitAfterWinner)
 	shortRefusalWindow(t)
 	hedgeStarted := make(chan struct{})
@@ -1768,25 +1829,17 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	require.NoError(t, err, "another host serves a prompt one host rejected")
 	require.Contains(t, buf.String(), `"choices"`)
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Equal(t, uint32(1), missesForSlot(t, env, 1), "the host that rejected the prompt still owes its nonce a timeout vote")
+	// Not-yet-due timeout votes sleep off the drain barrier and apply at the
+	// protocol deadline, so Missed can land after the outer cleanup Done.
+	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) >= 1 }, 3*time.Second, 20*time.Millisecond,
+		"the host that rejected the prompt still owes its nonce a timeout vote")
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
 	releaseCh := make(chan struct{})
-	client := &delayedResultClient{
-		releaseCh: releaseCh,
-		response: &host.HostResponse{
-			Nonce: 1,
-			Mempool: []*types.DevshardTx{
-				{
-					Tx: &types.DevshardTx_FinishInference{
-						FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1},
-					},
-				},
-			},
-		},
-	}
+	client := &delayedResultClient{releaseCh: releaseCh}
 	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	client.respond = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 
 	ctx, cancel := context.WithCancel(context.Background())
 	errCh := make(chan error, 1)
@@ -2059,6 +2112,7 @@ func TestRunInference_SpeculativeOnKill(t *testing.T) {
 
 func TestRunInference_SpeculativeFallsThroughMultipleDeadHosts(t *testing.T) {
 	zeroReceiptTimeout(t)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	env := setupTestProxy(t, 4, nil, true)
 
 	// nonce 1 -> host 1, nonce 2 -> host 2, nonce 3 -> host 3.
@@ -2381,6 +2435,7 @@ func TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces(t *testing.T)
 	require.NoError(t, err)
 	perf := NewPerfTracker(nil)
 	redundancy := NewRedundancy(session, perf, numHosts, "llama")
+	t.Cleanup(func() { _ = session.Close() })
 	t.Cleanup(redundancy.Stop)
 
 	var buf bytes.Buffer
@@ -2567,7 +2622,7 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	inf := &inflight{

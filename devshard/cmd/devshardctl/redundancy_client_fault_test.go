@@ -58,7 +58,7 @@ func TestErrorMissRunnable_WithoutASession(t *testing.T) {
 func TestErrorMissRunnable_AlternativeZeroFinishCannotHideAppliedBilling(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce, execIdx := prepared.Nonce(), prepared.HostIdx()
 	signer := env.verifiers[execIdx].signer
@@ -101,7 +101,7 @@ func TestErrorMissRunnable_AlternativeZeroFinishCannotHideAppliedBilling(t *test
 func appliedErrorFinishInflight(t *testing.T, env *testProxyEnv, errorLine string, outputTokens uint64) *inflight {
 	t.Helper()
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce, execIdx := prepared.Nonce(), prepared.HostIdx()
 	signer := env.verifiers[execIdx].signer

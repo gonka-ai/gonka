@@ -12,6 +12,10 @@ services:
       DEVSHARD_GATEWAY_HOST_PING_INTERVAL: ${DEVSHARD_GATEWAY_HOST_PING_INTERVAL:-15s}
       DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: ${DEVSHARD_GATEWAY_HOST_PING_TIMEOUT:-2s}
       DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: ${DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY:-8}
+      # HA hosts refuse peer /rpc/ on InferenceUrl :8080. Dial proxy-router's
+      # HTTP/2 port. These override config.devshard.env.
+      DEVSHARD_RPC_H2_UPGRADE: "true"
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-9443}
     volumes:
       - ${DEVSHARD_STORAGE_HOST_DIR:-.devshardctl}:/root/.devshardctl
     expose:

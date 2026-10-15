@@ -191,6 +191,23 @@ func TestApplyDiff_StartInference(t *testing.T) {
 	require.Equal(t, uint32(1), rec.ExecutorSlot)
 }
 
+func TestApplyDiff_StartInference_ProtocolVersionMismatch(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId:     1,
+		PromptHash:      []byte("prompt"),
+		Model:           "llama",
+		InputLength:     100,
+		MaxTokens:       testutil.TestMaxTokens,
+		StartedAt:       1000,
+		ProtocolVersion: "other-version",
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrProtocolVersionMismatch)
+}
+
 func TestApplyDiff_ConfirmStart(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
@@ -1603,6 +1620,43 @@ func TestApplyDiff_Validation_MultipleValidators(t *testing.T) {
 	require.Equal(t, expectedBitmap2, rec.ValidatedBy, "both validator bits must be set")
 }
 
+// TestApplyDiff_Validation_LateFalseOnChallengedInvalidates covers the
+// concurrent Phase-A race: a second MsgValidation{Valid:false} that lands
+// after Finished→Challenged must count toward VoteThreshold so the inference
+// reaches Invalidated instead of burning the voter without weight.
+func TestApplyDiff_Validation_LateFalseOnChallengedInvalidates(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100_000)
+	require.Equal(t, uint32(1), sm.Config().VoteThreshold, "3-slot group uses threshold 1")
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	before := sm.Balance()
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[1].Status)
+	require.Equal(t, uint32(1), sm.SnapshotState().Inferences[1].VotesInvalid)
+
+	valMsg2 := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
+	valMsg2.ProposerSig = testutil.SignProposerTx(t, hosts[2], valMsg2)
+	nonce = sm.SnapshotState().LatestNonce + 1
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg2)})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	rec := sm.SnapshotState().Inferences[1]
+	require.Equal(t, types.StatusInvalidated, rec.Status,
+		"late Phase-A false vote on Challenged must invalidate (votes_invalid=%d threshold=%d)",
+		rec.VotesInvalid, sm.Config().VoteThreshold)
+	require.Greater(t, sm.Balance(), before, "invalidation must refund ActualCost")
+}
+
 func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 	// Multi-slot validator tries to validate twice via different slots -> ErrDuplicateValidation.
 	signers := []*signing.Secp256k1Signer{
@@ -2728,6 +2782,40 @@ func applyStartConfirmWithWarmKey(t *testing.T, sm *StateMachine, user *signing.
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
+}
+
+func TestWarmKey_VerifyConfirmStartDoesNotStoreTheBinding(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warmSigner := testutil.MustGenerateKey(t)
+	executorIdx := 1
+
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+	}
+	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
+
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	require.NoError(t, sm.VerifyConfirmStart(1, 1000, execSig))
+	require.Empty(t, sm.WarmKeys(), "a receipt check must not write a warm key before the diff")
+	rec, ok := sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+
+	nonce++
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, warmSigner.Address(), sm.WarmKeys()[uint32(executorIdx)])
 }
 
 func TestWarmKey_ConfirmStartWithWarmKey(t *testing.T) {

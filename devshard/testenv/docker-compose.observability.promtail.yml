@@ -1,0 +1,20 @@
+# Promtail log collector fragment (jaeger-promtail / tempo-promtail profiles).
+
+services:
+  promtail:
+    image: grafana/promtail:3.6.10
+    command:
+      - -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ${TESTENV_OBS_CONFIG_DIR:-.}/observability/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - testenv_promtail_data:/tmp
+    depends_on:
+      - loki
+    networks:
+      - testenv
+    restart: unless-stopped
+
+volumes:
+  testenv_promtail_data:

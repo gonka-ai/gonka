@@ -14,8 +14,12 @@ import (
 )
 
 // TestEpochSwitch verifies POST /testenv/epoch advance fast-forwards mock-chain to the
-// next PoC start block, rolls next_poc_start forward, and wakes GetRuntimeConfig long-poll
-// with a higher CurrentEpochID while devshardd is running.
+// next PoC start block, rolls next_poc_start forward, and surfaces a higher
+// CurrentEpochId on GetRuntimeConfig while devshardd is running.
+//
+// Do not assert on the first long-poll wake: AdvanceEpoch floods blocks and can
+// notify mid-catch-up (params height ahead of epoch). Wait Eventually for the
+// settled epoch + height, same pattern as other citests.
 func TestEpochSwitch(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -50,41 +54,35 @@ func TestEpochSwitch(t *testing.T) {
 	startHeight := baseline.Config.ParamsBlockHeight
 	require.Equal(t, before.EpochIndex, startEpoch)
 
-	harness.Step(t, "long-poll blocked at epoch %d height %d; advancing epoch", startEpoch, startHeight)
-	type pollResult struct {
-		resp *gen.GetRuntimeConfigResponse
-		err  error
-	}
-	done := make(chan pollResult, 1)
-	pollCtx, cancelPoll := context.WithTimeout(ctx, 45*time.Second)
-	defer cancelPoll()
-	go func() {
-		r, err := harness.WaitRuntimeConfigLongPoll(pollCtx, nm, startHeight, 40*time.Second)
-		done <- pollResult{resp: r, err: err}
-	}()
-
-	time.Sleep(200 * time.Millisecond)
+	harness.Step(t, "advance epoch (target next PoC start=%d)", targetHeight)
 	harness.PatchTestenvEpochAdvance(t, client, mockDapi.HTTP)
 
-	var updated *gen.GetRuntimeConfigResponse
-	select {
-	case r := <-done:
-		require.NoError(t, r.err)
-		updated = r.resp
-	case <-time.After(30 * time.Second):
-		t.Fatal("long-poll did not wake after POST /testenv/epoch advance")
-	}
-
-	require.False(t, updated.Unchanged)
-	require.NotNil(t, updated.Config)
-	require.Greater(t, updated.Config.CurrentEpochId, startEpoch)
-	require.Greater(t, updated.Config.ParamsBlockHeight, startHeight)
-	t.Logf("citest: long-poll woke epoch=%d params_block_height=%d",
-		updated.Config.CurrentEpochId, updated.Config.ParamsBlockHeight)
+	harness.Step(t, "wait until GetRuntimeConfig shows epoch > %d and params height >= %d",
+		startEpoch, targetHeight)
+	var settled *gen.GetRuntimeConfigResponse
+	ok := harness.AssertEventually(t, 45*time.Second, 500*time.Millisecond, func() bool {
+		resp, err := harness.GetRuntimeConfigOnce(ctx, nm, 0)
+		if err != nil || resp.Unchanged || resp.Config == nil {
+			return false
+		}
+		if resp.Config.CurrentEpochId <= startEpoch {
+			return false
+		}
+		if resp.Config.ParamsBlockHeight < targetHeight {
+			return false
+		}
+		settled = resp
+		return true
+	})
+	require.True(t, ok, "runtime config did not settle to epoch>%d params_height>=%d (start height=%d)",
+		startEpoch, targetHeight, startHeight)
+	require.NotNil(t, settled)
+	t.Logf("citest: settled epoch=%d params_block_height=%d",
+		settled.Config.CurrentEpochId, settled.Config.ParamsBlockHeight)
 
 	harness.Step(t, "mock-chain caught up to next PoC start and rolled next_poc forward")
 	after := harness.GetMockChainSnapshot(t, cfg, eps, client)
-	require.Equal(t, updated.Config.CurrentEpochId, after.EpochIndex)
+	require.Equal(t, settled.Config.CurrentEpochId, after.EpochIndex)
 	require.GreaterOrEqual(t, after.BlockHeight, targetHeight)
 	require.Equal(t, targetHeight, after.PocStart)
 	require.Equal(t, targetHeight+epochLength, after.NextPocStart)

@@ -50,14 +50,14 @@ type BridgeAddressesResponse struct {
 
 // EpochResponse defines model for EpochResponse.
 type EpochResponse struct {
-	ActiveConfirmationPocEvent RawProtoJson `json:"active_confirmation_poc_event"`
-	BlockHeight                Int64        `json:"block_height"`
-	EpochParams                RawProtoJson `json:"epoch_params"`
-	EpochStages                RawProtoJson `json:"epoch_stages"`
-	IsConfirmationPocActive    bool         `json:"is_confirmation_poc_active"`
-	LatestEpoch                LatestEpoch  `json:"latest_epoch"`
-	NextEpochStages            RawProtoJson `json:"next_epoch_stages"`
-	Phase                      string       `json:"phase"`
+	ActiveConfirmationPocEvent *RawProtoJson `json:"active_confirmation_poc_event,omitempty"`
+	BlockHeight                Int64         `json:"block_height"`
+	EpochParams                RawProtoJson  `json:"epoch_params"`
+	EpochStages                RawProtoJson  `json:"epoch_stages"`
+	IsConfirmationPocActive    bool          `json:"is_confirmation_poc_active"`
+	LatestEpoch                LatestEpoch   `json:"latest_epoch"`
+	NextEpochStages            RawProtoJson  `json:"next_epoch_stages"`
+	Phase                      string        `json:"phase"`
 }
 
 // ExcludedParticipant defines model for ExcludedParticipant.

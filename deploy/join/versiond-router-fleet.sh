@@ -608,6 +608,8 @@ parent_diagnostic_available() {
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
+# Coarse and versioned listeners are :8080. Peer RPC is a second listen, so
+# its parent backend has to leave rotation in the same drain window.
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
@@ -628,7 +630,8 @@ parent_server_refs() {
             backend = $(column["pxname"])
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
-                    backend ~ /^versiond_routers_/) &&
+                    backend ~ /^versiond_routers_/ ||
+                    backend == "rpc_h2_upstream") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
                 $(column["status"]) ~ status_pattern) {
@@ -681,10 +684,12 @@ parent_address_withdrawal_state() {
             backend = $(column["pxname"])
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
-                    backend ~ /^versiond_routers_/) &&
+                    backend ~ /^versiond_routers_/ ||
+                    backend == "rpc_h2_upstream") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
-                $(column["status"]) ~ /^UP/) admitted = 1
+                ($(column["status"]) ~ /^UP/ ||
+                    $(column["status"]) == "no check")) admitted = 1
         }
         END {
             if (!valid) exit 2
@@ -1550,7 +1555,7 @@ prepare_slot_networks() {
 }
 
 pull_router_image() {
-    local image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    local image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     [[ $pull_policy != never ]] || return 0
     if slot_compose "${slots[0]}" render pull --policy "$pull_policy" router; then
         return 0
@@ -1574,7 +1579,7 @@ desired_slot_config_hash() {
 # configuration is rendered per slot on first use.
 candidate_image_id=
 resolve_candidate() {
-    candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$candidate_image") || fail \
         "candidate router image is not available: $candidate_image"
     desired_hashes=()

@@ -82,7 +82,7 @@ func TestServer_VerifyErrorMiss_AcceptsAndBindsHash(t *testing.T) {
 		Accept:       true,
 		ResponseHash: sum[:],
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	verifier := signing.NewSecp256k1Verifier()
 	recovered, err := verifier.RecoverAddress(data, resp.Signature)

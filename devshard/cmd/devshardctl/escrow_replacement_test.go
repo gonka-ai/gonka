@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -106,6 +107,26 @@ func TestGatewayBalanceExhaustedTakesTheEscrowOutOfServiceWhenItsReplacementFail
 	require.False(t, stillRegistered, "a failed replacement left the depleted runtime resident with its session and series")
 }
 
+// Test flow:
+//  1. Enable settlement globally but disable it for the depleted escrow's model, and make its replacement fail.
+//  2. Exhaust the escrow's balance and wait for the replacement attempt to finish.
+//  3. Assert the runtime is retired and the escrow is not saved as due for settlement, because its model does not settle.
+func TestGatewayBalanceExhaustedRetiresTheRuntimeWhenItsModelDoesNotSettle(t *testing.T) {
+	gateway, depletedRuntime := newReplacementTestGateway(t, withoutSettlementForTheModel)
+	stubCreateOnChainFailingBeforeBroadcast(t)
+	depletedRuntime.proxy.redundancy = &Redundancy{}
+	gateway.attachEscrowChecker(depletedRuntime)
+
+	depletedRuntime.proxy.redundancy.onBalanceExhausted()
+	waitForReplacementIdle(t, gateway, depletedRuntime.id)
+
+	gateway.mu.Lock()
+	_, stillRegistered := gateway.runtimes[depletedRuntime.id]
+	gateway.mu.Unlock()
+	require.False(t, stillRegistered, "a depleted escrow whose model does not settle left its runtime resident until restart")
+	require.False(t, devshardIDs(t, gateway.store)[depletedRuntime.id].SettlementPending, "a depleted escrow was saved due for settlement although its model does not settle")
+}
+
 func TestGatewayCheckBalancesSwapsADepletedEscrowForARegularReplacement(t *testing.T) {
 	gateway, depletedRuntime := newReplacementTestGateway(t, withoutSettlement)
 	stubCreateOnChain(t, "TXCONFIRMED", 99)
@@ -208,21 +229,29 @@ func withoutSettlement(settings *GatewaySettings) {
 	settings.EscrowRotation.SettlementEnabled = false
 }
 
+func withoutSettlementForTheModel(settings *GatewaySettings) {
+	settings.EscrowRotation.SettlementEnabled = true
+	isSettlementEnabled := false
+	settings.EscrowRotation.Models[0].SettlementEnabled = &isSettlementEnabled
+}
+
 func withoutReplacementModel(settings *GatewaySettings) {
 	settings.EscrowRotation.Models[0].ModelID = "another-model"
 }
 
-func pendingCommitments(t *testing.T, store *GatewayStore) []GatewayEscrowCommitment {
+func pendingCommitments(t *testing.T, store GatewayStore) []GatewayEscrowCommitment {
 	t.Helper()
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	return commitments
 }
 
 // rejectDevshardColumnUpdate makes the store refuse writing the value to the escrow's column and returns a function that lifts the refusal.
-func rejectDevshardColumnUpdate(t *testing.T, store *GatewayStore, escrowID, column string, rejectedValue int) func() {
+func rejectDevshardColumnUpdate(t *testing.T, store GatewayStore, escrowID, column string, rejectedValue int) func() {
 	t.Helper()
-	_, err := store.db.Exec(fmt.Sprintf(`
+	sqlite, ok := store.(*SQLiteGatewayStore)
+	require.True(t, ok, "column trigger requires the sqlite gateway store")
+	_, err := sqlite.db.Exec(fmt.Sprintf(`
 		CREATE TRIGGER reject_%[2]s_update
 		BEFORE UPDATE OF %[2]s ON gateway_devshards
 		WHEN NEW.id = '%[1]s' AND NEW.%[2]s = %[3]d
@@ -231,7 +260,7 @@ func rejectDevshardColumnUpdate(t *testing.T, store *GatewayStore, escrowID, col
 		END`, escrowID, column, rejectedValue))
 	require.NoError(t, err)
 	return func() {
-		_, err := store.db.Exec(fmt.Sprintf(`DROP TRIGGER reject_%s_update`, column))
+		_, err := sqlite.db.Exec(fmt.Sprintf(`DROP TRIGGER reject_%s_update`, column))
 		require.NoError(t, err)
 	}
 }
@@ -256,7 +285,7 @@ func waitForReplacementIdle(t *testing.T, gateway *Gateway, escrowID string) {
 func waitForSettlementFinished(t *testing.T, gateway *Gateway, escrowID string, settled *atomic.Int32) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		record, _, err := gateway.store.GetDevshard(escrowID)
+		record, _, err := gateway.store.GetDevshard(context.Background(), escrowID)
 		return settled.Load() == 1 && err == nil && !record.SettlementPending && !isSettlementInFlight(gateway, escrowID)
 	}, time.Second, 10*time.Millisecond, "settlement of escrow %s did not finish", escrowID)
 }

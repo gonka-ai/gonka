@@ -74,6 +74,26 @@ data class UpdateParams(
     }
 }
 
+data class PutDevshardApprovedVersion(
+    val authority: String = "",
+    val version: DevshardApprovedVersion,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgPutDevshardApprovedVersion"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
+data class DeleteDevshardApprovedVersion(
+    val authority: String = "",
+    val name: String,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgDeleteDevshardApprovedVersion"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
 data class UpdateRestrictionsParams(
     val authority: String = "",
     val params: RestrictionsParams,

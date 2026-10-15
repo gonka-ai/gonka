@@ -54,7 +54,15 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+	originLookups := newOriginLookupLimiter()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// HAProxy normalizes before its path zones. A request that reaches
+		// versiond with a still-encoded RPC path would be forwarded on the
+		// decoded Path (RawPath cleared in the rewrite) and skip those zones.
+		if encodedPeerRPCPath(r.URL) {
+			http.Error(w, "encoded rpc path", http.StatusBadRequest)
+			return
+		}
 		path := strings.TrimPrefix(r.URL.Path, "/")
 		path = strings.TrimPrefix(path, "devshard/")
 		if path == "" {
@@ -74,6 +82,22 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 			rest = "/" + parts[1]
 		}
 
+		// PeerAuth Watch is a keepalive, not a user request. Counting it
+		// would hold the retiring generation until DrainTimeout: the stream
+		// stays open for the session TTL, and stop/start waits for inflight
+		// to hit zero. The child is still the request's backend; Retire just
+		// does not wait for this stream.
+		if peerAuthWatchPath(rest) {
+			table, _ := routes.Load().(RouteTable)
+			target := table[version]
+			if target == nil {
+				http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
+				return
+			}
+			serveChild(w, r, target, rest, originLookups)
+			return
+		}
+
 		target, ok := acquireTarget(routes, version)
 		if !ok {
 			http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
@@ -81,8 +105,21 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 		}
 		defer target.release()
 
-		reverseProxy(target.Address(), rest).ServeHTTP(w, r)
+		serveChild(w, r, target, rest, originLookups)
 	})
+}
+
+func encodedPeerRPCPath(u *url.URL) bool {
+	if u == nil || u.RawPath == "" {
+		return false
+	}
+	return strings.Contains(u.Path, "/sessions/") && strings.Contains(u.Path, "/rpc/")
+}
+
+func peerAuthWatchPath(rest string) bool {
+	// The procedure is "...v1.PeerAuthService/Watch": the byte before
+	// PeerAuthService is the protobuf package dot, not a slash.
+	return strings.HasSuffix(rest, "PeerAuthService/Watch")
 }
 
 func acquireTarget(routes routeTableLoader, version string) (*Target, bool) {
@@ -125,10 +162,16 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routes routeTab
 		return
 	}
 
+	if isRPCStatsPath(rest) {
+		serveRPCStatsMerge(w, r, routes)
+		return
+	}
+
 	// Process-level obs (/metrics, /stats/shards list): pin to primary.
 	// Multi-version aggregation of /stats/shards is deferred; primary is the
 	// newest approved version by numeric/dotted comparison (not lexicographic).
 	// /healthz is owned by versiond's mux (not this handler).
+	// GET /stats/rpc is the exception: merge every running child (Phase 4 step 8).
 	escrowID, scoped := escrowIDFromObsPath(rest)
 	if !scoped {
 		serveAcquired(w, r, routes, primaryVersion(versions), rest)
@@ -165,7 +208,7 @@ func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoad
 		return
 	}
 	defer target.release()
-	reverseProxy(target.Address(), rest).ServeHTTP(w, r)
+	reverseProxy(target, rest, nil, nil).ServeHTTP(w, r)
 }
 
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
@@ -178,7 +221,7 @@ func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeT
 			continue
 		}
 		rec := httptest.NewRecorder()
-		reverseProxy(target.Address(), rest).ServeHTTP(rec, r.Clone(r.Context()))
+		reverseProxy(target, rest, nil, nil).ServeHTTP(rec, r.Clone(r.Context()))
 		target.release()
 		switch {
 		case rec.Code == http.StatusNotFound:
@@ -218,8 +261,28 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 	return "", false
 }
 
-func reverseProxy(target, rest string) *httputil.ReverseProxy {
-	targetURL, err := url.Parse("http://" + target)
+func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest string, lim *originLookupLimiter) {
+	// A token already rejected in this window is the child's
+	// invalid_session_token, not the IP budget. 429 would not send the
+	// peer back through Attach.
+	if lim.cachedInvalidToken(r, rest) {
+		writeInvalidSessionToken(w)
+		return
+	}
+	release, ok := lim.admit(r, rest)
+	if !ok {
+		w.Header().Set(headerDevshardError, errorEscrowLookupLimited)
+		http.Error(w, "too many escrow lookups", http.StatusTooManyRequests)
+		return
+	}
+	defer release()
+	reverseProxy(target, rest, lim, release).ServeHTTP(w, r)
+}
+
+// reverseProxy forwards to the child. release, when set, runs once the
+// child's response headers are observed.
+func reverseProxy(target *Target, rest string, lim *originLookupLimiter, release func()) *httputil.ReverseProxy {
+	targetURL, err := url.Parse("http://" + target.Address())
 	if err != nil {
 		return &httputil.ReverseProxy{
 			Director: func(req *http.Request) {
@@ -231,9 +294,16 @@ func reverseProxy(target, rest string) *httputil.ReverseProxy {
 			},
 		}
 	}
-	return &httputil.ReverseProxy{
+	rp := &httputil.ReverseProxy{
+		Transport: target.transport(), // h2c or HTTP/1.1, chosen when the child was registered
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetXForwarded()
+			// SetXForwarded rewrites X-Forwarded-*. Keep X-Real-IP from the
+			// trusted ingress (nginx / versiond-router). versiond keys the
+			// unknown-escrow IP cap on the inbound header; the child does not.
+			if ip := pr.In.Header.Get(originIPHeader); ip != "" {
+				pr.Out.Header.Set(originIPHeader, ip)
+			}
 			pr.Out.URL.Scheme = targetURL.Scheme
 			pr.Out.URL.Host = targetURL.Host
 			pr.Out.Host = targetURL.Host
@@ -242,6 +312,18 @@ func reverseProxy(target, rest string) *httputil.ReverseProxy {
 		},
 		FlushInterval: -1, // flush immediately for SSE
 	}
+	if lim != nil {
+		rp.ModifyResponse = func(resp *http.Response) error {
+			if resp != nil && resp.Request != nil {
+				lim.observe(resp.Request, rest, resp)
+			}
+			if release != nil {
+				release()
+			}
+			return nil
+		}
+	}
+	return rp
 }
 
 func writeRecorder(w http.ResponseWriter, rec *httptest.ResponseRecorder) {

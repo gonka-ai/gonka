@@ -73,9 +73,9 @@ const snapshotInterval = 500
 // the snapshot at restart time then reject with "invalid nonce: must be
 // sequential: expected M, got N" because we never re-send the gap diffs.
 //
-// A blob with no state, or a cursor that does not name every host, is not
-// restored. Recovery replays from nonce 1. A host recorded at cursor 0 is a
-// real cursor: that host's prefix is backfilled.
+// A blob with no state is not restored; recovery replays from nonce 1. A host
+// the cursor does not name has never answered, so it is at 0 and its prefix
+// is backfilled from the store.
 type sessionSnapshot struct {
 	State            *types.EscrowState     `json:"state"`
 	HostSyncNonce    map[int]uint64         `json:"host_sync_nonce,omitempty"`
@@ -97,25 +97,20 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64
 	return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
 }
 
-// hostCursorComplete reports whether cursor names every host in the group.
-// A missing map, or a map that skips a host, is not a cursor: recovery must
-// not treat the gap as "host is at 0" and backfill 1..snapshot under a
-// restored state. A present 0 is a real cursor.
-func hostCursorComplete(cursor map[int]uint64, groupSize int) bool {
-	if cursor == nil || groupSize <= 0 {
-		return false
-	}
+// restoredHostCursor names every host in the group. A host the snapshot does
+// not name is at 0. A value past snapNonce can only be a host's unverified
+// claim, so it is clamped: no host can hold a nonce the journal does not.
+func restoredHostCursor(cursor map[int]uint64, groupSize int, snapNonce uint64) map[int]uint64 {
+	out := make(map[int]uint64, groupSize)
 	for h := 0; h < groupSize; h++ {
-		if _, ok := cursor[h]; !ok {
-			return false
-		}
+		out[h] = min(cursor[h], snapNonce)
 	}
-	return true
+	return out
 }
 
-// minHostSyncNonce returns the smallest cursor value across a complete host
-// map. Callers must pass a cursor hostCursorComplete accepts. A host at 0
-// pulls the minimum to 0, and recovery backfills that host from nonce 1.
+// minHostSyncNonce returns the smallest cursor value across the group. A
+// missing host counts as 0. A host at 0 pulls the minimum to 0, and recovery
+// backfills that host from nonce 1.
 func minHostSyncNonce(cursor map[int]uint64, groupSize int) uint64 {
 	if len(cursor) == 0 || groupSize == 0 {
 		return 0
@@ -195,9 +190,7 @@ func RecoverSession(
 		return finishRecover(sess, sm, 1)
 	}
 
-	// Try to restore from a snapshot to skip replaying old diffs. A blob
-	// that does not carry a cursor for every host is ignored: replaying
-	// from nonce 1 is the recovery, not a backfill under restored state.
+	// Try to restore from a snapshot to skip replaying old diffs.
 	var snapshotCursor map[int]uint64
 	snapshotRestored := false
 	replayFrom := uint64(1)
@@ -206,9 +199,6 @@ func RecoverSession(
 		snapState, cursor, committedEntries, sealedNonces, floorProto, decodeErr := decodeSnapshot(snapData)
 		if decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
-		} else if !hostCursorComplete(cursor, len(group)) {
-			log.Printf("recover_session escrow=%s snapshot_nonce=%d incomplete_host_cursor=%d (replaying from 1)",
-				escrowID, snapNonce, len(cursor))
 		} else {
 			// A rejected blob degrades to a journal replay; if that cannot run
 			// either, RestoreStateWithFloor fails closed rather than serving
@@ -222,14 +212,43 @@ func RecoverSession(
 			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
 				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
 			}
-			sm.RestoreCommittedEntries(committedEntries)
-			sm.RestoreSealedNonces(sealedNonces)
-			replayFrom = snapNonce + 1
-			sess.nonce = snapNonce
-			snapshotCursor = cursor
-			snapshotRestored = true
-			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
-				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
+			// A rejected blob has already advanced the machine, so replay from 1
+			// needs a fresh one. The snapshot root is not compared to the diff
+			// hash: a seal can fold into that nonce after the diff was stored,
+			// and replaying the diffs would drop it.
+			recreate := func() error {
+				fresh, ferr := state.NewStateMachine(
+					escrowID, meta.Config, meta.Group, meta.InitialBalance,
+					meta.CreatorAddr, verifier, store,
+					stateOpts...,
+				)
+				if ferr != nil {
+					return fmt.Errorf("recreate state machine: %w", ferr)
+				}
+				freshSess, ferr := NewSession(fresh, signer, escrowID, meta.Group, clients, verifier,
+					WithStorage(store), WithHeartbeatConfig(fresh.HeartbeatConfig()))
+				if ferr != nil {
+					return fmt.Errorf("recreate session: %w", ferr)
+				}
+				sm = fresh
+				sess = freshSess
+				return nil
+			}
+			if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
+					escrowID, snapNonce, commitErr)
+				if recErr := recreate(); recErr != nil {
+					return nil, nil, recErr
+				}
+			} else {
+				sm.RestoreSealedNonces(sealedNonces)
+				replayFrom = snapNonce + 1
+				sess.nonce = snapNonce
+				snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
+				snapshotRestored = true
+				log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
+					escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor))
+			}
 		}
 	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 		log.Printf("recover_session escrow=%s snapshot_load_error=%v (replaying from 1)", escrowID, snapErr)
@@ -246,11 +265,11 @@ func RecoverSession(
 	// non-contiguous slice and the host rejects (it requires sequential
 	// nonces, only silent-skipping diffs <= its currentNonce).
 	//
-	// A complete cursor whose slowest host is behind snapNonce backfills
-	// that suffix into sess.diffs. A host at 0 is included: that is a real
-	// cursor, and the read is paged. An ignored snapshot (future nonce,
-	// decode failure, incomplete cursor) replays from 1, which already
-	// covers the range, so this block does not run.
+	// A cursor whose slowest host is behind snapNonce backfills that suffix
+	// into sess.diffs. A host at 0, named or not, is included; the read is
+	// paged and sess.diffs stays capped. An ignored snapshot (future nonce,
+	// decode failure) replays from 1, which already covers the range, so
+	// this block does not run.
 	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
 		if backfillFrom <= snapNonce {
@@ -382,27 +401,44 @@ func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*S
 	if err != nil {
 		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	// A tail replay or a snapshot restore already has the obs rows the live
-	// path wrote. Rebuilding them would clear that durable state, so only the
-	// applied-key set is read back from the journal.
-	if replayFrom != 1 {
-		if err := restoreAppliedTxKeys(sess, meta.LatestNonce); err != nil {
-			return nil, nil, err
+	rebuildObs := func() error {
+		return storage.RunValidationObsRebuild(sess.store, sess.escrowID, func() error {
+			return storage.RebuildValidationObsFromJournal(
+				sess.store,
+				sess.escrowID,
+				1,
+				meta.LatestNonce,
+				storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				func(page []types.DiffRecord) error {
+					noteAppliedTxKeys(sess, page)
+					return nil
+				},
+			)
+		})
+	}
+	if replayFrom == 1 {
+		if err := rebuildObs(); err != nil {
+			return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 		}
 		return sess, sm, nil
 	}
-	if err := storage.RebuildValidationObsFromJournal(
-		sess.store,
-		sess.escrowID,
-		1,
-		meta.LatestNonce,
-		storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-		func(page []types.DiffRecord) error {
-			noteAppliedTxKeys(sess, page)
-			return nil
-		},
-	); err != nil {
-		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+	// A tail replay or a snapshot restore keeps the obs rows on disk, so it
+	// rebuilds only when an earlier rebuild cleared them and never finished.
+	// That retry is best effort: obs is not state, and a failure keeps the
+	// mark for the next start instead of stopping the session.
+	pending, err := sess.store.ValidationObsRebuildPending(sess.escrowID)
+	if err != nil {
+		log.Printf("recover_session escrow=%s obs_rebuild_pending_read_failed=%v", sess.escrowID, err)
+	} else if pending {
+		log.Printf("recover_session escrow=%s obs_rebuild_retry from=1 to=%d", sess.escrowID, meta.LatestNonce)
+		retryErr := rebuildObs()
+		if retryErr == nil {
+			return sess, sm, nil
+		}
+		log.Printf("recover_session escrow=%s obs_rebuild_retry_failed=%v", sess.escrowID, retryErr)
+	}
+	if err := restoreAppliedTxKeys(sess, meta.LatestNonce); err != nil {
+		return nil, nil, err
 	}
 	return sess, sm, nil
 }
