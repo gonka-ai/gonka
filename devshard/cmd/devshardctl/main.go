@@ -38,6 +38,10 @@ const (
 	defaultMaxConcurrentRequests        = 512
 	startupSkipReasonLocalRecovery      = "local_recovery_failed"
 	startupSkipReasonParticipantMissing = "participant_missing"
+	// startupSkipReasonRuntimeBuildFailed is a build error with no final meaning: a
+	// transient chain call, a busy SQLite file, a recovery step that did not finish.
+	// The escrow stays active and the gateway retries the build in the background.
+	startupSkipReasonRuntimeBuildFailed = "runtime_build_failed"
 )
 
 type startupSkippedEscrow struct {
@@ -499,7 +503,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
-	gateway.awaitParticipants(startupSkipped)
+	gateway.awaitSkippedEscrows(startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams
@@ -630,9 +634,17 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 				}
 				continue
 			}
-			if firstFatal == nil {
-				firstFatal = res.err
-			}
+			// Anything else is one escrow's problem for this run, not the gateway's:
+			// a transient chain call, a busy SQLite file, a recovery step that did not
+			// finish. It must not stop the escrows that have nothing to do with it.
+			// Keep the escrow active, report it, and let the background retry start it.
+			log.Printf("devshard %s runtime build failed, skipping runtime and keeping it active for a background retry: %v", cfg.ID, res.err)
+			skipped = append(skipped, res.idx)
+			startupSkipped = append(startupSkipped, startupSkippedEscrow{
+				EscrowID: cfg.ID,
+				Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+				Reason:   startupSkipReasonRuntimeBuildFailed,
+			})
 			continue
 		}
 		runtimes[res.idx] = res.rt
@@ -686,6 +698,16 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 	if len(deactivatedIDs) > 0 {
 		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
 			len(deactivatedIDs), startupSkipReasonLocalRecovery, strings.Join(deactivatedIDs, ","))
+	}
+	var retryIDs []string
+	for _, skippedEscrow := range startupSkipped {
+		if skippedEscrow.Reason == startupSkipReasonRuntimeBuildFailed {
+			retryIDs = append(retryIDs, skippedEscrow.EscrowID)
+		}
+	}
+	if len(retryIDs) > 0 {
+		log.Printf("devshard_gateway_startup_degraded retried_escrows=%d reason=%s escrow_ids=%q",
+			len(retryIDs), startupSkipReasonRuntimeBuildFailed, strings.Join(retryIDs, ","))
 	}
 	return out, startupSkipped, nil
 }

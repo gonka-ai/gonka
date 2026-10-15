@@ -153,6 +153,10 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 	require.True(t, reloaded.Devshards[1].Active)
 }
 
+// Test flow:
+//  1. Hold one active escrow whose builder fails with a transient error (a dial timeout).
+//  2. Build the runtimes at startup.
+//  3. Assert the startup succeeds with no runtime, the escrow is skipped for a background retry, and it stays active.
 func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -183,8 +187,11 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	_, _, err = buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
-	require.Error(t, err)
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	require.NoError(t, err)
+	require.Empty(t, runtimes)
+	require.Equal(t, []startupSkippedEscrow{{EscrowID: "12", Model: "Qwen/Test", Reason: startupSkipReasonRuntimeBuildFailed}}, skipped)
+	require.True(t, state.Devshards[0].Active)
 
 	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
@@ -263,7 +270,12 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 	require.Contains(t, logs.String(), "reason=local_recovery_failed")
 }
 
-func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T) {
+// Test flow:
+//  1. Hold one active escrow whose builder fails to create its storage session (disk full).
+//  2. Build the runtimes at startup.
+//  3. Assert the startup succeeds, the escrow is skipped for a background retry, and it is not deactivated:
+//     a deactivated escrow would make rotation refill its slot while its data still exists.
+func TestBuildGatewayRuntimesKeepsAnEscrowActiveOnCreateStorageSessionFailure(t *testing.T) {
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -291,10 +303,11 @@ func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T)
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	_, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
-	require.ErrorContains(t, err, "create storage session")
-	require.Empty(t, skipped)
+	require.NoError(t, err)
+	require.Empty(t, runtimes)
+	require.Equal(t, []startupSkippedEscrow{{EscrowID: "12", Model: "Qwen/Test", Reason: startupSkipReasonRuntimeBuildFailed}}, skipped)
 	require.True(t, state.Devshards[0].Active)
 
 	reloaded, ok, loadErr := store.LoadState(context.Background())
@@ -642,4 +655,63 @@ func TestBuildGatewayRuntimesKeepsAnEscrowWithAMissingParticipantActive(t *testi
 	require.NoError(t, err)
 	require.True(t, reloaded.Devshards[0].Active)
 	require.Equal(t, []startupSkippedEscrow{{EscrowID: "12", Model: "Qwen/Test", Reason: startupSkipReasonParticipantMissing}}, skipped)
+}
+
+// Test flow:
+//  1. Hold two active escrows; the builder fails for one of them with an error that has no final meaning
+//     (a recovery step did not finish) and succeeds for the other.
+//  2. Build the runtimes at startup.
+//  3. Assert the startup does not fail, the healthy escrow serves, and the failed one is skipped with the
+//     runtime_build_failed reason and stays active in memory and in the store, so the background retry can start it.
+func TestBuildGatewayRuntimesSkipsAnEscrowWhoseBuildFailsForANonFinalReason(t *testing.T) {
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+
+	state, ok, err := store.LoadState(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	savedBuilder := gatewayRuntimeBuilder
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
+		switch cfg.ID {
+		case "12":
+			return nil, fmt.Errorf("runtime %s: recover session: rebuild validation obs: database is locked", cfg.ID)
+		case "24":
+			return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
+		default:
+			return nil, fmt.Errorf("unexpected runtime id %s", cfg.ID)
+		}
+	}
+	t.Cleanup(func() {
+		gatewayRuntimeBuilder = savedBuilder
+	})
+
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	require.Equal(t, "24", runtimes[0].id)
+	require.Equal(t, []startupSkippedEscrow{{EscrowID: "12", Model: "Qwen/Test", Reason: startupSkipReasonRuntimeBuildFailed}}, skipped)
+	require.True(t, state.Devshards[0].Active)
+	require.True(t, state.Devshards[1].Active)
+
+	reloaded, ok, err := store.LoadState(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, reloaded.Devshards[0].Active)
+	require.True(t, reloaded.Devshards[1].Active)
 }

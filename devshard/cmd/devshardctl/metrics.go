@@ -577,6 +577,19 @@ func (m *DevshardMetrics) RecordStartupSkippedEscrow(escrowID, model, reason str
 	).Set(1)
 }
 
+// ClearStartupSkippedEscrow drops the startup-skipped series of an escrow whose
+// runtime has started, so the gauge shows only escrows still waiting.
+func (m *DevshardMetrics) ClearStartupSkippedEscrow(escrowID string) {
+	if m == nil {
+		return
+	}
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	m.startupSkippedEscrows.DeletePartialMatch(prometheus.Labels{"escrow_id": escrowID})
+}
+
 func (m *DevshardMetrics) RecordSpeculativeDecision(reason string) {
 	if m == nil {
 		return
