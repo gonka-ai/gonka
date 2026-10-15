@@ -500,6 +500,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.awaitParticipants(startupSkipped)
+	wireStopTokenVocabulary(chainClient.InferenceQueryClient(), func() uint64 { return gateway.phaseGate.Snapshot().EpochIndex })
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams

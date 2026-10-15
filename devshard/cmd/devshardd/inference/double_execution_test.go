@@ -64,10 +64,10 @@ func TestASecondExecutionCommitsTheHashesOfWhatIsStored(t *testing.T) {
 
 	release := make(chan struct{})
 	close(release)
-	if _, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", release), fixedChainParams{}, true); err != nil {
+	if _, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", release), fixedChainParams{}, true, 0); err != nil {
 		t.Fatalf("first execution: %v", err)
 	}
-	second, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", release), fixedChainParams{}, true)
+	second, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", release), fixedChainParams{}, true, 0)
 	if err != nil {
 		t.Fatalf("second execution: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestOverlappingExecutionsAgreeOnTheStoredPayload(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		r, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", firstRelease), fixedChainParams{}, true)
+		r, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", firstRelease), fixedChainParams{}, true, 0)
 		if err != nil {
 			t.Errorf("first execution: %v", err)
 		}
@@ -117,7 +117,7 @@ func TestOverlappingExecutionsAgreeOnTheStoredPayload(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		r, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", secondRelease), fixedChainParams{}, true)
+		r, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", secondRelease), fixedChainParams{}, true, 0)
 		if err != nil {
 			t.Errorf("second execution: %v", err)
 		}
@@ -168,12 +168,12 @@ func TestALateDetachedRunDoesNotReplaceTheCommittedFilePayload(t *testing.T) {
 
 	release := make(chan struct{})
 	close(release)
-	second, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", release), fixedChainParams{}, true)
+	second, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "second run", release), fixedChainParams{}, true, 0)
 	if err != nil {
 		t.Fatalf("reconnect execution: %v", err)
 	}
 	// The closed host's run comes back after the reconnect committed.
-	if _, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", release), fixedChainParams{}, true); err != nil {
+	if _, err := executeInference(context.Background(), req, store, epoch, gatedModel(t, "first run", release), fixedChainParams{}, true, 0); err != nil {
 		t.Fatalf("detached execution: %v", err)
 	}
 

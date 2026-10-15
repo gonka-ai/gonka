@@ -20,7 +20,7 @@ class PromptHashingTests {
 
         // NOTE: keep this hash in sync with TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector
         // in common/completionapi/request_test.go -- same input, same expected hash.
-        val expectedHash = "840c921425b13906f6131af5db28c5f29f67e1b2e5703938cb41ecf08e8a7f96"
+        val expectedHash = "8956540596acd0ff60a29ed0d510e70e81934a7fe6dbf833b1e90767971af3f7"
         assertThat(hash).isEqualTo(expectedHash)
     }
 
@@ -35,7 +35,7 @@ class PromptHashingTests {
         assertThat(modifiedMap["top_logprobs"]).isEqualTo(5.0)
         assertThat(modifiedMap["max_tokens"]).isEqualTo(5000.0)
         assertThat(modifiedMap["max_completion_tokens"]).isEqualTo(5000.0)
-        assertThat(modifiedMap["min_tokens"]).isEqualTo(64.0)
+        assertThat(modifiedMap).doesNotContainKey("min_tokens")
         assertThat(modifiedMap["skip_special_tokens"]).isEqualTo(false)
         assertThat(modifiedMap["seed"]).isEqualTo(7.0)
         assertThat(modifiedMap["logprobs_mode"]).isEqualTo("processed_logprobs")
