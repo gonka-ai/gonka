@@ -20,7 +20,9 @@ import (
 const ServiceName = "mock-dapi"
 
 func main() {
-	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+	// Default json so stage=mlnode_acquire/release are Loki | json fields even
+	// when compose forgets LOG_FORMAT (text mode puts stage only in msg).
+	observability.InstallLogger(envOr("LOG_FORMAT", "json"))
 
 	cfg := mockdapi.DefaultConfig()
 	cfg.GRPCAddr = envOr("MOCK_DAPI_GRPC_ADDR", ":9400")
@@ -98,6 +100,14 @@ func envOr(key, def string) string {
 func envTruthy(key string) bool {
 	enabled, err := boolvalue.Parse(os.Getenv(key))
 	return err == nil && enabled
+}
+
+func parseMLNodes(raw string) []mockdapi.MLNode {
+	nodes, err := params.ParseMLNodesEnv(raw)
+	if err != nil {
+		return nil
+	}
+	return nodes
 }
 
 func versionFromEnv() cosrv.Version {

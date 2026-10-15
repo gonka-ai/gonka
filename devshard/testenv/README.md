@@ -12,6 +12,7 @@ Config-driven via `config/config.yaml` and `cmd/gencompose`.
 - **Phase 12 index:** [`docs/phase12-followup.md`](docs/phase12-followup.md)
 - **Operator runbook:** [`../docs/testenv-v2.md`](../docs/testenv-v2.md)
 - **Design plan:** [`docs/testenv-v2-plan.md`](docs/testenv-v2-plan.md)
+- **Load testing:** [`loadtest/README.md`](loadtest/README.md). Run `make loadtest SCENARIO=normal-load` from this directory.
 
 ## Development
 

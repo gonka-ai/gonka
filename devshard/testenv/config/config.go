@@ -119,20 +119,36 @@ type MockDapiCfg struct {
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
 type MockOpenAICfg struct {
-	HTTPPort int    `yaml:"http_port"`
-	Host     string `yaml:"host"`
+	HTTPPort   int                 `yaml:"http_port"`
+	Host       string              `yaml:"host"`
+	ReplayFile string              `yaml:"replay_file,omitempty"`
+	Nodes      []MockOpenAINodeCfg `yaml:"nodes"`
+}
+
+// MockOpenAINodeCfg configures one independently-behaving Mock ML container.
+type MockOpenAINodeCfg struct {
+	Name          string  `yaml:"name"`
+	TTFT          string  `yaml:"ttft,omitempty"`
+	TokenInterval string  `yaml:"token_interval,omitempty"`
+	Workers       int     `yaml:"workers,omitempty"`
+	Queue         int     `yaml:"queue,omitempty"`
+	Hang          bool    `yaml:"hang,omitempty"`
+	FailureRate   float64 `yaml:"failure_rate,omitempty"`
+	HTTPStatus    int     `yaml:"http_status,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode            string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName     string `yaml:"version_name"`
-	HostBinaryMount string `yaml:"host_binary_mount"`
-	OverridePath    string `yaml:"override_path"`
-	PollInterval    string `yaml:"poll_interval"`
-	BinaryVersion   string `yaml:"binary_version"`
-	KeyringDir      string `yaml:"keyring_dir"`
-	KeyringPassword string `yaml:"keyring_password"`
+	Mode                     string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName              string `yaml:"version_name"`
+	HostBinaryMount          string `yaml:"host_binary_mount"`
+	OverridePath             string `yaml:"override_path"`
+	PollInterval             string `yaml:"poll_interval"`
+	BinaryVersion            string `yaml:"binary_version"`
+	KeyringDir               string `yaml:"keyring_dir"`
+	KeyringPassword          string `yaml:"keyring_password"`
+	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
+	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
@@ -144,20 +160,22 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	IP   string `yaml:"ip"`
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	StatsPort int    `yaml:"stats_port"`
+	IP        string `yaml:"ip"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
 type PostgresCfg struct {
-	Enabled  bool   `yaml:"enabled"`
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	Database string `yaml:"database"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	IP       string `yaml:"ip"`
+	Enabled        bool   `yaml:"enabled"`
+	PerParticipant bool   `yaml:"per_participant"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	Database       string `yaml:"database"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
+	IP             string `yaml:"ip"`
 }
 
 // EscrowMeta describes slot layout gencompose owns (distinct from escrows[] seed).
@@ -249,6 +267,7 @@ const (
 	DefaultEscrowAmount  = uint64(1_000_000)
 	DefaultTokenPrice    = uint64(100)
 	DefaultUserPort      = 8081
+	DefaultStatsPort     = 9091
 	DefaultHostPort      = 8080
 	DefaultNetworkCIDR   = "172.30.0.0/24"
 	DefaultNetworkBaseIP = "172.30.0"
@@ -389,6 +408,9 @@ func (c *File) ApplyDefaults() {
 	}
 	if c.Devshardctl.Port == 0 {
 		c.Devshardctl.Port = DefaultUserPort
+	}
+	if c.Devshardctl.StatsPort == 0 {
+		c.Devshardctl.StatsPort = DefaultStatsPort
 	}
 
 	if c.Postgres.Host == "" {
@@ -667,6 +689,25 @@ func (c *File) Validate() error {
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
+	for i, node := range c.MockOpenAI.Nodes {
+		if strings.TrimSpace(node.Name) == "" {
+			return fmt.Errorf("mock_openai.nodes[%d].name must not be empty", i)
+		}
+		if _, exists := seenMLNodes[node.Name]; exists {
+			return fmt.Errorf("mock_openai.nodes contains duplicate name %q", node.Name)
+		}
+		if node.Workers < 0 || node.Queue < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] workers and queue must be non-negative", i)
+		}
+		if node.FailureRate < 0 || node.FailureRate > 1 {
+			return fmt.Errorf("mock_openai.nodes[%d] failure_rate must be between 0 and 1", i)
+		}
+		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
+			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		seenMLNodes[node.Name] = struct{}{}
 	}
 	return nil
 }

@@ -1342,6 +1342,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 	switch {
 	case inf.phaseTransitionAborted:
 		return "phase_transition_aborted"
+	case inf.preludePressure.Load():
+		return "gateway_pending_pressure"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
 	case isModelBurnEmpty(inf, model):
@@ -1350,9 +1352,9 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 		return "empty_stream"
 	}
 	if inf.err != nil {
-		var upstreamErr *transport.UpstreamStatusError
+		upstreamErr, refused := hostRefusal(inf.err)
 		switch {
-		case errors.As(inf.err, &upstreamErr):
+		case refused:
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
 		case errors.Is(inf.err, ErrAggregateResponseTooLarge):
 			return "aggregate_response_too_large"

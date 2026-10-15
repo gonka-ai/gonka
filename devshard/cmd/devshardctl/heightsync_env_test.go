@@ -12,6 +12,7 @@ import (
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/user"
 )
 
 func resetHeightSyncForTest() {
@@ -129,6 +130,23 @@ func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
 		t.Setenv(envHeightSyncHeartbeat, v)
 		require.False(t, heightSyncHeartbeatFromEnv(), v)
 	}
+}
+
+func TestQuietSettleDelayFromEnv(t *testing.T) {
+	t.Setenv(envQuietSettleDelay, "")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "5s")
+	require.Equal(t, user.TestQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "2m")
+	require.Equal(t, 2*time.Minute, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "0s")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "not-a-duration")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
 }
 
 func TestGatewayChainOracle_FlagValues(t *testing.T) {

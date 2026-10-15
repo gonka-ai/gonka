@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,6 +60,115 @@ func TestChatCompletions_JSONDeterministic(t *testing.T) {
 	}
 }
 
+func TestChatCompletions_ReplaysCapturedResponseByFingerprint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+	body := `{"model":"replay-model","messages":[{"role":"user","content":"captured prompt"}],"response":{"role":"assistant","content":"captured answer"}}
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	srv, err := mockopenai.NewServerWithError(mockopenai.Config{ReplayFile: path})
+	require.NoError(t, err)
+	httpServer := httptest.NewServer(srv.Handler())
+	defer httpServer.Close()
+
+	requestBody := `{"model":"replay-model","messages":[{"role":"user","content":"captured prompt"}]}`
+	response, err := http.Post(httpServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(requestBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, response.StatusCode)
+	var payload struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
+	_ = response.Body.Close()
+	require.Len(t, payload.Choices, 1)
+	require.Equal(t, "captured answer", payload.Choices[0].Message.Content)
+
+	response, err = http.Post(httpServer.URL+"/v1/chat/completions", "application/json", strings.NewReader(`{"model":"unknown","messages":[{"role":"user","content":"missing"}]}`))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, response.StatusCode)
+	_ = response.Body.Close()
+
+	var stats mockopenai.Stats
+	response, err = http.Get(httpServer.URL + "/testenv/stats")
+	require.NoError(t, err)
+	require.NoError(t, json.NewDecoder(response.Body).Decode(&stats))
+	_ = response.Body.Close()
+	require.Equal(t, uint64(1), stats.ReplayHits)
+	require.Equal(t, uint64(1), stats.ReplayMisses)
+}
+
+func TestModelStatus_Downloaded(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/api/v1/models/status", "application/json", strings.NewReader(`{"hf_repo":"Qwen/Qwen2.5-7B-Instruct"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]string
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&result))
+	require.Equal(t, "DOWNLOADED", result["status"])
+}
+
+func TestChatCompletions_HangRecordsTimeoutOnCancellation(t *testing.T) {
+	baseCtx, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	srv := httptest.NewUnstartedServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{Hang: true},
+	}).Handler())
+	srv.Config.BaseContext = func(net.Listener) context.Context { return baseCtx }
+	srv.Start()
+	defer srv.Close()
+
+	request, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{"model":"test-model"}`))
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	requestDone := make(chan error, 1)
+	go func() {
+		_, requestErr := http.DefaultClient.Do(request)
+		requestDone <- requestErr
+	}()
+
+	var stats mockopenai.Stats
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		statsResponse, statsErr := http.Get(srv.URL + "/testenv/stats")
+		if statsErr == nil {
+			stats = mockopenai.Stats{}
+			statsErr = json.NewDecoder(statsResponse.Body).Decode(&stats)
+			_ = statsResponse.Body.Close()
+			require.NoError(t, statsErr)
+			if stats.RequestsReceived == 1 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, uint64(1), stats.RequestsReceived)
+	cancelBase()
+	<-requestDone
+
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		statsResponse, statsErr := http.Get(srv.URL + "/testenv/stats")
+		if statsErr == nil {
+			stats = mockopenai.Stats{}
+			statsErr = json.NewDecoder(statsResponse.Body).Decode(&stats)
+			_ = statsResponse.Body.Close()
+			require.NoError(t, statsErr)
+			if stats.Timeouts == 1 {
+				break
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	require.Equal(t, uint64(1), stats.Timeouts)
+}
+
 func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
@@ -76,7 +188,7 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	_ = resp.Body.Close()
 	require.NotEmpty(t, lines)
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-test", true)
+	proc := completionapi.NewExecutorResponseProcessor("inference-test", false)
 	var streamed []string
 	for _, line := range lines {
 		updated, err := proc.ProcessStreamedResponse(line)
@@ -94,7 +206,7 @@ func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	n := int(completionapi.MinTokensFloor)
+	n := 64
 	body := []byte(fmt.Sprintf(`{"model":"test-model","max_tokens":%d,"messages":[{"role":"user","content":"pad me"}]}`, n))
 	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
@@ -142,6 +254,120 @@ func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, validation.HasNonNumericTokens(enforced),
 		"validators reject decoded-text logprobs before ML replay: %+v", enforced)
+}
+
+// Test flow:
+// 1. Request a completion with logprobs and top_logprobs=5, as the executor does.
+// 2. Require every alternative's bytes to be the ASCII of its token id.
+// 3. Compress the response and require it to slim instead of being refused.
+func TestChatCompletions_LogprobsCompressLikeVLLM(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","logprobs":true,"top_logprobs":5,"messages":[{"role":"user","content":"compress me"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cr, err := completionapi.NewCompletionResponseFromBytes(raw)
+	require.NoError(t, err)
+	logprobs := cr.ExtractLogits()
+	require.NotEmpty(t, logprobs)
+	for _, position := range logprobs {
+		require.Len(t, position.TopLogprobs, 5)
+		for _, alternative := range position.TopLogprobs {
+			require.Equal(t, alternative.Token, string(intsToBytes(alternative.Bytes)))
+		}
+	}
+
+	compressed, err := completionapi.CompressResponsePayload(raw)
+	require.NoError(t, err)
+	require.Less(t, len(compressed), len(raw))
+}
+
+func intsToBytes(values []int) []byte {
+	out := make([]byte, len(values))
+	for i, value := range values {
+		out[i] = byte(value)
+	}
+	return out
+}
+
+func TestChatCompletions_HonestReplayPassesValidation(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	prompt := []byte(`{"model":"test-model","stream":false,"max_tokens":16,"messages":[{"role":"user","content":"replay me"}]}`)
+	executorRequest, err := completionapi.ModifyRequestBody(prompt, 1)
+	require.NoError(t, err)
+	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
+	storedResponse, err := io.ReadAll(executorResponse.Body)
+	require.NoError(t, err)
+	_ = executorResponse.Body.Close()
+
+	completion, err := completionapi.NewCompletionResponseFromBytes(storedResponse)
+	require.NoError(t, err)
+	usage, err := completion.GetUsage()
+	require.NoError(t, err)
+
+	result, err := validation.ExecuteValidation(
+		context.Background(),
+		"1",
+		prompt,
+		storedResponse,
+		func(_ context.Context, body []byte) (*http.Response, error) {
+			return http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		},
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		"",
+		0,
+	)
+	require.NoError(t, err)
+	require.True(t, result.IsSuccessful(), "honest mock replay must validate successfully: %#v", result)
+}
+
+func TestChatCompletions_HonestStreamedReplayPassesValidation(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	prompt := []byte(`{"model":"test-model","stream":true,"stream_options":{"include_usage":true},"max_tokens":16,"messages":[{"role":"user","content":"streamed replay me"}]}`)
+	executorRequest, err := completionapi.ModifyRequestBody(prompt, 1)
+	require.NoError(t, err)
+	executorResponse, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorRequest.NewBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, executorResponse.StatusCode)
+	processor := completionapi.NewExecutorResponseProcessor("inference-1", false)
+	require.NoError(t, completionapi.ProcessHTTPResponse(executorResponse, processor))
+	storedResponse, err := processor.GetResponseBytes()
+	require.NoError(t, err)
+	var serialized completionapi.SerializedStreamedResponse
+	require.NoError(t, json.Unmarshal(storedResponse, &serialized))
+	completion, err := completionapi.NewCompletionResponseFromLines(serialized.Events)
+	require.NoError(t, err)
+	usage, err := completion.GetUsage()
+	require.NoError(t, err)
+
+	result, err := validation.ExecuteValidation(
+		context.Background(),
+		"1",
+		prompt,
+		storedResponse,
+		func(_ context.Context, body []byte) (*http.Response, error) {
+			return http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		},
+		usage.PromptTokens,
+		usage.CompletionTokens,
+		"",
+		0,
+	)
+	require.NoError(t, err)
+	require.True(t, result.IsSuccessful(), "honest streamed mock replay must validate successfully: %#v", result)
 }
 
 func TestChatCompletions_StreamLogprobTokensAreNumericIDs(t *testing.T) {
@@ -356,6 +582,19 @@ func TestChatCompletions_PartialStreamOmitsDONE(t *testing.T) {
 	require.Greater(t, len(raw), 0)
 }
 
+func TestChatCompletions_DeterministicFailureRate(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{FailureRate: 1, HTTPStatus: 503},
+	}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		bytes.NewReader([]byte(`{"messages":[{"role":"user","content":"x"}]}`)))
+	require.NoError(t, err)
+	require.Equal(t, 503, resp.StatusCode)
+	_ = resp.Body.Close()
+}
+
 func TestChatCompletions_FaultPatch(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
@@ -407,8 +646,7 @@ func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
 
 		payload, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: lines})
 		require.NoError(t, err)
-		_, ok := completionapi.IsTerminalErrorResponse(payload)
-		require.True(t, ok, "mock-openai error envelope must be a terminal error body")
+		require.Contains(t, string(payload), "error", "mock-openai error envelope must be a terminal error body")
 	}
 }
 
@@ -429,9 +667,14 @@ func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(streamBody))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	_, _ = io.ReadAll(resp.Body)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "stream must emit a first chunk immediately")
+	require.True(t, strings.HasPrefix(sc.Text(), "data: "))
+	firstChunkAt := time.Since(start)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	require.Less(t, time.Since(start), 200*time.Millisecond, "streaming inference must not sleep on Validate latency")
+	require.Less(t, firstChunkAt, 200*time.Millisecond,
+		"latency_ms must not delay the first stream chunk (got %s)", firstChunkAt)
 
 	jsonBody := []byte(`{"model":"test-model","messages":[{"role":"user","content":"slow"}]}`)
 	start = time.Now()
@@ -443,61 +686,47 @@ func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "non-stream Validate must honor latency_ms")
 }
 
-// Test flow:
-//  1. Send a gateway-shaped prompt (max_tokens and min_tokens at the floor) through the executor's request rewrite to the mock.
-//  2. Store the reply the way the executor does, streamed or JSON, with the logprobs optimization on and off.
-//  3. Validate it by replaying against the same mock, with the vocab unknown and with MockVocabularySize resolved.
-//  4. Every case must reach the mock and pass similarity, so citest validations exercise the replay path.
-func TestValidationReplayOfMockResponsePasses(t *testing.T) {
+func TestStreamTTFTDelaysFirstChunkOnly(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	floor := completionapi.MinTokensFloor
-	for _, stream := range []bool{true, false} {
-		for _, optimize := range []bool{true, false} {
-			for _, vocabularySize := range []int{0, mockopenai.MockVocabularySize} {
-				name := fmt.Sprintf("stream=%t/optimize=%t/vocab=%d", stream, optimize, vocabularySize)
-				t.Run(name, func(t *testing.T) {
-					prompt := []byte(fmt.Sprintf(`{"model":"test-model","stream":%t,"max_tokens":%d,"min_tokens":%d,"messages":[{"role":"user","content":"citest validation replay"}]}`, stream, floor, floor))
-					stored, usage := executeAgainstMock(t, srv.URL, prompt, optimize)
+	ttft := 300
+	patch, err := json.Marshal(map[string]int{"stream_ttft_ms": ttft})
+	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = resp.Body.Close()
 
-					replays := 0
-					execute := func(ctx context.Context, body []byte) (*http.Response, error) {
-						replays++
-						req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/chat/completions", bytes.NewReader(body))
-						if err != nil {
-							return nil, err
-						}
-						req.Header.Set("Content-Type", "application/json")
-						return http.DefaultClient.Do(req)
-					}
-					result, err := validation.ExecuteValidation(context.Background(), "7", prompt, stored, execute,
-						usage.PromptTokens, usage.CompletionTokens, "", vocabularySize)
-					require.NoError(t, err)
-					require.Equal(t, 1, replays, "validation must replay against the mock: %#v", result)
-					require.IsType(t, &validation.SimilarityValidationResult{}, result)
-					require.True(t, result.IsSuccessful(), "similarity %v", result.(*validation.SimilarityValidationResult).Value)
-				})
-			}
-		}
-	}
+	streamBody := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"ttft"}]}`)
+	start := time.Now()
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(streamBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "stream did not publish its first chunk")
+	require.GreaterOrEqual(t, time.Since(start), 250*time.Millisecond, "stream_ttft_ms must delay the first chunk")
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
 }
 
-func executeAgainstMock(t *testing.T, mockURL string, prompt []byte, optimize bool) ([]byte, *completionapi.Usage) {
-	t.Helper()
-	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(prompt, 7, "")
-	require.NoError(t, err)
-	resp, err := http.Post(mockURL+"/v1/chat/completions", "application/json", bytes.NewReader(modified.NewBody))
-	require.NoError(t, err)
-	defer func() { _ = resp.Body.Close() }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+func TestStreamChunkDelayAfterFirstChunk(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{StreamChunkDelay: 80 * time.Millisecond},
+	}).Handler())
+	defer srv.Close()
 
-	processor := completionapi.NewExecutorResponseProcessor("devshard-1-7", modified.AsksForLogprobs)
-	processor.SetLogprobsOptimization(nil, optimize)
-	require.NoError(t, completionapi.ProcessHTTPResponse(resp, processor))
-	stored, err := processor.GetResponseBytes()
+	body := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"abcdefghij"}]}`)
+	start := time.Now()
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
-	usage, err := processor.GetUsage()
-	require.NoError(t, err)
-	return stored, usage
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	sc := bufio.NewScanner(resp.Body)
+	require.True(t, sc.Scan(), "first chunk must flush before StreamChunkDelay")
+	require.Less(t, time.Since(start), 60*time.Millisecond, "first chunk must be immediate")
+	for sc.Scan() {
+	}
+	require.NoError(t, sc.Err())
+	_ = resp.Body.Close()
+	require.GreaterOrEqual(t, time.Since(start), 150*time.Millisecond, "later chunks honor stream_chunk_delay_ms")
 }

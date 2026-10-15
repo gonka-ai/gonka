@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
+	"devshard/profiling"
 	"devshard/runtimeparams"
 	"devshard/state"
 	"devshard/types"
@@ -27,15 +29,15 @@ import (
 )
 
 type adminAuthContextKey struct{}
-type adminAPIKeySuffixContextKey struct{}
 
 const (
-	defaultChainGRPCURL            = "localhost:9090"
-	defaultPublicAPIURL            = "http://localhost:9000"
-	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort              = "8080"
-	defaultMaxConcurrentRequests   = 512
-	startupSkipReasonLocalRecovery = "local_recovery_failed"
+	defaultChainGRPCURL                 = "localhost:9090"
+	defaultPublicAPIURL                 = "http://localhost:9000"
+	defaultModelName                    = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort                   = "8080"
+	defaultMaxConcurrentRequests        = 512
+	startupSkipReasonLocalRecovery      = "local_recovery_failed"
+	startupSkipReasonParticipantMissing = "participant_missing"
 )
 
 type startupSkippedEscrow struct {
@@ -136,6 +138,7 @@ func main() {
 		logFormat = os.Getenv("DEVSHARD_LOG_FORMAT")
 	}
 	installGatewayLogger(logFormat)
+	profiling.ConfigureContentionProfilesFromEnv()
 	// Init degrades in-process on exporter/resource failure (Ready=false);
 	// never couple gateway availability to OTel config.
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -496,6 +499,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
+	gateway.awaitParticipants(startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams
@@ -584,6 +588,16 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 				skipped = append(skipped, res.idx)
 				continue
 			}
+			if errors.Is(res.err, bridge.ErrParticipantNotFound) {
+				log.Printf("devshard %s group holds a slot with no participant on chain, skipping runtime and keeping it active: %v", cfg.ID, res.err)
+				skipped = append(skipped, res.idx)
+				startupSkipped = append(startupSkipped, startupSkippedEscrow{
+					EscrowID: cfg.ID,
+					Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+					Reason:   startupSkipReasonParticipantMissing,
+				})
+				continue
+			}
 			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
 			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) ||
 				errors.Is(res.err, bridge.ErrEscrowSettled) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
@@ -663,13 +677,15 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 	}
 	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
 		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
-	if len(startupSkipped) > 0 {
-		escrowIDs := make([]string, 0, len(startupSkipped))
-		for _, skippedEscrow := range startupSkipped {
-			escrowIDs = append(escrowIDs, skippedEscrow.EscrowID)
+	var deactivatedIDs []string
+	for _, skippedEscrow := range startupSkipped {
+		if skippedEscrow.Reason == startupSkipReasonLocalRecovery {
+			deactivatedIDs = append(deactivatedIDs, skippedEscrow.EscrowID)
 		}
+	}
+	if len(deactivatedIDs) > 0 {
 		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
-			len(startupSkipped), startupSkipReasonLocalRecovery, strings.Join(escrowIDs, ","))
+			len(deactivatedIDs), startupSkipReasonLocalRecovery, strings.Join(deactivatedIDs, ","))
 	}
 	return out, startupSkipped, nil
 }
@@ -705,9 +721,27 @@ func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
 		gateway.mu.Unlock()
 	}
 	log.Printf("gateway API keys loaded (%d key(s)); per-model access modes are configured in gateway settings", len(opts.apiKeys))
+	warnShortGatewayKeys(opts.apiKeys, opts.adminAPIKey)
 	handler = adminAuthMiddleware(opts.adminAPIKey, handler)
 	handler = gateway.disabledMiddleware(handler)
 	return gateway.metrics.Wrap(handler)
+}
+
+const minRecommendedGatewayKeyLength = 32
+
+func warnShortGatewayKeys(apiKeys map[string]struct{}, adminKey string) {
+	short := 0
+	for key := range apiKeys {
+		if len(key) < minRecommendedGatewayKeyLength {
+			short++
+		}
+	}
+	if short > 0 {
+		log.Printf("WARNING: %d gateway API key(s) shorter than %d characters; generate keys with `openssl rand -hex 24`", short, minRecommendedGatewayKeyLength)
+	}
+	if adminKey != "" && len(adminKey) < minRecommendedGatewayKeyLength {
+		log.Printf("WARNING: gateway admin API key shorter than %d characters; generate it with `openssl rand -hex 24`", minRecommendedGatewayKeyLength)
+	}
 }
 
 func serveGateway(handler http.Handler, port string, runtimeCount int) {
@@ -775,10 +809,9 @@ func isAdminPath(path string) bool {
 func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key, ok := bearerToken(r)
-		adminAuthenticated := adminKey != "" && ok && key == adminKey
+		adminAuthenticated := adminKey != "" && ok && subtle.ConstantTimeCompare([]byte(key), []byte(adminKey)) == 1
 		if adminAuthenticated {
 			r = r.WithContext(context.WithValue(r.Context(), adminAuthContextKey{}, true))
-			r = r.WithContext(context.WithValue(r.Context(), adminAPIKeySuffixContextKey{}, apiKeySuffix(adminKey)))
 		}
 		if !isAdminPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
@@ -804,14 +837,6 @@ func requestHasAdminAuth(r *http.Request) bool {
 	}
 	ok, _ := r.Context().Value(adminAuthContextKey{}).(bool)
 	return ok
-}
-
-func requestAdminAPIKeySuffix(r *http.Request) (string, bool) {
-	if r == nil {
-		return "", false
-	}
-	suffix, ok := r.Context().Value(adminAPIKeySuffixContextKey{}).(string)
-	return suffix, ok && suffix != ""
 }
 
 func readInt64Env(name string, fallback int64) int64 {

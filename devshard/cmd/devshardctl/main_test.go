@@ -596,3 +596,50 @@ func reloadGatewayStateForTest(t *testing.T, store GatewayStore) (GatewayState, 
 	require.NoError(t, err)
 	return state, ok
 }
+
+// Test flow:
+//  1. Start two active escrows, one of whose groups holds a slot the chain has no participant record for.
+//  2. Build the gateway runtimes.
+//  3. Assert the start succeeds without that escrow's runtime, the escrow stays active in memory and in the store, and it is reported as skipped for a missing participant.
+func TestBuildGatewayRuntimesKeepsAnEscrowWithAMissingParticipantActive(t *testing.T) {
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
+	}))
+	state, ok, err := store.LoadState(context.Background())
+	require.NoError(t, err)
+	require.True(t, ok)
+	savedBuilder := gatewayRuntimeBuilder
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
+		if cfg.ID == "12" {
+			return nil, fmt.Errorf("runtime %s: create session: get host info for gonka1slot: Participant gonka1slot: %w", cfg.ID, bridge.ErrParticipantNotFound)
+		}
+		return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
+	}
+	t.Cleanup(func() {
+		gatewayRuntimeBuilder = savedBuilder
+	})
+
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	require.Equal(t, "24", runtimes[0].id)
+	require.True(t, state.Devshards[0].Active, "a funded escrow must not be retired over a slot the chain has no participant for")
+	reloaded, _, err := store.LoadState(context.Background())
+	require.NoError(t, err)
+	require.True(t, reloaded.Devshards[0].Active)
+	require.Equal(t, []startupSkippedEscrow{{EscrowID: "12", Model: "Qwen/Test", Reason: startupSkipReasonParticipantMissing}}, skipped)
+}

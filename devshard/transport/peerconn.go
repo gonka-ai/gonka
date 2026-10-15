@@ -48,6 +48,12 @@ const DefaultAttachTimeout = 5 * time.Second
 // published a token. Callers must fail fast — do not wait on Attach.
 var ErrPeerNotReady = errors.New("peer rpc session not ready")
 
+// ErrPeerPayloadUnanswered wraps ErrPeerNotReady when a payload RPC's own
+// handshake wait expired, or the live token was gone when that RPC was
+// built. A connection this process already closed stays a plain
+// ErrPeerNotReady.
+var ErrPeerPayloadUnanswered = fmt.Errorf("%w: payload session unanswered", ErrPeerNotReady)
+
 var (
 	errWatchStale   = errors.New("watch heartbeat stale")
 	errAttachTTL    = errors.New("attach expires_at is out of range")

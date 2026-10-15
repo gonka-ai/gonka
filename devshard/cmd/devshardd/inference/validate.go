@@ -249,7 +249,10 @@ var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the H
 
 // classifyPayloadFetchError leaves a failure of this process's closed peer
 // untagged, so the lease is released and another generation can fetch. A
-// payload that is gone or too large is still the executor's result.
+// payload that is gone, too large, rate-limited, or never reached because
+// the executor did not finish Attach is the executor's result. A bare
+// ErrPeerNotReady is still this process's own session; ErrPeerPayloadUnanswered
+// is the executor's missing session.
 func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -258,6 +261,9 @@ func classifyPayloadFetchError(ctx context.Context, err error) error {
 		return err
 	}
 	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerPayloadUnanswered) && !transport.OutboundPeersReleased() {
 		return tagExecutorPayloadFault(err)
 	}
 	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
@@ -284,6 +290,12 @@ func fetchSignedPayloads(
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
+		// The executor did not finish Attach within the header budget, so
+		// the payload fetch got no response. A session this process already
+		// closed returns before that budget and stays untagged.
+		if payloadAttachTimedOut(ctx, waitCtx) {
+			return nil, tagExecutorPayloadFault(err)
+		}
 		return nil, err
 	}
 	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
@@ -295,13 +307,27 @@ func fetchSignedPayloads(
 	}, maxBytes)
 }
 
+// payloadAttachTimedOut reports that the handshake wait expired while this
+// validation is still running. A cancelled caller or a released peer
+// generation is this process stopping, not an executor that stayed silent.
+func payloadAttachTimedOut(ctx, waitCtx context.Context) bool {
+	return waitCtx.Err() != nil && ctx.Err() == nil && !transport.OutboundPeersReleased()
+}
+
 func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
 	if err != nil {
 		switch connect.CodeOf(err) {
 		case connect.CodeNotFound:
 			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
 		case connect.CodeResourceExhausted:
-			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			// The read cap and a 429 share this code. Only an oversized body
+			// is "too large". A rate limit is the executor not serving the
+			// payload, and classify tags that as a fault.
+			status, _, _, ok := transport.ConnectApplicationStatus(err)
+			if ok && status == http.StatusRequestEntityTooLarge {
+				return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			}
+			return nil, err
 		default:
 			return nil, err
 		}

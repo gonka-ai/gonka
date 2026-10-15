@@ -6,22 +6,28 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
-	"devshard/internal/boolvalue"
 	"devshard/testenv/mockopenai"
 )
 
 func main() {
 	cfg := mockopenai.DefaultConfig()
 	cfg.Addr = envOr("MOCK_OPENAI_ADDR", ":8088")
+	cfg.ReplayFile = envOr("MOCK_OPENAI_REPLAY_FILE", "")
 	cfg.Faults = faultsFromEnv()
+	cfg.Workers = intFromEnv("MOCK_OPENAI_WORKERS")
+	cfg.Queue = intFromEnv("MOCK_OPENAI_QUEUE")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := mockopenai.NewServer(cfg)
+	srv, err := mockopenai.NewServerWithError(cfg)
+	if err != nil {
+		log.Fatalf("mock-openai: %v", err)
+	}
 	log.Printf("mock-openai on %s", cfg.Addr)
 	if err := srv.Serve(ctx, cfg.Addr); err != nil && err != context.Canceled {
 		log.Fatalf("mock-openai: %v", err)
@@ -37,6 +43,12 @@ func envOr(key, def string) string {
 
 func faultsFromEnv() mockopenai.FaultConfig {
 	f := mockopenai.DefaultConfig().Faults
+	// TTFT delays the first SSE chunk only. latency_ms delays Validate JSON.
+	if v := os.Getenv("MOCK_OPENAI_TTFT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.StreamFirstTokenDelay = d
+		}
+	}
 	if v := os.Getenv("MOCK_OPENAI_LATENCY_MS"); v != "" {
 		if ms, err := strconv.Atoi(v); err == nil {
 			f.Latency = time.Duration(ms) * time.Millisecond
@@ -45,6 +57,11 @@ func faultsFromEnv() mockopenai.FaultConfig {
 	if v := os.Getenv("MOCK_OPENAI_HTTP_STATUS"); v != "" {
 		if code, err := strconv.Atoi(v); err == nil {
 			f.HTTPStatus = code
+		}
+	}
+	if v := os.Getenv("MOCK_OPENAI_FAILURE_RATE"); v != "" {
+		if rate, err := strconv.ParseFloat(v, 64); err == nil {
+			f.FailureRate = rate
 		}
 	}
 	if envTruthy("MOCK_OPENAI_DROP_FIRST_CHUNK") {
@@ -61,10 +78,30 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.StreamChunkDelay = time.Duration(ms) * time.Millisecond
 		}
 	}
+	if v := os.Getenv("MOCK_OPENAI_TOKEN_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.StreamChunkDelay = d
+		}
+	}
+	if envTruthy("MOCK_OPENAI_HANG") {
+		f.Hang = true
+	}
 	return f
 }
 
+func intFromEnv(key string) int {
+	v, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || v < 0 {
+		return 0
+	}
+	return v
+}
+
 func envTruthy(key string) bool {
-	enabled, err := boolvalue.Parse(os.Getenv(key))
-	return err == nil && enabled
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }

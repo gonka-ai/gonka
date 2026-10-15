@@ -85,8 +85,8 @@ func TestFinalize_ResumesFromFinalizingPhase(t *testing.T) {
 
 	require.NoError(t, session.sendDiffRound(ctx, []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
-	}}}))
-	require.NoError(t, session.sendDiffRound(ctx, nil))
+	}}}, true))
+	require.NoError(t, session.sendDiffRound(ctx, nil, true))
 	require.Equal(t, types.PhaseFinalizing, session.StateMachine().Phase())
 	finalizeNonce := session.StateMachine().FinalizeNonce()
 	require.NotZero(t, finalizeNonce)
@@ -144,7 +144,7 @@ func TestFinalize_ResumesAfterRecoveryWithLiarStillPresent(t *testing.T) {
 
 	err = session.sendDiffRound(ctx, []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
-	}}})
+	}}}, true)
 	require.ErrorIs(t, err, ErrHostResponseRejected)
 	require.ErrorIs(t, err, types.ErrStateHashMismatch)
 	require.Equal(t, types.PhaseFinalizing, session.StateMachine().Phase())
@@ -244,9 +244,9 @@ func runFinalizeRounds(t *testing.T, session *Session, rounds int) {
 	ctx := context.Background()
 	require.NoError(t, session.sendDiffRound(ctx, []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{
 		FinalizeRound: &types.MsgFinalizeRound{},
-	}}}))
+	}}}, true))
 	for i := 1; i < rounds; i++ {
-		require.NoError(t, session.sendDiffRound(ctx, nil))
+		require.NoError(t, session.sendDiffRound(ctx, nil, true))
 	}
 }
 
@@ -567,4 +567,58 @@ func TestFinalize_LocalRootUnavailablePropagates(t *testing.T) {
 	err = session.Finalize(ctx)
 	require.ErrorIs(t, err, ErrLocalRootUnavailable)
 	require.NotErrorIs(t, err, types.ErrStateHashMismatch)
+}
+
+type droppingClient struct {
+	inner HostClient
+	drop  atomic.Bool
+	mu    sync.Mutex
+	sent  []host.HostRequest
+}
+
+func (c *droppingClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.mu.Lock()
+	c.sent = append(c.sent, req)
+	c.mu.Unlock()
+	if c.drop.Load() {
+		return nil, errors.New("host unreachable")
+	}
+	return c.inner.Send(ctx, req, stream, receiptHandler)
+}
+
+func (c *droppingClient) requests() []host.HostRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]host.HostRequest(nil), c.sent...)
+}
+
+func TestFinalize_ResumeRefreshDoesNotPushCatchUpToLaggingHost(t *testing.T) {
+	numHosts := 4
+	session, _, _ := setupSession(t, numHosts, 1000000, 100)
+	ctx := context.Background()
+	for i := 0; i < numHosts; i++ {
+		_, err := session.SendInference(ctx, finalizeTestParams())
+		require.NoError(t, err)
+	}
+
+	lagging := &droppingClient{inner: session.clients[1]}
+	lagging.drop.Store(true)
+	session.clients[1] = lagging
+	runFinalizeRounds(t, session, numHosts-1)
+	require.Equal(t, types.PhaseFinalizing, session.StateMachine().Phase())
+	session.mu.Lock()
+	require.NotEmpty(t, session.diffsForHost(1))
+	session.mu.Unlock()
+
+	lagging.drop.Store(false)
+	before := len(lagging.requests())
+	require.NoError(t, session.refreshPendingTxsFromHosts(ctx))
+	refresh := lagging.requests()[before:]
+	require.Len(t, refresh, 1)
+	require.Empty(t, refresh[0].Diffs)
+	require.Equal(t, session.Nonce(), refresh[0].Nonce)
+
+	require.NoError(t, session.Finalize(ctx))
+	require.Equal(t, types.PhaseSettlement, session.StateMachine().Phase())
+	require.True(t, session.HasQuorumAt(session.Nonce()))
 }

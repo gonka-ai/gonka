@@ -743,7 +743,7 @@ func TestChannelLimit_ChatRateLimitRecordsNoReceipt(t *testing.T) {
 		Limits: &transport.ChannelLimitConfig{
 			MaxStreams:     8,
 			MessagesPerMin: 10,
-			MessagesBurst:  10,
+			MessagesBurst:  transport.RPCWeightChat,
 		},
 	}, stubLookup{core: stubCore{}})
 
@@ -771,7 +771,7 @@ func TestChannelLimit_ChatChargesAfterAcquire(t *testing.T) {
 		Limits: &transport.ChannelLimitConfig{
 			MaxStreams:     8,
 			MessagesPerMin: 10,
-			MessagesBurst:  10,
+			MessagesBurst:  transport.RPCWeightChat,
 		},
 	}, stubLookup{core: stubCore{}})
 

@@ -75,6 +75,9 @@ type hostPingEntry struct {
 // hostPingTargets is dial-keyed; own mutex (not g.mu).
 // An escrow may hold refs on multiple dials (multi-host group).
 type hostPingTargets struct {
+	// lifecycleMu serializes target changes with metric publication and deletion.
+	// Acquire it before mu whenever both locks are needed.
+	lifecycleMu    sync.Mutex
 	mu             sync.Mutex
 	byDial         map[string]*hostPingEntry
 	escrowDials    map[string]map[string]escrowDialMeta // escrowID → dial → meta
@@ -245,7 +248,7 @@ func (t *hostPingTargets) Targets() []probe.Target {
 		}
 		out = append(out, probe.Target{
 			Key:         dial,
-			ClockURL:     joinProbePath(dial, e.routePrefix, "/clock"),
+			ClockURL:    joinProbePath(dial, e.routePrefix, "/clock"),
 			FallbackURL: joinProbePath(dial, e.routePrefix, "/healthz"),
 		})
 	}
@@ -312,6 +315,13 @@ func (s *hostPingSink) Observe(r probe.Result) {
 	if s == nil || s.metrics == nil {
 		return
 	}
+	if s.targets != nil {
+		s.targets.lifecycleMu.Lock()
+		defer s.targets.lifecycleMu.Unlock()
+		if s.targets.refcount(r.Key) == 0 {
+			return
+		}
+	}
 	s.metrics.ObserveHostPingResult(r)
 	if s.targets != nil {
 		for _, pk := range s.targets.participantKeys(r.Key) {
@@ -326,6 +336,12 @@ func (s *hostPingSink) Forget(key string) {
 	}
 	var participants []string
 	if s.targets != nil {
+		s.targets.lifecycleMu.Lock()
+		defer s.targets.lifecycleMu.Unlock()
+		// A host may have been registered again since the scheduler snapshot.
+		if s.targets.refcount(key) > 0 {
+			return
+		}
 		participants = s.targets.participantKeys(key)
 	}
 	s.metrics.DeleteHostPingMetrics(key, participants)
@@ -457,6 +473,8 @@ func (j *hostPingJob) ObserveEscrowHost(escrowID, dial, routePrefix, participant
 	if j == nil || j.cfg.Disabled {
 		return
 	}
+	j.targets.lifecycleMu.Lock()
+	defer j.targets.lifecycleMu.Unlock()
 	if j.targets.ObserveEscrowHost(escrowID, dial, routePrefix, participantKey) {
 		j.InvalidateDial(dial)
 	}
@@ -481,6 +499,8 @@ func (j *hostPingJob) ReleaseEscrow(escrowID string) {
 	if j == nil {
 		return
 	}
+	j.targets.lifecycleMu.Lock()
+	defer j.targets.lifecycleMu.Unlock()
 	removed := j.targets.ReleaseEscrow(escrowID)
 	if j.metrics == nil {
 		return

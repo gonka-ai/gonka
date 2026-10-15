@@ -9,7 +9,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"devshard/testenv/replay"
 
 	"github.com/labstack/echo/v4"
 )
@@ -17,28 +20,64 @@ import (
 // Server serves OpenAI-compatible /v1/chat/completions.
 type Server struct {
 	echo       *echo.Echo
+	replay     *replay.Dataset
 	mu         sync.RWMutex
 	fault      FaultConfig
 	streamGate chan struct{}
+	capacity   chan struct{}
+	workers    chan struct{}
+	stats      struct {
+		requestsReceived    atomic.Uint64
+		successfulResponses atomic.Uint64
+		failedResponses     atomic.Uint64
+		timeouts            atomic.Uint64
+		replayHits          atomic.Uint64
+		replayMisses        atomic.Uint64
+	}
 }
 
 // NewServer builds the HTTP server.
 func NewServer(cfg Config) *Server {
+	server, err := NewServerWithError(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return server
+}
+
+// NewServerWithError builds the HTTP server and loads an optional replay file.
+func NewServerWithError(cfg Config) (*Server, error) {
 	s := &Server{fault: cfg.Faults}
+	if cfg.ReplayFile != "" {
+		dataset, err := replay.LoadFile(cfg.ReplayFile)
+		if err != nil {
+			return nil, fmt.Errorf("load replay file: %w", err)
+		}
+		s.replay = dataset
+	}
+	if cfg.Workers > 0 {
+		s.capacity = make(chan struct{}, cfg.Workers+cfg.Queue)
+		s.workers = make(chan struct{}, cfg.Workers)
+	}
 	if s.fault.PauseStream {
 		s.streamGate = make(chan struct{})
-	}
-	if s.fault.StreamChunkDelay <= 0 {
-		s.fault.StreamChunkDelay = 5 * time.Millisecond
 	}
 	e := echo.New()
 	e.HideBanner = true
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/testenv/stats", s.handleStats)
+	e.POST("/api/v1/models/status", s.handleModelStatus)
 	e.POST("/testenv/fault", s.handleFaultPatch)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
-	return s
+	return s, nil
+}
+
+// handleModelStatus is the small ML-node management contract real DAPI uses
+// before it makes a node available for inference.
+func (s *Server) handleModelStatus(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"status": "DOWNLOADED"})
 }
 
 func (s *Server) patchFault(p FaultPatch) {
@@ -89,40 +128,139 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+func (s *Server) handleStats(c echo.Context) error {
+	return c.JSON(http.StatusOK, Stats{
+		RequestsReceived:    s.stats.requestsReceived.Load(),
+		SuccessfulResponses: s.stats.successfulResponses.Load(),
+		FailedResponses:     s.stats.failedResponses.Load(),
+		Timeouts:            s.stats.timeouts.Load(),
+		ReplayHits:          s.stats.replayHits.Load(),
+		ReplayMisses:        s.stats.replayMisses.Load(),
+	})
+}
+
+func (s *Server) recordFailure(ctx context.Context) {
+	if ctx.Err() != nil {
+		s.stats.timeouts.Add(1)
+		return
+	}
+	s.stats.failedResponses.Add(1)
+}
+
 func (s *Server) handleChatCompletions(c echo.Context) error {
+	s.stats.requestsReceived.Add(1)
+	if !s.acquire(c.Request().Context()) {
+		s.recordFailure(c.Request().Context())
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
+	}
+	defer s.release()
+
 	f, streamGate := s.streamFaults()
+	if f.Hang {
+		<-c.Request().Context().Done()
+		s.stats.timeouts.Add(1)
+		return c.Request().Context().Err()
+	}
 	if f.StreamErrorEnvelope {
+		s.stats.failedResponses.Add(1)
 		return s.streamErrorEnvelope(c)
 	}
 	if f.HTTPStatus >= 400 {
+		s.stats.failedResponses.Add(1)
 		return c.JSON(f.HTTPStatus, OpenAIErrorBody(f.HTTPStatus, "mock-openai fault injection"))
 	}
 
 	body, err := readBody(c.Request())
 	if err != nil {
+		s.recordFailure(c.Request().Context())
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var req ChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		s.recordFailure(c.Request().Context())
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if req.Model == "" {
 		req.Model = "test-model"
 	}
 
-	// Latency stretches Validate (non-stream JSON). ExecuteValidation always
-	// sets stream=false before the ML call. Streaming inference must still
-	// emit a first token immediately so the gateway 1s floor is not tripped.
+	// Latency delays Validate (non-stream JSON) only. Stream first-token
+	// delay is StreamFirstTokenDelay inside streamCompletion; StreamChunkDelay
+	// sleeps after each flushed chunk.
 	if f.Latency > 0 && !req.Stream {
-		time.Sleep(f.Latency)
+		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
+			s.recordFailure(c.Request().Context())
+			return err
+		}
+	}
+
+	if f.HTTPStatus >= 400 || f.FailureRate > 0 {
+		selected := f.FailureRate <= 0 || f.ShouldFail(body)
+		if selected {
+			status := f.HTTPStatus
+			if status < 400 {
+				status = http.StatusServiceUnavailable
+			}
+			s.stats.failedResponses.Add(1)
+			return c.JSON(status, map[string]string{"error": "mock-openai fault injection"})
+		}
 	}
 
 	text := completionText(body)
-	if req.Stream {
-		return s.streamCompletion(c, req, text, body, f, streamGate)
+	if s.replay != nil {
+		sample, _, ok := s.replay.Lookup(req.Model, replayMessages(req.Messages))
+		if !ok {
+			s.stats.replayMisses.Add(1)
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "mock-openai replay sample not found"})
+		}
+		s.stats.replayHits.Add(1)
+		text = sample.Response.Content
 	}
-	return s.jsonCompletion(c, req, text, body)
+	if req.Stream {
+		err := s.streamCompletion(c, req, text, body, f, streamGate)
+		if err != nil || f.PartialStream || f.DropFirstChunk {
+			s.recordFailure(c.Request().Context())
+			return err
+		}
+		s.stats.successfulResponses.Add(1)
+		return nil
+	}
+	err = s.jsonCompletion(c, req, text, body)
+	if err != nil {
+		s.recordFailure(c.Request().Context())
+		return err
+	}
+	s.stats.successfulResponses.Add(1)
+	return nil
+}
+
+func (s *Server) acquire(ctx context.Context) bool {
+	if s.capacity == nil {
+		return true
+	}
+	select {
+	case s.capacity <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	default:
+		return false
+	}
+	select {
+	case s.workers <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		<-s.capacity
+		return false
+	}
+}
+
+func (s *Server) release() {
+	if s.capacity == nil {
+		return
+	}
+	<-s.workers
+	<-s.capacity
 }
 
 func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte) error {
@@ -162,6 +300,9 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 }
 
 func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
+	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
+		return err
+	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
@@ -293,6 +434,20 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		flusher.Flush()
 	}
 	return nil
+}
+
+func waitForLatency(ctx context.Context, latency time.Duration) error {
+	if latency <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(latency)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 const engineCoreErrorEvent = `data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"chatcmpl-mockopenai"}`

@@ -225,6 +225,10 @@ func (m *ManagedStorage) AppendDiff(escrowID string, rec types.DiffRecord) error
 	return m.inner.AppendDiff(escrowID, rec)
 }
 
+func (m *ManagedStorage) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	return appendDiffBatchVia(ctx, m.inner, escrowID, recs)
+}
+
 func (m *ManagedStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return m.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }

@@ -21,6 +21,7 @@ import (
 // cursor stays at 0 and only the cap trims s.diffs.
 func composeEmptyDiffs(t *testing.T, session *Session, n int) map[uint64][]byte {
 	t.Helper()
+	session.stopLaggingSync()
 	roots := make(map[uint64][]byte, n)
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -217,6 +218,88 @@ func TestSession_SendCatchUpReadsEachChunkFromTheStore(t *testing.T) {
 	require.Equal(t, uint64(n), session.hostSyncNonce[0])
 }
 
+// aheadCatchUpClient records catch-up chunks. With jump, the host applies the
+// whole journal before the first chunk is answered, the way a refused-timeout
+// ChallengeReceipt carries another host's journal to a paused executor. With
+// unhashedTip, every answer claims the session tip with no state hash or
+// signature, while the host holds only what the chunks delivered.
+type aheadCatchUpClient struct {
+	*InProcessClient
+	session     *Session
+	jump        bool
+	unhashedTip bool
+	mu          sync.Mutex
+	chunks      [][2]uint64
+}
+
+func (c *aheadCatchUpClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.mu.Lock()
+	c.chunks = append(c.chunks, [2]uint64{req.Diffs[0].Nonce, req.Diffs[len(req.Diffs)-1].Nonce})
+	first := len(c.chunks) == 1
+	c.mu.Unlock()
+	if c.jump && first {
+		c.session.mu.Lock()
+		all := append([]types.Diff(nil), c.session.diffRangeLocked(1, c.session.nonce)...)
+		c.session.mu.Unlock()
+		c.Host.ApplyCatchUpDiffs(all)
+	}
+	resp, err := c.InProcessClient.Send(ctx, req, stream, onReceipt)
+	if err != nil || !c.unhashedTip {
+		return resp, err
+	}
+	c.session.mu.Lock()
+	tip := c.session.nonce
+	c.session.mu.Unlock()
+	claimed := *resp
+	claimed.Nonce = tip
+	claimed.StateHash = nil
+	claimed.StateSig = nil
+	return &claimed, nil
+}
+
+func requireHostAt(t *testing.T, session *Session, h *host.Host, nonce uint64, root []byte) {
+	t.Helper()
+	require.Equal(t, nonce, h.LatestNonce())
+	hostRoot, err := h.StateRoot()
+	require.NoError(t, err)
+	require.Equal(t, root, hostRoot)
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.Equal(t, nonce, session.hostSyncNonce[0])
+}
+
+func TestSession_SendCatchUpSkipsAHostVerifiablyAhead(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize*3 + 50
+	roots := composeEmptyDiffs(t, session, n)
+	client := &aheadCatchUpClient{
+		InProcessClient: session.clients[0].(*InProcessClient),
+		session:         session,
+		jump:            true,
+	}
+
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+
+	require.Equal(t, [][2]uint64{{1, catchUpChunkSize}}, client.chunks,
+		"a hashed tip answer is checked against our root, so the rest is not resent")
+	requireHostAt(t, session, client.Host, n, roots[n])
+}
+
+func TestSession_SendCatchUpDoesNotSkipOnAnUnhashedTip(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize*3 + 50
+	roots := composeEmptyDiffs(t, session, n)
+	client := &aheadCatchUpClient{
+		InProcessClient: session.clients[0].(*InProcessClient),
+		session:         session,
+		unhashedTip:     true,
+	}
+
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+
+	requireHostAt(t, session, client.Host, n, roots[n])
+}
+
 type recordedSend struct {
 	from, to, nonce uint64
 	payload         bool
@@ -308,7 +391,6 @@ func TestSession_SignaturesAreTrimmedBelowEveryCursor(t *testing.T) {
 	}
 
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	floor := min(minHostSyncNonce(session.hostSyncNonce, len(session.group)), session.nonce-1)
 	require.Greater(t, floor, uint64(len(session.group)), "precondition: every cursor moved past the first round")
 	var below int
@@ -320,40 +402,42 @@ func TestSession_SignaturesAreTrimmedBelowEveryCursor(t *testing.T) {
 	require.LessOrEqual(t, below, len(session.group),
 		"below the cursors only each validator's highest signature stays")
 	require.NotContains(t, session.signatures, uint64(1))
+	session.mu.Unlock()
 
 	stored, err := session.store.GetSignatures(session.escrowID, 1)
 	require.NoError(t, err)
 	require.NotEmpty(t, stored, "precondition: nonce 1 was signed and persisted")
 	for slot := range stored {
-		require.True(t, session.hostSignedLocked(1, session.sm.SlotAddress(slot)),
+		require.True(t, session.hostSigned(1, session.sm.SlotAddress(slot)),
 			"a trimmed nonce is read back from the store")
 	}
 }
 
 func TestSession_TrimKeepsTheCurrentNonceAndTheQuorumStatus(t *testing.T) {
 	session := setupStoredSession(t, storage.NewMemory())
-	composeEmptyDiffs(t, session, 6)
+	roots := composeEmptyDiffs(t, session, 6)
 	a, b, c := hostSlot(session, 0), hostSlot(session, 1), hostSlot(session, 2)
-	sig := []byte("sig")
 
 	session.mu.Lock()
-	defer session.mu.Unlock()
 	session.signatures = map[uint64]map[uint32][]byte{
-		1: {a: sig, b: sig},
-		2: {b: sig},
-		3: {a: sig},
-		6: {c: sig},
+		1: {a: signSessionHostRootForTest(t, session, 0, 1, roots[1]), b: signSessionHostRootForTest(t, session, 1, 1, roots[1])},
+		2: {b: signSessionHostRootForTest(t, session, 1, 2, roots[2])},
+		3: {a: signSessionHostRootForTest(t, session, 0, 3, roots[3])},
+		6: {c: signSessionHostRootForTest(t, session, 2, 6, roots[6])},
 	}
-	wantEntries, wantHighest, wantAny := session.signatureStatusLocked()
+	session.mu.Unlock()
+	wantEntries, wantHighest, wantAny := session.SignatureStatus()
 
+	session.mu.Lock()
 	for i := range session.group {
 		session.hostSyncNonce[i] = 6
 	}
 	session.dropDiffPrefixLocked()
+	session.mu.Unlock()
 
 	require.ElementsMatch(t, []uint64{2, 3, 6}, slices.Collect(maps.Keys(session.signatures)),
 		"nonce 1 is no validator's highest; 2 and 3 are, and 6 is current")
-	_, gotHighest, gotAny := session.signatureStatusLocked()
+	_, gotHighest, gotAny := session.SignatureStatus()
 	require.Equal(t, wantAny, gotAny)
 	require.Equal(t, wantHighest, gotHighest, "the trim does not change the quorum nonce")
 	require.NotEmpty(t, wantEntries)
@@ -362,10 +446,10 @@ func TestSession_TrimKeepsTheCurrentNonceAndTheQuorumStatus(t *testing.T) {
 
 func TestSession_QuorumAtATrimmedNonceIsReadFromTheStore(t *testing.T) {
 	session := setupStoredSession(t, storage.NewMemory())
-	composeEmptyDiffs(t, session, 6)
+	roots := composeEmptyDiffs(t, session, 6)
 	for i := range session.group {
 		for _, slot := range session.addrToSlots[session.group[i].ValidatorAddress] {
-			require.NoError(t, session.store.AddSignature(session.escrowID, 2, slot, []byte("sig")))
+			require.NoError(t, session.store.AddSignature(session.escrowID, 2, slot, signSessionHostRootForTest(t, session, i, 2, roots[2])))
 		}
 	}
 

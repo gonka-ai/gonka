@@ -678,7 +678,11 @@ func (p *Proxy) handBackToGateway(ctx context.Context, err error) bool {
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		return SettlementJSON{}, err
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
@@ -688,7 +692,12 @@ func (p *Proxy) settlementJSON() (SettlementJSON, error) {
 func (p *Proxy) writeSettlement(w http.ResponseWriter) {
 	finalNonce := p.session.Nonce()
 	st := p.sm.SnapshotState()
-	payload, err := state.BuildSettlement(p.escrowID, st, p.session.Signatures()[finalNonce], finalNonce)
+	sigs, err := p.session.SettlementSignatures(finalNonce)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	payload, err := state.BuildSettlement(p.escrowID, st, sigs, finalNonce)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -869,6 +878,19 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 		// Deprecated: same as live_inferences; kept for older scripts.
 		"total_inferences": liveTotal,
 		"status_counts":    liveStatusCounts,
+	})
+}
+
+func (p *Proxy) handleDebugStateSizes(w http.ResponseWriter, r *http.Request) {
+	sizes := p.session.StateSizes()
+	writeJSON(w, map[string]any{
+		"diffs":            sizes.Diffs,
+		"diffs_bytes":      sizes.DiffBytes,
+		"diffs_mb":         float64(sizes.DiffBytes) / (1024 * 1024),
+		"signature_nonces": sizes.SignatureNonces,
+		"nonce_states":     sizes.NonceStates,
+		"pending_txs":      sizes.PendingTxs,
+		"applied_tx_keys":  sizes.AppliedTxKeys,
 	})
 }
 

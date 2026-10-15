@@ -12,7 +12,7 @@ const (
 	RPCWeightRepair        = 2
 	RPCWeightVerify        = 2
 	RPCWeightChallenge     = 2
-	RPCWeightChat          = 10
+	RPCWeightChat          = 1
 	RPCWeightGetMempool    = 6
 	RPCWeightGetPayload    = 6
 	RPCWeightGetDiffs      = 60
