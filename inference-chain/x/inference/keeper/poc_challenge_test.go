@@ -332,6 +332,7 @@ func TestPayAndDeleteOldChallenges_PassAndRefund(t *testing.T) {
 		StartHeight:   50,
 		State:         types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
 	}))
+	require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
 	mocks.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil).Times(1)
@@ -339,6 +340,9 @@ func TestPayAndDeleteOldChallenges_PassAndRefund(t *testing.T) {
 	_, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.False(t, found)
+	proven, err := k.ChallengeProven(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.False(t, proven, "the next challenge against the target starts unproven")
 
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
 		EpochIndex:    2,

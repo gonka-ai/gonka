@@ -170,28 +170,72 @@ func TestDecideCurrentChallengeSegment_ReplayAfterRotateDoesNotAbort(t *testing.
 	require.Equal(t, int64(400), ch.StartHeight)
 }
 
-func TestDecideCurrentChallengeSegment_NoRotateClosesBeforeLastSegment(t *testing.T) {
-	am, k, ctx := challengeApp(t)
-	ctx = ctx.WithBlockHeight(1960)
-	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:  2,
-		Target:      testutil.Executor,
-		StartHeight: 100,
-		Seed:        []byte{1},
-	}))
-	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 200, 180, true))
-	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
-	require.Equal(t, int64(1950), ch.StartHeight)
+func TestDecideCurrentChallengeSegment_NoRoomToRotateClosesTheChallenge(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proven bool
+		want   types.PoCChallengeState
+	}{
+		{"a target an earlier segment proved is paid", true, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED},
+		{"a target no segment proved hands the lock back", false, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := challengeApp(t)
+			ctx = ctx.WithBlockHeight(1960)
+			require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+				EpochIndex:  2,
+				Target:      testutil.Executor,
+				StartHeight: 100,
+				Seed:        []byte{1},
+			}))
+			if tc.proven {
+				require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
+			}
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 200, 180, true))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+			require.Equal(t, int64(100), ch.StartHeight)
 
-	require.NoError(t, am.decideLastChallengeSegments(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 0}))
-	ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
-	require.Equal(t, int64(1950), ch.StartHeight)
+			require.NoError(t, am.decideLastChallengeSegments(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+			ch, found, err = k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+		})
+	}
+}
+
+func TestDecideCurrentChallengeSegment_ARotationLeavingTooShortASegmentDecidesNow(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proven bool
+		want   types.PoCChallengeState
+	}{
+		{"a proven target is paid", true, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED},
+		{"an unproven target hands the lock back", false, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := challengeApp(t)
+			ctx = ctx.WithBlockHeight(1700)
+			require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+				EpochIndex:  2,
+				Target:      testutil.Executor,
+				StartHeight: 1500,
+				Seed:        []byte{1},
+			}))
+			if tc.proven {
+				require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
+			}
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 1700, 180, true))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+			require.Equal(t, int64(1500), ch.StartHeight)
+		})
+	}
 }
 
 func TestDecideCurrentChallengeSegment_MissingTargetDoesNotWriteWeight(t *testing.T) {
@@ -242,20 +286,34 @@ func TestDecideCurrentChallengeSegment_MissingTargetDoesNotWriteWeight(t *testin
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
 }
 
-func TestDecideCurrentChallengeSegment_FinalShortSegmentPasses(t *testing.T) {
-	am, k, ctx := challengeApp(t)
-	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
-		EpochIndex:  2,
-		Target:      testutil.Executor,
-		StartHeight: 1900,
-		Seed:        []byte{1},
-	}))
-	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 1950, 2000, false))
-	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
-	require.Equal(t, int64(1900), ch.StartHeight)
+func TestDecideCurrentChallengeSegment_FinalShortSegmentPassesOnlyAProvenTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proven bool
+		want   types.PoCChallengeState
+	}{
+		{"an earlier segment proved the target", true, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED},
+		{"no segment was ever punishable", false, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := challengeApp(t)
+			require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+				EpochIndex:  2,
+				Target:      testutil.Executor,
+				StartHeight: 1900,
+				Seed:        []byte{1},
+			}))
+			if tc.proven {
+				require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
+			}
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 1950, 2000, false))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+			require.Equal(t, int64(1900), ch.StartHeight)
+		})
+	}
 }
 
 func TestStripChallengeSkipFromPreserved(t *testing.T) {
@@ -528,9 +586,30 @@ func TestDecideCurrentChallengeSegment_FullyReservedHostIsRefundedNotPaid(t *tes
 	}
 }
 
-func TestDecideLastChallengeSegment_AFreeNodeOutsideTheSnapshotStillPays(t *testing.T) {
+func TestDecideCurrentChallengeSegment_OnlyAPassedSegmentProvesTheTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		count  uint32
+		proven bool
+	}{
+		{"a passed segment proves it", 100, true},
+		{"a failed segment does not", 10, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+				{id: "m1", weight: 100, count: tc.count, accept: true},
+			})
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, true))
+			proven, err := k.ChallengeProven(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.Equal(t, tc.proven, proven)
+		})
+	}
+}
+
+func TestDecideCurrentChallengeSegment_ASegmentWithNothingToMeasureDoesNotProveTheTarget(t *testing.T) {
 	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
-		{id: "m1", weight: 100},
+		{id: "m1", weight: 0},
 		{id: "m2", weight: 50},
 	})
 	require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
@@ -541,23 +620,82 @@ func TestDecideLastChallengeSegment_AFreeNodeOutsideTheSnapshotStillPays(t *test
 			VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 100}},
 		}},
 	}))
-	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
-		TrainshardId:    1,
-		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
-		CreatedAtHeight: 50,
-		Nodes: []*types.TrainshardReservedNode{{
-			Participant: testutil.Executor,
-			NodeId:      "m1-n",
-			ModelId:     "m1",
-			PocWeight:   100,
-			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
-		}},
-	}))
 	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+	proven, err := k.ChallengeProven(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.False(t, proven)
 	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State, "m2 was free, an earlier segment could have checked it")
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED, ch.State)
+	require.Equal(t, "no_punishable_segment", abortCause(ctx, testutil.Executor))
+}
+
+func abortCause(ctx sdk.Context, target string) string {
+	for _, event := range ctx.EventManager().Events() {
+		if event.Type != "poc_challenge_aborted" {
+			continue
+		}
+		var gotTarget, cause string
+		for _, attr := range event.Attributes {
+			switch attr.Key {
+			case "target":
+				gotTarget = attr.Value
+			case "cause":
+				cause = attr.Value
+			}
+		}
+		if gotTarget == target {
+			return cause
+		}
+	}
+	return ""
+}
+
+func TestDecideLastChallengeSegment_AFreeNodeOutsideTheSnapshotPaysOnlyAProvenTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		proven bool
+		want   types.PoCChallengeState
+	}{
+		{"an earlier segment checked the free node", true, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED},
+		{"no segment checked the free node", false, types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+				{id: "m1", weight: 100},
+				{id: "m2", weight: 50},
+			})
+			require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+				PocStageStartHeight: 180,
+				TotalNetworkWeight:  100,
+				ModelVotingPowers: []*types.ModelVotingPowers{{
+					ModelId:      "m1",
+					VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 100}},
+				}},
+			}))
+			require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+				TrainshardId:    1,
+				Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+				CreatedAtHeight: 50,
+				Nodes: []*types.TrainshardReservedNode{{
+					Participant: testutil.Executor,
+					NodeId:      "m1-n",
+					ModelId:     "m1",
+					PocWeight:   100,
+					Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+				}},
+			}))
+			if tc.proven {
+				require.NoError(t, k.MarkChallengeProven(ctx, testutil.Executor))
+			}
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tc.want, ch.State)
+		})
+	}
 }
 
 func TestDecideCurrentChallengeSegment_MultiModelPartialAcceptance(t *testing.T) {

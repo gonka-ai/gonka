@@ -146,6 +146,7 @@ type (
 		PoCChallenges             collections.Map[sdk.AccAddress, types.PoCChallenge]
 		PoCChallengeCommits       collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
 		PoCChallengeValidations   collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		PoCChallengeProven        collections.KeySet[sdk.AccAddress]
 		Trainshards               collections.Map[uint64, types.Trainshard]
 		TrainshardCounter         collections.Item[uint64]
 		TrainshardActiveIndex     collections.KeySet[uint64]
@@ -720,6 +721,12 @@ func NewKeeper(
 			"poc_challenge_validation",
 			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		PoCChallengeProven: collections.NewKeySet(
+			sb,
+			types.PoCChallengeProvenPrefix,
+			"poc_challenge_proven",
+			sdk.AccAddressKey,
 		),
 		Trainshards: collections.NewMap(
 			sb,

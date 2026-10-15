@@ -132,6 +132,7 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
+	PoCChallengeProvenPrefix       = collections.NewPrefix(114)
 	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
 	TrainshardsPrefix               = collections.NewPrefix(130)
 	TrainshardCounterPrefix         = collections.NewPrefix(131)

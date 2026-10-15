@@ -227,7 +227,26 @@ func (k Keeper) DeletePoCChallenge(ctx context.Context, target string) error {
 	if err != nil {
 		return err
 	}
+	if err := k.PoCChallengeProven.Remove(ctx, addr); err != nil {
+		return err
+	}
 	return k.PoCChallenges.Remove(ctx, addr)
+}
+
+func (k Keeper) MarkChallengeProven(ctx context.Context, target string) error {
+	addr, err := sdk.AccAddressFromBech32(target)
+	if err != nil {
+		return err
+	}
+	return k.PoCChallengeProven.Set(ctx, addr)
+}
+
+func (k Keeper) ChallengeProven(ctx context.Context, target string) (bool, error) {
+	addr, err := sdk.AccAddressFromBech32(target)
+	if err != nil {
+		return false, err
+	}
+	return k.PoCChallengeProven.Has(ctx, addr)
 }
 
 // MarkChallengeAborted closes a challenge without a failure.
