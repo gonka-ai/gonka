@@ -1021,19 +1021,27 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		}
 	}
 
-	// Add seeds for preserved participants
+	// Add seeds for preserved participants. Like a PoC participant above, one
+	// without a seed for the upcoming epoch is left out: addEpochMembers cannot
+	// seat it, and it must not stay in ActiveParticipants or the BLS key
+	// generation without a seat.
+	seededPreserved := preservedParticipants[:0]
 	for _, preservedParticipant := range preservedParticipants {
 		participantAddress := preservedParticipant.Index
-		if seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress); found {
-			preservedParticipant.Seed = &seed
-			seeds[participantAddress] = seed
-			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
-				"participantAddress", participantAddress)
-		} else {
-			am.LogWarn("ComputeNewWeights: No seed found for preserved participant", types.PoC,
-				"participantAddress", participantAddress)
+		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		if !found {
+			am.LogError("ComputeNewWeights: Preserved participant didn't submit the seed for the upcoming epoch", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"participant", participantAddress)
+			continue
 		}
+		preservedParticipant.Seed = &seed
+		seeds[participantAddress] = seed
+		seededPreserved = append(seededPreserved, preservedParticipant)
+		am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
+			"participantAddress", participantAddress)
 	}
+	preservedParticipants = seededPreserved
 
 	// Create weight calculator and calculate
 	params, err := am.keeper.GetParams(ctx)

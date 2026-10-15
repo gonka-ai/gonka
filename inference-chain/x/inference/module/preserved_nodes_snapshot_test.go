@@ -193,3 +193,91 @@ func TestComputeNewWeightsCarriesPreservedNodesFromRegularSnapshot(t *testing.T)
 	require.Len(t, result[0].MlNodes[0].MlNodes, 1)
 	require.Equal(t, "node-1", result[0].MlNodes[0].MlNodes[0].NodeId)
 }
+
+func TestComputeNewWeightsPreservedParticipantWithoutSeed(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	currentEpoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}
+	require.NoError(t, k.SetEpoch(ctx, &currentEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, currentEpoch.Index))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:          currentEpoch.Index,
+		PocStartBlockHeight: uint64(currentEpoch.PocStartBlockHeight),
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: testutil.Executor,
+				Weight:        10,
+			},
+			{
+				MemberAddress: testutil.Executor2,
+				Weight:        10,
+			},
+		},
+		SubGroupModels: []string{"model-a"},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: currentEpoch.Index,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{
+				MemberAddress: testutil.Executor,
+				Weight:        10,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "node-1", PocWeight: 10, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+			{
+				MemberAddress: testutil.Executor2,
+				Weight:        10,
+				MlNodes: []*types.MLNodeInfo{
+					{NodeId: "node-2", PocWeight: 10, TimeslotAllocation: []bool{true, true}},
+				},
+			},
+		},
+	})
+
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:        testutil.Executor,
+		Address:      testutil.Executor,
+		ValidatorKey: "validator-key",
+		InferenceUrl: "http://executor",
+		Status:       types.ParticipantStatus_ACTIVE,
+	}))
+	// Both participants only carry a preserved node into the upcoming epoch.
+	// Executor2 submitted its seed for epoch 2, Executor did not.
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:        testutil.Executor2,
+		Address:      testutil.Executor2,
+		ValidatorKey: "validator-key-2",
+		InferenceUrl: "http://executor2",
+		Status:       types.ParticipantStatus_ACTIVE,
+	}))
+	require.NoError(t, k.SetRandomSeed(ctx, types.RandomSeed{
+		Participant: testutil.Executor2,
+		EpochIndex:  2,
+		Signature:   "seed-signature-2",
+	}))
+	require.NoError(t, k.SetPreservedNodesSnapshot(ctx, types.PreservedNodesSnapshot{
+		EpisodeAnchorHeight: 100,
+		ModelPreservedNodes: []*types.ModelPreservedNodes{
+			{
+				ModelId: "model-a",
+				Participants: []*types.ParticipantPreservedNodes{
+					{ParticipantId: testutil.Executor, NodeIds: []string{"node-1"}},
+					{ParticipantId: testutil.Executor2, NodeIds: []string{"node-2"}},
+				},
+			},
+		},
+	}))
+
+	result := am.computeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100}).participants
+	// addEpochMembers skips any participant whose Seed is nil, so such a
+	// participant would stay in ActiveParticipants without an epoch group seat.
+	for _, p := range result {
+		require.NotNil(t, p.Seed, "participant %s returned without a seed", p.Index)
+	}
+	require.Len(t, result, 1)
+	require.Equal(t, testutil.Executor2, result[0].Index)
+}
