@@ -261,10 +261,12 @@ governance defaults only affects newly created sessions.
 
 ## 5. Cross-cutting consequences
 
-- **Validator behavior on missing payload.** A 404 from the executor
-  is mapped to a sentinel skip both at the validator side and at the
-  host's `validateAsync` loop, so the host produces no
-  `MsgValidation` and the validator does not retry the same id.
+- **Validator behavior on missing payload.** A 404 after the epoch
+  partition was dropped is a skip: no `MsgValidation`, no retry of the
+  same id. A 404 while the payload should still be stored (the
+  validator's phase is at most one epoch past the escrow's) votes
+  `Valid:false` with reason `payload_not_found`, unless
+  `DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE` is off.
 - **Diff replay on recovery.** The diff log is canonical and is
   replayed on cold start. Tier A and B seals naturally re-fire on
   the same terminal transitions and settlement entry. Tier C's
