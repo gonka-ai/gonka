@@ -117,6 +117,26 @@ services:
     restart: unless-stopped
 {{ end }}
 {{ if .Postgres.Enabled }}
+{{ if .Postgres.PerParticipant }}
+{{ range $i, $h := participantHosts . }}
+
+  {{ postgresServiceFor $ $h }}:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: {{ $.Postgres.Database }}
+      POSTGRES_USER: {{ $.Postgres.User }}
+      POSTGRES_PASSWORD: {{ $.Postgres.Password }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ $.Postgres.User }} -d {{ $.Postgres.Database }}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      testenv:
+        ipv4_address: {{ participantPostgresIP $ $i }}
+    restart: unless-stopped
+{{ end }}
+{{ else }}
 
   devshard-postgres:
     image: postgres:16-alpine
@@ -133,6 +153,7 @@ services:
       testenv:
         ipv4_address: {{ .Postgres.IP }}
     restart: unless-stopped
+{{ end }}
 {{ end }}
 {{ range .Hosts }}
 
@@ -191,7 +212,7 @@ services:
       GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
-      PGHOST: {{ $.Postgres.Host }}
+      PGHOST: {{ postgresServiceFor $ . }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
@@ -202,7 +223,7 @@ services:
       # warm/catch up after a solo executor, and citest can observe pending
       # leases when the solo validates (sqlite Acquire never writes PG rows).
       DEVSHARD_STORAGE_MODE: hybrid
-      PGHOST: {{ $.Postgres.Host }}
+      PGHOST: {{ postgresServiceFor $ . }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
@@ -231,7 +252,10 @@ services:
       {{ .Name }}:
         condition: service_started
 {{ end }}
-{{ if isHAReplica $ . }}
+{{ if $.Postgres.PerParticipant }}
+      {{ postgresServiceFor $ . }}:
+        condition: service_healthy
+{{ else if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
 {{ end }}
@@ -376,6 +400,9 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"routingActivationMinReady": routingActivationMinReady,
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
+		"participantHosts":          config.OnChainIdentityHosts,
+		"participantPostgresIP":     participantPostgresIP,
+		"postgresServiceFor":        config.PostgresServiceFor,
 		"legacyVersiondHost":        legacyVersiondHost,
 		"mockMLNodes":               mockMLNodes,
 		"mockMLNodesEnv":            mockMLNodesEnv,
@@ -499,6 +526,12 @@ func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 		return false
 	}
 	return config.KeyNameReplicaCount(cfg, h) > 1
+}
+
+// participantPostgresIP is the address of participant i's Postgres service,
+// above the mock ML node range (BaseIP.200+i).
+func participantPostgresIP(cfg *config.File, i int) string {
+	return fmt.Sprintf("%s.%d", cfg.Network.BaseIP, 200+i)
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.
