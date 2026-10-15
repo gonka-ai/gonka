@@ -32,6 +32,121 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+## External gateway
+
+Run the same normal-load client generator against an existing gateway without
+starting Docker (requires Go and the repository's Go dependencies):
+
+```bash
+cp devshard/testenv/.env.remote-load.example devshard/testenv/.env.remote-load
+# Edit .env.remote-load: set GONKA_API_KEY, GONKA_BASE, and GONKA_MODEL.
+make -C devshard/testenv loadtest-remote SCENARIO=normal-load
+```
+
+This uses `normal-load.yaml`: 30 seconds, two closed-loop workers, non-streaming,
+64 requested output tokens, and request prompts with distinct IDs within a run.
+Repeated runs with the same scenario name and seed reuse IDs and may hit caches.
+The Make target loads `devshard/testenv/.env.remote-load` if present; its values
+override exported variables. The local file is ignored by Git.
+Files are sourced as shell code and must be trusted. Without a file, exported
+environment variables also work. URL and model have no defaults in the target.
+The key is not saved in run artifacts.
+Select scenarios with `SCENARIO=name`. Duration, concurrency, traffic, streaming,
+request settings and assertions come from `loadtest/scenarios/<name>.yaml`;
+the model is overridden by `GONKA_MODEL` from the environment file.
+The Make target needs no other parameters. For a different workload, edit or
+create a scenario YAML, as with local Docker runs.
+It rejects host-fault scenarios. Request
+timeouts default to 30 seconds; set `workload.request_timeout` in the scenario
+to change the deadline for the entire HTTP exchange, including reading the
+response body. Active requests can finish after the workload
+window. Interrupting a run saves partial request results and exits nonzero.
+
+Artifacts under `loadtest/results/remote-<timestamp>/` include the effective
+`run.yaml`, `summary.json`, `requests.jsonl`, `assertions.json`, and capped
+failure bundles. Output directories must be new to avoid mixing runs. JSON
+latencies are nanoseconds, matching the local runner.
+
+The final console report is also saved as `report.txt`. It shows completed
+throughput over actual elapsed time (including final responses), separate
+request failures and generator drops, HTTP status counts, min/mean/p50/p95/p99/max
+full-response latency, and a window table with proportional throughput bars.
+Windows default to five seconds; use `-report-interval 10s` to change the size.
+Window RPS divides eventual completions of requests started in the window by
+that window's workload duration, matching the local Docker runner. Latencies
+include failed attempts and exclude generator drops. Streaming measurements
+cover the full stream, not time to first token. Repeated runs may benefit from
+response caching and should not be treated as uncached model benchmarks.
+
+Remote runs check HTTP status and error rate; response content, JSON structure,
+and streaming `[DONE]` are not validated. Connection failures without an HTTP
+response count as errors. After HTTP 200, bodies are consumed for latency
+measurement; read errors/timeouts are recorded separately and do not fail the
+status check. Latency then ends at the read error rather than the full response.
+Local Docker response validation is unchanged. A passing result also requires
+at least one completed request. Topology and gateway configuration are not
+applied; DevShard lifecycle, mock allocation, accounting, escrow rotation,
+container logs, process metrics and profiling checks are skipped explicitly.
+This measures client-visible behavior, not model quality or internal health.
+
+To send requests from the local 250-sample JSONL fixture:
+
+```bash
+make -C devshard/testenv loadtest-remote SCENARIO=normal-load \
+  LOAD_DATASET=loadtest/resources/devshard-load-samples-250-sanitized-final.jsonl
+```
+
+Both local `loadtest` and `loadtest-remote` Make targets accept `LOAD_DATASET`,
+which forwards the same `-load-dataset` flag to their runners. Paths are relative
+to `devshard/testenv`, or may be absolute. Omitting it uses the scenario's
+synthetic request. No separate dataset scenario is needed.
+Requests are sampled deterministically with replacement using
+the scenario seed; a run does not necessarily send all 250 records. Captured
+model IDs are replaced by `GONKA_MODEL`; messages, temperature, max_tokens and
+stream flags are preserved. The fixture's `response` field is ignored and may
+be omitted. Only the request is sent to the remote model and HTTP 200 is
+required by this scenario. Selected sample indices and original fingerprints
+are saved in `requests.jsonl`. Large prompts and output limits are sent as-is;
+HTTP errors from model context limits are included in the report.
+
+For longer real-model requests, use `remote-long-load`: ten minutes of
+closed-loop traffic, two concurrent requests, a three-minute timeout per
+request, and thirty-second report windows:
+
+```bash
+make -C devshard/testenv loadtest-remote SCENARIO=remote-long-load \
+  LOAD_DATASET=loadtest/resources/devshard-load-samples-250-sanitized-final.jsonl
+```
+
+The run may take up to about thirteen minutes while final requests finish.
+The effective timeout is printed at startup and saved in `run.yaml` and
+`report.txt`. Endpoint and model still come from `.env.remote-load`. This
+scenario keeps concurrency at two to allow longer responses without also
+increasing simultaneous load. HTTP-status-only validation is unchanged;
+incomplete body reads remain separately visible in the report.
+
+Remote runs also collect `GET <GONKA_BASE>/metrics` at 0%, 10%, ..., 100% of
+the configured workload duration, and once more after all requests return.
+The 0% snapshot finishes before traffic begins. For a ten-minute workload,
+scheduled snapshots are one minute apart; for thirty seconds, three seconds
+apart. Interrupted runs can have fewer snapshots. Scrapes run sequentially
+with a five-second deadline against absolute workload offsets; slow scrapes
+can delay later snapshots. Requested progress and actual timestamps are
+recorded separately. Raw Prometheus snapshots
+are saved in `metrics/*.prom`, with timestamps, phases, selected process/cache
+values and errors in `metrics.jsonl`. `metrics-summary.json` stores the baseline,
+final values and sampled peaks. The final console report (also `report.txt`)
+reports numeric memory changes, CPU-seconds and average CPU cores, model cache hits,
+server/participant failures and means of new server timing observations
+(receipt, first content, total attempt and maximum chunk gap per attempt).
+It contains no automated findings; the saved results can be analyzed by an LLM.
+Timings describe attempts whose histogram observations were recorded during
+the collection interval; they do not represent client request percentiles.
+Missing or reset counters are not treated as zero. Counter deltas are omitted if a process change is
+detected. Missing metrics stay unavailable; collection errors do not change the
+HTTP-status-only test result. Metrics describe the whole Gateway, including
+other concurrent users. Collection does not clear or bypass the response cache.
+
 ## Catch-up scenario
 
 `catch-up` runs three participants at 16 RPS for five minutes. At 90 seconds

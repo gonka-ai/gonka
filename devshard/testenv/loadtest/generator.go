@@ -27,6 +27,10 @@ type GeneratorConfig struct {
 	OutputDir  string
 	Client     *http.Client
 	Replay     *replay.Selector
+	// ReplayModel overrides captured model IDs for single-model external gateways.
+	ReplayModel string
+	// HTTPStatusOnly skips JSON/SSE response validation for remote runs.
+	HTTPStatusOnly bool
 }
 
 type RequestResult struct {
@@ -38,6 +42,7 @@ type RequestResult struct {
 	Status            int           `json:"status"`
 	Outcome           string        `json:"outcome"`
 	Error             string        `json:"error,omitempty"`
+	ResponseReadError string        `json:"response_read_error,omitempty"`
 }
 
 type Summary struct {
@@ -85,6 +90,7 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 	}
 	if cfg.Client == nil {
 		cfg.Client = defaultHTTPClient(cfg.Scenario.Workload.MaxInFlight)
+		cfg.Client.Timeout = cfg.Scenario.RequestTimeout()
 	}
 	if cfg.OutputDir == "" {
 		return Summary{}, fmt.Errorf("output directory is required")
@@ -300,6 +306,9 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 			messages[i] = Message{Role: message.Role, Content: message.Content}
 		}
 		result.SampleFingerprint = replay.Fingerprint(sample.Model, sample.Messages)
+		if cfg.ReplayModel != "" {
+			model = cfg.ReplayModel
+		}
 	} else {
 		messages = append([]Message(nil), request.Messages...)
 		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
@@ -335,6 +344,15 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	}
 	defer resp.Body.Close()
 	result.Status = resp.StatusCode
+	if cfg.HTTPStatusOnly && resp.StatusCode == cfg.Scenario.Assertions.Requests.HTTPStatus {
+		// Consume the body for latency/connection reuse, but a truncated body does
+		// not change a successful HTTP-status-only assertion.
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			result.ResponseReadError = err.Error()
+		}
+		result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
+		return result
+	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		result.Error = err.Error()
@@ -346,10 +364,12 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 		result.Error = string(responseBody)
 		return result
 	}
-	if err := validateGatewayResponse(responseBody, stream); err != nil {
-		result.Outcome = "error"
-		result.Error = err.Error()
-		return result
+	if !cfg.HTTPStatusOnly {
+		if err := validateGatewayResponse(responseBody, stream); err != nil {
+			result.Outcome = "error"
+			result.Error = err.Error()
+			return result
+		}
 	}
 	result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
 	return result
