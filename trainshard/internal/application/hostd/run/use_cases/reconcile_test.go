@@ -11,6 +11,7 @@ import (
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -31,7 +32,7 @@ func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
 
 	// assert
 	want := []string{"runs.update", "runs.update", "control.drain", "images.pull",
-		"mesh.identity", "mesh_store.save_identity", "runs.update"}
+		"runs.update", "mesh.identity", "mesh_store.save_identity", "runs.update"}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
 		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
 	}
@@ -152,7 +153,7 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true, Drained: true}
 
 	// act
 	for range 3 {
@@ -288,7 +289,7 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 	}
 }
 
-func (f *fixture) runningPastItsReservation(t *testing.T) {
+func (f *fixture) running(t *testing.T) {
 	t.Helper()
 
 	ctx := context.Background()
@@ -303,10 +304,54 @@ func (f *fixture) runningPastItsReservation(t *testing.T) {
 		}
 	}
 	if !f.containers.infos[nodeA].State.Running() {
-		t.Fatalf("got %v, want the run started before its reservation goes", f.containers.infos[nodeA].State)
+		t.Fatalf("got %v, want the run started", f.containers.infos[nodeA].State)
 	}
-	delete(f.chain.reservations, nodeA)
 	f.rec.reset()
+}
+
+func (f *fixture) runningPastItsReservation(t *testing.T) {
+	t.Helper()
+
+	f.running(t)
+	delete(f.chain.reservations, nodeA)
+}
+
+var errDapiDown = shared.New("DAPI_UNREACHABLE", shared.ErrUnavailable, "connection refused")
+
+func TestReconcileDrainsAgainANodeARestartedDapiForgotWithoutStoppingTheRun(t *testing.T) {
+	// arrange
+	f := newFixture()
+	f.running(t)
+	ctx := context.Background()
+	f.control.unreadable = errDapiDown
+	if _, err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile while the dapi is down: %v", err)
+	}
+	f.control.unreadable, f.control.drained = nil, false
+
+	// act
+	var errs []error
+	for range 2 {
+		_, err := f.reconcile().Execute(ctx, nodeA)
+		errs = append(errs, err)
+	}
+
+	// assert
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("got %v, want the node drained again quietly", errs)
+	}
+	if want := []string{"runs.update", "control.drain", "runs.update"}; !reflect.DeepEqual(f.rec.sequence(), want) {
+		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
+	}
+	if !f.containers.infos[nodeA].State.Running() {
+		t.Fatalf("got %v, want the run left running", f.containers.infos[nodeA].State)
+	}
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got releases %v, want the node kept", f.chain.releases)
+	}
+	if state := f.runs.states[nodeA]; !state.Drained || !state.UnpreparedAt.IsZero() {
+		t.Fatalf("got %+v, want the node found drained again with no wait left running", state)
+	}
 }
 
 func TestReconcileCleansUpWhileTheDapiCannotSayWhetherTheNodeIsDrained(t *testing.T) {

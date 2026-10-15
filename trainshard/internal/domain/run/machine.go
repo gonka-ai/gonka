@@ -33,7 +33,7 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 	var inUse int
 	if serving {
 		var err error
-		if drained, err = m.Control.Drained(ctx, node); err != nil {
+		if drained, err = m.drained(ctx, node, shardID); err != nil {
 			return Observed{}, err
 		}
 		if foreign, err = m.GPU.ForeignWork(ctx, shardID, node); err != nil {
@@ -95,6 +95,18 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 		DiskQuotaBytes:    quota,
 		TrainingProcesses: leftovers,
 	}, nil
+}
+
+func (m Machine) drained(ctx context.Context, node vo.NodeRef, shardID vo.ShardID) (bool, error) {
+	drained, err := m.Control.Drained(ctx, node)
+	if err == nil || !errors.Is(err, shared.ErrUnavailable) {
+		return drained, err
+	}
+	state, _, loadErr := m.Runs.Load(ctx, node)
+	if loadErr != nil {
+		return false, errors.Join(err, loadErr)
+	}
+	return state.For(shardID).Drained, nil
 }
 
 // Sweep goes by what the machine holds, not by the stored state, so a run that outlived its state

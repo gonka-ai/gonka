@@ -915,14 +915,26 @@ type EpochReservations struct {
 
 func (k Keeper) CollectEpochReservations(ctx context.Context, epochIndex uint64) *EpochReservations {
 	windows := k.reservedNodeWindows(ctx, epochIndex, ReservationScopeReward)
-	reservations := &EpochReservations{Nodes: EpochReservedWeightView{windows: windows}.nodeWeights(nil)}
 	start, end, ok := k.rewardEpochSpan(ctx, epochIndex)
 	if !ok {
-		return reservations
+		return &EpochReservations{Nodes: EpochReservedWeightView{windows: windows}.nodeWeights(nil)}
 	}
-	reservations.EpochBlocks = end - start + 1
-	reservations.LeasedBlocks = leasedBlocks(windows, start, end)
-	return reservations
+	windows = windowsWithin(windows, start, end)
+	return &EpochReservations{
+		Nodes:        EpochReservedWeightView{windows: windows}.nodeWeights(nil),
+		LeasedBlocks: leasedBlocks(windows, start, end),
+		EpochBlocks:  end - start + 1,
+	}
+}
+
+func windowsWithin(windows []reservedNodeWindow, start, end int64) []reservedNodeWindow {
+	within := make([]reservedNodeWindow, 0, len(windows))
+	for _, w := range windows {
+		if w.start <= end && w.end >= start {
+			within = append(within, w)
+		}
+	}
+	return within
 }
 
 func (r *EpochReservations) leasedPart(host, nodeId string, weight int64) int64 {

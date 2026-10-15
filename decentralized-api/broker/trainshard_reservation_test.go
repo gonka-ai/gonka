@@ -69,6 +69,62 @@ func TestEpochCommands_KeepAReservedNodeOutOfPoCEvenWhenPreserved(t *testing.T) 
 	assert.Equal(t, types.HardwareNodeStatus_POC, other.State.IntendedStatus)
 }
 
+func TestEpochCommands_HandOutNothingUntilTheReservationsAreReadAfterAStart(t *testing.T) {
+	cases := []struct {
+		name    string
+		phase   types.EpochPhase
+		execute func(*Broker)
+		want    types.HardwareNodeStatus
+	}{
+		{
+			name:    "start poc",
+			phase:   types.PoCGeneratePhase,
+			execute: func(b *Broker) { NewStartPocCommand().Execute(b) },
+			want:    types.HardwareNodeStatus_POC,
+		},
+		{
+			name:    "init validate",
+			phase:   types.PoCGenerateWindDownPhase,
+			execute: func(b *Broker) { NewInitValidateCommand().Execute(b) },
+			want:    types.HardwareNodeStatus_POC,
+		},
+		{
+			name:    "inference up",
+			phase:   types.InferencePhase,
+			execute: func(b *Broker) { NewInferenceUpAllCommand().Execute(b) },
+			want:    types.HardwareNodeStatus_INFERENCE,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			leased := createTestNodeWithStatus("leased", types.HardwareNodeStatus_STOPPED)
+			leased.State.IntendedStatus = types.HardwareNodeStatus_UNKNOWN
+			free := createTestNode("free")
+			bridge := &MockBrokerChainBridge{}
+			bridge.On("GetTrainingNodeReservations", reservingHost).Return(nil, errors.New("connection refused")).Once()
+			bridge.On("GetTrainingNodeReservations", reservingHost).Return(&types.QueryTrainingNodeReservationsResponse{
+				NodeIds: []string{"leased"},
+			}, nil)
+			broker := reservationBroker(bridge, leased, free)
+			broker.phaseTracker = newPhaseTrackerWithPhase(t, tc.phase)
+			broker.awaitingReservations.Store(true)
+
+			require.Error(t, broker.EnsureReservedNodesCached())
+			tc.execute(broker)
+
+			assert.Equal(t, types.HardwareNodeStatus_UNKNOWN, leased.State.IntendedStatus, "a node the chain may still lease gets no work")
+			assert.Equal(t, types.HardwareNodeStatus_UNKNOWN, free.State.IntendedStatus)
+
+			require.NoError(t, broker.EnsureReservedNodesCached())
+			tc.execute(broker)
+
+			assert.Equal(t, types.HardwareNodeStatus_STOPPED, leased.State.IntendedStatus)
+			assert.Equal(t, tc.want, free.State.IntendedStatus)
+		})
+	}
+}
+
 func TestEnsureReservedNodesCached_ReturnsANodeOnlyWhenTheOperatorDoesNotHoldIt(t *testing.T) {
 	free := createTestNodeWithStatus("free", types.HardwareNodeStatus_STOPPED)
 	free.State.Reserved = true

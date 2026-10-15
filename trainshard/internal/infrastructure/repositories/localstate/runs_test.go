@@ -130,6 +130,33 @@ func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
 	}
 }
 
+func TestTheDrainTheDapiLastConfirmedOutlivesARestart(t *testing.T) {
+	// arrange
+	dir, ctx := t.TempDir(), context.Background()
+	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	if err := run.RecordReservation(ctx, openRuns(t, dir), node, 7, reservedAt); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	state, _, err := openRuns(t, dir).Load(ctx, node)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := run.TrackPreparedness(ctx, openRuns(t, dir), node, &state, run.Desired{Reservation: run.Reservation{Active: true}, Reserved: true}, run.Observed{Drained: true}, reservedAt); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	// act
+	reopened, _, err := openRuns(t, dir).Load(ctx, node)
+
+	// assert
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !reopened.Drained {
+		t.Fatalf("got %+v, want the drain kept across a restart", reopened)
+	}
+}
+
 func TestADeployForAnotherShardStartsFromNothing(t *testing.T) {
 	// arrange
 	dir, ctx := t.TempDir(), context.Background()

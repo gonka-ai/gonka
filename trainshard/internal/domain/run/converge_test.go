@@ -69,6 +69,82 @@ func TestConvergeWipesAShardPastItsExpiryThatTheChainStillLists(t *testing.T) {
 	}
 }
 
+func TestConvergeStandsOnTheLastDrainWhileTheDapiDoesNotAnswer(t *testing.T) {
+	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	unreachable := shared.New("DAPI_UNREACHABLE", shared.ErrUnavailable, "connection refused")
+	unknownNode := shared.New("NODE_UNKNOWN", shared.ErrNotFound, "the dapi serves no node")
+
+	cases := []struct {
+		name       string
+		unreadable error
+		drained    bool
+		wantCalls  []string
+		wantErr    error
+	}{
+		{
+			name:       "a node the dapi last found drained keeps its run",
+			unreadable: unreachable,
+			drained:    true,
+		},
+		{
+			name:       "a node the dapi never found drained is drained before anything else",
+			unreadable: unreachable,
+			wantCalls:  []string{"control.drain"},
+		},
+		{
+			name:       "a dapi that answers it does not know the node is not stood on",
+			unreadable: unknownNode,
+			drained:    true,
+			wantErr:    unknownNode,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			rec := &recorder{}
+			chain := &reservationsStub{reservation: run.Reservation{Shard: 7, BaseImage: baseImage, Active: true}, found: true}
+			runs := &runStoreStub{states: map[vo.NodeRef]run.RunState{
+				nodeA: {Shard: 7, ReservedAt: reservedAt, Spec: runSpec(), Start: true, Drained: tc.drained},
+			}}
+			containers := &containersStub{rec: rec, info: run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}, shards: []vo.ShardID{7}}
+			machine := run.Machine{
+				Images:     &imagesStub{rec: rec, present: map[vo.ImageDigest]bool{baseImage: true, runImage: true}},
+				Containers: containers,
+				Volumes:    &volumesStub{rec: rec, shardID: 7, present: true},
+				GPU:        &gpuStub{rec: rec},
+				Mesh:       &networkStub{rec: rec, shardID: 7, key: true, up: true},
+				Egress:     egressStub{},
+				Control:    &controlStub{rec: rec, unreadable: tc.unreadable},
+				Runs:       runs,
+				Clock:      clockStub{now: reservedAt.Add(10 * time.Minute)},
+				StopGrace:  time.Minute,
+			}
+			converger := run.NewConverger(chain, runs, machine, machine.Clock, time.Hour)
+
+			// act
+			_, err := converger.Converge(context.Background(), nodeA)
+
+			// assert
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("got %v, want %v", err, tc.wantErr)
+			}
+			if !reflect.DeepEqual(rec.calls, tc.wantCalls) {
+				t.Fatalf("got %v, want %v", rec.calls, tc.wantCalls)
+			}
+			if !containers.info.State.Running() {
+				t.Fatalf("got %v, want the run left running", containers.info.State)
+			}
+			if len(chain.releases) != 0 {
+				t.Fatalf("got releases %v, want none", chain.releases)
+			}
+			if got := runs.states[nodeA].Drained; got != tc.drained {
+				t.Fatalf("got drained %v, want the last answer %v kept", got, tc.drained)
+			}
+		})
+	}
+}
+
 func TestConvergeBuildsAgainAContainerWhoseImageWentUnrecorded(t *testing.T) {
 	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	errStore := errors.New("state disk full")

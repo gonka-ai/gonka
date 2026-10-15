@@ -111,18 +111,22 @@ func ClearFault(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 }
 
 // TrackPreparedness times the wait before a handback from when the node stopped being ready, the
-// way a fault is timed; a node the chain no longer holds is not timed at all
+// way a fault is timed; a node the chain no longer holds is not timed at all. It also keeps the
+// dAPI's last word on the drain, which Observe stands on while the dAPI does not answer
 func TrackPreparedness(ctx context.Context, runs RunStore, node vo.NodeRef, state *RunState, d Desired, o Observed, at time.Time) error {
-	was := state.UnpreparedAt
+	was, wasDrained := state.UnpreparedAt, state.Drained
 	switch {
 	case !d.Reserved || Prepared(d, o):
 		state.UnpreparedAt = time.Time{}
 	case was.IsZero():
 		state.UnpreparedAt = at
 	}
-	if state.UnpreparedAt.Equal(was) {
+	if d.Reserved && d.Active {
+		state.Drained = o.Drained
+	}
+	if state.UnpreparedAt.Equal(was) && state.Drained == wasDrained {
 		return nil
 	}
-	mark := state.UnpreparedAt
-	return runs.Update(ctx, node, func(s *RunState) { s.UnpreparedAt = mark })
+	mark, drained := state.UnpreparedAt, state.Drained
+	return runs.Update(ctx, node, func(s *RunState) { s.UnpreparedAt, s.Drained = mark, drained })
 }

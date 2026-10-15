@@ -144,7 +144,12 @@ func NewTestBroker() *Broker {
 	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model1").Return(model1EpochData, nil)
 
 	mockConfigManager := &apiconfig.ConfigManager{}
-	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
+	return withReservationsRead(NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager))
+}
+
+func withReservationsRead(b *Broker) *Broker {
+	b.awaitingReservations.Store(false)
+	return b
 }
 
 func newTestBrokerWithChainBridge(mockChainBridge *MockBrokerChainBridge) *Broker {
@@ -164,7 +169,7 @@ func newTestBrokerWithParticipantAddress(mockChainBridge *MockBrokerChainBridge,
 		true,
 		nil,
 	)
-	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{})
+	return withReservationsRead(NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{}))
 }
 
 func TestEnrichWithPocParams_CachesAllModels(t *testing.T) {

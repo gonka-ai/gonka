@@ -150,6 +150,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	awaitingReservations atomic.Bool
 }
 
 type lockEntry struct {
@@ -403,6 +404,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
 	}
+	broker.awaitingReservations.Store(true)
 
 	// Initialize NodeWorkGroup
 	broker.nodeWorkGroup = NewNodeWorkGroup()
@@ -1884,11 +1886,20 @@ func (b *Broker) EnsureReservedNodesCached() error {
 		logging.Info("Trainshard reservation changed", types.Nodes, "node_id", id, "reserved", held)
 	}
 	b.mu.Unlock()
+	b.awaitingReservations.Store(false)
 
 	if changed {
 		b.TriggerReconciliation()
 	}
 	return nil
+}
+
+func (b *Broker) holdsForReservations(command string) bool {
+	if !b.awaitingReservations.Load() {
+		return false
+	}
+	logging.Warn(command+": skipping until the trainshard reservations are read", types.Nodes)
+	return true
 }
 
 // PopulateSingleNodeEpochData populates epoch data for a specific node.

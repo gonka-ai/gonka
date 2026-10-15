@@ -344,6 +344,21 @@ func TestCollectEpochReservations_UsesThePlannedLengthBeforeTheNextEpoch(t *test
 	require.Equal(t, length-10, reservations.LeasedBlocks[host]["node-a"])
 }
 
+func TestCollectEpochReservations_LeavesOutALeaseAfterThePlannedEnd(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	plannedEnd := 100 + params.EpochParams.EpochLength - 1
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 100}))
+	host := sample.AccAddress()
+	setLeases(t, k, ctx, host, leaseSpan{created: plannedEnd + 10, released: plannedEnd + 20})
+
+	reservations := k.CollectEpochReservations(ctx, 7)
+
+	require.Empty(t, reservations.Nodes[host])
+	require.Zero(t, reservations.LeasedBlocks[host]["node-a"])
+}
+
 func TestCollectEpochReservations_AnUnknownEpochLeavesTheSpanOpen(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	host := sample.AccAddress()

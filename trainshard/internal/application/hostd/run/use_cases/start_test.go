@@ -116,6 +116,24 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 	}
 }
 
+func TestStopStopsTheRunWhileTheDapiDoesNotAnswer(t *testing.T) {
+	// arrange
+	f := newFixture()
+	f.running(t)
+	f.control.unreadable = errDapiDown
+
+	// act
+	results, err := f.stop().Execute(context.Background(), stopCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault != nil || results[0].State != vo.ContainerExited {
+		t.Fatalf("got %+v, want the run stopped without the dapi", results)
+	}
+}
+
 func TestStopUsesTheDaemonGraceWhenTheCallerDidNotSetOne(t *testing.T) {
 	// arrange
 	f := newFixture()

@@ -32,6 +32,9 @@ func (c StartPocCommand) Execute(b *Broker) {
 		logging.Warn("StartPocCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
 		return
 	}
+	if b.holdsForReservations("StartPocCommand") {
+		return
+	}
 
 	// Check if we should run PoC (regular OR confirmation OR challenge generation)
 	shouldRunPoC := epochState.CurrentPhase == types.PoCGeneratePhase
@@ -156,6 +159,9 @@ func (c InitValidateCommand) Execute(b *Broker) {
 		logging.Warn("InitValidateCommand: skipping outdated command execution. epoch state is nil or not synced", types.PoC)
 		return
 	}
+	if b.holdsForReservations("InitValidateCommand") {
+		return
+	}
 
 	shouldValidate := epochState.CurrentPhase == types.PoCValidatePhase
 	if epochState.CurrentPhase == types.PoCGenerateWindDownPhase {
@@ -270,6 +276,9 @@ func (c InferenceUpAllCommand) Execute(b *Broker) {
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState.IsNilOrNotSynced() {
 		logging.Warn("InferenceUpAllCommand: skipping outdated command execution. epoch state is nil or not synced", types.Nodes)
+		return
+	}
+	if b.holdsForReservations("InferenceUpAllCommand") {
 		return
 	}
 

@@ -201,5 +201,6 @@ type RunState struct {
 	Fault          *shared.Fault
 	FaultAt        time.Time
 	UnpreparedAt   time.Time
+	Drained        bool
 	ReleasedAt     time.Time
 }

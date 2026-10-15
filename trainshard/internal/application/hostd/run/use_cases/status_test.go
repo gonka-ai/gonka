@@ -120,6 +120,24 @@ func TestStatusHidesWhatTheShardBeforeLeftOnTheNode(t *testing.T) {
 	}
 }
 
+func TestStatusAnswersForARunningNodeWhileTheDapiDoesNotAnswer(t *testing.T) {
+	// arrange
+	f := newFixture()
+	f.running(t)
+	f.control.unreadable = errDapiDown
+
+	// act
+	items, err := f.status().Execute(context.Background(), nodesCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	if len(items) != 1 || items[0].Fault != nil || items[0].State != vo.ContainerRunning || !items[0].Prepared {
+		t.Fatalf("got %+v, want the running node reported as it stands", items)
+	}
+}
+
 func TestStatusKeepsARefusalInTheNodeEntry(t *testing.T) {
 	// arrange
 	f := newFixture()
