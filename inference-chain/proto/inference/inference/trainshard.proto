@@ -92,4 +92,6 @@ message TrainingParams {
   int64 settled_shard_retention_blocks = 13;
   int64 opt_in_ttl_blocks = 14;
   int64 release_buffer_blocks = 15;
+  uint32 node_weight_tolerance_bps = 16;
+  uint32 min_weight_rate_participants = 17;
 }

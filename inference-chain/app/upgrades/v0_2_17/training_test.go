@@ -27,6 +27,32 @@ func TestBackfillTrainingParamDefaults(t *testing.T) {
 	require.Equal(t, inferencetypes.DefaultTrainingReleaseBufferBlocks, got.TrainingParams.ReleaseBufferBlocks)
 }
 
+func TestBackfillTrainingParamDefaults_FillsTheNodeWeightCapFromOldParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.TrainingParams.NodeWeightToleranceBps = 0
+	params.TrainingParams.MinWeightRateParticipants = 0
+	bz, err := params.TrainingParams.Marshal()
+	require.NoError(t, err)
+	var decoded inferencetypes.TrainingParams
+	require.NoError(t, decoded.Unmarshal(bz))
+	require.Zero(t, decoded.NodeWeightToleranceBps)
+	require.Zero(t, decoded.MinWeightRateParticipants)
+	params.TrainingParams = &decoded
+	require.Error(t, params.Validate())
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, backfillTrainingParamDefaults(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultTrainingNodeWeightTolerance, got.TrainingParams.NodeWeightToleranceBps)
+	require.Equal(t, inferencetypes.DefaultTrainingMinRateParticipants, got.TrainingParams.MinWeightRateParticipants)
+	require.NoError(t, got.Validate())
+}
+
 func TestBackfillTrainingParamDefaults_RaisesRetentionButKeepsTheOptInShort(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

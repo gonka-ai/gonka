@@ -35,11 +35,22 @@ func TestTrainingParamsValidate_RejectsZeroCaps(t *testing.T) {
 		"max_active_shards":             func(p *TrainingParams) { p.MaxActiveShards = 0 },
 		"max_active_shards_per_creator": func(p *TrainingParams) { p.MaxActiveShardsPerCreator = 0 },
 		"max_total_reserved_nodes":      func(p *TrainingParams) { p.MaxTotalReservedNodes = 0 },
+		"min_weight_rate_participants":  func(p *TrainingParams) { p.MinWeightRateParticipants = 0 },
 	} {
 		params := DefaultTrainingParams()
 		zero(params)
 		require.ErrorContains(t, params.Validate(nil), name)
 	}
+}
+
+func TestTrainingParamsValidate_NodeWeightTolerance(t *testing.T) {
+	params := DefaultTrainingParams()
+	params.NodeWeightToleranceBps = 0
+	require.NoError(t, params.Validate(nil))
+	params.NodeWeightToleranceBps = 10000
+	require.NoError(t, params.Validate(nil))
+	params.NodeWeightToleranceBps = 10001
+	require.ErrorContains(t, params.Validate(nil), "node_weight_tolerance_bps")
 }
 
 func TestParamsValidate_DefaultsHoldForRealEpochLengths(t *testing.T) {

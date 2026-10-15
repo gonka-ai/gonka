@@ -27,6 +27,7 @@ func setupTrainshardFlow(t *testing.T, nodeCount uint32) (keeper.Keeper, types.M
 
 	params := types.DefaultParams()
 	params.TrainingParams.TrainingEnabled = true
+	params.TrainingParams.MinWeightRateParticipants = 1
 	require.NoError(t, k.SetParams(ctx, params))
 
 	creator := sample.AccAddress()
@@ -362,6 +363,7 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	params.TrainingParams.TrainingEnabled = true
 	params.TrainingParams.MaxReservedSharePerModelBps = 10000
 	params.TrainingParams.MaxReservedSharePerProfileBps = 10000
+	params.TrainingParams.MinWeightRateParticipants = 1
 	require.NoError(t, k.SetParams(ctx, params))
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 1}))

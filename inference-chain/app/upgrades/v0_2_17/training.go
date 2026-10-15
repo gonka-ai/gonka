@@ -27,12 +27,19 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 		params.TrainingParams = types.DefaultTrainingParams()
 	}
 
-	changed := params.TrainingParams.OptInTtlBlocks == 0 || params.TrainingParams.ReleaseBufferBlocks == 0
+	changed := params.TrainingParams.OptInTtlBlocks == 0 || params.TrainingParams.ReleaseBufferBlocks == 0 ||
+		params.TrainingParams.NodeWeightToleranceBps == 0 || params.TrainingParams.MinWeightRateParticipants == 0
 	if params.TrainingParams.OptInTtlBlocks == 0 {
 		params.TrainingParams.OptInTtlBlocks = types.DefaultTrainingOptInTtlBlocks
 	}
 	if params.TrainingParams.ReleaseBufferBlocks == 0 {
 		params.TrainingParams.ReleaseBufferBlocks = types.DefaultTrainingReleaseBufferBlocks
+	}
+	if params.TrainingParams.NodeWeightToleranceBps == 0 {
+		params.TrainingParams.NodeWeightToleranceBps = types.DefaultTrainingNodeWeightTolerance
+	}
+	if params.TrainingParams.MinWeightRateParticipants == 0 {
+		params.TrainingParams.MinWeightRateParticipants = types.DefaultTrainingMinRateParticipants
 	}
 	// a zero cap stops training dead, so it can never be what the chain meant
 	if params.TrainingParams.MaxActiveShards == 0 {
@@ -69,6 +76,8 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 		"filled_new_fields", changed,
 		"opt_in_ttl_blocks", params.TrainingParams.OptInTtlBlocks,
 		"release_buffer_blocks", params.TrainingParams.ReleaseBufferBlocks,
+		"node_weight_tolerance_bps", params.TrainingParams.NodeWeightToleranceBps,
+		"min_weight_rate_participants", params.TrainingParams.MinWeightRateParticipants,
 		"settled_shard_retention_blocks", params.TrainingParams.SettledShardRetentionBlocks,
 	)
 	return nil

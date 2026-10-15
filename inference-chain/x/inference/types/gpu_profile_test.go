@@ -20,6 +20,24 @@ func TestCanonicalGpuProfileId(t *testing.T) {
 	require.Equal(t, CanonicalGpuProfileId(node), CanonicalGpuProfileIdOf(node.Hardware))
 }
 
+func TestSingleGpuTypeOf(t *testing.T) {
+	gpuType, count, ok := SingleGpuTypeOf([]*Hardware{
+		{Type: "  nvidia   h100 ", Count: 4},
+		{Type: "NVIDIA H100", Count: 4},
+		{Type: "CPU", Count: 2},
+	})
+	require.True(t, ok)
+	require.Equal(t, "NVIDIA H100", gpuType)
+	require.Equal(t, uint32(8), count)
+
+	_, _, ok = SingleGpuTypeOf([]*Hardware{{Type: "NVIDIA H100", Count: 4}, {Type: "NVIDIA A100", Count: 4}})
+	require.False(t, ok)
+	_, _, ok = SingleGpuTypeOf([]*Hardware{{Type: "NVIDIA H100", Count: 0}})
+	require.False(t, ok)
+	_, _, ok = SingleGpuTypeOf([]*Hardware{{Type: "CPU", Count: 8}})
+	require.False(t, ok)
+}
+
 func TestCanonicalGpuProfileIdEmpty(t *testing.T) {
 	require.Equal(t, "", CanonicalGpuProfileId(&HardwareNode{}))
 	require.Equal(t, "", CanonicalGpuProfileId(&HardwareNode{Hardware: []*Hardware{{Type: "CPU", Count: 8}}}))

@@ -214,7 +214,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	var bitcoinResult BitcoinResult
 	// a node reserved for any part of the epoch earns by its frozen weight for all
 	// of it and carries no duty for it
-	reservedNodes := k.CollectEpochReservedNodeWeights(ctx, currentEpochIndex, ReservationScopeReward)
+	reservedNodes := k.CollectEpochReservedNodeRecords(ctx, currentEpochIndex, ReservationScopeReward)
 	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
 		allParticipants,
 		&data,

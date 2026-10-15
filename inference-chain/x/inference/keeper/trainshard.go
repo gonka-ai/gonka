@@ -29,7 +29,7 @@ func (k Keeper) IsNodeReserved(ctx context.Context, participant, nodeId string) 
 }
 
 // IsNodeActivelyReserved checks whether a shard still runs on the node. A node
-// inside its return buffer is not actively reserved, so the host may change it.
+// inside its return buffer is not actively reserved.
 func (k Keeper) IsNodeActivelyReserved(ctx context.Context, participant, nodeId string) bool {
 	shardId, err := k.TrainshardReservations.Get(ctx, collections.Join(participant, nodeId))
 	if errors.Is(err, collections.ErrNotFound) {
@@ -127,6 +127,8 @@ type trainingEpochNode struct {
 	participant string
 	nodeId      string
 	profileId   string
+	gpuType     string
+	gpuCount    uint32
 	endpoint    string
 	entries     []*types.TrainshardReservedNode
 }
@@ -135,6 +137,75 @@ type trainingEpochView struct {
 	nodes           map[string]*trainingEpochNode
 	modelCapacity   map[string]int
 	profileCapacity map[string]int
+	weightRates     map[string]map[string]weightRate
+}
+
+type weightRate struct {
+	median       sdkmath.LegacyDec
+	participants int
+}
+
+type nodeHardware struct {
+	profileId string
+	gpuType   string
+	gpuCount  uint32
+	single    bool
+}
+
+type participantRate struct {
+	weight   int64
+	gpus     uint64
+	gpuType  string
+	eligible bool
+}
+
+func (r *participantRate) add(weight int64, hw nodeHardware) {
+	if !hw.single || (r.gpuType != "" && r.gpuType != hw.gpuType) {
+		r.eligible = false
+		return
+	}
+	r.gpuType = hw.gpuType
+	r.weight += weight
+	r.gpus += uint64(hw.gpuCount)
+}
+
+func medianWeightRates(samples map[string]map[string][]sdkmath.LegacyDec) map[string]map[string]weightRate {
+	rates := make(map[string]map[string]weightRate, len(samples))
+	for model, byType := range samples {
+		rates[model] = make(map[string]weightRate, len(byType))
+		for gpuType, values := range byType {
+			sort.Slice(values, func(i, j int) bool { return values[i].LT(values[j]) })
+			mid := len(values) / 2
+			median := values[mid]
+			if len(values)%2 == 0 {
+				median = values[mid-1].Add(values[mid]).QuoInt64(2)
+			}
+			rates[model][gpuType] = weightRate{median: median, participants: len(values)}
+		}
+	}
+	return rates
+}
+
+func (v *trainingEpochView) capNodeWeights(node *trainingEpochNode, params *types.TrainingParams) bool {
+	if node.gpuType == "" || node.gpuCount == 0 {
+		return false
+	}
+	caps := make([]int64, len(node.entries))
+	for i, e := range node.entries {
+		rate, ok := v.weightRates[e.ModelId][node.gpuType]
+		if !ok || rate.participants < int(params.MinWeightRateParticipants) {
+			return false
+		}
+		caps[i] = rate.median.
+			MulInt64(int64(node.gpuCount)).
+			MulInt64(10000 + int64(params.NodeWeightToleranceBps)).
+			QuoInt64(10000).
+			TruncateInt64()
+	}
+	for i, e := range node.entries {
+		e.PocWeight = min(e.PocWeight, caps[i])
+	}
+	return true
 }
 
 func nodeKey(participant, nodeId string) string {
@@ -158,22 +229,30 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 	}
 	countedProfile := make(map[string]map[string]bool)
 	countedModel := make(map[string]map[string]bool)
+	rateSamples := make(map[string]map[string][]sdkmath.LegacyDec)
 
 	for _, p := range active.Participants {
 		if p == nil || p.Index == "" {
 			continue
 		}
 		hardware, _ := k.GetHardwareNodes(ctx, p.Index)
-		profileByLocalId := make(map[string]string)
+		hardwareByLocalId := make(map[string]nodeHardware)
 		if hardware != nil {
 			for _, hn := range hardware.HardwareNodes {
-				profileByLocalId[hn.GetLocalId()] = types.CanonicalGpuProfileId(hn)
+				gpuType, gpuCount, single := types.SingleGpuTypeOf(hn.GetHardware())
+				hardwareByLocalId[hn.GetLocalId()] = nodeHardware{
+					profileId: types.CanonicalGpuProfileId(hn),
+					gpuType:   gpuType,
+					gpuCount:  gpuCount,
+					single:    single,
+				}
 			}
 		}
 		for i, model := range p.Models {
 			if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
 				continue
 			}
+			rate := participantRate{eligible: true}
 			for _, ml := range p.MlNodes[i].MlNodes {
 				// an id-less node cannot be opted in or reserved, and the other
 				// epoch views skip it, so it must not add training capacity here
@@ -190,12 +269,16 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 					continue
 				}
 				countedModel[model][key] = true
+				hw := hardwareByLocalId[ml.NodeId]
+				rate.add(ml.PocWeight, hw)
 				node := view.nodes[key]
 				if node == nil {
 					node = &trainingEpochNode{
 						participant: p.Index,
 						nodeId:      ml.NodeId,
-						profileId:   profileByLocalId[ml.NodeId],
+						profileId:   hw.profileId,
+						gpuType:     hw.gpuType,
+						gpuCount:    hw.gpuCount,
 					}
 					view.nodes[key] = node
 				}
@@ -216,8 +299,16 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 					}
 				}
 			}
+			if rate.eligible && rate.gpus > 0 {
+				if rateSamples[model] == nil {
+					rateSamples[model] = make(map[string][]sdkmath.LegacyDec)
+				}
+				sample := sdkmath.LegacyNewDec(rate.weight).QuoInt64(int64(rate.gpus))
+				rateSamples[model][rate.gpuType] = append(rateSamples[model][rate.gpuType], sample)
+			}
 		}
 	}
+	view.weightRates = medianWeightRates(rateSamples)
 	return view, nil
 }
 
@@ -291,7 +382,7 @@ func (k Keeper) selectTrainshardNodes(
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 
 	var skipped struct {
-		guardian, challenged, optIn, endpoint, reserved, totalCap, profileCap, modelCap int
+		guardian, challenged, optIn, endpoint, reserved, weightRate, totalCap, profileCap, modelCap int
 	}
 	ofProfile := 0
 	candidates := make([]*trainingEpochNode, 0, len(view.nodes))
@@ -328,6 +419,10 @@ func (k Keeper) selectTrainshardNodes(
 		}
 		if k.IsNodeReserved(ctx, node.participant, node.nodeId) {
 			skipped.reserved++
+			continue
+		}
+		if !view.capNodeWeights(node, params) {
+			skipped.weightRate++
 			continue
 		}
 		candidates = append(candidates, node)
@@ -404,10 +499,12 @@ func (k Keeper) selectTrainshardNodes(
 	if uint32(takenTotal) < nodeCount {
 		return nil, types.ErrTrainshardCapacity.Wrapf(
 			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d under a PoC challenge, %d without a live opt-in, "+
-				"%d without an endpoint, %d already reserved, %d over the total reserve cap (%d), "+
+				"%d without an endpoint, %d already reserved, %d without a reliable weight rate (%d participants needed), "+
+				"%d over the total reserve cap (%d), "+
 				"%d over the profile share cap (%d), %d over a model share cap or its last free node",
 			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.guardian, skipped.challenged, skipped.optIn,
-			skipped.endpoint, skipped.reserved, skipped.totalCap, params.MaxTotalReservedNodes,
+			skipped.endpoint, skipped.reserved, skipped.weightRate, params.MinWeightRateParticipants,
+			skipped.totalCap, params.MaxTotalReservedNodes,
 			skipped.profileCap, profileCap, skipped.modelCap)
 	}
 	return picked, nil
@@ -633,7 +730,7 @@ func (k Keeper) CollectReservedNodeIdsAt(ctx context.Context, height int64) map[
 	return reserved
 }
 
-func modelFreeWeight(p *types.ActiveParticipant, modelId string, reservedNodes map[string]struct{}) (int64, bool) {
+func modelFreeWeight(p *types.ActiveParticipant, modelId string, reservedWeight int64) (int64, bool) {
 	modelIndex := -1
 	for i, m := range p.Models {
 		if m == modelId {
@@ -655,18 +752,16 @@ func modelFreeWeight(p *types.ActiveParticipant, modelId string, reservedNodes m
 			continue
 		}
 		counted[node.NodeId] = struct{}{}
-		if _, reserved := reservedNodes[node.NodeId]; reserved {
-			continue
-		}
 		weight += node.PocWeight
 	}
 
-	return weight, true
+	return max(0, weight-reservedWeight), true
 }
 
 func (k Keeper) collectModelFreeWeights(ctx context.Context, epochId uint64, modelId string) map[string]int64 {
-	reserved := k.CollectReservedNodeIds(ctx)
-	if len(reserved) == 0 {
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	byModelHost, byHost := k.BuildEpochReservedWeightView(ctx, epochId, ReservationScopeShield).TotalsAt(height)
+	if len(byHost) == 0 {
 		return nil
 	}
 	active, found := k.GetActiveParticipants(ctx, epochId)
@@ -679,11 +774,10 @@ func (k Keeper) collectModelFreeWeights(ctx context.Context, epochId uint64, mod
 		if p == nil || p.Index == "" {
 			continue
 		}
-		reservedNodes := reserved[p.Index]
-		if len(reservedNodes) == 0 {
+		if _, reserved := byHost[p.Index]; !reserved {
 			continue
 		}
-		if freeWeight, tracked := modelFreeWeight(p, modelId, reservedNodes); tracked {
+		if freeWeight, tracked := modelFreeWeight(p, modelId, byModelHost[modelId][p.Index]); tracked {
 			weights[p.Index] = freeWeight
 		}
 	}
@@ -813,12 +907,16 @@ func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64,
 	}
 }
 
+func (k Keeper) CollectEpochReservedNodeRecords(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
+	return EpochReservedWeightView{windows: k.reservedNodeWindows(ctx, epochIndex, scope)}.nodeWeights(nil)
+}
+
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
-	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, nil)
+	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(nil)
 }
 
 func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epochIndex uint64, height int64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
-	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, &height)
+	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(&height)
 }
 
 // CollectEpochReservedNodeWeightsBetween returns the nodes reserved at any height in [from, to]
@@ -826,12 +924,20 @@ func (k Keeper) CollectEpochReservedNodeWeightsBetween(ctx context.Context, epoc
 	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeightsBetween(from, to)
 }
 
-func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope, height *int64) map[string][]*types.TrainshardReservedNode {
-	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(height)
+func (k Keeper) CollectCarriedReservedNodeWeights(ctx context.Context, upcomingEpoch types.Epoch) map[string][]*types.TrainshardReservedNode {
+	if upcomingEpoch.Index == 0 {
+		return nil
+	}
+	view := EpochReservedWeightView{windows: k.reservedNodeWindows(ctx, upcomingEpoch.Index, ReservationScopeShield)}
+	view.clampTo(k.GetActiveParticipants(ctx, upcomingEpoch.Index-1))
+	height := upcomingEpoch.PocStartBlockHeight
+	return view.nodeWeights(&height)
 }
 
 type EpochReservedWeightView struct {
-	windows []reservedNodeWindow
+	windows      []reservedNodeWindow
+	clamped      bool
+	epochWeights map[string]map[string]int64
 }
 
 type reservedNodeWindow struct {
@@ -841,11 +947,42 @@ type reservedNodeWindow struct {
 }
 
 func (k Keeper) BuildEpochReservedWeightView(ctx context.Context, epochIndex uint64, scope ReservationScope) EpochReservedWeightView {
-	var view EpochReservedWeightView
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
-		view.windows = append(view.windows, reservedNodeWindow{node: n, start: start, end: end})
-	})
+	view := EpochReservedWeightView{windows: k.reservedNodeWindows(ctx, epochIndex, scope)}
+	view.clampTo(k.GetActiveParticipants(ctx, epochIndex))
 	return view
+}
+
+func (k Keeper) reservedNodeWindows(ctx context.Context, epochIndex uint64, scope ReservationScope) []reservedNodeWindow {
+	var windows []reservedNodeWindow
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
+		windows = append(windows, reservedNodeWindow{node: n, start: start, end: end})
+	})
+	return windows
+}
+
+func (v *EpochReservedWeightView) clampTo(active types.ActiveParticipants, found bool) {
+	if !found {
+		return
+	}
+	v.clamped = true
+	v.epochWeights = epochNodeWeights(&active)
+}
+
+func (v EpochReservedWeightView) clamp(host, nodeId string, weight int64) int64 {
+	if !v.clamped {
+		return weight
+	}
+	return min(weight, v.epochWeights[host][nodeId])
+}
+
+func epochNodeWeights(active *types.ActiveParticipants) map[string]map[string]int64 {
+	weights := make(map[string]map[string]int64, len(active.Participants))
+	for _, p := range active.Participants {
+		if p != nil && p.Index != "" {
+			weights[p.Index] = hostEpochNodeWeights(p)
+		}
+	}
+	return weights
 }
 
 func (v EpochReservedWeightView) TotalsAt(height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
@@ -884,7 +1021,7 @@ func (v EpochReservedWeightView) nodeWeightsBetween(from, to int64) map[string][
 				Participant: participant,
 				ModelId:     mn.model,
 				NodeId:      mn.nodeId,
-				PocWeight:   weight,
+				PocWeight:   v.clamp(participant, mn.nodeId, weight),
 			})
 		}
 	}
@@ -925,13 +1062,14 @@ type hostReservedInterval struct {
 	start  int64
 	end    int64
 	nodeId string
+	weight int64
 }
 
 func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex uint64) map[string][]hostReservedInterval {
 	result := make(map[string][]hostReservedInterval)
 	seen := make(map[string]map[hostReservedInterval]bool)
 	k.forEachEpochReservedNode(ctx, epochIndex, ReservationScopeShield, func(n *types.TrainshardReservedNode, start, end int64) {
-		interval := hostReservedInterval{start: start, end: end, nodeId: n.NodeId}
+		interval := hostReservedInterval{start: start, end: end, nodeId: n.NodeId, weight: n.PocWeight}
 		if seen[n.Participant] == nil {
 			seen[n.Participant] = make(map[hostReservedInterval]bool)
 		}
@@ -944,31 +1082,43 @@ func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex ui
 	return result
 }
 
-func hostFullyReservedAtHeight(epochNodes map[string]struct{}, intervals []hostReservedInterval, height int64) bool {
+func hostFullyReservedAtHeight(epochNodes map[string]int64, intervals []hostReservedInterval, height int64) bool {
 	if len(epochNodes) == 0 || len(intervals) == 0 {
 		return false
 	}
-	covered := make(map[string]struct{}, len(epochNodes))
+	reserved := make(map[string]int64, len(epochNodes))
 	for _, iv := range intervals {
 		if iv.start > height || iv.end < height {
 			continue
 		}
-		if _, want := epochNodes[iv.nodeId]; want {
-			covered[iv.nodeId] = struct{}{}
+		if _, want := epochNodes[iv.nodeId]; !want {
+			continue
+		}
+		if prev, covered := reserved[iv.nodeId]; !covered || iv.weight > prev {
+			reserved[iv.nodeId] = iv.weight
 		}
 	}
-	return len(covered) == len(epochNodes)
+	for nodeId, weight := range epochNodes {
+		reservedWeight, covered := reserved[nodeId]
+		if !covered || reservedWeight < weight {
+			return false
+		}
+	}
+	return true
 }
 
-func hostEpochNodeSet(p *types.ActiveParticipant) map[string]struct{} {
-	nodes := make(map[string]struct{})
+func hostEpochNodeWeights(p *types.ActiveParticipant) map[string]int64 {
+	nodes := make(map[string]int64)
 	for i := range p.Models {
 		if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
 			continue
 		}
 		for _, n := range p.MlNodes[i].MlNodes {
-			if n != nil && n.NodeId != "" {
-				nodes[n.NodeId] = struct{}{}
+			if n == nil || n.NodeId == "" {
+				continue
+			}
+			if prev, seen := nodes[n.NodeId]; !seen || n.PocWeight > prev {
+				nodes[n.NodeId] = n.PocWeight
 			}
 		}
 	}
@@ -977,20 +1127,16 @@ func hostEpochNodeSet(p *types.ActiveParticipant) map[string]struct{} {
 
 type EpochReservationView struct {
 	intervals map[string][]hostReservedInterval
-	nodes     map[string]map[string]struct{}
+	nodes     map[string]map[string]int64
 }
 
 func (k Keeper) BuildEpochReservationView(ctx context.Context, epochIndex uint64) EpochReservationView {
 	v := EpochReservationView{
 		intervals: k.collectEpochReservedIntervals(ctx, epochIndex),
-		nodes:     make(map[string]map[string]struct{}),
+		nodes:     make(map[string]map[string]int64),
 	}
 	if active, found := k.GetActiveParticipants(ctx, epochIndex); found {
-		for _, p := range active.Participants {
-			if p != nil {
-				v.nodes[p.Index] = hostEpochNodeSet(p)
-			}
-		}
+		v.nodes = epochNodeWeights(&active)
 	}
 	return v
 }
@@ -1001,10 +1147,16 @@ func (v EpochReservationView) FullyReservedAt(host string, height int64) bool {
 
 func (k Keeper) CollectEpochReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string, scope ReservationScope) map[string]struct{} {
 	hosts := make(map[string]struct{})
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
-		if n != nil && n.ModelId == modelId && n.Participant != "" {
-			hosts[n.Participant] = struct{}{}
+	for host, nodes := range k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(nil) {
+		if host == "" {
+			continue
 		}
-	})
+		for _, n := range nodes {
+			if n.ModelId == modelId && n.PocWeight > 0 {
+				hosts[host] = struct{}{}
+				break
+			}
+		}
+	}
 	return hosts
 }

@@ -30,7 +30,7 @@ func (k Keeper) EstimateBitcoinReward(ctx context.Context, req *types.QueryEstim
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	reservedNodes := k.CollectEpochReservedNodeWeights(ctx, epochIndex, ReservationScopeReward)
+	reservedNodes := k.CollectEpochReservedNodeRecords(ctx, epochIndex, ReservationScopeReward)
 
 	amounts, _, err := GetBitcoinSettleAmountsWithTransfers(
 		inputs.Participants,

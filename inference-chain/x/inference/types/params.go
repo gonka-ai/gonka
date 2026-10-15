@@ -476,6 +476,8 @@ const (
 	DefaultTrainingRetentionBlocks      int64  = 100
 	DefaultTrainingOptInTtlBlocks       int64  = 200
 	DefaultTrainingReleaseBufferBlocks  int64  = 20
+	DefaultTrainingNodeWeightTolerance  uint32 = 3000
+	DefaultTrainingMinRateParticipants  uint32 = 3
 )
 
 func DefaultTrainingParams() *TrainingParams {
@@ -495,6 +497,8 @@ func DefaultTrainingParams() *TrainingParams {
 		SettledShardRetentionBlocks:   DefaultTrainingRetentionBlocks,
 		OptInTtlBlocks:                DefaultTrainingOptInTtlBlocks,
 		ReleaseBufferBlocks:           DefaultTrainingReleaseBufferBlocks,
+		NodeWeightToleranceBps:        DefaultTrainingNodeWeightTolerance,
+		MinWeightRateParticipants:     DefaultTrainingMinRateParticipants,
 	}
 }
 
@@ -560,6 +564,12 @@ func (p *TrainingParams) Validate(epochParams *EpochParams) error {
 	}
 	if p.ReleaseBufferBlocks > maxTrainingBlocksParam {
 		return fmt.Errorf("training release_buffer_blocks (%d) exceeds safe upper bound %d", p.ReleaseBufferBlocks, maxTrainingBlocksParam)
+	}
+	if p.NodeWeightToleranceBps > 10000 {
+		return fmt.Errorf("training node_weight_tolerance_bps cannot exceed 10000")
+	}
+	if p.MinWeightRateParticipants == 0 {
+		return fmt.Errorf("training min_weight_rate_participants must be positive")
 	}
 	// epoch-relative limits bind only while training runs, so the defaults stay
 	// valid on chains of any epoch length until governance enables training

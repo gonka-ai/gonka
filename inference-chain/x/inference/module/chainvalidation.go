@@ -10,7 +10,6 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/calculations"
-	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -929,7 +928,7 @@ func participantNodeIDs(participants []*types.ActiveParticipant) map[string]map[
 // node keeps its frozen weight even if it made the PoC: taking whichever exists would let the host
 // pick the higher of the two by skipping it
 func (am AppModule) reservedAtPoCStart(ctx context.Context, upcomingEpoch types.Epoch) map[string][]*types.TrainshardReservedNode {
-	return am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, upcomingEpoch.Index, upcomingEpoch.PocStartBlockHeight, keeper.ReservationScopeShield)
+	return am.keeper.CollectCarriedReservedNodeWeights(ctx, upcomingEpoch)
 }
 
 func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, upcomingEpoch types.Epoch, preserved []*types.ActiveParticipant) []*types.ActiveParticipant {

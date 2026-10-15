@@ -358,8 +358,8 @@ func TestSettleDevshardEscrow_ShieldsFullyReservedHost(t *testing.T) {
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId: epoch,
 		Participants: []*types.ActiveParticipant{
-			{Index: addrH1, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1"}, {NodeId: "n2"}}}}},
-			{Index: addrH2, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "m1"}}}}},
+			{Index: addrH1, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 100}, {NodeId: "n2", PocWeight: 100}}}}},
+			{Index: addrH2, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "m1", PocWeight: 100}}}}},
 		},
 	}))
 	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
@@ -367,8 +367,8 @@ func TestSettleDevshardEscrow_ShieldsFullyReservedHost(t *testing.T) {
 		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
 		CreatedAtHeight: 500,
 		Nodes: []*types.TrainshardReservedNode{
-			{Participant: addrH1, NodeId: "n1", ModelId: model},
-			{Participant: addrH1, NodeId: "n2", ModelId: model},
+			{Participant: addrH1, NodeId: "n1", ModelId: model, PocWeight: 100},
+			{Participant: addrH1, NodeId: "n2", ModelId: model, PocWeight: 100},
 		},
 	}))
 
@@ -427,8 +427,8 @@ func TestSettleDevshardEscrow_ShieldsHostWithPartialReservationOverlap(t *testin
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId: epoch,
 		Participants: []*types.ActiveParticipant{
-			{Index: addrH1, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1"}, {NodeId: "n2"}}}}},
-			{Index: addrH2, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "m1"}}}}},
+			{Index: addrH1, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1", PocWeight: 100}, {NodeId: "n2", PocWeight: 100}}}}},
+			{Index: addrH2, Models: []string{model}, MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "m1", PocWeight: 100}}}}},
 		},
 	}))
 	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
@@ -441,6 +441,7 @@ func TestSettleDevshardEscrow_ShieldsHostWithPartialReservationOverlap(t *testin
 				Participant:         addrH1,
 				NodeId:              "n1",
 				ModelId:             model,
+				PocWeight:           100,
 				Status:              types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
 				ReleasedAtHeight:    510,
 				ReservedUntilHeight: 520,
@@ -449,6 +450,7 @@ func TestSettleDevshardEscrow_ShieldsHostWithPartialReservationOverlap(t *testin
 				Participant:         addrH1,
 				NodeId:              "n2",
 				ModelId:             model,
+				PocWeight:           100,
 				Status:              types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
 				ReleasedAtHeight:    510,
 				ReservedUntilHeight: 520,

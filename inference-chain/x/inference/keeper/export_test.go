@@ -30,6 +30,10 @@ func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeigh
 	return k.storeService.OpenKVStore(ctx).Set(keyBz, bz)
 }
 
+func CollectModelFreeWeightsForTesting(k Keeper, ctx sdk.Context, epochId uint64, modelId string) map[string]int64 {
+	return k.collectModelFreeWeights(ctx, epochId, modelId)
+}
+
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
 }

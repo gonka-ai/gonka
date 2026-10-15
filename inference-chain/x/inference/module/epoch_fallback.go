@@ -106,11 +106,13 @@ func (am AppModule) seatAndGuardParticipants(
 	freshNodeIDs map[string]map[string]struct{},
 ) ([]*types.ActiveParticipant, bool) {
 	assigner := NewModelAssigner(am.keeper, am.keeper)
+	carryBudget := am.buildTrainingCarryBudget(ctx, upcomingEpoch)
 	seat := func(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
 		if len(participants) == 0 {
 			return nil
 		}
 		assigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
+		carryBudget.apply(participants)
 		return participantsWithSeatedWeight(participants)
 	}
 
@@ -146,6 +148,7 @@ func (am AppModule) seatAndGuardParticipants(
 	for _, p := range unfiltered {
 		_ = validatedModelNodes(p)
 	}
+	carryBudget.apply(unfiltered)
 	am.LogError("seatAndGuardParticipants: hardware filter zeroed fallback carry; keeping current-epoch assignments so the epoch can advance", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index, "participants", len(unfiltered))
 	return unfiltered, true

@@ -397,7 +397,10 @@ func takeTrainingReservedShare(
 				if epochNode == nil || frozen[epochNode.NodeId] == nil {
 					continue
 				}
-				reservedInEpochModelNodes[modelID] = append(reservedInEpochModelNodes[modelID], epochNode)
+				reservedInEpochModelNodes[modelID] = append(reservedInEpochModelNodes[modelID], &types.MLNodeInfo{
+					NodeId:    epochNode.NodeId,
+					PocWeight: min(epochNode.PocWeight, frozen[epochNode.NodeId].PocWeight),
+				})
 				present[epochNode.NodeId] = true
 			}
 		}
