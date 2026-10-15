@@ -35,6 +35,8 @@ def read_csv(name):
 def inputs():
     with (HERE.parent / 'data' / 'mlnode-4.0.0-prefill.csv').open(newline='') as source:
         measurements = list(csv.DictReader(source))
+    minimax_rates = {row["gpu_type"]: int(row["nonces_per_min_8gpu"])
+                     for row in measurements if "MiniMax" in row["model"]}
     reference = {}
     for row in measurements:
         if row["gpu_type"] == "H100":
@@ -67,6 +69,9 @@ def inputs():
         values['coeff_i_max'] = max(values['coeff_i_max'], current_bounds[m][1])
         for key, value in values.items():
             PARAMS[m][key] = (value.numerator * 10**12 // value.denominator) / 10**12
+    # Bounds cover maximum throughput. Deployment uses the documented table.
+    for gpu, rate in minimax_rates.items():
+        benchmarks["MiniMax", gpu] = [rate]
     nodes, excluded = [], Counter()
     for row in read_csv('nodes.csv'):
         gpu = next((g for g in GPUS if g in row['gpu_type']), None)
@@ -196,7 +201,8 @@ def run():
         epochs.append(record(epoch, nodes, allocation, coeff, state, passes, switches))
     result = dict(seed=SEED, epsilon=EPSILON, max_passes=MAX_PASSES,
                   params=PARAMS, excluded_gpus=excluded, epochs=epochs)
-    result['measurement'] = 'mlnode-4.0.0-max-8gpu: MAX 8xGPUs nonces/min'
+    result['measurement'] = 'dynamic-coeff-init section 2: inference configurations'
+    result['bounds_measurement'] = 'mlnode-4.0.0-max-8gpu: MAX 8xGPUs nonces/min'
     result['snapshot_epoch'] = 424
     path = args.output
     path.write_text(json.dumps(result, indent=2) + '\n')

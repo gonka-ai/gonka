@@ -19,6 +19,17 @@ class InitializationTests(unittest.TestCase):
         single_b300 = next(n for n in nodes if n['gpu'] == 'B300' and n['count'] == 1)
         self.assertEqual(single_b300['rates']['GLM'], 9600 / 8)
 
+    def test_deployment_rates_match_documented_measurements(self):
+        nodes, _ = epoch424.inputs()
+        rates = {
+            'MiniMax': dict(zip(epoch424.GPUS, (5800, 10400, 28000, 34000))),
+            'GLM': dict(zip(epoch424.GPUS, (2550, 4200, 7000, 9600))),
+            'DeepSeek': dict(zip(epoch424.GPUS, (3200, 4800, 15600, 25600))),
+        }
+        for node in nodes:
+            for model in epoch424.MODELS:
+                self.assertEqual(node['rates'][model], rates[model][node['gpu']] * node['count'] / 8)
+
     def test_zero_target_resets_state_before_reactivation(self):
         params = {'model': dict(coeff_i_min=1, coeff_i_max=4, T_i=0)}
         state = {'model': dict(s=0.2, prev_sign=-1)}

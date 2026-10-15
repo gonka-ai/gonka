@@ -42,7 +42,7 @@ The table shows throughput for inference optimized configurations, in nonces/min
 
 For each hardware class, use the fastest supported variant. For DeepSeek, this selects FP8 on H100/H200 and NVFP4 on B200/B300. The calculation assumes both variants can serve the same chain model.
 
-The table describes inference optimized configurations for all models. Bounds and simulation account for higher PoC throughput observed on chain and achievable with MLNode v4.0.0.
+The simulation uses the table above. Bounds also account for higher PoC throughput observed on chain and achievable with MLNode v4.0.0.
 
 Relative difficulties retain the earlier H100 measurements of 5800 nonces/min for MiniMax, 2000 for GLM, and 3400 for DeepSeek, each per 8 GPUs.
 
@@ -146,7 +146,7 @@ The simulation includes 700 reported GPUs across 174 existing nodes owned by 25 
 The snapshot contains 856 GPUs with positive PoC weight. The 156 GPUs without benchmarks are excluded: 80 H20, 40 A100, 16 RTX PRO 6000, 16 RTX 5090, and 4 H800. H100 PCIe uses the H100 measurements, H200 NVL uses H200 measurements, and both B300 variants use B300 measurements.
 
 - Hardware counts, ownership, and node sizes stay fixed. Initial assignments come from the epoch-424 snapshot. Nodes with zero PoC weight are excluded.
-- Each node represents normalized compute capacity. Its rate is `node_GPUs / 8 * q[i,g]`. Every modeled node can switch to any model. Reported counts do not establish physical topology or tensor-parallel deployment limits.
+- Each node represents normalized compute capacity. Its rate is `node_GPUs / 8 * throughput[i,g]`, using the measurements in section 2. Every modeled node can switch to any model. Reported counts do not establish physical topology or tensor-parallel deployment limits.
 - Hosts maximize their share of total network weight, `host_weight / network_weight`.
 - Hosts evaluate one node switch at a time. Each candidate is evaluated after recomputing dilution and the weights of all nodes owned by that host.
 - A switch must increase the host's share of total network weight by more than 1% of the switching node's current share. This threshold represents redeployment cost.
@@ -164,14 +164,13 @@ Each coefficient cell shows `base / effective`. The effective coefficient includ
 
 | Epoch | MiniMax coeff | GLM coeff | DeepSeek coeff | MiniMax share | GLM share | DeepSeek share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 0.302400 / 0.302400 | 0.682000 / 0.682000 | 0.270600 / 0.270600 | 69.87% | 10.70% | 19.43% |
-| 1 | 0.302400 / 0.302400 | 0.716100 / 0.716100 | 0.284130 / 0.284130 | 100.00% | 0.00% | 0.00% |
-| 4 | 0.302400 / 0.302400 | 1.181565 / 1.181565 | 0.468814 / 0.464405 | 41.16% | 24.91% | 33.93% |
-| 6 | 0.302400 / 0.302400 | 1.302675 / 1.245219 | 0.468814 / 0.468814 | 43.46% | 36.12% | 20.43% |
-| 8 | 0.302400 / 0.302400 | 1.302675 / 1.302675 | 0.516868 / 0.498089 | 40.88% | 23.53% | 35.59% |
-| 10 | 0.302400 / 0.302400 | 1.436200 / 1.380783 | 0.516868 / 0.516868 | 41.37% | 35.57% | 23.05% |
-| 11 | 0.302400 / 0.302400 | 1.436200 / 1.434761 | 0.542711 / 0.542711 | 38.50% | 33.38% | 28.12% |
-| 12-50 | 0.302400 / 0.302400 | 1.436200 / 1.419924 | 0.569847 / 0.548172 | 30.50% | 33.96% | 35.54% |
+| 0 | 0.302400 / 0.302400 | 0.682000 / 0.682000 | 0.270600 / 0.270600 | 62.44% | 13.34% | 24.22% |
+| 1 | 0.302400 / 0.302400 | 0.716100 / 0.716100 | 0.284130 / 0.284130 | 79.49% | 20.51% | 0.00% |
+| 2 | 0.302400 / 0.302400 | 0.751905 / 0.751905 | 0.312543 / 0.312543 | 79.49% | 20.51% | 0.00% |
+| 3 | 0.302400 / 0.302400 | 0.789500 / 0.758544 | 0.375052 / 0.375052 | 61.53% | 38.47% | 0.00% |
+| 4 | 0.302400 / 0.302400 | 0.769763 / 0.764916 | 0.468814 / 0.415827 | 23.48% | 34.11% | 42.41% |
+| 5 | 0.302400 / 0.302400 | 0.769763 / 0.763283 | 0.445374 / 0.412037 | 26.46% | 34.38% | 39.16% |
+| 6-50 | 0.302400 / 0.302400 | 0.769763 / 0.761650 | 0.423105 / 0.408921 | 29.49% | 34.66% | 35.85% |
 
 
 
@@ -185,38 +184,39 @@ Each cell lists individual GPU counts assigned to that model. Omitted GPU types 
 | Epoch | MiniMax | GLM | DeepSeek |
 | --- | --- | --- | --- |
 | 0 | 196 H100, 185 H200, 51 B200, 60 B300 | 12 H200, 8 B200, 39 B300 | 104 H100, 45 B300 |
-| 1 | 300 H100, 197 H200, 59 B200, 144 B300 | None | None |
-| 4 | 300 H100, 59 B200 | 197 H200, 37 B300 | 107 B300 |
-| 6 | 300 H100, 59 B200 | 197 H200, 83 B300 | 61 B300 |
-| 8 | 300 H100, 59 B200 | 197 H200, 31 B300 | 113 B300 |
-| 10 | 300 H100, 51 B200 | 197 H200, 8 B200, 75 B300 | 69 B300 |
-| 11 | 300 H100, 41 B200 | 197 H200, 18 B200, 59 B300 | 85 B300 |
-| 12-50 | 300 H100, 8 B200 | 197 H200, 51 B200, 37 B300 | 107 B300 |
+| 1 | 197 H200, 59 B200, 144 B300 | 300 H100 | None |
+| 2 | 197 H200, 59 B200, 144 B300 | 300 H100 | None |
+| 3 | 28 H200, 59 B200, 144 B300 | 300 H100, 169 H200 | None |
+| 4 | 36 H200, 59 B200, 25 B300 | 300 H100, 161 H200 | 119 B300 |
+| 5 | 36 H200, 59 B200, 35 B300 | 300 H100, 161 H200 | 109 B300 |
+| 6-50 | 36 H200, 59 B200, 45 B300 | 300 H100, 161 H200 | 99 B300 |
 
 ### Consensus weight per 8 GPUs
 
 This compares coefficient-adjusted PoC weight per 8 GPUs in each family with 8 H100 GPUs in the same epoch, before collateral adjustments and group caps. It uses the assignments above, including cases where a GPU family serves several models.
+
+These ratios use the inference optimized configurations in section 2. Other configurations can change PoC throughput, model allocation, and relative consensus weight. Further stabilization requires moving toward decode-based PoC to align measured compute more closely with inference performance.
 
 ```text
 weight_per_8[g] = 8 * sum(weight of nodes in family g) / GPU_count[g]
 weight_ratio[g] = weight_per_8[g] / weight_per_8[H100]
 ```
 
-H100 is the reference and always has a value of `1.000`. For example, B300 has a value of `3.685` in epochs 12-50. This means 8 B300 GPUs contribute 3.685 times the coefficient-adjusted PoC weight of 8 H100 GPUs on average.
+H100 is the reference and always has a value of `1.000`. For example, B300 has a value of `5.360` in epochs 6-50. This means 8 B300 GPUs contribute 5.360 times the coefficient-adjusted PoC weight of 8 H100 GPUs on average.
 
 
 Start uses the epoch-424 assignments and effective coefficients, calculated with the same benchmarks and weight model.
 
-| GPU | Start | Epoch 1 | Epoch 4 | Epoch 6 | Epoch 8 | Epoch 10 | Epoch 11 | Epochs 12-50 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| H100 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
-| H200 | 1.703 | 1.280 | 1.313 | 1.384 | 1.447 | 1.534 | 1.594 | 1.578 |
-| B200 | 3.301 | 2.600 | 2.600 | 2.600 | 2.600 | 2.594 | 2.617 | 2.625 |
-| B300 | 2.968 | 2.720 | 3.108 | 3.168 | 3.359 | 3.504 | 3.663 | 3.685 |
+| GPU | Start | Epoch 1 | Epoch 2 | Epoch 3 | Epoch 4 | Epoch 5 | Epochs 6-50 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| H100 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 | 1.000 |
+| H200 | 2.163 | 1.722 | 1.640 | 1.644 | 1.641 | 1.641 | 1.642 |
+| B200 | 5.509 | 4.637 | 4.416 | 4.377 | 4.341 | 4.350 | 4.360 |
+| B300 | 5.686 | 5.630 | 5.362 | 5.315 | 5.425 | 5.386 | 5.360 |
 
 
-All three shares enter the target zone at simulated epoch 12: MiniMax 30.50%, GLM 33.96%, and DeepSeek 35.54%. Allocations and coefficients stay unchanged through epoch 50, and an extended run confirms the same outcome through epoch 100. The final shares differ from one third because adjustment stops within 5 percentage points of each target.
+All three shares enter the target zone at simulated epoch 6: MiniMax 29.49%, GLM 34.66%, and DeepSeek 35.85%. Allocations and coefficients stay unchanged through epoch 50, and an extended run confirms the same outcome through epoch 200. The final shares differ from one third because adjustment stops within 5 percentage points of each target.
 
 Reproduce with `python3 proposals/multi-model-poc/simulation/epoch424.py`. [Full results](simulation/epoch424-results.json) include all 50 epochs, GPU allocations, controller state, and switching counts.
 
-Use `--epochs 100 --output /tmp/epoch424-100.json` to repeat the longer stability check.
+Use `--epochs 200 --output /tmp/epoch424-200.json` to repeat the longer stability check.
