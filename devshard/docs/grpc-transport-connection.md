@@ -169,7 +169,15 @@ one:
 - Same peer, new nonce → new token; the old one stays valid for **5s** so in-flight
   RPCs still admit.
 - Live TTL refresh posts that Attach on `_` and does **not** re-run
-  `AllowsSender`. A failed refresh keeps Watch and the live token.
+  `AllowsSender`. A failed refresh keeps Watch and the live token, except
+  when the host no longer admits that token (below).
+- `_` is not a roster, so it cannot open a session. An Attach on `_` whose
+  token is expired, forged, or missing is `unauthenticated` (`session
+  expired` or `handshake required`), before ECDSA and without spending the
+  anonymous floor. It carries no `X-Devshard-Error`, so versiond does not
+  charge the origin. The client then clears the token and Attaches on a live
+  door. An older child that answers `escrow is not open` on `_` is read the
+  same way.
 - Re-Attach after Watch loss posts on a live door and **does** re-run
   `AllowsSender`. Dropped from that shard's roster, or a settled id, cannot
   use that URL as a door.
@@ -201,6 +209,7 @@ request's escrow.
         |
         +-- token at ~75% TTL → Attach on /sessions/_/rpc (skip AllowsSender)
         |                       fail: keep Watch + token, retry refresh
+        |                       token gone on host: clear token → door Attach
         +-- Watch dies → clear token → Attach again on a live door
 ```
 
@@ -281,7 +290,8 @@ same derived key. No table, barrier, or membership feed is involved, and
 
 Shutdown or EOF on `Watch` reopens the stream with the same token; expiry and
 other `Unauthenticated` clear it and `Attach` again. Refresh does not wait for
-`Watch` to be up. A renewal on `_` spends a per-peer bucket (burst 4, 4/min)
+`Watch` to be up. A refresh on `_` that the host answers `session expired`
+or `handshake required` also clears the token and Attaches on a door. A renewal on `_` spends a per-peer bucket (burst 4, 4/min)
 before ECDSA instead of the anonymous floor.
 
 A child allows eight concurrent Watches per peer address. That is two replicas,
