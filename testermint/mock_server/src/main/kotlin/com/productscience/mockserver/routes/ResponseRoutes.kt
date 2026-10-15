@@ -8,6 +8,7 @@ import com.productscience.mockserver.service.HostName
 import com.productscience.mockserver.service.ModelName
 import com.productscience.mockserver.service.ResponseService
 import com.productscience.mockserver.service.ScenarioName
+import com.productscience.mockserver.service.WebhookService
 import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
@@ -65,14 +66,20 @@ data class SetPocNonceRequest(
     val nonce: Long
 )
 
+data class EmitPocBatchRequest(
+    @JsonProperty("host_name")
+    val hostName: String? = null
+)
+
 /**
  * Configures routes for response modification endpoints.
  */
-fun Route.responseRoutes(responseService: ResponseService) {
+fun Route.responseRoutes(responseService: ResponseService, webhookService: WebhookService) {
     val logger = LoggerFactory.getLogger(this::class.java)
 
     post("/api/v1/responses/reset") {
         responseService.clearOverrides()
+        webhookService.clearGenerateContext()
     }
 
     // POST /api/v1/responses/inference - Sets the response for the inference endpoint
@@ -171,6 +178,41 @@ fun Route.responseRoutes(responseService: ResponseService) {
                 mapOf(
                     "status" to "error",
                     "message" to "Failed to set POC response: ${e.message}"
+                )
+            )
+        }
+    }
+
+    // POST /api/v1/responses/poc/emit-batch - Replay the last generate callback with fresh nonces
+    post("/api/v1/responses/poc/emit-batch") {
+        try {
+            val request = runCatching { call.receive<EmitPocBatchRequest>() }.getOrElse { EmitPocBatchRequest() }
+            val host = request.hostName?.let { HostName(it) }
+            logger.info("Received emit-batch request host=${request.hostName}")
+            if (!webhookService.emitGeneratePocV2Batch(host)) {
+                call.respond(
+                    HttpStatusCode.NotFound,
+                    mapOf(
+                        "status" to "error",
+                        "message" to "No stored PoC v2 generate context for host ${request.hostName}"
+                    )
+                )
+                return@post
+            }
+            call.respond(
+                HttpStatusCode.OK,
+                mapOf(
+                    "status" to "success",
+                    "message" to "PoC v2 batch emitted",
+                    "hostName" to request.hostName
+                )
+            )
+        } catch (e: Exception) {
+            call.respond(
+                HttpStatusCode.BadRequest,
+                mapOf(
+                    "status" to "error",
+                    "message" to "Failed to emit PoC v2 batch: ${e.message}"
                 )
             )
         }

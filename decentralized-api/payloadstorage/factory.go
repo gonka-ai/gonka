@@ -28,14 +28,18 @@ func NewPayloadStorage(ctx context.Context, fileBasePath string) PayloadStorage 
 	if err != nil || retryInterval <= 0 {
 		retryInterval = 240 * time.Second
 	}
+	connectTimeout, err := time.ParseDuration(os.Getenv("PG_CONNECT_TIMEOUT"))
+	if err != nil || connectTimeout <= 0 {
+		connectTimeout = defaultPGConnectTimeout
+	}
 
 	pgStorage, err := NewPostgresStorage(ctx)
 	if err != nil {
 		logging.Warn("PostgreSQL connection failed, will retry lazily on Store", types.PayloadStorage,
 			"host", pgHost, "error", err)
-		return NewHybridStorage(nil, fileStorage, retryInterval)
+		return NewHybridStorage(nil, fileStorage, retryInterval, connectTimeout)
 	}
 
 	logging.Info("Using PostgreSQL with file fallback", types.PayloadStorage, "host", pgHost)
-	return NewHybridStorage(pgStorage, fileStorage, retryInterval)
+	return NewHybridStorage(pgStorage, fileStorage, retryInterval, connectTimeout)
 }

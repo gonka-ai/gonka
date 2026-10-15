@@ -599,11 +599,54 @@ func (s *SQLite) ListActiveSessions() ([]ActiveSession, error) {
 }
 
 func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
+	return s.AppendDiffBatch(context.Background(), escrowID, []types.DiffRecord{rec})
+}
+
+// AppendDiffBatch implements DiffBatchWriter with one write transaction.
+// SQLite has a single writer, so ctx is only checked before it starts.
+func (s *SQLite) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	p, _, err := s.poolFor(escrowID)
 	if err != nil {
 		return err
 	}
 
+	tx, err := p.writeDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var maxNonce uint64
+	for i, rec := range recs {
+		if i > 0 && rec.Nonce <= recs[i-1].Nonce {
+			return fmt.Errorf("diff batch nonces must ascend: %d after %d", rec.Nonce, recs[i-1].Nonce)
+		}
+		if err := appendDiffSQLiteTx(tx, escrowID, rec); err != nil {
+			return err
+		}
+		maxNonce = rec.Nonce
+	}
+
+	_, err = tx.Exec(
+		`UPDATE sessions SET latest_nonce = MAX(latest_nonce, ?) WHERE escrow_id = ?`,
+		maxNonce, escrowID,
+	)
+	if err != nil {
+		return fmt.Errorf("update latest_nonce: %w", err)
+	}
+
+	return tx.Commit()
+}
+
+func appendDiffSQLiteTx(tx *sql.Tx, escrowID string, rec types.DiffRecord) error {
 	txsProto, err := marshalTxs(rec.Txs)
 	if err != nil {
 		return err
@@ -618,12 +661,6 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		str := string(b)
 		warmJSON = &str
 	}
-
-	tx, err := p.writeDB.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 
 	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
@@ -663,16 +700,7 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 			return fmt.Errorf("insert sig: %w", err)
 		}
 	}
-
-	_, err = tx.Exec(
-		`UPDATE sessions SET latest_nonce = MAX(latest_nonce, ?) WHERE escrow_id = ?`,
-		rec.Nonce, escrowID,
-	)
-	if err != nil {
-		return fmt.Errorf("update latest_nonce: %w", err)
-	}
-
-	return tx.Commit()
+	return nil
 }
 
 func (s *SQLite) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
@@ -1149,6 +1177,47 @@ func (s *SQLite) ClearValidationObs(escrowID string) error {
 		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLite) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	flag := 0
+	if pending {
+		flag = 1
+	}
+	res, err := p.writeDB.Exec(`UPDATE sessions SET obs_rebuild_pending = ? WHERE escrow_id = ?`, flag, escrowID)
+	if err != nil {
+		return fmt.Errorf("set obs rebuild pending: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	return nil
+}
+
+func (s *SQLite) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return false, err
+	}
+	var flag int
+	if err := p.readDB.QueryRow(
+		`SELECT obs_rebuild_pending FROM sessions WHERE escrow_id = ?`, escrowID,
+	).Scan(&flag); err != nil {
+		if err == sql.ErrNoRows {
+			return false, fmt.Errorf("session %s not found", escrowID)
+		}
+		return false, fmt.Errorf("read obs rebuild pending: %w", err)
+	}
+	return flag != 0, nil
+}
+
+// LockValidationObsRebuild always succeeds: one process owns a SQLite file.
+func (s *SQLite) LockValidationObsRebuild(string) (func(), bool, error) {
+	return func() {}, true, nil
 }
 
 const sqliteValidationObsBatchChunk = 100

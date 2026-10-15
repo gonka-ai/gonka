@@ -1,19 +1,18 @@
-use cosmwasm_std::{
-    entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, Deps, DepsMut,
-    Env, MessageInfo, Response, StdError, StdResult, Uint128, QueryRequest, GrpcQuery,
-    ContractResult, SystemResult, WasmMsg, WasmQuery,
-};
 use cosmwasm_schema::cw_serde;
+use cosmwasm_std::{
+    entry_point, from_json, to_json_binary, to_json_vec, BankMsg, Binary, Coin, ContractResult,
+    Deps, DepsMut, Env, GrpcQuery, MessageInfo, QueryRequest, Response, StdError, StdResult,
+    SystemResult, Uint128, Uint256, WasmMsg, WasmQuery,
+};
+use cw2::{get_contract_version, set_contract_version};
 use cw_storage_plus::Item;
 use prost::Message;
-use cw2::{get_contract_version, set_contract_version};
 
 use crate::error::ContractError;
 use crate::msg::{
-    ConfigResponse, Cw20ReceiveMsg, ExecuteMsg, InstantiateMsg,
-    NativeBalanceResponse, PurchaseTokenMsg, QueryMsg, TestBridgeValidationResponse,
-    TokenCalculationResponse, BlockHeightResponse, ApprovedTokensForTradeJson, ApprovedTokenJson,
-    MigrateMsg,
+    ApprovedTokenJson, ApprovedTokensForTradeJson, BlockHeightResponse, ConfigResponse,
+    Cw20ReceiveMsg, ExecuteMsg, InstantiateMsg, MigrateMsg, NativeBalanceResponse,
+    PurchaseTokenMsg, QueryMsg, TestBridgeValidationResponse, TokenCalculationResponse,
 };
 use crate::state::{calculate_tokens_for_usd, Config, CONFIG};
 
@@ -82,7 +81,10 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // Helper function to validate if a token is a legitimate bridge token for trading
 // Accepts either a raw CW20 address (bech32) or a value prefixed with "cw20:"
-fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Result<bool, ContractError> {
+fn validate_wrapped_token_for_trade(
+    deps: Deps,
+    token_identifier: &str,
+) -> Result<bool, ContractError> {
     deps.api.debug(&format!(
         "CS: validate_wrapped_token_for_trade start token_identifier={token_identifier}"
     ));
@@ -99,7 +101,8 @@ fn validate_wrapped_token_for_trade(deps: Deps, token_identifier: &str) -> Resul
     let request = QueryValidateWrappedTokenForTradeRequest {
         contract_address: contract_address.to_string(),
     };
-    deps.api.debug("CS: issuing query_grpc for ValidateWrappedTokenForTrade");
+    deps.api
+        .debug("CS: issuing query_grpc for ValidateWrappedTokenForTrade");
     let response: QueryValidateWrappedTokenForTradeResponse = query_proto(
         deps,
         "/inference.inference.Query/ValidateWrappedTokenForTrade",
@@ -134,7 +137,8 @@ fn validate_ibc_token_for_trade(deps: Deps, ibc_denom: &str) -> Result<(bool, u3
     let request = QueryValidateIbcTokenForTradeRequest {
         ibc_denom: ibc_denom.to_string(),
     };
-    deps.api.debug("CS: issuing query_grpc for ValidateIbcTokenForTrade");
+    deps.api
+        .debug("CS: issuing query_grpc for ValidateIbcTokenForTrade");
     let response: QueryValidateIbcTokenForTradeResponse = query_proto(
         deps,
         "/inference.inference.Query/ValidateIbcTokenForTrade",
@@ -151,11 +155,10 @@ fn validate_ibc_token_for_trade(deps: Deps, ibc_denom: &str) -> Result<(bool, u3
 fn create_cw20_transfer_msg(
     cw20_contract: String,
     recipient: String,
-    amount: Uint128,
+    amount: Uint256,
 ) -> Result<WasmMsg, ContractError> {
-    let transfer_msg_str = format!(
-        r#"{{"transfer":{{"recipient":"{recipient}","amount":"{amount}"}}}}"#
-    );
+    let transfer_msg_str =
+        format!(r#"{{"transfer":{{"recipient":"{recipient}","amount":"{amount}"}}}}"#);
     Ok(WasmMsg::Execute {
         contract_addr: cw20_contract,
         msg: Binary::from(transfer_msg_str.as_bytes()),
@@ -175,22 +178,24 @@ pub struct TokenInfoResponse {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub total_supply: Uint128,
+    /// Widened to Uint256 so wrapped-token supply above Uint128::MAX still decodes.
+    /// Only `decimals` is used by this contract.
+    pub total_supply: Uint256,
 }
 
 /// Normalize a token amount to 6-decimal USD value based on the token's decimals.
 /// Assumes 1:1 USD peg for stablecoins (USDT, USDC).
-fn normalize_to_usd(amount: Uint128, decimals: u32) -> Result<Uint128, ContractError> {
+fn normalize_to_usd(amount: Uint256, decimals: u32) -> Result<Uint256, ContractError> {
     if decimals == 6 {
         Ok(amount)
     } else if decimals < 6 {
         let factor = 10u128.pow(6 - decimals);
-        amount.checked_mul(Uint128::from(factor)).map_err(|e| {
+        amount.checked_mul(Uint256::from(factor)).map_err(|e| {
             ContractError::Std(StdError::msg(format!("overflow normalizing to usd: {e}")))
         })
     } else {
         let divisor = 10u128.pow(decimals - 6);
-        amount.checked_div(Uint128::from(divisor)).map_err(|e| {
+        amount.checked_div(Uint256::from(divisor)).map_err(|e| {
             ContractError::Std(StdError::msg(format!("overflow normalizing to usd: {e}")))
         })
     }
@@ -213,14 +218,19 @@ fn query_bridge_info(deps: Deps, cw20_addr: &str) -> Result<(String, String), Co
     struct QueryMsg {
         bridge_info: BridgeInfoQuery,
     }
-    
-    let query_msg = QueryMsg { bridge_info: BridgeInfoQuery {} };
-    let response: BridgeInfoResponse = deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
-        contract_addr: cw20_addr.to_string(),
-        msg: to_json_binary(&query_msg)
-            .map_err(|e| ContractError::Std(StdError::msg(format!("serialize: {e}"))))?,
-    })).map_err(|e| ContractError::Std(StdError::msg(format!("query bridge_info: {e}"))))?;
-    
+
+    let query_msg = QueryMsg {
+        bridge_info: BridgeInfoQuery {},
+    };
+    let response: BridgeInfoResponse = deps
+        .querier
+        .query(&QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: cw20_addr.to_string(),
+            msg: to_json_binary(&query_msg)
+                .map_err(|e| ContractError::Std(StdError::msg(format!("serialize: {e}"))))?,
+        }))
+        .map_err(|e| ContractError::Std(StdError::msg(format!("query bridge_info: {e}"))))?;
+
     Ok((response.chain_id, response.contract_address.to_lowercase()))
 }
 
@@ -241,8 +251,13 @@ pub fn instantiate(
         return Err(ContractError::ZeroAmount {});
     }
 
-    if msg.accepted_chain_id.is_empty() || msg.accepted_eth_contract.is_empty() || msg.accepted_ibc_denom.is_empty() {
-        return Err(ContractError::Std(StdError::msg("accepted_chain_id, accepted_eth_contract, and accepted_ibc_denom are required")));
+    if msg.accepted_chain_id.is_empty()
+        || msg.accepted_eth_contract.is_empty()
+        || msg.accepted_ibc_denom.is_empty()
+    {
+        return Err(ContractError::Std(StdError::msg(
+            "accepted_chain_id, accepted_eth_contract, and accepted_ibc_denom are required",
+        )));
     }
 
     let native_denom = msg.native_denom.unwrap_or_else(|| "ngonka".to_string());
@@ -256,7 +271,7 @@ pub fn instantiate(
         price_usd: msg.price_usd,
         native_denom: native_denom.clone(),
         is_paused: false,
-        total_tokens_sold: Uint128::zero(),
+        total_tokens_sold: Uint256::zero(),
         allow_all_trade_tokens: msg.allow_all_trade_tokens.unwrap_or(false),
     };
     CONFIG.save(deps.storage, &config)?;
@@ -270,7 +285,10 @@ pub fn instantiate(
         .add_attribute("accepted_ibc_denom", msg.accepted_ibc_denom)
         .add_attribute("price_usd", msg.price_usd)
         .add_attribute("native_denom", native_denom)
-        .add_attribute("allow_all_trade_tokens", config.allow_all_trade_tokens.to_string()))
+        .add_attribute(
+            "allow_all_trade_tokens",
+            config.allow_all_trade_tokens.to_string(),
+        ))
 }
 
 #[entry_point]
@@ -287,11 +305,25 @@ pub fn execute(
         ExecuteMsg::Resume {} => resume_contract(deps, info),
         ExecuteMsg::UpdateBuyer { buyer } => update_buyer(deps, info, buyer),
         ExecuteMsg::UpdatePrice { price_usd } => update_price(deps, info, price_usd),
-        ExecuteMsg::UpdateAllowAllTradeTokens { allow } => update_allow_all_trade_tokens(deps, info, allow),
-        ExecuteMsg::WithdrawNative { amount, recipient } => withdraw_native(deps, info, amount, recipient),
-        ExecuteMsg::WithdrawCw20 { contract_addr, amount, recipient } => withdraw_cw20(deps, env, info, contract_addr, amount, recipient),
-        ExecuteMsg::WithdrawIbc { denom, amount, recipient } => withdraw_ibc(deps, env, info, denom, amount, recipient),
-        ExecuteMsg::EmergencyWithdraw { recipient } => emergency_withdraw(deps, env, info, recipient),
+        ExecuteMsg::UpdateAllowAllTradeTokens { allow } => {
+            update_allow_all_trade_tokens(deps, info, allow)
+        }
+        ExecuteMsg::WithdrawNative { amount, recipient } => {
+            withdraw_native(deps, info, amount, recipient)
+        }
+        ExecuteMsg::WithdrawCw20 {
+            contract_addr,
+            amount,
+            recipient,
+        } => withdraw_cw20(deps, env, info, contract_addr, amount, recipient),
+        ExecuteMsg::WithdrawIbc {
+            denom,
+            amount,
+            recipient,
+        } => withdraw_ibc(deps, env, info, denom, amount, recipient),
+        ExecuteMsg::EmergencyWithdraw { recipient } => {
+            emergency_withdraw(deps, env, info, recipient)
+        }
     }
 }
 
@@ -313,7 +345,9 @@ fn purchase_with_native(
     }
 
     if info.funds.len() != 1 {
-        return Err(ContractError::Std(StdError::msg("Must send exactly 1 coin")));
+        return Err(ContractError::Std(StdError::msg(
+            "Must send exactly 1 coin",
+        )));
     }
     let payment = &info.funds[0];
 
@@ -329,9 +363,12 @@ fn purchase_with_native(
     }
 
     if !payment.denom.starts_with("ibc/") {
-         return Err(ContractError::TokenNotAccepted {
-             token: format!("Only IBC tokens are accepted for native purchase. {} is not an IBC token", payment.denom),
-         });
+        return Err(ContractError::TokenNotAccepted {
+            token: format!(
+                "Only IBC tokens are accepted for native purchase. {} is not an IBC token",
+                payment.denom
+            ),
+        });
     }
 
     let (is_valid, decimals) = validate_ibc_token_for_trade(deps.as_ref(), &payment.denom)?;
@@ -341,10 +378,9 @@ fn purchase_with_native(
         });
     }
 
-    let raw_amount: Uint128 = payment.amount.try_into().map_err(|_| ContractError::Std(StdError::msg("Payment amount exceeds Uint128")))?;
-    let usd_amount = normalize_to_usd(raw_amount, decimals)?;
+    let usd_amount = normalize_to_usd(payment.amount, decimals)?;
     let tokens_to_buy = calculate_tokens_for_usd(usd_amount, config.price_usd);
-    
+
     if tokens_to_buy.is_zero() {
         return Err(ContractError::ZeroAmount {});
     }
@@ -353,15 +389,10 @@ fn purchase_with_native(
         .querier
         .query_balance(env.contract.address.to_string(), &config.native_denom)?;
 
-    let balance_u128: Uint128 = contract_balance
-        .amount
-        .try_into()
-        .map_err(|_| ContractError::Std(StdError::msg("balance exceeds Uint128")))?;
-
-    if tokens_to_buy > balance_u128 {
+    if tokens_to_buy > contract_balance.amount {
         return Err(ContractError::InsufficientBalance {
-            available: balance_u128.u128(),
-            needed: tokens_to_buy.u128(),
+            available: contract_balance.amount.to_string(),
+            needed: tokens_to_buy.to_string(),
         });
     }
 
@@ -376,7 +407,7 @@ fn purchase_with_native(
         to_address: info.sender.to_string(),
         amount: vec![Coin {
             denom: config.native_denom.clone(),
-            amount: tokens_to_buy.into(),
+            amount: tokens_to_buy,
         }],
     };
 
@@ -395,7 +426,7 @@ fn withdraw_ibc(
     _env: Env,
     info: MessageInfo,
     denom: String,
-    amount: Uint128,
+    amount: Uint256,
     recipient: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -414,7 +445,7 @@ fn withdraw_ibc(
         to_address: recipient_addr.to_string(),
         amount: vec![Coin {
             denom: denom.clone(),
-            amount: amount.into(),
+            amount,
         }],
     };
 
@@ -432,7 +463,7 @@ fn withdraw_cw20(
     _env: Env,
     info: MessageInfo,
     contract_addr: String,
-    amount: Uint128,
+    amount: Uint256,
     recipient: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -448,11 +479,8 @@ fn withdraw_cw20(
         return Err(ContractError::ZeroAmount {});
     }
 
-    let transfer_msg = create_cw20_transfer_msg(
-        contract_addr.clone(),
-        recipient_addr.to_string(),
-        amount,
-    )?;
+    let transfer_msg =
+        create_cw20_transfer_msg(contract_addr.clone(), recipient_addr.to_string(), amount)?;
 
     Ok(Response::new()
         .add_message(transfer_msg)
@@ -505,10 +533,9 @@ fn receive_cw20(
     }
 
     // Query CW20 token_info for decimals
-    let token_info_response: TokenInfoResponse = deps.querier.query_wasm_smart(
-        &cw20_contract,
-        &Cw20QueryMsg::TokenInfo {},
-    )?;
+    let token_info_response: TokenInfoResponse = deps
+        .querier
+        .query_wasm_smart(&cw20_contract, &Cw20QueryMsg::TokenInfo {})?;
     let decimals = token_info_response.decimals;
 
     let _purchase_msg: PurchaseTokenMsg = from_json(&cw20_msg.msg)?;
@@ -532,15 +559,10 @@ fn receive_cw20(
         .querier
         .query_balance(env.contract.address.to_string(), &config.native_denom)?;
 
-    let balance_u128: Uint128 = contract_balance
-        .amount
-        .try_into()
-        .map_err(|_| ContractError::Std(StdError::msg("balance exceeds Uint128")))?;
-
-    if tokens_to_buy > balance_u128 {
+    if tokens_to_buy > contract_balance.amount {
         return Err(ContractError::InsufficientBalance {
-            available: balance_u128.u128(),
-            needed: tokens_to_buy.u128(),
+            available: contract_balance.amount.to_string(),
+            needed: tokens_to_buy.to_string(),
         });
     }
 
@@ -557,15 +579,15 @@ fn receive_cw20(
         to_address: buyer.clone(),
         amount: vec![Coin {
             denom: config.native_denom.clone(),
-            amount: tokens_to_buy.into(),
+            amount: tokens_to_buy,
         }],
     };
 
     // Forward W(USDT) to admin
     let response = Response::new().add_message(send_native_msg);
     // Note: CW20 tokens from the purchase stay in the contract balance here to prevent them
-    // from getting stuck. Since the admin is usually a governance account that cannot 
-    // sign CW20 transfer messages directly, they must be withdrawn using the 
+    // from getting stuck. Since the admin is usually a governance account that cannot
+    // sign CW20 transfer messages directly, they must be withdrawn using the
     // administrative withdraw functions.
 
     Ok(response
@@ -597,7 +619,11 @@ fn resume_contract(deps: DepsMut, info: MessageInfo) -> Result<Response, Contrac
     Ok(Response::new().add_attribute("method", "resume"))
 }
 
-fn update_buyer(deps: DepsMut, info: MessageInfo, buyer: String) -> Result<Response, ContractError> {
+fn update_buyer(
+    deps: DepsMut,
+    info: MessageInfo,
+    buyer: String,
+) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
     if info.sender.as_str() != config.admin {
         return Err(ContractError::Unauthorized {});
@@ -610,7 +636,11 @@ fn update_buyer(deps: DepsMut, info: MessageInfo, buyer: String) -> Result<Respo
         .add_attribute("buyer", validated_buyer))
 }
 
-fn update_price(deps: DepsMut, info: MessageInfo, price_usd: Uint128) -> Result<Response, ContractError> {
+fn update_price(
+    deps: DepsMut,
+    info: MessageInfo,
+    price_usd: Uint256,
+) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
     if info.sender.as_str() != config.admin {
         return Err(ContractError::Unauthorized {});
@@ -625,7 +655,11 @@ fn update_price(deps: DepsMut, info: MessageInfo, price_usd: Uint128) -> Result<
         .add_attribute("price_usd", price_usd))
 }
 
-fn update_allow_all_trade_tokens(deps: DepsMut, info: MessageInfo, allow: bool) -> Result<Response, ContractError> {
+fn update_allow_all_trade_tokens(
+    deps: DepsMut,
+    info: MessageInfo,
+    allow: bool,
+) -> Result<Response, ContractError> {
     let mut config = CONFIG.load(deps.storage)?;
     if info.sender.as_str() != config.admin {
         return Err(ContractError::Unauthorized {});
@@ -640,7 +674,7 @@ fn update_allow_all_trade_tokens(deps: DepsMut, info: MessageInfo, allow: bool) 
 fn withdraw_native(
     deps: DepsMut,
     info: MessageInfo,
-    amount: Uint128,
+    amount: Uint256,
     recipient: String,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
@@ -655,7 +689,7 @@ fn withdraw_native(
         to_address: recipient_addr.to_string(),
         amount: vec![Coin {
             denom: config.native_denom,
-            amount: amount.into(),
+            amount,
         }],
     };
     Ok(Response::new()
@@ -702,8 +736,12 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
         QueryMsg::NativeBalance {} => to_json_binary(&query_native_balance(deps, env)?),
-        QueryMsg::CalculateTokens { usd_amount } => to_json_binary(&query_calculate_tokens(deps, usd_amount)?),
-        QueryMsg::TestBridgeValidation { cw20_contract } => to_json_binary(&query_test_bridge_validation(deps, cw20_contract)?),
+        QueryMsg::CalculateTokens { usd_amount } => {
+            to_json_binary(&query_calculate_tokens(deps, usd_amount)?)
+        }
+        QueryMsg::TestBridgeValidation { cw20_contract } => {
+            to_json_binary(&query_test_bridge_validation(deps, cw20_contract)?)
+        }
         QueryMsg::BlockHeight {} => to_json_binary(&query_block_height(env)?),
         QueryMsg::TestApprovedTokens {} => to_json_binary(&query_test_approved_tokens(deps)?),
     }
@@ -713,7 +751,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
 pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, ContractError> {
     let old_version = get_contract_version(deps.storage)
         .map_err(|e| ContractError::Std(StdError::msg(e.to_string())))?;
-        
+
     if old_version.contract != CONTRACT_NAME {
         return Err(ContractError::Std(StdError::msg(format!(
             "Cannot migrate from contract type: {}",
@@ -722,15 +760,17 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
     }
 
     if old_version.version.is_empty() {
-        return Err(ContractError::Std(StdError::msg("Invalid contract version")));
+        return Err(ContractError::Std(StdError::msg(
+            "Invalid contract version",
+        )));
     }
-    
+
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)
         .map_err(|e| ContractError::Std(StdError::msg(e.to_string())))?;
 
     // If version is already current, we might still want to update parameters if provided
     // but the main goal here is state migration from v1.
-    
+
     // Attempt to load current config. If it fails, try loading as V1.
     let config = match CONFIG.may_load(deps.storage) {
         Ok(Some(c)) => {
@@ -746,10 +786,12 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                 updated.allow_all_trade_tokens = allow;
             }
             updated
-        },
+        }
         Ok(None) => {
-            return Err(ContractError::Std(StdError::msg("CONFIG not found in state")));
-        },
+            return Err(ContractError::Std(StdError::msg(
+                "CONFIG not found in state",
+            )));
+        }
         Err(_) => {
             // Try loading as V1
             #[cw_serde]
@@ -763,14 +805,22 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                 pub is_paused: bool,
                 pub total_tokens_sold: Uint128,
             }
-            
+
             let v1_item: Item<ConfigV1> = Item::new("config");
             let v1 = match v1_item.may_load(deps.storage) {
                 Ok(Some(v)) => v,
-                Ok(None) => return Err(ContractError::Std(StdError::msg("CONFIG not found in state"))),
-                Err(e) => return Err(ContractError::Std(StdError::msg(format!("Failed to parse old config: {e}")))),
+                Ok(None) => {
+                    return Err(ContractError::Std(StdError::msg(
+                        "CONFIG not found in state",
+                    )))
+                }
+                Err(e) => {
+                    return Err(ContractError::Std(StdError::msg(format!(
+                        "Failed to parse old config: {e}"
+                    ))))
+                }
             };
-            
+
             Config {
                 admin: v1.admin,
                 buyer: v1.buyer,
@@ -786,10 +836,10 @@ pub fn migrate(deps: DepsMut, _env: Env, msg: MigrateMsg) -> Result<Response, Co
                         }
                     }
                 },
-                price_usd: v1.price_usd,
+                price_usd: Uint256::from(v1.price_usd),
                 native_denom: msg.native_denom.unwrap_or(v1.native_denom),
                 is_paused: v1.is_paused,
-                total_tokens_sold: v1.total_tokens_sold,
+                total_tokens_sold: Uint256::from(v1.total_tokens_sold),
                 allow_all_trade_tokens: msg.allow_all_trade_tokens.unwrap_or(false),
             }
         }
@@ -827,7 +877,7 @@ fn query_native_balance(deps: Deps, env: Env) -> StdResult<NativeBalanceResponse
     Ok(NativeBalanceResponse { balance })
 }
 
-fn query_calculate_tokens(deps: Deps, usd_amount: Uint128) -> StdResult<TokenCalculationResponse> {
+fn query_calculate_tokens(deps: Deps, usd_amount: Uint256) -> StdResult<TokenCalculationResponse> {
     let config = CONFIG.load(deps.storage)?;
     let tokens = calculate_tokens_for_usd(usd_amount, config.price_usd);
     Ok(TokenCalculationResponse {
@@ -836,14 +886,19 @@ fn query_calculate_tokens(deps: Deps, usd_amount: Uint128) -> StdResult<TokenCal
     })
 }
 
-fn query_test_bridge_validation(deps: Deps, cw20_contract: String) -> StdResult<TestBridgeValidationResponse> {
+fn query_test_bridge_validation(
+    deps: Deps,
+    cw20_contract: String,
+) -> StdResult<TestBridgeValidationResponse> {
     // Pass directly to the validator which handles both prefixed and raw addresses
     let is_valid = validate_wrapped_token_for_trade(deps, &cw20_contract).unwrap_or(false);
     Ok(TestBridgeValidationResponse { is_valid })
 }
 
 fn query_block_height(env: Env) -> StdResult<BlockHeightResponse> {
-    Ok(BlockHeightResponse { height: env.block.height })
+    Ok(BlockHeightResponse {
+        height: env.block.height,
+    })
 }
 
 fn query_test_approved_tokens(deps: Deps) -> StdResult<ApprovedTokensForTradeJson> {
@@ -875,18 +930,26 @@ fn query_raw(deps: Deps, request: &QueryRequest<GrpcQuery>) -> StdResult<Binary>
     let raw = to_json_vec(request).map_err(|e| StdError::msg(format!("Serializing: {e}")))?;
     match deps.querier.raw_query(&raw) {
         SystemResult::Err(e) => Err(StdError::msg(format!("System error: {e}"))),
-        SystemResult::Ok(ContractResult::Err(e)) => Err(StdError::msg(format!("Contract error: {e}"))),
+        SystemResult::Ok(ContractResult::Err(e)) => {
+            Err(StdError::msg(format!("Contract error: {e}")))
+        }
         SystemResult::Ok(ContractResult::Ok(value)) => Ok(value),
     }
 }
 
-fn query_proto<TRequest, TResponse>(deps: Deps, path: &str, request: &TRequest) -> StdResult<TResponse>
+fn query_proto<TRequest, TResponse>(
+    deps: Deps,
+    path: &str,
+    request: &TRequest,
+) -> StdResult<TResponse>
 where
     TRequest: prost::Message,
     TResponse: prost::Message + Default,
 {
     let mut buf = Vec::new();
-    request.encode(&mut buf).map_err(|e| StdError::msg(format!("Encode: {e}")))?;
+    request
+        .encode(&mut buf)
+        .map_err(|e| StdError::msg(format!("Encode: {e}")))?;
     let bytes = query_grpc(deps, path, Binary::from(buf))?;
     TResponse::decode(bytes.as_slice()).map_err(|e| StdError::msg(format!("Decode: {e}")))
 }
@@ -904,7 +967,7 @@ mod tests {
             accepted_chain_id: "ethereum".to_string(),
             accepted_eth_contract: "0xdac17f958d2ee523a2206206994597c13d831ec7".to_string(),
             accepted_ibc_denom: "ibc/1234567890ABCDEF".to_string(),
-            price_usd: Uint128::from(25000u128), // $0.025
+            price_usd: Uint256::from(25000u128), // $0.025
             native_denom: Some("ngonka".to_string()),
             allow_all_trade_tokens: None,
         }
@@ -915,7 +978,7 @@ mod tests {
         let deps = mock_dependencies();
         let api = MockApi::default();
         let buyer_addr = api.addr_make("buyer").to_string();
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -924,10 +987,23 @@ mod tests {
         };
 
         let res = instantiate(deps.as_mut(), env, info, mock_instantiate_msg(&api)).unwrap();
-        assert!(res.attributes.iter().any(|a| a.key == "buyer" && a.value == buyer_addr));
-        assert!(res.attributes.iter().any(|a| a.key == "accepted_chain_id" && a.value == "ethereum"));
-        assert!(res.attributes.iter().any(|a| a.key == "accepted_eth_contract" && a.value == "0xdac17f958d2ee523a2206206994597c13d831ec7"));
-        assert!(res.attributes.iter().any(|a| a.key == "accepted_ibc_denom" && a.value == "ibc/1234567890ABCDEF"));
+        assert!(res
+            .attributes
+            .iter()
+            .any(|a| a.key == "buyer" && a.value == buyer_addr));
+        assert!(res
+            .attributes
+            .iter()
+            .any(|a| a.key == "accepted_chain_id" && a.value == "ethereum"));
+        assert!(res
+            .attributes
+            .iter()
+            .any(|a| a.key == "accepted_eth_contract"
+                && a.value == "0xdac17f958d2ee523a2206206994597c13d831ec7"));
+        assert!(res
+            .attributes
+            .iter()
+            .any(|a| a.key == "accepted_ibc_denom" && a.value == "ibc/1234567890ABCDEF"));
     }
 
     #[test]
@@ -935,7 +1011,7 @@ mod tests {
         let deps = mock_dependencies();
         let api = MockApi::default();
         let admin_addr = api.addr_make("admin");
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -948,15 +1024,21 @@ mod tests {
             sender: admin_addr.clone(),
             funds: vec![],
         };
-        execute(deps.as_mut(), env.clone(), info.clone(), ExecuteMsg::Pause {}).unwrap();
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ExecuteMsg::Pause {},
+        )
+        .unwrap();
 
         let config: ConfigResponse =
-            from_json(&query(deps.as_ref(), env.clone(), QueryMsg::Config {}).unwrap()).unwrap();
+            from_json(query(deps.as_ref(), env.clone(), QueryMsg::Config {}).unwrap()).unwrap();
         assert!(config.is_paused);
 
         execute(deps.as_mut(), env.clone(), info, ExecuteMsg::Resume {}).unwrap();
         let config: ConfigResponse =
-            from_json(&query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
+            from_json(query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
         assert!(!config.is_paused);
     }
 
@@ -966,7 +1048,7 @@ mod tests {
         let api = MockApi::default();
         let admin_addr = api.addr_make("admin");
         let new_buyer = api.addr_make("newbuyer").to_string();
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -983,12 +1065,14 @@ mod tests {
             deps.as_mut(),
             env.clone(),
             info,
-            ExecuteMsg::UpdateBuyer { buyer: new_buyer.clone() },
+            ExecuteMsg::UpdateBuyer {
+                buyer: new_buyer.clone(),
+            },
         )
         .unwrap();
 
         let config: ConfigResponse =
-            from_json(&query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
+            from_json(query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
         assert_eq!(config.buyer, new_buyer);
     }
 
@@ -997,7 +1081,7 @@ mod tests {
         let deps = mock_dependencies();
         let api = MockApi::default();
         let admin_addr = api.addr_make("admin");
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -1014,20 +1098,22 @@ mod tests {
             deps.as_mut(),
             env.clone(),
             info,
-            ExecuteMsg::UpdatePrice { price_usd: Uint128::from(50000u128) },
+            ExecuteMsg::UpdatePrice {
+                price_usd: Uint256::from(50000u128),
+            },
         )
         .unwrap();
 
         let config: ConfigResponse =
-            from_json(&query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
-        assert_eq!(config.price_usd, Uint128::from(50000u128));
+            from_json(query(deps.as_ref(), env, QueryMsg::Config {}).unwrap()).unwrap();
+        assert_eq!(config.price_usd, Uint256::from(50000u128));
     }
 
     #[test]
     fn test_calculate_tokens() {
         let deps = mock_dependencies();
         let api = MockApi::default();
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -1036,14 +1122,13 @@ mod tests {
         };
         instantiate(deps.as_mut(), env.clone(), info, mock_instantiate_msg(&api)).unwrap();
 
-        let usd_amount = Uint128::from(100_000_000u128); // $100
-        let response: TokenCalculationResponse = from_json(
-            &query(deps.as_ref(), env, QueryMsg::CalculateTokens { usd_amount }).unwrap(),
-        )
-        .unwrap();
+        let usd_amount = Uint256::from(100_000_000u128); // $100
+        let response: TokenCalculationResponse =
+            from_json(query(deps.as_ref(), env, QueryMsg::CalculateTokens { usd_amount }).unwrap())
+                .unwrap();
 
-        assert_eq!(response.tokens, Uint128::from(4_000_000_000_000u128));
-        assert_eq!(response.price_usd, Uint128::from(25000u128));
+        assert_eq!(response.tokens, Uint256::from(4_000_000_000_000u128));
+        assert_eq!(response.price_usd, Uint256::from(25000u128));
     }
 
     #[test]
@@ -1052,7 +1137,7 @@ mod tests {
         let api = MockApi::default();
         let attacker = api.addr_make("attacker");
         let hacker = api.addr_make("hacker").to_string();
-        
+
         let mut deps = deps;
         let env = mock_env();
         let info = MessageInfo {
@@ -1119,8 +1204,8 @@ mod tests {
         migrate(deps.as_mut(), mock_env(), migrate_msg).unwrap();
 
         let config: ConfigResponse =
-            from_json(&query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap()).unwrap();
-        
+            from_json(query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap()).unwrap();
+
         assert_eq!(config.admin, admin);
         assert_eq!(config.buyer, buyer);
         assert_eq!(config.native_denom, "unewdenom");

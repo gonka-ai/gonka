@@ -106,6 +106,18 @@ func TestGRPCBridge_GetHostInfo(t *testing.T) {
 	assert.Contains(t, info.URL, "versiond-router")
 }
 
+// Test flow:
+//  1. Ask the chain for a participant it holds no record of.
+//  2. Assert the bridge reports a missing participant, never a missing escrow, so a caller does not retire a funded escrow over one slot.
+func TestGRPCBridge_GetHostInfoReportsAMissingParticipantNotAMissingEscrow(t *testing.T) {
+	b := startGRPCBridge(t)
+
+	_, err := b.GetHostInfo("gonka1nobody00000000000000000000000000000000")
+
+	require.ErrorIs(t, err, bridge.ErrParticipantNotFound)
+	require.NotErrorIs(t, err, bridge.ErrEscrowNotFound)
+}
+
 func TestGRPCBridge_GetValidationThreshold(t *testing.T) {
 	b := startGRPCBridge(t)
 	threshold, err := b.GetValidationThreshold(1, "test-model")

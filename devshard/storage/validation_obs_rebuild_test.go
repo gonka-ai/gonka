@@ -188,6 +188,80 @@ func TestRebuildValidationObsFromJournal_EmptyRangeClearsWithoutReading(t *testi
 	require.Empty(t, paged.ranges())
 }
 
+// rebuildMarkStore can refuse the rebuild lock or the pending write, to cover
+// the paths where RunValidationObsRebuild must not start a rebuild.
+type rebuildMarkStore struct {
+	Storage
+	lockHeld    bool
+	failPending bool
+	unlocks     int
+}
+
+func (s *rebuildMarkStore) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	if s.lockHeld {
+		return nil, false, nil
+	}
+	return func() { s.unlocks++ }, true, nil
+}
+
+func (s *rebuildMarkStore) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	if s.failPending {
+		return fmt.Errorf("pending write refused")
+	}
+	return s.Storage.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func requireRebuildPending(t *testing.T, store Storage, want bool) {
+	t.Helper()
+	pending, err := store.ValidationObsRebuildPending("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, want, pending)
+}
+
+func TestRunValidationObsRebuild_ClearsMarkOnlyOnSuccess(t *testing.T) {
+	store := &rebuildMarkStore{Storage: setupObsTestStore(t)}
+
+	err := RunValidationObsRebuild(store, "escrow-1", func() error {
+		requireRebuildPending(t, store, true)
+		return fmt.Errorf("page 2 read failed")
+	})
+	require.ErrorContains(t, err, "page 2 read failed")
+	requireRebuildPending(t, store, true)
+	require.Equal(t, 1, store.unlocks, "a failed rebuild still releases the lock")
+
+	require.NoError(t, RunValidationObsRebuild(store, "escrow-1", func() error { return nil }))
+	requireRebuildPending(t, store, false)
+	require.Equal(t, 2, store.unlocks)
+}
+
+func TestRunValidationObsRebuild_BusyLockDoesNotRebuild(t *testing.T) {
+	store := &rebuildMarkStore{Storage: setupObsTestStore(t), lockHeld: true}
+	require.NoError(t, store.Storage.SetValidationObsRebuildPending("escrow-1", true))
+
+	err := RunValidationObsRebuild(store, "escrow-1", func() error {
+		t.Fatal("rebuild must not run without the lock")
+		return nil
+	})
+	require.ErrorIs(t, err, ErrValidationObsRebuildBusy)
+	requireRebuildPending(t, store, true)
+}
+
+// The mark is written before the rebuild's clear. If it cannot be written,
+// the rows must stay as they are, or a crash would lose them unrecorded.
+func TestRunValidationObsRebuild_UnwritableMarkDoesNotClear(t *testing.T) {
+	inner := setupObsTestStore(t)
+	recordOnce(t, inner, "escrow-1", 7, 2)
+	store := &rebuildMarkStore{Storage: inner, failPending: true}
+
+	err := RunValidationObsRebuild(store, "escrow-1", func() error {
+		return RebuildValidationObsFromJournal(inner, "escrow-1", 1, 0, nil, nil)
+	})
+	require.ErrorContains(t, err, "mark pending")
+	rows, err := inner.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "obs rows survive a refused mark")
+}
+
 func TestValidationObsEntriesFromTxs_DedupWithinDiff(t *testing.T) {
 	txs := []*types.DevshardTx{validationTx(7, 2), validationTx(7, 2)}
 	entries := ValidationObsEntriesFromTxs(txs)

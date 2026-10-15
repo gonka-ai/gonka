@@ -59,13 +59,14 @@ type Postgres struct {
 }
 
 const (
-	// postgresConnectTimeout bounds establishing a new connection.
+	// postgresConnectTimeout bounds establishing a new connection. Longer than
+	// pgtimeouts.DefaultConnectTimeout: session open rebuilds the escrow index
+	// and tolerates a slower dial at boot than gateway/accounting fail-closed opens.
 	postgresConnectTimeout = 5 * time.Second
-	// postgresStatementTimeout aborts any single query server-side. It is the
-	// primary guard against a stalled backend hanging a caller indefinitely.
+	// Server-side per-query bounds for this pool. Gateway and accounting use
+	// common/storage/pgtimeouts; devshard storage stays independently set.
 	postgresStatementTimeout = 5 * time.Second
-	// postgresLockTimeout bounds waits on row/table locks server-side.
-	postgresLockTimeout = 3 * time.Second
+	postgresLockTimeout      = 3 * time.Second
 	// postgresOpTimeout bounds each storage operation Go-side. Unlike
 	// statement_timeout it also covers the time spent acquiring a pooled
 	// connection (pool exhaustion), which the server-side timeout cannot.
@@ -1939,6 +1940,92 @@ func (s *Postgres) ClearValidationObs(escrowID string) error {
 		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
+}
+
+func (s *Postgres) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE devshard_sessions SET obs_rebuild_pending = $1
+		 WHERE epoch_id = $2 AND escrow_id = $3`,
+		pending, epochID, escrowID,
+	)
+	if err != nil {
+		return fmt.Errorf("set obs rebuild pending: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	return nil
+}
+
+func (s *Postgres) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var pending bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT obs_rebuild_pending FROM devshard_sessions WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	).Scan(&pending); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("session %s not found", escrowID)
+		}
+		return false, fmt.Errorf("read obs rebuild pending: %w", err)
+	}
+	return pending, nil
+}
+
+// pgValidationObsRebuildLockNamespace is "OBSR" as an int32, distinct from
+// the connection fence namespace.
+const pgValidationObsRebuildLockNamespace int32 = 0x4f425352
+
+// LockValidationObsRebuild holds a session advisory lock on a connection taken
+// out of the pool. Replicas that share the database cannot rebuild the same
+// escrow at once, and a holder that dies drops the lock with its connection.
+// Closing that connection is the unlock.
+func (s *Postgres) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	pooled, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("acquire obs rebuild lock connection: %w", err)
+	}
+	conn := pooled.Hijack()
+	closeConn := func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_ = conn.Close(closeCtx)
+	}
+	// The connection idles while the rebuild runs on other connections.
+	if _, err := conn.Exec(ctx, `SET idle_session_timeout = 0`); err != nil {
+		closeConn()
+		return nil, false, fmt.Errorf("disable obs rebuild lock idle timeout: %w", err)
+	}
+	var acquired bool
+	if err := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock($1, hashtext($2))`,
+		pgValidationObsRebuildLockNamespace, fmt.Sprintf("%d/%s", epochID, escrowID),
+	).Scan(&acquired); err != nil {
+		closeConn()
+		return nil, false, fmt.Errorf("try obs rebuild lock: %w", err)
+	}
+	if !acquired {
+		closeConn()
+		return nil, false, nil
+	}
+	return closeConn, true, nil
 }
 
 func (s *Postgres) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {

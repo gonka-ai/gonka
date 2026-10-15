@@ -24,3 +24,14 @@ func (g *Gateway) chainMaxNonce() uint32 {
 	}
 	return g.maxNonce.MaxNonce()
 }
+
+func shareChainMaxNonce(runtimes []*devshardRuntime, chainMaxNonce uint32) {
+	if chainMaxNonce == 0 {
+		return
+	}
+	for _, runtime := range runtimes {
+		if runtime != nil && runtime.session != nil {
+			runtime.session.SetChainMaxNonce(chainMaxNonce)
+		}
+	}
+}

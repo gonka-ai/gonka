@@ -46,6 +46,7 @@ import (
 	solomachine "github.com/cosmos/ibc-go/v8/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v8/modules/light-clients/07-tendermint"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 	"github.com/spf13/cast"
 	// this line is used by starport scaffolding # ibc/app/import
 )
@@ -310,6 +311,18 @@ func AcceptedGrpcQueries() wasmkeeper.AcceptedQueries {
 		},
 		"/inference.inference.Query/ValidateIbcTokenForTrade": func() proto.Message {
 			return &inferencetypes.QueryValidateIbcTokenForTradeResponse{}
+		},
+		"/inference.inference.Query/GetCurrentEpoch": func() proto.Message {
+			return &inferencetypes.QueryGetCurrentEpochResponse{}
+		},
+		"/inference.inference.Query/ListClaimRecipients": func() proto.Message {
+			return &inferencetypes.QueryListClaimRecipientsResponse{}
+		},
+		"/inference.inference.Query/EpochPerformanceSummaryByParticipant": func() proto.Message {
+			return &inferencetypes.QueryEpochPerformanceSummaryByParticipantResponse{}
+		},
+		"/inference.streamvesting.Query/TotalVestingAmount": func() proto.Message {
+			return &streamvestingtypes.QueryTotalVestingAmountResponse{}
 		},
 	}
 }

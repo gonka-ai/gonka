@@ -507,6 +507,80 @@ func TestRecoverSessions_FullReplayRebuildsValidationObsInBackground(t *testing.
 	require.Equal(t, 1, store.clearCalls(), "the background rebuild must still run")
 }
 
+// obsRepairFaultStore fails the rebuild's drain, after its clear, or reports
+// the rebuild lock as held by another replica.
+type obsRepairFaultStore struct {
+	storage.Storage
+	failDrain bool
+	lockHeld  bool
+}
+
+func (s *obsRepairFaultStore) DrainInferenceValidationObsBatch(escrowID string, ids []uint64) error {
+	if s.failDrain {
+		return errors.New("drain refused")
+	}
+	return s.Storage.DrainInferenceValidationObsBatch(escrowID, ids)
+}
+
+func (s *obsRepairFaultStore) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	if s.lockHeld {
+		return nil, false, nil
+	}
+	return s.Storage.LockValidationObsRebuild(escrowID)
+}
+
+func requireObsRebuildPending(t *testing.T, store storage.Storage, want bool) {
+	t.Helper()
+	pending, err := store.ValidationObsRebuildPending("1")
+	require.NoError(t, err)
+	require.Equal(t, want, pending)
+}
+
+// The full replay saves its snapshot before the background rebuild runs. A
+// rebuild that dies after its clear is repeated by the next restart, which
+// restores that snapshot and would otherwise skip obs.
+func TestRecoverSessions_FailedObsRepairRepeatsAfterRestart(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+
+	first := recoverTestManager(t, &obsRepairFaultStore{Storage: inner, failDrain: true}, hostSigner, user, group)
+	require.NoError(t, first.RecoverSessions())
+	first.WaitRecoveryRepairs()
+	requireObsRebuildPending(t, inner, true)
+	snapNonce, _, err := inner.LoadSnapshot("1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), snapNonce, "the snapshot landed before the rebuild failed")
+
+	restarted := &obsCallStore{Storage: inner}
+	second := recoverTestManager(t, restarted, hostSigner, user, group)
+	require.NoError(t, second.RecoverSessions())
+	second.WaitRecoveryRepairs()
+	require.Equal(t, 1, restarted.clearCalls(), "the snapshot restore repeats the unfinished rebuild")
+	requireObsRebuildPending(t, inner, false)
+
+	settled := &obsCallStore{Storage: inner}
+	third := recoverTestManager(t, settled, hostSigner, user, group)
+	require.NoError(t, third.RecoverSessions())
+	third.WaitRecoveryRepairs()
+	require.Zero(t, settled.clearCalls(), "a finished rebuild is not repeated")
+}
+
+// A replica that finds the rebuild lock held leaves the rows and the mark to
+// the holder instead of rebuilding on top of it.
+func TestRecoverSessions_ObsRepairSkipsWhileAnotherReplicaHoldsTheLock(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveSnapshotThrough(t, inner, 10)
+	require.NoError(t, inner.SetValidationObsRebuildPending("1", true))
+
+	busy := &obsCallStore{Storage: &obsRepairFaultStore{Storage: inner, lockHeld: true}}
+	mgr := recoverTestManager(t, busy, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
+	require.Zero(t, busy.clearCalls())
+	requireObsRebuildPending(t, inner, true)
+}
+
 func TestRecoverSessions_SnapshotPathLeavesSealedInferenceRows(t *testing.T) {
 	inner := newManagerTestStore(t)
 	group, user, hostSigner := populateStore(t, inner, 10)

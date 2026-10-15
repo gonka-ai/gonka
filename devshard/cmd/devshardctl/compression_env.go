@@ -1,20 +1,23 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"os"
-
-	"devshard/internal/boolvalue"
+	"strings"
+	"sync"
 )
 
-// envGatewayCompressRequestBodies gzips request bodies on the gateway leg.
+// envGatewayCompressRequestBodies used to gzip HTTP request bodies. Phase 7
+// retired that path; a set variable is ignored.
 const envGatewayCompressRequestBodies = "DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES"
 
-// compressRequestBodiesFromEnv reports whether the gateway compresses requests.
-func compressRequestBodiesFromEnv() (bool, error) {
-	enabled, err := boolvalue.Parse(os.Getenv(envGatewayCompressRequestBodies))
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", envGatewayCompressRequestBodies, err)
+var noteRetiredCompressOnce sync.Once
+
+func noteRetiredCompressRequestBodies() {
+	if strings.TrimSpace(os.Getenv(envGatewayCompressRequestBodies)) == "" {
+		return
 	}
-	return enabled, nil
+	noteRetiredCompressOnce.Do(func() {
+		log.Printf("%s is retired; peer HTTP request bodies are not gzipped", envGatewayCompressRequestBodies)
+	})
 }

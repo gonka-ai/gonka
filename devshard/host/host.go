@@ -17,7 +17,6 @@ import (
 
 	"common/chainoracle/blocks"
 	"devshard"
-	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
@@ -140,6 +139,7 @@ type disappearedFinishObs struct {
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
 	mu                 sync.Mutex
+	writer             diffWriter
 	sm                 *state.StateMachine
 	signer             signing.Signer
 	verifier           signing.Verifier
@@ -153,7 +153,7 @@ type Host struct {
 	mempool            *Mempool
 	checker            AcceptanceChecker
 	store              storage.Storage // optional, nil = no persistence
-	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	gsp                gossipRelay     // optional, nil = no gossip pruning
 	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
@@ -296,7 +296,25 @@ func NewHost(
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
+	h.installOwedValidations()
 	return h, nil
+}
+
+// installOwedValidations registers this host's obligation rule on its state
+// machine and fills the set from inferences already live (recovery). Later
+// diffs maintain the set at each record write.
+func (h *Host) installOwedValidations() {
+	mySlots := h.slotIDs
+	mySlotCount := uint32(len(mySlots))
+	totalSlots := h.sm.TotalSlots()
+	seed := h.ownSeed
+	h.sm.SetOwedValidationPredicate(func(id uint64, rec *types.InferenceRecord, rate uint32) bool {
+		if rec == nil {
+			return false
+		}
+		executorSlots := h.sm.AddressSlotCount(h.slotToAddr[rec.ExecutorSlot])
+		return state.OwedValidation(seed, id, rec, mySlots, mySlotCount, executorSlots, totalSlots, rate)
+	})
 }
 
 // Start launches background workers owned by this host. Callers should invoke
@@ -371,8 +389,14 @@ func WithVerifier(v signing.Verifier) HostOption {
 	return func(h *Host) { h.verifier = v }
 }
 
+// gossipRelay is the host-side gossip surface. *gossip.Gossip implements it.
+type gossipRelay interface {
+	BroadcastTxs(ctx context.Context, txs []*types.DevshardTx)
+	PruneBelow(nonce uint64)
+}
+
 // WithGossip sets the gossip instance for pruning on finalization.
-func WithGossip(g *gossip.Gossip) HostOption {
+func WithGossip(g gossipRelay) HostOption {
 	return func(h *Host) { h.gsp = g }
 }
 
@@ -451,6 +475,15 @@ func (h *Host) StateRoot() ([]byte, error) {
 	return h.sm.ComputeStateRoot()
 }
 
+// StateHead is the applied nonce and the state root a verifier checks before
+// sending the diffs the executor does not have yet.
+func (h *Host) StateHead() (uint64, []byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	root, err := h.sm.ComputeStateRoot()
+	return h.sm.LatestNonce(), root, err
+}
+
 func (h *Host) MempoolTxs() []*types.DevshardTx {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -459,11 +492,37 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 
 // AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
 // recovery txs from a challenge-receipt response into a verifier's pool.
+//
+// The challenge checked a state snapshot and ran without h.mu. A copy whose
+// record has moved on since is dropped: the diff that carried it was already
+// applied, so RemoveIncluded would never clear it and it would ride every
+// response. Checking under h.mu orders this against that apply.
 func (h *Host) AddTx(tx *types.DevshardTx) {
 	if tx == nil {
 		return
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if id, ok := h.settledRecoveryTxLocked(tx); ok {
+		logging.Debug("dropped recovery tx for a settled inference", "subsystem", "host",
+			"escrow", h.escrowID, "inference_id", id, "tx_hash", types.TxHash(tx))
+		return
+	}
 	h.mempool.AddTx(tx)
+}
+
+// settledRecoveryTxLocked reports a ConfirmStart or FinishInference that can no
+// longer apply to its record. Other txs are never settled here.
+func (h *Host) settledRecoveryTxLocked(tx *types.DevshardTx) (uint64, bool) {
+	if cs := tx.GetConfirmStart(); cs != nil {
+		rec, ok := h.sm.GetInference(cs.InferenceId)
+		return cs.InferenceId, !ok || rec.Status != types.StatusPending
+	}
+	if fi := tx.GetFinishInference(); fi != nil {
+		rec, ok := h.sm.GetInference(fi.InferenceId)
+		return fi.InferenceId, !ok || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted)
+	}
+	return 0, false
 }
 
 func (h *Host) EscrowID() string { return h.escrowID }
@@ -511,6 +570,13 @@ func (h *Host) IsGroupMemberAddr(addr string) bool {
 	return ok
 }
 
+// OwedValidationIDs returns the inferences this host still owes a validation
+// for: finished ones it sampled and challenged ones, excluding work it executed
+// or already validated. Cheaper than SnapshotState: no records are copied.
+func (h *Host) OwedValidationIDs() []uint64 {
+	return h.sm.OwedValidationIDs()
+}
+
 // SnapshotState returns a deep copy of the current state.
 func (h *Host) SnapshotState() types.EscrowState {
 	h.mu.Lock()
@@ -525,20 +591,31 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 	return h.sm.IsWarmKeyAddress(addr)
 }
 
-// IsWarmKeyForSlot returns true if addr is an authorized warm key for the
-// given slot, either via existing state bindings or via the bridge resolver.
-func (h *Host) IsWarmKeyForSlot(addr string, slotID uint32) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	warmKeys := h.sm.WarmKeys()
-	if warmKeys[slotID] == addr {
-		return true
-	}
-	expected, ok := h.slotToAddr[slotID]
-	return ok && h.sm.CheckWarmKey(addr, expected)
-}
-
 func (h *Host) Signer() signing.Signer { return h.signer }
+
+// SlotActors is the host-signature identity set for this escrow (cold keys,
+// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+//
+// The returned value memoises its authz lookups, so a caller that checks two
+// identities for one request -- the repair handler checks the signer and the
+// HTTP sender -- should reuse one value rather than call this twice. The memo
+// is not synchronised; treat the value as request-scoped.
+func (h *Host) SlotActors() signing.SlotActors {
+	authz := make(map[[2]string]bool, 2)
+	return signing.SlotActors{
+		SlotKeys: h.slotToAddr,
+		WarmKeys: h.sm.WarmKeys(),
+		AcceptWarm: func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			ok, seen := authz[pair]
+			if !seen {
+				ok = h.sm.CheckWarmKey(recovered, expected)
+				authz[pair] = ok
+			}
+			return ok
+		},
+	}
+}
 
 // HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
 func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
@@ -582,23 +659,23 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
-	var newlyApplied []types.Diff
-	diffsApplied := false
-	for _, diff := range req.Diffs {
-		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
-			h.mu.Unlock()
+	diffsApplied := len(req.Diffs) > 0
+	if diffsApplied {
+		lastAppliedTxs = req.Diffs[len(req.Diffs)-1].Txs
+	}
+	newlyApplied, err := h.applyDiffsLocked(ctx, req.Diffs)
+	if err != nil {
+		h.mu.Unlock()
+		if errors.Is(err, types.ErrNonceLimitExceeded) {
 			return nil, err
 		}
-		before := h.sm.LatestNonce()
-		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
-			h.mu.Unlock()
-			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
-		}
-		if h.sm.LatestNonce() > before {
-			newlyApplied = append(newlyApplied, diff)
-		}
-		lastAppliedTxs = diff.Txs
-		diffsApplied = true
+		return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
+	}
+	// The diffs stay applied, but a caller that is gone gets no receipt: an
+	// execution nobody will read would only orphan the inference.
+	if err := ctx.Err(); err != nil {
+		h.mu.Unlock()
+		return nil, err
 	}
 
 	needOracle := h.oracleNeededLocked(req, newlyApplied)
@@ -754,76 +831,6 @@ func (h *Host) chainMaxNonce() uint32 {
 	return h.maxNonce.MaxNonce()
 }
 
-// applyAndPersist persists then commits a contiguous next-nonce diff
-// (persist-first). Captures WarmKeyDelta from ValidateDiff for replay.
-//
-// Callers that may see HA catch-up gaps must use applyAndPersistReconciling.
-// AppendDiff is idempotent for identical already-durable rows (Phase 1), so a
-// stale standby that fast-forwarded then re-persists the tip does not fail.
-// Persist uses bounded retry; on exhaustion memory is unchanged (no eviction).
-//
-// Caller must hold h.mu. May unlock briefly during persist backoff.
-func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
-	currentNonce := h.sm.LatestNonce()
-	if diff.Nonce <= currentNonce {
-		return nil
-	}
-	if err := h.checkDiffNonceLimitLocked(diff); err != nil {
-		return err
-	}
-
-	phaseBefore := h.sm.Phase()
-	if h.store != nil {
-		warmBefore := h.sm.WarmKeys()
-		vd, err := h.sm.ValidateDiff(diff)
-		if err != nil {
-			return fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
-		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		rec := types.DiffRecord{Diff: diff, StateHash: vd.Root, WarmKeyDelta: delta}
-		if err := h.persistDiffRetryLocked(ctx, rec); err != nil {
-			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
-		}
-		// CommitValidated installs the precomputed post-state (no second
-		// applyCore) and flushes the buffered obs writes. It returns false when
-		// another request committed this nonce while we unlocked for persist
-		// backoff, in which case the diff is already applied.
-		if !h.sm.CommitValidated(vd) {
-			return nil
-		}
-	} else if _, err := h.sm.ApplyDiff(diff); err != nil {
-		return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
-	}
-	h.mempool.RemoveIncluded(diff.Txs)
-
-	for _, tx := range diff.Txs {
-		if fi := tx.GetFinishInference(); fi != nil {
-			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
-		}
-	}
-
-	if h.store != nil {
-		// Validation obs recording runs only after the diff is committed.
-		// Correctness depends on the trial apply rejecting late/sealed
-		// validations before this runs; do not move recording before commit.
-		h.recordValidationObsFromAppliedDiff(diff.Txs)
-		phaseAfter := h.sm.Phase()
-		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
-		shouldSnapshot := settledNow || diff.Nonce%SnapshotInterval == 0
-		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
-	}
-	return nil
-}
-
-// persistDiffRetryLocked retries AppendDiff with backoff, unlocking h.mu during
-// waits so other requests can proceed. On exhaustion returns ErrPersistExhausted
-// without mutating host memory (persist-first: ValidateDiff left the SM
-// unchanged, and the commit happens only after this returns nil). Caller must
-// hold h.mu; it is held again on return. See storage.AppendDiffWithRetry.
-func (h *Host) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
-	return storage.AppendDiffWithRetryUnlocked(ctx, h.store, h.escrowID, rec, h.mu.Lock, h.mu.Unlock)
-}
-
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
 // JSON marshaling and storage I/O happen asynchronously outside h.mu.
 // Caller must hold h.mu.
@@ -865,9 +872,7 @@ func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *
 // Already-applied diffs (nonce <= current) are silently skipped.
 func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Lock()
-	for _, diff := range diffs {
-		_ = h.applyAndPersistReconciling(context.Background(), diff)
-	}
+	_, _ = h.applyDiffsLocked(context.Background(), diffs)
 	staleFinishes := h.collectStaleFinishesLocked()
 	h.mu.Unlock()
 
@@ -1241,11 +1246,24 @@ func storedResponseEpochs(epochID uint64) []uint64 {
 // would hold h.executing[id] for the process lifetime and permanently block this
 // inference; engine node-acquire loops also treat ctx as their only exit.
 func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+	execCtx, cancel := h.ExecutionContext(ctx)
 	go func() {
 		defer cancel()
 		_, _ = h.RunExecution(execCtx, job)
 	}()
+}
+
+// ExecutionContext detaches a signed execution from the request that started
+// it. Once the receipt is out the inference is owed: a client that leaves must
+// not stop the model run, the payload store, or the Finish.
+func (h *Host) ExecutionContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+}
+
+// RunExecutionDetached runs job in the background with no client attached.
+func (h *Host) RunExecutionDetached(ctx context.Context, job *devshard.ExecuteRequest) {
+	job.ResponseWriter = nil
+	h.executeAsync(ctx, job)
 }
 
 // executionBudget is the wall clock a detached execution may use. Past
@@ -1290,6 +1308,9 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 
 	obsH, obsHash := h.observedTip(ctx)
+	if job != nil {
+		obsH, obsHash = heightsync.FinishObserved(job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash, obsH, obsHash)
+	}
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
@@ -1354,89 +1375,80 @@ const (
 	validationFlowChallenged     validationFlow = "challenged"
 )
 
-// collectValidationJobs finds finished inferences that this host should validate.
-// Caller must hold h.mu.
+// collectValidationJobs finds inferences this host still owes a validation for.
+// Membership (status, sampling, self-execution, prior participation) lives in
+// the state machine's owed set, maintained as records are written. This walk
+// only applies host-local filters: model support, in-flight work, cooldown,
+// and mempool. Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
 	closed := h.validationClosed
 	h.validationLifecycleMu.RUnlock()
-	if h.validator == nil || q == nil || closed {
+	if h.validator == nil || q == nil || closed || validationEnqueueStopped.Load() {
 		return nil
 	}
 	if !h.completionRequestsEnabled() {
 		return nil
 	}
 
-	st := h.sm.SnapshotState()
 	available := cap(q) - len(q)
 	if available <= 0 {
 		return nil
 	}
-	for id := range h.validationCooldown {
-		rec, live := st.Inferences[id]
-		if !live || !h.inferenceValidatable(rec) {
-			delete(h.validationCooldown, id)
+	owed := h.sm.OwedValidationIDs()
+	if len(h.validationCooldown) > 0 {
+		owedSet := make(map[uint64]struct{}, len(owed))
+		for _, id := range owed {
+			owedSet[id] = struct{}{}
 		}
-	}
-	var jobs []validateJob
-
-	for infID, rec := range st.Inferences {
-		if !devshard.CanValidate(h.validator, rec.Model) {
-			continue
-		}
-		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
-			continue
-		}
-		if h.slotIDs[rec.ExecutorSlot] {
-			continue
-		}
-
-		alreadyValidated := false
-		for slot := range h.slotIDs {
-			if rec.ValidatedBy.IsSet(slot) {
-				alreadyValidated = true
-				break
+		for id := range h.validationCooldown {
+			if _, ok := owedSet[id]; !ok {
+				delete(h.validationCooldown, id)
 			}
 		}
-		if alreadyValidated {
+	}
+	var (
+		jobs    []validateJob
+		queued  map[uint64]struct{}
+		scanned bool
+		now     = time.Now()
+	)
+
+	for _, infID := range owed {
+		if _, inFlight := h.validating[infID]; inFlight {
 			continue
 		}
-		if _, ok := h.validating[infID]; ok {
-			continue
-		}
-		if until, ok := h.validationCooldown[infID]; ok {
+		if until, cooling := h.validationCooldown[infID]; cooling {
 			// A zero time is a hold, not an expiry. A skipped lease is never
-			// reclaimed, so it stays out until the inference leaves this set.
-			if until.IsZero() || time.Now().Before(until) {
+			// reclaimed, so it stays out until the inference leaves the owed set.
+			if until.IsZero() || now.Before(until) {
 				continue
 			}
 			delete(h.validationCooldown, infID)
 		}
-		if h.hasMempoolValidationOrVote(infID) {
+		if !scanned {
+			queued, scanned = h.ownMempoolValidationIDs(), true
+		}
+		if _, ok := queued[infID]; ok {
+			continue
+		}
+		rec, ok := h.sm.GetInference(infID)
+		if !ok || !h.inferenceValidatable(&rec) {
+			continue
+		}
+		if !devshard.CanValidate(h.validator, rec.Model) {
 			continue
 		}
 
-		executorAddr := h.slotToAddr[rec.ExecutorSlot]
-
-		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
 		flow := validationFlowChallenged
 		if rec.Status == types.StatusFinished {
-			mySlotCount := uint32(len(h.slotIDs))
-			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
-			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
-				continue
-			}
 			flow = validationFlowShouldValidate
 		}
-
-		validatorSlot := h.sortedSlots[0]
-
 		h.validating[infID] = struct{}{}
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
-			validatorSlot:   validatorSlot,
+			validatorSlot:   h.sortedSlots[0],
 			flow:            flow,
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
@@ -1445,7 +1457,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
 			escrowID:        h.escrowID,
-			executorAddress: executorAddr,
+			executorAddress: h.slotToAddr[rec.ExecutorSlot],
 			epochID:         h.epochID,
 		})
 		available--
@@ -1485,6 +1497,21 @@ func (h *Host) validationIsClosed() bool {
 	return h.validationClosed
 }
 
+// validationEnqueueStopped is process-wide. /rpc/release sets it before
+// outbound peers close so this generation does not Acquire a lease the
+// new generation should take.
+var validationEnqueueStopped atomic.Bool
+
+// StopValidationEnqueue stops this process from taking new validation leases.
+// A Validate call that has already started keeps running.
+func StopValidationEnqueue() {
+	validationEnqueueStopped.Store(true)
+}
+
+func resetValidationEnqueueForTest() {
+	validationEnqueueStopped.Store(false)
+}
+
 // EnqueueDueValidations offers collectValidationJobs work to the validation
 // queue. GET /mempool catch-up uses this so an HA survivor can re-acquire
 // after the owner Released on graceful stop, without waiting for a new chat.
@@ -1500,7 +1527,7 @@ func (h *Host) EnqueueDueValidations() {
 func (h *Host) enqueueValidation(job validateJob) {
 	h.validationLifecycleMu.RLock()
 	q := h.validationQueue
-	closed := h.validationClosed
+	closed := h.validationClosed || validationEnqueueStopped.Load()
 	if q == nil || closed {
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1528,6 +1555,27 @@ func (h *Host) enqueueValidation(job validateJob) {
 // hasMempoolValidationOrVote returns true if a MsgValidation or
 // MsgValidationVote for infID from this host is already in the mempool.
 // Caller must hold h.mu.
+// ownMempoolValidationIDs is hasMempoolValidationOrVote for every inference at
+// once: the ids this host already has a validation or vote queued for.
+func (h *Host) ownMempoolValidationIDs() map[uint64]struct{} {
+	var ids map[uint64]struct{}
+	for _, tx := range h.mempool.Txs() {
+		var id uint64
+		if v := tx.GetValidation(); v != nil && h.slotIDs[v.ValidatorSlot] {
+			id = v.InferenceId
+		} else if v := tx.GetValidationVote(); v != nil && h.slotIDs[v.VoterSlot] {
+			id = v.InferenceId
+		} else {
+			continue
+		}
+		if ids == nil {
+			ids = make(map[uint64]struct{})
+		}
+		ids[id] = struct{}{}
+	}
+	return ids
+}
+
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 	for _, tx := range h.mempool.Txs() {
 		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
@@ -1560,6 +1608,18 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			observability.SetValidationQueueDepth(h.escrowID, len(queue))
 		}
 	}()
+	// Queued work that has not entered Validate must not take a lease after
+	// this generation was released. A call already inside Validate continues.
+	if validationEnqueueStopped.Load() {
+		return
+	}
+	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
+	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
+		"inference_id", job.inferenceID,
+		"executor_address", job.executorAddress,
+		"validator_slot", job.validatorSlot,
+		"validation_flow", string(job.flow))
 
 	// A job can become obsolete while waiting in the queue. Check before
 	// acquiring a lease, fetching payloads, or dispatching to MLNode.
@@ -1665,9 +1725,6 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	var validationTx string
 	switch rec.Status {
 	case types.StatusFinished:
-		// TODO: if this MsgValidation lands after another host has already
-		// challenged the inference, the state machine records participation
-		// without vote weight. Counting that requires a coordinated upgrade.
 		msg := &types.MsgValidation{
 			InferenceId:   job.inferenceID,
 			ValidatorSlot: job.validatorSlot,
@@ -1913,11 +1970,8 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if addr != expected {
-		warmKeys := h.sm.WarmKeys()
-		if warmKeys[senderSlot] != addr && !h.sm.CheckWarmKey(addr, expected) {
-			return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
-		}
+	if !h.SlotActors().Allows(senderSlot, addr) {
+		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 
 	// Verify stateHash matches stored record.
@@ -1945,11 +1999,11 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 
 // ApplyRecoveredDiffs applies diffs fetched during gossip recovery.
 // Returns GossipSig for each successfully applied nonce.
-func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]gossip.GossipSig, error) {
+func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]types.GossipSig, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	var sigs []gossip.GossipSig
+	var sigs []types.GossipSig
 
 	for _, diff := range diffs {
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
@@ -1964,7 +2018,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 
 		if stateSig != nil && h.store != nil {
 			for slotID := range h.slotIDs {
-				sigs = append(sigs, gossip.GossipSig{
+				sigs = append(sigs, types.GossipSig{
 					Nonce:     nonce,
 					StateHash: root,
 					Sig:       stateSig,
@@ -2005,10 +2059,11 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	// An inference this host already held may have been executed by an
 	// earlier process that lost its finish.
 	_, heldBefore := h.sm.GetInference(inferenceID)
-	for _, diff := range diffs {
-		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
-			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
-		}
+	if _, err := h.applyDiffsLocked(ctx, diffs); err != nil {
+		return nil, 0, nil, fmt.Errorf("apply challenge diffs: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, 0, nil, err
 	}
 
 	rec, ok := h.sm.GetInference(inferenceID)
@@ -2115,7 +2170,7 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
-	data, err := proto.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal proposer msg: %w", err)
 	}

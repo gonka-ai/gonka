@@ -1,0 +1,4 @@
+source_id,block_height,model_id,seq_len,stat_test,weight_scale_factor,penalty_start_epoch,weight_scale_factor_decimal,dynamic_coefficient_present
+chain_params,6218275,MiniMaxAI/MiniMax-M2.7,1024,"{""dist_threshold"":{""value"":""75"",""exponent"":-2},""p_mismatch"":{""value"":""1"",""exponent"":-1},""p_value_threshold"":{""value"":""5"",""exponent"":-2}}","{""value"":""3024"",""exponent"":-4}",278,0.3024,false
+chain_params,6218275,deepseek-ai/DeepSeek-V4-Flash-0731,1024,"{""dist_threshold"":{""value"":""41"",""exponent"":-2},""p_mismatch"":{""value"":""1"",""exponent"":-1},""p_value_threshold"":{""value"":""5"",""exponent"":-2}}","{""value"":""246"",""exponent"":-3}",360,0.246,false
+chain_params,6218275,zai-org/GLM-5.3-Flash,1024,"{""dist_threshold"":{""value"":""44"",""exponent"":-2},""p_mismatch"":{""value"":""1"",""exponent"":-1},""p_value_threshold"":{""value"":""5"",""exponent"":-2}}","{""value"":""62"",""exponent"":-2}",394,0.62,false
