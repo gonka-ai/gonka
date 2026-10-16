@@ -303,13 +303,6 @@ func (c *RPCClient) sealChallenge(env *challengeEnvelope, body challengeBody, wi
 	return nil
 }
 
-func (c *RPCClient) challengeCatchUpClient() challengeClient {
-	if c.grpcOn() && c.challengeCatchUpGRPC != nil {
-		return c.challengeCatchUpGRPC
-	}
-	return c.challengeCatchUp
-}
-
 func (c *RPCClient) challengeLargeClient() challengeClient {
 	if c.grpcOn() && c.challengeLargeGRPC != nil {
 		return c.challengeLargeGRPC

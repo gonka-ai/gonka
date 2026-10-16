@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,10 +16,16 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 	"google.golang.org/protobuf/proto"
 
+	"common/httpguard"
+	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/state"
+	"devshard/stub"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
@@ -247,9 +254,11 @@ func TestChat_GzipBombRejectedBeforeHandler(t *testing.T) {
 
 func TestUnaryRPC_RequestAndResponseAreGzipped(t *testing.T) {
 	lookup := stubLookup{core: stubCore{
-		member:  true,
-		diffs:   []types.DiffRecord{{Diff: types.Diff{Nonce: 1, UserSig: make([]byte, 8<<10)}}},
-		mempool: []*types.DevshardTx{testutil.StartTx(1)},
+		member: true,
+		diffs:  []types.DiffRecord{{Diff: types.Diff{Nonce: 1, UserSig: make([]byte, 8<<10)}}},
+		mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			PromptHash: bytes.Repeat([]byte{1}, transport.MinGzipBodyBytes+32),
+		}}}},
 	}}
 	payload := NewPayloadHandler(lookup, func(_ context.Context, _ SessionCore, _ string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
 		return &rpcpb.GetPayloadResponse{
@@ -389,6 +398,9 @@ func (w *wireTap) encoding(h *http.Header) string {
 	if enc := h.Get("Content-Encoding"); enc != "" {
 		return enc
 	}
+	if enc := h.Get("Grpc-Encoding"); enc != "" {
+		return enc
+	}
 	return h.Get("Connect-Content-Encoding")
 }
 
@@ -430,3 +442,218 @@ func (g gossipCore) ServeGossipNonce(req transport.GossipNonceRequest) error {
 }
 
 func (g gossipCore) ServeGossipTxs([]*types.DevshardTx) {}
+
+// catchingCore records the ChallengeReceipt the handler was given.
+type catchingCore struct {
+	stubCore
+	ran *atomic.Bool
+	req transport.ChallengeReceiptRequest
+}
+
+func (c *catchingCore) ServeChallengeReceipt(_ context.Context, req transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
+	if c.ran != nil {
+		c.ran.Store(true)
+	}
+	c.req = req
+	return &transport.ChallengeReceiptResponse{}, nil
+}
+
+// newGzipRPC is an attached RPCClient aimed at a direct mux, plus a tap on
+// procedure. grpc speaks native gRPC on an h2c server.
+func newGzipRPC(t *testing.T, lookup SessionLookup, endpoints, procedure string, grpc bool, opts ...MuxOption) (*transport.RPCClient, *wireTap) {
+	t.Helper()
+	httpguard.SetAllowPrivate(true)
+	tap := &wireTap{procedure: procedure}
+	auth := newTestAuth(PeerAuthConfig{Heartbeat: 50 * time.Millisecond})
+	t.Cleanup(auth.Close)
+	mux := NewMux(auth, NewSessionHandler(lookup), opts...)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(WithEscrowID(r.Context(), testEscrowID))
+		if r.URL.Path != tap.procedure {
+			mux.ServeHTTP(w, r)
+			return
+		}
+		counted := &countingBody{ReadCloser: r.Body}
+		r.Body = counted
+		mux.ServeHTTP(&tapWriter{ResponseWriter: w, tap: tap}, r)
+		tap.mu.Lock()
+		tap.reqHdr = r.Header.Clone()
+		tap.reqBytes = counted.n
+		tap.respHdr = w.Header().Clone()
+		tap.mu.Unlock()
+	})
+
+	peer := testutil.MustGenerateKey(t)
+	cfg := transport.PeerConnConfig{
+		HostAddress:  testHostAddress,
+		Signer:       peer,
+		DirectMux:    true,
+		DoorEscrowID: testEscrowID,
+		WatchStale:   time.Minute,
+	}
+	var httpURL string
+	if grpc {
+		transport.ResetRPCH2MissCacheForTest()
+		transport.ResetRPCH2ClientPoolForTest()
+		t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+		t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+		h2 := httptest.NewServer(h2c.NewHandler(handler, &http2.Server{}))
+		t.Cleanup(h2.Close)
+		inf := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "must not use HTTP/1.1 when h2 works", http.StatusTeapot)
+		}))
+		t.Cleanup(inf.Close)
+		cfg.BaseURL = inf.URL
+		cfg.DialSet = transport.PeerRPCDialSet{H2URL: h2.URL}
+		cfg.GRPC = true
+		cfg.H2ProbeTimeout = 200 * time.Millisecond
+		httpURL = inf.URL
+	} else {
+		srv := httptest.NewServer(handler)
+		t.Cleanup(srv.Close)
+		cfg.BaseURL = srv.URL
+		httpURL = srv.URL
+	}
+	pc := transport.NewPeerConn(cfg)
+	t.Cleanup(pc.Close)
+	pc.Start()
+	require.Eventually(t, func() bool { return pc.Ready() && len(pc.LiveToken()) > 0 }, 3*time.Second, 10*time.Millisecond)
+
+	rpc := transport.NewRPCClient(
+		transport.NewHTTPClient(httpURL, testEscrowID, peer, transport.DefaultClientConfig()),
+		pc, transport.ParseRPCEndpoints(endpoints))
+	t.Cleanup(rpc.Close)
+	return rpc, tap
+}
+
+// catchUpWorld is one escrow the original diff and the diff the handler
+// decoded are both applied to, so their roots are comparable.
+type catchUpWorld struct {
+	signers []*signing.Secp256k1Signer
+	user    *signing.Secp256k1Signer
+	group   []types.SlotAssignment
+	config  types.SessionConfig
+	diff    types.Diff
+	stored  []byte
+}
+
+func newCatchUpWorld(t *testing.T) catchUpWorld {
+	t.Helper()
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(signers)
+	config := testutil.DefaultConfig(len(signers))
+	preview, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	start := testutil.StartTx(1)
+	start.GetStartInference().Model = strings.Repeat("m", transport.MinGzipBodyBytes)
+	txs := []*types.DevshardTx{start}
+	root, err := preview.ApplyLocal(1, txs)
+	require.NoError(t, err)
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", 1, txs, root)
+	stored, err := proto.Marshal(&types.DiffContent{Txs: diff.Txs})
+	require.NoError(t, err)
+	return catchUpWorld{signers: signers, user: user, group: group, config: config, diff: diff, stored: stored}
+}
+
+func (w catchUpWorld) root(t *testing.T, diff types.Diff) []byte {
+	t.Helper()
+	sm, err := state.NewStateMachine("escrow-1", w.config, w.group, 10000, w.user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", w.user.Address(), w.config, w.group, 10000))
+	require.NoError(t, err)
+	h, err := host.NewHost(sm, w.signers[0], stub.NewInferenceEngine(), "escrow-1", w.group, nil)
+	require.NoError(t, err)
+	t.Cleanup(h.Close)
+	_, _, err = h.ChallengeReceipt(context.Background(), 1, nil, []types.Diff{diff})
+	require.NoError(t, err)
+	root, err := h.StateRoot()
+	require.NoError(t, err)
+	return root
+}
+
+func TestChallengeCatchUpPageIsGzipped(t *testing.T) {
+	world := newCatchUpWorld(t)
+	wire := types.DiffWire{
+		Nonce:         world.diff.Nonce,
+		Txs:           world.stored,
+		UserSig:       world.diff.UserSig,
+		PostStateRoot: world.diff.PostStateRoot,
+	}
+	for _, tc := range []struct {
+		name string
+		grpc bool
+	}{
+		{name: "connect", grpc: false},
+		{name: "grpc", grpc: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			core := &catchingCore{stubCore: stubCore{member: true}}
+			rpc, tap := newGzipRPC(t, stubLookup{core: core}, transport.EndpointChallengeReceipt,
+				rpcpbconnect.SessionServiceChallengeReceiptProcedure, tc.grpc)
+			require.NoError(t, rpc.ChallengeCatchUp(context.Background(), 1, []types.DiffWire{wire}, ""))
+			require.Equal(t, "gzip", tap.requestEncoding())
+			require.Len(t, core.req.Diffs, 1)
+			require.Equal(t, transport.DiffWireTxs(wire.Nonce, world.stored), core.req.Diffs[0].Txs)
+
+			decoded, err := transport.DiffsFromJSON(core.req.Diffs)
+			require.NoError(t, err)
+			require.Len(t, decoded, 1)
+			require.Equal(t, world.root(t, world.diff), world.root(t, decoded[0]))
+		})
+	}
+}
+
+func TestChallengeCatchUpGzipInflateCap(t *testing.T) {
+	var ran atomic.Bool
+	core := &catchingCore{stubCore: stubCore{member: true}, ran: &ran}
+	rpc, tap := newGzipRPC(t, stubLookup{core: core}, transport.EndpointChallengeReceipt,
+		rpcpbconnect.SessionServiceChallengeReceiptProcedure, false)
+	err := rpc.ChallengeCatchUp(context.Background(), 1, []types.DiffWire{{
+		Nonce: 1,
+		Txs:   bytes.Repeat([]byte{0}, transport.DefaultRPCLargeReadMaxBytes+1),
+	}}, "")
+	require.Error(t, err)
+	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
+	require.False(t, ran.Load(), "a page that inflates past the read cap never reaches ServeChallengeReceipt")
+	require.Less(t, tap.requestBytes(), transport.DefaultRPCLargeReadMaxBytes,
+		"the compressed page fits; the reject is the inflate cap")
+}
+
+func TestCompressMinBytes(t *testing.T) {
+	t.Run("under", func(t *testing.T) {
+		rpc, tap := newGzipRPC(t, stubLookup{core: stubCore{
+			member: true,
+			sigs:   map[uint32][]byte{0: {1, 2, 3, 4}},
+		}}, transport.EndpointSignatures, rpcpbconnect.SessionServiceGetSignaturesProcedure, false)
+		got, err := rpc.GetSignatures(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, []byte{1, 2, 3, 4}, got[0])
+		require.Empty(t, tap.requestEncoding())
+		require.Empty(t, tap.responseEncoding())
+	})
+	t.Run("over", func(t *testing.T) {
+		const n = transport.MinGzipBodyBytes + 256
+		lookup := stubLookup{core: stubCore{member: true}}
+		payload := NewPayloadHandler(lookup, func(_ context.Context, _ SessionCore, _ string, req *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+			return &rpcpb.GetPayloadResponse{
+				InferenceId:   req.GetInferenceId(),
+				PromptPayload: bytes.Repeat([]byte("p"), n),
+			}, nil
+		})
+		rpc, tap := newGzipRPC(t, lookup, transport.EndpointPayload, rpcpbconnect.PayloadServiceGetPayloadProcedure, false,
+			WithPayloadService(payload))
+		resp, err := rpc.GetPayload(context.Background(), &rpcpb.GetPayloadRequest{
+			InferenceId: "1",
+			Signature:   bytes.Repeat([]byte("s"), n),
+		}, 0)
+		require.NoError(t, err)
+		require.Len(t, resp.GetPromptPayload(), n)
+		require.Equal(t, "gzip", tap.requestEncoding())
+		require.Equal(t, "gzip", tap.responseEncoding())
+	})
+}

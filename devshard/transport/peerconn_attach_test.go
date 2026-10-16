@@ -817,7 +817,9 @@ func TestRPCClient_QueriesGzipRequestAndResponse(t *testing.T) {
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
 	} {
-		require.Equal(t, "gzip", obs.requestEncoding(procedure), procedure)
+		// The request is a nonce range or an empty mempool query, under
+		// MinGzipBodyBytes, so it stays plain. The response is 8 KiB.
+		require.Empty(t, obs.requestEncoding(procedure), procedure)
 		require.Equal(t, "gzip", obs.responseEncoding(procedure), procedure)
 	}
 }

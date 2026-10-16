@@ -37,16 +37,16 @@ type RPCClient struct {
 	// session client.
 	sessionQuery rpcpbconnect.SessionServiceClient
 	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
-	// read cap (VerifyTimeout, VerifyErrorMiss, ChallengeReceipt responses).
+	// read cap (VerifyTimeout, VerifyErrorMiss, and a decoded
+	// ChallengeReceipt). Catch-up pages use challengeLarge with the same
+	// gzip options.
 	sessionLarge rpcpbconnect.SessionServiceClient
-	// challengeCatchUp and challengeLarge send ChallengeReceipt pages of
-	// stored wires with the 10 MiB read cap. Their codec encodes each page
-	// into Connect's send buffer, so no separate body is kept while the
-	// executor applies it. challengeCatchUp is the nil-payload page, without
-	// gzip: user signatures do not compress, and gzip of a page is the CPU
-	// the spike spent. The page that carries the payload uses challengeLarge.
-	challengeCatchUp, challengeCatchUpGRPC challengeClient
-	challengeLarge, challengeLargeGRPC     challengeClient
+	// challengeLarge sends ChallengeReceipt: a nil-payload catch-up page and
+	// the page that carries the payload. The codec writes the page into
+	// Connect's send buffer, so no separate body is kept while the executor
+	// applies it, and Connect gzips that buffer once it reaches
+	// MinGzipBodyBytes. The read cap is 10 MiB.
+	challengeLarge, challengeLargeGRPC challengeClient
 	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
 	sessionChat rpcpbconnect.SessionServiceClient
 	gossip      rpcpbconnect.GossipServiceClient
@@ -93,7 +93,6 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
 		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
-		c.challengeCatchUp = newChallengeClient(conn.http, base, connectPlainOptions(DefaultRPCLargeReadMaxBytes))
 		c.challengeLarge = newChallengeClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes))
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
@@ -101,7 +100,6 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
-			c.challengeCatchUpGRPC = newChallengeClient(conn.http, base, maybeGRPC(connectPlainOptions(DefaultRPCLargeReadMaxBytes), true))
 			c.challengeLargeGRPC = newChallengeClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true))
 			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
@@ -343,16 +341,7 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(maxBytes),
 		connect.WithSendGzip(),
-	}
-}
-
-// connectPlainOptions is the catch-up client: the same read cap, no request gzip.
-func connectPlainOptions(maxBytes int) []connect.ClientOption {
-	if maxBytes <= 0 {
-		maxBytes = DefaultRPCReadMaxBytes
-	}
-	return []connect.ClientOption{
-		connect.WithReadMaxBytes(maxBytes),
+		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
 }
 
@@ -412,6 +401,7 @@ func chatClientOptions() []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
 		connect.WithSendGzip(),
+		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
 }
 
@@ -863,7 +853,7 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 	return func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 		defer cancel()
-		if _, err := c.sendChallenge(ctx, c.challengeCatchUpClient(), body, page); err != nil {
+		if _, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page); err != nil {
 			return fmt.Errorf("challenge-receipt: %w", err)
 		}
 		return nil
