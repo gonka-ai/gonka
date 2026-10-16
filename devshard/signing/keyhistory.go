@@ -14,17 +14,15 @@ import (
 // GrantID names the entry of the chain's warm-key log the binding points at:
 // the id the module gave the grant, increasing per granter, so a later grant
 // of the same key has a larger id and the same grant can never be bound twice
-// after its revoke. GrantedAtHeight and RevokedAtHeight are the heights the
-// chain recorded on that entry. The log is append-only, so every host that
-// looks the entry up gets the same answer, whenever it asks.
-// See docs/warm-keys-v7.md.
+// after its revoke. The log is append-only, so every host that looks the
+// entry up gets the same answer, whenever it asks. The heights the chain
+// recorded on the entry are not part of the binding: the rule here is a
+// function of nonces alone. See docs/warm-keys-v7.md.
 type WarmKeyBinding struct {
-	Addr            string
-	FromNonce       uint64
-	GrantID         uint64
-	GrantedAtHeight uint64
-	RevokedAtNonce  uint64
-	RevokedAtHeight uint64
+	Addr           string
+	FromNonce      uint64
+	GrantID        uint64
+	RevokedAtNonce uint64
 }
 
 // Covers reports whether the binding is in force in the diff at nonce: at or
@@ -48,12 +46,11 @@ var (
 	ErrWarmKeyNotLive  = errors.New("warm key is not live on this slot")
 	ErrWarmKeyNonce    = errors.New("warm key nonce is not after the previous entry")
 	ErrWarmKeyGrant    = errors.New("warm key grant id is not after the previous grant of this key")
-	ErrWarmKeyHeight   = errors.New("warm key revoke height is not after the grant height")
 	ErrWarmKeyNotFound = errors.New("warm key is not bound on this slot")
 )
 
 // Bind appends a live binding of addr to slot from nonce on, pointing at the
-// chain log entry grantID recorded at grantedAtHeight. A key that is already
+// chain log entry grantID. A key that is already
 // live on the slot cannot be bound twice; a key revoked earlier can be bound
 // again with a later grant, one whose id is above the id of every earlier
 // grant of that key on the slot, so an old grant cannot bring a revoked key
@@ -61,7 +58,7 @@ var (
 // orders after it. Entries are append-only and ordered by nonce, so a bind
 // at a nonce before the slot's latest entry is refused: the diffs would have
 // been applied out of order.
-func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantID, grantedAtHeight uint64) error {
+func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantID uint64) error {
 	if addr == "" {
 		return ErrWarmKeyEmpty
 	}
@@ -80,15 +77,14 @@ func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantID, grantedAt
 			return fmt.Errorf("%w: slot %d %s grant %d after %d", ErrWarmKeyGrant, slot, addr, grantID, b.GrantID)
 		}
 	}
-	h[slot] = append(entries, WarmKeyBinding{Addr: addr, FromNonce: nonce, GrantID: grantID, GrantedAtHeight: grantedAtHeight})
+	h[slot] = append(entries, WarmKeyBinding{Addr: addr, FromNonce: nonce, GrantID: grantID})
 	return nil
 }
 
 // Revoke ends the live binding of addr on slot at nonce: the binding whose
-// grant is grantID, with the chain's revoke height, which must be at or after
-// the grant height. Signatures in diffs before nonce keep verifying; from
+// grant is grantID. Signatures in diffs before nonce keep verifying; from
 // nonce on the key is refused on this slot.
-func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, grantID, revokedAtHeight uint64) error {
+func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, grantID uint64) error {
 	if addr == "" {
 		return ErrWarmKeyEmpty
 	}
@@ -103,11 +99,7 @@ func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, grantID, revoked
 		if entries[i].GrantID != grantID {
 			return fmt.Errorf("%w: slot %d %s grant %d, live binding is grant %d", ErrWarmKeyGrant, slot, addr, grantID, entries[i].GrantID)
 		}
-		if revokedAtHeight < entries[i].GrantedAtHeight {
-			return fmt.Errorf("%w: slot %d %s revoked at %d, granted at %d", ErrWarmKeyHeight, slot, addr, revokedAtHeight, entries[i].GrantedAtHeight)
-		}
 		entries[i].RevokedAtNonce = nonce
-		entries[i].RevokedAtHeight = revokedAtHeight
 		return nil
 	}
 	for _, b := range entries {
