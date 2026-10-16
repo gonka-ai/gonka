@@ -962,15 +962,31 @@ if [ "$haproxy_ready" -eq 1 ] && [ -n "$pending_signal" ]; then
 fi
 status=0
 while :; do
-    # A trapped signal interrupts wait with a status above 128 while the
-    # process is still there; wait again until it has really exited. The
-    # if keeps set -e from ending the script on that interruption.
+    # A trapped signal interrupts wait with a status above 128. The if
+    # keeps set -e from ending the script on that interruption.
     if wait "$haproxy_pid"; then
         status=0
     else
         status=$?
     fi
-    kill -0 "$haproxy_pid" 2>/dev/null || break
+    if [ "$status" -gt 128 ]; then
+        # Still running: the signal was only forwarded; wait again.
+        if kill -0 "$haproxy_pid" 2>/dev/null; then
+            continue
+        fi
+        # Gone. Either that signal ended HAProxy, or a trapped signal
+        # interrupted the wait just as HAProxy exited and the shell reported
+        # the interruption, not the exit. A second wait returns the real
+        # status in the second case; in the first the job is already
+        # collected and the shell answers 127, so the status stands.
+        if wait "$haproxy_pid"; then
+            again=0
+        else
+            again=$?
+        fi
+        [ "$again" -eq 127 ] || status=$again
+    fi
+    break
 done
 if [ -n "$reconciler_pid" ]; then
     kill "$reconciler_pid" 2>/dev/null || true
