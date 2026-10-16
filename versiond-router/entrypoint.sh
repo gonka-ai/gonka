@@ -83,16 +83,19 @@ forward_signal() {
     case $1 in
         USR1)
             if [ "$haproxy_ready" -eq 1 ]; then
-                stop_reconciler
+                # HAProxy first: the socket closes with its listeners, so
+                # nothing the reconciler could still send gets through.
+                # Collecting the reconciler may take one of its polls.
                 kill -s USR1 "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
             else
                 pending_signal=USR1
             fi
             ;;
         *)
             if [ -n "$haproxy_pid" ]; then
-                stop_reconciler
                 kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
             else
                 echo "versiond-router: $1 before HAProxy started; exiting" >&2
                 exit 1
@@ -909,11 +912,24 @@ fi
 
 run_catalog_reconciler() {
     # The program runs as a child that this loop waits for, so a TERM to the
-    # loop ends the program as well; a child reparented to the entrypoint
-    # would otherwise outlive the loop until the container is torn down.
+    # loop ends the program as well and the loop only exits once the program
+    # has been collected; a child reparented to the entrypoint would
+    # otherwise outlive the loop until the container is torn down. A TERM
+    # that lands between the launch and the pid being recorded is kept as a
+    # flag and acted on right after.
     reconciler_child=
-    trap 'if [ -n "$reconciler_child" ]; then kill "$reconciler_child" 2>/dev/null; fi; exit 0' TERM INT
+    reconciler_stopping=0
+    end_reconciler_child() {
+        reconciler_stopping=1
+        if [ -n "$reconciler_child" ]; then
+            kill "$reconciler_child" 2>/dev/null || true
+            wait "$reconciler_child" 2>/dev/null || true
+            exit 0
+        fi
+    }
+    trap end_reconciler_child TERM INT
     while :; do
+        [ "$reconciler_stopping" -eq 0 ] || exit 0
         status=0
         ROUTING_CATALOG_COMPONENT=versiond-router \
         ROUTING_CATALOG_URL="$CATALOG_URL" \
@@ -941,6 +957,7 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
             /usr/local/lib/router-runtime/catalog-reconciler &
         reconciler_child=$!
+        [ "$reconciler_stopping" -eq 0 ] || end_reconciler_child
         wait "$reconciler_child" || status=$?
         reconciler_child=
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
