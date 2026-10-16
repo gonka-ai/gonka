@@ -548,11 +548,14 @@ That is the Watch bound only; a Chat stream ends with its own response, and
 SIGKILL comes after `hard-stop-after` on every stop path. The fleet script
 derives all three numbers from one: `hard-stop-after` is
 `VERSIOND_ROUTER_HARD_STOP_SECONDS`, by default
-`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`; it stops a slot with
-`docker stop --time` set to that plus a 10 s headroom; and it exports the
-slot's `stop_grace_period` (`VERSIOND_ROUTER_STOP_GRACE_PERIOD`) as the same
-value, so `docker compose stop`, `down`, `restart` and a recreate get the same
-budget. An explicit grace period below the hard stop plus headroom is refused.
+`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`; it stops a router with
+`docker stop --time` set to that plus a 10 s headroom, or to the hard stop
+that router was created with plus the headroom when that is larger; and it
+exports the slot's `stop_grace_period` (`VERSIOND_ROUTER_STOP_GRACE_PERIOD`)
+as the configured value, so `docker compose stop`, `down`, `restart` and a
+recreate get the same budget. An explicit grace period below the hard stop
+plus headroom, or one that is not whole hours, minutes and seconds, is
+refused.
 A container created before this contract keeps the 10 s budget it was created
 with until the fleet replaces it; the fleet's own stop passes its timeout
 explicitly, so use `rollout` for that replacement, not a Compose restart.

@@ -188,16 +188,34 @@ done
 # leading zero as octal, while HAProxy reads the same string as decimal.
 stop_timeout=$((10#$hard_stop + stop_headroom))
 
-# Seconds in a Compose duration (30m, 1810s, 90). Anything else is refused.
+# Seconds in a Compose duration made of whole hours, minutes and seconds
+# (30m, 1810s, 1h30m10s). Compose refuses a bare number, so this does too;
+# fractions and sub-second units are not accepted for a stop budget.
 compose_duration_seconds() {
-    local value=$1 number unit
-    [[ $value =~ ^([0-9]+)([smh]?)$ ]] || return 1
-    number=${BASH_REMATCH[1]}
-    unit=${BASH_REMATCH[2]}
-    case $unit in
-        m) echo $((10#$number * 60)) ;;
-        h) echo $((10#$number * 3600)) ;;
-        *) echo $((10#$number)) ;;
+    local value=$1 h m s
+    [[ $value =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?$ ]] || return 1
+    h=${BASH_REMATCH[2]:-0}
+    m=${BASH_REMATCH[4]:-0}
+    s=${BASH_REMATCH[6]:-0}
+    [[ -n ${BASH_REMATCH[1]}${BASH_REMATCH[3]}${BASH_REMATCH[5]} ]] || return 1
+    echo $((10#$h * 3600 + 10#$m * 60 + 10#$s))
+}
+
+# The stop budget for one running router: its own hard-stop-after (recorded
+# in the container's environment) plus the headroom, or the configured one
+# when that is larger or the container predates the setting. A lowered
+# configuration must not shorten the stop of a generation still running the
+# old value.
+generation_stop_timeout() {
+    local id=$1 recorded
+    recorded=$("$docker_bin" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" 2>/dev/null | \
+        sed -n 's/^VERSIOND_ROUTER_HARD_STOP_SECONDS=//p' | head -n 1)
+    case $recorded in
+        '' | *[!0-9]* | 0) echo "$stop_timeout" ;;
+        *)
+            recorded=$((10#$recorded + stop_headroom))
+            if ((recorded > stop_timeout)); then echo "$recorded"; else echo "$stop_timeout"; fi
+            ;;
     esac
 }
 
@@ -811,7 +829,7 @@ stop_generation() {
         reset_parent_slot_health || true
         return 1
     }
-    "$docker_bin" stop --time "$stop_timeout" "$id" >/dev/null || status=$?
+    "$docker_bin" stop --time "$(generation_stop_timeout "$id")" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
 }
@@ -2041,7 +2059,7 @@ stop_fleet_containers() {
             "router container $id disappeared before maintenance stop"
         case $state in
             running | restarting | paused)
-                "$docker_bin" stop --time "$stop_timeout" "$id" >/dev/null &
+                "$docker_bin" stop --time "$(generation_stop_timeout "$id")" "$id" >/dev/null &
                 pids+=("$!")
                 ;;
             created | exited | dead) ;;
