@@ -688,14 +688,16 @@ fleet, proxy, versiond so that window is the versiond replacement only.
 ### The updater does not probe the HTTP/2 path end to end
 
 `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do not
-send a peer RPC. The `_rpc` twin's check is HTTP/1.1 `GET /readyz` on the
-router admin port `:8404`, then `GET /readyz` on the router's `:8081` over
-HTTP/2, the data dial itself. A router generation without that listen (a v5
-router after a rollback) fails the second step, the twin empties, and the
-proxy's `rpc_h2` frontend sends that version's peer RPC to the JSON sibling
-backend over HTTP/1.1, where the router routes `/rpc/` by path; non-HA asks
-versiond `/readyz?peer-rpc=1` for the `peer-rpc-ok` body the same way. What
-the check does not prove is the child behind the router. After a
+send a peer RPC. The `_rpc` twin's check is HTTP/1.1 `GET /readyz?version=`
+on the router admin port `:8404`, then `GET /<version>/healthz` on the
+router's `:8081` over HTTP/2, the data dial itself. A router generation
+without that listen (a v5 router after a rollback) fails the second step, the
+twin empties, and the proxy's `rpc_h2` frontend sends that version's peer RPC
+to the JSON sibling backend over HTTP/1.1, where the router routes `/rpc/` by
+path; the coarse pool only needs an HTTP answer on `:8081`. Non-HA opens
+versiond's own listen over HTTP/2 the same way and falls back to versiond
+over HTTP/1.1. What the checks do not prove is the child behind the router.
+After a
 wrapping switch, send one peer RPC through the public port (see the release
 guide) rather than trusting `/readyz`. A remote endpoint `{id, host, port}` is
 the versiond listen (`8080`); that process has to speak h2c, and the updater

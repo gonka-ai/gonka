@@ -108,6 +108,8 @@ grep -q 'http-check expect status 200' "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC check does not expect 200"
 grep -q 'http-check connect port 8081 proto h2' "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC check does not open the :8081 data dial over HTTP/2"
+grep -q 'http-check expect rstatus' "$tmpdir/backend.cfg" \
+    || fail "rendered coarse data step must accept any HTTP answer on :8081"
 grep -q 'use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }' "$tmpdir/ha.cfg" \
     || fail "rendered peer RPC frontend does not fall back to the JSON path"
 grep -q 'server-template router 1 router:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' \
@@ -186,7 +188,9 @@ EOF
 
 frontend rpc
     bind :8081
-    http-request return status 200 content-type text/plain string "ready" if { path /readyz }
+    # The previous router generation answers the coarse probe from a strict
+    # pool: a 503 there must still count as "speaks HTTP/2 on :8081".
+    http-request return status 503 content-type text/plain string "not ready" if { path /healthz }
     http-request return status 200 content-type text/plain lf-string "rpc-h2 ver=%[req.ver]"
 EOF
     fi
@@ -291,13 +295,16 @@ for _ in $(seq 1 40); do
     checked_check=$(stat_field rpc_h2_upstream router1 check_status || true)
     checked_code=$(stat_field rpc_h2_upstream router1 check_code || true)
     unchecked_status=$(stat_field rpc_h2_unchecked router status || true)
-    if [[ $checked_status == UP* && $checked_check == L7OK && $checked_code == 200 && $unchecked_status == "no check" ]]; then
+    # check_code is the last step's status: the :8081 data probe, which the
+    # mock answers 503 the way the previous router generation's strict
+    # coarse pool would, and which the coarse check accepts.
+    if [[ $checked_status == UP* && $checked_check == L7OK && $checked_code == 503 && $unchecked_status == "no check" ]]; then
         up_ready=1
         break
     fi
     sleep 0.5
 done
-[[ -n $up_ready ]] || fail "peer RPC did not become UP/L7OK/200 after /readyz returned 200 (status=${checked_status:-} check=${checked_check:-} code=${checked_code:-} unchecked=${unchecked_status:-})"
+[[ -n $up_ready ]] || fail "peer RPC did not become UP/L7OK after /readyz returned 200 (status=${checked_status:-} check=${checked_check:-} code=${checked_code:-} unchecked=${unchecked_status:-})"
 
 through_proxy() {
     docker run --rm --network "$net" curlimages/curl:8.11.1 \

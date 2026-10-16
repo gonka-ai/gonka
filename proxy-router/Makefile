@@ -190,18 +190,29 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "the :80 hand-off does not carry the client address with PROXY v2"; \
 	grep -q '^ *default_backend rpc_h2_upstream$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen is forwarded to proxy-policy"; \
-	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 check-proto h1 ' "$$tmpdir/proxy.cfg" \
-		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2 with an HTTP/1.1 check"; \
+	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none$$' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2 with a check"; \
 	awk ' \
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
-		inside && /http-check send meth GET uri \/readyz\?peer-rpc=1 hdr Host versiond/ { send = 1 } \
-		inside && /http-check expect string peer-rpc-ok/ { body = 1 } \
-		END { exit !(send && body) } \
+		inside && /http-check connect port 8080 proto h2/ { connect = 1 } \
+		inside && /http-check send meth GET uri \/readyz hdr Host versiond/ { send = 1 } \
+		inside && /http-check expect status 200/ { expect = 1 } \
+		END { exit !(connect && send && expect) } \
 	' "$$tmpdir/proxy.cfg" \
-		|| fail "non-HA peer RPC does not require peer-rpc-ok from versiond"; \
-	grep -q '^ *use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/proxy.cfg" \
-		|| fail "peer RPC does not fall back to the JSON path when its pool is empty"; \
+		|| fail "non-HA peer RPC check does not open versiond over HTTP/2"; \
+	grep -q '^ *use_backend rpc_versiond_h1 if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not fall back to versiond over HTTP/1.1 when its pool is empty"; \
+	awk ' \
+		$$0 ~ "^backend rpc_versiond_h1$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /^ *server versiond versiond:8080 resolvers docker init-addr none$$/ { h1 = 1 } \
+		END { exit !h1 } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA HTTP/1.1 fallback backend does not dial versiond"; \
+	if grep -q 'versiond-router-fleet' "$$tmpdir/proxy.cfg" | grep -q rpc; then \
+		fail "non-HA peer RPC references the router fleet"; \
+	fi; \
 	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen has no conn_rate on src"; \
 	awk ' \
@@ -287,20 +298,25 @@ test-render: test-route-status test-rpc-h2-cert
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /http-check connect port 8404 proto h1/ { connect = 1 } \
+		inside && /http-check send meth GET uri \/readyz hdr Host versiond-router-fleet/ { send = 1 } \
+		inside && /http-check expect status 200/ { expect = 1 } \
 		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
-		inside && /http-check send meth GET uri \/readyz hdr Host versiond-router-fleet/ { send++ } \
-		inside && /http-check expect status 200/ { expect++ } \
-		END { exit !(connect && data && send == 2 && expect == 2) } \
+		inside && /http-check send meth GET uri \/healthz hdr Host versiond-router-fleet/ { dsend = 1 } \
+		inside && /http-check expect rstatus \^\[2-5\]\[0-9\]\[0-9\]/ { dexpect = 1 } \
+		END { exit !(connect && send && expect && data && dsend && dexpect) } \
 	' "$$tmpdir/ha.cfg" \
-		|| fail "HA peer RPC check is not admin /readyz over HTTP/1.1 followed by /readyz on :8081 over HTTP/2"; \
+		|| fail "HA coarse peer RPC check is not admin /readyz over HTTP/1.1 followed by any HTTP answer on :8081 over HTTP/2"; \
+	grep -q '^ *use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC does not fall back to the coarse JSON pool when its pool is empty"; \
 	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found } { var(txn.ver),map_str(.*/ha.map),concat(_rpc),nbsrv gt 0 }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not select the per-version _rpc backend only while it has a usable server"; \
 	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not fall back to the version's JSON backend"; \
 	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
 		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
-		END { exit !data }' "$$tmpdir/ha.cfg" \
-		|| fail "dynamic peer RPC twins do not check the :8081 data dial"; \
+		inside && /uri-lf \/%\[be_name,regsub\(_rpc\$$,\),map\(.*\)\]\/healthz/ { dsend = 1 } \
+		END { exit !(data && dsend) }' "$$tmpdir/ha.cfg" \
+		|| fail "dynamic peer RPC twins do not check their version's /healthz on :8081"; \
 	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
 		inside && /server-template router 16 versiond-router-fleet:8081 proto h2/ { dial = 1 } \
 		inside && /regsub\(_rpc/ { check = 1 } \
@@ -337,6 +353,11 @@ test-render: test-route-status test-rpc-h2-cert
 	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
 		fail "HA peer RPC still dials the non-HA versiond"; \
 	fi; \
+	awk '/^backend versiond_routers_v5_rpc$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
+		inside && /http-check send meth GET uri \/v5\/healthz hdr Host versiond-router-fleet/ { dsend = 1 } \
+		END { exit !(data && dsend) }' "$$tmpdir/ha-v5.cfg" \
+		|| fail "the static v5 peer RPC twin does not check /v5/healthz on :8081 over HTTP/2"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
