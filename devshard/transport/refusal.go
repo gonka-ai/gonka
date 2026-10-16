@@ -26,7 +26,7 @@ type refusalBudgetClient interface {
 // verifyRefusedTimeout fetches the executor tip and challenges with the diffs
 // after that nonce, one page at a time. The verify budget stays at
 // RefusalVerifyBudget even when the peer client allows a longer vote.
-func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, rec *types.InferenceRecord, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient, nowUnix int64) (bool, error) {
+func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, rec *types.InferenceRecord, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient, executorAddr string, nowUnix int64) (bool, error) {
 	var tip host.SessionTip
 	if sh, ok := executor.(host.SessionTip); ok {
 		tip = sh
@@ -44,6 +44,7 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	if s.store != nil {
 		journal = refusalJournal{store: s.store, escrowID: s.host.EscrowID()}
 	}
+	ctx = host.WithColdWalk(ctx, s.coldWalks, executorAddr)
 	return host.VerifyRefusedProgress(ctx, st, inferenceID, rec, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, nowUnix, executorUnreachable)
 }
 

@@ -48,6 +48,13 @@ func (e *executorCallError) Unwrap() error { return e.err }
 // payload and no diffs. No HTTP response accepts the timeout. An answer with no verified
 // receipt rechecks the tip only when the previous root matched, and challenges from the
 // new tip, at most RefusalProgressRetries times.
+// WithColdWalk, on this verifier only, keeps one gated walk in flight per executor: a
+// cold head (session not found or tip 0), or any suffix past coldWalkLongNonces. Other
+// gated checks wait and do not read the journal. The next gated walk resumes at the
+// nonce already sent. Once that nonce is past LatestNonce, or coldCatchUpAttempts walks
+// ended without progress, a gated check sends the payload alone and is judged as usual.
+// Progress is a root-matched tip above the highest seen; it clears the memory. A
+// cancelled check does not spend an attempt.
 // The walk's own deadline, and a tip read that hits its own query deadline, are returned.
 // They do not accept the timeout. An answered catch-up error still sends the payload
 // before that answer is classified. A per-page tip moves the cursor only when its root
@@ -104,38 +111,64 @@ func VerifyRefusedProgress(
 	ctx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
 
-	deadline, _ := ctx.Deadline()
-	budget := time.Until(deadline)
-	queryBudget := min(queryTimeout, budget/4)
-	if queryBudget <= 0 {
+	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		return false, context.DeadlineExceeded
-	}
-	queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
-	nonce, root, queryErr := tip.SessionHead(queryCtx)
-	probeErr := queryCtx.Err()
-	queryCancel()
-	if queryErr != nil && requestCtx.Err() != nil && errors.Is(queryErr, requestCtx.Err()) {
-		return false, requestCtx.Err()
-	}
-	if queryErr != nil && ctx.Err() != nil && errors.Is(queryErr, ctx.Err()) {
-		return false, ctx.Err()
-	}
-	if ownProbeTimeout(ctx, probeErr, queryErr) {
-		return false, probeErr
-	}
+		deadline, _ := ctx.Deadline()
+		budget := time.Until(deadline)
+		queryBudget := min(queryTimeout, budget/4)
+		if queryBudget <= 0 {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			return false, context.DeadlineExceeded
+		}
+		queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
+		nonce, root, queryErr := tip.SessionHead(queryCtx)
+		probeErr := queryCtx.Err()
+		queryCancel()
+		if queryErr != nil && requestCtx.Err() != nil && errors.Is(queryErr, requestCtx.Err()) {
+			return false, requestCtx.Err()
+		}
+		if queryErr != nil && ctx.Err() != nil && errors.Is(queryErr, ctx.Err()) {
+			return false, ctx.Err()
+		}
+		if ownProbeTimeout(ctx, probeErr, queryErr) {
+			return false, probeErr
+		}
 
-	cursor, matched, early, earlyErr := refusalCursor(st, nonce, root, queryErr, journal, unreachable)
-	if earlyErr != nil {
-		return false, earlyErr
-	}
-	if early {
-		return true, nil
-	}
+		cursor, matched, early, earlyErr := refusalCursor(st, nonce, root, queryErr, journal, unreachable)
+		if earlyErr != nil {
+			return false, earlyErr
+		}
+		if early {
+			return true, nil
+		}
 
-	return challengeAndMaybeRetry(ctx, st, inferenceID, rec, payload, cursor, matched, nonce, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+		walkCtx := ctx
+		if walk := coldWalkFrom(ctx); walk != nil {
+			join, resume, joinErr := walk.gate.Join(ctx, walk.key, refusalWalkHead(st, cursor, nonce, matched, queryErr), st.LatestNonce)
+			if joinErr != nil {
+				return false, joinErr
+			}
+			switch join {
+			case coldRetry:
+				continue
+			case coldPayloadOnly:
+				cursor = st.LatestNonce + 1
+			case coldLead:
+				if resume > cursor {
+					cursor = resume
+				}
+				lead := &coldWalkLead{gate: walk.gate, key: walk.key, request: requestCtx}
+				defer lead.release()
+				walkCtx = context.WithValue(ctx, coldLeadKey{}, lead)
+			}
+		}
+
+		return challengeAndMaybeRetry(walkCtx, st, inferenceID, rec, payload, cursor, matched, nonce, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+	}
 }
 
 // refusalCursor chooses the first nonce to send. early means accept without a challenge.
@@ -164,6 +197,20 @@ func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr err
 	}
 	logRefusalCursor(choice, cursor, nonce, st.LatestNonce)
 	return cursor, matched, false, nil
+}
+
+// refusalWalkHead describes the walk the first SessionHead asks for. A tip
+// past LatestNonce and an unanswered head walk nothing, so they are not long.
+func refusalWalkHead(st types.EscrowState, cursor, nonce uint64, matched bool, queryErr error) walkHead {
+	h := walkHead{cold: sessionNotFound(queryErr) || (queryErr == nil && nonce == 0)}
+	if queryErr != nil || h.cold {
+		return h
+	}
+	if matched {
+		h.matchedTip = nonce
+	}
+	h.long = cursor <= st.LatestNonce && st.LatestNonce-cursor+1 > coldWalkLongNonces
+	return h
 }
 
 func logRefusalCursor(choice string, cursor, tip, latest uint64) {
@@ -331,6 +378,7 @@ func challengeOnce(
 	if !errors.As(err, &catchUp) {
 		return outcome, err
 	}
+	releaseColdWalk(ctx)
 	if unreachable(catchUp.err) {
 		return 0, &executorCallError{err: catchUp.err}
 	}
@@ -338,9 +386,10 @@ func challengeOnce(
 }
 
 // challengeFrom sends [from, LatestNonce] one page at a time, then the payload.
-// The last page rides with the payload when it fits. Each page is sent before
-// the next one is loaded. Catch-up pages use a child deadline that leaves a
-// reserve for that payload call.
+// The last page rides with the payload when it fits, unless this check leads a
+// gated walk; the leader sends every page as catch-up and releases the gate
+// before the payload call. Each page is sent before the next one is loaded.
+// Catch-up pages use a child deadline that leaves a reserve for that payload call.
 func challengeFrom(
 	ctx context.Context,
 	st types.EscrowState,
@@ -357,13 +406,17 @@ func challengeFrom(
 	unreachable func(error) bool,
 ) (refusedChallenge, error) {
 	if from > st.LatestNonce {
+		releaseColdWalk(ctx)
 		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 	}
 	walkCtx, walkCancel := walkContext(ctx, queryTimeout)
 	defer walkCancel()
 
 	var last []types.DiffWire
-	err := journal.Pages(walkCtx, from, st.LatestNonce, func() uint64 { return from }, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
+	err := journal.Pages(walkCtx, from, st.LatestNonce, func() uint64 {
+		noteColdCursor(walkCtx, from)
+		return from
+	}, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
 		if err := walkCtx.Err(); err != nil {
 			return nil, err
 		}
@@ -378,7 +431,7 @@ func challengeFrom(
 		return 0, err
 	}
 	last = wiresFromCursor(last, from)
-	if pageFitsPayload(last, payload) {
+	if coldLeadFrom(ctx) == nil && pageFitsPayload(last, payload) {
 		decoded, err := decodeWires(last)
 		last = nil
 		if err != nil {
@@ -396,8 +449,10 @@ func challengeFrom(
 			if err := send(walkCtx); err != nil {
 				return 0, err
 			}
+			noteColdCursor(walkCtx, from)
 		}
 	}
+	releaseColdWalk(ctx)
 	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 }
 
@@ -456,7 +511,15 @@ func prepareCatchUp(
 		}
 		if tipErr == nil && tipRootMatches(journal, latest, nonce, *cursor, root) {
 			*cursor = nonce + 1
+			noteColdBound(ctx, nonce)
 		}
+		// The tip stays put on a cold executor, so the next unread nonce is
+		// the one after this page unless the tip jumped further.
+		advanced := *cursor
+		if len(page) > 0 && page[len(page)-1].Nonce+1 > advanced {
+			advanced = page[len(page)-1].Nonce + 1
+		}
+		noteColdCursor(ctx, advanced)
 		return nil
 	}, nil
 }

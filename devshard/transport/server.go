@@ -119,6 +119,10 @@ type Server struct {
 	heightSyncMarks     *heightsync.MarkLog
 	heightSyncSeedRPC   bool
 
+	// coldWalks remembers, for this process only, how far a gated catch-up
+	// got for each executor address. One address can own several slots.
+	coldWalks *host.ColdWalks
+
 	pendingUntrustedMu        sync.Mutex
 	pendingUntrustedBySession map[string]*pendingUntrustedTip
 
@@ -188,6 +192,7 @@ func NewServer(
 		verifier:    verifier,
 		userAddr:    userAddr,
 		maxBodySize: DefaultMaxBodySize,
+		coldWalks:   host.NewColdWalks(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -648,7 +653,8 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	}
 	localMempool := s.host.MempoolTxs()
 
-	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
+	group := s.host.Group()
+	executorIdx := int(req.InferenceID % uint64(len(group)))
 	executorClient, err := s.timeoutExecutor(ctx, executorIdx)
 	if err != nil {
 		return nil, err
@@ -659,7 +665,7 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, group[executorIdx].ValidatorAddress, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
