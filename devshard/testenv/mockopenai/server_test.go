@@ -686,6 +686,39 @@ func TestLatencyAppliesToJSONNotStream(t *testing.T) {
 	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "non-stream Validate must honor latency_ms")
 }
 
+func TestValidationReplayStreamHonorsLatencyWithoutStreamFaults(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	patch, err := json.Marshal(map[string]any{"latency_ms": 400, "drop_first_chunk": true, "sse_error_message": "boom"})
+	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = resp.Body.Close()
+
+	replayBody := []byte(`{"model":"test-model","stream":true,"logprobs":true,"top_logprobs":2,"messages":[{"role":"user","content":"replay"}],"enforced_tokens":{"tokens":[{"token":"1","top_tokens":["1"]}]}}`)
+	start := time.Now()
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(replayBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "an enforced-token replay is Validate and honors latency_ms")
+	require.NotContains(t, string(raw), "boom")
+	require.Contains(t, string(raw), "data: [DONE]")
+	require.Contains(t, string(raw), `"usage"`)
+
+	executorBody := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"replay"}]}`)
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(executorBody))
+	require.NoError(t, err)
+	raw, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Contains(t, string(raw), "boom", "executor streams keep their stream faults")
+}
+
 func TestStreamTTFTDelaysFirstChunkOnly(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
