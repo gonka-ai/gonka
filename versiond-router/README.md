@@ -475,7 +475,7 @@ lock.
 | `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
 | `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected)* | main Compose network used for Prometheus discovery |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric resolver; part of the fleet placement contract |
-| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `1810s` | Docker's stop budget for a slot: `hard-stop-after` plus the 10 s headroom the fleet rollout also uses, so any stop path lets HAProxy end or reset its own streams; raise it with `VERSIOND_ROUTER_HARD_STOP_SECONDS` |
+| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | *(derived)* | Docker's stop budget for a slot. The fleet exports `hard-stop-after` plus 10 s (the same timeout it gives `docker stop --time`) and refuses an explicit value below that; a raw render defaults to `1810s` |
 | `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | explicit one-command acknowledgement for `maintenance-rollout` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
@@ -545,13 +545,18 @@ accepted skew. With the defaults (2-minute TTL, 5 s skew, 30 s heartbeat) a
 Watch therefore ends at most about 2.5 minutes after its token was issued.
 That is the Watch bound only; a Chat stream ends with its own response, and
 `hard-stop-after` is the backstop for anything that does not end. Docker's
-SIGKILL comes after `hard-stop-after` on every stop path: a fleet rollout
-renders `VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` as the slot's `hard-stop-after`
-and stops the slot with that timeout plus a 10 s headroom, and the slot's
-`stop_grace_period` (`VERSIOND_ROUTER_STOP_GRACE_PERIOD`, default `1810s`)
-gives `docker compose stop`, `down`, `restart` and a recreate the same budget.
-A site that raises `VERSIOND_ROUTER_HARD_STOP_SECONDS` must raise the grace
-period with it. HAProxy runs as a child of the entrypoint, which passes it every
+SIGKILL comes after `hard-stop-after` on every stop path. The fleet script
+derives all three numbers from one: `hard-stop-after` is
+`VERSIOND_ROUTER_HARD_STOP_SECONDS`, by default
+`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS`; it stops a slot with
+`docker stop --time` set to that plus a 10 s headroom; and it exports the
+slot's `stop_grace_period` (`VERSIOND_ROUTER_STOP_GRACE_PERIOD`) as the same
+value, so `docker compose stop`, `down`, `restart` and a recreate get the same
+budget. An explicit grace period below the hard stop plus headroom is refused.
+A container created before this contract keeps the 10 s budget it was created
+with until the fleet replaces it; the fleet's own stop passes its timeout
+explicitly, so use `rollout` for that replacement, not a Compose restart.
+HAProxy runs as a child of the entrypoint, which passes it every
 stop signal at once and, when it has exited, stops the catalog reconciler loop:
 the master-worker process waits for every child, so an exec would leave the
 master waiting on that loop after the worker had drained.

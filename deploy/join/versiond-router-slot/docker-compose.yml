@@ -76,12 +76,12 @@ services:
       retries: 10
       start_period: 15s
     stop_signal: SIGUSR1
-    # Every stop path lets the soft stop run to hard-stop-after: the default is
-    # VERSIOND_ROUTER_HARD_STOP_SECONDS (1800) plus the 10 s headroom the fleet
-    # rollout also adds to `docker stop --time`. A site that raises the hard
-    # stop must raise this as well, or Docker's SIGKILL resets the last
-    # streams first. HAProxy exits as soon as its last stream ends, so a stop
-    # waits this long only for a stream that never ends.
+    # Every stop path lets the soft stop run to hard-stop-after. The fleet
+    # script exports this as the effective hard stop plus the 10 s headroom it
+    # also gives `docker stop --time`, and refuses a smaller explicit value;
+    # the default here matches the default hard stop for a raw render.
+    # HAProxy exits as soon as its last stream ends, so a stop waits this long
+    # only for a stream that never ends.
     stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-1810s}
     restart: always
     cap_drop:

@@ -124,9 +124,13 @@ fleet_id=${VERSIOND_ROUTER_FLEET_ID:-$project_prefix}
 slot_list=${VERSIOND_ROUTER_FLEET_SLOTS:-0 1 2}
 min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
-# The router renders drain_timeout as hard-stop-after (versiond-router-slot
-# compose), so HAProxy resets the last streams and exits on its own at that
-# point. Docker's SIGKILL comes this much later, so the two never race.
+# The slot compose renders hard-stop-after from VERSIOND_ROUTER_HARD_STOP_SECONDS,
+# which defaults to drain_timeout, so HAProxy resets the last streams and exits
+# on its own at that point. Docker's SIGKILL comes this much later on every
+# stop path: `docker stop --time` here, and the slot's stop_grace_period for
+# compose stop, down, restart and a recreate, which is derived below from the
+# same number unless the site sets it at least as high.
+hard_stop=${VERSIOND_ROUTER_HARD_STOP_SECONDS:-$drain_timeout}
 stop_headroom=10
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
@@ -177,12 +181,34 @@ fi
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
-for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
+for value in "$drain_timeout" "$hard_stop" "$wait_timeout" "$version_wait_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
 # Decimal, whatever the spelling in config.env: shell arithmetic would read a
 # leading zero as octal, while HAProxy reads the same string as decimal.
-stop_timeout=$((10#$drain_timeout + stop_headroom))
+stop_timeout=$((10#$hard_stop + stop_headroom))
+
+# Seconds in a Compose duration (30m, 1810s, 90). Anything else is refused.
+compose_duration_seconds() {
+    local value=$1 number unit
+    [[ $value =~ ^([0-9]+)([smh]?)$ ]] || return 1
+    number=${BASH_REMATCH[1]}
+    unit=${BASH_REMATCH[2]}
+    case $unit in
+        m) echo $((10#$number * 60)) ;;
+        h) echo $((10#$number * 3600)) ;;
+        *) echo $((10#$number)) ;;
+    esac
+}
+
+if [[ -z ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-} ]]; then
+    export VERSIOND_ROUTER_STOP_GRACE_PERIOD="${stop_timeout}s"
+else
+    grace_seconds=$(compose_duration_seconds "$VERSIOND_ROUTER_STOP_GRACE_PERIOD") || fail \
+        "VERSIOND_ROUTER_STOP_GRACE_PERIOD must be a Compose duration in s, m or h: '$VERSIOND_ROUTER_STOP_GRACE_PERIOD'"
+    ((grace_seconds >= stop_timeout)) || fail \
+        "VERSIOND_ROUTER_STOP_GRACE_PERIOD=$VERSIOND_ROUTER_STOP_GRACE_PERIOD is below the hard stop plus headroom (${stop_timeout}s): Docker would kill a router before hard-stop-after"
+fi
 
 read -r -a slots <<<"$slot_list"
 ((${#slots[@]} >= 2)) || fail "at least two router slots are required"
