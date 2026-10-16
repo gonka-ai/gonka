@@ -139,9 +139,10 @@ protocol": a per-diff height that the protocol verifies against the hosts'
 own observations and that every diff inherits. The warm-key rule uses that
 height and nothing weaker; until it exists, the rule cannot be implemented
 safely, and this note asks the authors of that item to confirm it provides:
-one height per diff (inherited when a diff carries no stamp), monotonic, and
-bounded by what a quorum of hosts has acknowledged. See
-[Open questions](#open-questions).
+one height per diff (inherited when a diff carries no stamp), monotonic,
+bounded above by what a quorum of hosts has acknowledged, and tracking the
+hosts' observations within a bounded lag, so the gateway can neither run it
+ahead nor hold it back. See [Open questions](#open-questions).
 
 The nonce is the **authorization nonce**, and each path has its own:
 
@@ -207,15 +208,27 @@ the 0.2.18 change records on the escrow (`DevshardEscrow` has no such field
 today, `CreateDevshardEscrow` does not persist one, and the bridge does not
 carry it; all three change), or, for an escrow created before the upgrade,
 the upgrade height, which is the height every seeded entry was granted at.
-The gateway's first diff carries a bind for every slot whose validator has a
-grant live at the anchor, and those binds are checked against the log at the
-anchor. The same applies to a session that moves from v6 to v7: the first v7
-diff binds the keys live at the anchor, and the hosts accept cold keys only
-before it. A key granted after the anchor, that is, a host that rotated
-between the escrow's creation and the session's first diff, is not live at
-the anchor and is bound from the second diff on, once the authorization
-height exists; until then that host's messages are refused, a bounded and
-rare delay. Rotations after the first diff use the authorization height.
+The anchor is a lower bound, not the height the first binds are checked at.
+The gateway's first diff states its own authorization height h1, at or above
+the anchor and at or below the chain tip as the hosts see it, and carries a
+bind for every slot whose validator has a grant live at h1; the hosts check
+those binds against the log at h1, a log fact, before they verify anything
+else in the diff, including the height acknowledgements that the newly bound
+keys sign. No quorum has to exist before the binds: the binds are what
+creates it. A key granted after the anchor is therefore bound in the first
+diff like any other, and a host that rotated between the escrow's creation
+and the first diff waits for nothing. The same applies to a session that
+moves from v6 to v7: the first v7 diff binds the keys live at its h1, and
+the hosts accept cold keys only before it.
+
+What stops a gateway from choosing an old h1 to bind a key revoked after it
+is the authorization-height dependency itself, with one more property: the
+height must track the hosts' own observations within a bounded lag, so the
+gateway cannot hold the session at a height from before a revoke. Under that
+property, a key revoked at R is refused in every diff at or past R, and the
+diffs below R are exactly those made while the chain, as the hosts see it,
+had not reached R, where the key was still granted. Rotations after the
+first diff use the authorization height of the diff that binds them.
 
 The check needs a complete, committed view of the log through h: a host
 answers only once its chain node, or its log copy, has reached h with no
@@ -337,9 +350,11 @@ propose binds and a v7 session accepts cold keys only.
   rests on a per-diff chain height the gateway cannot set back and one host
   cannot push forward. Height-sync as it stands gives neither
   ([Model](#model)). The v7 item "heightstamped time verified by protocol" is
-  where it has to come from; this note needs its authors to confirm the three
-  properties (one height per diff, monotonic, bounded by a quorum of host
-  observations) or to say which the warm-key rule must do without. Without
+  where it has to come from; this note needs its authors to confirm four
+  properties (one height per diff, monotonic, bounded above by what a quorum
+  of hosts acknowledged, and tracking the hosts' observations within a
+  bounded lag so the gateway cannot hold it back) or to say which the
+  warm-key rule must do without. Without
   it, the honest fallback is weaker: binds and revokes take effect at their
   nonce only, the chain log orders them, and a gateway that withholds a
   revoke keeps the key accepted until the hosts stop serving it through the
@@ -357,11 +372,6 @@ propose binds and a v7 session accepts cold keys only.
   rejected because the submitter would choose the height.
 - Several live keys per slot. The model allows it; the operator flow may want
   "one new, one old" only.
-- A host that rotates between the escrow's creation and the session's first
-  diff waits for the second diff. If that window turns out to matter, the
-  anchor could be the height of the gateway's first chain interaction for
-  the escrow, recorded on chain with the escrow; that is a larger chain
-  change.
 - Who may bind. The gateway as the sole author keeps sequencing simple. A host
   that rotates while the gateway is down waits with the old key; is that fine?
 - A slot reassigned to another validator in a later epoch, and HA replicas of
