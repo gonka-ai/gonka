@@ -45,9 +45,12 @@ func (sm *StateMachine) CheckEvidenceCached(rec *types.InferenceRecord, txs ...*
 	return sm.checkEvidence(rec, txs, false)
 }
 
-// unboundSigner is a recovered key that only the grant source can admit.
+// unboundSigner is a recovered warm key the grant source has the last word
+// on: one the history does not cover (admitted only if the source has a live
+// grant) or one it does (refused only if the source has seen the grant end).
 type unboundSigner struct {
 	recovered, expected string
+	bound               bool
 	err                 error
 }
 
@@ -57,6 +60,12 @@ func (sm *StateMachine) checkEvidence(rec *types.InferenceRecord, txs []*types.D
 		return err
 	}
 	for _, u := range unbound {
+		if u.bound {
+			if sm.WarmKeyGrantEnded(u.recovered, u.expected) {
+				return u.err
+			}
+			continue
+		}
 		if !sm.CheckWarmKey(u.recovered, u.expected) {
 			return u.err
 		}
@@ -85,6 +94,12 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 		actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
 			unbound = append(unbound, unboundSigner{recovered: recovered, expected: expected})
 			return true
+		}
+		actors.RefuseWarm = func(_ uint32, recovered, expected string) bool {
+			if recovered != expected {
+				unbound = append(unbound, unboundSigner{recovered: recovered, expected: expected, bound: true})
+			}
+			return false
 		}
 	}
 	allowed := actors.Allows

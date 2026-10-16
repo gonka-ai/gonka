@@ -2929,17 +2929,18 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	if err != nil {
 		return "", err
 	}
-	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.warmKeyAuthorizedAt(nonce, recovered, expectedAddr) {
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
 }
 
-// warmKeyAuthorized reports whether warm may sign for cold: a binding in the
-// history, or a live grant in the grant source for a key the gateway has not
-// bound yet.
-func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	return s.sm.HostSignerAllowedAddr(cold, warm)
+// warmKeyAuthorizedAt reports whether warm may sign for cold the state at
+// nonce: a binding in the history that covers that nonce, or a live grant in
+// the grant source for a key the gateway has not bound yet, minus a key whose
+// grant the source has seen end.
+func (s *Session) warmKeyAuthorizedAt(nonce uint64, warm, cold string) bool {
+	return s.sm.HostSignerAllowedAddrAt(cold, warm, nonce)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {

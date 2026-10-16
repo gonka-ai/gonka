@@ -5,22 +5,28 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 )
 
 // maxWarmKeyLogExecDepth bounds the MsgExec nesting the decorator walks. The
-// ante handler refuses nested MsgExec, so one level is what reaches here;
-// the bound only keeps the walk finite if that changes.
-const maxWarmKeyLogExecDepth = 2
+// CheckTx ante handler refuses nested MsgExec, but a proposer can include a
+// deeper nesting in a block, so a nesting past the bound fails the
+// transaction rather than letting a grant or revoke escape the log.
+const maxWarmKeyLogExecDepth = 8
+
+// errWarmKeyLogExecTooDeep is a MsgExec nested past maxWarmKeyLogExecDepth.
+var errWarmKeyLogExecTooDeep = sdkerrors.ErrInvalidRequest.Wrap("warm-key log: MsgExec nested too deep")
 
 // WarmKeyLogDecorator mirrors authz grants and revokes of the warm-key marker
 // into the inference module's warm-key log. It runs after the messages
-// executed, in FinalizeBlock only, and only for a transaction whose messages
-// all succeeded, so the log records exactly the grants authz stored. A
-// failure to record fails the transaction, which reverts the grant with it:
-// the log and authz never disagree.
+// executed, in FinalizeBlock and in simulation (so a simulated gas limit
+// covers the log's writes), and only for a transaction whose messages all
+// succeeded, so the log records exactly the grants authz stored. A failure
+// to record fails the transaction, which reverts the grant with it: the log
+// and authz never disagree.
 type WarmKeyLogDecorator struct {
 	cdc    codec.Codec
 	keeper *inferencekeeper.Keeper
@@ -31,7 +37,7 @@ func NewWarmKeyLogDecorator(cdc codec.Codec, k *inferencekeeper.Keeper) WarmKeyL
 }
 
 func (d WarmKeyLogDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
-	if !success || simulate || ctx.ExecMode() != sdk.ExecModeFinalize {
+	if !success || (ctx.ExecMode() != sdk.ExecModeFinalize && ctx.ExecMode() != sdk.ExecModeSimulate) {
 		return next(ctx, tx, simulate, success)
 	}
 	for _, msg := range tx.GetMsgs() {
@@ -71,7 +77,7 @@ func (d WarmKeyLogDecorator) record(ctx sdk.Context, msg sdk.Msg, depth int) err
 		return err
 	case *authz.MsgExec:
 		if depth >= maxWarmKeyLogExecDepth {
-			return nil
+			return errWarmKeyLogExecTooDeep
 		}
 		for _, innerAny := range m.Msgs {
 			var inner sdk.Msg

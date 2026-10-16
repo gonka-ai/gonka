@@ -84,7 +84,8 @@ func ConfirmWarmKeyBind(src WarmKeyGrantSource, cold, warm string, id uint64) er
 }
 
 // IsWarmKeyLive reports whether warm holds a live grant from cold according
-// to src.
+// to src. A miss on a source that can reload (the log copy) schedules a
+// reload, so a grant the events did not deliver is found on the next ask.
 func IsWarmKeyLive(src WarmKeyGrantSource, cold, warm string, now time.Time) (bool, error) {
 	live, err := src.LiveWarmKeys(cold)
 	if err != nil {
@@ -94,6 +95,9 @@ func IsWarmKeyLive(src WarmKeyGrantSource, cold, warm string, now time.Time) (bo
 		if e.Grantee == warm && e.LiveAt(now) {
 			return true, nil
 		}
+	}
+	if n, ok := src.(interface{ NoteMiss(granter string) }); ok {
+		n.NoteMiss(cold)
 	}
 	return false, nil
 }
@@ -168,6 +172,10 @@ const (
 	// append-only, so staleness only delays a new grant or an end; it never
 	// answers wrongly about an entry it has.
 	DefaultWarmKeyRefresh = 30 * time.Second
+	// warmKeyMissRefresh bounds how often a miss (a key the copy does not
+	// hold a live grant for) may trigger a reload of the granter's log, so a
+	// stream of unknown keys cannot turn into a stream of chain queries.
+	warmKeyMissRefresh = 5 * time.Second
 	// warmKeyFetchTimeout bounds one chain read. Hosts confirm binds from
 	// inside diff application, so a stalled node must not hold the escrow.
 	warmKeyFetchTimeout = 10 * time.Second
@@ -270,6 +278,20 @@ func (c *WarmKeyLogCopy) WarmKeyEntry(granter string, id uint64) (WarmKeyEntry, 
 // or ended, never removed.
 func (c *WarmKeyLogCopy) Apply(e WarmKeyEntry) {
 	c.apply(e)
+}
+
+// NoteMiss records that a key was asked for and not found live under
+// granter. The copy may be behind the chain (an old dapi serves no warm-key
+// events), so a reload is started in the background, at most once per
+// warmKeyMissRefresh per granter.
+func (c *WarmKeyLogCopy) NoteMiss(granter string) {
+	c.mu.Lock()
+	g := c.granters[granter]
+	due := g != nil && g.complete && c.now().Sub(g.loadedAt) > warmKeyMissRefresh
+	c.mu.Unlock()
+	if due {
+		go func() { _ = c.load(granter, true) }()
+	}
 }
 
 // Reset forgets completeness: every granter is reloaded from the chain on

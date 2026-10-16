@@ -18,6 +18,14 @@ func WithWarmKeyGrantSource(src bridge.WarmKeyGrantSource) SessionOption {
 	return func(sess *Session) { sess.warmKeySource = src }
 }
 
+// SetWarmKeyGrantSource installs the grant source on a session built without
+// it, such as one rebuilt by RecoverSession.
+func (s *Session) SetWarmKeyGrantSource(src bridge.WarmKeyGrantSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warmKeySource = src
+}
+
 // warmKeyProposalsLocked returns the bind and revoke entries the next diff
 // should carry, for nonce. The entries name chain-log ids; the hosts confirm
 // them against the same log, so the gateway proposes only what its source
@@ -48,8 +56,19 @@ func (s *Session) warmKeyProposalsLocked(nonce uint64) []*types.DevshardTx {
 			}
 			liveByCold[cold] = live
 		}
-		out = append(out, s.warmKeyBindsForSlotLocked(history, slot.SlotID, live, nonce)...)
-		out = append(out, s.warmKeyRevokesForSlotLocked(history, slot.SlotID, cold, live)...)
+		// Revokes first, and the binds against the history they leave: a
+		// grant renewed on chain (the old entry replaced by a new one for
+		// the same key) is revoked and re-bound in one diff, so the key is
+		// never without a binding between the two.
+		scratch := signing.WarmKeyHistory{slot.SlotID: append([]signing.WarmKeyBinding(nil), history[slot.SlotID]...)}
+		for _, tx := range s.warmKeyRevokesForSlotLocked(history, slot.SlotID, cold, live) {
+			r := tx.GetWarmKeyRevoke()
+			if err := scratch.Revoke(r.SlotId, r.Address, nonce, r.GrantId); err != nil {
+				continue
+			}
+			out = append(out, tx)
+		}
+		out = append(out, s.warmKeyBindsForSlotLocked(scratch, slot.SlotID, live, nonce)...)
 	}
 	return out
 }

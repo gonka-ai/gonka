@@ -286,6 +286,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			return nil, nil, fmt.Errorf("recover session: %w", recErr)
 		}
 		enableWarmKeyResolver()
+		if src := cfg.warmKeySource(); src != nil {
+			session.SetWarmKeyGrantSource(src)
+		}
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)

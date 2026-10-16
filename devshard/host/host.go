@@ -605,11 +605,27 @@ func (h *Host) Signer() signing.Signer { return h.signer }
 // signer and the HTTP sender -- should reuse one value rather than call this
 // twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
+	return h.SlotActorsAt(h.sm.LatestNonce() + 1)
+}
+
+// SlotActorsAt is SlotActors at the authorization nonce of the caller's
+// path, for a signature that names its nonce (state-signature gossip).
+func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
 	authz := make(map[[2]string]bool, 2)
+	ended := make(map[[2]string]bool, 2)
 	return signing.SlotActors{
 		SlotKeys: h.slotToAddr,
 		History:  h.sm.WarmKeyHistory(),
-		Nonce:    h.sm.LatestNonce() + 1,
+		Nonce:    nonce,
+		RefuseWarm: func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			over, seen := ended[pair]
+			if !seen {
+				over = h.sm.WarmKeyGrantEnded(recovered, expected)
+				ended[pair] = over
+			}
+			return over
+		},
 		AcceptWarm: func(_ uint32, recovered, expected string) bool {
 			pair := [2]string{recovered, expected}
 			ok, seen := authz[pair]
@@ -1975,7 +1991,7 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if !h.SlotActors().Allows(senderSlot, addr) {
+	if !h.SlotActorsAt(nonce).Allows(senderSlot, addr) {
 		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 

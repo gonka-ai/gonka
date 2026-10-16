@@ -77,7 +77,7 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 		GrantedAtHeight: height,
 	}
 	if expiration != nil {
-		entry.ExpiresAtUnix = expiration.Unix()
+		entry.ExpiresAtUnix = warmKeyExpiryUnix(*expiration)
 	}
 	if err := k.WarmKeyLogEntriesMap.Set(ctx, collections.Join(granter, nextID), entry); err != nil {
 		return types.WarmKeyLogEntry{}, err
@@ -97,6 +97,17 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 		sdk.NewAttribute(AttributeKeyWarmKeyExpiresAt, fmt.Sprint(entry.ExpiresAtUnix)),
 	))
 	return entry, nil
+}
+
+// warmKeyExpiryUnix is the expiration in whole seconds, rounded up: the log
+// ends an entry in the first block whose time is at or past this second, so
+// it never ends a grant before authz would.
+func warmKeyExpiryUnix(expiration time.Time) int64 {
+	unix := expiration.Unix()
+	if expiration.Nanosecond() > 0 {
+		unix++
+	}
+	return unix
 }
 
 // RecordWarmKeyRevoke ends the live entry for (granter, grantee) as REVOKED.

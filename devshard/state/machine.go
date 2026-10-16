@@ -1995,11 +1995,50 @@ func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byt
 // which is the diff being applied. The history is cloned so the value can
 // be used after the lock is released. Caller holds sm.mu.
 func (sm *StateMachine) consensusActorsLocked() signing.SlotActors {
+	return sm.consensusActorsAtLocked(sm.state.LatestNonce + 1)
+}
+
+// consensusActorsAtLocked is consensusActorsLocked at an explicit
+// authorization nonce: the nonce a state signature or settlement signs.
+func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors {
 	return signing.SlotActors{
 		SlotKeys: sm.slotToAddress,
 		History:  cloneWarmKeyHistory(sm.state.WarmKeyHistory),
-		Nonce:    sm.state.LatestNonce + 1,
+		Nonce:    nonce,
 	}
+}
+
+// localActorsAt is the local-admission identity set at nonce: the consensus
+// rule plus the grant source both ways, for a key the history does not cover
+// (AcceptWarm) and for one whose grant the source has seen end (RefuseWarm).
+// The source is asked with sm.mu released.
+func (sm *StateMachine) localActorsAt(nonce uint64) signing.SlotActors {
+	sm.mu.RLock()
+	actors := sm.consensusActorsAtLocked(nonce)
+	sm.mu.RUnlock()
+	// One source lookup per (key, validator) pair however many slots the
+	// validator owns; the value is request-scoped, so the memo is too.
+	live := make(map[[2]string]bool, 1)
+	ended := make(map[[2]string]bool, 1)
+	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+		pair := [2]string{recovered, expected}
+		ok, seen := live[pair]
+		if !seen {
+			ok = sm.CheckWarmKey(recovered, expected)
+			live[pair] = ok
+		}
+		return ok
+	}
+	actors.RefuseWarm = func(_ uint32, recovered, expected string) bool {
+		pair := [2]string{recovered, expected}
+		over, seen := ended[pair]
+		if !seen {
+			over = sm.WarmKeyGrantEnded(recovered, expected)
+			ended[pair] = over
+		}
+		return over
+	}
+	return actors
 }
 
 // hostSignerAllowedLocked is the apply-path check, decided from consensus
@@ -2015,44 +2054,49 @@ func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string)
 	}.Allows(slotID, recovered)
 }
 
-// HostSignerAllowed reports whether recovered may act for slotID: the apply
-// rule, then the grant source for a key the history does not cover, asked
-// with sm.mu released. It never binds anything; it is the local-admission
-// view of a key the gateway may bind in a later diff.
+// HostSignerAllowed reports whether recovered may act for slotID in the
+// next diff: the apply rule, then the grant source, asked with sm.mu
+// released, for a key the history does not cover and against a key whose
+// grant it has seen end. It never binds anything; it is the local-admission
+// view of a key the gateway may bind, or revoke, in a later diff.
 func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
-	sm.mu.RLock()
-	actors := sm.consensusActorsLocked()
-	sm.mu.RUnlock()
-	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
-		return sm.CheckWarmKey(recovered, expected)
-	}
-	return actors.Allows(slotID, recovered)
+	return sm.HostSignerAllowedAt(slotID, recovered, sm.LatestNonce()+1)
+}
+
+// HostSignerAllowedAt is HostSignerAllowed at the authorization nonce of the
+// caller's path: the nonce a state signature or a settlement signs.
+func (sm *StateMachine) HostSignerAllowedAt(slotID uint32, recovered string, nonce uint64) bool {
+	return sm.localActorsAt(nonce).Allows(slotID, recovered)
 }
 
 // HostSignerAllowedAddr is HostSignerAllowed for any slot owned by expected.
 // Used where the message names a host address rather than a slot.
 func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
+	return sm.HostSignerAllowedAddrAt(expected, recovered, sm.LatestNonce()+1)
+}
+
+// HostSignerAllowedAddrAt is HostSignerAllowedAddr at an explicit
+// authorization nonce.
+func (sm *StateMachine) HostSignerAllowedAddrAt(expected, recovered string, nonce uint64) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
-	if sm.HostSignerBoundAddr(expected, recovered) {
+	if recovered == expected {
 		return true
 	}
 	sm.mu.RLock()
-	slots := sm.addressToSlots[expected]
-	next := sm.state.LatestNonce + 1
-	revoked := false
-	for _, slot := range slots {
-		if sm.state.WarmKeyHistory.RevokedOn(slot, recovered, next) {
-			revoked = true
-			break
-		}
-	}
+	slots := append([]uint32(nil), sm.addressToSlots[expected]...)
 	sm.mu.RUnlock()
-	if revoked || len(slots) == 0 {
+	if len(slots) == 0 {
 		return false
 	}
-	return sm.CheckWarmKey(recovered, expected)
+	actors := sm.localActorsAt(nonce)
+	for _, slot := range slots {
+		if actors.Allows(slot, recovered) {
+			return true
+		}
+	}
+	return false
 }
 
 // HostSignerBoundAddr reports whether recovered is expected itself or a warm
@@ -2083,6 +2127,19 @@ func (sm *StateMachine) CheckWarmKey(warmAddr, coldAddr string) bool {
 	}
 	ok, err := sm.warmResolver(warmAddr, coldAddr)
 	return err == nil && ok
+}
+
+// WarmKeyGrantEnded reports that the grant source answered, and answered that
+// warmAddr holds no live grant from coldAddr: the backstop that refuses a key
+// the history still binds once the chain has ended its grant. A source that
+// is absent or cannot answer reports false, so an outage never refuses a key
+// consensus accepts.
+func (sm *StateMachine) WarmKeyGrantEnded(warmAddr, coldAddr string) bool {
+	if sm.warmResolver == nil {
+		return false
+	}
+	ok, err := sm.warmResolver(warmAddr, coldAddr)
+	return err == nil && !ok
 }
 
 func (sm *StateMachine) TotalSlots() uint32 {

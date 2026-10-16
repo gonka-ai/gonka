@@ -20,6 +20,12 @@ type SlotActors struct {
 	// consulted on a consensus path, which leaves it nil, and never for a key
 	// the history has revoked on the slot at or before Nonce.
 	AcceptWarm func(slotID uint32, recovered, expected string) bool
+	// RefuseWarm is the local-admission backstop for a key the history does
+	// cover: it reports that the grant source has seen the key's grant from
+	// expected end, so a revoke the sequencer has not sequenced yet already
+	// refuses the key here. A source that cannot answer reports false; the
+	// history's verdict then stands. Nil on consensus paths.
+	RefuseWarm func(slotID uint32, recovered, expected string) bool
 }
 
 // Exact is a SlotActors that accepts only key for slotID. Tests and callers
@@ -39,9 +45,10 @@ func (a SlotActors) Expected(slotID uint32) (string, bool) {
 
 // Allows reports whether recovered may act for slotID.
 //
-// Everything above AcceptWarm is decided from consensus state alone, so every
-// replica answers it identically. AcceptWarm is the only step that can consult
-// anything else, and a revoke in the history on this slot overrides it.
+// Everything except AcceptWarm and RefuseWarm is decided from consensus state
+// alone, so every replica answers it identically. Those two consult the grant
+// source on local-admission paths only, and a revoke in the history on this
+// slot overrides AcceptWarm.
 func (a SlotActors) Allows(slotID uint32, recovered string) bool {
 	if recovered == "" {
 		return false
@@ -54,7 +61,7 @@ func (a SlotActors) Allows(slotID uint32, recovered string) bool {
 		return true
 	}
 	if a.History.Allows(a.SlotKeys, slotID, recovered, a.Nonce) {
-		return true
+		return a.RefuseWarm == nil || !a.RefuseWarm(slotID, recovered, key)
 	}
 	if a.AcceptWarm == nil || a.History.RevokedOn(slotID, recovered, a.Nonce) {
 		return false

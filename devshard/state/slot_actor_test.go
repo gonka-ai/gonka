@@ -158,7 +158,7 @@ func TestHostSignerAllowedAddr_AtMostOneBridgeCall(t *testing.T) {
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warm.Address(), 1)})
 	require.NoError(t, err)
 	require.True(t, sm.HostSignerAllowedAddr(cold.Address(), warm.Address()))
-	require.Zero(t, *calls, "a binding in state must short-circuit the bridge")
+	require.Equal(t, 1, *calls, "a binding in state is confirmed against the grant source once, for the backstop")
 
 	*calls = 0
 	stranger := testutil.MustGenerateKey(t)

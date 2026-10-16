@@ -201,3 +201,34 @@ func TestWarmKeyLogCopy_ChainErrorIsNotCachedAsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, live, 1)
 }
+
+// Test flow:
+//  1. Load a granter, add a grant on the chain the copy has not seen (no events), and ask for that key.
+//  2. Assert the first ask misses and schedules a reload, so the next ask finds the key; a miss on a copy
+//     reloaded a moment ago schedules nothing.
+func TestWarmKeyLogCopy_MissSchedulesAReload(t *testing.T) {
+	chain := &fakeWarmKeyFetcher{}
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"})
+	cp := NewWarmKeyLogCopy(chain, time.Hour)
+	now := time.Unix(1000, 0)
+	cp.now = func() time.Time { return now }
+
+	ok, err := IsWarmKeyLive(cp, "cold", "warm", now)
+	require.NoError(t, err)
+	require.True(t, ok)
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"}, WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "next"})
+
+	ok, err = IsWarmKeyLive(cp, "cold", "next", now)
+	require.NoError(t, err)
+	require.False(t, ok, "a miss right after the load does not reload")
+	require.Equal(t, 1, chain.count())
+
+	now = now.Add(10 * time.Second)
+	ok, err = IsWarmKeyLive(cp, "cold", "next", now)
+	require.NoError(t, err)
+	require.False(t, ok, "the miss answers from the copy and reloads in the background")
+	require.Eventually(t, func() bool {
+		ok, err := IsWarmKeyLive(cp, "cold", "next", now)
+		return err == nil && ok
+	}, 5*time.Second, 10*time.Millisecond)
+}

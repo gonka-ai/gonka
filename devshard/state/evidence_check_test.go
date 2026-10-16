@@ -278,12 +278,13 @@ func TestCheckEvidence_BoundWarmKeyWins(t *testing.T) {
 	started := evidenceRecord(types.StatusStarted)
 
 	require.NoError(t, sm.CheckEvidence(pending, evidenceConfirm(t, bound, "escrow-1", pending)))
+	require.Equal(t, 1, resolverCalls, "a bound key is checked against the grant source for an end")
 	require.NoError(t, sm.CheckEvidenceCached(started, evidenceFinish(t, bound, "escrow-1", 1)))
-	require.Zero(t, resolverCalls, "a bound key never asks the grant source")
+	require.Equal(t, 1, resolverCalls, "the cached check never asks the grant source")
 
 	require.NoError(t, sm.CheckEvidence(started, evidenceFinish(t, rotated, "escrow-1", 1)),
 		"a key the grant source knows passes the check that may ask it, ahead of its bind")
-	require.Equal(t, 1, resolverCalls)
+	require.Equal(t, 2, resolverCalls)
 	require.ErrorIs(t, sm.CheckEvidenceCached(started, evidenceFinish(t, rotated, "escrow-1", 1)), types.ErrInvalidProposerSig,
 		"the cached check decides from the history alone")
 

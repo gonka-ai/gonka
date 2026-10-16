@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -791,4 +793,53 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 
 	require.Nil(t, receipt.Receipt, "non-executor should not have receipt")
 	require.False(t, hasInferenceData, "non-executor should not have inference data")
+}
+
+// membershipBridge answers VerifyWarmKey from a script; every other bridge
+// method is unused by the membership check.
+type membershipBridge struct {
+	bridge.MainnetBridge
+	answer func(warm, cold string) (bool, error)
+}
+
+func (b membershipBridge) VerifyWarmKey(warm, cold string) (bool, error) { return b.answer(warm, cold) }
+
+// Test flow:
+//  1. Bind a warm key in the host's state and point the bridge at three answers in turn: live, ended,
+//     unreachable; then ask about a key the state does not bind.
+//  2. Assert membership follows the history unless the bridge has seen the grant end, and admits an unbound key
+//     only when the bridge reports a live grant.
+func TestIsGroupMember_WarmKeyBackstopFollowsTheBridge(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	warmSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
+	}))
+	h, err := host.NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
+	require.NoError(t, err)
+	answer := func(string, string) (bool, error) { return true, nil }
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithBridge(membershipBridge{answer: func(w, c string) (bool, error) { return answer(w, c) }}))
+	require.NoError(t, err)
+
+	stranger := testutil.MustGenerateKey(t)
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "a live grant admits an unbound key")
+	answer = func(string, string) (bool, error) { return false, nil }
+	require.False(t, srv.IsGroupMember(stranger.Address()))
+
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+	require.False(t, srv.IsGroupMember(warmSigner.Address()), "the bridge saw the grant end: refused ahead of the revoke diff")
+	answer = func(string, string) (bool, error) { return false, errors.New("chain down") }
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "an outage leaves the binding in force")
+	answer = func(string, string) (bool, error) { return true, nil }
+	require.True(t, srv.IsGroupMember(warmSigner.Address()))
 }

@@ -224,3 +224,28 @@ func TestWarmKeyLogQueries(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, empty.Entries)
 }
+
+// Test flow:
+//  1. Grant a key expiring at 100.9 s and run ExpireWarmKeys in blocks timestamped 100.1 s and 101.0 s.
+//  2. Assert the entry stores the expiration rounded up to 101 and ends only in the second block: the log never
+//     ends a grant before authz would.
+func TestWarmKeyLogExpiryRoundsUpToTheNextSecond(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+	expires := time.Unix(100, 900_000_000)
+	ctx = ctx.WithBlockHeight(5).WithBlockTime(time.Unix(50, 0))
+	entry, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &expires)
+	require.NoError(t, err)
+	require.Equal(t, int64(101), entry.ExpiresAtUnix)
+
+	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(6).WithBlockTime(time.Unix(100, 100_000_000))))
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Zero(t, entries[0].RevokedAtHeight, "100.1s is before the grant's 100.9s expiration")
+
+	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(7).WithBlockTime(time.Unix(101, 0))))
+	entries, err = k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), entries[0].RevokedAtHeight)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED, entries[0].End)
+}

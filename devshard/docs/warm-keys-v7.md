@@ -217,9 +217,14 @@ A revoke on chain reaches a session through the gateway: its grant source
 shows the entry ended, its next diff carries `MsgWarmKeyRevoke`, and from that
 nonce the key is refused in every diff and on every host. The hosts also stop
 serving the key locally as soon as their own grant source shows the end:
-repair, gossip admission and unbound payload fetches refuse it without
-waiting for the diff. Expiry is one more end in the log, handled the same
-way.
+repair, gossip admission, transport membership and unbound payload fetches
+refuse a key the history still binds once the source answers that its grant
+has ended (`SlotActors.RefuseWarm`); a source that cannot answer leaves the
+history's verdict in place, so an outage never refuses a key consensus
+accepts. Expiry is one more end in the log, handled the same way. A grant
+renewed on chain (the old entry replaced by a new one for the same key) is
+revoked and re-bound in one diff, the revoke first, so the key is never
+without a binding in between.
 
 What the rule does not give is a revoke that takes effect inside a session
 against the gateway's will. A gateway that withholds the revoke entry keeps
@@ -310,11 +315,20 @@ version, so no v7 session starts from a v6 snapshot.
 ## Compatibility
 
 The new diff transactions are understood by v7 children only, so this is a
-protocol version, not a patch to v6. The gateway emits them only on v7
-sessions. The chain log, the post handler and the queries ship with the
-0.2.18 chain upgrade, which seeds the log; until then the gateway's grant
-source has nothing to propose from and a v7 session accepts cold keys only.
-A dapi without the event kinds leaves the hosts on the chain fallback.
+protocol version, not a patch to v6. The boundary is the binary: versiond
+routes `/devshard/v7` to the v7 gateway and hosts, and a session belongs to
+the version it was opened under. The v7 binary cannot serve a v6 session:
+its state root hashes the binding history where v6 hashed one key per slot,
+so a v6 escrow replayed or restored on it fails the root check instead of
+continuing with a different key rule, and a v6 host that received a bind
+would refuse the diff as unknown. Escrows are opened under one version and
+settled under it; the v6 and v7 binaries run side by side until the last v6
+escrow settles, as with every protocol version before. The chain log, the
+post handler and the queries ship with the 0.2.18 chain upgrade, which seeds
+the log; until then the gateway's grant source has nothing to propose from
+and a v7 session accepts cold keys only. A dapi without the event kinds
+leaves the hosts on the chain fallback: the copy reloads a granter's log on
+a refresh interval and after a miss.
 
 ## Open questions
 

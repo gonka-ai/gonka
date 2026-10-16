@@ -11,6 +11,74 @@ import (
 	"devshard/types"
 )
 
+// Test flow:
+//  1. Run a warm-key session, then renew slot 0's grant on chain: the old entry ends and a new one for the same
+//     key appears.
+//  2. Assert the next diff carries the revoke of the old grant and the bind of the new one, in that order, and
+//     the key stays live on the slot throughout.
+func TestSession_GrantRenewalRevokesAndRebindsInOneDiff(t *testing.T) {
+	session, coldKeys, warmKeys := setupWarmKeySession(t, 3)
+	grants := session.warmKeySource.(*testutil.WarmKeyGrants)
+	ctx := context.Background()
+	_, err := session.SendInference(ctx, defaultParams)
+	require.NoError(t, err)
+
+	grants.Revoke(coldKeys[0].Address(), warmKeys[0].Address())
+	id := grants.Grant(coldKeys[0].Address(), warmKeys[0].Address())
+	require.Equal(t, uint64(2), id)
+
+	session.mu.Lock()
+	proposals := session.warmKeyProposalsLocked(session.nonce + 1)
+	session.mu.Unlock()
+	require.Len(t, proposals, 2)
+	require.NotNil(t, proposals[0].GetWarmKeyRevoke(), "the revoke comes first")
+	require.Equal(t, uint64(1), proposals[0].GetWarmKeyRevoke().GrantId)
+	require.NotNil(t, proposals[1].GetWarmKeyBind())
+	require.Equal(t, uint64(2), proposals[1].GetWarmKeyBind().GrantId)
+
+	before := session.Nonce()
+	_, err = session.SendInference(ctx, defaultParams)
+	require.NoError(t, err)
+	history := session.StateMachine().WarmKeyHistory()
+	require.Equal(t, []string{warmKeys[0].Address()}, history.Live(0))
+	require.Len(t, history[0], 2)
+	require.Equal(t, before+1, history[0][0].RevokedAtNonce)
+	require.Equal(t, before+1, history[0][1].FromNonce)
+}
+
+// Test flow:
+//  1. Open an HTTP session with a grant source, close it, and open it again on the same storage (recovery).
+//  2. Assert the recovered session has the grant source too, so it keeps proposing binds and revokes.
+func TestNewHTTPSession_RecoveredSessionKeepsTheGrantSource(t *testing.T) {
+	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
+	storagePath := t.TempDir() + "/session.db"
+	grants := testutil.NewWarmKeyGrants()
+
+	session, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "9801",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   "/devshard/dev/",
+		WarmKeys:      grants,
+	})
+	require.NoError(t, err)
+	require.Same(t, grants, session.warmKeySource)
+	require.NoError(t, session.Close())
+
+	recovered, _, err := NewHTTPSession(HTTPSessionConfig{
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "9801",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   "/devshard/dev/",
+		WarmKeys:      grants,
+	})
+	require.NoError(t, err)
+	defer recovered.Close()
+	require.Same(t, grants, recovered.warmKeySource, "recovery must reattach the grant source")
+}
+
 func warmKeyEntriesIn(diffs []types.Diff) (binds []*types.MsgWarmKeyBind, revokes []*types.MsgWarmKeyRevoke) {
 	for _, d := range diffs {
 		for _, tx := range d.Txs {

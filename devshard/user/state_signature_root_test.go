@@ -307,5 +307,5 @@ func TestWarmKeyBindingOverridesCachedRejection(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, session.verifyStateSignature(1, root, sig, owner.Address()))
-	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, int32(2), calls.Load(), "a bound key is asked about once more; a source that cannot answer leaves the binding in force")
 }

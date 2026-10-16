@@ -292,29 +292,33 @@ func (s *Server) isAllowedSender(addr string) bool {
 	return s.isWarmKeySender(addr)
 }
 
-// isWarmKeySender checks if addr is a known warm key (from state) or can be
-// verified via bridge for any group member. Cached by the bridge implementation.
+// isWarmKeySender checks if addr is a warm key of a group member: bound in
+// the history, or holding a live grant according to the bridge's copy of the
+// chain's warm-key log. A bound key whose grant the bridge has seen end is
+// refused even before the sequencer revokes it; a bridge that cannot answer
+// leaves the history's verdict in place.
 func (s *Server) isWarmKeySender(addr string) bool {
-	if s.host.IsWarmKeyAddress(addr) {
-		return true
-	}
-
-	// Bridge fallback for gossip bootstrap.
+	bound := s.host.IsWarmKeyAddress(addr)
 	if s.bridge == nil {
-		return false
+		return bound
 	}
 	seen := make(map[string]bool, len(s.host.Group()))
+	answered := true
 	for _, slot := range s.host.Group() {
 		if seen[slot.ValidatorAddress] {
 			continue
 		}
 		seen[slot.ValidatorAddress] = true
 		ok, err := s.bridge.VerifyWarmKey(addr, slot.ValidatorAddress)
-		if err == nil && ok {
+		if err != nil {
+			answered = false
+			continue
+		}
+		if ok {
 			return true
 		}
 	}
-	return false
+	return bound && !answered
 }
 
 // isOwner returns true if addr is the session owner (escrow creator).
