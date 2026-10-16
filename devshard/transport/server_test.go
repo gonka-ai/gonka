@@ -418,8 +418,10 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Create warm key binding via confirm start.
-	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	// Bind the warm key in the first diff, then confirm with it.
+	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warmSigner.Address(), 1), testutil.StartTx(1),
+	})
 	_, err = sm.ApplyDiff(diff1)
 	require.NoError(t, err)
 

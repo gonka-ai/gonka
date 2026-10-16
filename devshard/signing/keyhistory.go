@@ -162,7 +162,7 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 		}
 		return false
 	}
-	if h.revokedOn(slot, recovered, nonce) {
+	if h.RevokedOn(slot, recovered, nonce) {
 		return false
 	}
 	siblings := make([]uint32, 0, len(h))
@@ -182,9 +182,11 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 	return false
 }
 
-// revokedOn reports whether addr has a binding on slot that was revoked at
-// or before nonce.
-func (h WarmKeyHistory) revokedOn(slot uint32, addr string, nonce uint64) bool {
+// RevokedOn reports whether addr has a binding on slot that was revoked at
+// or before nonce. A revoke is final for the slot it names: callers that
+// consult a grant source for keys the history does not cover check this
+// first.
+func (h WarmKeyHistory) RevokedOn(slot uint32, addr string, nonce uint64) bool {
 	for _, b := range h[slot] {
 		if b.Addr == addr && b.RevokedAtNonce != 0 && b.RevokedAtNonce <= nonce {
 			return true

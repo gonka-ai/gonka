@@ -4,14 +4,21 @@ package signing
 //
 // Both binaries (devshardd and devshardctl) recover signatures with Verifier
 // and then call Allows. The same rule applies to HeightAck, confirm, finish,
-// votes, repair, settlement, and gossip: cold slot key, or this slot's bound
-// warm key; if the slot is still unbound, a sibling slot's bound warm key for
-// the same validator, or AcceptWarm (live authz / CheckWarmKey / ResolveWarmKey).
+// votes, repair, settlement, and gossip: the cold slot key, or a warm key the
+// history binds to the slot at Nonce, or, while the slot has no binding at
+// Nonce, a sibling slot's binding for the same validator; and, only where
+// AcceptWarm is set, the grant source for a key the history does not cover.
 type SlotActors struct {
 	SlotKeys map[uint32]string
-	WarmKeys map[uint32]string
-	// AcceptWarm is the non-cache (or bind-on-success) fallback used when
-	// WarmKeys has no entry for this slot. Nil means cache-only.
+	// History is the consensus binding history of the escrow and Nonce the
+	// authorization nonce of the caller's path: the diff being applied, the
+	// signed state nonce, or the next diff for a local admission decision.
+	History WarmKeyHistory
+	Nonce   uint64
+	// AcceptWarm is the local-admission fallback for a key the history does
+	// not cover: the grant source (the chain's warm-key log). It is never
+	// consulted on a consensus path, which leaves it nil, and never for a key
+	// the history has revoked on the slot at or before Nonce.
 	AcceptWarm func(slotID uint32, recovered, expected string) bool
 }
 
@@ -32,13 +39,9 @@ func (a SlotActors) Expected(slotID uint32) (string, bool) {
 
 // Allows reports whether recovered may act for slotID.
 //
-// Bound slots are exclusive: cold key or that slot's warm key. Sibling lookup
-// and AcceptWarm run only when the slot has no binding yet, which is the
-// HeightAck case (a heartbeat can name a slot that has never executed).
-//
 // Everything above AcceptWarm is decided from consensus state alone, so every
 // replica answers it identically. AcceptWarm is the only step that can consult
-// the chain, and it is reached only for an unbound slot.
+// anything else, and a revoke in the history on this slot overrides it.
 func (a SlotActors) Allows(slotID uint32, recovered string) bool {
 	if recovered == "" {
 		return false
@@ -50,16 +53,11 @@ func (a SlotActors) Allows(slotID uint32, recovered string) bool {
 	if recovered == key {
 		return true
 	}
-	if warm := a.WarmKeys[slotID]; warm != "" {
-		return recovered == warm
+	if a.History.Allows(a.SlotKeys, slotID, recovered, a.Nonce) {
+		return true
 	}
-	for other, warm := range a.WarmKeys {
-		if warm == "" || recovered != warm {
-			continue
-		}
-		if a.SlotKeys[other] == key {
-			return true
-		}
+	if a.AcceptWarm == nil || a.History.RevokedOn(slotID, recovered, a.Nonce) {
+		return false
 	}
-	return a.AcceptWarm != nil && a.AcceptWarm(slotID, recovered, key)
+	return a.AcceptWarm(slotID, recovered, key)
 }

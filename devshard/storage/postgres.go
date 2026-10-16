@@ -1052,15 +1052,9 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
@@ -1150,16 +1144,7 @@ func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error 
 		if err != nil {
 			return err
 		}
-		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			b, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(b)
-			warmJSON = &str
-		}
-		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto, warmJSON: warmJSON})
+		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto})
 		sigCount += len(rec.Signatures)
 		if rec.Nonce > maxNonce {
 			maxNonce = rec.Nonce
@@ -1419,13 +1404,6 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 				},
 				StateHash: stateHash,
 				CreatedAt: createdAt,
-			}
-			if warmJSON != nil {
-				wk := make(map[uint32]string)
-				if err := json.Unmarshal([]byte(*warmJSON), &wk); err != nil {
-					return nil, fmt.Errorf("unmarshal warm keys: %w", err)
-				}
-				rec.WarmKeyDelta = wk
 			}
 			current = &rec
 			currentNonce = nonce

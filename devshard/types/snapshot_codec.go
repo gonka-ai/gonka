@@ -2,6 +2,9 @@ package types
 
 import (
 	"fmt"
+	"sort"
+
+	"devshard/signing"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -37,11 +40,6 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 		}
 	}
 
-	warmKeys := make(map[uint32]string, len(state.WarmKeys))
-	for slotID, addr := range state.WarmKeys {
-		warmKeys[slotID] = addr
-	}
-
 	cfg := state.Config
 	return &EscrowStateProto{
 		EscrowId:                    state.EscrowID,
@@ -65,7 +63,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 		FinalizeNonce:                 state.FinalizeNonce,
 		Inferences:                    inferences,
 		HostStats:                     hostStats,
-		WarmKeys:                      warmKeys,
+		WarmKeyHistory:                warmKeyHistoryToProto(state.WarmKeyHistory),
 		LatestNonce:                   state.LatestNonce,
 		SealedAcc:                     append([]byte(nil), state.SealedAcc...),
 		HeightSyncForcedStart:         state.HeightSyncForcedStart,
@@ -114,11 +112,6 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 		}
 	}
 
-	warmKeys := make(map[uint32]string, len(msg.WarmKeys))
-	for slotID, addr := range msg.WarmKeys {
-		warmKeys[slotID] = addr
-	}
-
 	var cfg SessionConfig
 	if msg.Config != nil {
 		p := msg.Config
@@ -147,7 +140,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 		FinalizeNonce:                 msg.FinalizeNonce,
 		Inferences:                    inferences,
 		HostStats:                     hostStats,
-		WarmKeys:                      warmKeys,
+		WarmKeyHistory:                warmKeyHistoryFromProto(msg.WarmKeyHistory),
 		LatestNonce:                   msg.LatestNonce,
 		SealedAcc:                     append([]byte(nil), msg.SealedAcc...),
 		HeightSyncForcedStart:         msg.GetHeightSyncForcedStart(),
@@ -261,4 +254,47 @@ func cloneUint64Map(src map[uint64]uint64) map[uint64]uint64 {
 		out[k] = v
 	}
 	return out
+}
+
+// warmKeyHistoryToProto flattens the history in slot order and binding order.
+func warmKeyHistoryToProto(h signing.WarmKeyHistory) []*WarmKeyBindingProto {
+	if len(h) == 0 {
+		return nil
+	}
+	slots := make([]uint32, 0, len(h))
+	for slot := range h {
+		slots = append(slots, slot)
+	}
+	sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+	var out []*WarmKeyBindingProto
+	for _, slot := range slots {
+		for _, b := range h[slot] {
+			out = append(out, &WarmKeyBindingProto{
+				SlotId:         slot,
+				Address:        b.Addr,
+				FromNonce:      b.FromNonce,
+				GrantId:        b.GrantID,
+				RevokedAtNonce: b.RevokedAtNonce,
+			})
+		}
+	}
+	return out
+}
+
+// warmKeyHistoryFromProto rebuilds the history, keeping the binding order of
+// the wire form within each slot.
+func warmKeyHistoryFromProto(entries []*WarmKeyBindingProto) signing.WarmKeyHistory {
+	h := make(signing.WarmKeyHistory, len(entries))
+	for _, e := range entries {
+		if e == nil {
+			continue
+		}
+		h[e.SlotId] = append(h[e.SlotId], signing.WarmKeyBinding{
+			Addr:           e.Address,
+			FromNonce:      e.FromNonce,
+			GrantID:        e.GrantId,
+			RevokedAtNonce: e.RevokedAtNonce,
+		})
+	}
+	return h
 }

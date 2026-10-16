@@ -513,7 +513,7 @@ func TestVerifyExecution_WarmKeyFinishRejectsWithoutBinding(t *testing.T) {
 	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, nil, executor, nil, g.sm, st.Config, deadlinePassedExecution(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "a finish signed by the executor's warm key rejects the timeout")
-	require.Empty(t, g.sm.WarmKeys(), "challenge evidence must not write a warm binding into hashed state")
+	require.Empty(t, g.sm.WarmKeyHistory(), "challenge evidence must not write a warm binding into hashed state")
 }
 
 func TestVerifyExecution_ChallengesOnceWithoutDiffs(t *testing.T) {

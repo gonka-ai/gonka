@@ -51,6 +51,10 @@ type HTTPSessionConfig struct {
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
+	// WarmKeys is the sequencer's grant source for warm-key bind and revoke
+	// proposals. Nil uses Bridge when it implements
+	// bridge.WarmKeyGrantSource, and proposes nothing otherwise.
+	WarmKeys bridge.WarmKeyGrantSource
 	// Optional bind-time timeout overrides. These are mainly for integration
 	// harnesses that need protocol timeouts shorter than production defaults.
 	RefusalTimeoutSeconds   *int64
@@ -415,6 +419,9 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 }
 
 func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
+	if src := cfg.warmKeySource(); src != nil {
+		extra = append(extra, WithWarmKeyGrantSource(src))
+	}
 	if cfg.Heartbeat != nil {
 		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
 	}
@@ -428,4 +435,15 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
 	}
 	return extra
+}
+
+// warmKeySource is the configured grant source, or the bridge when it is one.
+func (cfg HTTPSessionConfig) warmKeySource() bridge.WarmKeyGrantSource {
+	if cfg.WarmKeys != nil {
+		return cfg.WarmKeys
+	}
+	if src, ok := cfg.Bridge.(bridge.WarmKeyGrantSource); ok {
+		return src
+	}
+	return nil
 }

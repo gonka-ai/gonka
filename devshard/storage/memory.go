@@ -26,17 +26,6 @@ func copyGroup(src []types.SlotAssignment) []types.SlotAssignment {
 	return dst
 }
 
-func copyWarmKeyDelta(src map[uint32]string) map[uint32]string {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[uint32]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
 type snapshotData struct {
 	nonce uint64
 	data  []byte
@@ -165,7 +154,6 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 
 	rec.Signatures = copySignatures(rec.Signatures)
-	rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
@@ -210,7 +198,6 @@ func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []ty
 			continue
 		}
 		rec.Signatures = copySignatures(rec.Signatures)
-		rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
 		s.diffs = append(s.diffs, rec)
 		s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
 	}
@@ -699,7 +686,6 @@ func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
 		dc := *d
 		dc.Signatures = copySignatures(d.Signatures)
-		dc.WarmKeyDelta = copyWarmKeyDelta(d.WarmKeyDelta)
 		result = append(result, dc)
 		return true
 	})

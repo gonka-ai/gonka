@@ -52,4 +52,6 @@ var (
 	ErrFloorNotRestored                = errors.New("height-sync floor not restored")
 	ErrStartProofMissing               = errors.New("gateway start proof required to open session")
 	ErrProtocolVersionMismatch         = errors.New("protocol version mismatch")
+	ErrInvalidWarmKeyEntry             = errors.New("invalid warm key entry")
+	ErrWarmKeyUnconfirmed              = errors.New("warm key grant not confirmed by the chain log")
 )

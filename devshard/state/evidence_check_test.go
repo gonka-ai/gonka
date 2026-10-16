@@ -225,7 +225,7 @@ func TestCheckEvidence_StampBelowHeightFloor(t *testing.T) {
 }
 
 // Challenge evidence is never sequenced, so accepting a warm signature must not
-// write WarmKeys: that map is part of the state root.
+// write the history: it is part of the state root.
 func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	warm := testutil.MustGenerateKey(t)
 	var resolverCalls int
@@ -243,7 +243,7 @@ func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	require.NoError(t, sm.CheckEvidence(pending, evidenceConfirm(t, warm, "escrow-1", pending)))
 	require.NoError(t, sm.CheckEvidence(started, evidenceFinish(t, warm, "escrow-1", 1)))
 	require.Equal(t, 2, resolverCalls)
-	require.Empty(t, sm.WarmKeys())
+	require.Empty(t, sm.WarmKeyHistory())
 	rootAfter, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter)
@@ -259,6 +259,10 @@ func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	require.Zero(t, resolverCalls)
 }
 
+// Test flow:
+//  1. Bind one warm key to the executor slot through a diff; the grant source also knows a second, rotated key.
+//  2. Assert the bound key passes both checks without the grant source, the rotated key passes only the check
+//     that may ask the grant source, and a key the history revoked is refused even though the source accepts it.
 func TestCheckEvidence_BoundWarmKeyWins(t *testing.T) {
 	bound := testutil.MustGenerateKey(t)
 	rotated := testutil.MustGenerateKey(t)
@@ -267,15 +271,26 @@ func TestCheckEvidence_BoundWarmKeyWins(t *testing.T) {
 		resolverCalls++
 		return warmAddr == bound.Address() || warmAddr == rotated.Address(), nil
 	})
-	require.NoError(t, sm.VerifyFinishProposerSig(evidenceFinish(t, bound, "escrow-1", 1).GetFinishInference()), "sequenced finish binds the warm key")
-	require.Equal(t, map[uint32]string{1: bound.Address()}, sm.WarmKeys())
-	resolverCalls = 0
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(1, bound.Address(), 1)})
+	require.NoError(t, err)
+	require.Equal(t, []string{bound.Address()}, sm.WarmKeyHistory().Live(1))
 	pending := evidenceRecord(types.StatusPending)
 	started := evidenceRecord(types.StatusStarted)
 
 	require.NoError(t, sm.CheckEvidence(pending, evidenceConfirm(t, bound, "escrow-1", pending)))
 	require.NoError(t, sm.CheckEvidenceCached(started, evidenceFinish(t, bound, "escrow-1", 1)))
-	require.ErrorIs(t, sm.CheckEvidence(started, evidenceFinish(t, rotated, "escrow-1", 1)), types.ErrInvalidProposerSig,
-		"a bound slot accepts only its bound warm key, as applyFinish does")
-	require.Zero(t, resolverCalls, "a bound slot never asks the resolver")
+	require.Zero(t, resolverCalls, "a bound key never asks the grant source")
+
+	require.NoError(t, sm.CheckEvidence(started, evidenceFinish(t, rotated, "escrow-1", 1)),
+		"a key the grant source knows passes the check that may ask it, ahead of its bind")
+	require.Equal(t, 1, resolverCalls)
+	require.ErrorIs(t, sm.CheckEvidenceCached(started, evidenceFinish(t, rotated, "escrow-1", 1)), types.ErrInvalidProposerSig,
+		"the cached check decides from the history alone")
+
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{testutil.WarmKeyRevokeTx(1, bound.Address(), 1)})
+	require.NoError(t, err)
+	resolverCalls = 0
+	require.ErrorIs(t, sm.CheckEvidence(started, evidenceFinish(t, bound, "escrow-1", 1)), types.ErrInvalidProposerSig,
+		"a revoke in the history is final, whatever the grant source says")
+	require.Zero(t, resolverCalls)
 }

@@ -16,7 +16,6 @@ const (
 	defaultUnknownEscrowPerPeerPerMin = 2
 	defaultUnknownEscrowFloorPerMin   = 300
 	maxEscrowLookupCache              = 4096
-	maxRosterPeerDecisions            = 256
 	maxKnownCreators                  = 4096
 )
 
@@ -32,12 +31,12 @@ type escrowLookupEntry struct {
 	expiresAt time.Time
 }
 
-// rosterEscrow is one retained chain escrow plus the warm-key decisions
-// already made for it. A slot address is not stored: that check is the
-// slot list. peers holds a definitive allow or deny from VerifyWarmKey.
+// rosterEscrow is one retained chain escrow. A slot address is not stored:
+// that check is the slot list. Warm-key decisions are not stored either:
+// the bridge answers them from its copy of the chain's warm-key log, which
+// is as cheap as a cache and, unlike one, follows grants and revokes.
 type rosterEscrow struct {
-	info  *bridge.EscrowInfo
-	peers map[string]bool
+	info *bridge.EscrowInfo
 }
 
 // errPayloadPeerDenied is the unbound GetPayload gate: the handshake peer is
@@ -195,12 +194,11 @@ func (m *HostManager) payloadRoster(escrowID, peer string) (*bridge.EscrowInfo, 
 	return info, nil
 }
 
-// payloadPeerAllowed reports whether peer may call unbound GetPayload.
-// A slot address returns before any chain call. Any other peer uses the
-// decision stored on the roster entry. The first miss scans warm keys once;
-// concurrent callers for the same escrow and peer share that scan. A deny is
-// stored. A scan that saw a query error and no matching grant is not stored.
-func (m *HostManager) payloadPeerAllowed(escrowID string, info *bridge.EscrowInfo, peer string) bool {
+// payloadPeerAllowed reports whether peer may call unbound GetPayload. A
+// slot address returns before any bridge call; any other peer is checked
+// against the live warm-key grants of the slots, every time, through the
+// bridge's copy of the chain's warm-key log.
+func (m *HostManager) payloadPeerAllowed(_ string, info *bridge.EscrowInfo, peer string) bool {
 	if info == nil || peer == "" {
 		return false
 	}
@@ -209,29 +207,15 @@ func (m *HostManager) payloadPeerAllowed(escrowID string, info *bridge.EscrowInf
 			return true
 		}
 	}
-	if allowed, ok := m.cachedRosterPeer(escrowID, peer); ok {
-		return allowed
-	}
 	if m.bridge == nil {
 		return false
 	}
-	v, _, _ := m.rosterPeerSF.Do(escrowID+"\x00"+peer, func() (interface{}, error) {
-		if allowed, ok := m.cachedRosterPeer(escrowID, peer); ok {
-			return allowed, nil
-		}
-		allowed, definitive := m.scanRosterWarmKey(info, peer)
-		if definitive {
-			m.rememberRosterPeer(escrowID, peer, allowed)
-		}
-		return allowed, nil
-	})
-	allowed, _ := v.(bool)
+	allowed, _ := m.scanRosterWarmKey(info, peer)
 	return allowed
 }
 
-// scanRosterWarmKey walks slots in order. allowed is true when one grant
-// matches. definitive is false when a query failed and no grant matched, so
-// the caller must not cache the deny.
+// scanRosterWarmKey walks slots in order. allowed is true when one live grant
+// matches. definitive is false when a query failed and no grant matched.
 func (m *HostManager) scanRosterWarmKey(info *bridge.EscrowInfo, peer string) (allowed, definitive bool) {
 	if m == nil || m.bridge == nil || info == nil {
 		return false, false
@@ -342,39 +326,6 @@ func (m *HostManager) rememberRoster(escrowID string, info *bridge.EscrowInfo) {
 		m.evictOneRosterLocked(info.EpochID)
 	}
 	m.rosterEscrows[escrowID] = &rosterEscrow{info: cloneEscrowInfo(info)}
-}
-
-func (m *HostManager) cachedRosterPeer(escrowID, peer string) (bool, bool) {
-	m.escrowLookupMu.Lock()
-	defer m.escrowLookupMu.Unlock()
-	entry := m.rosterEscrows[escrowID]
-	if entry == nil || entry.peers == nil {
-		return false, false
-	}
-	allowed, ok := entry.peers[peer]
-	return allowed, ok
-}
-
-func (m *HostManager) rememberRosterPeer(escrowID, peer string, allowed bool) {
-	if peer == "" {
-		return
-	}
-	m.escrowLookupMu.Lock()
-	defer m.escrowLookupMu.Unlock()
-	entry := m.rosterEscrows[escrowID]
-	if entry == nil {
-		return
-	}
-	if entry.peers == nil {
-		entry.peers = make(map[string]bool)
-	}
-	if _, exists := entry.peers[peer]; !exists && len(entry.peers) >= maxRosterPeerDecisions {
-		for id := range entry.peers {
-			delete(entry.peers, id)
-			break
-		}
-	}
-	entry.peers[peer] = allowed
 }
 
 func (m *HostManager) evictOneRosterLocked(keepEpoch uint64) {

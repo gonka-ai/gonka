@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -236,17 +237,6 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
-type warmCheckKey struct {
-	warm string
-	cold string
-}
-
-type warmCheckResult struct {
-	done    chan struct{}
-	valid   bool
-	retryAt time.Time
-}
-
 type cachedSignatureSigner struct {
 	signature []byte
 	address   string
@@ -255,8 +245,6 @@ type cachedSignatureSigner struct {
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
-	warmCheckMu sync.Mutex
-	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -303,6 +291,9 @@ type Session struct {
 	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
+	// warmKeySource is the sequencer's view of the chain's warm-key log;
+	// nil means no bind or revoke proposals. See warmkeys.go.
+	warmKeySource bridge.WarmKeyGrantSource
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -582,7 +573,6 @@ func NewSession(
 		sm:               sm,
 		signer:           signer,
 		verifier:         verifier,
-		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
 		escrowID:         escrowID,
 		group:            group,
 		addrToSlots:      addrToSlots,
@@ -1248,13 +1238,17 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	// Warm-key entries lead: compose applies them before the other
+	// candidates whatever their position, and a message by a key bound in
+	// this diff is accepted in it.
+	keyEntries := s.warmKeyProposalsLocked(nonce)
+	candidates := make([]*types.DevshardTx, 0, len(keyEntries)+len(pending)+len(extraTxs))
+	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
 
 	var diff types.Diff
 	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1263,11 +1257,9 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
 		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
+			Diff:      diff,
+			StateHash: vd.Root,
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
@@ -2943,43 +2935,11 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	return recovered, nil
 }
 
+// warmKeyAuthorized reports whether warm may sign for cold: a binding in the
+// history, or a live grant in the grant source for a key the gateway has not
+// bound yet.
 func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	if s.sm.HostSignerBoundAddr(cold, warm) {
-		return true
-	}
-	key := warmCheckKey{warm: warm, cold: cold}
-	for {
-		s.warmCheckMu.Lock()
-		check := s.warmChecks[key]
-		if check != nil {
-			if check.done != nil {
-				done := check.done
-				s.warmCheckMu.Unlock()
-				<-done
-				continue
-			}
-			if check.valid || time.Now().Before(check.retryAt) {
-				valid := check.valid
-				s.warmCheckMu.Unlock()
-				return valid
-			}
-		}
-		check = &warmCheckResult{done: make(chan struct{})}
-		s.warmChecks[key] = check
-		s.warmCheckMu.Unlock()
-
-		valid := s.sm.CheckWarmKey(warm, cold)
-		s.warmCheckMu.Lock()
-		check.valid = valid
-		if !check.valid {
-			check.retryAt = time.Now().Add(30 * time.Second)
-		}
-		close(check.done)
-		check.done = nil
-		accepted := check.valid
-		s.warmCheckMu.Unlock()
-		return accepted
-	}
+	return s.sm.HostSignerAllowedAddr(cold, warm)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {

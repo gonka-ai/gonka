@@ -234,14 +234,16 @@ func NewHost(
 		}
 	}
 
-	// Check state's WarmKeys for existing bindings, then try the warm key
-	// resolver directly (without caching in SM state, which would change
-	// the state root before any diffs are applied).
+	// A warm signer owns the slots the history binds it to, or, before the
+	// gateway has bound it, the slots whose cold key granted it according to
+	// the grant source. Neither read writes state.
 	if len(slotIDs) == 0 {
-		warmKeys := sm.WarmKeys()
-		for slotID, warmAddr := range warmKeys {
-			if warmAddr == addr {
-				slotIDs[slotID] = true
+		history := sm.WarmKeyHistory()
+		for slotID := range history {
+			for _, live := range history.Live(slotID) {
+				if live == addr {
+					slotIDs[slotID] = true
+				}
 			}
 		}
 	}
@@ -584,7 +586,7 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
-// IsWarmKeyAddress returns true if addr is a known warm key in the current state.
+// IsWarmKeyAddress returns true if addr has a live binding in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -593,18 +595,21 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 
 func (h *Host) Signer() signing.Signer { return h.signer }
 
-// SlotActors is the host-signature identity set for this escrow (cold keys,
-// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+// SlotActors is the host-signature identity set for this escrow: cold keys,
+// the binding history at the next nonce, and the grant source for a key the
+// history does not cover. Same rule as HeightAck L2 and confirm/finish, plus
+// the local-admission fallback.
 //
-// The returned value memoises its authz lookups, so a caller that checks two
-// identities for one request -- the repair handler checks the signer and the
-// HTTP sender -- should reuse one value rather than call this twice. The memo
-// is not synchronised; treat the value as request-scoped.
+// The returned value memoises its grant-source lookups, so a caller that
+// checks two identities for one request -- the repair handler checks the
+// signer and the HTTP sender -- should reuse one value rather than call this
+// twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
 	authz := make(map[[2]string]bool, 2)
 	return signing.SlotActors{
 		SlotKeys: h.slotToAddr,
-		WarmKeys: h.sm.WarmKeys(),
+		History:  h.sm.WarmKeyHistory(),
+		Nonce:    h.sm.LatestNonce() + 1,
 		AcceptWarm: func(_ uint32, recovered, expected string) bool {
 			pair := [2]string{recovered, expected}
 			ok, seen := authz[pair]

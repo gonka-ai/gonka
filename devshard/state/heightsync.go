@@ -121,9 +121,8 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 
 // applyHeightAck accepts MsgHeightAck into Diff while Active. Log-plane L0–L7
 // still run in applyCore / compose; this is the same apply-path identity check
-// confirm, finish, and votes use (hostSignerAllowedLocked). L2 admits with
-// CheckWarmKey and must not bind: compose trials it on prefixes that can still
-// be dropped. The binding is written here, on a tx that is actually applied.
+// confirm, finish, and votes use (hostSignerAllowedLocked): the history at
+// this nonce, with the diff's own warm-key entries already applied.
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -188,13 +187,10 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 	return heightsync.LogPlaneState{
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
-		WarmKeys: sm.state.WarmKeys,
-		// Non-binding: L2 runs on compose trial prefixes that may still be
-		// dropped. Apply writes the binding via hostSignerAllowedLocked, the
-		// same AcceptWarm as confirm/finish/vote.
-		AcceptWarm: func(_ uint32, recovered, expected string) bool {
-			return sm.CheckWarmKey(recovered, expected)
-		},
+		// L2 reads the consensus history only: the diff's bind and revoke
+		// entries apply before the log-plane check, so a first ack by a
+		// freshly bound key verifies on every replica alike.
+		History:  sm.state.WarmKeyHistory,
 		Verifier: sm.verifier,
 		Tracker:  sm.turnTracker,
 		Floor:    sm.heightSyncFloor,

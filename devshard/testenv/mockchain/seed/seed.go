@@ -68,6 +68,7 @@ func Defaults() *store.Store {
 		GranterAddress: host,
 		MessageTypeURL: "/inference.inference.MsgStartInference",
 	}] = []inferencetypes.Grantee{{Address: warm}}
+	s.SyncWarmKeyLog()
 	s.EpochGroupData[store.EpochGroupKey{EpochIndex: 1, ModelID: "test-model"}] = &inferencetypes.EpochGroupData{
 		EpochIndex: 1,
 		ModelId:    "test-model",
@@ -224,6 +225,7 @@ func FromFile(f *config.File) (*store.Store, error) {
 			MessageTypeURL: g.MessageTypeURL,
 		}] = grantees
 	}
+	s.SyncWarmKeyLog()
 
 	for _, eg := range f.EpochGroups {
 		if eg.ModelID == "" {

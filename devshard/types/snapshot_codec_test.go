@@ -1,6 +1,7 @@
 package types
 
 import (
+	"devshard/signing"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -45,7 +46,10 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 		HostStats: map[uint32]*HostStats{
 			0: {Missed: 1, Invalid: 2, Cost: 3},
 		},
-		WarmKeys:                      map[uint32]string{0: "warm-0"},
+		WarmKeyHistory: signing.WarmKeyHistory{
+			0: {{Addr: "warm-0", FromNonce: 3, GrantID: 7}},
+			1: {{Addr: "warm-1", FromNonce: 2, GrantID: 1, RevokedAtNonce: 9}, {Addr: "warm-1b", FromNonce: 10, GrantID: 2}},
+		},
 		SealedAcc:                     []byte("sealed-acc-bytes"),
 		HeightSyncForcedStart:         4,
 		HeightSyncForcedEnd:           6,
@@ -67,7 +71,7 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 	require.Equal(t, state.FinalizeNonce, roundTrip.FinalizeNonce)
 	require.Equal(t, state.LatestNonce, roundTrip.LatestNonce)
 	require.Equal(t, state.SealedAcc, roundTrip.SealedAcc)
-	require.Equal(t, state.WarmKeys, roundTrip.WarmKeys)
+	require.Equal(t, state.WarmKeyHistory, roundTrip.WarmKeyHistory)
 	require.Equal(t, state.HostStats[0], roundTrip.HostStats[0])
 	require.Equal(t, state.Inferences[1], roundTrip.Inferences[1])
 	require.Equal(t, state.HeightSyncForcedStart, roundTrip.HeightSyncForcedStart)
@@ -86,7 +90,7 @@ func TestMarshalStateSnapshotProtoRoundTrip(t *testing.T) {
 		LatestNonce:                 42,
 		Inferences:                  map[uint64]*InferenceRecord{},
 		HostStats:                   map[uint32]*HostStats{0: {}},
-		WarmKeys:                    map[uint32]string{0: "warm-0"},
+		WarmKeyHistory:              signing.WarmKeyHistory{0: {{Addr: "warm-0", FromNonce: 1, GrantID: 1}}},
 	}
 	committed := map[uint64][]byte{1: []byte("entry-one")}
 	sealed := map[uint64]uint64{1: 11}
@@ -110,7 +114,7 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 		LatestNonce:                 42,
 		Inferences:                  map[uint64]*InferenceRecord{},
 		HostStats:                   map[uint32]*HostStats{0: {}},
-		WarmKeys:                    map[uint32]string{0: "warm-0"},
+		WarmKeyHistory:              signing.WarmKeyHistory{0: {{Addr: "warm-0", FromNonce: 1, GrantID: 1}}},
 	}
 	floor := &FloorIndexProto{
 		Truncated: true,

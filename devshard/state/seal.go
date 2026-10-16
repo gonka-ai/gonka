@@ -216,7 +216,7 @@ func (sm *StateMachine) rootComponentsLocked() (rootComponents, error) {
 	if err != nil {
 		return rootComponents{}, err
 	}
-	warmKeysHash := computeWarmKeysHash(st.WarmKeys)
+	warmKeysHash := computeWarmKeysHash(st.WarmKeyHistory)
 	heightSyncHash := hashHeightSyncEscrow(hs)
 	restHash := restHashFromV2Parts(st.Balance, acc, liveHash, warmKeysHash, heightSyncHash)
 	return rootComponents{

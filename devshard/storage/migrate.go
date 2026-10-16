@@ -247,14 +247,6 @@ func migrateLegacyDiffs(src *sql.DB, dest Storage, escrowID string, copiedThroug
 			StateHash: d.stateHash,
 			CreatedAt: d.createdAt,
 		}
-		if d.warmJSON != nil {
-			wk := make(map[uint32]string)
-			if err := json.Unmarshal([]byte(*d.warmJSON), &wk); err != nil {
-				return fmt.Errorf("unmarshal warm keys nonce %d: %w", d.nonce, err)
-			}
-			rec.WarmKeyDelta = wk
-		}
-
 		// Pull signatures into the diff record before insert so the dest
 		// store sees them as part of the same AppendDiff transaction.
 		sigRows, err := src.Query(
@@ -314,9 +306,6 @@ func verifyMigratedDiff(escrowID string, expected, actual types.DiffRecord) erro
 		expected.CreatedAt != actual.CreatedAt {
 		return fmt.Errorf("migrated diff conflict for %s nonce %d", escrowID, expected.Nonce)
 	}
-	if !equalWarmKeyDelta(expected.WarmKeyDelta, actual.WarmKeyDelta) {
-		return fmt.Errorf("migrated warm-key conflict for %s nonce %d", escrowID, expected.Nonce)
-	}
 	if !equalTxs(expected.Txs, actual.Txs) {
 		return fmt.Errorf("migrated tx conflict for %s nonce %d", escrowID, expected.Nonce)
 	}
@@ -326,18 +315,6 @@ func verifyMigratedDiff(escrowID string, expected, actual types.DiffRecord) erro
 		}
 	}
 	return nil
-}
-
-func equalWarmKeyDelta(a, b map[uint32]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for k, av := range a {
-		if b[k] != av {
-			return false
-		}
-	}
-	return true
 }
 
 func equalTxs(a, b []*types.DevshardTx) bool {

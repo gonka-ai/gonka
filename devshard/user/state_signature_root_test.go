@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -241,10 +242,11 @@ func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	started := make(chan struct{})
 	release := make(chan struct{})
+	var startedOnce sync.Once
 	var calls atomic.Int32
 	resolver := func(_, _ string) (bool, error) {
 		calls.Add(1)
-		close(started)
+		startedOnce.Do(func() { close(started) })
 		<-release
 		return false, errors.New("chain unavailable")
 	}
@@ -276,7 +278,7 @@ func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
 	close(release)
 	require.False(t, <-quorumDone)
 	require.False(t, session.HasQuorumAt(1))
-	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, int32(2), calls.Load(), "the session keeps no verdict of its own; the grant source is asked each time")
 }
 
 func TestWarmKeyBindingOverridesCachedRejection(t *testing.T) {
@@ -301,7 +303,8 @@ func TestWarmKeyBindingOverridesCachedRejection(t *testing.T) {
 	require.ErrorIs(t, session.verifyStateSignature(1, root, sig, owner.Address()), types.ErrInvalidStateSig)
 	require.Equal(t, int32(1), calls.Load())
 
-	sm.InjectWarmKeys(map[uint32]string{group[0].SlotID: warm.Address()})
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(group[0].SlotID, warm.Address(), 1)})
+	require.NoError(t, err)
 
 	require.NoError(t, session.verifyStateSignature(1, root, sig, owner.Address()))
 	require.Equal(t, int32(1), calls.Load())

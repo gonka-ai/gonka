@@ -314,7 +314,6 @@ func RecoverSession(
 	var replayed int
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
-			sm.InjectWarmKeys(rec.WarmKeyDelta)
 			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {

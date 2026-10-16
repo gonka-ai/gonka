@@ -658,7 +658,8 @@ func setupWarmHeartbeatSession(t *testing.T, height *uint64) (*Session, []*signi
 	const numHosts = 3
 	coldKeys := makeKeys(t, numHosts)
 	warmKeys := makeKeys(t, numHosts)
-	resolver := acceptResolver(warmKeys, coldKeys)
+	grants := warmGrants(warmKeys, coldKeys)
+	resolver := grants.Resolver
 	oracles, _ := sessionOracles(numHosts, *height)
 
 	user := testutil.MustGenerateKey(t)
@@ -678,6 +679,7 @@ func setupWarmHeartbeatSession(t *testing.T, height *uint64) (*Session, []*signi
 
 	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+		WithWarmKeyGrantSource(grants),
 		WithHeightSyncCadence(10, uint64(numHosts)),
 		WithObservedHeight(func() (uint64, []byte, bool) {
 			h := *height
@@ -697,12 +699,11 @@ func TestHeartbeat_WarmKeyAckAppliesWithoutPriorBinding(t *testing.T) {
 	session, _, warmKeys := setupWarmHeartbeatSession(t, &height)
 	t.Cleanup(func() { _ = session.Close() })
 
-	wk := session.StateMachine().WarmKeys()
-	require.Equal(t, warmKeys[1].Address(), wk[1], "bootstrap confirm binds only the executor slot")
-	_, slot0Bound := wk[0]
-	_, slot2Bound := wk[2]
-	require.False(t, slot0Bound)
-	require.False(t, slot2Bound)
+	history := session.StateMachine().WarmKeyHistory()
+	for slot := range warmKeys {
+		require.Equal(t, []string{warmKeys[slot].Address()}, history.Live(uint32(slot)),
+			"the first diff binds every live grant of the group, not only the executor's")
+	}
 
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
@@ -717,10 +718,7 @@ func TestHeartbeat_WarmKeyAckAppliesWithoutPriorBinding(t *testing.T) {
 		require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
 	}
 
-	wk = session.StateMachine().WarmKeys()
-	require.Equal(t, warmKeys[0].Address(), wk[0])
-	require.Equal(t, warmKeys[1].Address(), wk[1])
-	require.Equal(t, warmKeys[2].Address(), wk[2])
+	require.Equal(t, history, session.StateMachine().WarmKeyHistory(), "acks bind nothing; the binds were already in")
 
 	for _, d := range seenDiffs(session) {
 		if len(heightAcksInDiffs([]types.Diff{d})) == 0 {
