@@ -2049,8 +2049,8 @@ stop_slot() {
 }
 
 stop_fleet_containers() {
-    local id state pid timeout failed=0
-    local -a ids=() pids=()
+    local id state pid timeout i failed=0
+    local -a ids=() targets=() timeouts=() pids=()
     fleet_inventory
     ids=("${inventory_ids[@]}")
     if ((${#ids[@]} == 0)); then
@@ -2058,8 +2058,9 @@ stop_fleet_containers() {
         return 0
     fi
 
-    # All routers receive their soft-stop together. The maintenance deadline is
-    # therefore one fleet-wide wall-clock budget rather than N sequential waits.
+    # Every router's state and stop budget are read first. A container that
+    # cannot be read fails the command before any router has been signaled,
+    # so a maintenance stop is all or nothing rather than a partial drain.
     for id in "${ids[@]}"; do
         state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
             "router container $id disappeared before maintenance stop"
@@ -2067,12 +2068,18 @@ stop_fleet_containers() {
             running | restarting | paused)
                 timeout=$(generation_stop_timeout "$id") || fail \
                     "cannot read the stop budget of router container $id"
-                "$docker_bin" stop --time "$timeout" "$id" >/dev/null &
-                pids+=("$!")
+                targets+=("$id")
+                timeouts+=("$timeout")
                 ;;
             created | exited | dead) ;;
             *) fail "router container $id has unsupported state '$state'" ;;
         esac
+    done
+    # All routers receive their soft-stop together. The maintenance deadline is
+    # therefore one fleet-wide wall-clock budget rather than N sequential waits.
+    for i in "${!targets[@]}"; do
+        "$docker_bin" stop --time "${timeouts[$i]}" "${targets[$i]}" >/dev/null &
+        pids+=("$!")
     done
     for pid in "${pids[@]}"; do
         wait "$pid" || failed=1
