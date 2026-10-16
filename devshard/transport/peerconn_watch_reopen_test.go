@@ -66,11 +66,18 @@ type watchCapAuth struct {
 	retryAfter string
 	mu         *sync.Mutex
 	watchAt    *[]time.Time
+	attachGate *atomic.Int32
 }
 
 func (a watchCapAuth) Attach(context.Context, *connect.Request[rpcpb.AttachRequest]) (*connect.Response[rpcpb.AttachResponse], error) {
 	if a.attaches != nil {
 		a.attaches.Add(1)
+	}
+	if a.attachGate != nil {
+		for a.attachGate.Load() < 1 {
+			time.Sleep(time.Millisecond)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	return connect.NewResponse(&rpcpb.AttachResponse{
 		SessionToken: []byte("token-bytes-renewed"),
@@ -84,6 +91,10 @@ func (a watchCapAuth) Watch(context.Context, *connect.Request[rpcpb.WatchRequest
 		a.mu.Lock()
 		*a.watchAt = append(*a.watchAt, time.Now())
 		a.mu.Unlock()
+	}
+	if a.attachGate != nil && a.attachGate.Load() == 0 {
+		time.Sleep(50 * time.Millisecond)
+		defer a.attachGate.Add(1)
 	}
 	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many concurrent watches"))
 	if a.retryAfter != "" {
@@ -176,10 +187,10 @@ func TestServeWatch_ServerWatchCapHonorsRetryAfterAcrossJitter(t *testing.T) {
 }
 
 func TestServeWatch_RenewalWaitsForWatchRetryAfter(t *testing.T) {
-	var watches, attaches atomic.Int32
+	var watches, attaches, refused atomic.Int32
 	var mu sync.Mutex
 	var at []time.Time
-	srv := startWatchCapServer(t, watchCapAuth{watches: &watches, attaches: &attaches, retryAfter: "1", mu: &mu, watchAt: &at})
+	srv := startWatchCapServer(t, watchCapAuth{watches: &watches, attaches: &attaches, retryAfter: "1", mu: &mu, watchAt: &at, attachGate: &refused})
 
 	pc := NewPeerConn(PeerConnConfig{
 		BaseURL:      srv.URL,

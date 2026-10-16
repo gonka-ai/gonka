@@ -892,6 +892,19 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				refreshDue = time.Now().Add(p.nextRefreshWait(exp, refreshBackoff))
 				continue
 			}
+			if cancelWatch != nil {
+				select {
+				case err := <-watchErr:
+					cancelWatch()
+					cancelWatch, watchErr = nil, nil
+					if isServerWatchCap(err) {
+						if wait := connectRetryAfter(err); wait > 0 {
+							watchNotBefore = time.Now().Add(wait)
+						}
+					}
+				default:
+				}
+			}
 			p.incReattach(reattachReasonTTL)
 			p.publishToken(newTok, newExp)
 			tok, exp = newTok, newExp
