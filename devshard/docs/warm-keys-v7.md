@@ -82,7 +82,9 @@ grants that exist at that moment, one entry per current grant with
 `granted_at_height` = the upgrade height and ids in a fixed order, so every
 warm key in use has an entry to point at without a new grant transaction.
 History from before the upgrade is not reconstructed; it is not needed,
-because no v7 session exists before it.
+because no v7 session exists before it. The same change records the creation
+height on every escrow created from then on; escrows created earlier use the
+upgrade height as their anchor ([First binds](#how-a-binding-enters-consensus)).
 
 This is the chain part of the item. It belongs to the 0.2.18 chain branch that
 collects the settlement changes for v7.
@@ -200,13 +202,20 @@ authorization height is one the gateway cannot set back
 **First binds.** A new session has no diff with a height yet, and the hosts'
 first messages, the ones that establish the height floor, are themselves
 warm-signed, so the first binds cannot wait for a height. They use a chain
-fact instead: the escrow's creation height, recorded on chain with the
-escrow. The gateway's first diff carries a bind for every slot whose
-validator has a live grant at the creation height, and those binds are
-checked against the log at that height. The same applies to a session that
-moves from v6 to v7: the first v7 diff binds the keys live at the creation
-height, and the hosts accept cold keys only before it. Rotations after that
-use the authorization height.
+fact instead, the **bootstrap anchor**: the escrow's creation height, which
+the 0.2.18 change records on the escrow (`DevshardEscrow` has no such field
+today, `CreateDevshardEscrow` does not persist one, and the bridge does not
+carry it; all three change), or, for an escrow created before the upgrade,
+the upgrade height, which is the height every seeded entry was granted at.
+The gateway's first diff carries a bind for every slot whose validator has a
+grant live at the anchor, and those binds are checked against the log at the
+anchor. The same applies to a session that moves from v6 to v7: the first v7
+diff binds the keys live at the anchor, and the hosts accept cold keys only
+before it. A key granted after the anchor, that is, a host that rotated
+between the escrow's creation and the session's first diff, is not live at
+the anchor and is bound from the second diff on, once the authorization
+height exists; until then that host's messages are refused, a bounded and
+rare delay. Rotations after the first diff use the authorization height.
 
 The check needs a complete, committed view of the log through h: a host
 answers only once its chain node, or its log copy, has reached h with no
@@ -255,7 +264,12 @@ without a chain round trip per question.
    cache today (`cmd/devshardd/hostevents_sink.go`), and an event the runner
    gives up on (`hostevents/runner.go`, `MaxDispatchAttempts`) marks the copy
    incomplete from that event's height until a full reload, so an answer is
-   never given from a copy with a hole.
+   never given from a copy with a hole. One existing loss path in dapi has to
+   close first: a poll that times out re-reads the ring and advances
+   `NextCursor` while returning no events
+   (`decentralized-api/nodemanager/host_events_rpc.go`), so an event that
+   arrived between the timeout and the re-read is skipped for good; the
+   timeout response must return what the re-read found, or not advance.
 2. Direct chain query, `WarmKeyEntry` and the log, when dapi is unavailable
    or does not serve the event kinds (an old dapi answers the request without
    them), and whenever the copy is incomplete through the height asked.
@@ -343,6 +357,11 @@ propose binds and a v7 session accepts cold keys only.
   rejected because the submitter would choose the height.
 - Several live keys per slot. The model allows it; the operator flow may want
   "one new, one old" only.
+- A host that rotates between the escrow's creation and the session's first
+  diff waits for the second diff. If that window turns out to matter, the
+  anchor could be the height of the gateway's first chain interaction for
+  the escrow, recorded on chain with the escrow; that is a larger chain
+  change.
 - Who may bind. The gateway as the sole author keeps sequencing simple. A host
   that rotates while the gateway is down waits with the old key; is that fine?
 - A slot reassigned to another validator in a later epoch, and HA replicas of
@@ -357,7 +376,8 @@ one buildable and tested on its own.
 1. `signing/keyhistory.go`: the pure model and its acceptance rule, with
    tests. No caller yet.
 2. `inference-chain`: the warm-key log with ids, the `WarmKeyEntry` query,
-   log events, expiry ending entries, the seeding at the upgrade.
+   log events, expiry ending entries, the seeding at the upgrade, the
+   creation height on the escrow and in the bridge's `EscrowInfo`.
 3. `types`, `state`: `EscrowState.WarmKeyHistory`, hash version, the two
    transactions, staged application, the height rule against the diff's
    stamped height, journal undo/redo, snapshot codec, every verifier
@@ -371,8 +391,9 @@ one buildable and tested on its own.
 6. `cmd/devshardd`, `user`: entry confirmation against the log before a key is
    counted, waiting on availability, replay and snapshot paths, the
    unbound-payload path on the log copy.
-7. dapi: event kinds, log snapshot on reset, event listener on the module
-   events.
+7. dapi: event kinds, log snapshot on reset, the processed-block watermark
+   on every response, the timed-out poll returning what its re-read found,
+   event listener on the module events.
 8. Tests: rotation mid-session; lagging host replaying a bind and a revoke
    after the revoke, with the chain pruned; dapi down; a log copy with a
    skipped event; snapshot restore; a settlement with old-key signatures
