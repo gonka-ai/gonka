@@ -458,5 +458,5 @@ least; S and H if that ingress is still in the estate.
 
 - `update-devshard.sh --check` does not send an HTTP/2 request. A router can look admitted (its admin `/readyz` is HTTP/1.1) while the HTTP/2 data path is not serving. After the wrapping switch, confirm it with a real RPC through the public port, not only `/readyz`.
 - The transport is agreed per host, in band. A peer that missed HTTP/2 on this host stays on HTTP/1.1 for 30 minutes before probing again, so a wrapping update shows up on peers with that delay. Between `fleet apply` and the versiond replacement the peer-RPC twins are empty and `/rpc/` to this host answers 503 on either transport.
-- Rollback needs no ordering between proxy and routers: every v6 router generation takes the proxy's HTTP/2 dial on its `:8081`, and a proxy generation without HTTP/2 still carries Connect over HTTP/1.1 on the same public ports.
+- Rollback needs no ordering between proxy and routers: every v6 router generation takes the proxy's HTTP/2 dial on its `:8081`; a v5 router fails the proxy's `:8081` check and the proxy sends peer RPC to that router's JSON listen over HTTP/1.1 instead; a proxy generation without HTTP/2 still carries Connect over HTTP/1.1 on the same public ports.
 - The public `proxy-router` is still one process on one host. The bundled PostgreSQL is still not database HA.

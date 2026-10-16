@@ -1,10 +1,10 @@
 package transport
 
 import (
-	"io"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"

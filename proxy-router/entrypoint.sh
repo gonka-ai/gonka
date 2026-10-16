@@ -248,18 +248,32 @@ esac
 # the router admin port, the same question the JSON backends ask. Without
 # check-proto h1 the probe would follow proto h2, and without a check at all
 # HAProxy reports the server "no check", which the fleet drain does not match.
+# Both checks also prove the data dial: the HA twin opens the router's :8081
+# over HTTP/2 after the admin readiness, and the non-HA server asks versiond
+# /readyz?peer-rpc=1 for the peer-rpc-ok body only a child with h2c sends. A
+# generation without either leaves the pool, and the frontend sends peer RPC
+# to the JSON path over HTTP/1.1 instead of answering 503 on HTTP/2.
+RPC_H2_CHECKS_FILE=$(mktemp)
 if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
-    RPC_H2_HTTPCHK='option httpchk'
-    RPC_H2_CHECK_CONNECT="http-check connect port ${ROUTER_ADMIN_PORT} proto h1"
-    RPC_H2_CHECK_SEND="http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}"
-    RPC_H2_CHECK_EXPECT='http-check expect status 200'
+    cat > "$RPC_H2_CHECKS_FILE" <<EOF
+    option httpchk
+    http-check connect port ${ROUTER_ADMIN_PORT} proto h1
+    http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect status 200
+    http-check connect port ${ROUTER_RPC_PORT} proto h2
+    http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect status 200
+EOF
     RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
 else
-    RPC_H2_HTTPCHK=
-    RPC_H2_CHECK_CONNECT=
-    RPC_H2_CHECK_SEND=
-    RPC_H2_CHECK_EXPECT=
-    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr none"
+    cat > "$RPC_H2_CHECKS_FILE" <<EOF
+    option httpchk
+    http-check connect port ${RPC_H2_VERSIOND_PORT} proto h1
+    http-check send meth GET uri /readyz?peer-rpc=1 hdr Host ${RPC_H2_VERSIOND_HOST}
+    http-check expect status 200
+    http-check expect string peer-rpc-ok
+EOF
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none"
 fi
 
 case "$NGINX_MODE" in
@@ -336,7 +350,7 @@ STATIC_VERSIONS_FILE=$(mktemp)
 CACHED_VERSIONS_FILE=$(mktemp)
 CACHED_DYNAMIC_VERSIONS_FILE=$(mktemp)
 CATALOG_PROXY_FILE=$(mktemp)
-trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$RPC_H2_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
+trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$RPC_H2_RULES_FILE" "$RPC_H2_CHECKS_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
 if [ -n "$CATALOG_BIND_HOST" ]; then
     cat > "$CATALOG_PROXY_FILE" <<EOF
 frontend routing_catalog
@@ -520,7 +534,8 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)\$|^/stats(/|\$)|^/sessions/[^/]+/(diffs|mempool|signatures)\$
     $UNDECLARED_VERSION_GUARD
-    use_backend %[var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc)] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }
+    use_backend %[var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc)] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found } { var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc),nbsrv gt 0 }
+    use_backend %[var(txn.ver),map_str(${VERSION_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }
 EOF
 else
     printf '%s\n' '    # Non-HA peer RPC dials one versiond. Version pools belong to the router fleet.' > "$RPC_H2_RULES_FILE"
@@ -573,11 +588,11 @@ sed \
     -e "s|\${RPC_ALPN}|$RPC_ALPN|g" \
     -e "s|\${PUBLIC_HTTPS_RPC_ROUTE}|$PUBLIC_HTTPS_RPC_ROUTE|g" \
     -e "s|\${RPC_TLS_BIND}|$RPC_TLS_BIND|g" \
-    -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \
-    -e "s|\${RPC_H2_CHECK_CONNECT}|$RPC_H2_CHECK_CONNECT|g" \
-    -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \
-    -e "s|\${RPC_H2_CHECK_EXPECT}|$RPC_H2_CHECK_EXPECT|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
+    -e "/\${RPC_H2_CHECKS}/{
+        r $RPC_H2_CHECKS_FILE
+        d
+    }" \
     -e "/\${RPC_H2_VERSION_RULES}/{
         r $RPC_H2_RULES_FILE
         d

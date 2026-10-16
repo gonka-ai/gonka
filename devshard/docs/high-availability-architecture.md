@@ -331,9 +331,11 @@ Known limitations of this hop, recorded in
   twins are empty and peer RPC to this host answers 503 on either transport;
   `update-devshard.sh` keeps that window to the versiond step.
 - `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
-  not send an HTTP/2 request. The `_rpc` health check is HTTP/1.1
-  `GET /readyz` on router admin `:8404`; data is `proto h2` to the router's
-  `:8081`, a second bind of the frontend JSON uses. A remote endpoint `{id, host, port}` is
+  not send a peer RPC. The `_rpc` health check is HTTP/1.1 `GET /readyz` on
+  router admin `:8404` followed by `GET /readyz` on the router's `:8081` over
+  HTTP/2 (the data dial); a router without that listen leaves the twin and
+  the proxy sends that version's peer RPC to the JSON backend over HTTP/1.1.
+  A remote endpoint `{id, host, port}` is
   the versiond listen (`8080`); that process has to speak h2c, and the
   updater on the network node cannot see which image a remote host runs.
 - Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only

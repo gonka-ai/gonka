@@ -854,12 +854,13 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			newTok, newExp, err := p.attach()
 			p.incAttach(err)
 			if err != nil {
-				if isRPCH2TransportMiss(err) {
-					// Origin is gone (listen/RST/ALPN/half-open). End
-					// Watch. The outer loop probes h2 again and falls
-					// back to HTTP/1.1 if the origin still misses. A
-					// slow Attach (DeadlineExceeded) is not this: keep
-					// Watch and retry refresh.
+				if isRPCH2Miss(err) {
+					// Origin is gone (listen/RST/ALPN/half-open, or a
+					// close with no answer). End Watch. The outer loop
+					// probes h2 again and falls back to HTTP/1.1 if the
+					// origin still misses. A slow Attach
+					// (DeadlineExceeded) is not this: keep Watch and
+					// retry refresh.
 					stopWatch()
 					p.incReattach(reattachReasonWatch)
 					return sawBeat.Load(), err

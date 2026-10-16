@@ -222,9 +222,12 @@ frontend rpc_h2
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
 
     # Versioned Attach/Chat uses the same map as versiond_router_in, with _rpc
-    # appended. A version that is not in the map, or whose twin has no ready
-    # slot, is not forwarded. Versionless paths stay on the coarse pool.
+    # appended. A twin with no usable server (a router generation without
+    # the :8081 peer-RPC listen, after a rollback) hands the request to its
+    # JSON sibling: the same router over HTTP/1.1, which routes /rpc/ by
+    # path. Versionless paths stay on the coarse pool, with the same fallback.
 ${RPC_H2_VERSION_RULES}
+    use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }
     default_backend rpc_h2_upstream
 
 backend st_rpc_attach
@@ -261,10 +264,7 @@ backend rpc_h2_upstream
     option redispatch 1
     retries 2
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
-    ${RPC_H2_HTTPCHK}
-    ${RPC_H2_CHECK_CONNECT}
-    ${RPC_H2_CHECK_SEND}
-    ${RPC_H2_CHECK_EXPECT}
+${RPC_H2_CHECKS}
     ${RPC_H2_SERVER}
 
 frontend versiond_router_in
