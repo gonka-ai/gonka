@@ -2866,3 +2866,22 @@ func TestDecodeSnapshot_HeightSyncFloor(t *testing.T) {
 	_, _, _, _, _, err = decodeSnapshot(legacy)
 	require.ErrorContains(t, err, "snapshot state missing")
 }
+
+// Test flow:
+//  1. Decode a gateway snapshot whose state carries the v6 WarmKeys map, and one without it.
+//  2. Assert the v6 snapshot is refused as one of an earlier protocol and the v7 one decodes.
+func TestDecodeSnapshot_RefusesV6WarmKeys(t *testing.T) {
+	v7 := []byte(`{"state":{"EscrowID":"escrow-1","LatestNonce":3,"WarmKeyHistory":{"0":[{"Addr":"gonka1warm","FromNonce":1,"GrantID":1}]}}}`)
+	st, _, _, _, _, err := decodeSnapshot(v7)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), st.LatestNonce)
+	require.Len(t, st.WarmKeyHistory[0], 1)
+
+	v6 := []byte(`{"state":{"EscrowID":"escrow-1","LatestNonce":3,"WarmKeys":{"0":"gonka1warm"}}}`)
+	_, _, _, _, _, err = decodeSnapshot(v6)
+	require.ErrorIs(t, err, types.ErrSnapshotFromEarlierProtocol)
+
+	nulled := []byte(`{"state":{"EscrowID":"escrow-1","WarmKeys":null}}`)
+	_, _, _, _, _, err = decodeSnapshot(nulled)
+	require.NoError(t, err, "an explicit null is not a binding")
+}

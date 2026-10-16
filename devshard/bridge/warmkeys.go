@@ -344,7 +344,13 @@ func (c *WarmKeyLogCopy) loaded(granter string) ([]WarmKeyEntry, error) {
 	c.mu.Lock()
 	g := c.granters[granter]
 	complete := g != nil && g.complete
-	stale := complete && c.now().Sub(g.loadedAt) > c.refreshAfter
+	// A stale copy reloads in the background, at most once per
+	// warmKeyMissRefresh whether or not the last attempt succeeded, so a
+	// failing chain does not turn every lookup into a query.
+	stale := complete && c.now().Sub(g.loadedAt) > c.refreshAfter && c.now().Sub(g.attemptedAt) > warmKeyMissRefresh
+	if stale {
+		g.attemptedAt = c.now()
+	}
 	c.mu.Unlock()
 
 	if !complete {

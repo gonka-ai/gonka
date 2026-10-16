@@ -266,3 +266,37 @@ func TestWarmKeyLogCopy_MissReloadsAreThrottledWhileTheChainFails(t *testing.T) 
 	}
 	require.Equal(t, 1+2, chain.count(), "one load, then one attempt per five seconds")
 }
+
+// Test flow:
+//  1. Load a granter with a one-second refresh interval, take the chain down, and look the granter up every
+//     second for twelve seconds.
+//  2. Assert the stale copy keeps answering and starts at most one reload attempt per five seconds.
+func TestWarmKeyLogCopy_StaleRefreshesAreThrottledWhileTheChainFails(t *testing.T) {
+	chain := &fakeWarmKeyFetcher{}
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"})
+	cp := NewWarmKeyLogCopy(chain, time.Second)
+	now := time.Unix(1000, 0)
+	cp.now = func() time.Time { return now }
+	live, err := cp.LiveWarmKeys("cold")
+	require.NoError(t, err)
+	require.Len(t, live, 1)
+	chain.mu.Lock()
+	chain.err = errors.New("down")
+	chain.mu.Unlock()
+
+	for second := 1; second <= 12; second++ {
+		now = now.Add(time.Second)
+		before := chain.count()
+		for i := 0; i < 3; i++ {
+			live, err := cp.LiveWarmKeys("cold")
+			require.NoError(t, err, "second %d", second)
+			require.Len(t, live, 1, "the stale copy keeps answering")
+		}
+		if second == 2 || second == 8 {
+			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
+		} else {
+			require.Equal(t, before, chain.count(), "second %d", second)
+		}
+	}
+	require.Equal(t, 1+2, chain.count())
+}

@@ -93,7 +93,27 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64
 	if blob.State == nil {
 		return nil, nil, nil, nil, nil, errors.New("snapshot state missing")
 	}
+	if err := refuseEarlierProtocolSnapshot(data); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 	return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
+}
+
+// refuseEarlierProtocolSnapshot rejects a snapshot whose state carries the
+// v6 WarmKeys map (one key per slot, bound on first use). json.Unmarshal
+// would drop the field and the session would go on under the v7 rule with
+// its bindings gone; a v6 session belongs to the v6 binary.
+func refuseEarlierProtocolSnapshot(data []byte) error {
+	var probe struct {
+		State map[string]json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if raw, ok := probe.State["WarmKeys"]; ok && len(raw) > 0 && string(raw) != "null" {
+		return types.ErrSnapshotFromEarlierProtocol
+	}
+	return nil
 }
 
 // restoredHostCursor names every host in the group. A host the snapshot does

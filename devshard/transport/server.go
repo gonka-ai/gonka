@@ -961,7 +961,16 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if !s.host.SlotActorsAt(req.Nonce).Allows(req.SlotID, addr) {
+	// A nonce past this host's head may carry bindings this host has not
+	// applied yet, so its signer is admitted the way next-diff messages
+	// are (history plus the grant source) and the notification can start
+	// the catch-up that brings those bindings in. A nonce at or below the
+	// head is judged by the history at that nonce.
+	actors := s.host.SlotActorsAt(req.Nonce)
+	if req.Nonce > s.host.LatestNonce() {
+		actors = s.host.SlotActors()
+	}
+	if !actors.Allows(req.SlotID, addr) {
 		return ErrGossipInvalidStateSig
 	}
 
