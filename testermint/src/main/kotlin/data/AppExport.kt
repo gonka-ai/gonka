@@ -430,6 +430,8 @@ data class DevshardEscrowParams(
 )
 
 data class PocParams(
+    @SerializedName("poc_scheme")
+    val pocScheme: String = "POC_SCHEME_PREFILL",
     val defaultDifficulty: Int,
     val validationSampleSize: Int,
     @SerializedName("poc_data_pruning_epoch_threshold")
