@@ -260,9 +260,10 @@ func TestWarmKeyLogCopy_MissReloadsAreThrottledWhileTheChainFails(t *testing.T) 
 			require.False(t, ok)
 		}
 		// The load counts as an attempt, so a reload is due six seconds
-		// after it and every six seconds from then on.
+		// after it and every six seconds from then on. The clock advances
+		// only once the reload has finished, or the next one would join it.
 		if second == 6 || second == 12 {
-			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
+			require.Eventually(t, func() bool { return chain.count() == before+1 && cp.idle() }, time.Second, time.Millisecond, "second %d", second)
 		} else {
 			require.Equal(t, before, chain.count(), "second %d", second)
 		}
@@ -296,10 +297,17 @@ func TestWarmKeyLogCopy_StaleRefreshesAreThrottledWhileTheChainFails(t *testing.
 			require.Len(t, live, 1, "the stale copy keeps answering")
 		}
 		if second == 6 || second == 12 {
-			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
+			require.Eventually(t, func() bool { return chain.count() == before+1 && cp.idle() }, time.Second, time.Millisecond, "second %d", second)
 		} else {
 			require.Equal(t, before, chain.count(), "second %d", second)
 		}
 	}
 	require.Equal(t, 1+2, chain.count())
+}
+
+// idle reports that no reload is in flight.
+func (c *WarmKeyLogCopy) idle() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.loading) == 0
 }
