@@ -22,10 +22,13 @@
 # outlive the stop budget.
 #
 # Entrypoint: with ROUTER_IMAGE set to a built versiond-router image, the
-# real entrypoint is stopped while its catalog reconciler loop is retrying
-# an unreachable catalog. The container must exit right after hard-stop-after:
-# the master-worker process waits for every child, so the loop has to be
-# stopped once HAProxy has exited.
+# real entrypoint is soft-stopped while a Watch is held through it and while
+# its catalog reconciler loop is retrying an unreachable catalog. The loop
+# and its program must be gone as soon as the stop is forwarded (the Runtime
+# socket closes with the listeners, so from then on the loop could only fail
+# and restart every second), the held Watch must still be served until
+# hard-stop-after, and the container must exit right after that: the
+# master-worker process waits for every child, so nothing may outlive HAProxy.
 set -Eeuo pipefail
 
 router_image=${ROUTER_IMAGE:-}
@@ -85,6 +88,16 @@ class Handler(BaseHTTPRequestHandler):
         with open(sys.argv[2], "a", encoding="utf-8") as paths:
             paths.write(self.path + "\n")
         path, _, query = self.path.partition("?")
+        if path.endswith("/readyz") or path.endswith("/healthz"):
+            # A router's own checks on its versiond: answered at once. The
+            # peer-RPC twin requires the body a versiond with h2c sends.
+            body = b"peer-rpc-ok" if "peer-rpc=1" in query else b"ready"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path.endswith("PeerAuthService/Watch"):
             # A Watch answers only when the peer ends it, the proxy resets it,
             # or (?ttl=N) the session expires N seconds in, the way the child
@@ -237,7 +250,8 @@ wait_exit() {
 # process alive after the backend has ended it; the client does nothing a
 # drain could depend on. "watch-open" is written before the request is sent;
 # the backend's request log ($tmpdir/paths) says when the stream has reached
-# the proxy.
+# the proxy. An optional fourth argument is a path prefix for both requests
+# (a router routes by the version segment).
 cat >"$tmpdir/client.go" <<'EOF'
 package main
 
@@ -267,6 +281,10 @@ func note(path, line string) {
 
 func main() {
 	hostport, status, mode := os.Args[1], os.Args[2], os.Args[3]
+	prefix := ""
+	if len(os.Args) > 4 {
+		prefix = os.Args[4]
+	}
 	conn, err := net.Dial("tcp", hostport)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -281,7 +299,7 @@ func main() {
 	// RoundTrip blocks on the headers; the stream is open from its first frame.
 	watchCtx, endWatch := context.WithCancel(context.Background())
 	defer endWatch()
-	watchURL := "http://h2c/devshard.transport.v1.PeerAuthService/Watch"
+	watchURL := "http://h2c" + prefix + "/devshard.transport.v1.PeerAuthService/Watch"
 	if ttl, ok := strings.CutPrefix(mode, "expire:"); ok {
 		watchURL += "?ttl=" + ttl
 		mode = "expire"
@@ -322,7 +340,7 @@ func main() {
 		time.Sleep(120 * time.Second)
 		return
 	}
-	chatReq, _ := http.NewRequest(http.MethodGet, "http://h2c/v1/chat", nil)
+	chatReq, _ := http.NewRequest(http.MethodGet, "http://h2c"+prefix+"/v1/chat", nil)
 	chat, err := cc.RoundTrip(chatReq)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "chat:", err)
@@ -362,7 +380,7 @@ EOF
 
 run_client() {
     : >"$tmpdir/client.status"
-    "$tmpdir/client" "$1" "$tmpdir/client.status" "$2" >"$tmpdir/client.out" 2>"$tmpdir/client.err" &
+    "$tmpdir/client" "$1" "$tmpdir/client.status" "$2" "${3:-}" >"$tmpdir/client.out" 2>"$tmpdir/client.err" &
     client_pid=$!
 }
 
@@ -466,12 +484,23 @@ if [[ -z $router_image ]]; then
     echo "soft-stop_test: ok (entrypoint phase skipped: ROUTER_IMAGE is not set)"
     exit 0
 fi
+: >"$tmpdir/paths"
 proxy=gonka-soft-stop-entry-$$
 docker rm -f "$proxy" >/dev/null 2>&1 || true
+# The test backend is the one versiond of a v4 pool: its /readyz and
+# /v4/healthz answer at once, so the router admits it and routes a held
+# Watch to it. The catalog is unreachable, so the reconciler loop is in its
+# retry cycle the whole time. The backend is named by the host gateway's
+# address: a name from --add-host is not visible to HAProxy's Docker DNS
+# resolver, an IPv4 literal needs no resolver.
+gateway_ip=$(docker run --rm --add-host=host.docker.internal:host-gateway "$haproxy_image" \
+    getent hosts host.docker.internal | awk '{ print $1; exit }')
+[[ -n $gateway_ip ]] || fail "could not resolve the host gateway address"
 docker run -d --name "$proxy" \
-    -e VERSIOND_HOSTS=127.0.0.1:1 -e VERSIOND_VERSIONS=v4 \
+    -p 127.0.0.1::8080 -p 127.0.0.1::8081 \
+    -e "VERSIOND_HOSTS=${gateway_ip}:${port}" -e VERSIOND_VERSIONS=v4 \
     -e VERSIOND_ROUTER_BACKEND_H2=false \
-    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=3 \
+    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=8 \
     -e VERSIOND_ROUTING_CATALOG_URL=http://127.0.0.1:1/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=1 \
@@ -485,14 +514,53 @@ for _ in $(seq 1 120); do
     sleep 0.25
 done
 [[ $loaded == 1 ]] || fail "the router image did not start: $(docker logs "$proxy" 2>&1 | tail -5)"
-sleep 2
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+admitted=0
+for _ in $(seq 1 120); do
+    if curl -fsS -m 2 "http://${hostport}/v4/healthz" >/dev/null 2>&1; then
+        admitted=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $admitted == 1 ]] || fail "the router image did not admit the test backend for v4: $(docker logs "$proxy" 2>&1 | tail -5)"
+# Peer RPC is the router's proto h2 bind; its v4 twin admits the backend
+# once /readyz?peer-rpc=1 has answered peer-rpc-ok.
+rpc_hostport=$(docker port "$proxy" 8081 | head -n 1)
+rpc_admitted=0
+for _ in $(seq 1 120); do
+    if curl -fsS -m 2 --http2-prior-knowledge "http://${rpc_hostport}/v4/readyz" >/dev/null 2>&1; then
+        rpc_admitted=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $rpc_admitted == 1 ]] || fail "the router image did not admit the test backend for v4 peer RPC: $(docker logs "$proxy" 2>&1 | tail -5)"
 docker exec "$proxy" ps -o comm | grep -q 'catalog-reconci' || fail "the catalog reconciler loop is not running"
+run_client "$rpc_hostport" hold /v4/sessions/entry/rpc
+wait_for watch-open 100 || fail "watch did not open through the router image: $(cat "$tmpdir/client.err")"
+for _ in $(seq 1 100); do
+    grep -q 'PeerAuthService/Watch' "$tmpdir/paths" && break
+    sleep 0.1
+done
+grep -q 'PeerAuthService/Watch' "$tmpdir/paths" || fail "held watch did not reach the backend through the router image"
+restarts_before=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
 docker kill --signal SIGUSR1 "$proxy" >/dev/null
 signaled_at=$(proxy_age)
-wait_exit 60 || fail "the router image did not exit after SIGUSR1 while the reconciler loop was retrying: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+sleep 3
+proxy_running || fail "the router image exited at soft stop while a watch was held"
+if docker exec "$proxy" ps -o comm 2>/dev/null | grep -q 'catalog-reconci'; then
+    fail "the catalog reconciler is still running after the soft stop: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+fi
+restarts_after=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
+(( restarts_after <= restarts_before + 1 )) || \
+    fail "the reconciler loop kept restarting during the drain: $restarts_before before the stop, $restarts_after after"
+wait_exit 80 || fail "the router image did not exit at hard-stop-after with a watch held: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
 exited_at=$(proxy_age)
-(( exited_at - signaled_at <= 10 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
+(( exited_at - signaled_at <= 18 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
+wait_for watch-reset 20 || fail "the held watch was not reset by the router image's hard stop: $(cat "$tmpdir/client.status")"
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$proxy") == 0 ]] \
     || fail "the router image exited with status $(docker inspect --format '{{.State.ExitCode}}' "$proxy")"
+stop_client
 
 echo "soft-stop_test: ok"

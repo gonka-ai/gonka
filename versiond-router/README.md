@@ -559,10 +559,12 @@ refused.
 A container created before this contract keeps the 10 s budget it was created
 with until the fleet replaces it; the fleet's own stop passes its timeout
 explicitly, so use `rollout` for that replacement, not a Compose restart.
-HAProxy runs as a child of the entrypoint, which passes it every
-stop signal at once and, when it has exited, stops the catalog reconciler loop:
-the master-worker process waits for every child, so an exec would leave the
-master waiting on that loop after the worker had drained.
+HAProxy runs as a child of the entrypoint, which passes it every stop
+signal at once and stops the catalog reconciler loop at that moment: the
+soft stop closes the Runtime socket with the listeners, so the reconciler
+could only fail and restart for the whole drain, and the master-worker
+process waits for every child, so the loop must not outlive HAProxy
+either.
 
 `VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
 registry to be reachable before a slot operation. During a registry incident,

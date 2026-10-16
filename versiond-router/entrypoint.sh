@@ -65,10 +65,25 @@ set -eu
 haproxy_ready=0
 haproxy_pid=
 pending_signal=
+reconciler_pid=
+# The catalog reconciler loop ends with the stop, not after it. A soft stop
+# closes the Runtime socket with the other listeners, so from the moment
+# USR1 reaches HAProxy the reconciler can neither read nor change anything;
+# left alone, its program would fail and be restarted every second for the
+# whole drain. The loop forwards the signal to its program (see
+# run_catalog_reconciler), so this takes both down.
+stop_reconciler() {
+    if [ -n "$reconciler_pid" ]; then
+        kill "$reconciler_pid" 2>/dev/null || true
+        wait "$reconciler_pid" 2>/dev/null || true
+        reconciler_pid=
+    fi
+}
 forward_signal() {
     case $1 in
         USR1)
             if [ "$haproxy_ready" -eq 1 ]; then
+                stop_reconciler
                 kill -s USR1 "$haproxy_pid" 2>/dev/null || true
             else
                 pending_signal=USR1
@@ -76,6 +91,7 @@ forward_signal() {
             ;;
         *)
             if [ -n "$haproxy_pid" ]; then
+                stop_reconciler
                 kill -s "$1" "$haproxy_pid" 2>/dev/null || true
             else
                 echo "versiond-router: $1 before HAProxy started; exiting" >&2
@@ -892,6 +908,11 @@ if [ -n "$RENDER_ONLY" ]; then
 fi
 
 run_catalog_reconciler() {
+    # The program runs as a child that this loop waits for, so a TERM to the
+    # loop ends the program as well; a child reparented to the entrypoint
+    # would otherwise outlive the loop until the container is torn down.
+    reconciler_child=
+    trap 'if [ -n "$reconciler_child" ]; then kill "$reconciler_child" 2>/dev/null; fi; exit 0' TERM INT
     while :; do
         status=0
         ROUTING_CATALOG_COMPONENT=versiond-router \
@@ -918,13 +939,15 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_STATUS_SERVER=catalog \
         ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
         ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
-            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
+            /usr/local/lib/router-runtime/catalog-reconciler &
+        reconciler_child=$!
+        wait "$reconciler_child" || status=$?
+        reconciler_child=
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1
     done
 }
 
-reconciler_pid=
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
     reconciler_pid=$!
@@ -988,10 +1011,9 @@ while :; do
     fi
     break
 done
-if [ -n "$reconciler_pid" ]; then
-    kill "$reconciler_pid" 2>/dev/null || true
-    pkill -P "$reconciler_pid" 2>/dev/null || true
-fi
+# HAProxy exited on its own (or on a stop that came before it was ready):
+# the loop may still be running; without it the master would wait on it.
+stop_reconciler
 if [ "$ready_timeout" -eq 1 ] && [ "$status" -eq 0 ]; then
     # Stopped by the readiness deadline above: a failed start must not look
     # like a clean exit to the restart policy. (A HAPROXY_BIN that exits on
