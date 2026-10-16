@@ -40,6 +40,14 @@ func wireStopTokenVocabulary(query vocabulary.EpochGroupDataQuery, epoch func() 
 type stopTokenIDsHandler struct{}
 
 func (stopTokenIDsHandler) Apply(ctx *RequestFilterContext, _ VLLMParameter) error {
+	var hasStopTokenIDs bool
+	ctx.Document.RLockedScope(func(raw map[string]any) {
+		hasStopTokenIDs = completionapi.HasStopTokenIDs(raw)
+	})
+	// The vocabulary lookup can block on the chain, so requests without stop ids skip it.
+	if !hasStopTokenIDs {
+		return nil
+	}
 	vocabularySize := 0
 	if stopTokenVocabulary != nil {
 		vocabularySize = stopTokenVocabulary.VocabularySize(ctx.RoutedModel)

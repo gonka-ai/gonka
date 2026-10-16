@@ -367,15 +367,14 @@ func ExecuteValidationWithPolicy(
 	}
 
 	stopTokenIDs := completionapi.StopTokenIDsOf(requestMap)
-	if !isEmptySentinel {
-		if err := completionapi.ValidateStopTokenIDs(requestMap, vocabularySize); err != nil {
-			if vocabularySize > 0 {
-				return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "stop_token_ids outside the model vocabulary.", Error: err}, nil
-			}
-			// Unknown vocab on this validator is not the executor's fault: replay without the ids so
-			// the node cannot index out of range, and keep the stop-before-end check below.
-			delete(requestMap, "stop_token_ids")
+	// Runs for the empty-sentinel replay too: both forward stop_token_ids to the node.
+	if err := completionapi.ValidateStopTokenIDs(requestMap, vocabularySize); err != nil {
+		if vocabularySize > 0 {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "stop_token_ids outside the model vocabulary.", Error: err}, nil
 		}
+		// Unknown vocab on this validator is not the executor's fault: replay without the ids so
+		// the node cannot index out of range, and keep the stop-before-end check below.
+		delete(requestMap, "stop_token_ids")
 	}
 
 	if isEmptySentinel {

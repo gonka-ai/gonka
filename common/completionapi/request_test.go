@@ -474,6 +474,48 @@ func TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector(t *testing.
 	require.Equal(t, "8956540596acd0ff60a29ed0d510e70e81934a7fe6dbf833b1e90767971af3f7", utils.GenerateSHA256Hash(canonical))
 }
 
+// Test flow:
+// 1. Modify requests with max_tokens 100, min_tokens 16 and each grammar or non-grammar field.
+// 2. Grammar-constrained requests lose min_tokens and the others keep it.
+// 3. Each canonical body hashes to the vector shared with testermint PromptHashingTests.kt.
+func TestModifyRequestBodyWithLogprobsMode_KotlinGrammarVectors(t *testing.T) {
+	for _, tc := range []struct {
+		field      string
+		grammar    bool
+		promptHash string
+	}{
+		{`"response_format":{"type":"json_object"}`, true, "14375a569703654ee49597e76e438a9bc4a4077af752f8d6372d63be23b58f3f"},
+		{`"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":{"type":"object"}}}`, true, "51118e2c54ff99d1d62b191728d77c5d9582e940d86f666bfe2ba9c852d84273"},
+		{`"response_format":{"type":"structural_tag","structures":[],"triggers":[]}`, true, "6ce640f00a6c178c33cf745b51c1a50461aac03262b0a68dd184dc7253631755"},
+		{`"structured_outputs":{"regex":"[a-z]+"}`, true, "6a6583c4d8b4d7b7c86f74376e39dd0a68899f697b8a97c73b59a6685653723e"},
+		{`"structured_outputs":{"choice":["yes","no"]}`, true, "82d7ac91c6881194fb8024104eee99cee2a7c42ee9bf93da6117108ca3444920"},
+		{`"structured_outputs":{"json_object":true}`, true, "8631718544e8fc5058fc88c48c8eb7c08fdfeb3b987f293db03f47d7a70d0f66"},
+		{`"tool_choice":"required"`, true, "4b256311efaf6dc9a557d43c5539db0b4f654009c940f911f9ca1cb765eccd8f"},
+		{`"tool_choice":{"type":"function","function":{"name":"get_weather"}}`, true, "fa5706891721b4ad0245ee0e061089c5b30edc55116f62636d185183268c24a3"},
+		{`"response_format":{"type":"text"}`, false, "4757432586a04dc9d98a226bf4f5932f6dfbec2ab73240ec945f5a0d6b94d907"},
+		{`"structured_outputs":{"json_object":false}`, false, "57508112a67145d91c0300de0b69d1a34a821c6a6f654c0983528e5d47ebf89e"},
+		{`"tool_choice":"auto"`, false, "a8094f7e1cf2de859a9ab0e505d89fbf99e215276690b98ef14c8306bf97b22a"},
+		{`"tool_choice":{"type":"function","function":{"name":""}}`, false, "b1e4fb885dfa07cc0cd83e98c1fe64d7e4f372ac12ad979a5ce148297597ced8"},
+	} {
+		t.Run(tc.field, func(t *testing.T) {
+			body := []byte(`{"model":"m","max_tokens":100,"min_tokens":16,"messages":[{"role":"user","content":"hi"}],` + tc.field + `}`)
+			r, err := ModifyRequestBodyWithLogprobsMode(body, 0, "processed_logprobs")
+			require.NoError(t, err)
+
+			var raw map[string]interface{}
+			require.NoError(t, json.Unmarshal(r.NewBody, &raw))
+			if tc.grammar {
+				require.NotContains(t, raw, "min_tokens")
+			} else {
+				require.EqualValues(t, 16, raw["min_tokens"])
+			}
+			canonical, err := utils.CanonicalizeJSON(r.NewBody)
+			require.NoError(t, err)
+			require.Equal(t, tc.promptHash, utils.GenerateSHA256Hash(canonical))
+		})
+	}
+}
+
 // #6: top_logprobs is hard-pinned to ForcedTopLogprobs on every request — absent,
 // below, or above — so executor and validator responses share one logprob width.
 func TestModifyRequestBody_PinsTopLogprobs(t *testing.T) {

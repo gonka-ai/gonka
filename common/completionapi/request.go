@@ -210,6 +210,17 @@ func GrammarConstrained(requestMap map[string]interface{}) bool {
 // ErrStopTokenIDs marks a stop_token_ids field the engine must not be sent.
 var ErrStopTokenIDs = errors.New("invalid stop_token_ids")
 
+// HasStopTokenIDs reports whether stop_token_ids is set to anything but null or an empty array,
+// so callers resolve the vocabulary only when ValidateStopTokenIDs needs it.
+func HasStopTokenIDs(requestMap map[string]interface{}) bool {
+	raw, present := requestMap["stop_token_ids"]
+	if !present || raw == nil {
+		return false
+	}
+	ids, isArray := raw.([]interface{})
+	return !isArray || len(ids) > 0
+}
+
 // ValidateStopTokenIDs checks every stop_token_ids entry is an integer in [0, vocabularySize).
 // An unknown vocabulary (vocabularySize <= 0) fails closed: an out-of-range id crashes the node.
 func ValidateStopTokenIDs(requestMap map[string]interface{}, vocabularySize int) error {

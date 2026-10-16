@@ -106,7 +106,9 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	return executeWithRecovery(ctx, req, e.payloadRead, e.phase.EpochID(), func(ctx context.Context) (*devshard.ExecuteResult, error) {
 		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
-		}, e.chainParams, e.logprobsOptimizationEnabled, e.vocabularySize(ctx, req.Model))
+		}, e.chainParams, e.logprobsOptimizationEnabled, func() int {
+			return e.vocabularySize(ctx, req.Model)
+		})
 		if err == nil && result != nil && !result.PartialResponse {
 			e.earnValidationCredit(ctx, req.Model)
 		}

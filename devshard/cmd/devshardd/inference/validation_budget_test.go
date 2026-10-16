@@ -557,3 +557,49 @@ func TestValidationBudgetSpendsOldestFirst(t *testing.T) {
 	require.True(t, spendCredit(b, "m"), "the newer credit must survive the first credit's expiry")
 	require.False(t, spendCredit(b, "m"))
 }
+
+type countingVocabularyResolver struct{ calls atomic.Int32 }
+
+func (c *countingVocabularyResolver) Resolve(context.Context, uint64, string) int {
+	c.calls.Add(1)
+	return 1000
+}
+
+// Test flow:
+// 1. Execute requests with stop_token_ids absent, null and an empty array on an engine with a counting vocabulary resolver.
+// 2. Each reaches the ML node without resolving the vocabulary.
+// 3. A request with stop ids resolves it once and reaches the node.
+func TestEngineExecuteResolvesVocabularyOnlyForStopTokenIDs(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"x","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}`)
+	}))
+	defer srv.Close()
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: "node", Endpoint: srv.URL}, nil
+		},
+	})
+	phase := new(chain.Phase)
+	phase.SetEpoch(5)
+	resolver := &countingVocabularyResolver{}
+	e := NewEngine(ml, nil, nil, &memoryPayloads{}, fixedChainParams{}, phase, true, resolver)
+	execute := func(extra string) error {
+		req := devshard.ExecuteRequest{InferenceID: 1, EscrowID: "e", Model: "m",
+			Prompt: []byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]` + extra + `}`)}
+		_, err := e.Execute(context.Background(), req)
+		return err
+	}
+
+	for _, extra := range []string{``, `,"stop_token_ids":null`, `,"stop_token_ids":[]`} {
+		require.NoError(t, execute(extra), extra)
+	}
+	require.Zero(t, resolver.calls.Load())
+	require.Equal(t, int32(3), hits.Load())
+
+	require.NoError(t, execute(`,"stop_token_ids":[7]`))
+	require.Equal(t, int32(1), resolver.calls.Load())
+	require.Equal(t, int32(4), hits.Load())
+}

@@ -41,7 +41,7 @@ func TestExecuteInferenceShortOutput(t *testing.T) {
 				func(_ context.Context, _ string, body []byte) (*http.Response, error) {
 					require.NoError(t, json.Unmarshal(body, &sent))
 					return nil, refused
-				}, fixedChainParams{}, true, tc.vocabularySize)
+				}, fixedChainParams{}, true, fixedVocabularySize(tc.vocabularySize))
 			require.Error(t, err)
 			if !tc.wantSent {
 				require.Nil(t, sent, "the ML node must not see the request")
@@ -62,4 +62,8 @@ func TestExecuteInferenceShortOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func fixedVocabularySize(size int) func() int {
+	return func() int { return size }
 }

@@ -32,7 +32,7 @@ func executeInference(
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
 	logprobsOptimizationEnabled bool,
-	vocabularySize int,
+	vocabularySize func() int,
 ) (*devshardpkg.ExecuteResult, error) {
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
@@ -149,10 +149,14 @@ func processExecutionHTTPResponse(
 	}, nil
 }
 
-func checkStopTokenIDs(body []byte, vocabularySize int) error {
+// checkStopTokenIDs resolves vocabularySize only for a request with stop ids: the lookup can block on the chain.
+func checkStopTokenIDs(body []byte, vocabularySize func() int) error {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(body, &requestMap); err != nil {
 		return fmt.Errorf("modify request body: %w", err)
 	}
-	return completionapi.ValidateStopTokenIDs(requestMap, vocabularySize)
+	if !completionapi.HasStopTokenIDs(requestMap) {
+		return nil
+	}
+	return completionapi.ValidateStopTokenIDs(requestMap, vocabularySize())
 }

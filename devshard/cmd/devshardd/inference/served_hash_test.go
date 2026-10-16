@@ -52,7 +52,7 @@ func runServedRequest(t *testing.T, request devshardpkg.ExecuteRequest, contentT
 			}
 			return http.DefaultClient.Do(call)
 		},
-		fixedChainParams{}, optimizationEnabled, 0)
+		fixedChainParams{}, optimizationEnabled, fixedVocabularySize(0))
 	require.NoError(t, err)
 	return servedInference{result: result, stored: store.responsePayload, forwarded: toGateway.Body.String()}
 }

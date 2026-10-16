@@ -113,3 +113,14 @@ func TestStopTokenIDsOf(t *testing.T) {
 	require.Equal(t, map[string]struct{}{"7": {}, "200020": {}}, ids)
 	require.Nil(t, StopTokenIDsOf(map[string]interface{}{}))
 }
+
+// Test flow:
+// 1. Check HasStopTokenIDs on absent, null, empty, non-empty and non-array stop_token_ids.
+// 2. Only a non-empty array or a non-array value reports true.
+func TestHasStopTokenIDs(t *testing.T) {
+	for raw, want := range map[string]bool{`{}`: false, `{"stop_token_ids":null}`: false, `{"stop_token_ids":[]}`: false, `{"stop_token_ids":[7]}`: true, `{"stop_token_ids":"7"}`: true} {
+		var requestMap map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(raw), &requestMap))
+		require.Equal(t, want, HasStopTokenIDs(requestMap), raw)
+	}
+}

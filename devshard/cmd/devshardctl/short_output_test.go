@@ -168,3 +168,28 @@ func TestWireStopTokenVocabularyInstallsChainSource(t *testing.T) {
 	require.NotNil(t, source.resolver)
 	require.Zero(t, source.VocabularySize("m"), "no epoch yet: unknown, so refused")
 }
+
+type countingStopTokenVocabulary struct{ calls int }
+
+func (c *countingStopTokenVocabulary) VocabularySize(string) int {
+	c.calls++
+	return 1000
+}
+
+// Test flow:
+// 1. Normalize requests with stop_token_ids absent, null and an empty array.
+// 2. Each is accepted without resolving the vocabulary.
+// 3. A request with stop ids resolves it once.
+func TestStopTokenIDsVocabularyResolvedOnlyWhenNeeded(t *testing.T) {
+	vocabulary := &countingStopTokenVocabulary{}
+	withStopTokenVocabulary(t, vocabulary)
+	for _, extra := range []string{``, `,"stop_token_ids":null`, `,"stop_token_ids":[]`} {
+		_, _, err := normalizedFields(t, `{"messages":[{"role":"user","content":"hi"}],"max_tokens":8`+extra+`}`)
+		require.NoError(t, err, extra)
+	}
+	require.Zero(t, vocabulary.calls)
+
+	_, _, err := normalizedFields(t, `{"messages":[{"role":"user","content":"hi"}],"max_tokens":8,"stop_token_ids":[7]}`)
+	require.NoError(t, err)
+	require.Equal(t, 1, vocabulary.calls)
+}

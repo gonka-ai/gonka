@@ -45,6 +45,37 @@ class PromptHashingTests {
     }
 
     @Test
+    fun `grammar-constrained prompt hashes match cross-language vectors`() {
+        // Keep in sync with TestModifyRequestBodyWithLogprobsMode_KotlinGrammarVectors in
+        // common/completionapi/request_test.go -- same inputs, same expected hashes.
+        val vectors = listOf(
+            Triple(""""response_format":{"type":"json_object"}""", true, "14375a569703654ee49597e76e438a9bc4a4077af752f8d6372d63be23b58f3f"),
+            Triple(""""response_format":{"type":"json_schema","json_schema":{"name":"r","schema":{"type":"object"}}}""", true, "51118e2c54ff99d1d62b191728d77c5d9582e940d86f666bfe2ba9c852d84273"),
+            Triple(""""response_format":{"type":"structural_tag","structures":[],"triggers":[]}""", true, "6ce640f00a6c178c33cf745b51c1a50461aac03262b0a68dd184dc7253631755"),
+            Triple(""""structured_outputs":{"regex":"[a-z]+"}""", true, "6a6583c4d8b4d7b7c86f74376e39dd0a68899f697b8a97c73b59a6685653723e"),
+            Triple(""""structured_outputs":{"choice":["yes","no"]}""", true, "82d7ac91c6881194fb8024104eee99cee2a7c42ee9bf93da6117108ca3444920"),
+            Triple(""""structured_outputs":{"json_object":true}""", true, "8631718544e8fc5058fc88c48c8eb7c08fdfeb3b987f293db03f47d7a70d0f66"),
+            Triple(""""tool_choice":"required"""", true, "4b256311efaf6dc9a557d43c5539db0b4f654009c940f911f9ca1cb765eccd8f"),
+            Triple(""""tool_choice":{"type":"function","function":{"name":"get_weather"}}""", true, "fa5706891721b4ad0245ee0e061089c5b30edc55116f62636d185183268c24a3"),
+            Triple(""""response_format":{"type":"text"}""", false, "4757432586a04dc9d98a226bf4f5932f6dfbec2ab73240ec945f5a0d6b94d907"),
+            Triple(""""structured_outputs":{"json_object":false}""", false, "57508112a67145d91c0300de0b69d1a34a821c6a6f654c0983528e5d47ebf89e"),
+            Triple(""""tool_choice":"auto"""", false, "a8094f7e1cf2de859a9ab0e505d89fbf99e215276690b98ef14c8306bf97b22a"),
+            Triple(""""tool_choice":{"type":"function","function":{"name":""}}""", false, "b1e4fb885dfa07cc0cd83e98c1fe64d7e4f372ac12ad979a5ce148297597ced8"),
+        )
+        for ((field, grammar, expectedHash) in vectors) {
+            val requestJson = """{"model":"m","max_tokens":100,"min_tokens":16,"messages":[{"role":"user","content":"hi"}],$field}"""
+            @Suppress("UNCHECKED_CAST")
+            val modifiedMap = gson.fromJson(PromptHashing.modifyRequestBody(requestJson, 0), Map::class.java) as Map<String, Any?>
+            if (grammar) {
+                assertThat(modifiedMap).describedAs(field).doesNotContainKey("min_tokens")
+            } else {
+                assertThat(modifiedMap["min_tokens"]).describedAs(field).isEqualTo(16.0)
+            }
+            assertThat(PromptHashing.computeModifiedPromptHash(requestJson, 0)).describedAs(field).isEqualTo(expectedHash)
+        }
+    }
+
+    @Test
     fun `logprob manipulation produces different hash`() {
         // Security test: payloads with same content but different logprobs must have different hashes
         // This prevents attack where executor serves fake logprobs with valid content

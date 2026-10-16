@@ -186,10 +186,34 @@ object PromptHashing {
         requestMap["max_completion_tokens"] = maxTokens
 
         val minTokens = getMinTokens(requestMap)
-        if (minTokens > 0) {
+        if (minTokens > 0 && !grammarConstrained(requestMap)) {
             requestMap["min_tokens"] = minOf(minTokens, maxTokens)
         } else {
             requestMap.remove("min_tokens")
+        }
+    }
+
+    // Mirrors completionapi.GrammarConstrained.
+    private fun grammarConstrained(requestMap: Map<String, Any?>): Boolean {
+        val responseFormat = requestMap["response_format"]
+        if (responseFormat is Map<*, *>) {
+            when (responseFormat["type"]) {
+                "json_object", "json_schema", "structural_tag" -> return true
+            }
+        }
+        val structuredOutputs = requestMap["structured_outputs"]
+        if (structuredOutputs is Map<*, *>) {
+            if (structuredOutputs["json_object"] == true) {
+                return true
+            }
+            if (listOf("json", "regex", "choice", "grammar", "structural_tag").any { structuredOutputs[it] != null }) {
+                return true
+            }
+        }
+        return when (val toolChoice = requestMap["tool_choice"]) {
+            is String -> toolChoice == "required"
+            is Map<*, *> -> ((toolChoice["function"] as? Map<*, *>)?.get("name") as? String)?.isNotEmpty() == true
+            else -> false
         }
     }
 

@@ -466,3 +466,34 @@ func TestShortOutputChecksLogOnlyPerModel(t *testing.T) {
 	require.IsType(t, &SimilarityValidationResult{}, result)
 	require.False(t, passes(result, miniMaxThreshold))
 }
+
+// Test flow:
+// 1. Replay a stored <EMPTY> response whose prompt has min_tokens 8 and an out-of-range stop id.
+// 2. With a known vocabulary the validation is invalid and never reaches the node.
+// 3. With an unknown vocabulary the replay drops stop_token_ids, as on the normal path.
+func TestExecuteValidationEmptySentinelStopTokenIDs(t *testing.T) {
+	prompt := []byte(`{"model":"m","stream":true,"messages":[{"role":"user","content":"hi"}],"max_tokens":16,"min_tokens":8,"stop_token_ids":[9999999]}`)
+	sentinel := responsePayloadJSON("<EMPTY>", -0.5)
+
+	var replays int
+	result, err := ExecuteValidationWithPolicy(context.Background(), "7", prompt, sentinel,
+		func(context.Context, []byte) (*http.Response, error) {
+			replays++
+			return nil, fmt.Errorf("must not replay")
+		},
+		0, 0, "processed", 1000, DefaultShortOutputScoringPolicy)
+	require.NoError(t, err)
+	require.Zero(t, replays)
+	require.Equal(t, "stop_token_ids outside the model vocabulary.", result.(*InvalidInferenceResult).Reason)
+
+	var replayed map[string]any
+	_, err = ExecuteValidationWithPolicy(context.Background(), "7", prompt, sentinel,
+		func(_ context.Context, body []byte) (*http.Response, error) {
+			require.NoError(t, json.Unmarshal(body, &replayed))
+			return fakeHTTPResponse(http.StatusInternalServerError, nil), nil
+		},
+		0, 0, "processed", 0, DefaultShortOutputScoringPolicy)
+	require.Error(t, err)
+	require.NotContains(t, replayed, "stop_token_ids")
+	require.NotContains(t, replayed, "enforced_tokens")
+}
