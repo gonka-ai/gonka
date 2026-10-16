@@ -40,9 +40,14 @@ func TestChallengeClaimsDecodeEachNonceOnce(t *testing.T) {
 	}()
 	<-f.store.entered
 
+	const waiters = 29
+	var waiting atomic.Int32
+	testBeforeClaimWait = func() { waiting.Add(1) }
+	t.Cleanup(func() { testBeforeClaimWait = nil })
+
 	var wg sync.WaitGroup
-	errs := make(chan error, 29)
-	for range 29 {
+	errs := make(chan error, waiters)
+	for range waiters {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -52,11 +57,11 @@ func TestChallengeClaimsDecodeEachNonceOnce(t *testing.T) {
 			errs <- err
 		}()
 	}
+	// The first claim is already in the list once the store gate is entered, so
+	// that length does not mean the others have seen it. Releasing the gate
+	// before they wait lets them observe the nonces as already applied.
 	require.Eventually(t, func() bool {
-		f.host.mu.Lock()
-		n := len(f.host.writer.claims)
-		f.host.mu.Unlock()
-		return n == 1
+		return waiting.Load() == waiters
 	}, 2*time.Second, time.Millisecond)
 
 	close(f.store.gate)
