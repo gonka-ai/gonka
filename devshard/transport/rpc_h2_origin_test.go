@@ -483,3 +483,45 @@ func testHostnameCert(t *testing.T, dnsName string) (tls.Certificate, *x509.Cert
 		Leaf:        parsed,
 	}, parsed
 }
+
+func TestPeerConnGRPCClientStaysOnH2AfterDowngrade(t *testing.T) {
+	ResetRPCH2ClientPoolForTest()
+	t.Cleanup(ResetRPCH2ClientPoolForTest)
+	h2, accepts := startCountingH2CServer(t)
+	var h1Hits atomic.Int32
+	h1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h1Hits.Add(1)
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	t.Cleanup(h1.Close)
+	p := NewPeerConn(PeerConnConfig{
+		BaseURL:      h1.URL,
+		DoorEscrowID: "1",
+		GRPC:         true,
+		DialSet:      PeerRPCDialSet{InferenceURL: h1.URL, H2URL: h2.URL},
+	})
+	t.Cleanup(p.Close)
+	require.NotNil(t, p.httpH2)
+	require.Same(t, p.httpH2, p.httpFor(true))
+	require.Same(t, p.http, p.httpFor(false))
+
+	// The switch has gone back to HTTP/1.1 (a miss on the h2 origin). A
+	// native gRPC client selected before that must still send HTTP/2 to
+	// the h2 origin, never gRPC framing onto the HTTP/1.1 path.
+	p.origin.setH2(false)
+	req, err := http.NewRequest(http.MethodGet, h1.URL+"/", nil)
+	require.NoError(t, err)
+	resp, err := p.httpFor(true).Do(req)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, 2, resp.ProtoMajor)
+	require.Equal(t, int32(1), accepts.Load())
+	require.Zero(t, h1Hits.Load())
+
+	resp, err = p.httpFor(false).Do(req.Clone(req.Context()))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int32(1), h1Hits.Load(), "Connect clients follow the switch onto HTTP/1.1")
+}
