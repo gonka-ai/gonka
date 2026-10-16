@@ -291,7 +291,7 @@ func TestRPCH2DialTLSServerNameUsesInferenceHost(t *testing.T) {
 			gotSNI.Store(hello.ServerName)
 			return &tls.Config{
 				Certificates: []tls.Certificate{leaf},
-				NextProtos:   []string{http2.NextProtoTLS},
+				NextProtos:   []string{PeerRPCALPN},
 			}, nil
 		},
 	})
@@ -312,7 +312,7 @@ func TestRPCH2DialTLSServerNameUsesInferenceHost(t *testing.T) {
 
 	tr := newRPCH2Transport(nil, false, want, 0, 0, 0)
 	tr.TLSClientConfig.RootCAs = pool
-	// x/net would pass the H2URL dial host here (127.0.0.1 / proxy).
+	// x/net would pass the dial address and its own h2 ALPN here.
 	cfg := &tls.Config{
 		ServerName: "127.0.0.1",
 		RootCAs:    pool,
@@ -327,13 +327,22 @@ func TestRPCH2DialTLSServerNameUsesInferenceHost(t *testing.T) {
 	tlsConn, ok := conn.(*tls.Conn)
 	require.True(t, ok)
 	require.Equal(t, want, tlsConn.ConnectionState().ServerName)
+	require.Equal(t, PeerRPCALPN, tlsConn.ConnectionState().NegotiatedProtocol)
 }
 
-func TestRPCH2DialTLSRejectsHTTP11ALPN(t *testing.T) {
-	err := dialRPCH2TLS(t, []string{"http/1.1"}, []string{http2.NextProtoTLS, "http/1.1"})
+func TestRPCH2DialTLSOffersOnlyPeerRPCALPN(t *testing.T) {
+	var offered atomic.Value
+	err := dialRPCH2TLSObserved(t, []string{PeerRPCALPN, http2.NextProtoTLS, "http/1.1"}, []string{http2.NextProtoTLS, "http/1.1"}, &offered)
+	require.NoError(t, err)
+	require.Equal(t, []string{PeerRPCALPN}, offered.Load(), "the client must not offer h2 or http/1.1: the proxy sends those to nginx")
+}
+
+func TestRPCH2DialTLSRejectsH2ALPN(t *testing.T) {
+	// A listener that negotiates plain h2 is nginx's TLS, not the peer-RPC
+	// listener. The client must not send an HTTP/2 preface there.
+	err := dialRPCH2TLS(t, []string{http2.NextProtoTLS, "http/1.1"}, []string{http2.NextProtoTLS, "http/1.1"})
 	require.Error(t, err)
-	require.True(t, isRPCH2Miss(err), "http/1.1 ALPN must be an h2 miss, not Connect")
-	require.Contains(t, err.Error(), `unexpected ALPN protocol "http/1.1"`)
+	require.True(t, isRPCH2Miss(err), "h2 from the JSON listener must be an h2 miss, so Connect goes HTTP/1.1")
 }
 
 func TestRPCH2DialTLSRejectsEmptyALPN(t *testing.T) {
@@ -345,6 +354,15 @@ func TestRPCH2DialTLSRejectsEmptyALPN(t *testing.T) {
 
 func dialRPCH2TLS(t *testing.T, serverProtos, clientProtos []string) error {
 	t.Helper()
+	return dialRPCH2TLSObserved(t, serverProtos, clientProtos, nil)
+}
+
+// dialRPCH2TLSObserved handshakes a TLS listener that offers serverProtos.
+// A Go TLS server with a NextProtos list refuses a client whose list has
+// no overlap, which is one of the miss shapes; a server list that is
+// a superset records what the client offered in offered.
+func dialRPCH2TLSObserved(t *testing.T, serverProtos, clientProtos []string, offered *atomic.Value) error {
+	t.Helper()
 	const name = "join.example.com"
 	leaf, parsed := testHostnameCert(t, name)
 	pool := x509.NewCertPool()
@@ -352,6 +370,12 @@ func dialRPCH2TLS(t *testing.T, serverProtos, clientProtos []string) error {
 	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
 		Certificates: []tls.Certificate{leaf},
 		NextProtos:   serverProtos,
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			if offered != nil {
+				offered.Store(append([]string(nil), hello.SupportedProtos...))
+			}
+			return nil, nil
+		},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })

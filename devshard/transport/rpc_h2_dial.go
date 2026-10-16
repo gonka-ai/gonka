@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,28 +18,26 @@ import (
 )
 
 const (
-	envRPCH2Port = "DEVSHARD_RPC_H2_PORT"
-	// envRPCH2Host is the TCP dial hostname for the h2 origin (overlay
-	// "proxy"). TLS SNI and certificate verify always use InferenceUrl's
-	// hostname, never this value.
-	envRPCH2Host    = "DEVSHARD_RPC_H2_HOST"
+	// envRPCH2Upgrade turns the HTTP/2 probe off. Unset is on: Attach
+	// first tries prior-knowledge HTTP/2 (h2c on an HTTP InferenceUrl, TLS
+	// with PeerRPCALPN on HTTPS) on InferenceUrl's own origin, and drops to
+	// Connect over HTTP/1.1 on the same origin when that origin does not
+	// speak it. "0" / "false" / "no" / "off" stay on HTTP/1.1.
 	envRPCH2Upgrade = "DEVSHARD_RPC_H2_UPGRADE"
-	// envRPCH2FrontHost lists shared front doors (comma-separated hostnames,
-	// testenv: versiond-router). The overlay dial host replaces only those.
-	// Any other InferenceUrl is a direct participant and stays on h2c at its
-	// own origin. Unset applies the overlay host to every base.
-	envRPCH2FrontHost = "DEVSHARD_RPC_H2_FRONT_HOST"
-	envRPCH2GRPC      = "DEVSHARD_RPC_GRPC"
+	envRPCH2GRPC    = "DEVSHARD_RPC_GRPC"
 
-	// DefaultRPCH2Port is the in-network overlay / join RPC HTTP/2 listen.
-	// JSON and catalog stay on InferenceUrl (testenv :8080). Unset env still
-	// means no h2 dial; this is only the number operators set when opting in.
-	DefaultRPCH2Port = 8443
+	// PeerRPCALPN is the ALPN token a peer offers on an HTTPS InferenceUrl.
+	// The public proxy routes a ClientHello carrying it to the peer-RPC
+	// listener on the same :443, which negotiates the token and speaks
+	// HTTP/2. nginx behind an older wrapping negotiates nothing, so the
+	// probe ends there and the peer uses HTTP/1.1. The token is not "h2":
+	// browsers and the JSON clients offer h2 and must keep landing on nginx.
+	PeerRPCALPN = "gonka-rpc/1"
 
-	// DefaultRPCH2MissTTL is retained for the miss-cache unit tests.
-	// Attach does not record a miss: a current hop fails closed and the
-	// next attempt probes h2 again. HTTP/1.1 is only the dial when H2URL
-	// is empty (upgrade off or port unset), which is the 0.2.15-v5 pin.
+	// DefaultRPCH2MissTTL is how long an InferenceUrl host stays on
+	// HTTP/1.1 after its origin did not speak HTTP/2. The next Attach or
+	// session refresh after that probes HTTP/2 again, so a host whose
+	// wrapping was updated in the meantime is picked up without a restart.
 	DefaultRPCH2MissTTL = 30 * time.Minute
 
 	// DefaultRPCH2MissTTLJitter is ± this fraction of DefaultRPCH2MissTTL so
@@ -68,15 +65,17 @@ const (
 	DefaultRPCH2PingTimeout = 5 * time.Second
 )
 
-// PeerRPCDialSet is the Phase 6 client origin pair. Upgrade stays off unless
-// DEVSHARD_RPC_H2_UPGRADE is on and DEVSHARD_RPC_H2_PORT is set.
+// PeerRPCDialSet is the client origin pair. Both are InferenceUrl's own
+// origin: peer RPC shares the public port with the JSON API, and the two
+// sides agree on HTTP/2 or HTTP/1.1 in band. H2URL is empty only when
+// DEVSHARD_RPC_H2_UPGRADE is off.
 type PeerRPCDialSet struct {
 	InferenceURL string
 	H2URL        string
 }
 
-// Origins returns InferenceURL, plus H2URL when upgrade is on. The client
-// dial set is only these origins — never a child bind.
+// Origins returns InferenceURL, plus H2URL when the HTTP/2 probe is on.
+// The client dial set is only these origins — never a child bind.
 func (s PeerRPCDialSet) Origins() []string {
 	out := make([]string, 0, 2)
 	if s.InferenceURL != "" {
@@ -88,9 +87,20 @@ func (s PeerRPCDialSet) Origins() []string {
 	return out
 }
 
-// RPCH2UpgradeEnabled reports whether DEVSHARD_RPC_H2_UPGRADE is on.
-// Empty / unset / "0" / "false" / "off" stay HTTP/1.1 on InferenceUrl.
+// RPCH2UpgradeEnabled reports whether the HTTP/2 probe is on. Unset is on.
+// "0" / "false" / "no" / "off" stay on Connect over HTTP/1.1.
 func RPCH2UpgradeEnabled(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+// RPCH2GRPCEnabled reports whether native gRPC (connect.WithGRPC) is on.
+// Empty / unset stays Connect. HTTP/1.1 fallback never uses gRPC.
+func RPCH2GRPCEnabled(raw string) bool {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "1", "true", "yes", "on":
 		return true
@@ -99,78 +109,32 @@ func RPCH2UpgradeEnabled(raw string) bool {
 	}
 }
 
-// RPCH2GRPCEnabled reports whether native gRPC (connect.WithGRPC) is on.
-// Empty / unset stays Connect. HTTP/1.1 fallback never uses gRPC.
-func RPCH2GRPCEnabled(raw string) bool {
-	return RPCH2UpgradeEnabled(raw)
-}
-
-// PeerRPCDialSetFromEnv reads InferenceURL plus optional H2 host/port/upgrade.
+// PeerRPCDialSetFromEnv reads InferenceURL plus the optional upgrade switch.
 func PeerRPCDialSetFromEnv(inferenceURL string) (PeerRPCDialSet, error) {
-	return PeerRPCDialSetFrom(
-		inferenceURL,
-		os.Getenv(envRPCH2Host),
-		os.Getenv(envRPCH2Port),
-		os.Getenv(envRPCH2Upgrade),
-	)
+	return PeerRPCDialSetFrom(inferenceURL, os.Getenv(envRPCH2Upgrade))
 }
 
-// PeerRPCDialSetFrom builds the origin pair. Upgrade off or port unset →
-// H2URL empty. Host empty rewrites InferenceURL's hostname to h2Port
-// (join same-host). Overlay sets host to "proxy" as the TCP dial name
-// only; TLS SNI/verify stay on InferenceURL's hostname.
-func PeerRPCDialSetFrom(inferenceURL, h2Host, h2Port, upgrade string) (PeerRPCDialSet, error) {
+// PeerRPCDialSetFrom builds the origin pair. H2URL is InferenceURL's
+// scheme and host with no path: the same listen, so the same SNI and
+// certificate. Upgrade off leaves H2URL empty.
+func PeerRPCDialSetFrom(inferenceURL, upgrade string) (PeerRPCDialSet, error) {
 	out := PeerRPCDialSet{InferenceURL: strings.TrimSpace(inferenceURL)}
 	if out.InferenceURL == "" {
 		return PeerRPCDialSet{}, fmt.Errorf("inference URL is empty")
 	}
-	if _, err := url.Parse(out.InferenceURL); err != nil {
-		return PeerRPCDialSet{}, fmt.Errorf("inference URL: %w", err)
+	origin, err := inferenceOrigin(out.InferenceURL)
+	if err != nil {
+		return PeerRPCDialSet{}, err
 	}
 	if !RPCH2UpgradeEnabled(upgrade) {
 		return out, nil
 	}
-	raw := strings.TrimSpace(h2Port)
-	if raw == "" {
-		return out, nil
-	}
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 || n > 65535 {
-		return PeerRPCDialSet{}, fmt.Errorf("DEVSHARD_RPC_H2_PORT %q is not a valid port", raw)
-	}
-	h2, err := originWithHostPort(out.InferenceURL, strings.TrimSpace(h2Host), n)
-	if err != nil {
-		return PeerRPCDialSet{}, err
-	}
-	out.H2URL = h2
+	out.H2URL = origin
 	return out, nil
 }
 
-// keepDirectH2Origin is true when DEVSHARD_RPC_H2_FRONT_HOST is set and base
-// names some other host. Catch-up and gossip to a solo must not be rewritten
-// onto the overlay proxy: the router hashes by escrow and the solo never
-// sees the diff.
-func keepDirectH2Origin(base string) bool {
-	raw := strings.TrimSpace(os.Getenv(envRPCH2FrontHost))
-	if raw == "" {
-		return false
-	}
-	u, err := url.Parse(strings.TrimSpace(base))
-	if err != nil || u.Hostname() == "" {
-		return false
-	}
-	host := u.Hostname()
-	for _, part := range strings.Split(raw, ",") {
-		if strings.EqualFold(strings.TrimSpace(part), host) {
-			return false
-		}
-	}
-	return true
-}
-
-// directH2Origin is the base URL's scheme and host, with no path. versiond
-// accepts h2c on that public listen.
-func directH2Origin(base string) (string, error) {
+// inferenceOrigin is the base URL's scheme and host, with no path.
+func inferenceOrigin(base string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(base))
 	if err != nil {
 		return "", fmt.Errorf("inference URL: %w", err)
@@ -178,28 +142,11 @@ func directH2Origin(base string) (string, error) {
 	if u.Scheme == "" || u.Host == "" {
 		return "", fmt.Errorf("inference URL %q has no host", base)
 	}
-	u.Path = ""
-	u.RawPath = ""
-	u.RawQuery = ""
-	u.Fragment = ""
-	return u.String(), nil
-}
-
-func originWithHostPort(raw, host string, port int) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("inference URL: %w", err)
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	default:
+		return "", fmt.Errorf("inference URL %q: scheme %q is not http or https", base, u.Scheme)
 	}
-	if u.Host == "" {
-		return "", fmt.Errorf("inference URL %q has no host", raw)
-	}
-	if host == "" {
-		host = u.Hostname()
-	}
-	if host == "" {
-		return "", fmt.Errorf("inference URL %q has no hostname", raw)
-	}
-	u.Host = net.JoinHostPort(host, strconv.Itoa(port))
 	u.Path = ""
 	u.RawPath = ""
 	u.RawQuery = ""
@@ -220,7 +167,6 @@ func inferenceHostKey(raw string) string {
 }
 
 // rpcH2ServerName is TLS SNI and certificate verify: InferenceUrl's hostname.
-// DEVSHARD_RPC_H2_HOST is a dial name only and must not appear here.
 func rpcH2ServerName(inferenceURL string) string {
 	u, err := url.Parse(strings.TrimSpace(inferenceURL))
 	if err != nil || u == nil {
@@ -303,8 +249,15 @@ func (c *h2MissCache) reset() {
 
 var rpch2Miss = newH2MissCache(DefaultRPCH2MissTTL, nil)
 
+// skipRPCH2 is whether this InferenceUrl host missed HTTP/2 inside the
+// miss TTL. Attach then goes straight to HTTP/1.1.
 func skipRPCH2(inferenceURL string) bool {
 	return rpch2Miss.skip(inferenceHostKey(inferenceURL))
+}
+
+// rememberRPCH2Miss pins this InferenceUrl host to HTTP/1.1 for the miss TTL.
+func rememberRPCH2Miss(inferenceURL string) {
+	rpch2Miss.remember(inferenceHostKey(inferenceURL))
 }
 
 // ResetRPCH2MissCacheForTest clears the process-wide h2-miss map and restores
@@ -329,8 +282,8 @@ func RPCH2MissCachedForTest(inferenceURL string) bool {
 }
 
 // h2MissLog is one Warn per InferenceUrl host per miss TTL. Later misses in
-// that window are Debug. The attach loop retries a dead hop, and several
-// PeerConns can miss the same host together; only the first of those is Warn.
+// that window are Debug. Several PeerConns can miss the same host together;
+// only the first of those is Warn.
 type h2MissLog struct {
 	mu    sync.Mutex
 	until map[string]time.Time
@@ -374,18 +327,19 @@ func noteRPCH2Miss(host, h2URL string, err error) {
 		"h2_url", h2URL,
 		"error", err,
 	}
+	kv = append(kv, "http11_for", DefaultRPCH2MissTTL.String())
 	if rpch2MissLog.first(host) {
-		logging.Warn("peer rpc h2 origin missed; failing closed", kv...)
+		logging.Warn("peer rpc origin does not speak HTTP/2; using HTTP/1.1", kv...)
 		return
 	}
-	logging.Debug("peer rpc h2 origin missed; failing closed", kv...)
+	logging.Debug("peer rpc origin does not speak HTTP/2; using HTTP/1.1", kv...)
 }
 
 // isRPCH2Miss is a failed h2 origin (closed, not h2c, refuse, preface,
-// dial or TLS that hit the probe timeout). Connect status from a working
-// HTTP/2 server — including Unavailable / Unknown after an RPC — is not
-// a miss. A context deadline on the Attach call is not a miss either:
-// that RPC has the full DefaultAttachTimeout.
+// ALPN, dial or TLS that hit the probe timeout). Connect status from a
+// working HTTP/2 server — including Unavailable / Unknown after an RPC —
+// is not a miss. A context deadline on the Attach call is not a miss
+// either: that RPC has the full DefaultAttachTimeout.
 func isRPCH2Miss(err error) bool {
 	return isRPCH2TransportMiss(err)
 }

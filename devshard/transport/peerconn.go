@@ -102,8 +102,9 @@ type PeerConnConfig struct {
 	// below that floor (unix-second TTL refresh) set this explicitly.
 	MinTTL time.Duration
 	// DialSet is the optional h2 origin. Empty H2URL means HTTP/1.1 on
-	// BaseURL only. Production fills this from DEVSHARD_RPC_H2_*.
-	// H2URL is the TCP target; TLS SNI/verify use InferenceURL's hostname.
+	// BaseURL only. Production fills H2URL with InferenceUrl's own origin
+	// (PeerRPCDialSetFromEnv); tests may point it elsewhere. TLS SNI and
+	// verify use InferenceURL's hostname.
 	DialSet PeerRPCDialSet
 	// H2ProbeTimeout bounds dial and TLS for the h2 origin. The Attach
 	// RPC uses DefaultAttachTimeout. Zero uses DefaultRPCH2ProbeTimeout (3s).
@@ -113,8 +114,8 @@ type PeerConnConfig struct {
 	H2ReadIdleTimeout time.Duration
 	// H2PingTimeout bounds that PING. Zero uses DefaultRPCH2PingTimeout (5s).
 	H2PingTimeout time.Duration
-	// GRPC uses connect.WithGRPC on the h2 origin only. HTTP/1.1 fallback
-	// stays Connect. Ignored when H2URL is empty.
+	// GRPC uses connect.WithGRPC while the live origin is HTTP/2. The
+	// HTTP/1.1 fallback stays Connect. Ignored when H2URL is empty.
 	GRPC bool
 }
 
@@ -814,9 +815,10 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				err = io.EOF
 			}
 			// A dead HTTP/2 origin leaves this loop. The next Attach probes
-			// h2 again and does not use InferenceUrl. Shutting down, a
-			// clean EOF, and a local stream-cap refusal stay here and
-			// reopen Watch with the same token.
+			// h2 again and drops to HTTP/1.1 if the origin still does not
+			// answer it. Shutting down, a clean EOF, and a local
+			// stream-cap refusal stay here and reopen Watch with the same
+			// token.
 			if errors.Is(err, errWatchStreamCap) || (!isRPCH2TransportMiss(err) && watchReopen(err)) {
 				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
 				continue
@@ -833,10 +835,10 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			if err != nil {
 				if isRPCH2TransportMiss(err) {
 					// Origin is gone (listen/RST/ALPN/half-open). End
-					// Watch; do not flip setH2(false). The outer loop
-					// probes h2 again and does not Attach on InferenceUrl.
-					// A slow Attach (DeadlineExceeded) is not this:
-					// keep Watch and retry refresh.
+					// Watch. The outer loop probes h2 again and falls
+					// back to HTTP/1.1 if the origin still misses. A
+					// slow Attach (DeadlineExceeded) is not this: keep
+					// Watch and retry refresh.
 					stopWatch()
 					p.incReattach(reattachReasonWatch)
 					return sawBeat.Load(), err
@@ -953,11 +955,7 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
 	defer cancel()
 	if p.liveSession() {
-		msg, err := p.newAttachRequest()
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		return p.attachOnce(overall, p.peerAuthClient(true), msg)
+		return p.refreshLive(overall)
 	}
 	h2Tried := false
 	var lastErr error
@@ -998,11 +996,16 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 			if !isRPCH2Miss(err) {
 				return nil, time.Time{}, err
 			}
-			// Stay on the h2 origin so a concurrent RPC cannot slide onto
-			// InferenceUrl. The next loop iteration probes again.
-			// Warn once per InferenceUrl host per miss TTL; retries are Debug.
-			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
-			return nil, time.Time{}, err
+			// The origin did not speak HTTP/2 (older wrapping, closed or
+			// held listen, no ALPN). Pin this host to HTTP/1.1 for the
+			// miss TTL and Attach on the same door over Connect/HTTP/1.1.
+			// Concurrent RPCs follow the switch; none of them was on a
+			// mux that never came up. Warn once per host per TTL.
+			p.noteH2Miss(err)
+			msg, err = p.newAttachRequest()
+			if err != nil {
+				return nil, time.Time{}, err
+			}
 		}
 		tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
 		if err == nil {
@@ -1015,6 +1018,42 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		}
 		return nil, time.Time{}, err
 	}
+}
+
+// refreshLive renews a live session token on the host client. A PeerConn
+// that fell back to HTTP/1.1 probes HTTP/2 again here once the miss TTL
+// has passed: the token is the peer's identity on either transport, so a
+// successful HTTP/2 refresh moves Watch and later RPCs onto the mux. A
+// miss pins HTTP/1.1 for another TTL and the refresh completes there.
+func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
+	msg, err := p.newAttachRequest()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if !p.origin.usingH2() && p.shouldProbeH2() {
+		p.origin.setH2(true)
+		tok, exp, err := p.attachOnce(ctx, p.peerAuthClient(true), msg)
+		if err == nil {
+			return tok, exp, nil
+		}
+		if p.ctx.Err() != nil || !isRPCH2Miss(err) {
+			return nil, time.Time{}, err
+		}
+		p.noteH2Miss(err)
+		msg, err = p.newAttachRequest()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	return p.attachOnce(ctx, p.peerAuthClient(true), msg)
+}
+
+// noteH2Miss records that this InferenceUrl host does not speak HTTP/2
+// and switches this PeerConn to Connect over HTTP/1.1 on InferenceUrl.
+func (p *PeerConn) noteH2Miss(err error) {
+	noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
+	rememberRPCH2Miss(p.cfg.BaseURL)
+	p.origin.setH2(false)
 }
 
 func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
@@ -1063,8 +1102,11 @@ func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthS
 	return resp.Msg.GetSessionToken(), expires, nil
 }
 
+// shouldProbeH2 is whether the next Attach tries prior-knowledge HTTP/2
+// first: an h2 origin is configured and this InferenceUrl host has not
+// missed HTTP/2 inside the miss TTL.
 func (p *PeerConn) shouldProbeH2() bool {
-	return p != nil && p.cfg.DialSet.H2URL != ""
+	return p != nil && p.cfg.DialSet.H2URL != "" && !skipRPCH2(p.cfg.BaseURL)
 }
 
 func (p *PeerConn) useGRPC() bool {
@@ -1094,8 +1136,8 @@ func h2ProbeTimeout(cfg PeerConnConfig) time.Duration {
 	return DefaultRPCH2ProbeTimeout
 }
 
-// UsingH2 is whether the live origin is the published hop (prior-knowledge
-// HTTP/2), not InferenceUrl HTTP/1.1.
+// UsingH2 is whether this PeerConn speaks prior-knowledge HTTP/2 on the
+// public origin, not Connect over HTTP/1.1.
 func (p *PeerConn) UsingH2() bool {
 	return p != nil && p.origin.usingH2()
 }

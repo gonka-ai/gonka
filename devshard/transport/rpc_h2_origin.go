@@ -18,8 +18,10 @@ import (
 )
 
 // originSwitchTransport sends Connect on InferenceUrl (HTTP/1.1) or rewrites
-// to H2URL on a prior-knowledge http2.Transport. Never uses http.Transport
-// against the h2 origin (that would silently speak HTTP/1.1).
+// to H2URL on a prior-knowledge http2.Transport. Both are the same public
+// origin; the switch is which protocol this PeerConn speaks there. Never
+// uses http.Transport against the h2 origin (that would silently speak
+// HTTP/1.1 on a mux).
 type originSwitchTransport struct {
 	h1    http.RoundTripper
 	h2    http.RoundTripper
@@ -70,10 +72,10 @@ func rewriteOrigin(req *http.Request, origin *url.URL) *http.Request {
 	return out
 }
 
-// rpch2ClientPool is the process-wide h2 client. Overlay (same H2URL) and
-// join-same-host mux every PeerConn onto one TCP. Distinct remotes (distinct
-// H2URL) stay separate. TLS also keys on SNI so two InferenceUrl hostnames
-// do not share a handshake. h2c ignores SNI so overlay through proxy muxes.
+// rpch2ClientPool is the process-wide h2 client. PeerConns to the same
+// origin (one host's escrows, or several hosts behind one public proxy)
+// mux onto one TCP. Distinct origins stay separate. TLS also keys on SNI
+// so two InferenceUrl hostnames do not share a handshake.
 type rpch2ClientPool struct {
 	mu sync.Mutex
 	m  map[string]*http2.Transport
@@ -191,8 +193,9 @@ func rpch2ProbeTimeoutError(err error) error {
 	return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("h2 probe timeout")}
 }
 
-// rpch2TLSConfig clones cfg and sets ServerName to InferenceUrl's hostname.
-// x/net's newTLSConfig would otherwise use the dial address (H2_HOST / proxy).
+// rpch2TLSConfig clones cfg, sets ServerName to InferenceUrl's hostname,
+// and offers only PeerRPCALPN. x/net's newTLSConfig would otherwise offer
+// h2 and http/1.1, which the public proxy sends to nginx.
 func rpch2TLSConfig(cfg *tls.Config, serverName string) *tls.Config {
 	if cfg != nil {
 		cfg = cfg.Clone()
@@ -202,15 +205,18 @@ func rpch2TLSConfig(cfg *tls.Config, serverName string) *tls.Config {
 	if serverName != "" {
 		cfg.ServerName = serverName
 	}
+	cfg.NextProtos = []string{PeerRPCALPN}
 	return cfg
 }
 
-// rpch2RequireALPN is x/net's post-handshake check. DialTLSContext skips it,
-// so a TLS listener that only offers http/1.1 would otherwise get an HTTP/2
-// preface. Empty ALPN (cert-only proxy) is the same miss.
+// rpch2RequireALPN replaces x/net's post-handshake check, which
+// DialTLSContext skips. The peer-RPC listener negotiates PeerRPCALPN.
+// A listener that offers something else, or nothing (nginx, a cert-only
+// proxy, an older wrapping), must not get an HTTP/2 preface: that is the
+// miss that sends this peer to HTTP/1.1.
 func rpch2RequireALPN(state tls.ConnectionState) error {
-	if p := state.NegotiatedProtocol; p != http2.NextProtoTLS {
-		return fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", p, http2.NextProtoTLS)
+	if p := state.NegotiatedProtocol; p != PeerRPCALPN {
+		return fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", p, PeerRPCALPN)
 	}
 	return nil
 }
