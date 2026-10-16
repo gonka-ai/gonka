@@ -64,8 +64,9 @@ var (
 )
 
 var (
-	peerConnMu       sync.Mutex
-	peerConnRegistry = map[string]*PeerConn{}
+	peerConnMu         sync.Mutex
+	peerConnRegistry   = map[string]*PeerConn{}
+	peerConnSuperseded = map[*PeerConn]struct{}{}
 )
 
 // PeerConnConfig is one Attach/Watch session to a (host, version, URL, signer) child.
@@ -152,11 +153,17 @@ func (c PeerConnConfig) signerAddress() string {
 }
 
 // registryKey is the PeerConn map identity: host child + signer.
-// The server keeps one session per peer address, so two InferenceUrls for
-// the same child and signer share one Watch. Different signers do not.
+// The server keeps one session per peer address, so one child and signer
+// share one Watch. Different signers do not.
 // Prometheus still uses childID.
 func (c PeerConnConfig) registryKey() string {
 	return c.childID() + "|" + c.signerAddress()
+}
+
+func (c PeerConnConfig) endpointKey() string {
+	base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+	h2 := strings.TrimRight(strings.TrimSpace(c.DialSet.H2URL), "/")
+	return base + "|" + h2
 }
 
 func (c PeerConnConfig) connectBase(escrowID string) string {
@@ -509,9 +516,13 @@ func ReleaseOutboundPeerConns() {
 	signalPeerRelease()
 	cancelInflightPayloadFetches()
 	peerConnMu.Lock()
-	conns := make([]*PeerConn, 0, len(peerConnRegistry))
+	conns := make([]*PeerConn, 0, len(peerConnRegistry)+len(peerConnSuperseded))
 	for key, pc := range peerConnRegistry {
 		delete(peerConnRegistry, key)
+		conns = append(conns, pc)
+	}
+	for pc := range peerConnSuperseded {
+		delete(peerConnSuperseded, pc)
 		conns = append(conns, pc)
 	}
 	peerConnMu.Unlock()
@@ -534,6 +545,18 @@ var testPeerConnBeforeInsert func()
 // stream end and is about to exit.
 var testWatchRecvExit func(*PeerConn)
 
+func livePeerConnLocked(key, endpoint string) *PeerConn {
+	if pc := peerConnRegistry[key]; pc != nil && pc.cfg.endpointKey() == endpoint {
+		return pc
+	}
+	for pc := range peerConnSuperseded {
+		if pc.key == key && pc.cfg.endpointKey() == endpoint {
+			return pc
+		}
+	}
+	return nil
+}
+
 func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 	if outboundPeerReleased.Load() {
 		pc := NewPeerConn(cfg)
@@ -541,8 +564,9 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 		return pc
 	}
 	key := cfg.registryKey()
+	endpoint := cfg.endpointKey()
 	peerConnMu.Lock()
-	if pc := peerConnRegistry[key]; pc != nil {
+	if pc := livePeerConnLocked(key, endpoint); pc != nil {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()
 		return pc
@@ -562,12 +586,21 @@ func acquirePeerConn(cfg PeerConnConfig) *PeerConn {
 		fresh.Close()
 		return fresh
 	}
-	if pc := peerConnRegistry[key]; pc != nil {
+	if pc := livePeerConnLocked(key, endpoint); pc != nil {
 		pc.refs.Add(1)
 		peerConnMu.Unlock()
 		// Never Start'ed. Close cancels the unused context.
 		fresh.Close()
 		return pc
+	}
+	if pc := peerConnRegistry[key]; pc != nil {
+		peerConnSuperseded[pc] = struct{}{}
+		logging.Info("peer rpc endpoint changed; new clients use a new connection",
+			"subsystem", "transport",
+			"peer", cfg.childID(),
+			"old_url", pc.cfg.BaseURL,
+			"new_url", cfg.BaseURL,
+		)
 	}
 	fresh.refs.Store(1)
 	peerConnRegistry[key] = fresh
@@ -742,6 +775,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 	refreshBackoff := time.Duration(0)
 	var reopenBackoff atomic.Int64
 	var sawBeat atomic.Bool
+	var watchNotBefore time.Time
 	refreshDue := time.Now().Add(p.nextRefreshWait(exp, 0))
 	noteBeat := func() {
 		sawBeat.Store(true)
@@ -780,7 +814,11 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 		var reopenTimer *time.Timer
 		var reopenC <-chan time.Time
 		if cancelWatch == nil {
-			reopenTimer = time.NewTimer(p.reopenWait(time.Duration(reopenBackoff.Load())))
+			wait := p.reopenWait(time.Duration(reopenBackoff.Load()))
+			if d := time.Until(watchNotBefore); d > wait {
+				wait = d
+			}
+			reopenTimer = time.NewTimer(wait)
 			reopenC = reopenTimer.C
 		}
 		refreshWait := time.Until(refreshDue)
@@ -821,6 +859,13 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
 				continue
 			}
+			if isServerWatchCap(err) {
+				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
+				if wait := connectRetryAfter(err); wait > 0 {
+					watchNotBefore = time.Now().Add(wait)
+				}
+				continue
+			}
 			p.incReattach(reattachReasonWatch)
 			return sawBeat.Load(), err
 		case <-reopenC:
@@ -847,12 +892,27 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				refreshDue = time.Now().Add(p.nextRefreshWait(exp, refreshBackoff))
 				continue
 			}
+			if cancelWatch != nil {
+				select {
+				case err := <-watchErr:
+					cancelWatch()
+					cancelWatch, watchErr = nil, nil
+					if isServerWatchCap(err) {
+						if wait := connectRetryAfter(err); wait > 0 {
+							watchNotBefore = time.Now().Add(wait)
+						}
+					}
+				default:
+				}
+			}
 			p.incReattach(reattachReasonTTL)
 			p.publishToken(newTok, newExp)
 			tok, exp = newTok, newExp
 			refreshBackoff = 0
 			refreshDue = time.Now().Add(p.nextRefreshWait(exp, 0))
-			startWatch(tok)
+			if cancelWatch != nil || !time.Now().Before(watchNotBefore) {
+				startWatch(tok)
+			}
 		}
 	}
 }
@@ -1476,6 +1536,11 @@ func PeerConnRegistered(hostAddress, version string) bool {
 			return true
 		}
 	}
+	for pc := range peerConnSuperseded {
+		if strings.HasPrefix(pc.key, prefix) {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1509,6 +1574,7 @@ func (p *PeerConn) Release() {
 	if p.key != "" && peerConnRegistry[p.key] == p {
 		delete(peerConnRegistry, p.key)
 	}
+	delete(peerConnSuperseded, p)
 	peerConnMu.Unlock()
 	p.Close()
 }
@@ -1524,6 +1590,11 @@ func watchReopen(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "host shutting down")
+}
+
+func isServerWatchCap(err error) bool {
+	return connect.CodeOf(err) == connect.CodeResourceExhausted &&
+		strings.Contains(err.Error(), "too many concurrent watches")
 }
 
 func nextAttachBackoff(prev, min, max time.Duration) time.Duration {
