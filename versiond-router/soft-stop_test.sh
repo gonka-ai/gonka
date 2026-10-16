@@ -10,8 +10,15 @@
 # test does not tell whether HAProxy would also exit under an idle connection
 # a client keeps open.)
 #
-# Hard stop: SIGUSR1 while a Watch is held and never released. HAProxy exits
-# at hard-stop-after, so a held stream cannot outlive the stop budget.
+# Expiry: SIGUSR1 while a Watch is held that the client never releases. The
+# backend ends the stream on its own after a session TTL, as the child does
+# when the peer's token expires (openToken fails on the next heartbeat), and
+# HAProxy exits right after that, well before hard-stop-after. This is the
+# bound on a slot drain under a peer that does not refresh: one TTL.
+#
+# Hard stop: SIGUSR1 while a Watch is held and never released and the backend
+# never ends it. HAProxy exits at hard-stop-after, so a held stream cannot
+# outlive the stop budget.
 #
 # Entrypoint: with ROUTER_IMAGE set to a built versiond-router image, the
 # real entrypoint is stopped while its catalog reconciler loop is retrying
@@ -76,9 +83,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         with open(sys.argv[2], "a", encoding="utf-8") as paths:
             paths.write(self.path + "\n")
-        if self.path.endswith("PeerAuthService/Watch"):
-            # A Watch answers only when the peer ends it or the proxy resets it.
-            time.sleep(120)
+        path, _, query = self.path.partition("?")
+        if path.endswith("PeerAuthService/Watch"):
+            # A Watch answers only when the peer ends it, the proxy resets it,
+            # or (?ttl=N) the session expires N seconds in, the way the child
+            # ends Watch once the token no longer opens.
+            ttl = 120
+            for part in query.split("&"):
+                if part.startswith("ttl="):
+                    ttl = int(part[4:])
+            time.sleep(ttl)
             body = b"watch-ok"
             self.send_response(200)
             self.send_header("content-type", "text/plain")
@@ -218,8 +232,11 @@ wait_exit() {
 # One HTTP/2 connection. Mode "release": open Watch and Chat, read the Chat
 # body, then end the Watch stream and keep the connection open and idle.
 # Mode "hold": open Watch only and keep it until the proxy resets it.
-# "watch-open" is written before the request is sent; the backend's request
-# log ($tmpdir/paths) says when the stream has reached the proxy.
+# Mode "expire:N": open Watch with ?ttl=N, never cancel it, and keep the
+# process alive after the backend has ended it; the client does nothing a
+# drain could depend on. "watch-open" is written before the request is sent;
+# the backend's request log ($tmpdir/paths) says when the stream has reached
+# the proxy.
 cat >"$tmpdir/client.go" <<'EOF'
 package main
 
@@ -230,6 +247,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -262,7 +280,12 @@ func main() {
 	// RoundTrip blocks on the headers; the stream is open from its first frame.
 	watchCtx, endWatch := context.WithCancel(context.Background())
 	defer endWatch()
-	watchReq, _ := http.NewRequestWithContext(watchCtx, http.MethodGet, "http://h2c/devshard.transport.v1.PeerAuthService/Watch", nil)
+	watchURL := "http://h2c/devshard.transport.v1.PeerAuthService/Watch"
+	if ttl, ok := strings.CutPrefix(mode, "expire:"); ok {
+		watchURL += "?ttl=" + ttl
+		mode = "expire"
+	}
+	watchReq, _ := http.NewRequestWithContext(watchCtx, http.MethodGet, watchURL, nil)
 	note(status, "watch-open")
 	watchEnd := make(chan string, 1)
 	go func() {
@@ -281,6 +304,14 @@ func main() {
 	}()
 	if mode == "hold" {
 		note(status, <-watchEnd)
+		return
+	}
+	if mode == "expire" {
+		// The session expires on the backend; the client neither cancels
+		// the stream nor exits, so only the stream's own end can let the
+		// proxy go.
+		note(status, <-watchEnd)
+		time.Sleep(120 * time.Second)
 		return
 	}
 	chatReq, _ := http.NewRequest(http.MethodGet, "http://h2c/v1/chat", nil)
@@ -365,8 +396,39 @@ stop_client
 docker rm -f "$proxy" >/dev/null
 proxy=
 
+# --- expiry: a Watch the client never releases ends with the session, and so does the drain ---
+: >"$tmpdir/paths"
+write_config expire 60
+launch_proxy "expire-$$" expire
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+wait_listener "$hostport" || fail "haproxy did not open its listener for the expiry phase"
+run_client "$hostport" expire:8
+wait_for watch-open 100 || fail "expiring watch did not open: $(cat "$tmpdir/client.err")"
+for _ in $(seq 1 100); do
+    grep -q 'PeerAuthService/Watch?ttl=8' "$tmpdir/paths" && break
+    sleep 0.1
+done
+grep -q 'PeerAuthService/Watch?ttl=8' "$tmpdir/paths" || fail "expiring watch did not reach the backend"
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+sleep 2
+proxy_running || fail "proxy exited at soft stop while the expiring watch was still held"
+if h2_answers "${hostport##*:}"; then
+    fail "listener still serves new connections after soft stop (expiry phase)"
+fi
+# The backend ends the stream about 8 s after it opened. Nothing else ends
+# it: the client holds it and stays up. HAProxy must then exit on its own.
+wait_for watch-done 60 || fail "the backend did not end the expiring watch: $(cat "$tmpdir/client.status")"
+grep -q 'watch-reset' "$tmpdir/client.status" && fail "the expiring watch was reset instead of ending with the session"
+wait_exit 40 || fail "haproxy did not exit after the expiring watch ended: $(cat "$tmpdir/client.status")"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at < 30 )) || fail "haproxy waited for hard-stop-after instead of the session end: signaled ${signaled_at}s, exited ${exited_at}s"
+stop_client
+docker rm -f "$proxy" >/dev/null
+proxy=
+
 # --- hard stop: a held Watch is reset at hard-stop-after and the process exits ---
-# A fresh request log: the soft-stop Watch must not stand in for this one.
+# A fresh request log: the earlier Watches must not stand in for this one.
 : >"$tmpdir/paths"
 write_config hard 5
 launch_proxy "hard-$$" hard
