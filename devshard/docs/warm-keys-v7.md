@@ -137,7 +137,10 @@ The nonce is the **authorization nonce**, and each path has its own:
   key live until its pending messages are through
   ([Rotation](#rotation-step-by-step)).
 - State-signature gossip and settlement signatures sign a state nonce: that
-  nonce.
+  nonce, and the history at it alone: a grant the history has not bound at
+  that nonce does not sign it, whatever the grant source says now. The
+  source is consulted only as the backstop against a bound key whose grant
+  has ended.
 - Repair requests and answers, and other admission on a session the receiver
   holds, are local decisions, not consensus: the receiver uses its history
   head **and** the grant source at the current moment, so a key revoked on
@@ -319,9 +322,11 @@ protocol version, not a patch to v6. The boundary is the binary: versiond
 routes `/devshard/v7` to the v7 gateway and hosts, and a session belongs to
 the version it was opened under. The v7 binary cannot serve a v6 session:
 its state root hashes the binding history where v6 hashed one key per slot,
-so a v6 escrow replayed or restored on it fails the root check instead of
-continuing with a different key rule, and a v6 host that received a bind
-would refuse the diff as unknown. Escrows are opened under one version and
+so a v6 escrow replayed on it fails the root check, a v6 snapshot (one that
+carries the reserved `warm_keys` field) is refused by the decoder
+(`ErrSnapshotFromEarlierProtocol`) instead of being restored with its
+bindings dropped, and a v6 host that received a bind would refuse the diff
+as unknown. Escrows are opened under one version and
 settled under it; the v6 and v7 binaries run side by side until the last v6
 escrow settles, as with every protocol version before. The chain log, the
 post handler and the queries ship with the 0.2.18 chain upgrade, which seeds

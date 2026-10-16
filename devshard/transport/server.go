@@ -298,27 +298,30 @@ func (s *Server) isAllowedSender(addr string) bool {
 // refused even before the sequencer revokes it; a bridge that cannot answer
 // leaves the history's verdict in place.
 func (s *Server) isWarmKeySender(addr string) bool {
-	bound := s.host.IsWarmKeyAddress(addr)
 	if s.bridge == nil {
-		return bound
+		return s.host.IsWarmKeyAddress(addr)
 	}
 	seen := make(map[string]bool, len(s.host.Group()))
-	answered := true
+	// boundUnanswered is set when the history binds addr to a validator
+	// whose grants the bridge could not report: that binding stands. A
+	// binding whose validator the bridge did answer for, without a live
+	// grant, is refused; a lookup failure for an unrelated validator says
+	// nothing about it.
+	boundUnanswered := false
 	for _, slot := range s.host.Group() {
 		if seen[slot.ValidatorAddress] {
 			continue
 		}
 		seen[slot.ValidatorAddress] = true
 		ok, err := s.bridge.VerifyWarmKey(addr, slot.ValidatorAddress)
-		if err != nil {
-			answered = false
-			continue
-		}
-		if ok {
+		if err == nil && ok {
 			return true
 		}
+		if err != nil && s.host.WarmKeyBoundTo(addr, slot.ValidatorAddress) {
+			boundUnanswered = true
+		}
 	}
-	return bound && !answered
+	return boundUnanswered
 }
 
 // isOwner returns true if addr is the session owner (escrow creator).
@@ -958,7 +961,7 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if !s.host.SlotActors().Allows(req.SlotID, addr) {
+	if !s.host.SlotActorsAt(req.Nonce).Allows(req.SlotID, addr) {
 		return ErrGossipInvalidStateSig
 	}
 

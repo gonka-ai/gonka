@@ -176,6 +176,14 @@ func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, 
 	if msg.State == nil {
 		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
 	}
+	if len(msg.State.ProtoReflect().GetUnknown()) > 0 {
+		// Field 11 was the v6 warm_keys map, reserved since v7. A snapshot
+		// that carries it belongs to a session of an earlier protocol, whose
+		// key rule this binary does not implement: refusing it here keeps a
+		// v6 session from continuing under the v7 rule with its bindings
+		// silently dropped.
+		return nil, nil, nil, nil, ErrSnapshotFromEarlierProtocol
+	}
 	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), msg.HeightSyncFloor, nil
 }
 

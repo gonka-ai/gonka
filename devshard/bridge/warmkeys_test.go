@@ -232,3 +232,37 @@ func TestWarmKeyLogCopy_MissSchedulesAReload(t *testing.T) {
 		return err == nil && ok
 	}, 5*time.Second, 10*time.Millisecond)
 }
+
+// Test flow:
+//  1. Load a granter, take the chain down, and send misses at request rate for twelve seconds.
+//  2. Assert the misses start at most one reload attempt per five seconds although none succeeds.
+func TestWarmKeyLogCopy_MissReloadsAreThrottledWhileTheChainFails(t *testing.T) {
+	chain := &fakeWarmKeyFetcher{}
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"})
+	cp := NewWarmKeyLogCopy(chain, time.Hour)
+	now := time.Unix(1000, 0)
+	cp.now = func() time.Time { return now }
+	_, err := cp.LiveWarmKeys("cold")
+	require.NoError(t, err)
+	chain.mu.Lock()
+	chain.err = errors.New("down")
+	chain.mu.Unlock()
+
+	for second := 1; second <= 12; second++ {
+		now = now.Add(time.Second)
+		before := chain.count()
+		for i := 0; i < 5; i++ {
+			ok, err := IsWarmKeyLive(cp, "cold", "stranger", now)
+			require.NoError(t, err)
+			require.False(t, ok)
+		}
+		// The first miss after the load is due at once (no attempt yet),
+		// the next ones every six seconds.
+		if second == 1 || second == 7 {
+			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
+		} else {
+			require.Equal(t, before, chain.count(), "second %d", second)
+		}
+	}
+	require.Equal(t, 1+2, chain.count(), "one load, then one attempt per five seconds")
+}

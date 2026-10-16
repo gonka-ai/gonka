@@ -234,8 +234,13 @@ func TestTrimRechecksReplacedSignature(t *testing.T) {
 	require.False(t, session.HasQuorumAt(nonce))
 }
 
-func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
+// Test flow:
+//  1. Bind a warm key, store its signature over nonce 1, and make the grant source block when asked about it.
+//  2. Assert the quorum check asks the source (the backstop against an ended grant) without holding the session
+//     lock, and that a source that cannot answer leaves the binding in force.
+func TestStoredWarmSignatureLookupDoesNotHoldSessionLock(t *testing.T) {
 	owner := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{owner})
 	config := testutil.DefaultConfig(1)
@@ -252,11 +257,14 @@ func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
 	}
 	sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier,
 		state.WithWarmKeyResolver(resolver))
+	root, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(group[0].SlotID, warm.Address(), 1)})
+	require.NoError(t, err)
 	session, err := NewSession(sm, user, "escrow-1", group, []HostClient{&ErrorClient{}}, verifier)
 	require.NoError(t, err)
 	session.mu.Lock()
 	session.nonce = 1
-	session.signatures[1] = map[uint32][]byte{0: signRootForTest(t, owner, "escrow-1", 1, nil)}
+	session.diffs = append(session.diffs, types.Diff{Nonce: 1, PostStateRoot: root})
+	session.signatures[1] = map[uint32][]byte{0: signRootForTest(t, warm, "escrow-1", 1, root)}
 	session.mu.Unlock()
 
 	quorumDone := make(chan bool, 1)
@@ -276,8 +284,8 @@ func TestStoredWrongRootWarmLookupDoesNotHoldSessionLock(t *testing.T) {
 		t.Fatal("session lock remained held during warm-key lookup")
 	}
 	close(release)
-	require.False(t, <-quorumDone)
-	require.False(t, session.HasQuorumAt(1))
+	require.True(t, <-quorumDone, "a source that cannot answer leaves the binding in force")
+	require.True(t, session.HasQuorumAt(1))
 	require.Equal(t, int32(2), calls.Load(), "the session keeps no verdict of its own; the grant source is asked each time")
 }
 
@@ -301,11 +309,11 @@ func TestWarmKeyBindingOverridesCachedRejection(t *testing.T) {
 	sig := signRootForTest(t, warm, "escrow-1", 1, root)
 
 	require.ErrorIs(t, session.verifyStateSignature(1, root, sig, owner.Address()), types.ErrInvalidStateSig)
-	require.Equal(t, int32(1), calls.Load())
+	require.Zero(t, calls.Load(), "a signature over a nonce is judged by the history at that nonce; the source does not admit an unbound key")
 
 	_, err = sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(group[0].SlotID, warm.Address(), 1)})
 	require.NoError(t, err)
 
 	require.NoError(t, session.verifyStateSignature(1, root, sig, owner.Address()))
-	require.Equal(t, int32(2), calls.Load(), "a bound key is asked about once more; a source that cannot answer leaves the binding in force")
+	require.Equal(t, int32(1), calls.Load(), "a bound key is checked against the source once; a source that cannot answer leaves the binding in force")
 }

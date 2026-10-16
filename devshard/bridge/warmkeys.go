@@ -204,6 +204,9 @@ type WarmKeyLogCopy struct {
 type granterLog struct {
 	entries  map[uint64]WarmKeyEntry
 	loadedAt time.Time
+	// attemptedAt is the start of the last reload, successful or not, so a
+	// failing chain does not turn misses into a reload per request.
+	attemptedAt time.Time
 	// complete is false until the granter's whole log was read from the
 	// chain; Apply alone (events for a granter never loaded) leaves holes.
 	complete bool
@@ -287,7 +290,10 @@ func (c *WarmKeyLogCopy) Apply(e WarmKeyEntry) {
 func (c *WarmKeyLogCopy) NoteMiss(granter string) {
 	c.mu.Lock()
 	g := c.granters[granter]
-	due := g != nil && g.complete && c.now().Sub(g.loadedAt) > warmKeyMissRefresh
+	due := g != nil && g.complete && c.now().Sub(g.attemptedAt) > warmKeyMissRefresh
+	if due {
+		g.attemptedAt = c.now()
+	}
 	c.mu.Unlock()
 	if due {
 		go func() { _ = c.load(granter, true) }()
@@ -394,6 +400,9 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	}
 	done := make(chan struct{})
 	c.loading[granter] = done
+	if g := c.granters[granter]; g != nil && !background {
+		g.attemptedAt = c.now()
+	}
 	c.mu.Unlock()
 	defer func() {
 		c.mu.Lock()

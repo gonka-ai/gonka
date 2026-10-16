@@ -586,6 +586,12 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
+// WarmKeyBoundTo reports whether the history binds addr, at the next nonce,
+// to a slot of validator.
+func (h *Host) WarmKeyBoundTo(addr, validator string) bool {
+	return h.sm.HostSignerBoundAddr(validator, addr)
+}
+
 // IsWarmKeyAddress returns true if addr has a live binding in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
@@ -595,23 +601,37 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 
 func (h *Host) Signer() signing.Signer { return h.signer }
 
-// SlotActors is the host-signature identity set for this escrow: cold keys,
-// the binding history at the next nonce, and the grant source for a key the
-// history does not cover. Same rule as HeightAck L2 and confirm/finish, plus
-// the local-admission fallback.
+// SlotActors is the host-signature identity set for admission at the next
+// nonce: cold keys, the binding history, the grant source for a key the
+// history does not cover (one the sequencer may bind in its next diff) and
+// the grant source against a bound key whose grant has ended. Same rule as
+// HeightAck L2 and confirm/finish, plus the local-admission fallback.
 //
 // The returned value memoises its grant-source lookups, so a caller that
 // checks two identities for one request -- the repair handler checks the
 // signer and the HTTP sender -- should reuse one value rather than call this
 // twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
-	return h.SlotActorsAt(h.sm.LatestNonce() + 1)
+	actors := h.SlotActorsAt(h.sm.LatestNonce() + 1)
+	authz := make(map[[2]string]bool, 2)
+	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+		pair := [2]string{recovered, expected}
+		ok, seen := authz[pair]
+		if !seen {
+			ok = h.sm.CheckWarmKey(recovered, expected)
+			authz[pair] = ok
+		}
+		return ok
+	}
+	return actors
 }
 
-// SlotActorsAt is SlotActors at the authorization nonce of the caller's
-// path, for a signature that names its nonce (state-signature gossip).
+// SlotActorsAt is the identity set for a signature that names its nonce
+// (state-signature gossip): the history at that nonce, with the grant
+// source only as the backstop against a key whose grant has ended. A grant
+// the history has not bound at that nonce does not sign it, whatever the
+// source says now.
 func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
-	authz := make(map[[2]string]bool, 2)
 	ended := make(map[[2]string]bool, 2)
 	return signing.SlotActors{
 		SlotKeys: h.slotToAddr,
@@ -625,15 +645,6 @@ func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
 				ended[pair] = over
 			}
 			return over
-		},
-		AcceptWarm: func(_ uint32, recovered, expected string) bool {
-			pair := [2]string{recovered, expected}
-			ok, seen := authz[pair]
-			if !seen {
-				ok = h.sm.CheckWarmKey(recovered, expected)
-				authz[pair] = ok
-			}
-			return ok
 		},
 	}
 }

@@ -2009,10 +2009,13 @@ func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors
 }
 
 // localActorsAt is the local-admission identity set at nonce: the consensus
-// rule plus the grant source both ways, for a key the history does not cover
-// (AcceptWarm) and for one whose grant the source has seen end (RefuseWarm).
-// The source is asked with sm.mu released.
-func (sm *StateMachine) localActorsAt(nonce uint64) signing.SlotActors {
+// rule plus the grant source against a bound key whose grant it has seen
+// end (RefuseWarm) and, when admit is set, for a key the history does not
+// cover (AcceptWarm). admit is for messages the sequencer may still bind
+// the key for in its next diff; a signature that names its nonce gets no
+// such fallback, since a grant the history has not bound at that nonce does
+// not sign it. The source is asked with sm.mu released.
+func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActors {
 	sm.mu.RLock()
 	actors := sm.consensusActorsAtLocked(nonce)
 	sm.mu.RUnlock()
@@ -2020,14 +2023,16 @@ func (sm *StateMachine) localActorsAt(nonce uint64) signing.SlotActors {
 	// validator owns; the value is request-scoped, so the memo is too.
 	live := make(map[[2]string]bool, 1)
 	ended := make(map[[2]string]bool, 1)
-	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
-		pair := [2]string{recovered, expected}
-		ok, seen := live[pair]
-		if !seen {
-			ok = sm.CheckWarmKey(recovered, expected)
-			live[pair] = ok
+	if admit {
+		actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			ok, seen := live[pair]
+			if !seen {
+				ok = sm.CheckWarmKey(recovered, expected)
+				live[pair] = ok
+			}
+			return ok
 		}
-		return ok
 	}
 	actors.RefuseWarm = func(_ uint32, recovered, expected string) bool {
 		pair := [2]string{recovered, expected}
@@ -2060,24 +2065,30 @@ func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string)
 // grant it has seen end. It never binds anything; it is the local-admission
 // view of a key the gateway may bind, or revoke, in a later diff.
 func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
-	return sm.HostSignerAllowedAt(slotID, recovered, sm.LatestNonce()+1)
+	return sm.localActorsAt(sm.LatestNonce()+1, true).Allows(slotID, recovered)
 }
 
-// HostSignerAllowedAt is HostSignerAllowed at the authorization nonce of the
-// caller's path: the nonce a state signature or a settlement signs.
+// HostSignerAllowedAt reports whether recovered may have signed slotID's
+// part of the state at nonce: the history at that nonce, minus a bound key
+// whose grant the source has seen end. No grant-source admission: a key the
+// history has not bound at nonce did not sign it.
 func (sm *StateMachine) HostSignerAllowedAt(slotID uint32, recovered string, nonce uint64) bool {
-	return sm.localActorsAt(nonce).Allows(slotID, recovered)
+	return sm.localActorsAt(nonce, false).Allows(slotID, recovered)
 }
 
 // HostSignerAllowedAddr is HostSignerAllowed for any slot owned by expected.
 // Used where the message names a host address rather than a slot.
 func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
-	return sm.HostSignerAllowedAddrAt(expected, recovered, sm.LatestNonce()+1)
+	return sm.hostSignerAllowedAddr(expected, recovered, sm.LatestNonce()+1, true)
 }
 
-// HostSignerAllowedAddrAt is HostSignerAllowedAddr at an explicit
-// authorization nonce.
+// HostSignerAllowedAddrAt is HostSignerAllowedAt for any slot owned by
+// expected: a state signature over nonce by recovered on expected's behalf.
 func (sm *StateMachine) HostSignerAllowedAddrAt(expected, recovered string, nonce uint64) bool {
+	return sm.hostSignerAllowedAddr(expected, recovered, nonce, false)
+}
+
+func (sm *StateMachine) hostSignerAllowedAddr(expected, recovered string, nonce uint64, admit bool) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
@@ -2090,7 +2101,7 @@ func (sm *StateMachine) HostSignerAllowedAddrAt(expected, recovered string, nonc
 	if len(slots) == 0 {
 		return false
 	}
-	actors := sm.localActorsAt(nonce)
+	actors := sm.localActorsAt(nonce, admit)
 	for _, slot := range slots {
 		if actors.Allows(slot, recovered) {
 			return true

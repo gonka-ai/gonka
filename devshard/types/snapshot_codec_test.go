@@ -2,6 +2,8 @@ package types
 
 import (
 	"devshard/signing"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -136,4 +138,30 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 	require.Equal(t, floor.Entries[0].Height, roundTripFloor.Entries[0].Height)
 	require.Equal(t, floor.Entries[0].Hash, roundTripFloor.Entries[0].Hash)
 	require.Equal(t, floor.Entries[0].Author, roundTripFloor.Entries[0].Author)
+}
+
+// Test flow:
+//  1. Marshal a snapshot whose state carries the reserved v6 warm_keys field (11).
+//  2. Assert the decoder refuses it as a snapshot of an earlier protocol, and accepts the same snapshot without it.
+func TestUnmarshalStateSnapshotProto_RefusesV6WarmKeys(t *testing.T) {
+	state := &EscrowState{EscrowID: "escrow-1", StateRootAndProtocolVersion: "v6", Inferences: map[uint64]*InferenceRecord{}, HostStats: map[uint32]*HostStats{}}
+	data, err := MarshalStateSnapshotProto(state, nil, nil, nil)
+	require.NoError(t, err)
+	_, _, _, _, err = UnmarshalStateSnapshotProto(data)
+	require.NoError(t, err)
+
+	msg := &StateSnapshotProto{}
+	require.NoError(t, proto.Unmarshal(data, msg))
+	// map<uint32, string> warm_keys = 11, one entry {1: "warm"}.
+	entry := protowire.AppendTag(nil, 1, protowire.VarintType)
+	entry = protowire.AppendVarint(entry, 1)
+	entry = protowire.AppendTag(entry, 2, protowire.BytesType)
+	entry = protowire.AppendString(entry, "warm")
+	legacy := protowire.AppendTag(nil, 11, protowire.BytesType)
+	legacy = protowire.AppendBytes(legacy, entry)
+	msg.State.ProtoReflect().SetUnknown(legacy)
+	withLegacy, err := proto.Marshal(msg)
+	require.NoError(t, err)
+	_, _, _, _, err = UnmarshalStateSnapshotProto(withLegacy)
+	require.ErrorIs(t, err, ErrSnapshotFromEarlierProtocol)
 }

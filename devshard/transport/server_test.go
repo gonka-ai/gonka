@@ -843,3 +843,42 @@ func TestIsGroupMember_WarmKeyBackstopFollowsTheBridge(t *testing.T) {
 	answer = func(string, string) (bool, error) { return true, nil }
 	require.True(t, srv.IsGroupMember(warmSigner.Address()))
 }
+
+// Test flow:
+//  1. Two validators A and B; the history binds W to A's slot. The bridge answers "no live grant" for A and
+//     fails for B.
+//  2. Assert W is refused: the failure for B says nothing about A's binding, which the bridge did answer for.
+//     With the answers swapped (A fails, B says no) the binding to A stands.
+func TestIsGroupMember_OutageOnAnotherValidatorDoesNotOverrideARevoke(t *testing.T) {
+	a, b := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	warmSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{a, b})
+	config := testutil.DefaultConfig(2)
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
+	}))
+	h, err := host.NewHost(sm, a, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
+	require.NoError(t, err)
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+
+	failing := b.Address()
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithBridge(membershipBridge{answer: func(_, cold string) (bool, error) {
+		if cold == failing {
+			return false, errors.New("chain down")
+		}
+		return false, nil
+	}}))
+	require.NoError(t, err)
+	require.False(t, srv.IsGroupMember(warmSigner.Address()), "A answered: the grant ended")
+
+	failing = a.Address()
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "A could not be asked: the binding to A stands")
+}

@@ -59,7 +59,9 @@ func TestHostSignerAllowed_RefusesBoundKeyWhoseGrantEnded(t *testing.T) {
 func TestHostSignerAllowedAddrAt_FollowsTheSignedNonce(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	oldKey, newKey := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
-	sm, user := newTestSM(t, hosts, 100000)
+	// The grant source knows every key as live: it must not admit a key for
+	// a nonce its binding does not cover.
+	sm, user := newTestSMWithWarmKey(t, hosts, 100000, func(string, string) (bool, error) { return true, nil })
 	applyWarmKeyBind(t, sm, user, 0, oldKey.Address(), 1)
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, nil))
 	require.NoError(t, err)
@@ -76,4 +78,8 @@ func TestHostSignerAllowedAddrAt_FollowsTheSignedNonce(t *testing.T) {
 	require.True(t, sm.HostSignerAllowedAddrAt(cold, newKey.Address(), 3))
 	require.True(t, sm.HostSignerAllowedAddrAt(cold, cold, 1))
 	require.False(t, sm.HostSignerAllowedAddr(cold, oldKey.Address()), "the next diff refuses the old key")
+	require.False(t, sm.HostSignerAllowedAddrAt(cold, oldKey.Address(), 3), "a live grant does not resurrect a revoked binding")
+	stranger := testutil.MustGenerateKey(t)
+	require.False(t, sm.HostSignerAllowedAt(0, stranger.Address(), 3), "a signature over a nonce needs a binding at that nonce")
+	require.True(t, sm.HostSignerAllowed(0, stranger.Address()), "admission for the next diff may rely on the grant source")
 }
