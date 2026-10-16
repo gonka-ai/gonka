@@ -7,8 +7,10 @@ import (
 )
 
 // coldCatchUpAttempts is how many gated walks one executor may finish on this
-// verifier without making progress. The first can stop on the verify budget.
-// The second resumes at the nonce already sent. Past it, checks send the
+// verifier without making progress. A walk counts only after a catch-up page
+// was answered. A verify deadline or a journal read that ends the walk before
+// that answer does not count; the next walk starts again. The second answered
+// walk resumes at the nonce already sent. Past the cap, checks send the
 // payload alone. A check that only waited does not count.
 const coldCatchUpAttempts = 2
 
@@ -34,6 +36,8 @@ type coldWalkExec struct {
 	tip uint64
 	// bound is set when the running walk, or a check during it, saw progress.
 	bound bool
+	// reached is set when the executor answered a catch-up page of this walk.
+	reached bool
 }
 
 // walkHead is what the first SessionHead says about the walk ahead.
@@ -153,6 +157,7 @@ func (g *ColdWalks) Join(ctx context.Context, key string, h walkHead, latest uin
 	st.running = true
 	st.done = make(chan struct{})
 	st.bound = progress
+	st.reached = false
 	resume = st.sent
 	g.mu.Unlock()
 	return coldLead, resume, nil
@@ -181,7 +186,9 @@ func (g *ColdWalks) Bind(key string, nonce uint64) {
 
 // Finish ends the walk started by Join. A walk that saw progress clears the
 // nonce and the count. A cancelled request keeps the nonce and spends no
-// attempt. Any other finish spends one.
+// attempt. A walk that ends before the executor answers a catch-up page
+// spends none either: the deadline or the journal read was this verifier's.
+// Any other finish spends one.
 func (g *ColdWalks) Finish(key string, requestCanceled bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -193,13 +200,26 @@ func (g *ColdWalks) Finish(key string, requestCanceled bool) {
 	case st.bound:
 		st.sent = 0
 		st.attempts = 0
-	case !requestCanceled:
+	case !requestCanceled && st.reached:
 		st.attempts++
 	}
 	st.bound = false
+	st.reached = false
 	st.running = false
 	close(st.done)
 	st.done = nil
+}
+
+// pageAnswered records that the executor answered a catch-up page of the
+// running walk. A later Finish then spends an attempt unless the walk saw
+// progress or the request was cancelled.
+func (g *ColdWalks) pageAnswered(key string) {
+	g.mu.Lock()
+	st := g.exec(key)
+	if st.running {
+		st.reached = true
+	}
+	g.mu.Unlock()
 }
 
 func (l *coldWalkLead) release() {
@@ -220,6 +240,12 @@ func releaseColdWalk(ctx context.Context) {
 func noteColdCursor(ctx context.Context, cursor uint64) {
 	if l := coldLeadFrom(ctx); l != nil && cursor > 0 {
 		l.gate.Note(l.key, cursor)
+	}
+}
+
+func noteColdPageAnswered(ctx context.Context) {
+	if l := coldLeadFrom(ctx); l != nil {
+		l.gate.pageAnswered(l.key)
 	}
 }
 

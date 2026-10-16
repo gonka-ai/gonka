@@ -308,6 +308,28 @@ func TestColdWalkAttemptLimitSendsPayloadOnly(t *testing.T) {
 	require.Equal(t, 1, peer.payloadCalls())
 }
 
+func TestColdWalkLocalStopDoesNotSpendAnAttempt(t *testing.T) {
+	st := progressState(4)
+	root := bytes.Repeat([]byte{1}, 32)
+	journal := &nonceJournal{diffs: progressDiffs(4, root)}
+	peer := &coldPeer{head: coldNotFound}
+	c := coldChecker{t: t, gate: NewColdWalks(), key: "exec", st: st, peer: peer, journal: journal}
+
+	for range coldCatchUpAttempts {
+		journal.arm(1)
+		_, err := c.run(context.Background(), 500*time.Millisecond)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	require.Empty(t, journal.loadedNonces())
+	require.Empty(t, peer.sentNonces())
+
+	accept, err := c.check()
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Equal(t, nonces(1, 4), journal.loadedNonces())
+	require.Equal(t, nonces(1, 4), peer.sentNonces())
+}
+
 func TestColdWalkRealTipClearsTheMark(t *testing.T) {
 	st := progressState(4)
 	root := bytes.Repeat([]byte{1}, 32)

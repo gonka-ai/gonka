@@ -101,7 +101,8 @@ func localSendError(err error) error {
 // nonce already sent. Once that nonce is past LatestNonce, or coldCatchUpAttempts walks
 // ended without progress, a gated check sends the payload alone and is judged as usual.
 // Progress is a root-matched tip above the highest seen; it clears the memory. A
-// cancelled check does not spend an attempt.
+// cancelled check does not spend an attempt. A walk that ends before the executor
+// answers a catch-up page does not spend one either.
 // The walk's own deadline, and a tip read that hits its own query deadline, are returned.
 // They do not accept the timeout. An answered catch-up error still sends the payload
 // before that answer is classified. A per-page tip moves the cursor only when its root
@@ -559,8 +560,10 @@ func prepareCatchUp(
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return ctx.Err()
 			}
+			noteColdPageAnswered(ctx)
 			return &catchUpCallError{err: err}
 		}
+		noteColdPageAnswered(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
