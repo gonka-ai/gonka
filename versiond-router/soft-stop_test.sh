@@ -12,9 +12,10 @@
 #
 # Expiry: SIGUSR1 while a Watch is held that the client never releases. The
 # backend ends the stream on its own after a session TTL, as the child does
-# when the peer's token expires (openToken fails on the next heartbeat), and
-# HAProxy exits right after that, well before hard-stop-after. This is the
-# bound on a slot drain under a peer that does not refresh: one TTL.
+# once the peer's token no longer opens (checked on each heartbeat, so TTL
+# plus skew plus one heartbeat), and HAProxy exits right after that, well
+# before hard-stop-after. This is the Watch bound on a slot drain under a
+# peer that does not refresh.
 #
 # Hard stop: SIGUSR1 while a Watch is held and never released and the backend
 # never ends it. HAProxy exits at hard-stop-after, so a held stream cannot
@@ -298,8 +299,15 @@ func main() {
 			}
 			return
 		}
-		_, _ = io.Copy(io.Discard, resp.Body)
+		// Only the backend's own answer, read to its end, is a clean
+		// session end. A proxy error page or a reset after the headers
+		// is not.
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || string(body) != "watch-ok" {
+			watchEnd <- "watch-reset"
+			return
+		}
 		watchEnd <- "watch-done"
 	}()
 	if mode == "hold" {

@@ -539,9 +539,13 @@ last stream ends or at `hard-stop-after` (`VERSIOND_ROUTER_HARD_STOP_SECONDS`).
 A peer cannot open a new stream on a drained connection; it reopens Watch on
 its next token refresh, on a new connection that the parent proxy sends to
 another slot, and ends the old Watch then. A peer that does not refresh holds
-its Watch until the session token expires, when the child ends the stream
-itself, so a slot drains within one session TTL (2 minutes by default) under
-any peer that answers at all; `hard-stop-after` is the backstop for the rest. The shipped Compose overlay bounds routine cleanup with
+its Watch until the session token no longer opens: the child checks the token
+on each heartbeat and ends the stream once the token has expired past the
+accepted skew. With the defaults (2-minute TTL, 5 s skew, 30 s heartbeat) a
+Watch therefore ends at most about 2.5 minutes after its token was issued.
+That is the Watch bound only; a Chat stream ends with its own response, and
+`hard-stop-after` is the backstop for anything that does not end. The
+shipped Compose overlay bounds routine cleanup with
 `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default `10s`). A fleet rollout renders
 `VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` as the slot's `hard-stop-after` and
 stops the slot with that timeout plus a 10 s headroom, so HAProxy resets the
