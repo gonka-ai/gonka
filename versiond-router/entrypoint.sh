@@ -1,11 +1,13 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then execs HAProxy. SIGUSR1 is HAProxy's soft stop: the
-# listeners close, every HTTP/2 connection gets GOAWAY, streams in flight
-# finish on their own, and the process exits after the last stream ends or
-# at hard-stop-after (VERSIOND_ROUTER_HARD_STOP_SECONDS). A peer reopens
-# Watch on its next token refresh, on a new connection through the parent
-# proxy, so an idle Watch moves to another slot by itself.
+# environment, then runs HAProxy and passes it every stop signal at once.
+# SIGUSR1 is HAProxy's soft stop: the listeners close, every HTTP/2
+# connection gets GOAWAY, streams in flight finish on their own, and the
+# process exits after the last stream ends or at hard-stop-after
+# (VERSIOND_ROUTER_HARD_STOP_SECONDS). A peer reopens Watch on its next token
+# refresh, on a new connection through the parent proxy, so an idle Watch
+# moves to another slot by itself. When HAProxy has exited, the catalog
+# reconciler loop is stopped and its exit status is returned.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -90,9 +92,9 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
 # an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
-# Soft stop waits for streams in flight; this caps that wait. Keep it at or
-# below the stop budget the caller gives Docker (the fleet passes
-# VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS to `docker stop --time`).
+# Soft stop waits for streams in flight; this caps that wait. Keep it below
+# the stop budget the caller gives Docker (the fleet passes
+# VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS plus a headroom to `docker stop --time`).
 HARD_STOP="${VERSIOND_ROUTER_HARD_STOP_SECONDS:-1800}"
 VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
@@ -890,8 +892,39 @@ run_catalog_reconciler() {
     done
 }
 
+reconciler_pid=
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
+    reconciler_pid=$!
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+# HAProxy runs as a child of this shell, not through exec: the master-worker
+# process waits for every child before it exits, and the reconciler loop above
+# restarts its program for as long as it lives, so an exec would leave the
+# master waiting after the worker has drained, until Docker's SIGKILL. Stop
+# signals are passed to HAProxy at once; nothing is held or decided here.
+"$HAPROXY_BIN" -W -db -f "$OUT" &
+haproxy_pid=$!
+forward_signal() {
+    kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+}
+trap 'forward_signal USR1' USR1
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
+status=0
+while :; do
+    # A trapped signal interrupts wait with a status above 128 while the
+    # process is still there; wait again until it has really exited. The
+    # if keeps set -e from ending the script on that interruption.
+    if wait "$haproxy_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    kill -0 "$haproxy_pid" 2>/dev/null || break
+done
+if [ -n "$reconciler_pid" ]; then
+    kill "$reconciler_pid" 2>/dev/null || true
+    pkill -P "$reconciler_pid" 2>/dev/null || true
+fi
+exit "$status"

@@ -1957,7 +1957,7 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 			haproxy -c -f "$$tmpdir/$$cfg.cfg" >/dev/null \
 			|| fail "$$cfg.cfg is not valid HAProxy configuration"; \
 	done; \
-	./soft-stop_test.sh || fail "soft stop"; \
+	ROUTER_IMAGE=gonka-versiond-router-probe ./soft-stop_test.sh || fail "soft stop"; \
 	echo "test-render: ok"
 
 include ../scripts/blst-portable.mk

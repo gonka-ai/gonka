@@ -5,12 +5,22 @@
 #
 # Soft stop: SIGUSR1 while the Chat body is still held. The body still
 # arrives, the listener is closed, and once the client ends its Watch stream
-# HAProxy exits on its own, long before hard-stop-after, with the TCP
-# connection still open.
+# HAProxy exits on its own, long before hard-stop-after. (The Go client, like
+# the devshard peer, closes a drained connection after its last stream; the
+# test does not tell whether HAProxy would also exit under an idle connection
+# a client keeps open.)
 #
 # Hard stop: SIGUSR1 while a Watch is held and never released. HAProxy exits
 # at hard-stop-after, so a held stream cannot outlive the stop budget.
+#
+# Entrypoint: with ROUTER_IMAGE set to a built versiond-router image, the
+# real entrypoint is stopped while its catalog reconciler loop is retrying
+# an unreachable catalog. The container must exit right after hard-stop-after:
+# the master-worker process waits for every child, so the loop has to be
+# stopped once HAProxy has exited.
 set -Eeuo pipefail
+
+router_image=${ROUTER_IMAGE:-}
 
 haproxy_image=${HAPROXY_IMAGE:-haproxy:3.2-alpine}
 tmpdir=$(mktemp -d)
@@ -208,6 +218,8 @@ wait_exit() {
 # One HTTP/2 connection. Mode "release": open Watch and Chat, read the Chat
 # body, then end the Watch stream and keep the connection open and idle.
 # Mode "hold": open Watch only and keep it until the proxy resets it.
+# "watch-open" is written before the request is sent; the backend's request
+# log ($tmpdir/paths) says when the stream has reached the proxy.
 cat >"$tmpdir/client.go" <<'EOF'
 package main
 
@@ -284,8 +296,10 @@ func main() {
 		os.Exit(1)
 	}
 	note(status, string(body))
-	// The peer ends its Watch (token refresh reopens it elsewhere). The TCP
-	// connection stays open: the proxy must not need the client to hang up.
+	// The peer ends its Watch (token refresh reopens it elsewhere). After
+	// GOAWAY the transport closes the drained connection once its last
+	// stream ends, as the devshard peer does. The process stays alive so a
+	// client exit cannot be what ends the proxy.
 	endWatch()
 	note(status, <-watchEnd)
 	note(status, "watch-released")
@@ -343,7 +357,7 @@ fi
 # the proxy may exit at once, so no liveness check belongs after this line.
 wait_for chat-ok 60 || fail "chat body was cut off by soft stop: $(cat "$tmpdir/client.status")"
 wait_for watch-released 20 || fail "client did not release its watch: $(cat "$tmpdir/client.status")"
-wait_exit 40 || fail "haproxy did not exit after the last stream ended (connection still open): $(cat "$tmpdir/client.status")"
+wait_exit 40 || fail "haproxy did not exit after the last stream ended: $(cat "$tmpdir/client.status")"
 exited_at=$(proxy_age)
 (( exited_at - signaled_at < 30 )) || fail "haproxy exited only at hard-stop-after: signaled ${signaled_at}s, exited ${exited_at}s"
 grep -q 'exit status\|chat body:' "$tmpdir/client.err" && fail "client error: $(cat "$tmpdir/client.err")"
@@ -352,6 +366,8 @@ docker rm -f "$proxy" >/dev/null
 proxy=
 
 # --- hard stop: a held Watch is reset at hard-stop-after and the process exits ---
+# A fresh request log: the soft-stop Watch must not stand in for this one.
+: >"$tmpdir/paths"
 write_config hard 5
 launch_proxy "hard-$$" hard
 hostport=$(docker port "$proxy" 8080 | head -n 1)
@@ -372,5 +388,41 @@ exited_at=$(proxy_age)
 (( exited_at - signaled_at <= 12 )) || fail "hard stop took too long: signaled ${signaled_at}s, exited ${exited_at}s"
 wait_for watch-reset 20 || fail "held watch was not reset by the hard stop: $(cat "$tmpdir/client.status")"
 stop_client
+docker rm -f "$proxy" >/dev/null
+proxy=
+
+# --- entrypoint: the reconciler loop does not hold the master after the worker exits ---
+if [[ -z $router_image ]]; then
+    echo "soft-stop_test: ok (entrypoint phase skipped: ROUTER_IMAGE is not set)"
+    exit 0
+fi
+proxy=gonka-soft-stop-entry-$$
+docker rm -f "$proxy" >/dev/null 2>&1 || true
+docker run -d --name "$proxy" \
+    -e VERSIOND_HOSTS=127.0.0.1:1 -e VERSIOND_VERSIONS=v4 \
+    -e VERSIOND_ROUTER_BACKEND_H2=false \
+    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=3 \
+    -e VERSIOND_ROUTING_CATALOG_URL=http://127.0.0.1:1/versions \
+    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+    -e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=1 \
+    "$router_image" >/dev/null
+loaded=0
+for _ in $(seq 1 120); do
+    if docker logs "$proxy" 2>&1 | grep -q 'Loading success'; then
+        loaded=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $loaded == 1 ]] || fail "the router image did not start: $(docker logs "$proxy" 2>&1 | tail -5)"
+sleep 2
+docker exec "$proxy" ps -o comm | grep -q 'catalog-reconci' || fail "the catalog reconciler loop is not running"
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+wait_exit 60 || fail "the router image did not exit after SIGUSR1 while the reconciler loop was retrying: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at <= 10 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
+[[ $(docker inspect --format '{{.State.ExitCode}}' "$proxy") == 0 ]] \
+    || fail "the router image exited with status $(docker inspect --format '{{.State.ExitCode}}' "$proxy")"
 
 echo "soft-stop_test: ok"

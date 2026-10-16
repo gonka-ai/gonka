@@ -469,7 +469,7 @@ lock.
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
-| `VERSIOND_ROUTER_HARD_STOP_SECONDS` | `1800` | `hard-stop-after` for the SIGUSR1 soft stop; keep it at or below the stop budget given to Docker |
+| `VERSIOND_ROUTER_HARD_STOP_SECONDS` | `1800` | `hard-stop-after` for the SIGUSR1 soft stop; keep it below the stop budget given to Docker |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private live/readiness listener consumed by the parent proxy and fleet checks |
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(all interfaces)* | per-slot front-network address used for data and admin listeners |
 | `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
@@ -479,7 +479,7 @@ lock.
 | `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | explicit one-command acknowledgement for `maintenance-rollout` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
-`non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
+`non_ha.map`, runs `haproxy -c` on the result, and only then starts HAProxy. A bad
 value fails the container immediately instead of producing a subtly wrong
 config. Version pinning is startup configuration because each pin needs its own
 health-checked backend; change `VERSIOND_NON_HA_VERSIONS` and replace the router
@@ -539,10 +539,15 @@ last stream ends or at `hard-stop-after` (`VERSIOND_ROUTER_HARD_STOP_SECONDS`).
 A peer cannot open a new stream on a drained connection; it reopens Watch on
 its next token refresh, on a new connection that the parent proxy sends to
 another slot. The shipped Compose overlay bounds routine cleanup with
-`VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default `10s`); a fleet rollout passes
-`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` to `docker stop --time`, and
-`hard-stop-after` must not exceed that budget, or Docker kills the process
-before HAProxy resets the last streams itself.
+`VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default `10s`). A fleet rollout renders
+`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` as the slot's `hard-stop-after` and
+stops the slot with that timeout plus a 10 s headroom, so HAProxy resets the
+last streams and exits before Docker's SIGKILL. A site that sets
+`VERSIOND_ROUTER_HARD_STOP_SECONDS` itself must keep it below the budget it
+gives Docker. HAProxy runs as a child of the entrypoint, which passes it every
+stop signal at once and, when it has exited, stops the catalog reconciler loop:
+the master-worker process waits for every child, so an exec would leave the
+master waiting on that loop after the worker had drained.
 
 `VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
 registry to be reachable before a slot operation. During a registry incident,

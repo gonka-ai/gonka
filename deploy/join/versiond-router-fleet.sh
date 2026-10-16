@@ -124,6 +124,10 @@ fleet_id=${VERSIOND_ROUTER_FLEET_ID:-$project_prefix}
 slot_list=${VERSIOND_ROUTER_FLEET_SLOTS:-0 1 2}
 min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
+# The router renders drain_timeout as hard-stop-after (versiond-router-slot
+# compose), so HAProxy resets the last streams and exits on its own at that
+# point. Docker's SIGKILL comes this much later, so the two never race.
+stop_headroom=10
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
@@ -778,7 +782,7 @@ stop_generation() {
         reset_parent_slot_health || true
         return 1
     }
-    "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null || status=$?
+    "$docker_bin" stop --time "$((drain_timeout + stop_headroom))" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
 }
@@ -2008,7 +2012,7 @@ stop_fleet_containers() {
             "router container $id disappeared before maintenance stop"
         case $state in
             running | restarting | paused)
-                "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null &
+                "$docker_bin" stop --time "$((drain_timeout + stop_headroom))" "$id" >/dev/null &
                 pids+=("$!")
                 ;;
             created | exited | dead) ;;

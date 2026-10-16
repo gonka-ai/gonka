@@ -32,8 +32,9 @@ services:
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
       - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
-      # hard-stop-after for the SIGUSR1 soft stop. The fleet gives Docker the
-      # drain timeout as the stop budget, so the two default to the same value.
+      # hard-stop-after for the SIGUSR1 soft stop. The fleet stops a slot with
+      # this drain timeout plus a headroom, so HAProxy resets the last streams
+      # and exits before Docker's SIGKILL.
       - VERSIOND_ROUTER_HARD_STOP_SECONDS=${VERSIOND_ROUTER_HARD_STOP_SECONDS:-${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}}
     labels:
       ai.gonka.component: versiond-router
