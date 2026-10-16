@@ -173,10 +173,14 @@ func cw20SendTarget(raw []byte) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if _, err := base64.StdEncoding.DecodeString(msg); err != nil {
-		if _, err := base64.RawStdEncoding.DecodeString(msg); err != nil {
+	hook, err := base64.StdEncoding.DecodeString(msg)
+	if err != nil {
+		if hook, err = base64.RawStdEncoding.DecodeString(msg); err != nil {
 			return "", false
 		}
+	}
+	if hookFields, ok := strictObject(hook); !ok || len(hookFields) != 0 {
+		return "", false
 	}
 	return contract, true
 }
