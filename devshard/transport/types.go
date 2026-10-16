@@ -3,6 +3,7 @@ package transport
 import (
 	"fmt"
 
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
@@ -139,18 +140,25 @@ func marshalDiffWireTxs(d types.Diff) ([]byte, error) {
 	return txsBytes, nil
 }
 
+// DiffWireTxs is the Txs field on the wire: protowire field 1 (varint nonce)
+// followed by the stored txs_proto. That stored blob is the repeated txs
+// field of DiffContent, which marshalDiffWireTxs emits after the nonce.
+// nonce 0 is still written; proto.Marshal omits a zero nonce.
+func DiffWireTxs(nonce uint64, stored []byte) []byte {
+	out := make([]byte, 0, 1+protowire.SizeVarint(nonce)+len(stored))
+	out = protowire.AppendTag(out, 1, protowire.VarintType)
+	out = protowire.AppendVarint(out, nonce)
+	return append(out, stored...)
+}
+
 // DiffFromJSON converts a JSON wire diff back to the domain Diff.
 func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
-	var content types.DiffContent
-	if err := proto.Unmarshal(dj.Txs, &content); err != nil {
-		return types.Diff{}, fmt.Errorf("unmarshal diff content: %w", err)
-	}
-	return types.Diff{
+	return types.DecodeDiffWire(types.DiffWire{
 		Nonce:         dj.Nonce,
-		Txs:           content.Txs,
+		Txs:           dj.Txs,
 		UserSig:       dj.UserSig,
 		PostStateRoot: dj.PostStateRoot,
-	}, nil
+	})
 }
 
 // DiffsFromJSON decodes a challenge / verify diffs list.

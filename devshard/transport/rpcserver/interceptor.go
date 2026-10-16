@@ -76,11 +76,12 @@ func isImplementedRPC(implemented map[string]struct{}, path string) bool {
 
 // handshakeGate admits non-Attach RPCs from the session header before Connect
 // reads the body. Unary interceptors run after protobuf decode; this wrapper
-// does not. The ResponseWriter and session token are stashed only on Watch.
-// Unimplemented procedures (unmounted Gossip/Payload, junk paths) are
-// answered here before the peer budget is charged, so Connect never reads
-// the body. Chat is implemented; it is charged after the stream slot is
-// acquired. Attach's anonymous bucket bounds ECDSA. A body over 4 KiB is
+// does not. The ResponseWriter is stashed on Watch and Chat, the session
+// token only on Watch. Unimplemented procedures (unmounted Gossip/Payload,
+// junk paths) are answered here before the peer budget is charged, so
+// Connect never reads the body. Chat is counted as pending here and gets a
+// read deadline; its stream slot and weight wait for the owner check
+// (admitChat). Attach's anonymous bucket bounds ECDSA. A body over 4 KiB is
 // refused here and does not take a bucket token.
 func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[string]struct{}) http.Handler {
 	ew := connect.NewErrorWriter()
@@ -99,7 +100,8 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[str
 		}
 		ctx := r.Context()
 		watch := isWatchPath(r.URL.Path)
-		if watch {
+		chat := isChatPath(r.URL.Path)
+		if watch || chat {
 			ctx = withResponseWriter(ctx, w)
 		}
 		ctx, err := admitSession(auth, ctx, r.Header, watch)
@@ -113,9 +115,19 @@ func handshakeGate(auth *PeerAuthHandler, next http.Handler, implemented map[str
 			_ = ew.Write(w, r, connect.NewError(connect.CodeUnimplemented, errors.New("method is not implemented")))
 			return
 		}
-		// Chat is charged after acquireStream (finding 6). Watch is
-		// weight 0 so charging here is a no-op.
-		if !isChatPath(r.URL.Path) && !isWatchPath(r.URL.Path) {
+		if chat {
+			gate, err := openChatGate(ctx, auth, w)
+			if err != nil {
+				auth.observeRPC(ctx, r.URL.Path, PeerFromContext(ctx), true, true, false, false)
+				_ = ew.Write(w, r, err)
+				return
+			}
+			defer gate.finish()
+			ctx = withChatGate(ctx, gate)
+		}
+		// Chat is charged by admitChat after acquireStream (finding 6).
+		// Watch is weight 0 so charging here is a no-op.
+		if !chat && !watch {
 			if err := auth.limiter.charge(ctx, PeerFromContext(ctx), r.URL.Path); err != nil {
 				auth.observeRPC(ctx, r.URL.Path, PeerFromContext(ctx), true, false, false, false)
 				_ = ew.Write(w, r, err)
@@ -194,6 +206,14 @@ func (s *rateLimitInterceptor) WrapStreamingHandler(next connect.StreamingHandle
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
 		procedure := conn.Spec().Procedure
 		peer := PeerFromContext(ctx)
+		if isChatPath(procedure) {
+			// This runs before Connect reads the envelope. Chat takes its
+			// slot and weight in SessionHandler.Chat (admitChat).
+			if chatGateFromContext(ctx) == nil {
+				ctx = withChatGate(ctx, &chatGate{auth: s.auth})
+			}
+			return next(ctx, conn)
+		}
 		if isStreamPath(procedure) {
 			if err := s.auth.limiter.acquireStream(ctx, peer, procedure); err != nil {
 				s.auth.observeRPC(ctx, procedure, peer, true, true, false, false)

@@ -21,6 +21,11 @@ const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
 // context parameter, so the deadline has to be applied here.
 const warmKeyQueryTimeout = 10 * time.Second
 
+// hostInfoQueryTimeout bounds a single Participant lookup. GetHostInfo has no
+// context parameter, so a stalled chain endpoint would otherwise hold the
+// caller forever.
+const hostInfoQueryTimeout = 10 * time.Second
+
 type warmCacheKey struct {
 	host string
 	warm string
@@ -112,7 +117,9 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 }
 
 func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
-	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), hostInfoQueryTimeout)
+	defer cancel()
+	resp, err := b.client.InferenceQueryClient().Participant(ctx,
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
 		return nil, bridge.ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))

@@ -341,6 +341,8 @@ func (p *sessionPicker) run() {
 			continue
 		}
 
+		nonceBefore := p.session.Nonce()
+
 		// Phase 2: try to dispatch one nonce. The chooser runs under
 		// Session.mu and decides between five outcomes, all handled
 		// by the same PrepareInferenceFn-produced diff:
@@ -476,6 +478,16 @@ func (p *sessionPicker) run() {
 		case err != nil:
 			if chosen != nil {
 				chosen.reply <- pickerResult{err: err}
+				continue
+			}
+			if ghost != ghostNone && p.session.Nonce() > nonceBefore {
+				// The ghost MsgStart is already in the diff. The queue was
+				// not chosen, so failing it would drop requests this burn
+				// did not touch. The next iteration uses the next nonce.
+				// A ghost error that left the nonce in place still drains
+				// below: retrying that would spin on the same prepare.
+				logRequestStage(p.logCtx, "session_picker_ghost_prepare_error",
+					"error", err, "nonce", p.session.Nonce())
 				continue
 			}
 			// Unclassified error from chooser. Should not happen with

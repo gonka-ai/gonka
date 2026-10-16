@@ -14,10 +14,12 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/labstack/echo/v4"
+	promtest "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
@@ -381,6 +383,61 @@ func TestH2C_NativeGRPCAttachChatAndGetSignatures(t *testing.T) {
 	require.NotEmpty(t, chunks)
 }
 
+func TestH2C_ChatReadDeadlineThroughEcho(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	const host = "host-under-test"
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), host, rpcserver.PeerAuthConfig{
+		ChatReadTimeout: 50 * time.Millisecond,
+	})
+	t.Cleanup(auth.Close)
+	e := echo.New()
+	e.HideBanner = true
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: new(int)}, nil,
+		WithPeerRPC(auth, rpcserver.NewSessionHandler(staticH2CLookup{core: h2cChatCore{}})))
+	srv := startCleartextHTTP2(t, e)
+
+	h2 := newH2CClient(t, nil)
+	rpcBase := srv.URL + "/sessions/1/rpc"
+	authClient := rpcpbconnect.NewPeerAuthServiceClient(h2, rpcBase)
+	nonce := []byte("h2c-chat-read-deadline-nonce1")
+	ts := time.Now().Unix()
+	sig, err := transport.SignAttach(signer, host, ts, signer.Address(), nonce, transport.AttachProtocolVersion, nil)
+	require.NoError(t, err)
+	attached, err := authClient.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{
+		PeerAddress:     signer.Address(),
+		AttachNonce:     nonce,
+		ProtocolVersion: transport.AttachProtocolVersion,
+		HostAddress:     host,
+		Timestamp:       ts,
+		Signature:       sig,
+	}))
+	require.NoError(t, err)
+
+	counter := observability.PeerRPCChatDroppedForTest(observability.PeerRPCChatDroppedReadTimeout)
+	before := promtest.ToFloat64(counter)
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	req, err := http.NewRequest(http.MethodPost, rpcBase+rpcpbconnect.SessionServiceChatProcedure, pr)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/connect+proto")
+	req.Header.Set("Connect-Protocol-Version", "1")
+	rpcserver.SetSessionHeader(req.Header, attached.Msg.SessionToken)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if resp, err := h2.Do(req); err == nil {
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("an unread Chat envelope behind Echo must end at ChatReadTimeout")
+	}
+	require.Equal(t, 1.0, promtest.ToFloat64(counter)-before)
+}
+
 type errStatus int
 
 func (e errStatus) Error() string { return http.StatusText(int(e)) }
@@ -451,6 +508,6 @@ func (s staticH2CLookup) SessionForOwner(string, string) (rpcserver.SessionCore,
 	return s.core, nil
 }
 
-func (s staticH2CLookup) SessionForStartProof(string, string, []types.Diff, string) (rpcserver.SessionCore, error) {
+func (s staticH2CLookup) SessionForStartProof(string, string, func() ([]types.Diff, error), string) (rpcserver.SessionCore, error) {
 	return s.core, nil
 }

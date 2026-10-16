@@ -36,7 +36,7 @@ func (m *HostManager) sessionForParticipant(escrowID, addr string) (*transport.S
 	return srv, nil
 }
 
-func (m *HostManager) sessionForStartProof(escrowID, addr string, diffs []types.Diff, claimedVersion string) (*transport.Server, error) {
+func (m *HostManager) sessionForStartProof(escrowID, addr string, decode func() ([]types.Diff, error), claimedVersion string) (*transport.Server, error) {
 	srv, err := m.sessionForParticipant(escrowID, addr)
 	if err == nil {
 		return srv, nil
@@ -64,6 +64,13 @@ func (m *HostManager) sessionForStartProof(escrowID, addr string, diffs []types.
 	}
 	if !escrowLookupEligible(escrow, nil, addr) {
 		return nil, nil
+	}
+	if decode == nil {
+		return nil, err
+	}
+	diffs, err := decode()
+	if err != nil {
+		return nil, err
 	}
 	version, err := state.GatewayStartVersion(m.verifier, escrow.CreatorAddress, escrowID, diffs)
 	if err != nil {
@@ -118,5 +125,5 @@ func (m *HostManager) bindGroupPeerFromBody(escrowID, addr string, body []byte) 
 		}
 		return nil, types.ErrStartProofMissing
 	}
-	return m.sessionForStartProof(escrowID, addr, diffs, claimed)
+	return m.sessionForStartProof(escrowID, addr, func() ([]types.Diff, error) { return diffs, nil }, claimed)
 }

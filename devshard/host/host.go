@@ -584,6 +584,14 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
+// SnapshotForTimeout copies the escrow summary and one inference record under
+// the same lock. The returned state has a nil inference map.
+func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types.InferenceRecord, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.SnapshotWithInference(inferenceID)
+}
+
 // IsWarmKeyAddress returns true if addr is a known warm key in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
@@ -2041,74 +2049,11 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 // executor IS reachable. The verifier should already have caught bad payloads
 // before forwarding (defense-in-depth).
 func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, error) {
-	receipt, confirmedAt, job, err := h.challengeReceiptLocked(ctx, inferenceID, payload, diffs)
-	if err != nil || job == nil {
-		return receipt, confirmedAt, err
-	}
-	h.executeAsync(ctx, job)
-	return receipt, confirmedAt, nil
-}
-
-// challengeReceiptLocked applies diffs, checks executor eligibility, and signs
-// the receipt under the mutex. Returns a non-nil ExecuteRequest when async execution is needed.
-func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
-	hdr, hdrErr := h.latestHeader(ctx)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	// An inference this host already held may have been executed by an
-	// earlier process that lost its finish.
-	_, heldBefore := h.sm.GetInference(inferenceID)
-	if _, err := h.applyDiffsLocked(ctx, diffs); err != nil {
-		return nil, 0, nil, fmt.Errorf("apply challenge diffs: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, 0, nil, err
-	}
-
-	rec, ok := h.sm.GetInference(inferenceID)
-	if !ok || rec.Status != types.StatusPending {
-		return nil, 0, nil, nil
-	}
-	if !h.slotIDs[rec.ExecutorSlot] {
-		return nil, 0, nil, nil
-	}
-	if payload == nil {
-		return nil, 0, nil, nil
-	}
-	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return nil, 0, nil, nil
-	}
-
-	// Publish MsgConfirmStart the way the request path does. To the verifier the
-	// receipt is only a liveness proof and is discarded after the timeout vote,
-	// so without ConfirmStart the inference stays pending and applyFinishInference
-	// rejects the MsgFinishInference this execution produces as an invalid
-	// transition -- the work could never be settled. Only reachable while the
-	// record is still pending, so this cannot confirm an already-started
-	// inference.
-	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
+	wires, err := diffWiresFromDiffs(diffs)
 	if err != nil {
-		return nil, 0, nil, err
+		return nil, 0, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
-
-	// Dedup: return receipt (proves executor alive) but skip execution
-	// if already in-flight or already finished in mempool.
-	if _, dup := h.executing[inferenceID]; dup {
-		return sig, confirmedAt, nil, nil
-	}
-	if h.mempool.HasFinish(inferenceID) {
-		return sig, confirmedAt, nil, nil
-	}
-
-	h.executing[inferenceID] = struct{}{}
-
-	job := h.newExecuteRequest(inferenceID, rec, payload)
-	if heldBefore && h.storedResponse != nil {
-		job.Recovery = devshard.RecoveryStoredFirst
-	}
-	return sig, confirmedAt, job, nil
+	return h.ChallengeReceiptWire(ctx, inferenceID, payload, wires, diffs)
 }
 
 func (h *Host) LatestNonce() uint64 {

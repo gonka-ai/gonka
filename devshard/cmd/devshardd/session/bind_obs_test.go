@@ -399,7 +399,7 @@ func TestChallengeReceiptUnbound_MissingVersionDoesNotBind(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 }
 
-func TestChallengeReceiptUnbound_ClaimedVersionMismatchDoesNotBind(t *testing.T) {
+func TestChallengeReceiptUnbound_RequestVersionIsNotOnTheWire(t *testing.T) {
 	const escrowID = "9717"
 	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
 	rpc := newBindRPC(t, mgr)
@@ -408,15 +408,17 @@ func TestChallengeReceiptUnbound_ClaimedVersionMismatchDoesNotBind(t *testing.T)
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 
-	_, err = rpc.challenge(escrowID, hosts[2], transport.ChallengeReceiptRequest{
+	resp, err := rpc.challenge(escrowID, hosts[2], transport.ChallengeReceiptRequest{
 		InferenceID:     1,
 		ProtocolVersion: "other-version",
 		Payload:         &transport.PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 		Diffs:           []transport.DiffJSON{dj},
 	})
-	require.Equal(t, connect.CodeFailedPrecondition, connect.CodeOf(err), "rpc=%v", err)
-	_, err = store.GetSessionMeta(escrowID)
-	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Receipt)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
 func TestChallengeReceiptUnbound_StrangerDoesNotBind(t *testing.T) {
