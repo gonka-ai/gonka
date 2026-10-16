@@ -1042,6 +1042,54 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	return resp.Receipt, mempool, nil
 }
 
+// ChallengeReceiptWires posts the payload and one page of stored wires. The
+// page is not decoded. The JSON session route is retired, so this returns
+// ErrHTTPSessionRetired unless the test client allows that route.
+func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+
+	body, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			djList[i] = DiffJSON{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
+		}
+		encoded, err := json.Marshal(ChallengeReceiptRequest{
+			InferenceID: inferenceID,
+			Payload:     PayloadToJSON(payload),
+			Diffs:       djList,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return encoded, nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
+	if err != nil {
+		return nil, nil, err
+	}
+	var resp ChallengeReceiptResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Receipt, mempool, nil
+}
+
 // ChallengeCatchUp sends one encoded page with a nil payload. The body is one
 // JSON marshal of the stored bytes with the nonce field prepended.
 func (c *HTTPClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {

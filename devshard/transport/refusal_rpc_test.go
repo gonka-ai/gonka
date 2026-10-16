@@ -129,6 +129,21 @@ func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint
 	return nil
 }
 
+func (e *recordingExecutor) ChallengeReceiptWires(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+	raw, err := transport.ChallengeReceiptWireBody(inferenceID, payload, diffs)
+	require.NoError(e.t, err)
+	nonces := make([]uint64, len(diffs))
+	for i, d := range diffs {
+		nonces[i] = d.Nonce
+	}
+	e.calls = append(e.calls, recordedChallenge{
+		size:    len(raw),
+		nonces:  nonces,
+		payload: payload != nil,
+	})
+	return nil, nil, nil
+}
+
 func (e *recordingExecutor) ChallengeReceipt(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	raw, err := challengeReceiptBody(inferenceID, payload, diffs)
 	require.NoError(e.t, err)

@@ -289,7 +289,20 @@ func challengeRefused(
 	ingest TxSink,
 	ev EvidenceVerifier,
 ) (refusedChallenge, error) {
-	receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	return judgeRefusedChallenge(escrowID, inferenceID, rec, ingest, ev, func() ([]byte, []*types.DevshardTx, error) {
+		return executorClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	})
+}
+
+func judgeRefusedChallenge(
+	escrowID string,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	call func() ([]byte, []*types.DevshardTx, error),
+) (refusedChallenge, error) {
+	receipt, mempool, err := call()
 	if err != nil {
 		// The caller decides whether this error is an answer or no HTTP response.
 		return refusedUnreachable, err

@@ -388,7 +388,9 @@ func challengeOnce(
 // challengeFrom sends [from, LatestNonce] one page at a time, then the payload.
 // The last page rides with the payload when it fits, unless this check leads a
 // gated walk; the leader sends every page as catch-up and releases the gate
-// before the payload call. Each page is sent before the next one is loaded.
+// before the payload call. That combined call sends the stored wires. It does
+// not decode them and encode them again. Each page is sent before the next
+// one is loaded.
 // Catch-up pages use a child deadline that leaves a reserve for that payload call.
 func challengeFrom(
 	ctx context.Context,
@@ -432,12 +434,9 @@ func challengeFrom(
 	}
 	last = wiresFromCursor(last, from)
 	if coldLeadFrom(ctx) == nil && pageFitsPayload(last, payload) {
-		decoded, err := decodeWires(last)
+		page := last
 		last = nil
-		if err != nil {
-			return 0, err
-		}
-		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, decoded, executorClient, ingest, ev, unreachable)
+		return finishPayloadWires(ctx, st.EscrowID, inferenceID, rec, payload, page, executorClient, ingest, ev, unreachable)
 	}
 	if len(last) > 0 {
 		send, err := prepareCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout, unreachable)
@@ -461,6 +460,13 @@ func challengeFrom(
 // request goes out.
 type challengeCatchUpPreparer interface {
 	PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error)
+}
+
+// challengeReceiptWireSender sends a payload and one page of stored wires
+// without decoding the page. Clients that do not implement it still receive
+// the decoded diffs through ChallengeReceipt.
+type challengeReceiptWireSender interface {
+	ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error)
 }
 
 // prepareCatchUp checks the stored bytes and builds the catch-up send.
@@ -567,11 +573,58 @@ func finishPayload(
 	ev EvidenceVerifier,
 	unreachable func(error) bool,
 ) (refusedChallenge, error) {
+	return finishChallengeCall(ctx, escrowID, inferenceID, rec, ingest, ev, unreachable, func(ctx context.Context) ([]byte, []*types.DevshardTx, error) {
+		return executor.ChallengeReceipt(ctx, inferenceID, payload, diffs)
+	})
+}
+
+// finishPayloadWires sends the last page with the payload as stored bytes.
+// A client without ChallengeReceiptWires still gets the decoded diffs.
+func finishPayloadWires(
+	ctx context.Context,
+	escrowID string,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	wires []types.DiffWire,
+	executor ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	unreachable func(error) bool,
+) (refusedChallenge, error) {
+	sender, ok := executor.(challengeReceiptWireSender)
+	if !ok {
+		decoded, err := decodeWires(wires)
+		if err != nil {
+			return 0, err
+		}
+		return finishPayload(ctx, escrowID, inferenceID, rec, payload, decoded, executor, ingest, ev, unreachable)
+	}
+	if err := screenCatchUpPage(wires); err != nil {
+		return 0, err
+	}
+	return finishChallengeCall(ctx, escrowID, inferenceID, rec, ingest, ev, unreachable, func(ctx context.Context) ([]byte, []*types.DevshardTx, error) {
+		return sender.ChallengeReceiptWires(ctx, inferenceID, payload, wires)
+	})
+}
+
+func finishChallengeCall(
+	ctx context.Context,
+	escrowID string,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	unreachable func(error) bool,
+	call func(context.Context) ([]byte, []*types.DevshardTx, error),
+) (refusedChallenge, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	ctx = memwatch.WithChallengeStats(ctx)
-	outcome, err := challengeRefused(ctx, escrowID, inferenceID, rec, payload, diffs, executor, ingest, ev)
+	outcome, err := judgeRefusedChallenge(escrowID, inferenceID, rec, ingest, ev, func() ([]byte, []*types.DevshardTx, error) {
+		return call(ctx)
+	})
 	noteRefusalPage(err, nil, unreachable)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {

@@ -192,3 +192,53 @@ func TestChallengeCatchUpBodyAllocsIgnoreTxCount(t *testing.T) {
 	})
 	require.LessOrEqual(t, manyAllocs, oneAllocs+2)
 }
+
+func TestChallengeReceiptWireBodyKeepsStoredBytes(t *testing.T) {
+	stored := bytes.Repeat([]byte{0xab}, 64)
+	sig := bytes.Repeat([]byte{1}, 64)
+	root := bytes.Repeat([]byte{2}, 32)
+	payload := &host.InferencePayload{Prompt: []byte("prompt"), Model: "llama"}
+	wire := types.DiffWire{Nonce: 7, Txs: stored, UserSig: sig, PostStateRoot: root}
+
+	body, err := ChallengeReceiptWireBody(3, payload, []types.DiffWire{wire})
+	require.NoError(t, err)
+	var req rpcpb.ChallengeReceiptRequest
+	require.NoError(t, proto.Unmarshal(body, &req))
+	require.Equal(t, uint64(3), req.GetInferenceId())
+	require.Equal(t, payload.Prompt, req.GetPayload().GetPrompt())
+	require.Len(t, req.GetDiffs(), 1)
+	require.Equal(t, DiffWireTxs(wire.Nonce, stored), req.GetDiffs()[0].GetTxs())
+	require.Equal(t, sig, req.GetDiffs()[0].GetUserSig())
+
+	const total = 4 << 20
+	oneTx := []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			PromptHash: bytes.Repeat([]byte{0xab}, total),
+		}},
+	}}
+	const n = 200
+	chunk := total / n
+	manyTx := make([]*types.DevshardTx, n)
+	for i := range manyTx {
+		manyTx[i] = &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			PromptHash: bytes.Repeat([]byte{byte(i)}, chunk),
+		}}}
+	}
+	oneStored, err := proto.Marshal(&types.DiffContent{Txs: oneTx})
+	require.NoError(t, err)
+	manyStored, err := proto.Marshal(&types.DiffContent{Txs: manyTx})
+	require.NoError(t, err)
+	one := types.DiffWire{Nonce: 1, Txs: oneStored, UserSig: sig, PostStateRoot: root}
+	many := types.DiffWire{Nonce: 1, Txs: manyStored, UserSig: sig, PostStateRoot: root}
+	oneAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := ChallengeReceiptWireBody(1, payload, []types.DiffWire{one}); err != nil {
+			panic(err)
+		}
+	})
+	manyAllocs := testing.AllocsPerRun(20, func() {
+		if _, err := ChallengeReceiptWireBody(1, payload, []types.DiffWire{many}); err != nil {
+			panic(err)
+		}
+	})
+	require.LessOrEqual(t, manyAllocs, oneAllocs+2)
+}

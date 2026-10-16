@@ -775,11 +775,30 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 	if err != nil {
 		return nil, nil, err
 	}
+	return c.challengeReceiptRaw(ctx, raw)
+}
+
+// ChallengeReceiptWires sends the payload and one page of stored wires. The
+// page is not decoded. DiffToJSON is not used.
+func (c *RPCClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+	if !c.Uses(EndpointChallengeReceipt) {
+		return c.HTTPClient.ChallengeReceiptWires(ctx, inferenceID, payload, diffs)
+	}
+	raw, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		return ChallengeReceiptWireBody(inferenceID, payload, diffs)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return c.challengeReceiptRaw(ctx, raw)
+}
+
+func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte, []*types.DevshardTx, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 	var receipt []byte
 	var mempool []*types.DevshardTx
-	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
 		env, err := c.signEnvelope(raw)
 		if err != nil {
 			return err
@@ -846,6 +865,28 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 		}
 		return nil
 	}, nil
+}
+
+// ChallengeReceiptWireBody is the Connect payload of a challenge that carries
+// the prompt and one page of stored wires. Each diff's Txs is the stored blob
+// with the nonce field prepended. The page is not decoded.
+func ChallengeReceiptWireBody(inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, error) {
+	req := &rpcpb.ChallengeReceiptRequest{
+		InferenceId: inferenceID,
+		Payload:     PayloadJSONToProto(PayloadToJSON(payload)),
+	}
+	if len(diffs) > 0 {
+		req.Diffs = make([]*rpcpb.Diff, len(diffs))
+		for i, d := range diffs {
+			req.Diffs[i] = &rpcpb.Diff{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
+		}
+	}
+	return proto.Marshal(req)
 }
 
 // ChallengeCatchUpBody is the Connect payload of a nil-payload catch-up page.

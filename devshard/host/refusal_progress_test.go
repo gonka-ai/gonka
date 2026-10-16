@@ -36,10 +36,12 @@ type progressPeer struct {
 		mempool []*types.DevshardTx
 		err     error
 	}
-	stepN      int
-	pages      [][]types.Diff
-	sawPayload []bool
-	versions   []string
+	stepN           int
+	pages           [][]types.Diff
+	sawPayload      []bool
+	versions        []string
+	decodedReceipts int
+	payloadOnWires  int
 }
 
 func (p *progressPeer) SessionHead(context.Context) (uint64, []byte, error) {
@@ -77,7 +79,21 @@ func (p *progressPeer) ChallengeCatchUp(_ context.Context, _ uint64, diffs []typ
 }
 
 func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if len(diffs) > 0 {
+		p.decodedReceipts++
+	}
 	return p.takeStep(payload != nil, diffs)
+}
+
+func (p *progressPeer) ChallengeReceiptWires(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+	if payload != nil && len(diffs) > 0 {
+		p.payloadOnWires++
+	}
+	page := make([]types.Diff, len(diffs))
+	for i, d := range diffs {
+		page[i] = types.Diff{Nonce: d.Nonce, PostStateRoot: append([]byte(nil), d.PostStateRoot...)}
+	}
+	return p.takeStep(payload != nil, page)
 }
 
 type progressJournal struct {
@@ -571,6 +587,8 @@ func TestRefusalCursorChoosesTheSuffix(t *testing.T) {
 		require.Equal(t, []int{3}, pageLens(peer.pages))
 		require.Equal(t, []bool{true}, peer.sawPayload)
 		require.Equal(t, []uint64{2, 3, 4}, sentNonces(peer.pages))
+		require.Equal(t, 1, peer.payloadOnWires)
+		require.Zero(t, peer.decodedReceipts)
 	})
 }
 
@@ -604,6 +622,13 @@ func (p *scriptedPeer) ChallengeReceipt(ctx context.Context, id uint64, payload 
 		return nil, nil, err
 	}
 	return p.progressPeer.ChallengeReceipt(ctx, id, payload, diffs)
+}
+
+func (p *scriptedPeer) ChallengeReceiptWires(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+	if err := p.interrupt(ctx); err != nil {
+		return nil, nil, err
+	}
+	return p.progressPeer.ChallengeReceiptWires(ctx, id, payload, diffs)
 }
 
 func journalWires(diffs []types.Diff) ([]types.DiffWire, error) {
