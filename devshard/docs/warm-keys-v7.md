@@ -105,23 +105,41 @@ the same key on the slot, and a revoke must name the live binding's grant id
 back and a stale revoke cannot end a later binding.
 
 The acceptance rule for a host signature is a function of the history, of one
-nonce and of that diff's stamped height (`WarmKeyHistory.Allows`, with the
-height rule applied by the state machine): the cold key; a warm key whose
-binding for that slot covers the nonce **and whose grant is live at the
-diff's stamped height** (the diff's height is below `revoked_at_height`, or
-the entry has none); while the slot has no binding covering it, a key that
-covers it on a sibling slot of the same validator, unless the key was revoked
-on this slot at or before it. No chain call on the apply path, no wall clock.
-The stamped height is the user-signed height the diff chain already carries
-(`MsgHeartbeat.observed_height`, acknowledged by the hosts through
-height-sync), so it is part of the log and every host reads the same value.
-Replaying the same diffs on any host yields the same answer.
+nonce and of that diff's **authorization height** (`WarmKeyHistory.Allows`,
+with the height rule applied by the state machine): the cold key; a warm key
+whose binding for that slot covers the nonce and whose grant is live at the
+authorization height (below `revoked_at_height`, or the entry has none);
+while the slot has no binding covering it, a key that covers it on a sibling
+slot of the same validator, unless the key was revoked on this slot at or
+before it. No chain call on the apply path, no wall clock. Replaying the same
+diffs on any host yields the same answer.
 
 The height rule is what makes a revoke effective even when the gateway never
 emits `MsgWarmKeyRevoke`: a host that has seen the entry's end in the chain
-log refuses the key in every diff stamped at or past it. The revoke entry is
-bookkeeping that ends the binding's nonce range and keeps the history
-readable; the chain log is the authority for the end.
+log refuses the key in every diff whose authorization height is at or past
+it. The revoke entry is bookkeeping that ends the binding's nonce range and
+keeps the history readable; the chain log is the authority for the end.
+
+**The authorization height is a dependency, not something this note
+supplies.** It must be a chain height, carried by every diff, that a
+malicious gateway cannot set below the chain's real progress. What the log
+carries today is not that: `MsgHeartbeat.observed_height` is optional,
+absent from ordinary transaction diffs and forbidden during finalization
+(`state/heightsync.go`); the height-sync checks mark a sequencer height
+above the floor rather than rejecting a stale one (`checkL0`), the floor
+rises on any one host-signed claim with no corroboration
+(`heightsync/floor.go`, `FloorIndex`), and acknowledgements follow the
+heartbeat rather than bound it. A gateway could stamp a height from before a
+revoke and keep a compromised key alive, or one host could push the floor
+past the chain tip and stall every check. The v7 scope already carries the
+item that fixes this, "timeouts use heightstamped time, as it is verified by
+protocol": a per-diff height that the protocol verifies against the hosts'
+own observations and that every diff inherits. The warm-key rule uses that
+height and nothing weaker; until it exists, the rule cannot be implemented
+safely, and this note asks the authors of that item to confirm it provides:
+one height per diff (inherited when a diff carries no stamp), monotonic, and
+bounded by what a quorum of hosts has acknowledged. See
+[Open questions](#open-questions).
 
 The nonce is the **authorization nonce**, and each path has its own:
 
@@ -137,8 +155,10 @@ The nonce is the **authorization nonce**, and each path has its own:
   nonce.
 - Repair requests and answers, and other admission on a session the receiver
   holds, are local decisions, not consensus: the receiver uses its history
-  head. A key rotated in may repair an old turn; a revoked key may not,
-  whatever `RefNonce` it names.
+  head **and** the grant source at the current height, so a key revoked on
+  chain is refused even when the session has not advanced since. A key
+  rotated in may repair an old turn; a revoked key may not, whatever
+  `RefNonce` it names.
 - Admission without a session (`ServeUnboundGetPayload`, `payloadRoster`,
   `scanRosterWarmKey`) has no history to read and uses the grant source
   ([below](#grant-source)) at the current height, as it does today, minus the
@@ -168,13 +188,25 @@ The gateway is the sequencer and the only author of these entries, but it is
 not the authority for them: its signature authenticates the diff, not the
 grant. The authority is the chain log, and the entry names the log record by
 its id. Every host checks the entry against the chain log before it counts
-the key. For a bind in a diff stamped at height h: the entry `grant_id` of
-the slot's cold key exists, its grantee is `address`, `granted_at_height` is
-at or below h, and the entry is not ended at or before h. For a revoke: the
-entry is ended, and the diff is stamped at or past its `revoked_at_height`.
-The gateway cannot bind a key through an old grant, because the diff's own
-height is what the grant must be live at, and the gateway cannot stamp a
-height the hosts have not acknowledged.
+the key. For a bind in a diff with authorization height h: the entry
+`grant_id` of the slot's cold key exists, its grantee is `address`,
+`granted_at_height` is at or below h, and the entry is not ended at or
+before h. For a revoke: the entry is ended, and h is at or past its
+`revoked_at_height`. The gateway cannot bind a key through an old grant,
+because the diff's own height is what the grant must be live at, and the
+authorization height is one the gateway cannot set back
+([above](#model)).
+
+**First binds.** A new session has no diff with a height yet, and the hosts'
+first messages, the ones that establish the height floor, are themselves
+warm-signed, so the first binds cannot wait for a height. They use a chain
+fact instead: the escrow's creation height, recorded on chain with the
+escrow. The gateway's first diff carries a bind for every slot whose
+validator has a live grant at the creation height, and those binds are
+checked against the log at that height. The same applies to a session that
+moves from v6 to v7: the first v7 diff binds the keys live at the creation
+height, and the hosts accept cold keys only before it. Rotations after that
+use the authorization height.
 
 The check needs a complete, committed view of the log through h: a host
 answers only once its chain node, or its log copy, has reached h with no
@@ -214,13 +246,16 @@ without a chain round trip per question.
    grant. The stream keeps its cursor and `needs_reset` contract: on a reset,
    and at the first poll, dapi answers with the full log for the participants
    the host asks about, stamped with the height and cursor it was taken at,
-   and devshardd replaces its copy before it applies later events. devshardd
-   keeps the copy the way it keeps the escrow cache today
-   (`cmd/devshardd/hostevents_sink.go`), with one addition: the copy knows
-   the height it is complete through, and an event the runner gives up on
-   (`hostevents/runner.go`, `MaxDispatchAttempts`) marks the copy incomplete
-   from that event's height until a full reload, so an answer is never
-   given from a copy with a hole.
+   and devshardd replaces its copy before it applies later events. Every
+   response, with or without events, carries a **processed-block
+   watermark**: the height through which dapi has published every log event,
+   so the copy's completeness advances during blocks with no key changes and
+   an event's own height is never taken as completeness before the rest of
+   its block arrives. devshardd keeps the copy the way it keeps the escrow
+   cache today (`cmd/devshardd/hostevents_sink.go`), and an event the runner
+   gives up on (`hostevents/runner.go`, `MaxDispatchAttempts`) marks the copy
+   incomplete from that event's height until a full reload, so an answer is
+   never given from a copy with a hole.
 2. Direct chain query, `WarmKeyEntry` and the log, when dapi is unavailable
    or does not serve the event kinds (an old dapi answers the request without
    them), and whenever the copy is incomplete through the height asked.
@@ -236,7 +271,8 @@ history, which is consensus.
    The module appends a log entry at height H1.
 2. The host's devshardd starts signing with the new key. Peers refuse the key
    until the binding is in the log; the gateway sees the grant in its grant
-   source and its next diff carries `MsgWarmKeyBind{slot, key, H1}`.
+   source and its next diff carries `MsgWarmKeyBind{slot, key, id}` with the
+   entry's id.
 3. Peers apply the diff, confirm the entry against the chain log, and the new
    key is live from that nonce.
 4. The old key stays live, and the host may keep using it, until every escrow
@@ -248,10 +284,10 @@ history, which is consensus.
    chooses that height, so it would let a compromised, revoked key sign
    settlements "in the past".
 5. The operator revokes on chain; the entry gets `revoked_at_height` H2. The
-   gateway emits `MsgWarmKeyRevoke{slot, key, grant_id}` in a diff stamped at
-   or past H2; from that nonce the old key is refused, and the height rule
-   refuses it in any diff stamped at or past H2 whether or not the entry is
-   emitted. Diffs from before it replay unchanged.
+   gateway emits `MsgWarmKeyRevoke{slot, key, id}` in a diff whose
+   authorization height is at or past H2; from that nonce the old key is
+   refused, and the height rule refuses it in any diff at or past H2 whether
+   or not the entry is emitted. Diffs from before it replay unchanged.
 
 ## Catch-up and snapshots
 
@@ -283,6 +319,17 @@ propose binds and a v7 session accepts cold keys only.
 
 ## Open questions
 
+- The authorization height. Everything about revocation inside a session
+  rests on a per-diff chain height the gateway cannot set back and one host
+  cannot push forward. Height-sync as it stands gives neither
+  ([Model](#model)). The v7 item "heightstamped time verified by protocol" is
+  where it has to come from; this note needs its authors to confirm the three
+  properties (one height per diff, monotonic, bounded by a quorum of host
+  observations) or to say which the warm-key rule must do without. Without
+  it, the honest fallback is weaker: binds and revokes take effect at their
+  nonce only, the chain log orders them, and a gateway that withholds a
+  revoke keeps the key accepted until the hosts stop serving it through the
+  local admission rules.
 - Scope of the chain change: the warm-key log with ids, `WarmKeyEntry`, the
   module ending entries on expiry, and the seeding at the upgrade. This note
   assumes the 0.2.18 branch takes them; if it cannot, the fallback is
