@@ -76,9 +76,13 @@ services:
       retries: 10
       start_period: 15s
     stop_signal: SIGUSR1
-    # Routine cleanup stays bounded. The fleet rollout passes its explicit,
-    # longer SSE drain budget to `docker compose stop --timeout`.
-    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    # Every stop path lets the soft stop run to hard-stop-after: the default is
+    # VERSIOND_ROUTER_HARD_STOP_SECONDS (1800) plus the 10 s headroom the fleet
+    # rollout also adds to `docker stop --time`. A site that raises the hard
+    # stop must raise this as well, or Docker's SIGKILL resets the last
+    # streams first. HAProxy exits as soon as its last stream ends, so a stop
+    # waits this long only for a stream that never ends.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-1810s}
     restart: always
     cap_drop:
       - ALL
