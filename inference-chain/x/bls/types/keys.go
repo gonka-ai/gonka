@@ -20,6 +20,7 @@ var (
 	ParamsKey                     = []byte("p_bls")
 	EpochBLSDataPrefix            = []byte("epoch_bls_data")
 	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
+	DealerCommitmentsPrefix       = []byte("epoch_bls_dealer_commitments/")
 	VerificationSubmissionPrefix  = []byte("epoch_bls_verification_submission/")
 	DealerComplaintPrefix         = []byte("epoch_bls_dealer_complaint/")
 	ThresholdPartialSigPrefix     = []byte("threshold_partial_sig/")
@@ -65,6 +66,19 @@ func DealerPartEpochPrefix(epochID uint64) []byte {
 	copy(prefix, DealerPartPrefix)
 	binary.BigEndian.PutUint64(prefix[len(DealerPartPrefix):], epochID)
 	prefix[len(DealerPartPrefix)+8] = '/'
+	return prefix
+}
+
+// DealerCommitmentsEpochPrefix scopes the dealers' polynomial commitments
+// for one epoch, sub-keyed by DealerPartSubKey. The verifier needs only the
+// t+1 commitments (~5 KB), not the whole ~35 KB dealer part.
+//
+// Full layout: {DealerCommitmentsPrefix}{epoch_id:uint64 BE}/{participant_index:uint32 BE}.
+func DealerCommitmentsEpochPrefix(epochID uint64) []byte {
+	prefix := make([]byte, len(DealerCommitmentsPrefix)+8+1)
+	copy(prefix, DealerCommitmentsPrefix)
+	binary.BigEndian.PutUint64(prefix[len(DealerCommitmentsPrefix):], epochID)
+	prefix[len(DealerCommitmentsPrefix)+8] = '/'
 	return prefix
 }
 

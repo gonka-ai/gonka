@@ -68,6 +68,7 @@ type (
 		TopMiners                 collections.Map[sdk.AccAddress, types.TopMiner]
 		PartialUpgrades           collections.Map[uint64, types.PartialUpgrade]
 		EpochPerformanceSummaries collections.Map[collections.Pair[sdk.AccAddress, uint64], types.EpochPerformanceSummary]
+		ReputationAggregates      collections.Map[sdk.AccAddress, types.ReputationAggregate]
 		TrainingExecAllowListSet  collections.KeySet[sdk.AccAddress]
 		TrainingStartAllowListSet collections.KeySet[sdk.AccAddress]
 		ParticipantAllowListSet   collections.KeySet[sdk.AccAddress]
@@ -377,6 +378,13 @@ func NewKeeper(
 			"epoch_performance_summary",
 			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
 			codec.CollValue[types.EpochPerformanceSummary](cdc),
+		),
+		ReputationAggregates: collections.NewMap(
+			sb,
+			types.ReputationAggregatesPrefix,
+			"reputation_aggregate",
+			sdk.AccAddressKey,
+			codec.CollValue[types.ReputationAggregate](cdc),
 		),
 		TrainingExecAllowListSet: collections.NewKeySet(
 			sb,

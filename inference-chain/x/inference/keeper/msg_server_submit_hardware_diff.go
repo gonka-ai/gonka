@@ -30,13 +30,18 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		seenIds[node.LocalId] = true
 	}
 
-	// Make sure that before the update, we have models in the state
+	// Make sure that before the update, we have models in the state.
+	// Nodes usually share models, so each model is looked up once.
+	checkedModels := make(map[string]struct{})
 	for _, node := range msg.NewOrModified {
-
 		for _, modelId := range node.Models {
+			if _, ok := checkedModels[modelId]; ok {
+				continue
+			}
 			if !k.IsValidGovernanceModel(ctx, modelId) {
 				return nil, types.ErrInvalidModel
 			}
+			checkedModels[modelId] = struct{}{}
 		}
 	}
 

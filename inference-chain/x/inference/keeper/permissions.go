@@ -205,7 +205,7 @@ func (k msgServer) checkCurrentActiveParticipantPermission(ctx context.Context, 
 	if err != nil {
 		return err
 	}
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
+	currentEpoch, err := k.effectiveEpochIndex(ctx)
 	if err != nil {
 		return err
 	}
