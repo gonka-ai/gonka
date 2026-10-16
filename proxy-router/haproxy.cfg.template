@@ -107,12 +107,15 @@ backend policy_https
 frontend rpc_h2
     bind ${RPC_H2_BIND}
     maxconn 4096
-    stick-table type ip size 1m expire 10s store conn_rate(1s),sess_rate(1s)
+    stick-table type ip size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)
     # Same trusted-proxy list as :80/:443. The preamble is accepted before
     # track-sc0 so conn_rate, the path zones, and X-Real-IP see the client.
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     tcp-request connection track-sc0 src
+    # conn_rate only slows the fill. An idle socket holds a maxconn slot until
+    # timeout client, so one address is also capped on how many it holds.
+    tcp-request connection reject if { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
     tcp-request connection reject if { sc_conn_rate(0) gt 200 }
     tcp-request session track-sc0 src
     tcp-request session reject if { sc_sess_rate(0) gt 400 }

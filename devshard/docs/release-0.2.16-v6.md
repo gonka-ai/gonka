@@ -74,7 +74,7 @@ listen. The nginx image does not publish it.
 | **Peer RPC and authentication** | Connect on `/devshard/{version}/sessions/{id}/rpc/...`. `Attach` opens a session; `Watch` keeps it. Admission after that is the session token. The signed envelope still covers dispute-bearing bodies |
 | **gzip** | Chat responses are one gzip stream for the whole completion (compression window kept across events, not one gzip per frame). Request gzip is inflated only up to a decoded cap, and a body past that cap is rejected before the handler. `GET /devshard/stats/rpc` is gzip when the caller sends `Accept-Encoding: gzip` |
 | **Per-peer rate limits** | After `Attach`, the child charges the authenticated peer: 6000 weight/min, burst 600. Concurrent chats per peer default to 2560, a quarter of the 10240 process cap. Only the escrow owner takes a chat slot. `GetDiffs` is expensive (weight 60) so it cannot spend the chat budget. Anonymous `Attach` is capped before the signature check |
-| **Per-connection rate limits** | v6 `proxy-router` only. One HTTP/2 connection per peer. That connection is limited per client address: 200 new connections/s, 400 new sessions/s, plus a separate request budget per RPC path |
+| **Per-connection rate limits** | v6 `proxy-router` only. One HTTP/2 connection per peer. That connection is limited per client address: 32 concurrent connections, 200 new connections/s, 400 new sessions/s, plus a separate request budget per RPC path |
 | **Gateway Postgres** | `DEVSHARD_STORAGE_MODE=hybrid` or `postgres` keeps gateway management state in Postgres. `sqlite` stays on local `gateway.db` and ignores `PGHOST`. The same mode applies to `perf.db` |
 | **Load testing** | YAML scenarios drive the gateway through an isolated Docker testenv: concurrent traffic, mock ML-node faults, host pause, catch-up, escrow rotation, and miss-rate checks. In-process `loadsim` remains for gateway and `perf.db` profiles |
 | **Refusal vote** | Already on `devshard/v4.2` and included here. A receipt that arrives during the refusal wait ends that wait. The gateway does not ask verifiers for a refusal once the inference is confirmed. An unsigned or forged receipt cannot cancel the vote |
@@ -237,6 +237,7 @@ A second peer (a second address) has its own connection and its own counters.
 
 | Check | Threshold | Over-limit response |
 | --- | --- | --- |
+| Concurrent connections per address | 32 (`PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) | connection rejected, before `Attach` |
 | New TCP connections | 200/s | connection rejected, before `Attach` |
 | New HTTP/2 sessions | 400/s | session rejected |
 | `Attach`, `Watch` | 100 / 10s | Connect: HTTP 429. Native gRPC: HTTP 200, `grpc-status` 8 |
@@ -254,6 +255,13 @@ The listen overwrites `X-Real-IP` from the real client address. A caller-supplie
 `X-Real-IP` is discarded. Inner hops must not rate-limit on `RemoteAddr`; on
 HA that address is `proxy-router`, and collapsing every peer into one bucket
 is a failed rollout.
+
+The concurrent cap is what bounds idle sockets: the open rate only slows how
+fast one address fills `maxconn 4096`, and an idle socket holds its slot until
+`timeout client`. 32 leaves room for reconnect overlap, HA replicas, and
+several peers behind one NAT address. Behind an L4 load balancer the cap is
+only per client if `PROXY_ROUTER_PROXY_PROTOCOL_FROM` is set; without PROXY
+protocol every client arrives from the balancer's address and shares 32.
 
 ## Manual test plan
 
@@ -381,6 +389,12 @@ flood. Confirm the connection count stays 1 for the whole run.
 (no signature work in the child logs for the refused ones). A second address,
 opening a single connection in the same second, attaches and chats. Repeat
 against InferenceUrl on the old wrapping: this reject must not appear.
+
+**D2. Concurrent connections (v6 only).** From one address, open 33 TCP
+connections to `:9443` at under 200/s and send nothing on them. The first 32
+stay open; the 33rd is closed at accept. A second address opens a connection
+in the same window, attaches, and chats. Close one of the 32 and the next open
+from the first address is accepted again.
 
 **E. Forged `X-Real-IP` (v6 only).** Peer A sets `X-Real-IP` to peer B's
 address. A's flood still counts against A's real address. B is not pushed

@@ -95,6 +95,7 @@ func pinProxyOverlayIP(t *testing.T, s *Stack, cfg *config.File) {
 // fixture. Production haproxy-rpc.cfg stays high (R8). These exist so
 // GetDiffs / Attach floods finish in one test.
 type rpcProxyTestLimits struct {
+	ConnCur    int
 	ConnRate   int
 	AttachRate int
 	DiffsRate  int
@@ -109,6 +110,9 @@ func defaultRPCProxyTestLimits() rpcProxyTestLimits {
 // points the backend at a local server. Bind stays proto h2. The test
 // fixture drops docker DNS and lowers path-zone ceilings.
 func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string {
+	if lim.ConnCur <= 0 {
+		lim.ConnCur = 32
+	}
 	if lim.ConnRate <= 0 {
 		lim.ConnRate = 50
 	}
@@ -122,6 +126,9 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 		lim.ChatRate = 50
 	}
 	out := src
+	out = strings.Replace(out,
+		"tcp-request connection reject if { sc_conn_cur(0) gt 32 }",
+		fmt.Sprintf("tcp-request connection reject if { sc_conn_cur(0) gt %d }", lim.ConnCur), 1)
 	out = strings.Replace(out,
 		"tcp-request connection reject if { sc_conn_rate(0) gt 200 }",
 		fmt.Sprintf("tcp-request connection reject if { sc_conn_rate(0) gt %d }", lim.ConnRate), 1)

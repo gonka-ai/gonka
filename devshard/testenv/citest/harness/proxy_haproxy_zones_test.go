@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -48,6 +49,7 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 2 }")
+	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 32 }")
 	require.Contains(t, got, "server router versiond-router:19081\n")
 	require.NotContains(t, got, "server router versiond-router:19081 proto h2")
 	require.NotContains(t, got, "server router versiond-router:19081 resolvers docker")
@@ -189,6 +191,73 @@ func TestProxyHAProxy_SecondSrcNotThrottled(t *testing.T) {
 	require.Contains(t, codeB, "200", "second src must not share the first src's stick-table, got %q", codeB)
 }
 
+func TestRewriteRPCProxyForTestLowersConnCur(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
+	require.NoError(t, err)
+	lim := defaultRPCProxyTestLimits()
+	lim.ConnCur = 3
+	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", lim)
+	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 3 }")
+	require.NotContains(t, got, "sc_conn_cur(0) gt 32")
+}
+
+func TestProxyHAProxy_IdleConnsCappedPerSrc(t *testing.T) {
+	lim := defaultRPCProxyTestLimits()
+	lim.ConnCur = 3
+	fx := startRPCProxyHAProxy(t, lim)
+
+	var held []net.Conn
+	for i := 0; i < lim.ConnCur; i++ {
+		conn, closed := dialIdle(t, fx.hostAddr)
+		require.False(t, closed, "idle conn %d is within the cap", i+1)
+		held = append(held, conn)
+	}
+	_, closed := dialIdle(t, fx.hostAddr)
+	require.True(t, closed, "idle conn past the cap must be closed at accept")
+
+	require.NoError(t, held[0].Close())
+	reopened := false
+	for i := 0; i < 5 && !reopened; i++ {
+		_, closed = dialIdle(t, fx.hostAddr)
+		reopened = !closed
+	}
+	require.True(t, reopened, "a closed conn must free its slot")
+}
+
+func TestProxyHAProxy_ConnCapIsPerSrc(t *testing.T) {
+	lim := defaultRPCProxyTestLimits()
+	lim.ConnCur = 3
+	fx := startRPCProxyHAProxyOnNetwork(t, lim)
+
+	for i := 0; i < lim.ConnCur; i++ {
+		_, closed := dialIdle(t, fx.hostAddr)
+		require.False(t, closed, "idle conn %d is within the cap", i+1)
+	}
+	_, closed := dialIdle(t, fx.hostAddr)
+	require.True(t, closed, "first src must hit the conn cap")
+
+	b := startCurlPeer(t, fx.network)
+	codeB := b.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.SessionService/Chat", 1)
+	require.Contains(t, codeB, "200", "second src must not share the first src's conn cap, got %q", codeB)
+}
+
+// dialIdle opens a TCP conn that never sends the h2 preface, keeps it open
+// until the test ends, and reports whether the proxy closed it within 1s.
+func dialIdle(t *testing.T, addr string) (net.Conn, bool) {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	buf := make([]byte, 512)
+	for {
+		if _, err := conn.Read(buf); err != nil {
+			var ne net.Error
+			return conn, !errors.As(err, &ne) || !ne.Timeout()
+		}
+	}
+}
+
 func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
 	const n = 101
 	started := make(chan struct{}, n)
@@ -261,6 +330,7 @@ func TestProxyHAProxy_ProductionCfgSyntax(t *testing.T) {
 
 type rpcProxyFixture struct {
 	url        string
+	hostAddr   string
 	alias      string
 	network    string
 	attach     atomic.Int32
@@ -338,13 +408,17 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		fx.network = netName
 		fx.alias = "proxy"
 		args = append(args, "--network", netName, "--network-alias", "proxy")
-	} else {
-		args = append(args, "-p", "127.0.0.1::8443")
 	}
-	args = append(args, "haproxy:3.2-alpine")
+	args = append(args, "-p", "127.0.0.1::8443", "haproxy:3.2-alpine")
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+
+	portOut, err := exec.Command("docker", "port", name, "8443/tcp").Output()
+	require.NoError(t, err, "%s", portOut)
+	mapped, err := publishedLocalPort(string(portOut))
+	require.NoError(t, err)
+	fx.hostAddr = "127.0.0.1:" + mapped
 
 	if userNet {
 		fx.url = "http://proxy:8443"
@@ -360,16 +434,14 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		return fx
 	}
 
-	portOut, err := exec.Command("docker", "port", name, "8443/tcp").Output()
-	require.NoError(t, err, "%s", portOut)
-	mapped, err := publishedLocalPort(string(portOut))
-	require.NoError(t, err)
-	fx.url = "http://127.0.0.1:" + mapped
+	fx.url = "http://" + fx.hostAddr
 
 	client := newH2CClient(t)
 	waitHAProxyReady(t, name, func() (int, error) {
 		return proxyRPCStatus(client, fx.url, rpcProxySession+"/devshard.transport.v1.SessionService/Chat")
 	})
+	// The probe's pooled conn would otherwise hold one sc_conn_cur slot.
+	client.CloseIdleConnections()
 	fx.chat.Store(0)
 	return fx
 }

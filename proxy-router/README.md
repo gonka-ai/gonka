@@ -202,6 +202,7 @@ availability.
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
+| `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC` | `32` | concurrent connections one client address may hold on the peer RPC listen (`DEVSHARD_RPC_H2_PORT`); the next one is closed at accept. Keyed on the client address, so behind an L4 load balancer that does not send PROXY protocol every client counts as one address: set `PROXY_ROUTER_PROXY_PROTOCOL_FROM` rather than raising this |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 | `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |

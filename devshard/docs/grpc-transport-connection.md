@@ -532,7 +532,7 @@ client → nginx (InferenceUrl) → …   # unchanged
 | Hop | Change |
 |---|---|
 | nginx / proxy-policy | **Not on `/rpc/`.** Keep InferenceUrl for JSON and the public API. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row, not the h2 bind. |
-| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
+| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_cur` / `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
 | versiond-router (HA) | Inner hop. `proto h2` on the frontend from `proxy` **and** on every backend to versiond (h2c). Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
 | versiond (both) | `h2c.NewHandler` on the listen that serves `/rpc/`; reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
@@ -569,8 +569,12 @@ want one wire protocol.
 
 The nginx per-IP ceiling disappears for this path. Replace it on the published listen:
 
-- **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table on `src` at **`proxy`**)
-  — nginx `limit_conn` analogue. Handshake and Attach do not bound socket opens.
+- **Concurrent connections per IP** (stick-table `conn_cur` on `src` at **`proxy`**,
+  default 32, `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) — the nginx `limit_conn`
+  analogue. An idle socket that never sends a request holds a `maxconn` slot until
+  `timeout client`, so the open rate alone does not bound how many one address holds.
+- **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table `conn_rate` /
+  `sess_rate` on `src` at **`proxy`**). Handshake and Attach do not bound socket opens.
 - **Path zones** (phase 6) on **`proxy`**: Attach / Chat / diffs / gossip as separate
   `src` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
   and inner versiond on HA must not re-key on `RemoteAddr` (`proxy`). The child must not

@@ -166,6 +166,10 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2"; \
 	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen has no conn_rate on src"; \
+	grep -q 'store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC stick-table does not store conn_cur"; \
+	grep -q 'tcp-request connection reject if { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen has no default per-source connection cap"; \
 	awk ' \
 		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
@@ -311,6 +315,25 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "HTTPS peer RPC listen is not TLS with ALPN h2"; \
 	if grep -q '^ *bind :9443 proto h2$$' "$$tmpdir/https.cfg"; then \
 		fail "HTTPS peer RPC listen fell back to cleartext h2c"; \
+	fi; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/conn-cap.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/conn-cap.map" \
+	PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC=64 \
+	./entrypoint.sh; \
+	grep -q 'tcp-request connection reject if { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
+		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered"; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/conn-cap-zero.cfg" \
+		PROXY_ROUTER_VERSION_MAP="$$tmpdir/conn-cap-zero.map" \
+		PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC=0 \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a zero per-source connection cap was accepted"; \
 	fi; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
