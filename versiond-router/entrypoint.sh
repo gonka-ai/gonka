@@ -56,6 +56,25 @@
 # health from active /readyz checks. Host and version additions need no reload.
 set -eu
 
+# Stop signals are trapped from the first line: a signal with no handler
+# ends this shell before HAProxy runs, and HAProxy itself drops a stop that
+# reaches it while it is still loading. A signal that comes before HAProxy
+# answers on its Runtime socket is kept and passed on then; see the end of
+# this file.
+haproxy_ready=0
+haproxy_pid=
+pending_signal=
+forward_signal() {
+    if [ "$haproxy_ready" -eq 1 ]; then
+        kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+    else
+        pending_signal=$1
+    fi
+}
+trap 'forward_signal USR1' USR1
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
+
 entrypoint_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 runtime_contract=${ROUTER_RUNTIME_VERSION_CONTRACT:-}
 if [ -z "$runtime_contract" ]; then
@@ -905,12 +924,20 @@ fi
 # signals are passed to HAProxy at once; nothing is held or decided here.
 "$HAPROXY_BIN" -W -db -f "$OUT" &
 haproxy_pid=$!
-forward_signal() {
-    kill -s "$1" "$haproxy_pid" 2>/dev/null || true
-}
-trap 'forward_signal USR1' USR1
-trap 'forward_signal TERM' TERM
-trap 'forward_signal INT' INT
+# Ready means the worker answers on the Runtime socket. A stop forwarded
+# before that is dropped by HAProxy; a stop that arrived earlier waits here.
+i=0
+while [ "$i" -lt 600 ] && kill -0 "$haproxy_pid" 2>/dev/null; do
+    if printf 'show info\n' | socat -t 1 - UNIX-CONNECT:/var/run/haproxy/reconciler.sock 2>/dev/null | grep -q '^Name:'; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 0.1
+done
+haproxy_ready=1
+if [ -n "$pending_signal" ]; then
+    forward_signal "$pending_signal"
+fi
 status=0
 while :; do
     # A trapped signal interrupts wait with a status above 128 while the

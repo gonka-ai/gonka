@@ -180,6 +180,9 @@ case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID
 for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
+# Decimal, whatever the spelling in config.env: shell arithmetic would read a
+# leading zero as octal, while HAProxy reads the same string as decimal.
+stop_timeout=$((10#$drain_timeout + stop_headroom))
 
 read -r -a slots <<<"$slot_list"
 ((${#slots[@]} >= 2)) || fail "at least two router slots are required"
@@ -782,7 +785,7 @@ stop_generation() {
         reset_parent_slot_health || true
         return 1
     }
-    "$docker_bin" stop --time "$((drain_timeout + stop_headroom))" "$id" >/dev/null || status=$?
+    "$docker_bin" stop --time "$stop_timeout" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
 }
@@ -2012,7 +2015,7 @@ stop_fleet_containers() {
             "router container $id disappeared before maintenance stop"
         case $state in
             running | restarting | paused)
-                "$docker_bin" stop --time "$((drain_timeout + stop_headroom))" "$id" >/dev/null &
+                "$docker_bin" stop --time "$stop_timeout" "$id" >/dev/null &
                 pids+=("$!")
                 ;;
             created | exited | dead) ;;
