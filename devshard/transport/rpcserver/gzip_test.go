@@ -430,3 +430,114 @@ func (g gossipCore) ServeGossipNonce(req transport.GossipNonceRequest) error {
 }
 
 func (g gossipCore) ServeGossipTxs([]*types.DevshardTx) {}
+
+// gzipZeroMembers is a multi-member gzip body. Each member decodes to
+// decoded zeros. Concatenated members are one stream to gzip.Reader.
+func gzipZeroMembers(t *testing.T, decoded, members int) []byte {
+	t.Helper()
+	var one bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&one, gzip.BestSpeed)
+	require.NoError(t, err)
+	_, err = zw.Write(bytes.Repeat([]byte{0}, decoded))
+	require.NoError(t, err)
+	require.NoError(t, zw.Close())
+	require.Greater(t, members, 1)
+	return bytes.Repeat(one.Bytes(), members)
+}
+
+func postRPC(t *testing.T, srv *httptest.Server, procedure string, token, body []byte, hdr map[string]string) (int, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+procedure, bytes.NewReader(body))
+	require.NoError(t, err)
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	SetSessionHeader(req.Header, token)
+	resp, err := srv.Client().Do(req)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return resp.StatusCode, string(raw)
+}
+
+func TestHandshakeGate_GzipBombStopsInflating(t *testing.T) {
+	var ran atomic.Bool
+	lookup := stubLookup{core: gossipCore{
+		stubCore: stubCore{member: true},
+		onNonce: func(transport.GossipNonceRequest) error {
+			ran.Store(true)
+			return nil
+		},
+	}}
+	auth := newTestAuth(PeerAuthConfig{})
+	mux := NewMux(auth, NewSessionHandler(lookup), WithGossipService(NewGossipHandler(lookup)))
+	srv := httptest.NewServer(withTestEscrow(mux))
+	t.Cleanup(srv.Close)
+	signer := testutil.MustGenerateKey(t)
+	attached := attach(t, rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL), signer, []byte("gzip-stop-attach-nonce-0123"))
+
+	// 8 MiB decoded, compressed well under the 16 KiB read cap. A full drain
+	// would report "message size <decoded>". Stopping reports that the size
+	// could not be determined.
+	bomb := gzipZeroMembers(t, 1<<20, 8)
+	require.Less(t, len(bomb), transport.DefaultRPCReadMaxBytes)
+	status, body := postRPC(t, srv, rpcpbconnect.GossipServiceNonceProcedure, attached.SessionToken, bomb, map[string]string{
+		"Content-Type":     "application/proto",
+		"Content-Encoding": "gzip",
+	})
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Contains(t, body, "unable to determine message size")
+	require.False(t, ran.Load(), "gzip bomb must not reach ServeGossipNonce")
+}
+
+func TestGetPayload_GzipBombStopsInflating(t *testing.T) {
+	var ran atomic.Bool
+	auth := newTestAuth(PeerAuthConfig{})
+	lookup := stubLookup{core: stubCore{member: true}}
+	h := NewPayloadHandler(lookup, func(context.Context, SessionCore, string, *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		ran.Store(true)
+		return &rpcpb.GetPayloadResponse{InferenceId: "1"}, nil
+	})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, NewSessionHandler(lookup), WithPayloadService(h))))
+	t.Cleanup(srv.Close)
+	signer := testutil.MustGenerateKey(t)
+	attached := attach(t, rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL), signer, []byte("payload-stop-attach-nonce-01"))
+
+	bomb := gzipZeroMembers(t, 1<<20, 12)
+	require.Less(t, len(bomb), int(transport.DefaultMaxBodySize))
+	status, body := postRPC(t, srv, rpcpbconnect.PayloadServiceGetPayloadProcedure, attached.SessionToken, bomb, map[string]string{
+		"Content-Type":     "application/proto",
+		"Content-Encoding": "gzip",
+	})
+	require.Equal(t, http.StatusTooManyRequests, status)
+	require.Contains(t, body, "unable to determine message size")
+	require.False(t, ran.Load(), "gzip bomb must not reach ServeRPCGetPayload")
+}
+
+func TestChat_GzipBombStopsInflating(t *testing.T) {
+	var ran atomic.Bool
+	lookup := stubLookup{core: chatCore{stubCore: stubCore{owner: true}, ran: &ran}}
+	auth := newTestAuth(PeerAuthConfig{})
+	srv := httptest.NewServer(withTestEscrow(NewMux(auth, NewSessionHandler(lookup))))
+	t.Cleanup(srv.Close)
+	signer := testutil.MustGenerateKey(t)
+	attached := attach(t, rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL), signer, []byte("chat-stop-attach-nonce-01234"))
+
+	bomb := gzipZeroMembers(t, 1<<20, 12)
+	require.Less(t, len(bomb), int(transport.DefaultMaxBodySize))
+	var env bytes.Buffer
+	env.WriteByte(connectFlagCompressed)
+	var size [4]byte
+	binary.BigEndian.PutUint32(size[:], uint32(len(bomb)))
+	env.Write(size[:])
+	env.Write(bomb)
+
+	status, body := postRPC(t, srv, rpcpbconnect.SessionServiceChatProcedure, attached.SessionToken, env.Bytes(), map[string]string{
+		"Content-Type":             "application/connect+proto",
+		"Connect-Content-Encoding": "gzip",
+		"Connect-Protocol-Version": "1",
+	})
+	require.Contains(t, body, "unable to determine message size", "status %d body %q", status, body)
+	require.False(t, ran.Load(), "gzip bomb must not reach ServeInference")
+}

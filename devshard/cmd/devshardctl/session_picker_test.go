@@ -12,7 +12,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"devshard/accounting"
+	"devshard/host"
+	"devshard/internal/statetest"
+	"devshard/internal/testutil"
 	"devshard/observability"
+	"devshard/signing"
+	"devshard/storage"
+	"devshard/stub"
+	"devshard/types"
 	"devshard/user"
 )
 
@@ -143,6 +150,98 @@ func TestPicker_PrepareErrorWhileGhostingDrainsQueue(t *testing.T) {
 	require.Nil(t, res.prepared)
 	require.Equal(t, uint64(0), env.session.Nonce(), "failed ghost burn must not advance nonce")
 	require.Equal(t, 0, ghost.total(), "failed ghost prepare must not dispatch")
+}
+
+// A catch-up read can fail after the ghost MsgStart is already committed.
+// That burn must not fail the queue: the nonce moved, and the queued
+// request was never chosen.
+func TestPicker_CommittedGhostPrepareErrorKeepsQueue(t *testing.T) {
+	session, store := pickerSessionWithStore(t)
+	ctx := context.Background()
+	for range 3 {
+		_, err := session.SendInference(ctx, defaultParams())
+		require.NoError(t, err)
+	}
+	next := session.Nonce() + 1
+	hostIdx := int(next % uint64(len(session.Clients())))
+	require.True(t, session.RewindHostCatchUp(hostIdx, "test"),
+		"rewinding host %d is what makes the next inline catch-up read the store", hostIdx)
+
+	store.fail.Store(true)
+	throttledKey := session.HostParticipantKey(hostIdx)
+	ghost := &fakeGhost{}
+	p := newSessionPicker(session, "llama", ghost.dispatch, func(key string) bool {
+		return key == throttledKey
+	}, nil)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.NoError(t, res.err)
+	require.NotNil(t, res.prepared)
+	require.Greater(t, res.prepared.Nonce(), next, "the failed ghost still spent its nonce")
+	require.NotEqual(t, hostIdx, res.prepared.HostIdx())
+	require.Equal(t, 0, ghost.total(), "a prepare error returns before the ghost is recorded")
+	require.Greater(t, session.Nonce(), next)
+}
+
+type failDiffReadStore struct {
+	storage.Storage
+	fail atomic.Bool
+}
+
+func (s *failDiffReadStore) DiffSizes(escrowID string, from, to uint64, limit int) ([]storage.DiffSize, error) {
+	if s.fail.Load() {
+		return nil, errors.New("diff store unavailable")
+	}
+	return s.Storage.DiffSizes(escrowID, from, to, limit)
+}
+
+func (s *failDiffReadStore) GetDiffs(escrowID string, from, to uint64) ([]types.DiffRecord, error) {
+	if s.fail.Load() {
+		return nil, errors.New("diff store unavailable")
+	}
+	return s.Storage.GetDiffs(escrowID, from, to)
+}
+
+func pickerSessionWithStore(t *testing.T) (*user.Session, *failDiffReadStore) {
+	t.Helper()
+	const (
+		escrowID = "escrow-picker-ghost"
+		balance  = uint64(1_000_000)
+		n        = 3
+	)
+	hostSigners := make([]*signing.Secp256k1Signer, n)
+	for i := range hostSigners {
+		hostSigners[i] = testutil.MustGenerateKey(t)
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := types.SessionConfig{
+		RefusalTimeout:   1,
+		ExecutionTimeout: 1,
+		TokenPrice:       1,
+		VoteThreshold:    uint32(n) / 2,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	inner := testutil.MustMemoryStore(t, escrowID, userKey.Address(), config, group, balance)
+	store := &failDiffReadStore{Storage: inner}
+
+	clients := make([]user.HostClient, n)
+	for i := range hostSigners {
+		sm := statetest.MustStateMachine(t, escrowID, config, group, balance, userKey.Address(), verifier)
+		h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), escrowID, group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &user.InProcessClient{Host: h}
+	}
+	userSM := statetest.MustStateMachine(t, escrowID, config, group, balance, userKey.Address(), verifier)
+	session, err := user.NewSession(userSM, userKey, escrowID, group, clients, verifier, user.WithStorage(store))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	return session, store
 }
 
 // TestPicker_ExcludeNextHost_GhostBurnsThenMatches: when the only
