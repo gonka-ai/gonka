@@ -183,7 +183,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 15 }
+func (AppModule) ConsensusVersion() uint64 { return 16 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -409,6 +409,13 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
+
+	// End the warm-key log entries whose grant expired in this block. The
+	// log must not fall out of step with authz, so a failure here is a
+	// block failure, not a logged warning.
+	if err := am.keeper.ExpireWarmKeys(ctx); err != nil {
+		return fmt.Errorf("expire warm keys: %w", err)
+	}
 
 	// Handle confirmation PoC trigger decisions and phase transitions
 	err := am.handleConfirmationPoC(ctx, blockHeight)
