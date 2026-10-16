@@ -11,6 +11,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/storage"
 	"devshard/types"
@@ -27,6 +28,26 @@ func (m refusalMapStore) GetDiffs(_ string, from, to uint64) ([]types.DiffRecord
 		if rec.Diff.Nonce >= from && rec.Diff.Nonce <= to {
 			out = append(out, rec)
 		}
+	}
+	return out, nil
+}
+
+func (m refusalMapStore) GetDiffWires(_ string, from, to uint64) ([]types.DiffWire, error) {
+	var out []types.DiffWire
+	for _, rec := range m.recs {
+		if rec.Nonce < from || rec.Nonce > to {
+			continue
+		}
+		txs, err := proto.Marshal(&types.DiffContent{Txs: rec.Txs})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, types.DiffWire{
+			Nonce:         rec.Nonce,
+			Txs:           txs,
+			UserSig:       rec.UserSig,
+			PostStateRoot: rec.PostStateRoot,
+		})
 	}
 	return out, nil
 }
@@ -57,7 +78,9 @@ func TestRefusalJournalRequiresAContiguousRange(t *testing.T) {
 	match, err = journal.Anchor(1, bytes.Repeat([]byte{2}, 32))
 	require.NoError(t, err)
 	require.False(t, match)
-	err = journal.Pages(context.Background(), 1, 2, func([]types.Diff, bool) error { return nil })
+	err = journal.Pages(context.Background(), 1, 2, func([]types.DiffWire, bool) (func(context.Context) error, error) {
+		return nil, nil
+	})
 	var gap *storage.DiffGapError
 	require.ErrorAs(t, err, &gap)
 	require.Equal(t, uint64(2), gap.Expected)

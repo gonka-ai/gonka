@@ -39,20 +39,25 @@ type RPCClient struct {
 	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
 	// read cap (VerifyTimeout, VerifyErrorMiss, ChallengeReceipt responses).
 	sessionLarge rpcpbconnect.SessionServiceClient
+	// sessionCatchUp is ChallengeCatchUp: the same read cap, without gzip.
+	// User signatures do not compress, and gzip of a page is the CPU the
+	// spike spent. The payload ChallengeReceipt stays on sessionLarge.
+	sessionCatchUp rpcpbconnect.SessionServiceClient
 	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
 	sessionChat rpcpbconnect.SessionServiceClient
 	gossip      rpcpbconnect.GossipServiceClient
 	// payload is GetPayload stubs, one per rpcPayloadReadBuckets entry.
 	// Connect applies WithReadMaxBytes per client, not per RPC, so
 	// payloadClient picks the smallest bucket >= PayloadReadLimit.
-	payload          [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
-	payloadMu        *sync.Mutex
-	sessionGRPC      rpcpbconnect.SessionServiceClient
-	sessionQueryGRPC rpcpbconnect.SessionServiceClient
-	sessionLargeGRPC rpcpbconnect.SessionServiceClient
-	sessionChatGRPC  rpcpbconnect.SessionServiceClient
-	gossipGRPC       rpcpbconnect.GossipServiceClient
-	payloadGRPC      [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
+	payload            [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
+	payloadMu          *sync.Mutex
+	sessionGRPC        rpcpbconnect.SessionServiceClient
+	sessionQueryGRPC   rpcpbconnect.SessionServiceClient
+	sessionLargeGRPC   rpcpbconnect.SessionServiceClient
+	sessionCatchUpGRPC rpcpbconnect.SessionServiceClient
+	sessionChatGRPC    rpcpbconnect.SessionServiceClient
+	gossipGRPC         rpcpbconnect.GossipServiceClient
+	payloadGRPC        [rpcPayloadReadBucketCount]rpcpbconnect.PayloadServiceClient
 	// closeOnce is a pointer so WithoutAdmission can copy RPCClient without
 	// copying a sync.Once (go vet copylocks).
 	closeOnce *sync.Once
@@ -85,12 +90,14 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
 		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
+		c.sessionCatchUp = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectPlainOptions(DefaultRPCLargeReadMaxBytes)...)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		if conn.cfg.GRPC {
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
+			c.sessionCatchUpGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectPlainOptions(DefaultRPCLargeReadMaxBytes), true)...)
 			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 		}
@@ -334,6 +341,16 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 }
 
+// connectPlainOptions is the catch-up client: the same read cap, no request gzip.
+func connectPlainOptions(maxBytes int) []connect.ClientOption {
+	if maxBytes <= 0 {
+		maxBytes = DefaultRPCReadMaxBytes
+	}
+	return []connect.ClientOption{
+		connect.WithReadMaxBytes(maxBytes),
+	}
+}
+
 func maybeGRPC(opts []connect.ClientOption, on bool) []connect.ClientOption {
 	if !on {
 		return opts
@@ -366,6 +383,13 @@ func (c *RPCClient) sessionLargeClient() rpcpbconnect.SessionServiceClient {
 		return c.sessionLargeGRPC
 	}
 	return c.sessionLarge
+}
+
+func (c *RPCClient) sessionCatchUpClient() rpcpbconnect.SessionServiceClient {
+	if c.grpcOn() && c.sessionCatchUpGRPC != nil {
+		return c.sessionCatchUpGRPC
+	}
+	return c.sessionCatchUp
 }
 
 func (c *RPCClient) sessionChatClient() rpcpbconnect.SessionServiceClient {
@@ -779,6 +803,67 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
 	}
 	return receipt, mempool, nil
+}
+
+// ChallengeCatchUp sends one encoded page with a nil payload and drops the
+// response.
+func (c *RPCClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {
+	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, protocolVersion)
+	if err != nil {
+		return err
+	}
+	return send(ctx)
+}
+
+// PrepareChallengeCatchUp marshals the page. The returned function sends that
+// body and does not reference diffs.
+func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error) {
+	if !c.Uses(EndpointChallengeReceipt) {
+		return c.HTTPClient.PrepareChallengeCatchUp(inferenceID, diffs, protocolVersion)
+	}
+	raw, err := ChallengeCatchUpBody(inferenceID, diffs, protocolVersion)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+		defer cancel()
+		err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
+			env, err := c.signEnvelope(raw)
+			if err != nil {
+				return err
+			}
+			creq, err := tokenRequest(ctx, c, env)
+			if err != nil {
+				return err
+			}
+			_, err = c.sessionCatchUpClient().ChallengeReceipt(ctx, creq)
+			return err
+		})
+		if err != nil {
+			return fmt.Errorf("challenge-receipt: %w", err)
+		}
+		return nil
+	}, nil
+}
+
+// ChallengeCatchUpBody is the Connect payload of a nil-payload catch-up page.
+// Each diff's Txs is the stored blob with the nonce field prepended.
+func ChallengeCatchUpBody(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) ([]byte, error) {
+	req := &rpcpb.ChallengeReceiptRequest{
+		InferenceId:     inferenceID,
+		ProtocolVersion: protocolVersion,
+		Diffs:           make([]*rpcpb.Diff, len(diffs)),
+	}
+	for i, d := range diffs {
+		req.Diffs[i] = &rpcpb.Diff{
+			Nonce:         d.Nonce,
+			Txs:           DiffWireTxs(d.Nonce, d.Txs),
+			UserSig:       d.UserSig,
+			PostStateRoot: d.PostStateRoot,
+		}
+	}
+	return proto.Marshal(req)
 }
 
 // VerifyTimeout must be on *RPCClient: the HTTP wrapper calls SendVerifyTimeout

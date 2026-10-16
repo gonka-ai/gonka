@@ -1446,6 +1446,40 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	return result, rows.Err()
 }
 
+func (s *Postgres) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.DiffWire
+	for rows.Next() {
+		var w types.DiffWire
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
+			return nil, err
+		}
+		w.Txs = append([]byte(nil), w.Txs...)
+		w.UserSig = append([]byte(nil), w.UserSig...)
+		w.PostStateRoot = append([]byte(nil), w.PostStateRoot...)
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // DiffSizes reads octet_length from the TOAST header, so a large txs_proto is
 // not fetched or decompressed.
 func (s *Postgres) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {

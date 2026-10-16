@@ -69,6 +69,9 @@ type Storage interface {
 	// different payload at the same nonce returns ErrDiffFork.
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
+	// GetDiffWires reads [fromNonce, toNonce] without decoding transactions.
+	// Txs is the stored txs_proto (DiffContent with no nonce field).
+	GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error)
 	// DiffSizes lists stored nonces in [fromNonce, toNonce] in ascending
 	// order, at most limit of them, with the stored txs_proto length. It is
 	// one indexed read and does not decode transactions.

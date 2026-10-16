@@ -1037,6 +1037,47 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	return resp.Receipt, mempool, nil
 }
 
+// ChallengeCatchUp sends one encoded page with a nil payload. The body is one
+// JSON marshal of the stored bytes with the nonce field prepended.
+func (c *HTTPClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {
+	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, protocolVersion)
+	if err != nil {
+		return err
+	}
+	return send(ctx)
+}
+
+// PrepareChallengeCatchUp marshals the page. The returned function posts that
+// body and does not reference diffs.
+func (c *HTTPClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
+	djList := make([]DiffJSON, len(diffs))
+	for i, d := range diffs {
+		djList[i] = DiffJSON{
+			Nonce:         d.Nonce,
+			Txs:           DiffWireTxs(d.Nonce, d.Txs),
+			UserSig:       d.UserSig,
+			PostStateRoot: d.PostStateRoot,
+		}
+	}
+	body, err := json.Marshal(ChallengeReceiptRequest{
+		InferenceID:     inferenceID,
+		Diffs:           djList,
+		ProtocolVersion: protocolVersion,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal: %w", err)
+	}
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+		defer cancel()
+		_, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
+		return err
+	}, nil
+}
+
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
 func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	var djList []DiffJSON

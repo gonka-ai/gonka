@@ -63,7 +63,7 @@ func (j refusalJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return bytes.Equal(recs[0].StateHash, root), nil
 }
 
-func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
+func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if from > to {
 		return nil
 	}
@@ -83,23 +83,23 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]ty
 		}
 		count := host.PackChallengePage(sizes)
 		last := sizes[count-1].Nonce
-		recs, err := j.store.GetDiffs(j.escrowID, n, last)
+		wires, err := j.store.GetDiffWires(j.escrowID, n, last)
 		if err != nil {
-			return fmt.Errorf("get diffs: %w", err)
+			return fmt.Errorf("get diff wires: %w", err)
 		}
-		page := make([]types.Diff, 0, len(recs))
+		page := make([]types.DiffWire, 0, len(wires))
 		expect := n
 		var gap *storage.DiffGapError
-		for _, rec := range recs {
-			if rec.Nonce != expect {
+		for _, w := range wires {
+			if w.Nonce != expect {
 				next := uint64(0)
-				if rec.Nonce > expect {
-					next = rec.Nonce
+				if w.Nonce > expect {
+					next = w.Nonce
 				}
 				gap = &storage.DiffGapError{Expected: expect, Next: next, To: to}
 				break
 			}
-			page = append(page, rec.Diff)
+			page = append(page, w)
 			if expect == last {
 				break
 			}
@@ -115,10 +115,16 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]ty
 		if err != nil {
 			return err
 		}
-		if err := fn(page, more); err != nil {
+		send, err := fn(page, more)
+		page = nil
+		if err != nil {
 			return err
 		}
-		page = nil
+		if send != nil {
+			if err := send(ctx); err != nil {
+				return err
+			}
+		}
 		if !more {
 			return nil
 		}

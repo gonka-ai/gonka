@@ -639,6 +639,14 @@ func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]
 	return b.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (h *HybridStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.GetDiffWires(escrowID, fromNonce, toNonce)
+}
+
 func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {

@@ -75,6 +75,10 @@ func (m *mockExecutorClient) GetMempool(_ context.Context) ([]*types.DevshardTx,
 	return m.mempool, m.mempoolErr
 }
 
+func (m *mockExecutorClient) ChallengeCatchUp(context.Context, uint64, []types.DiffWire, string) error {
+	return m.challengeReceiptErr
+}
+
 func (m *mockExecutorClient) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	m.challengePayload = payload
 	m.challengeDiffs = diffs

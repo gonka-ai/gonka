@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/types"
 )
@@ -153,6 +154,43 @@ func runAppendDiff_GetDiffs(t *testing.T, store Storage) {
 	meta, err := store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(5), meta.LatestNonce)
+}
+
+// runGetDiffWires pins the encoded read to the same transactions GetDiffs decodes.
+func runGetDiffWires(t *testing.T, store Storage) {
+	t.Helper()
+	require.NoError(t, store.CreateSession(defaultParams()))
+	txs := []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 1,
+			Model:       "llama",
+		}},
+	}}
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      types.Diff{Nonce: 1, Txs: txs, UserSig: []byte("sig"), PostStateRoot: []byte{9}},
+		StateHash: []byte{1},
+	}))
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      types.Diff{Nonce: 2, UserSig: []byte("sig2")},
+		StateHash: []byte{2},
+	}))
+
+	got, err := store.GetDiffs("escrow-1", 1, 2)
+	require.NoError(t, err)
+	wires, err := store.GetDiffWires("escrow-1", 1, 2)
+	require.NoError(t, err)
+	require.Len(t, wires, len(got))
+	for i := range got {
+		decoded, err := unmarshalTxs(wires[i].Txs)
+		require.NoError(t, err)
+		require.Equal(t, got[i].Nonce, wires[i].Nonce)
+		require.Len(t, decoded, len(got[i].Txs))
+		for j := range got[i].Txs {
+			require.True(t, proto.Equal(got[i].Txs[j], decoded[j]))
+		}
+		require.Equal(t, got[i].UserSig, wires[i].UserSig)
+		require.Equal(t, got[i].PostStateRoot, wires[i].PostStateRoot)
+	}
 }
 
 // runDiffSizes pins DiffSizes to the stored txs_proto length, ascending

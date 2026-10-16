@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"connectrpc.com/connect"
@@ -344,66 +345,119 @@ func challengeFrom(
 	walkCtx, walkCancel := walkContext(ctx, queryTimeout)
 	defer walkCancel()
 
-	var last []types.Diff
-	err := journal.Pages(walkCtx, from, st.LatestNonce, func(page []types.Diff, more bool) error {
+	var last []types.DiffWire
+	err := journal.Pages(walkCtx, from, st.LatestNonce, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
 		if err := walkCtx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if more {
-			return sendCatchUp(walkCtx, inferenceID, &from, page, executorClient, tip, journal, st.LatestNonce, queryTimeout)
+			return prepareCatchUp(walkCtx, inferenceID, &from, page, executorClient, tip, journal, st.LatestNonce, queryTimeout)
 		}
-		last = append([]types.Diff(nil), page...)
-		return nil
+		last = append([]types.DiffWire(nil), page...)
+		return nil, nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	last = diffsFromCursor(last, from)
+	last = wiresFromCursor(last, from)
 	if pageFitsPayload(last, payload) {
-		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, last, executorClient, ingest, ev)
+		decoded, err := decodeWires(last)
+		last = nil
+		if err != nil {
+			return 0, err
+		}
+		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, decoded, executorClient, ingest, ev)
 	}
 	if len(last) > 0 {
-		if err := sendCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout); err != nil {
+		send, err := prepareCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout)
+		last = nil
+		if err != nil {
 			return 0, err
+		}
+		if send != nil {
+			if err := send(walkCtx); err != nil {
+				return 0, err
+			}
 		}
 	}
 	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
 }
 
-func sendCatchUp(
+// challengeCatchUpPreparer copies a page into the request body. The returned
+// send func does not reference the page, so the caller can drop it before the
+// request goes out.
+type challengeCatchUpPreparer interface {
+	PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error)
+}
+
+// prepareCatchUp checks the stored bytes and builds the catch-up send.
+// A diff that does not decode is returned as-is, so a damaged journal row
+// does not become an answered executor error. The send func does not retain
+// page. protocolVersion is empty; a cold executor reads it from the diffs.
+func prepareCatchUp(
 	walkCtx context.Context,
 	inferenceID uint64,
 	cursor *uint64,
-	page []types.Diff,
+	page []types.DiffWire,
 	executor ExecutorClient,
 	tip SessionTip,
 	journal RefusalJournal,
 	latest uint64,
 	queryTimeout time.Duration,
-) error {
-	page = diffsFromCursor(page, *cursor)
+) (func(context.Context) error, error) {
+	page = wiresFromCursor(page, *cursor)
 	if len(page) == 0 {
-		return nil
+		return nil, nil
 	}
 	if err := walkCtx.Err(); err != nil {
-		return err
+		return nil, err
 	}
-	_, _, err := executor.ChallengeReceipt(walkCtx, inferenceID, nil, page)
+	if err := screenCatchUpPage(page); err != nil {
+		return nil, err
+	}
+	send, err := catchUpSender(executor, inferenceID, page)
 	if err != nil {
-		if walkCtx.Err() != nil && errors.Is(err, walkCtx.Err()) {
-			return walkCtx.Err()
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		err := send(ctx)
+		if err != nil {
+			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				return ctx.Err()
+			}
+			return &catchUpCallError{err: err}
 		}
-		return &catchUpCallError{err: err}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		nonce, root, tipErr := readTip(ctx, tip, queryTimeout)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if tipErr == nil && tipRootMatches(journal, latest, nonce, *cursor, root) {
+			*cursor = nonce + 1
+		}
+		return nil
+	}, nil
+}
+
+func catchUpSender(executor ExecutorClient, inferenceID uint64, page []types.DiffWire) (func(context.Context) error, error) {
+	if prep, ok := executor.(challengeCatchUpPreparer); ok {
+		return prep.PrepareChallengeCatchUp(inferenceID, page, "")
 	}
-	if walkCtx.Err() != nil {
-		return walkCtx.Err()
-	}
-	nonce, root, tipErr := readTip(walkCtx, tip, queryTimeout)
-	if walkCtx.Err() != nil {
-		return walkCtx.Err()
-	}
-	if tipErr == nil && tipRootMatches(journal, latest, nonce, *cursor, root) {
-		*cursor = nonce + 1
+	kept := append([]types.DiffWire(nil), page...)
+	return func(ctx context.Context) error {
+		return executor.ChallengeCatchUp(ctx, inferenceID, kept, "")
+	}, nil
+}
+
+// screenCatchUpPage decodes each stored blob and discards it. One undecodable
+// diff fails the check before the page is sent.
+func screenCatchUpPage(page []types.DiffWire) error {
+	for _, w := range page {
+		if _, err := types.DecodeDiffWire(w); err != nil {
+			return fmt.Errorf("diff %d: %w", w.Nonce, err)
+		}
 	}
 	return nil
 }
@@ -481,7 +535,7 @@ func readTip(ctx context.Context, tip SessionTip, queryTimeout time.Duration) (u
 	return tip.SessionHead(queryCtx)
 }
 
-func diffsFromCursor(page []types.Diff, cursor uint64) []types.Diff {
+func wiresFromCursor(page []types.DiffWire, cursor uint64) []types.DiffWire {
 	i := 0
 	for i < len(page) && page[i].Nonce < cursor {
 		i++
@@ -493,4 +547,19 @@ func diffsFromCursor(page []types.Diff, cursor uint64) []types.Diff {
 		return nil
 	}
 	return page[i:]
+}
+
+func decodeWires(page []types.DiffWire) ([]types.Diff, error) {
+	if len(page) == 0 {
+		return nil, nil
+	}
+	out := make([]types.Diff, len(page))
+	for i, w := range page {
+		d, err := types.DecodeDiffWire(w)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = d
+	}
+	return out, nil
 }

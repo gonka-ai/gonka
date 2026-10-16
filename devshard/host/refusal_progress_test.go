@@ -39,6 +39,7 @@ type progressPeer struct {
 	stepN      int
 	pages      [][]types.Diff
 	sawPayload []bool
+	versions   []string
 }
 
 func (p *progressPeer) SessionHead(context.Context) (uint64, []byte, error) {
@@ -55,14 +56,28 @@ func (p *progressPeer) GetMempool(context.Context) ([]*types.DevshardTx, error) 
 	return nil, nil
 }
 
-func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (p *progressPeer) takeStep(payload bool, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	p.pages = append(p.pages, append([]types.Diff(nil), diffs...))
-	p.sawPayload = append(p.sawPayload, payload != nil)
+	p.sawPayload = append(p.sawPayload, payload)
 	step := p.steps[p.stepN]
 	if p.stepN+1 < len(p.steps) {
 		p.stepN++
 	}
 	return step.receipt, step.mempool, step.err
+}
+
+func (p *progressPeer) ChallengeCatchUp(_ context.Context, _ uint64, diffs []types.DiffWire, version string) error {
+	p.versions = append(p.versions, version)
+	page := make([]types.Diff, len(diffs))
+	for i, d := range diffs {
+		page[i] = types.Diff{Nonce: d.Nonce, PostStateRoot: d.PostStateRoot}
+	}
+	_, _, err := p.takeStep(false, page)
+	return err
+}
+
+func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	return p.takeStep(payload != nil, diffs)
 }
 
 type progressJournal struct {
@@ -82,7 +97,7 @@ func (j *progressJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *progressJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
+func (j *progressJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if j.fail {
 		return errors.New("storage unavailable")
 	}
@@ -104,7 +119,19 @@ func (j *progressJournal) Pages(ctx context.Context, from, to uint64, fn func([]
 	if len(out) == 0 {
 		return nil
 	}
-	return fn(out, false)
+	wires, err := journalWires(out)
+	if err != nil {
+		return err
+	}
+	send, err := fn(wires, false)
+	wires = nil
+	if err != nil {
+		return err
+	}
+	if send != nil {
+		return send(ctx)
+	}
+	return nil
 }
 
 func progressState(latest uint64) types.EscrowState {
@@ -301,7 +328,7 @@ func (j *onePageJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
+func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -319,10 +346,21 @@ func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, fn func([]t
 				len(page), stored, ChallengePageMaxNonces, ChallengePageMaxBytes)
 		}
 		j.calls++
-		err := fn(page, more)
+		wires, err := journalWires(page)
+		if err != nil {
+			return err
+		}
+		send, err := fn(wires, more)
 		page = nil
+		wires = nil
 		stored = 0
-		return err
+		if err != nil {
+			return err
+		}
+		if send != nil {
+			return send(ctx)
+		}
+		return nil
 	}
 	for _, d := range j.diffs {
 		if d.Nonce < from || d.Nonce > to {
@@ -542,16 +580,47 @@ type scriptedPeer struct {
 	block  bool
 }
 
-func (p *scriptedPeer) ChallengeReceipt(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (p *scriptedPeer) interrupt(ctx context.Context) error {
 	if p.block {
 		<-ctx.Done()
-		return nil, nil, ctx.Err()
+		return ctx.Err()
 	}
 	if p.cancel != nil {
 		p.cancel()
 		p.cancel = nil
 	}
+	return nil
+}
+
+func (p *scriptedPeer) ChallengeCatchUp(ctx context.Context, id uint64, diffs []types.DiffWire, version string) error {
+	if err := p.interrupt(ctx); err != nil {
+		return err
+	}
+	return p.progressPeer.ChallengeCatchUp(ctx, id, diffs, version)
+}
+
+func (p *scriptedPeer) ChallengeReceipt(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if err := p.interrupt(ctx); err != nil {
+		return nil, nil, err
+	}
 	return p.progressPeer.ChallengeReceipt(ctx, id, payload, diffs)
+}
+
+func journalWires(diffs []types.Diff) ([]types.DiffWire, error) {
+	out := make([]types.DiffWire, len(diffs))
+	for i, d := range diffs {
+		txs, err := proto.Marshal(&types.DiffContent{Txs: d.Txs})
+		if err != nil {
+			return nil, err
+		}
+		out[i] = types.DiffWire{
+			Nonce:         d.Nonce,
+			Txs:           txs,
+			UserSig:       d.UserSig,
+			PostStateRoot: d.PostStateRoot,
+		}
+	}
+	return out, nil
 }
 
 func TestRefusalWalkStops(t *testing.T) {
@@ -842,4 +911,89 @@ func TestRefusalProbeTimeoutDoesNotAccept(t *testing.T) {
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.False(t, accept)
 	})
+}
+
+type wireListJournal struct {
+	pages [][]types.DiffWire
+	root  []byte
+}
+
+func (j *wireListJournal) Anchor(nonce uint64, root []byte) (bool, error) {
+	return nonce == 1 && bytes.Equal(root, j.root), nil
+}
+
+func (j *wireListJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for i, page := range j.pages {
+		if len(page) == 0 || page[0].Nonce < from || page[0].Nonce > to {
+			continue
+		}
+		send, err := fn(page, i+1 < len(j.pages))
+		page = nil
+		j.pages[i] = nil
+		if err != nil {
+			return err
+		}
+		if send != nil {
+			if err := send(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func TestRefusalCorruptCatchUpDoesNotAccept(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	peer := &progressPeer{
+		heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{nonce: 1, root: root}},
+		steps: answeredStep(),
+	}
+	journal := &wireListJournal{
+		root: root,
+		pages: [][]types.DiffWire{
+			{{Nonce: 2, Txs: []byte{0xff}, PostStateRoot: root}},
+			{{Nonce: 3, PostStateRoot: root}},
+		},
+	}
+	st := progressState(3)
+	accept, err := VerifyRefusedProgress(
+		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+		peer, nil, newEvidenceGroup(t).sm, peer, journal,
+		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+	)
+	require.Error(t, err)
+	require.False(t, accept)
+	require.Empty(t, peer.pages)
+}
+
+func TestRefusalCatchUpVersionStaysEmpty(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	half := ChallengePageMaxBytes/2 + 1024
+	st := progressState(2)
+	peer := &progressPeer{
+		heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{err: errors.New("session not found")}},
+		steps: answeredStep(),
+	}
+	journal := &onePageJournal{t: t, diffs: []types.Diff{
+		diffWithStoredBytes(1, root, half),
+		diffWithStoredBytes(2, root, half),
+	}}
+	accept, err := runOnePage(t, st, peer, journal)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.NotEmpty(t, peer.versions)
+	for _, version := range peer.versions {
+		require.Empty(t, version)
+	}
 }

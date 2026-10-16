@@ -841,14 +841,21 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 		return nil, err
 	}
 
-	receipt, _, err := s.host.ChallengeReceipt(ctx, req.InferenceID, PayloadFromJSON(req.Payload), diffs)
+	payload := PayloadFromJSON(req.Payload)
+	receipt, _, err := s.host.ChallengeReceipt(ctx, req.InferenceID, payload, diffs)
 	if err != nil {
 		return nil, err
 	}
 
-	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
-	if err != nil {
-		return nil, err
+	// A nil payload with diffs is catch-up. The verifier discards the mempool,
+	// and building it takes the host lock. An execution vote sends no diffs
+	// and reads this mempool, so that call still builds it.
+	var mempoolBytes [][]byte
+	if payload != nil || len(diffs) == 0 {
+		mempoolBytes, err = DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes}, nil
 }

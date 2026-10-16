@@ -119,6 +119,11 @@ type ExecutorClient interface {
 	// already-bound session. It cannot CreateSession.
 	GetMempool(ctx context.Context) ([]*types.DevshardTx, error)
 
+	// ChallengeCatchUp sends one encoded page with a nil payload. The receipt
+	// and mempool in the response are ignored. protocolVersion is empty:
+	// a cold executor reads the version from the diffs.
+	ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error
+
 	// ChallengeReceipt forwards creator-signed diffs to the executor.
 	// The host CreateSession from the gateway signature in those diffs when
 	// it has not bound the escrow, then applies missing diffs. With a payload
@@ -147,10 +152,13 @@ type RefusalJournal interface {
 	// Anchor reports whether nonce is stored and its state hash equals root.
 	Anchor(nonce uint64, root []byte) (bool, error)
 	// Pages calls fn with each challenge page of [from, to], in order.
-	// more is false only for the last page. fn may copy that page. It must
-	// not retain a page after it returns. A hole returns an error and does
-	// not call fn with a partial page. from > to does not call fn.
-	Pages(ctx context.Context, from, to uint64, fn func(page []types.Diff, more bool) error) error
+	// The page transactions stay encoded. more is false only for the last
+	// page. fn may copy that page. It must not retain a page after it
+	// returns. When the page has to be sent before the next one is loaded,
+	// fn returns a send func that does not reference the page. Pages drops
+	// the page and then calls send. A hole returns an error and does not
+	// call fn with a partial page. from > to does not call fn.
+	Pages(ctx context.Context, from, to uint64, fn func(page []types.DiffWire, more bool) (send func(context.Context) error, err error)) error
 }
 
 // TxSink receives mempool txs copied from a challenge-receipt response.

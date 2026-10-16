@@ -44,14 +44,23 @@ func challengePageCost(diffs []types.Diff) int {
 	return total
 }
 
+func wirePageCost(page []types.DiffWire) int {
+	total := 0
+	for _, w := range page {
+		total += len(w.Txs) + ChallengeDiffWireOverhead
+	}
+	return total
+}
+
 // pageFitsPayload reports that page plus the prompt still fit one challenge
 // page. An empty page is the payload-only call. A single diff larger than
-// the budget goes alone.
-func pageFitsPayload(page []types.Diff, payload *InferencePayload) bool {
+// the budget goes alone. Cost is the stored txs_proto length plus the wire
+// allowance, so the page does not need to be decoded.
+func pageFitsPayload(page []types.DiffWire, payload *InferencePayload) bool {
 	if len(page) == 0 {
 		return true
 	}
-	cost := challengePageCost(page)
+	cost := wirePageCost(page)
 	if len(page) == 1 && cost > ChallengePageMaxBytes {
 		return false
 	}

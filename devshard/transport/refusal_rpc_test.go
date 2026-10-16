@@ -118,6 +118,17 @@ func (e *recordingExecutor) GetMempool(context.Context) ([]*types.DevshardTx, er
 	return nil, nil
 }
 
+func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint64, diffs []types.DiffWire, version string) error {
+	raw, err := transport.ChallengeCatchUpBody(inferenceID, diffs, version)
+	require.NoError(e.t, err)
+	nonces := make([]uint64, len(diffs))
+	for i, d := range diffs {
+		nonces[i] = d.Nonce
+	}
+	e.calls = append(e.calls, recordedChallenge{size: len(raw), nonces: nonces})
+	return nil
+}
+
 func (e *recordingExecutor) ChallengeReceipt(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	raw, err := challengeReceiptBody(inferenceID, payload, diffs)
 	require.NoError(e.t, err)

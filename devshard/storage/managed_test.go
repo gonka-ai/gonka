@@ -86,6 +86,9 @@ func (s *legacyOnlyStorage) AppendDiff(escrowID string, rec types.DiffRecord) er
 func (s *legacyOnlyStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return s.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
+func (s *legacyOnlyStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	return s.inner.GetDiffWires(escrowID, fromNonce, toNonce)
+}
 func (s *legacyOnlyStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	return s.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
 }
