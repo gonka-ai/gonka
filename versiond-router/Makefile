@@ -1506,6 +1506,8 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "session stickiness regex is gone; /rpc/ would no longer hash by escrow"; \
 	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/mixed.cfg" \
 		|| fail "JSON and peer RPC data listener is not on :8080"; \
+	grep -q '^[[:space:]]*bind :8081$$' "$$tmpdir/mixed.cfg" \
+		|| fail "the previous proxy generation's :8081 dial has no listener"; \
 	if grep -q 'proto h2' <<<"$$(grep '^[[:space:]]*bind ' "$$tmpdir/mixed.cfg")"; then \
 		fail "a bind forces proto h2: JSON HTTP/1.1 and peer RPC HTTP/2 share :8080 by preface detection"; \
 	fi; \

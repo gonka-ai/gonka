@@ -211,6 +211,9 @@ type PeerConn struct {
 	authDoor rpcpbconnect.PeerAuthServiceClient
 	// authHost is Watch and live renewals: /sessions/_/rpc, no door.
 	authHost rpcpbconnect.PeerAuthServiceClient
+	// authHostProbe Attaches on the h2 origin only (refreshLive). Nil when
+	// H2URL is empty.
+	authHostProbe rpcpbconnect.PeerAuthServiceClient
 	// authDoorGRPC / authHostGRPC are native gRPC (connect.WithGRPC). Used
 	// only while usingH2(); HTTP/1.1 fallback keeps authDoor / authHost.
 	authDoorGRPC rpcpbconnect.PeerAuthServiceClient
@@ -308,6 +311,15 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	if hostBase != doorBase {
 		authHost = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, opts...)
 	}
+	// The live-session HTTP/2 probe Attaches on a client pinned to the h2
+	// origin, so the shared switch flips only after that probe succeeded.
+	var authHostProbe rpcpbconnect.PeerAuthServiceClient
+	if h2 := origin.h2Only(); h2 != nil {
+		authHostProbe = rpcpbconnect.NewPeerAuthServiceClient(&http.Client{
+			Transport:     h2,
+			CheckRedirect: noFollowRedirects,
+		}, hostBase, opts...)
+	}
 	var authDoorGRPC, authHostGRPC rpcpbconnect.PeerAuthServiceClient
 	if cfg.GRPC {
 		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, doorBase, grpcOpts...)
@@ -323,6 +335,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 		origin:         origin,
 		authDoor:       authDoor,
 		authHost:       authHost,
+		authHostProbe:  authHostProbe,
 		authDoorGRPC:   authDoorGRPC,
 		authHostGRPC:   authHostGRPC,
 		key:            cfg.registryKey(),
@@ -1022,24 +1035,38 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 
 // refreshLive renews a live session token on the host client. A PeerConn
 // that fell back to HTTP/1.1 probes HTTP/2 again here once the miss TTL
-// has passed: the token is the peer's identity on either transport, so a
-// successful HTTP/2 refresh moves Watch and later RPCs onto the mux. A
+// has passed, on a client pinned to the h2 origin: concurrent RPCs stay on
+// HTTP/1.1 until the probe has succeeded, and only then does the shared
+// switch flip. The token is the peer's identity on either transport, so
+// the successful HTTP/2 refresh moves Watch and later RPCs onto the mux. A
 // miss pins HTTP/1.1 for another TTL and the refresh completes there.
 func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 	msg, err := p.newAttachRequest()
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	if !p.origin.usingH2() && p.shouldProbeH2() {
-		p.origin.setH2(true)
-		tok, exp, err := p.attachOnce(ctx, p.peerAuthClient(true), msg)
+	if p.authHostProbe != nil && !p.origin.usingH2() && p.shouldProbeH2() {
+		tok, exp, err := p.attachOnce(ctx, p.authHostProbe, msg)
 		if err == nil {
+			p.origin.setH2(true)
 			return tok, exp, nil
 		}
-		if p.ctx.Err() != nil || !isRPCH2Miss(err) {
+		if p.ctx.Err() != nil {
 			return nil, time.Time{}, err
 		}
-		p.noteH2Miss(err)
+		if isRPCH2Miss(err) {
+			rememberRPCH2Miss(p.cfg.BaseURL)
+			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
+		} else {
+			// The origin speaks HTTP/2 but refused this Attach (a Connect
+			// error). Stay on HTTP/1.1 for now and let the refresh below
+			// decide the session's fate; the next refresh probes again.
+			logging.Debug("peer rpc h2 probe refused on refresh; staying on HTTP/1.1",
+				"subsystem", "transport",
+				"host", p.cfg.HostAddress,
+				"error", err,
+			)
+		}
 		msg, err = p.newAttachRequest()
 		if err != nil {
 			return nil, time.Time{}, err

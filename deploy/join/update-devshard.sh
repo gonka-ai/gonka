@@ -12,9 +12,10 @@
 # versiond. JSON backends stay HTTP/1.1, so a v4 or v5 child stays up. Peer
 # RPC shares the public ports with JSON and the router's :8080 with JSON:
 # a proxy or router generation that does not speak HTTP/2 there still
-# carries it as Connect over HTTP/1.1, so no order of image replacement
-# leaves peers without a path, and only the peer-RPC twin dials proto h2
-# (it stays down until the child answers peer-rpc-ok).
+# carries it as Connect over HTTP/1.1, and the router keeps the :8081
+# listener the previous v6 proxy generation dials, so no order of image
+# replacement leaves peers without a path. Only the peer-RPC twin dials
+# proto h2 (it stays down until the child answers peer-rpc-ok).
 # Failed replacements restore the saved Docker specification; an interrupted
 # replacement is recovered on the next normal run. PostgreSQL restores only its
 # image, retaining the migration target and its data. See the release guide for

@@ -73,7 +73,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	postGatewayChats(t, client, eps, cfg, "citest overlay hop")
 	host, _ := waitHostMetric(t, stack, cfg, 30*time.Second, "devshard_peer_rpc_requests_total", `endpoint="Chat"`, `result="ok"`)
 	require.NotEmpty(t, host, "no child counted Chat ok")
-	requireRouterSawPeerRPC(t, stack, "HTTP/2.0")
+	requireRouterSawPeerRPC(t, stack, "HTTP/2.0", 0)
 
 	proxyIP := procIPv4(overlayProxyIP(cfg))
 	// The gateway keeps one mux to the proxy for peer RPC. Short JSON
@@ -119,17 +119,23 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	// instead of handing it to rpc_h2. A fresh gateway finds that out on
 	// its first Attach and continues over Connect on HTTP/1.1 through the
 	// same port; chat still completes and the router sees HTTP/1.1 Attach.
+	// The HTTP/1.1 Attach above already appears in the router log; the
+	// fallback must add Attach lines of its own on HTTP/1.1 and none on
+	// HTTP/2 beyond those already there.
+	h1Before := routerAttachCount(t, stack, "HTTP/1.1")
+	h2Before := routerAttachCount(t, stack, "HTTP/2.0")
 	harness.RejectProxyH2(t, stack)
 	stack.RecreateServices(t, "proxy")
+	require.False(t, tcpAccepted(strings.TrimPrefix(stack.ProxyH2HTTP(t), "http://")),
+		"the rewritten proxy must reset the HTTP/2 preface")
 	stack.RecreateServices(t, "devshardctl")
 	eps = stack.Endpoints(t, cfg)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	before := chatOKCount(t, stack, cfg)
 	postGatewayChats(t, client, eps, cfg, "citest overlay http11 fallback")
 	require.Greater(t, chatOKCount(t, stack, cfg), before, "chat over the HTTP/1.1 fallback must be counted on the child")
-	requireRouterSawPeerRPC(t, stack, "HTTP/1.1")
-	require.False(t, tcpAccepted(strings.TrimPrefix(stack.ProxyH2HTTP(t), "http://")),
-		"the rewritten proxy must reset the HTTP/2 preface")
+	requireRouterSawPeerRPC(t, stack, "HTTP/1.1", h1Before)
+	require.Equal(t, h2Before, routerAttachCount(t, stack, "HTTP/2.0"), "no Attach may reach the router over HTTP/2 while the proxy rejects the preface")
 }
 
 func requireOverlayRPC(t *testing.T) {
@@ -151,20 +157,27 @@ func overlayProxyIP(cfg *config.File) string {
 	return base + ".70"
 }
 
-// requireRouterSawPeerRPC reads versiond-router's request log for an Attach
-// on the given HTTP version. The router logs the request line, so this is
-// the wire protocol between the proxy and the router.
-func requireRouterSawPeerRPC(t *testing.T, stack *harness.Stack, proto string) {
+// routerAttachCount counts Attach request lines on the given HTTP version in
+// versiond-router's log. The router logs the request line, so this is the
+// wire protocol between the proxy and the router.
+func routerAttachCount(t *testing.T, stack *harness.Stack, proto string) int {
+	t.Helper()
+	logs, err := stack.ComposeLogsTail(5000, "versiond-router")
+	require.NoError(t, err)
+	return strings.Count(logs, "PeerAuthService/Attach "+proto)
+}
+
+// requireRouterSawPeerRPC waits until the router has logged more Attach
+// lines on the given HTTP version than seen.
+func requireRouterSawPeerRPC(t *testing.T, stack *harness.Stack, proto string, seen int) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		logs, err := stack.ComposeLogsTail(2000, "versiond-router")
-		require.NoError(t, err)
-		if strings.Contains(logs, "PeerAuthService/Attach "+proto) {
+		if routerAttachCount(t, stack, proto) > seen {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("versiond-router logged no Attach on %s", proto)
+			t.Fatalf("versiond-router logged no new Attach on %s", proto)
 		}
 		time.Sleep(time.Second)
 	}

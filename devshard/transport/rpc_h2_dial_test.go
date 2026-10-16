@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"io"
 	"context"
 	"errors"
 	"fmt"
@@ -69,6 +70,18 @@ func TestPeerRPCDialSetRejectsBadInference(t *testing.T) {
 	require.Error(t, err, "no scheme")
 	_, err = PeerRPCDialSetFrom("ftp://versiond-router:8080", "")
 	require.Error(t, err, "not http(s)")
+}
+
+func TestRPCH2MissClassifiesSilentClose(t *testing.T) {
+	// A TLS terminator that drops an unsupported ClientHello without an
+	// alert, or a cleartext server that swallows the preface and closes,
+	// ends the handshake with a bare EOF. That is a miss: the peer must
+	// fall back instead of retrying HTTP/2 against a silent origin.
+	require.True(t, isRPCH2Miss(io.EOF))
+	require.True(t, isRPCH2Miss(io.ErrUnexpectedEOF))
+	require.True(t, isRPCH2Miss(fmt.Errorf("attach: %w", io.ErrUnexpectedEOF)))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(errAttachTTL))
 }
 
 func TestH2MissCacheRemembersInferenceHost(t *testing.T) {

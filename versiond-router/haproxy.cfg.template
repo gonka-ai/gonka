@@ -93,8 +93,13 @@ resolvers docker
 # peer-RPC twin of a backend is the path, not the port or the protocol, so
 # Connect over HTTP/1.1 from a peer whose own side has no HTTP/2 reaches
 # the same twin.
+# :8081 is the same frontend for the previous v6 generation of proxy-router,
+# which dials peer RPC there with proto h2. It lets the router fleet be
+# replaced before that proxy without a peer-RPC gap. Not published; remove
+# once no proxy of that generation can be running.
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080
+    bind ${FRONT_BIND_ADDRESS}:8081
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
 	"net/url"
@@ -348,11 +349,18 @@ func isContextDone(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
-// isRPCH2TransportMiss is a dead origin (RST, refuse, not h2c, preface).
-// DeadlineExceeded / Canceled are not transport misses.
+// isRPCH2TransportMiss is a dead origin (RST, refuse, not h2c, preface,
+// a close with no answer). DeadlineExceeded / Canceled are not transport
+// misses. A plain EOF is: a TLS terminator that drops an unsupported
+// ClientHello without an alert, or a cleartext server that swallows the
+// preface and closes, both end the handshake with io.EOF or
+// io.ErrUnexpectedEOF and never say anything the client could act on.
 func isRPCH2TransportMiss(err error) bool {
 	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
 		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
 	}
 	var op *net.OpError
 	if errors.As(err, &op) {

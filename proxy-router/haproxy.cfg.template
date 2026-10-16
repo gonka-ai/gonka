@@ -69,8 +69,14 @@ frontend public_http
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     tcp-request inspect-delay ${PUBLIC_INSPECT_SECONDS}s
+    # The preface may arrive in pieces. Its first line parses as an HTTP
+    # request, so HTTP alone would end the inspection on "PRI * HTTP/2.0"
+    # and send a peer to nginx; a connection that starts with that line
+    # waits for the whole 24-byte preface instead.
     acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
-    tcp-request content accept if peer_rpc_h2c or HTTP
+    acl peer_rpc_h2c_prefix req.payload(0,14) -m bin 505249202a20485454502f322e30
+    tcp-request content accept if peer_rpc_h2c
+    tcp-request content accept if HTTP !peer_rpc_h2c_prefix
     use_backend rpc_h2c_in if peer_rpc_h2c
     default_backend policy_http
 

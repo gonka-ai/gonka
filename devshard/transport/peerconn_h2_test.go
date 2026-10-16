@@ -163,6 +163,43 @@ func TestPeerConn_H2CloseDoesNotFINSharedMux(t *testing.T) {
 	require.Zero(t, infHits.Load())
 }
 
+// A listen that accepts the preface and then closes without a word (a TLS
+// terminator dropping an unknown ALPN, a TCP-mode reject on the preface)
+// is a miss, not a slow host.
+func TestPeerConn_H2SilentCloseFallsBackToHTTP11(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	var accepts atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			accepts.Add(1)
+			go func(c net.Conn) {
+				buf := make([]byte, 24)
+				_, _ = io.ReadFull(c, buf)
+				_ = c.Close()
+			}(c)
+		}
+	}()
+
+	pc := h2PeerConn(t, inf, hostAddr, peer, "http://"+ln.Addr().String())
+	pc.Start()
+	waitPeerReady(t, pc)
+	require.False(t, pc.UsingH2())
+	require.Greater(t, accepts.Load(), int32(0))
+	require.Greater(t, infHits.Load(), int32(0))
+	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+}
+
 func TestPeerConn_H2BaselineNotH2CFallsBackNoMixedStream(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)

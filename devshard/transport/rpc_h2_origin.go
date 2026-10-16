@@ -47,6 +47,22 @@ func (t *originSwitchTransport) usingH2() bool {
 	return t != nil && t.h2On.Load()
 }
 
+// h2Only is a RoundTripper pinned to the h2 origin regardless of the
+// switch. The live-session HTTP/2 probe uses it so concurrent RPCs stay on
+// HTTP/1.1 until that probe has succeeded. Nil when there is no h2 origin.
+func (t *originSwitchTransport) h2Only() http.RoundTripper {
+	if t == nil || t.h2 == nil || t.h2URL == nil {
+		return nil
+	}
+	return h2OnlyTransport{t: t}
+}
+
+type h2OnlyTransport struct{ t *originSwitchTransport }
+
+func (h h2OnlyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return h.t.h2.RoundTrip(rewriteOrigin(req, h.t.h2URL))
+}
+
 func (t *originSwitchTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if t.h2On.Load() && t.h2 != nil && t.h2URL != nil {
 		return t.h2.RoundTrip(rewriteOrigin(req, t.h2URL))

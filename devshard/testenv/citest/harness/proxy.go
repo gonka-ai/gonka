@@ -148,17 +148,23 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 
 // RejectProxyH2 rewrites the overlay HAProxy file in a booted stack so the
 // public port resets a connection that opens with the HTTP/2 preface
-// instead of handing it to rpc_h2. JSON passthrough is unchanged. That is
-// a public port whose wrapping does not speak HTTP/2: peers must fall back
-// to Connect over HTTP/1.1 through the same port. Recreate proxy afterwards.
+// instead of handing it to rpc_h2. The reject takes the place of the
+// preface accept, so it is evaluated before any accept ends the
+// inspection; the hand-off rule below it is then never reached. JSON
+// passthrough is unchanged. That is a public port whose wrapping does not
+// speak HTTP/2: peers must fall back to Connect over HTTP/1.1 through the
+// same port. Recreate proxy afterwards.
 func RejectProxyH2(t *testing.T, s *Stack) {
 	t.Helper()
 	path := filepath.Join(s.WorkDir, "proxy", "haproxy-rpc.cfg")
 	text, err := os.ReadFile(path)
 	require.NoError(t, err)
+	const accept = "    tcp-request content accept if peer_rpc_h2c\n"
 	const route = "    use_backend rpc_h2c_in if peer_rpc_h2c\n"
+	require.Contains(t, string(text), accept)
 	require.Contains(t, string(text), route)
-	out := strings.Replace(string(text), route, "    tcp-request content reject if peer_rpc_h2c\n", 1)
+	out := strings.Replace(string(text), accept, "    tcp-request content reject if peer_rpc_h2c\n", 1)
+	out = strings.Replace(out, route, "", 1)
 	require.NoError(t, os.WriteFile(path, []byte(out), 0o644))
 }
 

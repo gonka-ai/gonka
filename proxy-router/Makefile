@@ -168,10 +168,12 @@ test-render: test-route-status test-rpc-h2-cert
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /tcp-request inspect-delay 5s/ { delay = 1 } \
 		inside && /acl peer_rpc_h2c req.payload\(0,24\) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a/ { acl = 1 } \
-		inside && /tcp-request content accept if peer_rpc_h2c or HTTP/ { accept = 1 } \
+		inside && /acl peer_rpc_h2c_prefix req.payload\(0,14\) -m bin 505249202a20485454502f322e30/ { prefix = 1 } \
+		inside && /tcp-request content accept if peer_rpc_h2c$$/ { accept = 1 } \
+		inside && /tcp-request content accept if HTTP !peer_rpc_h2c_prefix/ { accepth1 = 1 } \
 		inside && /use_backend rpc_h2c_in if peer_rpc_h2c/ { route = 1 } \
 		inside && /default_backend policy_http/ { json = 1 } \
-		END { exit !(delay && acl && accept && route && json) } \
+		END { exit !(delay && acl && prefix && accept && accepth1 && route && json) } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "public :80 does not hand the HTTP/2 preface to peer RPC and the rest to nginx"; \
 	awk ' \

@@ -530,12 +530,14 @@ transport in band:
   landing on nginx.
 - **An origin that does not speak it.** nginx behind an older wrapping answers the
   preface with an HTTP/1.1 error and negotiates no ALPN for the unknown token; a
-  TLS-terminating load balancer does the same. Both are an h2 miss: the client
+  TLS-terminating load balancer does the same, or just closes. All are an h2 miss: the client
   remembers the InferenceUrl host for `DefaultRPCH2MissTTL` (30 min ± 10 %) and
   Attaches on the same door over Connect/HTTP/1.1 through nginx. The next Attach or
-  session refresh after the TTL probes HTTP/2 again, so a host whose wrapping was
-  updated in the meantime is picked up without a restart. A Connect error from a
-  working HTTP/2 origin, and an Attach that merely runs out of time, are not misses.
+  session refresh after the TTL probes HTTP/2 again, on a client pinned to the h2
+  origin so that in-flight RPCs stay on HTTP/1.1 until it succeeds; a host whose
+  wrapping was updated in the meantime is thus picked up without a restart. A Connect
+  error from a working HTTP/2 origin, and an Attach that merely runs out of time, are
+  not misses.
 
 HTTP/2 is required on **every** hop of the h2 path — not only the public listen.
 Connect does not turn a Go `http.Server` into h2c; each process must opt in.
@@ -552,7 +554,10 @@ Fallback: client → proxy :80 / :443 (HTTP/1.1, or TLS with h2 / http/1.1) → 
 versiond-router has one data listen. HAProxy detects the HTTP/2 preface on a cleartext
 bind, so the proxy's `proto h2` dial and nginx's HTTP/1.1 JSON share `:8080`. The
 `_rpc` twin of a backend is selected by the `/sessions/{id}/rpc/` path, not by port or
-protocol, so the HTTP/1.1 fallback reaches the same twin and the same child.
+protocol, so the HTTP/1.1 fallback reaches the same twin and the same child. The same
+frontend also binds `:8081`, unpublished, for the previous v6 generation of
+`proxy-router` that dials peer RPC there; that keeps fleet-before-proxy a safe order
+across that boundary and goes away once no such proxy can be running.
 
 A default `httputil.ReverseProxy` (HTTP/1.1) or a child `http.ListenAndServe` without
 `golang.org/x/net/http2/h2c` fans N RPCs back into N TCP connections and **fails** this
@@ -565,7 +570,7 @@ client → nginx (InferenceUrl) → …   # unchanged
 | Hop | Change |
 |---|---|
 | nginx / proxy-policy | **Not on the h2 path.** Keeps InferenceUrl for JSON, the public API, and Connect over HTTP/1.1 from a peer that fell back. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row. |
-| **proxy (proxy-router)** | `:80`/`:443` stay TCP frontends. `tcp-request inspect-delay` (`PROXY_ROUTER_PUBLIC_INSPECT_SECONDS`, 5 s) reads the first bytes; the preface or the ALPN token selects `rpc_h2` over `abns@rpc_h2c` / `abns@rpc_tls`, everything else goes to `proxy-policy`. `rpc_h2`: `proto h2` to versiond-router `:8080` (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`); `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. Keep the same version + escrow hash as `versiond_router_in`. |
+| **proxy (proxy-router)** | `:80`/`:443` stay TCP frontends. `tcp-request inspect-delay` (`PROXY_ROUTER_PUBLIC_INSPECT_SECONDS`, 5 s) reads the first bytes; the preface or the ALPN token selects `rpc_h2` over `abns@rpc_h2c` / `abns@rpc_tls`, everything else goes to `proxy-policy`. A connection that starts with `PRI * HTTP/2.0` waits for the whole 24-byte preface rather than being accepted as HTTP on its first line. `rpc_h2`: `proto h2` to versiond-router `:8080` (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`); `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. Keep the same version + escrow hash as `versiond_router_in`. |
 | versiond-router (HA) | One `:8080`, JSON and the HTTP/2 preface. `proto h2` on every backend to versiond (h2c) in the `_rpc` twins, with `check-proto h1`. Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
 | versiond (both) | HTTP/1.1 and prior-knowledge HTTP/2 on the public listen (`ConfigureCleartextHTTP2`); reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON and for the fallback |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
