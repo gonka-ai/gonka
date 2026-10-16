@@ -57,13 +57,18 @@ sibling slot of the same validator, or a live chain lookup.
 A slot has a history of bindings instead of one binding:
 
 ```
-WarmKeyBinding { Addr, FromNonce, Height, RevokedAtNonce }
+WarmKeyBinding { Addr, FromNonce, Sequence, Height, ExpiresAt, Attestation,
+                 RevokedAtNonce, RevokeSequence }
 WarmKeyHistory  map[slot][]WarmKeyBinding
 ```
 
-`FromNonce` is the diff nonce whose application introduced the binding;
-`Height` is the chain height at which the grant was known to exist;
-`RevokedAtNonce` is the nonce of the revoke entry, zero while the key is live.
+`FromNonce` is the diff nonce whose application introduced the binding and
+`RevokedAtNonce` the nonce of the revoke entry, zero while the key is live.
+`Sequence` and `RevokeSequence` are the granter's account sequences of the
+chain transactions that attest the bind and the revoke
+([below](#how-a-binding-enters-consensus)); `Height` is the height the bind
+was confirmed at, `ExpiresAt` the grant's expiry, and `Attestation` the
+signed transaction itself, so the history carries its proofs into snapshots.
 
 The acceptance rule for a host signature is a function of the history and of
 one nonce only (`WarmKeyHistory.Allows`): the cold key; a warm key whose
@@ -72,14 +77,22 @@ it, a key that covers it on a sibling slot of the same validator, unless the
 key was revoked on this slot at or before it. No chain call, no wall clock.
 Replaying the same diffs on any host yields the same answer.
 
-The nonce is the **authorization nonce**: the nonce of the diff that carries
-the signed message. Receipts, finishes, votes and HeightAcks do not sign a
-production time, and they do not need one. A message signed by a key that is
-live at the diff that includes it is accepted; a message the gateway includes
-after the key's revoke is refused, whenever it was produced. The gateway is
-the sequencer, so it decides what it includes before a revoke, and a host that
-rotates keeps the old key live until its pending messages are through
-([Rotation](#rotation-step-by-step)).
+The nonce is the **authorization nonce**, and each path has its own:
+
+- Messages carried in diffs (receipts, finishes, votes, HeightAck, heartbeat):
+  the nonce of the diff that carries them. They do not sign a production
+  time and do not need one. A message signed by a key that is live at the
+  diff that includes it is accepted; one the gateway includes after the key's
+  revoke is refused, whenever it was produced. The gateway sequences, so it
+  decides what goes in before a revoke, and a host that rotates keeps the old
+  key live until its pending messages are through
+  ([Rotation](#rotation-step-by-step)).
+- State-signature gossip and settlement signatures sign a state nonce: that
+  nonce.
+- Repair requests and answers, and every other out-of-band admission, are
+  local decisions, not consensus: the receiver uses its history head. A key
+  rotated in may repair an old turn; a revoked key may not, whatever
+  `RefNonce` it names.
 
 Two keys may cover the same nonce range on one slot. That is the rotation
 window: the old grant stays valid until its revoke entry, so a diff that was
@@ -119,15 +132,30 @@ MsgWarmKeyBind   { slot, address, height, attestation }
 MsgWarmKeyRevoke { slot, address, height, attestation }
 ```
 
-The attestation is a signature by the slot's cold key over
-`(escrow, slot, address, height, bind|revoke)`. The cold key is the account
-that grants on chain, so it is the right authority, and every host knows it
-from the group. The host obtains the attestation through its dapi, which
-holds the account key for chain transactions, when the operator grants or
-revokes (see [Open questions](#open-questions) for a cold key that is not
-reachable). `height` records the chain height at which the grant existed when
-the bind was requested; it is informational for operators and for the grant
-source, not an input to acceptance.
+The attestation is the chain transaction the operator already signs with
+the cold key: the `MsgGrant` that creates the grant for a bind, the
+`MsgRevoke` that ends it for a revoke, as signed transaction bytes. Nothing
+new is signed and no new key custody appears: dapi holds only the warm
+signer (`apiconfig.ApiAccount.SignerAccount`; `AccountKey` is a public key),
+and the cold key is used exactly where it is used today, by the operator at
+grant time. Every host verifies the attestation from the log alone: the
+signature by the cold key of the slot, the chain id, the granter equal to
+that cold key, the grantee equal to `address`, the current grant marker, and
+the account sequence. The sequence is what stops replay: a bind must carry a
+sequence above every entry the slot has seen, a revoke above the binding it
+ends, so a bind attestation cannot bind a revoked key again and an old
+revoke cannot end a later binding (`WarmKeyHistory.Bind`, `Revoke`). The
+expiry in the grant is copied into the binding. `height` is the height the
+transaction was confirmed at, informational.
+
+A compromised warm key gains nothing here: it cannot produce a `MsgGrant`,
+and the only input it can make is to send an existing attestation to the
+gateway, which is public anyway. Who may request a bind is therefore not an
+authorization boundary; the attestation is.
+
+dapi keeps the signed grant and revoke transactions for its own account
+(it submits them, or fetches them by hash from the chain) and serves them to
+the host next to the grant events.
 
 Application is staged: the bind and revoke entries of a diff apply before its
 other transactions, so a key bound at nonce N is live for the messages of
@@ -143,6 +171,13 @@ on the apply path. A host that sees a bind it does not recognise in its grant
 source logs it and raises a metric, and otherwise applies the diff like any
 other, because the attestation is the proof.
 
+**Expiry.** A grant with an expiry needs no revoke transaction to end:
+the binding ends at the first diff whose heightstamped time (the v7 item that
+puts chain time into diffs for timeouts) is at or after `ExpiresAt`. That is
+a function of the log, so every host ends it at the same nonce. Until that
+item lands, bindings with an expiry are refused at bind time, so an expiry
+can never leave a dead grant live in a session.
+
 ## Grant source
 
 The grant source answers "which keys does granter G authorise, and since which
@@ -150,9 +185,13 @@ height" without a chain round trip on the apply path.
 
 1. dapi host events. `GetHostEvents` (`common/nodemanager/nodemanager.proto`)
    gains `HOST_EVENT_KIND_KEY_GRANTED` and `HOST_EVENT_KIND_KEY_REVOKED` with
-   `{granter, grantee, height, expiration}`, produced by the dapi event
-   listener from the chain's authz `EventGrant` / `EventRevoke` filtered on
-   the current marker, with the legacy marker translated as the query does.
+   `{granter, grantee, height, expiration, tx_hash}`, produced by the dapi
+   event listener from the chain's authz `EventGrant` / `EventRevoke` on the
+   current marker only. Events on the legacy marker are ignored: a legacy
+   grant is stored separately on chain and its revoke says nothing about a
+   `MsgClaimRewards` grant, so translating it would end a live
+   authorization. The query's legacy translation stays what it is, a query
+   convenience.
    The stream keeps its cursor and `needs_reset` contract: on a reset, and at
    the first poll, dapi answers with a snapshot of the current grants stamped
    with the height and cursor it was taken at, and devshardd replaces its
@@ -202,12 +241,15 @@ sessions. Snapshots keep the old map for reading.
 
 ## Open questions
 
-- The attestation key. The design signs binds with the cold key through dapi,
-  where the account key lives for chain transactions. If a deployment keeps
-  that key elsewhere, the alternative is a chain proof of the grant (a Merkle
-  proof against a block header the hosts can verify), which is heavier and
-  depends on the light-client story; or an attestation by the old warm key for
-  a rotation, with the cold key needed only for the first bind.
+- The attestation shape. Signed transaction bytes are self-contained but
+  bigger than a bare signature, and the hosts need the cold key's public key
+  to verify them (recoverable from the transaction's signer info). An
+  alternative is a chain proof of the grant against a block header, which
+  needs the light-client story. Attestations by the old warm key were
+  considered and rejected: a compromised warm key could then hand the slot to
+  a successor of its choosing.
+- Expiry before heightstamped time lands: refusing grants with an expiry is
+  the safe default; is it acceptable for operators?
 - Settlement and rotation. `HasWarmKeyGrant` checks grants at submission. The
   rule above makes the operator keep the old grant until pending settlements
   are through. The alternative is a chain change that accepts signers granted
@@ -228,17 +270,19 @@ one buildable and tested on its own.
 1. `signing/keyhistory.go`: the pure model and its acceptance rule, with
    tests. No caller yet.
 2. `types`, `state`: `EscrowState.WarmKeyHistory`, hash version, the two
-   transactions with their attestation, staged application, journal undo/redo,
-   snapshot codec, every verifier (HeightAck, repair, gossip, settlement)
-   reading the history for the diff at hand.
+   transactions with their attestation and its verification (cold-key
+   signature, chain id, granter, grantee, marker, sequence), staged
+   application, expiry at heightstamped time, journal undo/redo, snapshot
+   codec carrying the attestations, every verifier (HeightAck, repair,
+   gossip, settlement) reading the history by its own nonce rule.
 3. `bridge`: grant log fed by dapi host events with the reset rule, direct-query
    fallback with a TTL; the three forever-caches removed.
 4. `cmd/devshardctl`: bind and revoke proposals in the sequencer with the
    "first use after the bind" rule; admin listing.
-5. `cmd/devshardd`, `user`: the host's attestation request to dapi, sending the
-   bind, replay and snapshot paths.
-6. dapi: attestation endpoint, event kinds, grant snapshot on reset, event
-   listener on the current marker.
+5. `cmd/devshardd`, `user`: fetching the signed grant transaction from dapi,
+   sending the bind, replay and snapshot paths.
+6. dapi: keeping and serving the signed grant and revoke transactions, event
+   kinds, grant snapshot on reset, event listener on the current marker.
 7. Tests: rotation mid-session; lagging host replaying a bind and a revoke
    after the grant was revoked and pruned on chain; dapi down; snapshot
    restore; a settlement with old-key signatures across a rotation; a slot
