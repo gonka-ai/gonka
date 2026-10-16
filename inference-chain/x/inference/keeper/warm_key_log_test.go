@@ -155,14 +155,21 @@ func TestWarmKeyLogSeedFromAuthzGrants(t *testing.T) {
 		{b, types.WarmKeyGrantMarkerTypeURL, &past},
 		{c, types.WarmKeyGrantMarkerTypeURL, nil},
 	}
+	// The store hands grants out as the codec read them; the Any may or may
+	// not carry a cached value, so both forms are fed in turn.
 	iterate := func(_ context.Context, handler func(granter, grantee sdk.AccAddress, grant authz.Grant) bool) {
-		for _, g := range grants {
+		for i, g := range grants {
 			anyAuth, err := codectypes.NewAnyWithValue(authz.NewGenericAuthorization(g.msg))
 			require.NoError(t, err)
+			if i%2 == 1 {
+				anyAuth = &codectypes.Any{TypeUrl: anyAuth.TypeUrl, Value: anyAuth.Value}
+			}
 			if handler(granter, g.grantee, authz.Grant{Authorization: anyAuth, Expiration: g.exp}) {
 				return
 			}
 		}
+		other := &codectypes.Any{TypeUrl: "/cosmos.bank.v1beta1.SendAuthorization", Value: []byte{0x0a, 0x00}}
+		handler(granter, warmKeyTestAddr(5), authz.Grant{Authorization: other})
 	}
 
 	n, err := k.SeedWarmKeyLog(ctx, iterate)
