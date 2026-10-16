@@ -30,10 +30,12 @@ ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
-# Peer RPC listen. 9443, not 8443: join publishes API_SSL_PORT (default 8443)
-# onto container :443. Clients dial {InferenceUrl.host}:DEVSHARD_RPC_H2_PORT.
-RPC_H2_PORT="${DEVSHARD_RPC_H2_PORT:-9443}"
-RPC_H2_ROUTER_PORT="${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}"
+# Peer RPC shares :80/:443 with the JSON API. The public frontends hand a
+# connection that opens with the HTTP/2 preface (:80) or offers ALPN
+# RPC_ALPN (:443) to the rpc_h2 frontend over an abstract socket. The
+# ALPN token is the devshard client's transport.PeerRPCALPN.
+RPC_ALPN="gonka-rpc/1"
+PUBLIC_INSPECT="${PROXY_ROUTER_PUBLIC_INSPECT_SECONDS:-5}"
 RPC_H2_VERSIOND_HOST="${DEVSHARD_RPC_H2_VERSIOND_HOST:-versiond}"
 RPC_H2_VERSIOND_PORT="${DEVSHARD_RPC_H2_VERSIOND_PORT:-8080}"
 RPC_H2_CERT_DIR="${DEVSHARD_RPC_H2_CERT_DIR:-/etc/haproxy/ssl}"
@@ -159,7 +161,7 @@ if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
 fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
-    "$RPC_H2_PORT" "$RPC_H2_ROUTER_PORT" "$RPC_H2_VERSIOND_PORT" \
+    "$RPC_H2_VERSIOND_PORT" "$PUBLIC_INSPECT" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
@@ -221,10 +223,8 @@ case "$NGINX_MODE" in
         ;;
 esac
 
-if [ "$RPC_H2_PORT" -eq 80 ] || [ "$RPC_H2_PORT" -eq 443 ] || \
-    [ "$RPC_H2_PORT" -eq "$VERSIOND_FRONTEND_PORT" ] || \
-    [ "$RPC_H2_PORT" -eq "$ADMIN_PORT" ]; then
-    echo "proxy-router: DEVSHARD_RPC_H2_PORT=$RPC_H2_PORT collides with an existing listen" >&2
+if [ "$PUBLIC_INSPECT" -eq 0 ]; then
+    echo "proxy-router: PROXY_ROUTER_PUBLIC_INSPECT_SECONDS must be a positive integer" >&2
     exit 1
 fi
 case "$RPC_H2_VERSIOND_HOST" in
@@ -235,8 +235,9 @@ case "$RPC_H2_VERSIOND_HOST" in
 esac
 
 # HA sets VERSIOND_ROUTER_POOL_HOST (the fleet). Non-HA leaves it unset and
-# the h2 hop goes straight to versiond:8080. JSON :8080 on the router is not
-# this hop: peer RPC is the router's proto h2 listen (8081).
+# the h2 hop goes straight to versiond:8080. The router hop is the same
+# data listen JSON uses (VERSIOND_ROUTER_PORT, 8080): HAProxy detects the
+# HTTP/2 preface on a cleartext bind, so there is no second router port.
 # The data connection stays proto h2. The check is HTTP/1.1 GET /readyz on
 # the router admin port, the same question the JSON backends ask. Without
 # check-proto h1 the probe would follow proto h2, and without a check at all
@@ -246,7 +247,7 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
     RPC_H2_CHECK_CONNECT="http-check connect port ${ROUTER_ADMIN_PORT} proto h1"
     RPC_H2_CHECK_SEND="http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}"
     RPC_H2_CHECK_EXPECT='http-check expect status 200'
-    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
 else
     RPC_H2_HTTPCHK=
     RPC_H2_CHECK_CONNECT=
@@ -260,17 +261,21 @@ case "$NGINX_MODE" in
         cert="$RPC_H2_CERT_DIR/cert.pem"
         key="$RPC_H2_CERT_DIR/private.key"
         if [ ! -f "$cert" ] || [ ! -f "$key" ]; then
-            echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for DEVSHARD_RPC_H2_PORT (looked in $RPC_H2_CERT_DIR)" >&2
+            echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for peer RPC on :443 (looked in $RPC_H2_CERT_DIR)" >&2
             exit 1
         fi
         # nginx renewal later replaces cert.pem and private.key. watch_rpc_h2_cert
         # rebuilds this PEM and commits it on the admin socket.
         write_rpc_h2_pem "$cert" "$key" "$RPC_H2_PEM"
-        # ssl+alpn is HTTP/2 over TLS. proto h2 would be cleartext h2c.
-        RPC_H2_BIND=":${RPC_H2_PORT} ssl crt ${RPC_H2_PEM} alpn h2"
+        # TLS terminates here with nginx's cert. The listener negotiates only
+        # the peer-RPC ALPN token, and proto h2 runs HTTP/2 on it; h2 itself
+        # is never offered, so a browser's ClientHello cannot land here.
+        RPC_TLS_BIND="bind abns@rpc_tls accept-proxy ssl crt ${RPC_H2_PEM} alpn ${RPC_ALPN} proto h2"
+        PUBLIC_HTTPS_RPC_ROUTE="use_backend rpc_tls_in if peer_rpc_tls"
         ;;
     *)
-        RPC_H2_BIND=":${RPC_H2_PORT} proto h2"
+        RPC_TLS_BIND='# HTTP InferenceUrl: peer RPC is h2c on :80; :443 carries no peer RPC.'
+        PUBLIC_HTTPS_RPC_ROUTE='# No TLS peer-RPC listener in NGINX_MODE=http.'
         ;;
 esac
 
@@ -413,7 +418,7 @@ render_rpc_backend() {
         -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
-        -e "s|\${RPC_H2_ROUTER_PORT}|$RPC_H2_ROUTER_PORT|g" \
+        -e "s|\${ROUTER_PORT}|$ROUTER_PORT|g" \
         -e "s|\${SERVER_STATE}|$server_state|g" \
         "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
@@ -558,7 +563,10 @@ sed \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
-    -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
+    -e "s|\${PUBLIC_INSPECT_SECONDS}|$PUBLIC_INSPECT|g" \
+    -e "s|\${RPC_ALPN}|$RPC_ALPN|g" \
+    -e "s|\${PUBLIC_HTTPS_RPC_ROUTE}|$PUBLIC_HTTPS_RPC_ROUTE|g" \
+    -e "s|\${RPC_TLS_BIND}|$RPC_TLS_BIND|g" \
     -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \
     -e "s|\${RPC_H2_CHECK_CONNECT}|$RPC_H2_CHECK_CONNECT|g" \
     -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \

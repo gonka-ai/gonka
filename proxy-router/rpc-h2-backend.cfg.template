@@ -1,7 +1,8 @@
 # Peer-RPC twin of a versiond_routers_* backend. The data connection is proto h2
-# on the router h2 listen. The check stays HTTP/1.1 GET /readyz?version= on the
-# admin port, so a slot that has not projected this version stays out of the
-# pool. JSON traffic keeps the twin's sibling backend.
+# on the router's data listen, the same :8080 that carries JSON; the router
+# detects the HTTP/2 preface there. The check stays HTTP/1.1 GET
+# /readyz?version= on the admin port, so a slot that has not projected this
+# version stays out of the pool. JSON traffic keeps the twin's sibling backend.
 backend ${BACKEND_NAME}
     balance hash var(txn.hashkey)
     hash-type consistent
@@ -17,4 +18,4 @@ backend ${BACKEND_NAME}
     retries 2
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
 
-    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
+    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}

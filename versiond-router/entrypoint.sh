@@ -23,8 +23,6 @@
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
-#   VERSIOND_ROUTER_H2_PORT  published-hop frontend (default 8081, proto h2).
-#                             :8080 stays HTTP/1.1 for JSON/healthz/catalog.
 #   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
 #                             on), with check-proto h1 so the existing health
 #                             check stays HTTP/1.1. Set false for HTTP/1.1
@@ -73,7 +71,6 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
-H2_PORT="${VERSIOND_ROUTER_H2_PORT:-8081}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -341,7 +338,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -349,10 +346,6 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
-if [ "$H2_PORT" -eq 0 ] || [ "$H2_PORT" -eq 8080 ] || [ "$H2_PORT" -eq "$ADMIN_PORT" ]; then
-    echo "versiond-router: VERSIOND_ROUTER_H2_PORT must be a distinct positive port (not 8080 or the admin port)" >&2
-    exit 1
-fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || \
@@ -818,7 +811,6 @@ sed \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
-    -e "s|\${H2_PORT}|$H2_PORT|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${CATALOG_STATUS_SERVER_STATE}|$CATALOG_STATUS_SERVER_STATE|g" \

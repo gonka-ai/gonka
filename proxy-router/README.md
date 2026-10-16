@@ -11,9 +11,12 @@ It has three data-plane responsibilities:
    router network.
 
 The nginx workers still own TLS and HTTP/2 on `:80` and `:443`, plus CORS,
-rate limits, path rewrites, and the on-chain route table. Peer RPC is a
-separate HAProxy listen (`DEVSHARD_RPC_H2_PORT`, default 9443) and does not
-enter those workers. This keeps one policy implementation for JSON while
+rate limits, path rewrites, and the on-chain route table. Peer RPC shares
+those two ports: the public frontends recognise a peer by the first bytes
+of its connection (the HTTP/2 client preface on `:80`, ALPN `gonka-rpc/1`
+on `:443`) and hand it to an HAProxy frontend in the same process, so it
+does not enter those workers. Every other connection is JSON and goes to
+nginx exactly as before. This keeps one policy implementation for JSON while
 allowing the service-pool distributors to scale and restart independently.
 
 ## Request path
@@ -25,11 +28,20 @@ client
        -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
 
-peer RPC (skips nginx)
-  -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
-       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
+peer RPC (same :80/:443, skips nginx)
+  -> proxy-router :80  (HTTP/2 preface)  -> rpc_h2 frontend (h2c)
+  -> proxy-router :443 (ALPN gonka-rpc/1) -> rpc_h2 frontend (TLS with nginx's cert, HTTP/2)
+       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8080 proto h2
        non-HA: versiond:8080 proto h2
 ```
+
+A client whose first bytes are neither (an older devshard, a browser, curl)
+never sees the peer-RPC frontend. A peer whose host still runs an older
+wrapping gets nginx on these ports, fails its HTTP/2 probe there, and
+continues over Connect on HTTP/1.1 through the JSON path; there is no port
+to open or close when the wrapping changes. The hand-off waits for the
+first bytes at most `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` (default 5); an
+idle connection then goes to nginx.
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between
 the client and nginx. `send-proxy-v2` carries the original source address to the
@@ -152,7 +164,7 @@ services and containers owned by other active overlays remain unchanged.
 
 | Listener | Purpose |
 | --- | --- |
-| `:80`, `:443` | public TCP ingress to policy workers |
+| `:80`, `:443` | public TCP ingress to policy workers; peer RPC connections are recognised here and kept in this process |
 | policy network `:18081` | private versiond-router distributor |
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
