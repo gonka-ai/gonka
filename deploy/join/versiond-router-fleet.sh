@@ -205,11 +205,12 @@ compose_duration_seconds() {
 # in the container's environment) plus the headroom, or the configured one
 # when that is larger or the container predates the setting. A lowered
 # configuration must not shorten the stop of a generation still running the
-# old value.
+# old value, so a container whose environment cannot be read is not stopped
+# on the configured budget: the caller fails instead.
 generation_stop_timeout() {
-    local id=$1 recorded
-    recorded=$("$docker_bin" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" 2>/dev/null | \
-        sed -n 's/^VERSIOND_ROUTER_HARD_STOP_SECONDS=//p' | head -n 1)
+    local id=$1 environment recorded
+    environment=$("$docker_bin" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id") || return 1
+    recorded=$(sed -n 's/^VERSIOND_ROUTER_HARD_STOP_SECONDS=//p' <<<"$environment" | head -n 1)
     case $recorded in
         '' | *[!0-9]* | 0) echo "$stop_timeout" ;;
         *)
@@ -823,13 +824,18 @@ reset_parent_slot_health() {
 # leaves it stopped next to its replacement. restore_generation switches
 # `always` back on.
 stop_generation() {
-    local slot=$1 id=$2 status=0
+    local slot=$1 id=$2 status=0 timeout
     prepare_parent_slot_stop "$slot" "$id" || return 1
+    timeout=$(generation_stop_timeout "$id") || {
+        echo "versiond-router-fleet: cannot read the stop budget of router container $id" >&2
+        reset_parent_slot_health || true
+        return 1
+    }
     "$docker_bin" update --restart=unless-stopped "$id" >/dev/null || {
         reset_parent_slot_health || true
         return 1
     }
-    "$docker_bin" stop --time "$(generation_stop_timeout "$id")" "$id" >/dev/null || status=$?
+    "$docker_bin" stop --time "$timeout" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
 }
@@ -2043,7 +2049,7 @@ stop_slot() {
 }
 
 stop_fleet_containers() {
-    local id state pid failed=0
+    local id state pid timeout failed=0
     local -a ids=() pids=()
     fleet_inventory
     ids=("${inventory_ids[@]}")
@@ -2059,7 +2065,9 @@ stop_fleet_containers() {
             "router container $id disappeared before maintenance stop"
         case $state in
             running | restarting | paused)
-                "$docker_bin" stop --time "$(generation_stop_timeout "$id")" "$id" >/dev/null &
+                timeout=$(generation_stop_timeout "$id") || fail \
+                    "cannot read the stop budget of router container $id"
+                "$docker_bin" stop --time "$timeout" "$id" >/dev/null &
                 pids+=("$!")
                 ;;
             created | exited | dead) ;;
