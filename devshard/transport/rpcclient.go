@@ -340,6 +340,7 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(maxBytes),
+		withGzipReadCap(maxBytes),
 		connect.WithSendGzip(),
 		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
@@ -394,12 +395,14 @@ func (c *RPCClient) gossipClient() rpcpbconnect.GossipServiceClient {
 }
 
 // chatClientOptions gzips the request envelope (prompt + catch-up diffs) like
-// the unary clients and HTTP Send. gzip must stay registered for WithSendGzip
-// to resolve; the handler never compresses ChatFrames, so response chunks are
-// still one application gzip stream and are not compressed twice.
+// the unary clients and HTTP Send. withGzipReadCap keeps that gzip registered
+// for WithSendGzip and stops response inflation at the read cap. The handler
+// never compresses ChatFrames, so response chunks are still one application
+// gzip stream and are not compressed twice.
 func chatClientOptions() []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
+		withGzipReadCap(int(DefaultMaxBodySize)),
 		connect.WithSendGzip(),
 		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}

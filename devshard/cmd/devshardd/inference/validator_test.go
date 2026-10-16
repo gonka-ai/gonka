@@ -15,6 +15,7 @@ import (
 	"common/chain"
 	commonvalidation "common/validation"
 	devshardpkg "devshard"
+	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
 )
@@ -977,6 +978,69 @@ func cancelledCtx() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	return ctx
+}
+
+func TestValidator_RateLimitAfterRetryVotesFalse(t *testing.T) {
+	t.Cleanup(transport.ResetOutboundPeerReleaseForTest)
+	retried := classifyPayloadFetchError(context.Background(), fmt.Errorf("%w: %w", errPayloadRateLimitRetried, ErrPayloadRateLimited))
+	v := newFaultTestValidator(10, true, taggedFetch(retried), nil, nil)
+
+	result, err := v.Validate(context.Background(), faultReq(10))
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.False(t, result.Valid)
+	require.Equal(t, executorPayloadUnavailableReason, result.Reason)
+	require.Contains(t, fmt.Sprint(result.Details), string(observability.ReasonRateLimited))
+
+	off := newFaultTestValidator(10, false, taggedFetch(retried), nil, nil)
+	_, err = off.Validate(context.Background(), faultReq(10))
+	require.ErrorIs(t, err, ErrPayloadRateLimited)
+}
+
+func TestValidator_UntaggedRateLimitDoesNotVote(t *testing.T) {
+	rateLimited := fmt.Errorf("get payload: %w", ErrPayloadRateLimited)
+	for _, voteFalse := range []bool{true, false} {
+		v := newFaultTestValidator(10, voteFalse, taggedFetch(rateLimited), nil, nil)
+		_, err := v.Validate(context.Background(), faultReq(10))
+		require.ErrorIs(t, err, ErrPayloadRateLimited)
+		require.NotErrorIs(t, err, errExecutorPayloadFault)
+		reason, _ := observability.ErrorReason(err, "", "")
+		require.Equal(t, observability.ReasonRateLimited, reason)
+	}
+}
+
+// One participant runs HA replicas under one address. The rate-limit wait
+// runs inside Validate, so the replica that waits holds the pending lease
+// and a sibling cannot start a second deferral for the same inference.
+func TestLeaseValidator_SiblingCannotTakeLeaseDuringRateLimitWait(t *testing.T) {
+	store := storage.NewMemory()
+	waiting := make(chan struct{})
+	resume := make(chan struct{})
+	replicaA := NewLeaseValidator(&stubValidator{fn: func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		close(waiting)
+		<-resume
+		return &devshardpkg.ValidateResult{Valid: false}, nil
+	}}, new(chain.Phase), store, storage.LeaseOwner{Address: "validator-addr", InstanceID: "replica-a"}, time.Hour)
+	replicaB := NewLeaseValidator(&stubValidator{fn: func(context.Context, devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+		t.Error("a sibling must not validate while the waiting replica holds the lease")
+		return nil, nil
+	}}, new(chain.Phase), store, storage.LeaseOwner{Address: "validator-addr", InstanceID: "replica-b"}, time.Hour)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := replicaA.Validate(context.Background(), makeReq())
+		done <- err
+	}()
+	<-waiting
+
+	_, err := replicaB.Validate(context.Background(), makeReq())
+	var conflict *devshardpkg.LeaseConflict
+	require.ErrorAs(t, err, &conflict)
+	require.Equal(t, "replica-a", conflict.InstanceID)
+	require.Equal(t, string(storage.LeaseStatusPending), conflict.Status)
+
+	close(resume)
+	require.NoError(t, <-done)
 }
 
 func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {

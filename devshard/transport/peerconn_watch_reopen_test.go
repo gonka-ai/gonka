@@ -23,6 +23,19 @@ func TestWatchReopen(t *testing.T) {
 	require.False(t, watchReopen(errWatchStreamCap))
 }
 
+func TestHostRenewalLost(t *testing.T) {
+	require.True(t, hostRenewalLost(connect.NewError(connect.CodeUnauthenticated, errors.New("session expired"))))
+	require.True(t, hostRenewalLost(connect.NewError(connect.CodeUnauthenticated, errors.New("handshake required"))))
+	require.True(t, hostRenewalLost(connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))))
+
+	require.False(t, hostRenewalLost(nil))
+	require.False(t, hostRenewalLost(connect.NewError(connect.CodeFailedPrecondition, errors.New("host shutting down"))))
+	require.False(t, hostRenewalLost(connect.NewError(connect.CodeUnavailable, errors.New("chain unavailable"))))
+	require.False(t, hostRenewalLost(connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))))
+	require.False(t, hostRenewalLost(connect.NewError(connect.CodeUnauthenticated, errors.New("host_address does not match"))))
+	require.False(t, hostRenewalLost(errors.New("dial tcp: connection refused")))
+}
+
 func TestServeWatch_LocalStreamCapWaits(t *testing.T) {
 	pc := NewPeerConn(PeerConnConfig{
 		HostAddress: "host",

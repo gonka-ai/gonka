@@ -419,7 +419,6 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if deps.metrics != nil {
 		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}
-	noteRetiredCompressRequestBodies()
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:              keyHex,
 		EscrowID:                   cfg.ID,

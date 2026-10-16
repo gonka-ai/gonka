@@ -841,6 +841,14 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 					p.incReattach(reattachReasonWatch)
 					return sawBeat.Load(), err
 				}
+				if hostRenewalLost(err) {
+					// The host no longer admits this token, and `_` cannot
+					// open a session. Retrying refresh never succeeds, so
+					// the caller clears the token and Attaches on a door.
+					stopWatch()
+					p.incReattach(reattachReasonTTL)
+					return sawBeat.Load(), err
+				}
 				// Watch and token stay. Retry refresh; do not drop to
 				// unauthenticated.
 				refreshBackoff = nextAttachBackoff(refreshBackoff, p.cfg.BackoffMin, p.cfg.BackoffMax)
@@ -1524,6 +1532,22 @@ func watchReopen(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "host shutting down")
+}
+
+// hostRenewalLost is a refresh on `_` refused because the host does not
+// hold a live session for this token. A child with the fix answers
+// Unauthenticated "session expired" or "handshake required". An older child
+// ran the roster check on `_` and answered "escrow is not open". Other
+// errors (shutting down, rate limits, Unavailable, signature) keep the token.
+func hostRenewalLost(err error) bool {
+	if err == nil {
+		return false
+	}
+	if connect.CodeOf(err) == connect.CodeUnauthenticated {
+		msg := err.Error()
+		return strings.Contains(msg, "session expired") || strings.Contains(msg, "handshake required")
+	}
+	return isDeadDoorError(err)
 }
 
 func nextAttachBackoff(prev, min, max time.Duration) time.Duration {

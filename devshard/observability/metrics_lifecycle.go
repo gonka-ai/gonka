@@ -53,9 +53,10 @@ var (
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
 
-	peerRPCEnabled     prometheus.Gauge
-	peerRPCAttachTotal *prometheus.CounterVec
-	peerRPCGateTotal   *prometheus.CounterVec
+	peerRPCEnabled          prometheus.Gauge
+	peerRPCAttachTotal      *prometheus.CounterVec
+	peerRPCGateTotal        *prometheus.CounterVec
+	peerRPCChatDroppedTotal *prometheus.CounterVec
 
 	peerSessionState         *prometheus.GaugeVec
 	peerAttachTotal          *prometheus.CounterVec
@@ -263,6 +264,10 @@ func initRegistry() {
 		Name: "devshard_peer_rpc_gate_total",
 		Help: "Peer RPC handshake-gate outcomes (admitted, missing, forged, expired, oversized).",
 	}, []string{"reason"})
+	peerRPCChatDroppedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_chat_dropped_total",
+		Help: "Inbound Chat streams the child ended or refused before or during inference (pending_cap, read_timeout, send_timeout).",
+	}, []string{"reason"})
 	peerSessionState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_peer_session_state",
 		Help: "Client PeerConn state (1 on the current state, 0 on the others) per destination host child (addr@version).",
@@ -363,6 +368,7 @@ func initRegistry() {
 		peerRPCEnabled,
 		peerRPCAttachTotal,
 		peerRPCGateTotal,
+		peerRPCChatDroppedTotal,
 		peerSessionState,
 		peerAttachTotal,
 		peerReattachTotal,
@@ -665,6 +671,25 @@ func IncPeerRPCAttach(result string) {
 func IncPeerRPCGate(reason string) {
 	ensureMetrics()
 	peerRPCGateTotal.WithLabelValues(reason).Inc()
+}
+
+const (
+	PeerRPCChatDroppedPendingCap  = "pending_cap"
+	PeerRPCChatDroppedReadTimeout = "read_timeout"
+	PeerRPCChatDroppedSendTimeout = "send_timeout"
+)
+
+// IncPeerRPCChatDropped counts one inbound Chat the child refused while
+// its envelope was unread, or ended on a read or send deadline.
+func IncPeerRPCChatDropped(reason string) {
+	ensureMetrics()
+	peerRPCChatDroppedTotal.WithLabelValues(reason).Inc()
+}
+
+// PeerRPCChatDroppedForTest is the counter behind IncPeerRPCChatDropped.
+func PeerRPCChatDroppedForTest(reason string) prometheus.Counter {
+	ensureMetrics()
+	return peerRPCChatDroppedTotal.WithLabelValues(reason)
 }
 
 // IncPeerRPCRequests counts one classified inbound RPC. result is ok or banned.

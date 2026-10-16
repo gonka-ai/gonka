@@ -99,6 +99,12 @@ func IsStorageBusy(err error) bool {
 	return false
 }
 
+// IsEscrowLookupLimitedError reports an escrow_lookup_limited 429 on either
+// transport. See IsEscrowLookupLimited.
+func IsEscrowLookupLimitedError(err error) bool {
+	return isEscrowLookupLimitedError(err)
+}
+
 func isEscrowLookupLimitedError(err error) bool {
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
@@ -288,8 +294,12 @@ func isChatTransportFault(err error) bool {
 	return isRPCH2TransportMiss(err)
 }
 
-// connectRetryAfter is the wait advertised on a Connect error (delta-seconds
+// ConnectRetryAfter is the wait advertised on a Connect error (delta-seconds
 // or HTTP-date). Zero means the meta was missing or unparsable.
+func ConnectRetryAfter(err error) time.Duration {
+	return connectRetryAfter(err)
+}
+
 func connectRetryAfter(err error) time.Duration {
 	var ce *connect.Error
 	if !errors.As(err, &ce) {

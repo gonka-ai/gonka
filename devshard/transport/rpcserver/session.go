@@ -102,10 +102,20 @@ func NewSessionHandler(lookup SessionLookup) *SessionHandler {
 }
 
 func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope], stream *connect.ServerStream[rpcpb.ChatFrame]) (err error) {
+	chatEnvelopeRead(ctx)
 	if req == nil || req.Msg == nil {
 		return connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	peer, srv, payload, err := h.openSignedOwner(ctx, req.Msg, rpcChatRoute)
+	release := func() {}
+	defer func() { release() }()
+	peer, srv, payload, err := h.openSignedOwnerAdmit(ctx, req.Msg, rpcChatRoute, func() error {
+		r, err := admitChat(ctx)
+		if err != nil {
+			return err
+		}
+		release = r
+		return nil
+	})
 	if err != nil {
 		return err
 	}
@@ -124,7 +134,9 @@ func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.Si
 	observability.Request.SetInferenceBodyBytes(op, len(payload))
 
 	sink := transport.NewChatFrameSink(func(chunk []byte) error {
-		return stream.Send(&rpcpb.ChatFrame{Chunk: chunk})
+		return sendChatFrame(ctx, func() error {
+			return stream.Send(&rpcpb.ChatFrame{Chunk: chunk})
+		})
 	})
 	err = mapInferenceError(core.ServeInference(ctx, transport.InferenceCall{
 		SessionID: escrow,
