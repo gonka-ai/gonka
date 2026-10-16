@@ -57,19 +57,32 @@
 set -eu
 
 # Stop signals are trapped from the first line: a signal with no handler
-# ends this shell before HAProxy runs, and HAProxy itself drops a stop that
-# reaches it while it is still loading. A signal that comes before HAProxy
-# answers on its Runtime socket is kept and passed on then; see the end of
-# this file.
+# ends this shell before HAProxy runs, and HAProxy itself drops a soft stop
+# that reaches it while it is still loading. USR1 (soft stop) that comes
+# before HAProxy answers on its Runtime socket is kept and passed on then.
+# TERM and INT mean "stop now" to HAProxy and are passed on as soon as the
+# process exists; before that they end this shell. See the end of this file.
 haproxy_ready=0
 haproxy_pid=
 pending_signal=
 forward_signal() {
-    if [ "$haproxy_ready" -eq 1 ]; then
-        kill -s "$1" "$haproxy_pid" 2>/dev/null || true
-    else
-        pending_signal=$1
-    fi
+    case $1 in
+        USR1)
+            if [ "$haproxy_ready" -eq 1 ]; then
+                kill -s USR1 "$haproxy_pid" 2>/dev/null || true
+            else
+                pending_signal=USR1
+            fi
+            ;;
+        *)
+            if [ -n "$haproxy_pid" ]; then
+                kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+            else
+                echo "versiond-router: $1 before HAProxy started; exiting" >&2
+                exit 1
+            fi
+            ;;
+    esac
 }
 trap 'forward_signal USR1' USR1
 trap 'forward_signal TERM' TERM
@@ -924,18 +937,27 @@ fi
 # signals are passed to HAProxy at once; nothing is held or decided here.
 "$HAPROXY_BIN" -W -db -f "$OUT" &
 haproxy_pid=$!
-# Ready means the worker answers on the Runtime socket. A stop forwarded
-# before that is dropped by HAProxy; a stop that arrived earlier waits here.
-i=0
-while [ "$i" -lt 600 ] && kill -0 "$haproxy_pid" 2>/dev/null; do
-    if printf 'show info\n' | socat -t 1 - UNIX-CONNECT:/var/run/haproxy/reconciler.sock 2>/dev/null | grep -q '^Name:'; then
+# Ready means the worker answers on the Runtime socket. A soft stop
+# forwarded before that is dropped by HAProxy; one that arrived earlier waits
+# here. Each probe is bounded on its own, and the wait as a whole by wall
+# clock: a worker that does not answer within it is a failed start, not a
+# ready one.
+ready_deadline=$(( $(date +%s) + 60 ))
+ready_timeout=0
+while kill -0 "$haproxy_pid" 2>/dev/null; do
+    if printf 'show info\n' | timeout 2 socat -t 1 - UNIX-CONNECT:/var/run/haproxy/reconciler.sock 2>/dev/null | grep -q '^Name:'; then
+        haproxy_ready=1
         break
     fi
-    i=$((i + 1))
+    if [ "$(date +%s)" -ge "$ready_deadline" ]; then
+        echo "versiond-router: HAProxy did not answer on its Runtime socket within 60s; stopping it" >&2
+        ready_timeout=1
+        kill -s TERM "$haproxy_pid" 2>/dev/null || true
+        break
+    fi
     sleep 0.1
 done
-haproxy_ready=1
-if [ -n "$pending_signal" ]; then
+if [ "$haproxy_ready" -eq 1 ] && [ -n "$pending_signal" ]; then
     forward_signal "$pending_signal"
 fi
 status=0
@@ -953,5 +975,11 @@ done
 if [ -n "$reconciler_pid" ]; then
     kill "$reconciler_pid" 2>/dev/null || true
     pkill -P "$reconciler_pid" 2>/dev/null || true
+fi
+if [ "$ready_timeout" -eq 1 ] && [ "$status" -eq 0 ]; then
+    # Stopped by the readiness deadline above: a failed start must not look
+    # like a clean exit to the restart policy. (A HAPROXY_BIN that exits on
+    # its own, as the render-only tests use, keeps its status.)
+    status=1
 fi
 exit "$status"
