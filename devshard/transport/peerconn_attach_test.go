@@ -729,7 +729,7 @@ func (s sigLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, erro
 	return s.SessionServerExisting(id)
 }
 
-func (s sigLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (s sigLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return s.SessionForParticipant(id, addr)
 }
 
@@ -930,7 +930,7 @@ func (q queryLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, er
 	return q.SessionServerExisting(id)
 }
 
-func (q queryLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (q queryLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return q.SessionForParticipant(id, addr)
 }
 
@@ -1243,7 +1243,7 @@ func (l largeRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore,
 	return l.SessionServerExisting(id)
 }
 
-func (l largeRPCLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (l largeRPCLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return l.SessionForParticipant(id, addr)
 }
 

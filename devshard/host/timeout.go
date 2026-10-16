@@ -156,9 +156,11 @@ type RefusalJournal interface {
 	// page. fn may copy that page. It must not retain a page after it
 	// returns. When the page has to be sent before the next one is loaded,
 	// fn returns a send func that does not reference the page. Pages drops
-	// the page and then calls send. A hole returns an error and does not
-	// call fn with a partial page. from > to does not call fn.
-	Pages(ctx context.Context, from, to uint64, fn func(page []types.DiffWire, more bool) (send func(context.Context) error, err error)) error
+	// the page and then calls send. next, when non-nil, is read after send.
+	// The following read starts at max(last+1, next()), so nonces the cursor
+	// has passed are not loaded. A hole returns an error and does not call
+	// fn with a partial page. from > to does not call fn.
+	Pages(ctx context.Context, from, to uint64, next func() uint64, fn func(page []types.DiffWire, more bool) (send func(context.Context) error, err error)) error
 }
 
 // TxSink receives mempool txs copied from a challenge-receipt response.

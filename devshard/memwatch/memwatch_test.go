@@ -1,7 +1,10 @@
 package memwatch
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -112,6 +115,57 @@ func TestServeHTTPServesTheStoredSnapshot(t *testing.T) {
 	}
 	if _, nested := got["inventory"]; nested {
 		t.Fatalf("inventory must be flat: %s", rec.Body.Bytes())
+	}
+}
+
+func TestTakeChallengeStatsAggregatesTheWindow(t *testing.T) {
+	TakeChallengeStats()
+	RecordChallengeRequest(100)
+	RecordChallengeRequest(300)
+	RecordChallengeRequest(200)
+	stats, ok := TakeChallengeStats()
+	if !ok {
+		t.Fatal("empty window")
+	}
+	if stats.Requests != 3 || stats.BytesMin != 100 || stats.BytesMax != 300 || stats.BytesAvg != 200 {
+		t.Fatalf("sizes %+v", stats)
+	}
+	if _, ok := TakeChallengeStats(); ok {
+		t.Fatal("window was not cleared")
+	}
+}
+
+func TestSampleLogsChallengeRequestStats(t *testing.T) {
+	TakeChallengeStats()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	RecordChallengeRequest(100)
+	RecordChallengeRequest(300)
+	New(Config{}).Sample()
+
+	line := buf.String()
+	for _, want := range []string{
+		`"challenge_requests":2`,
+		`"challenge_bytes_min":100`,
+		`"challenge_bytes_max":300`,
+		`"challenge_bytes_avg":200`,
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("missing %s in %s", want, line)
+		}
+	}
+	if _, ok := TakeChallengeStats(); ok {
+		t.Fatal("sample left the window in place")
+	}
+}
+
+func TestChallengeStatsContext(t *testing.T) {
+	ctx := WithChallengeStats(context.Background())
+	if !ChallengeStatsOn(ctx) || ChallengeStatsOn(context.Background()) {
+		t.Fatal("challenge stats context")
 	}
 }
 

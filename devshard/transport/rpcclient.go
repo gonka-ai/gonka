@@ -756,21 +756,23 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 	if !c.Uses(EndpointChallengeReceipt) {
 		return c.HTTPClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	}
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		dj, err := DiffToJSON(d)
-		if err != nil {
-			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
+	raw, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
 		}
-		djList[i] = dj
-	}
-	inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Payload:         PayloadToJSON(payload),
-		Diffs:           djList,
-		ProtocolVersion: types.StartProtocolVersion(diffs),
+		inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
+			InferenceID:     inferenceID,
+			Payload:         PayloadToJSON(payload),
+			Diffs:           djList,
+			ProtocolVersion: types.StartProtocolVersion(diffs),
+		})
+		return proto.Marshal(inner)
 	})
-	raw, err := proto.Marshal(inner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -850,20 +852,22 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 // ChallengeCatchUpBody is the Connect payload of a nil-payload catch-up page.
 // Each diff's Txs is the stored blob with the nonce field prepended.
 func ChallengeCatchUpBody(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) ([]byte, error) {
-	req := &rpcpb.ChallengeReceiptRequest{
-		InferenceId:     inferenceID,
-		ProtocolVersion: protocolVersion,
-		Diffs:           make([]*rpcpb.Diff, len(diffs)),
-	}
-	for i, d := range diffs {
-		req.Diffs[i] = &rpcpb.Diff{
-			Nonce:         d.Nonce,
-			Txs:           DiffWireTxs(d.Nonce, d.Txs),
-			UserSig:       d.UserSig,
-			PostStateRoot: d.PostStateRoot,
+	return recordRefusalBody(true, nil, func() ([]byte, error) {
+		req := &rpcpb.ChallengeReceiptRequest{
+			InferenceId:     inferenceID,
+			ProtocolVersion: protocolVersion,
+			Diffs:           make([]*rpcpb.Diff, len(diffs)),
 		}
-	}
-	return proto.Marshal(req)
+		for i, d := range diffs {
+			req.Diffs[i] = &rpcpb.Diff{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
+		}
+		return proto.Marshal(req)
+	})
 }
 
 // VerifyTimeout must be on *RPCClient: the HTTP wrapper calls SendVerifyTimeout

@@ -451,6 +451,6 @@ func (s staticH2CLookup) SessionForOwner(string, string) (rpcserver.SessionCore,
 	return s.core, nil
 }
 
-func (s staticH2CLookup) SessionForStartProof(string, string, []types.Diff, string) (rpcserver.SessionCore, error) {
+func (s staticH2CLookup) SessionForStartProof(string, string, func() ([]types.Diff, error), string) (rpcserver.SessionCore, error) {
 	return s.core, nil
 }

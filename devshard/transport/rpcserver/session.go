@@ -45,8 +45,9 @@ type SessionLookup interface {
 	SessionForOwner(escrowID, addr string) (SessionCore, error)
 	// SessionForStartProof is the ChallengeReceipt / verify-* bind: Existing,
 	// or CreateSession when diffs prove the gateway start and version.
+	// decode is called only when the escrow is not already bound.
 	// claimedVersion, when set, must match MsgStartInference.protocol_version.
-	SessionForStartProof(escrowID, addr string, diffs []types.Diff, claimedVersion string) (SessionCore, error)
+	SessionForStartProof(escrowID, addr string, decode func() ([]types.Diff, error), claimedVersion string) (SessionCore, error)
 }
 
 // AdaptLookup wraps a *transport.Server finder (HostManager.SessionServerExisting).
@@ -83,9 +84,9 @@ func (f lookupAdapter) SessionForOwner(id, addr string) (SessionCore, error) {
 	return f.SessionServerExisting(id)
 }
 
-func (f lookupAdapter) SessionForStartProof(id, addr string, diffs []types.Diff, claimedVersion string) (SessionCore, error) {
+func (f lookupAdapter) SessionForStartProof(id, addr string, decode func() ([]types.Diff, error), claimedVersion string) (SessionCore, error) {
 	_ = addr
-	_ = diffs
+	_ = decode
 	_ = claimedVersion
 	return f.SessionServerExisting(id)
 }
@@ -312,7 +313,7 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_verify_timeout", diffs, types.StartProtocolVersion(diffs))
+	srv, err := h.bindStartProof(ctx, "rpc_verify_timeout", func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +348,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_verify_error_miss", diffs, types.StartProtocolVersion(diffs))
+	srv, err := h.bindStartProof(ctx, "rpc_verify_error_miss", func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
 	if err != nil {
 		return nil, err
 	}
@@ -377,14 +378,28 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
 	}
+	req.Msg.Payload = nil
+	payload = nil
 	jsonReq := transport.ChallengeReceiptRequestFromProto(&inner)
-	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	var (
+		decoded []types.Diff
+		decErr  error
+		ran     bool
+	)
+	decode := func() ([]types.Diff, error) {
+		if ran {
+			return decoded, decErr
+		}
+		ran = true
+		decoded, decErr = transport.DiffsFromJSON(jsonReq.Diffs)
+		return decoded, decErr
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", diffs, jsonReq.ProtocolVersion)
+	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", decode, jsonReq.ProtocolVersion)
 	if err != nil {
 		return nil, err
+	}
+	if ran {
+		ctx = transport.WithPredecodedDiffs(ctx, decoded)
 	}
 	type challengeCore interface {
 		ServeChallengeReceipt(context.Context, transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error)
@@ -428,7 +443,7 @@ func (h *SessionHandler) signedPeerPayload(ctx context.Context, env *rpcpb.Signe
 
 // bindStartProof opens an existing session or creates one from a creator-signed
 // MsgStartInference in diffs. The caller must already have checked the envelope.
-func (h *SessionHandler) bindStartProof(ctx context.Context, route string, diffs []types.Diff, claimedVersion string) (SessionCore, error) {
+func (h *SessionHandler) bindStartProof(ctx context.Context, route string, decode func() ([]types.Diff, error), claimedVersion string) (SessionCore, error) {
 	peer, escrow, err := requirePeer(ctx)
 	if err != nil {
 		return nil, err
@@ -436,7 +451,7 @@ func (h *SessionHandler) bindStartProof(ctx context.Context, route string, diffs
 	if h.lookup == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
 	}
-	srv, err := h.lookup.SessionForStartProof(escrow, peer, diffs, claimedVersion)
+	srv, err := h.lookup.SessionForStartProof(escrow, peer, decode, claimedVersion)
 	if err != nil {
 		recordRPCSessionResolution(ctx, route, escrow, err)
 		return nil, mapAllowError(err)

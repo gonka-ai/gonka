@@ -1003,24 +1003,29 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		dj, err := DiffToJSON(d)
-		if err != nil {
-			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
+	body, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
 		}
-		djList[i] = dj
-	}
-
-	req := ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Payload:         PayloadToJSON(payload),
-		Diffs:           djList,
-		ProtocolVersion: types.StartProtocolVersion(diffs),
-	}
-	body, err := json.Marshal(req)
+		req := ChallengeReceiptRequest{
+			InferenceID:     inferenceID,
+			Payload:         PayloadToJSON(payload),
+			Diffs:           djList,
+			ProtocolVersion: types.StartProtocolVersion(diffs),
+		}
+		body, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return body, nil
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal: %w", err)
+		return nil, nil, err
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
@@ -1053,22 +1058,28 @@ func (c *HTTPClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.D
 	if err := c.errIfRetiredHTTP(); err != nil {
 		return nil, err
 	}
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		djList[i] = DiffJSON{
-			Nonce:         d.Nonce,
-			Txs:           DiffWireTxs(d.Nonce, d.Txs),
-			UserSig:       d.UserSig,
-			PostStateRoot: d.PostStateRoot,
+	body, err := recordRefusalBody(true, nil, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			djList[i] = DiffJSON{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
 		}
-	}
-	body, err := json.Marshal(ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Diffs:           djList,
-		ProtocolVersion: protocolVersion,
+		body, err := json.Marshal(ChallengeReceiptRequest{
+			InferenceID:     inferenceID,
+			Diffs:           djList,
+			ProtocolVersion: protocolVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return body, nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, err
 	}
 	return func(ctx context.Context) error {
 		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)

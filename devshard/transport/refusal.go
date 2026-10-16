@@ -63,7 +63,7 @@ func (j refusalJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return bytes.Equal(recs[0].StateHash, root), nil
 }
 
-func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
+func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if from > to {
 		return nil
 	}
@@ -129,6 +129,11 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]ty
 			return nil
 		}
 		n = last + 1
+		if next != nil {
+			if cur := next(); cur > n {
+				n = cur
+			}
+		}
 	}
 	return nil
 }
@@ -170,8 +175,15 @@ func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSiz
 // answer the probe, so the timeout is accepted without resending the
 // journal. Any other HTTP status, including 404 and 500, means the
 // executor answered. A message-size ResourceExhausted is an answer too.
+// storage_busy is an answer as well, on HTTP 503 and on Connect
+// Unavailable: the executor received the page and applied none of it.
+// rpcRetry still retries that Unavailable for the non-inference budget;
+// once the budget is spent the answer stays answered, so the payload is sent.
 func executorUnreachable(err error) bool {
 	if err == nil {
+		return false
+	}
+	if IsStorageBusy(err) {
 		return false
 	}
 	if errors.Is(err, ErrPeerNotReady) {

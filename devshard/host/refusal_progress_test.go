@@ -97,7 +97,7 @@ func (j *progressJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *progressJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
+func (j *progressJournal) Pages(ctx context.Context, from, to uint64, _ func() uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if j.fail {
 		return errors.New("storage unavailable")
 	}
@@ -328,7 +328,7 @@ func (j *onePageJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
+func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, _ func() uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -922,7 +922,7 @@ func (j *wireListJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return nonce == 1 && bytes.Equal(root, j.root), nil
 }
 
-func (j *wireListJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
+func (j *wireListJournal) Pages(ctx context.Context, from, to uint64, _ func() uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -996,4 +996,46 @@ func TestRefusalCatchUpVersionStaysEmpty(t *testing.T) {
 	for _, version := range peer.versions {
 		require.Empty(t, version)
 	}
+}
+
+func TestRefusalPageResult(t *testing.T) {
+	require.Equal(t, "ok", refusalPageResult(nil, nil, nil))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Equal(t, "deadline", refusalPageResult(ctx.Err(), ctx, func(error) bool { return true }))
+
+	tooBig := connect.NewError(connect.CodeResourceExhausted, errors.New("message size 99 is larger than configured max"))
+	require.Equal(t, "too_large", refusalPageResult(tooBig, context.Background(), func(error) bool { return false }))
+
+	require.Equal(t, "unreachable", refusalPageResult(net.ErrClosed, context.Background(), progressUnreachable))
+	require.Equal(t, "answered_error", refusalPageResult(errAnswered, context.Background(), progressUnreachable))
+}
+
+func TestScreenCatchUpPageRejectsDamagedFraming(t *testing.T) {
+	stored, err := proto.Marshal(&types.DiffContent{Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{Model: "m"}},
+	}}})
+	require.NoError(t, err)
+	require.NoError(t, screenCatchUpPage([]types.DiffWire{{Nonce: 4, Txs: stored}}))
+	require.Error(t, screenCatchUpPage([]types.DiffWire{{Nonce: 4, Txs: stored[:len(stored)-1]}}))
+	require.Error(t, screenCatchUpPage([]types.DiffWire{{Nonce: 4, Txs: []byte{0x12, 0x03, 0x0a, 0x05, 0x00}}}))
+
+	const n = 200
+	txs := make([]*types.DevshardTx, n)
+	for i := range txs {
+		txs[i] = &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			PromptHash: []byte{byte(i)},
+		}}}
+	}
+	many, err := proto.Marshal(&types.DiffContent{Txs: txs})
+	require.NoError(t, err)
+	page := []types.DiffWire{{Nonce: 4, Txs: many}}
+	require.NoError(t, screenCatchUpPage(page))
+	allocs := testing.AllocsPerRun(20, func() {
+		if err := screenCatchUpPage(page); err != nil {
+			panic(err)
+		}
+	})
+	require.Zero(t, allocs)
 }

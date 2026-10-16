@@ -39,7 +39,7 @@ func (l retryRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore,
 	_ = addr
 	return l.SessionServerExisting(id)
 }
-func (l retryRPCLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (l retryRPCLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return l.SessionForParticipant(id, addr)
 }
 

@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 
+	"devshard/logging"
+	"devshard/memwatch"
+	"devshard/observability"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -141,8 +145,10 @@ func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr err
 			return 0, false, true, nil
 		}
 		if sessionNotFound(queryErr) {
+			logRefusalCursor("cold", 1, nonce, st.LatestNonce)
 			return 1, false, false, nil
 		}
+		logRefusalCursor("ahead", st.LatestNonce+1, nonce, st.LatestNonce)
 		return st.LatestNonce + 1, false, false, nil
 	}
 	if nonce > 0 && nonce <= st.LatestNonce && len(root) == 32 {
@@ -151,7 +157,17 @@ func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr err
 			return 0, false, false, err
 		}
 	}
-	return nonce + 1, matched, false, nil
+	cursor = nonce + 1
+	choice := "tip"
+	if nonce > st.LatestNonce {
+		choice = "ahead"
+	}
+	logRefusalCursor(choice, cursor, nonce, st.LatestNonce)
+	return cursor, matched, false, nil
+}
+
+func logRefusalCursor(choice string, cursor, tip, latest uint64) {
+	logging.Debug("refusal cursor", "choice", choice, "cursor", cursor, "tip_nonce", tip, "latest", latest)
 }
 
 // sessionNotFound reports that SessionHead answered "this escrow is not here".
@@ -310,7 +326,7 @@ func challengeOnce(
 	queryTimeout time.Duration,
 	unreachable func(error) bool,
 ) (refusedChallenge, error) {
-	outcome, err := challengeFrom(ctx, st, inferenceID, rec, payload, from, executorClient, ingest, ev, tip, journal, queryTimeout)
+	outcome, err := challengeFrom(ctx, st, inferenceID, rec, payload, from, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
 	var catchUp *catchUpCallError
 	if !errors.As(err, &catchUp) {
 		return outcome, err
@@ -318,7 +334,7 @@ func challengeOnce(
 	if unreachable(catchUp.err) {
 		return 0, &executorCallError{err: catchUp.err}
 	}
-	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 }
 
 // challengeFrom sends [from, LatestNonce] one page at a time, then the payload.
@@ -338,20 +354,22 @@ func challengeFrom(
 	tip SessionTip,
 	journal RefusalJournal,
 	queryTimeout time.Duration,
+	unreachable func(error) bool,
 ) (refusedChallenge, error) {
 	if from > st.LatestNonce {
-		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 	}
 	walkCtx, walkCancel := walkContext(ctx, queryTimeout)
 	defer walkCancel()
 
 	var last []types.DiffWire
-	err := journal.Pages(walkCtx, from, st.LatestNonce, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
+	err := journal.Pages(walkCtx, from, st.LatestNonce, func() uint64 { return from }, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
 		if err := walkCtx.Err(); err != nil {
 			return nil, err
 		}
+		warnOversizedDiff(page)
 		if more {
-			return prepareCatchUp(walkCtx, inferenceID, &from, page, executorClient, tip, journal, st.LatestNonce, queryTimeout)
+			return prepareCatchUp(walkCtx, inferenceID, &from, page, executorClient, tip, journal, st.LatestNonce, queryTimeout, unreachable)
 		}
 		last = append([]types.DiffWire(nil), page...)
 		return nil, nil
@@ -366,10 +384,10 @@ func challengeFrom(
 		if err != nil {
 			return 0, err
 		}
-		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, decoded, executorClient, ingest, ev)
+		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, decoded, executorClient, ingest, ev, unreachable)
 	}
 	if len(last) > 0 {
-		send, err := prepareCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout)
+		send, err := prepareCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout, unreachable)
 		last = nil
 		if err != nil {
 			return 0, err
@@ -380,7 +398,7 @@ func challengeFrom(
 			}
 		}
 	}
-	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 }
 
 // challengeCatchUpPreparer copies a page into the request body. The returned
@@ -391,7 +409,7 @@ type challengeCatchUpPreparer interface {
 }
 
 // prepareCatchUp checks the stored bytes and builds the catch-up send.
-// A diff that does not decode is returned as-is, so a damaged journal row
+// A diff that is not well-framed is returned as-is, so a damaged journal row
 // does not become an answered executor error. The send func does not retain
 // page. protocolVersion is empty; a cold executor reads it from the diffs.
 func prepareCatchUp(
@@ -404,6 +422,7 @@ func prepareCatchUp(
 	journal RefusalJournal,
 	latest uint64,
 	queryTimeout time.Duration,
+	unreachable func(error) bool,
 ) (func(context.Context) error, error) {
 	page = wiresFromCursor(page, *cursor)
 	if len(page) == 0 {
@@ -421,6 +440,7 @@ func prepareCatchUp(
 	}
 	return func(ctx context.Context) error {
 		err := send(ctx)
+		noteRefusalPage(err, ctx, unreachable)
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 				return ctx.Err()
@@ -451,11 +471,11 @@ func catchUpSender(executor ExecutorClient, inferenceID uint64, page []types.Dif
 	}, nil
 }
 
-// screenCatchUpPage decodes each stored blob and discards it. One undecodable
-// diff fails the check before the page is sent.
+// screenCatchUpPage checks each stored blob's framing. One damaged diff fails
+// the check before the page is sent. The walk does not decode transactions.
 func screenCatchUpPage(page []types.DiffWire) error {
 	for _, w := range page {
-		if _, err := types.DecodeDiffWire(w); err != nil {
+		if err := types.CheckDiffContentFraming(w.Txs); err != nil {
 			return fmt.Errorf("diff %d: %w", w.Nonce, err)
 		}
 	}
@@ -482,11 +502,14 @@ func finishPayload(
 	executor ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
+	unreachable func(error) bool,
 ) (refusedChallenge, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
+	ctx = memwatch.WithChallengeStats(ctx)
 	outcome, err := challengeRefused(ctx, escrowID, inferenceID, rec, payload, diffs, executor, ingest, ev)
+	noteRefusalPage(err, nil, unreachable)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return 0, ctx.Err()
@@ -494,6 +517,51 @@ func finishPayload(
 		return 0, &executorCallError{err: err}
 	}
 	return outcome, nil
+}
+
+func warnOversizedDiff(page []types.DiffWire) {
+	if len(page) == 1 && wirePageCost(page) > ChallengePageMaxBytes {
+		logging.Warn("refusal diff over page budget", "nonce", page[0].Nonce, "stored_bytes", len(page[0].Txs))
+	}
+}
+
+func noteRefusalPage(err error, walkCtx context.Context, unreachable func(error) bool) {
+	observability.IncRefusalChallengePage(refusalPageResult(err, walkCtx, unreachable))
+}
+
+func refusalPageResult(err error, walkCtx context.Context, unreachable func(error) bool) string {
+	if err == nil {
+		return "ok"
+	}
+	if walkCtx != nil && walkCtx.Err() != nil && errors.Is(err, walkCtx.Err()) {
+		return "deadline"
+	}
+	if refusalMessageTooLarge(err) {
+		return "too_large"
+	}
+	if unreachable != nil && unreachable(err) {
+		return "unreachable"
+	}
+	return "answered_error"
+}
+
+// refusalMessageTooLarge matches transport.isConnectMessageTooLarge. This
+// package cannot import transport.
+func refusalMessageTooLarge(err error) bool {
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		return false
+	}
+	msg := err.Error()
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		msg = ce.Message()
+	}
+	return strings.Contains(msg, "larger than configured max") ||
+		strings.Contains(msg, "exceeds sendMaxBytes") ||
+		strings.Contains(msg, "exceeds getURLMaxBytes") ||
+		strings.Contains(msg, "http.MaxBytesReader") ||
+		strings.Contains(msg, "bandwidth exhausted") ||
+		strings.Contains(msg, "attach request too large")
 }
 
 func walkContext(ctx context.Context, queryTimeout time.Duration) (context.Context, context.CancelFunc) {

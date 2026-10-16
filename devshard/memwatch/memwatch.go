@@ -381,6 +381,14 @@ func (l *Logger) Sample() {
 	if inv != nil {
 		attrs = append(attrs, inv.LogAttrs()...)
 	}
+	if stats, ok := TakeChallengeStats(); ok {
+		attrs = append(attrs,
+			"challenge_requests", stats.Requests,
+			"challenge_bytes_min", stats.BytesMin,
+			"challenge_bytes_max", stats.BytesMax,
+			"challenge_bytes_avg", stats.BytesAvg,
+		)
+	}
 	slog.Info("memory snapshot", attrs...)
 	for _, line := range snap.Heap {
 		slog.Info("memory heap",

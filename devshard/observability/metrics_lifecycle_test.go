@@ -173,6 +173,26 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 	ClearPeerSessionState("gonka1peer")
 }
 
+func TestRefusalChallengeMetrics(t *testing.T) {
+	ensureMetrics()
+	beforePages := testutil.ToFloat64(refusalChallengePages.WithLabelValues("deadline"))
+	IncRefusalChallengePage("deadline")
+	if testutil.ToFloat64(refusalChallengePages.WithLabelValues("deadline"))-beforePages != 1 {
+		t.Fatal("refusal page counter delta want 1")
+	}
+	ObserveRefusalChallengeBytes(4096)
+	beforeClaimed := testutil.ToFloat64(challengeDiffsTotal.WithLabelValues("claimed"))
+	AddChallengeDiffs("claimed", 3)
+	if testutil.ToFloat64(challengeDiffsTotal.WithLabelValues("claimed"))-beforeClaimed != 3 {
+		t.Fatal("claimed diffs delta want 3")
+	}
+	beforeRetry := testutil.ToFloat64(challengeClaimRetries.WithLabelValues("gap"))
+	IncChallengeClaimRetry("gap")
+	if testutil.ToFloat64(challengeClaimRetries.WithLabelValues("gap"))-beforeRetry != 1 {
+		t.Fatal("claim retry delta want 1")
+	}
+}
+
 func TestObservePostgresHealthProbeTracksOutcomeAndSaturation(t *testing.T) {
 	ensureMetrics()
 

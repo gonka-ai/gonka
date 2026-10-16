@@ -836,13 +836,18 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
 		return forged, nil
 	}
-	diffs, err := decodeDiffsJSON(req.Diffs)
-	if err != nil {
-		return nil, err
+	wires := make([]types.DiffWire, len(req.Diffs))
+	for i, dj := range req.Diffs {
+		wires[i] = types.DiffWire{
+			Nonce:         dj.Nonce,
+			Txs:           dj.Txs,
+			UserSig:       dj.UserSig,
+			PostStateRoot: dj.PostStateRoot,
+		}
 	}
 
 	payload := PayloadFromJSON(req.Payload)
-	receipt, _, err := s.host.ChallengeReceipt(ctx, req.InferenceID, payload, diffs)
+	receipt, _, err := s.host.ChallengeReceiptWire(ctx, req.InferenceID, payload, wires, PredecodedDiffs(ctx))
 	if err != nil {
 		return nil, err
 	}
@@ -851,7 +856,7 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	// and building it takes the host lock. An execution vote sends no diffs
 	// and reads this mempool, so that call still builds it.
 	var mempoolBytes [][]byte
-	if payload != nil || len(diffs) == 0 {
+	if payload != nil || len(wires) == 0 {
 		mempoolBytes, err = DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
 		if err != nil {
 			return nil, err
