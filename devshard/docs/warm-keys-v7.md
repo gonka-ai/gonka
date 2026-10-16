@@ -210,25 +210,32 @@ carry it; all three change), or, for an escrow created before the upgrade,
 the upgrade height, which is the height every seeded entry was granted at.
 The anchor is a lower bound, not the height the first binds are checked at.
 The gateway's first diff states its own authorization height h1, at or above
-the anchor and at or below the chain tip as the hosts see it, and carries a
-bind for every slot whose validator has a grant live at h1; the hosts check
-those binds against the log at h1, a log fact, before they verify anything
-else in the diff, including the height acknowledgements that the newly bound
-keys sign. No quorum has to exist before the binds: the binds are what
-creates it. A key granted after the anchor is therefore bound in the first
-diff like any other, and a host that rotated between the escrow's creation
-and the first diff waits for nothing. The same applies to a session that
-moves from v6 to v7: the first v7 diff binds the keys live at its h1, and
-the hosts accept cold keys only before it.
+the anchor and at or below the chain tip as the hosts see it, and carries
+the binds and nothing signed by a host: a bind for every slot whose
+validator has a grant live at h1. The hosts check those binds against the
+log at h1, a log fact, apply the diff, and from then on acknowledge heights
+and sign with their newly bound keys in the diffs that follow, as they do
+today after any heartbeat (a host acknowledges only after it has applied the
+soliciting diff). No quorum has to exist before the binds: the binds are
+what creates it, and the "first message after the bind" rule holds for the
+first diff like for any other. A key granted after the anchor is bound in
+the first diff like any other, and a host that rotated between the escrow's
+creation and the first diff waits for nothing. The same applies to a session
+that moves from v6 to v7: the first v7 diff binds the keys live at its h1,
+and the hosts accept cold keys only before it.
 
-What stops a gateway from choosing an old h1 to bind a key revoked after it
+What bounds a gateway that chooses an old h1 to bind a key revoked after it
 is the authorization-height dependency itself, with one more property: the
-height must track the hosts' own observations within a bounded lag, so the
-gateway cannot hold the session at a height from before a revoke. Under that
-property, a key revoked at R is refused in every diff at or past R, and the
-diffs below R are exactly those made while the chain, as the hosts see it,
-had not reached R, where the key was still granted. Rotations after the
-first diff use the authorization height of the diff that binds them.
+height must track the hosts' own observations within a bounded lag L, so
+the gateway cannot hold the session at a height from before a revoke for
+longer than L blocks. This is a window, not a boundary, and the note states
+it as such: a key revoked at R can still be accepted in diffs whose
+authorization height lies in [R-L, R), which the gateway may produce after
+the hosts have already observed R. L is the revocation latency of the
+protocol, to be chosen small (a few blocks); within it a compromised key the
+operator has just revoked can still sign, and nothing in a session can do
+better than its height lag allows. Rotations after the first diff use the
+authorization height of the diff that binds them.
 
 The check needs a complete, committed view of the log through h: a host
 answers only once its chain node, or its log copy, has reached h with no
@@ -353,8 +360,10 @@ propose binds and a v7 session accepts cold keys only.
   where it has to come from; this note needs its authors to confirm four
   properties (one height per diff, monotonic, bounded above by what a quorum
   of hosts acknowledged, and tracking the hosts' observations within a
-  bounded lag so the gateway cannot hold it back) or to say which the
-  warm-key rule must do without. Without
+  bounded lag L so the gateway cannot hold it back) or to say which the
+  warm-key rule must do without. L is also the revocation latency: a revoked
+  key stays acceptable for up to L blocks of session height
+  ([First binds](#how-a-binding-enters-consensus)). Without
   it, the honest fallback is weaker: binds and revokes take effect at their
   nonce only, the chain log orders them, and a gateway that withholds a
   revoke keeps the key accepted until the hosts stop serving it through the
