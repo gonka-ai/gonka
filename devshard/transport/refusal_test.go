@@ -31,6 +31,20 @@ func (m refusalMapStore) GetDiffs(_ string, from, to uint64) ([]types.DiffRecord
 	return out, nil
 }
 
+func (m refusalMapStore) DiffSizes(_ string, from, to uint64, limit int) ([]storage.DiffSize, error) {
+	var out []storage.DiffSize
+	for _, rec := range m.recs {
+		if rec.Nonce < from || rec.Nonce > to {
+			continue
+		}
+		out = append(out, storage.DiffSize{Nonce: rec.Nonce, Bytes: 1})
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 func TestRefusalJournalRequiresAContiguousRange(t *testing.T) {
 	root := bytes.Repeat([]byte{1}, 32)
 	journal := refusalJournal{store: refusalMapStore{recs: []types.DiffRecord{
@@ -43,8 +57,10 @@ func TestRefusalJournalRequiresAContiguousRange(t *testing.T) {
 	match, err = journal.Anchor(1, bytes.Repeat([]byte{2}, 32))
 	require.NoError(t, err)
 	require.False(t, match)
-	_, err = journal.Diffs(1, 2)
-	require.EqualError(t, err, "incomplete refusal diff range")
+	err = journal.Pages(context.Background(), 1, 2, func([]types.Diff, bool) error { return nil })
+	var gap *storage.DiffGapError
+	require.ErrorAs(t, err, &gap)
+	require.Equal(t, uint64(2), gap.Expected)
 }
 
 func TestExecutorUnreachableIgnoresAnHTTPAnswer(t *testing.T) {

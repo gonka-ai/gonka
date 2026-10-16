@@ -23,20 +23,20 @@ type refusalBudgetClient interface {
 	RefusalVerifyBudget() time.Duration
 }
 
-// verifyRefusedTimeout fetches the executor tip, checks it against the stored
-// state hash, and challenges with the diffs after that nonce. A tip the
-// verifier cannot check falls back to the diffs from nonce 1.
-func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient, nowUnix int64) (bool, error) {
+// verifyRefusedTimeout fetches the executor tip and challenges with the diffs
+// after that nonce, one page at a time. The verify budget stays at
+// RefusalVerifyBudget even when the peer client allows a longer vote.
+func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, rec *types.InferenceRecord, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient, nowUnix int64) (bool, error) {
 	var tip host.SessionTip
 	if sh, ok := executor.(host.SessionTip); ok {
 		tip = sh
 	}
-	query, verify := 30*time.Second, 3*time.Minute
+	query, verify := 30*time.Second, host.RefusalVerifyBudget
 	if budgets, ok := executor.(refusalBudgetClient); ok {
-		if d := budgets.RefusalQueryBudget(); d > 0 {
+		if d := budgets.RefusalQueryBudget(); d > 0 && d < query {
 			query = d
 		}
-		if d := budgets.RefusalVerifyBudget(); d > 0 {
+		if d := budgets.RefusalVerifyBudget(); d > 0 && d < verify {
 			verify = d
 		}
 	}
@@ -44,7 +44,7 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	if s.store != nil {
 		journal = refusalJournal{store: s.store, escrowID: s.host.EscrowID()}
 	}
-	return host.VerifyRefusedProgress(ctx, st, inferenceID, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, nowUnix, executorUnreachable)
+	return host.VerifyRefusedProgress(ctx, st, inferenceID, rec, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, nowUnix, executorUnreachable)
 }
 
 type refusalJournal struct {
@@ -63,37 +63,100 @@ func (j refusalJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return bytes.Equal(recs[0].StateHash, root), nil
 }
 
-func (j refusalJournal) Diffs(from, to uint64) ([]types.Diff, error) {
+func (j refusalJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
 	if from > to {
-		return nil, nil
+		return nil
 	}
-	diffs := make([]types.Diff, 0, to-from+1)
-	expect := from
-	for start := from; start <= to; {
-		end := start + uint64(storage.DiffPageMaxNonces) - 1
-		if end < start || end > to {
-			end = to
+	for n := from; n <= to; {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		recs, err := j.store.GetDiffs(j.escrowID, start, end)
+		sizes, err := j.store.DiffSizes(j.escrowID, n, to, host.ChallengePageMaxNonces)
 		if err != nil {
-			return nil, err
+			return fmt.Errorf("get diff sizes: %w", err)
 		}
-		if uint64(len(recs)) != end-start+1 {
-			return nil, fmt.Errorf("incomplete refusal diff range")
+		if len(sizes) == 0 {
+			return &storage.DiffGapError{Expected: n, To: to}
 		}
+		if sizes[0].Nonce != n {
+			return &storage.DiffGapError{Expected: n, Next: sizes[0].Nonce, To: to}
+		}
+		count := host.PackChallengePage(sizes)
+		last := sizes[count-1].Nonce
+		recs, err := j.store.GetDiffs(j.escrowID, n, last)
+		if err != nil {
+			return fmt.Errorf("get diffs: %w", err)
+		}
+		page := make([]types.Diff, 0, len(recs))
+		expect := n
+		var gap *storage.DiffGapError
 		for _, rec := range recs {
-			if rec.Diff.Nonce != expect {
-				return nil, fmt.Errorf("noncontiguous refusal diffs")
+			if rec.Nonce != expect {
+				next := uint64(0)
+				if rec.Nonce > expect {
+					next = rec.Nonce
+				}
+				gap = &storage.DiffGapError{Expected: expect, Next: next, To: to}
+				break
 			}
-			diffs = append(diffs, rec.Diff)
+			page = append(page, rec.Diff)
+			if expect == last {
+				break
+			}
 			expect++
 		}
-		if end == to {
-			break
+		if gap == nil && uint64(len(page)) != last-n+1 {
+			gap = &storage.DiffGapError{Expected: n + uint64(len(page)), To: to}
 		}
-		start = end + 1
+		if gap != nil {
+			return gap
+		}
+		more, err := j.pageHasMore(ctx, sizes, count, last, to)
+		if err != nil {
+			return err
+		}
+		if err := fn(page, more); err != nil {
+			return err
+		}
+		page = nil
+		if !more {
+			return nil
+		}
+		n = last + 1
 	}
-	return diffs, nil
+	return nil
+}
+
+// pageHasMore reports whether another challenge page follows last.
+// A hole is returned without the caller delivering the page it already built.
+func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSize, count int, last, to uint64) (bool, error) {
+	if last == to {
+		return false, nil
+	}
+	if count < len(sizes) {
+		next := sizes[count].Nonce
+		if next != last+1 {
+			return false, &storage.DiffGapError{Expected: last + 1, Next: next, To: to}
+		}
+		return true, nil
+	}
+	if len(sizes) < host.ChallengePageMaxNonces {
+		return false, &storage.DiffGapError{Expected: last + 1, To: to}
+	}
+	peek, err := j.store.DiffSizes(j.escrowID, last+1, to, 1)
+	if err != nil {
+		return false, fmt.Errorf("get diff sizes: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if len(peek) == 0 {
+		return false, &storage.DiffGapError{Expected: last + 1, To: to}
+	}
+	if peek[0].Nonce != last+1 {
+		return false, &storage.DiffGapError{Expected: last + 1, Next: peek[0].Nonce, To: to}
+	}
+	return true, nil
 }
 
 // executorUnreachable reports that a refusal probe got no usable response.

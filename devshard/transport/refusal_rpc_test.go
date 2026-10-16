@@ -130,7 +130,7 @@ func (e *recordingExecutor) ChallengeReceipt(_ context.Context, inferenceID uint
 		nonces:  nonces,
 		payload: payload != nil,
 	})
-	return nil, nil, errors.New("challenge answered without a receipt")
+	return nil, nil, nil
 }
 
 func (e *recordingExecutor) HeightSyncRepair(context.Context, *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {

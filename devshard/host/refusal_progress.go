@@ -5,6 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -14,19 +17,43 @@ var errMissingRefusalJournal = errors.New("missing refusal diff storage")
 // Past this, the vote is accepted even if the executor would move again.
 const RefusalProgressRetries = 3
 
+// RefusalVerifyBudget is one refused-timeout check. It is shorter than the
+// gateway's 3 minute VerifyTimeout, so the verifier returns before the
+// gateway gives up on the vote.
+const RefusalVerifyBudget = 2 * time.Minute
+
+// executorCallError is an executor ChallengeReceipt failure. A journal error
+// or the walk's own deadline is returned unwrapped so the caller does not
+// accept the timeout.
+type executorCallError struct{ err error }
+
+// catchUpCallError is a nil-payload catch-up failure. The payload was not sent.
+type catchUpCallError struct{ err error }
+
+func (e *catchUpCallError) Error() string { return e.err.Error() }
+func (e *catchUpCallError) Unwrap() error { return e.err }
+
+func (e *executorCallError) Error() string { return e.err.Error() }
+func (e *executorCallError) Unwrap() error { return e.err }
+
 // VerifyRefusedProgress is the verifier's refused-timeout check.
 // Deadline, mempool, and payload checks do not contact the executor; a rejection is final.
-// A client that reports its applied tip is challenged with the diffs after that tip once the
-// stored state hash matches. No HTTP response accepts the timeout. An answer with no verified
-// receipt rechecks the tip and, when it advanced and still matches, challenges from the new
-// tip only, at most RefusalProgressRetries times. A tip that cannot be verified falls back
-// to one challenge carrying the diffs from nonce 1.
+// SessionHead nonce T selects diffs from T+1, for any root and for a tip past LatestNonce.
+// session not found starts at nonce 1. Any other answered SessionHead error sends the
+// payload and no diffs. No HTTP response accepts the timeout. An answer with no verified
+// receipt rechecks the tip only when the previous root matched, and challenges from the
+// new tip, at most RefusalProgressRetries times.
+// The walk's own deadline, and a tip read that hits its own query deadline, are returned.
+// They do not accept the timeout. An answered catch-up error still sends the payload
+// before that answer is classified. A per-page tip moves the cursor only when its root
+// matches the journal.
 // unreachable reports that a probe got no HTTP response. A nil classifier treats every error
 // as no response. queryTimeout and verifyBudget bound the tip read and the whole check.
 func VerifyRefusedProgress(
 	ctx context.Context,
 	st types.EscrowState,
 	inferenceID uint64,
+	rec *types.InferenceRecord,
 	payload *InferencePayload,
 	localMempool []*types.DevshardTx,
 	executorClient ExecutorClient,
@@ -46,7 +73,7 @@ func VerifyRefusedProgress(
 	if unreachable == nil {
 		unreachable = func(error) bool { return true }
 	}
-	localAccept, localErr := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, nil, ev, st.Config, nowUnix)
+	localAccept, localErr := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, nil, nil, ev, st.Config, nowUnix)
 	if localErr != nil || !localAccept {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
@@ -54,7 +81,7 @@ func VerifyRefusedProgress(
 		return localAccept, localErr
 	}
 	if tip == nil || executorClient == nil || st.LatestNonce == 0 {
-		accept, err := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, ev, st.Config, nowUnix)
+		accept, err := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev, st.Config, nowUnix)
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
@@ -67,75 +94,144 @@ func VerifyRefusedProgress(
 		queryTimeout = 30 * time.Second
 	}
 	if verifyBudget <= 0 {
-		verifyBudget = 3 * time.Minute
+		verifyBudget = RefusalVerifyBudget
 	}
 	ctx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
-	load := func(from uint64) ([]types.Diff, error) {
-		if from > st.LatestNonce {
-			return nil, nil
-		}
-		return journal.Diffs(from, st.LatestNonce)
-	}
+
 	deadline, _ := ctx.Deadline()
 	budget := time.Until(deadline)
 	queryBudget := min(queryTimeout, budget/4)
-	queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
-	nonce, root, queryErr := tip.SessionHead(queryCtx)
-	queryCancel()
-	rec := st.Inferences[inferenceID]
-	if queryErr != nil {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		if unreachable(queryErr) {
-			return true, nil
-		}
-	} else if nonce > 0 && nonce <= st.LatestNonce && len(root) == 32 {
-		match, err := journal.Anchor(nonce, root)
-		if err != nil {
+	if queryBudget <= 0 {
+		if err := ctx.Err(); err != nil {
 			return false, err
 		}
-		if match {
-			var diffs []types.Diff
-			if nonce < st.LatestNonce {
-				diffs, err = load(nonce + 1)
-				if err != nil {
-					return false, err
-				}
-			}
-			// No response accepts the timeout. An answer with no verified receipt
-			// rechecks the nonce instead of sending the history from nonce 1.
-			shortCtx, shortCancel := context.WithTimeout(ctx, budget/4)
-			outcome, challengeErr := challengeRefused(shortCtx, st.EscrowID, inferenceID, rec, payload, diffs, executorClient, ingest, ev)
-			shortCancel()
-			if ctx.Err() != nil {
-				return false, ctx.Err()
-			}
-			if challengeErr == nil && outcome == refusedReceipt {
-				return false, nil
-			}
-			if challengeErr != nil && unreachable(challengeErr) {
-				return true, nil
-			}
-			return refusalAfterProgress(ctx, st, inferenceID, rec, payload, executorClient, ingest, ev, tip, journal, nonce, queryTimeout, load, unreachable)
-		}
+		return false, context.DeadlineExceeded
 	}
-	if ctx.Err() != nil {
-		return false, ctx.Err()
-	}
-	diffs, err := load(1)
-	if err != nil {
-		return false, err
-	}
-	if ctx.Err() != nil {
-		return false, ctx.Err()
-	}
-	accept, err := verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, diffs, executorClient, ingest, ev, st.Config, nowUnix)
-	if requestCtx.Err() != nil {
+	queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
+	nonce, root, queryErr := tip.SessionHead(queryCtx)
+	probeErr := queryCtx.Err()
+	queryCancel()
+	if queryErr != nil && requestCtx.Err() != nil && errors.Is(queryErr, requestCtx.Err()) {
 		return false, requestCtx.Err()
 	}
-	return accept, err
+	if queryErr != nil && ctx.Err() != nil && errors.Is(queryErr, ctx.Err()) {
+		return false, ctx.Err()
+	}
+	if ownProbeTimeout(ctx, probeErr, queryErr) {
+		return false, probeErr
+	}
+
+	cursor, matched, early, earlyErr := refusalCursor(st, nonce, root, queryErr, journal, unreachable)
+	if earlyErr != nil {
+		return false, earlyErr
+	}
+	if early {
+		return true, nil
+	}
+
+	return challengeAndMaybeRetry(ctx, st, inferenceID, rec, payload, cursor, matched, nonce, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+}
+
+// refusalCursor chooses the first nonce to send. early means accept without a challenge.
+func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr error, journal RefusalJournal, unreachable func(error) bool) (cursor uint64, matched bool, early bool, err error) {
+	if queryErr != nil {
+		if unreachable(queryErr) {
+			return 0, false, true, nil
+		}
+		if sessionNotFound(queryErr) {
+			return 1, false, false, nil
+		}
+		return st.LatestNonce + 1, false, false, nil
+	}
+	if nonce > 0 && nonce <= st.LatestNonce && len(root) == 32 {
+		matched, err = journal.Anchor(nonce, root)
+		if err != nil {
+			return 0, false, false, err
+		}
+	}
+	return nonce + 1, matched, false, nil
+}
+
+// sessionNotFound reports that SessionHead answered "this escrow is not here".
+// Connect NotFound is that answer. Any other error matches only when its own
+// text is exactly "session not found", so a 500 body that mentions the phrase
+// does not start a cold walk.
+func sessionNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	var ce *connect.Error
+	if errors.As(err, &ce) {
+		return ce.Code() == connect.CodeNotFound
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return true
+	}
+	for err != nil {
+		if err.Error() == "session not found" {
+			return true
+		}
+		next := errors.Unwrap(err)
+		if next == nil {
+			return false
+		}
+		err = next
+	}
+	return false
+}
+
+// ownProbeTimeout reports that err is the deadline of a tip read whose parent
+// context is still running. That is the verifier's query budget, not a dead executor.
+func ownProbeTimeout(parent context.Context, probeErr, err error) bool {
+	return err != nil && parent.Err() == nil && probeErr != nil && errors.Is(err, probeErr)
+}
+
+func challengeAndMaybeRetry(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	cursor uint64,
+	matched bool,
+	previous uint64,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	tip SessionTip,
+	journal RefusalJournal,
+	queryTimeout time.Duration,
+	unreachable func(error) bool,
+) (bool, error) {
+	outcome, err := challengeOnce(ctx, st, inferenceID, rec, payload, cursor, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+	accept, done, err := classifyChallenge(outcome, err, unreachable)
+	if done {
+		return accept, err
+	}
+	if !matched {
+		return true, nil
+	}
+	return refusalAfterProgress(ctx, st, inferenceID, rec, payload, executorClient, ingest, ev, tip, journal, previous, queryTimeout, unreachable)
+}
+
+// classifyChallenge turns a challengeFrom result into an accept decision.
+// done is false when the caller may retry a matching root.
+func classifyChallenge(outcome refusedChallenge, err error, unreachable func(error) bool) (accept bool, done bool, ret error) {
+	if err != nil {
+		var call *executorCallError
+		if !errors.As(err, &call) {
+			return false, true, err
+		}
+		if unreachable(call.err) {
+			return true, true, nil
+		}
+		return false, false, nil
+	}
+	if outcome == refusedReceipt {
+		return false, true, nil
+	}
+	return false, false, nil
 }
 
 // refusalAfterProgress runs after a challenge answered without a verified receipt.
@@ -154,7 +250,6 @@ func refusalAfterProgress(
 	journal RefusalJournal,
 	previous uint64,
 	queryTimeout time.Duration,
-	load func(uint64) ([]types.Diff, error),
 	unreachable func(error) bool,
 ) (bool, error) {
 	for range RefusalProgressRetries {
@@ -164,13 +259,17 @@ func refusalAfterProgress(
 		deadline, _ := ctx.Deadline()
 		queryBudget := min(queryTimeout, time.Until(deadline)/4)
 		if queryBudget <= 0 {
-			return true, nil
+			return false, context.DeadlineExceeded
 		}
 		queryCtx, queryCancel := context.WithTimeout(ctx, queryBudget)
 		nonce, root, queryErr := tip.SessionHead(queryCtx)
+		probeErr := queryCtx.Err()
 		queryCancel()
 		if ctx.Err() != nil {
 			return false, ctx.Err()
+		}
+		if ownProbeTimeout(ctx, probeErr, queryErr) {
+			return false, probeErr
 		}
 		if queryErr != nil || nonce <= previous || nonce > st.LatestNonce || len(root) != 32 {
 			return true, nil
@@ -182,26 +281,216 @@ func refusalAfterProgress(
 		if !match {
 			return true, nil
 		}
-		var diffs []types.Diff
-		if nonce < st.LatestNonce {
-			diffs, err = load(nonce + 1)
-			if err != nil {
-				return false, err
-			}
+		outcome, err := challengeOnce(ctx, st, inferenceID, rec, payload, nonce+1, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+		accept, done, err := classifyChallenge(outcome, err, unreachable)
+		if !done {
+			previous = nonce
+			continue
 		}
-		challengeCtx, challengeCancel := context.WithTimeout(ctx, time.Until(deadline)/2)
-		outcome, challengeErr := challengeRefused(challengeCtx, st.EscrowID, inferenceID, rec, payload, diffs, executorClient, ingest, ev)
-		challengeCancel()
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		if challengeErr == nil && outcome == refusedReceipt {
-			return false, nil
-		}
-		if challengeErr != nil && unreachable(challengeErr) {
-			return true, nil
-		}
-		previous = nonce
+		return accept, err
 	}
 	return true, nil
+}
+
+// challengeOnce walks from the cursor. An answered catch-up error still sends
+// the payload before the caller classifies the challenge.
+func challengeOnce(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	from uint64,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	tip SessionTip,
+	journal RefusalJournal,
+	queryTimeout time.Duration,
+	unreachable func(error) bool,
+) (refusedChallenge, error) {
+	outcome, err := challengeFrom(ctx, st, inferenceID, rec, payload, from, executorClient, ingest, ev, tip, journal, queryTimeout)
+	var catchUp *catchUpCallError
+	if !errors.As(err, &catchUp) {
+		return outcome, err
+	}
+	if unreachable(catchUp.err) {
+		return 0, &executorCallError{err: catchUp.err}
+	}
+	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+}
+
+// challengeFrom sends [from, LatestNonce] one page at a time, then the payload.
+// The last page rides with the payload when it fits. Each page is sent before
+// the next one is loaded. Catch-up pages use a child deadline that leaves a
+// reserve for that payload call.
+func challengeFrom(
+	ctx context.Context,
+	st types.EscrowState,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	from uint64,
+	executorClient ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+	tip SessionTip,
+	journal RefusalJournal,
+	queryTimeout time.Duration,
+) (refusedChallenge, error) {
+	if from > st.LatestNonce {
+		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+	}
+	walkCtx, walkCancel := walkContext(ctx, queryTimeout)
+	defer walkCancel()
+
+	var last []types.Diff
+	err := journal.Pages(walkCtx, from, st.LatestNonce, func(page []types.Diff, more bool) error {
+		if err := walkCtx.Err(); err != nil {
+			return err
+		}
+		if more {
+			return sendCatchUp(walkCtx, inferenceID, &from, page, executorClient, tip, journal, st.LatestNonce, queryTimeout)
+		}
+		last = append([]types.Diff(nil), page...)
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	last = diffsFromCursor(last, from)
+	if pageFitsPayload(last, payload) {
+		return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, last, executorClient, ingest, ev)
+	}
+	if len(last) > 0 {
+		if err := sendCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout); err != nil {
+			return 0, err
+		}
+	}
+	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev)
+}
+
+func sendCatchUp(
+	walkCtx context.Context,
+	inferenceID uint64,
+	cursor *uint64,
+	page []types.Diff,
+	executor ExecutorClient,
+	tip SessionTip,
+	journal RefusalJournal,
+	latest uint64,
+	queryTimeout time.Duration,
+) error {
+	page = diffsFromCursor(page, *cursor)
+	if len(page) == 0 {
+		return nil
+	}
+	if err := walkCtx.Err(); err != nil {
+		return err
+	}
+	_, _, err := executor.ChallengeReceipt(walkCtx, inferenceID, nil, page)
+	if err != nil {
+		if walkCtx.Err() != nil && errors.Is(err, walkCtx.Err()) {
+			return walkCtx.Err()
+		}
+		return &catchUpCallError{err: err}
+	}
+	if walkCtx.Err() != nil {
+		return walkCtx.Err()
+	}
+	nonce, root, tipErr := readTip(walkCtx, tip, queryTimeout)
+	if walkCtx.Err() != nil {
+		return walkCtx.Err()
+	}
+	if tipErr == nil && tipRootMatches(journal, latest, nonce, *cursor, root) {
+		*cursor = nonce + 1
+	}
+	return nil
+}
+
+// tipRootMatches reports that nonce is a stored journal row whose root is root.
+// A tip past latest, or a root that does not match, does not move the cursor.
+func tipRootMatches(journal RefusalJournal, latest, nonce, cursor uint64, root []byte) bool {
+	if journal == nil || nonce+1 <= cursor || nonce > latest || len(root) != 32 {
+		return false
+	}
+	ok, err := journal.Anchor(nonce, root)
+	return err == nil && ok
+}
+
+func finishPayload(
+	ctx context.Context,
+	escrowID string,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	payload *InferencePayload,
+	diffs []types.Diff,
+	executor ExecutorClient,
+	ingest TxSink,
+	ev EvidenceVerifier,
+) (refusedChallenge, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	outcome, err := challengeRefused(ctx, escrowID, inferenceID, rec, payload, diffs, executor, ingest, ev)
+	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return 0, ctx.Err()
+		}
+		return 0, &executorCallError{err: err}
+	}
+	return outcome, nil
+}
+
+func walkContext(ctx context.Context, queryTimeout time.Duration) (context.Context, context.CancelFunc) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return ctx, func() {}
+	}
+	reserve := queryTimeout
+	if reserve <= 0 {
+		reserve = 30 * time.Second
+	}
+	if quarter := time.Until(deadline) / 4; quarter < reserve {
+		reserve = quarter
+	}
+	if reserve <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithDeadline(ctx, deadline.Add(-reserve))
+}
+
+func readTip(ctx context.Context, tip SessionTip, queryTimeout time.Duration) (uint64, []byte, error) {
+	budget := queryTimeout
+	if budget <= 0 {
+		budget = 30 * time.Second
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if remain := time.Until(deadline); remain < budget {
+			budget = remain
+		}
+	}
+	if budget <= 0 {
+		if err := ctx.Err(); err != nil {
+			return 0, nil, err
+		}
+		return 0, nil, context.DeadlineExceeded
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	return tip.SessionHead(queryCtx)
+}
+
+func diffsFromCursor(page []types.Diff, cursor uint64) []types.Diff {
+	i := 0
+	for i < len(page) && page[i].Nonce < cursor {
+		i++
+	}
+	if i == 0 {
+		return page
+	}
+	if i >= len(page) {
+		return nil
+	}
+	return page[i:]
 }

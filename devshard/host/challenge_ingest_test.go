@@ -104,7 +104,7 @@ func TestHost_RefusedChallengeAnsweredAfterItsConfirmAppliedLeavesNoCopy(t *test
 	}
 	done := make(chan verdict, 1)
 	go func() {
-		accept, err := VerifyRefusedTimeout(ctx, st, 1, defaultPayload(), verifier.MempoolTxs(), client, verifier, verifier, st.Config, nowUnix)
+		accept, err := VerifyRefusedTimeout(ctx, st, 1, st.Inferences[1], defaultPayload(), verifier.MempoolTxs(), client, verifier, verifier, st.Config, nowUnix)
 		done <- verdict{accept, err}
 	}()
 

@@ -4,21 +4,24 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"devshard/storage"
 	"devshard/types"
 )
 
 var errAnswered = errors.New("http 409")
 
 func progressUnreachable(err error) bool {
-	return err != nil && !errors.Is(err, errAnswered)
+	return err != nil && !errors.Is(err, errAnswered) && !sessionNotFound(err)
 }
 
 type progressPeer struct {
@@ -33,8 +36,9 @@ type progressPeer struct {
 		mempool []*types.DevshardTx
 		err     error
 	}
-	stepN int
-	pages [][]types.Diff
+	stepN      int
+	pages      [][]types.Diff
+	sawPayload []bool
 }
 
 func (p *progressPeer) SessionHead(context.Context) (uint64, []byte, error) {
@@ -51,8 +55,9 @@ func (p *progressPeer) GetMempool(context.Context) ([]*types.DevshardTx, error) 
 	return nil, nil
 }
 
-func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, _ *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	p.pages = append(p.pages, append([]types.Diff(nil), diffs...))
+	p.sawPayload = append(p.sawPayload, payload != nil)
 	step := p.steps[p.stepN]
 	if p.stepN+1 < len(p.steps) {
 		p.stepN++
@@ -77,12 +82,15 @@ func (j *progressJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *progressJournal) Diffs(from, to uint64) ([]types.Diff, error) {
+func (j *progressJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
 	if j.fail {
-		return nil, errors.New("storage unavailable")
+		return errors.New("storage unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if from > to {
-		return nil, nil
+		return nil
 	}
 	var out []types.Diff
 	for _, d := range j.diffs {
@@ -91,9 +99,12 @@ func (j *progressJournal) Diffs(from, to uint64) ([]types.Diff, error) {
 		}
 	}
 	if uint64(len(out)) != to-from+1 {
-		return nil, errors.New("incomplete refusal diff range")
+		return errors.New("incomplete refusal diff range")
 	}
-	return out, nil
+	if len(out) == 0 {
+		return nil
+	}
+	return fn(out, false)
 }
 
 func progressState(latest uint64) types.EscrowState {
@@ -112,7 +123,7 @@ func progressDiffs(n int, root []byte) []types.Diff {
 
 func runProgress(t *testing.T, st types.EscrowState, peer *progressPeer, journal *progressJournal, ev EvidenceVerifier) (bool, error) {
 	t.Helper()
-	return VerifyRefusedProgress(context.Background(), st, 1, testPayload(), nil, peer, nil, ev, peer, journal, time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable)
+	return VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peer, nil, ev, peer, journal, time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable)
 }
 
 func TestRefusalRecheckRetriesAdvancedNonce(t *testing.T) {
@@ -245,7 +256,9 @@ func TestRefusalFullHistoryWhenTipDoesNotMatch(t *testing.T) {
 	accept, err := runProgress(t, st, peer, &progressJournal{diffs: progressDiffs(2, root)}, g.sm)
 	require.NoError(t, err)
 	require.False(t, accept)
-	require.Equal(t, []int{2}, pageLens(peer.pages))
+	require.Equal(t, 1, peer.headN, "a root mismatch is not retried")
+	require.Equal(t, []int{1}, pageLens(peer.pages))
+	require.Equal(t, uint64(2), peer.pages[0][0].Nonce)
 }
 
 func TestRefusalStorageFailure(t *testing.T) {
@@ -271,21 +284,12 @@ func pageLens(pages [][]types.Diff) []int {
 	return out
 }
 
-// Challenge page the walk has to keep. These are the planned
-// ChallengePageMaxNonces and ChallengePageMaxBytes; they are not production
-// constants yet. A single diff is one page even when it is larger than the
-// byte budget.
-const (
-	refusalPageMaxNonces = 8192
-	refusalPageMaxBytes  = 4 << 20
-)
-
-// onePageJournal is a RefusalJournal that fails the test when one Diffs call
-// spans more than one challenge page.
+// onePageJournal yields [from, to] one challenge page at a time and fails the
+// test if a page it hands the walk is over the budget.
 type onePageJournal struct {
 	t     *testing.T
 	diffs []types.Diff
-	calls []struct{ from, to uint64 }
+	calls int
 }
 
 func (j *onePageJournal) Anchor(nonce uint64, root []byte) (bool, error) {
@@ -297,27 +301,43 @@ func (j *onePageJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	return false, nil
 }
 
-func (j *onePageJournal) Diffs(from, to uint64) ([]types.Diff, error) {
+func (j *onePageJournal) Pages(ctx context.Context, from, to uint64, fn func([]types.Diff, bool) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if from > to {
-		return nil, nil
+		return nil
 	}
-	var out []types.Diff
-	var stored int
-	for _, d := range j.diffs {
-		if d.Nonce >= from && d.Nonce <= to {
-			out = append(out, d)
-			stored += proto.Size(&types.DiffContent{Txs: d.Txs})
+	var page []types.Diff
+	stored := 0
+	flush := func(more bool) error {
+		if len(page) == 0 {
+			return nil
 		}
+		if len(page) > 1 && (len(page) > ChallengePageMaxNonces || stored > ChallengePageMaxBytes) {
+			j.t.Fatalf("challenge page is %d diffs and %d bytes; the budget is %d nonces or %d bytes",
+				len(page), stored, ChallengePageMaxNonces, ChallengePageMaxBytes)
+		}
+		j.calls++
+		err := fn(page, more)
+		page = nil
+		stored = 0
+		return err
 	}
-	if uint64(len(out)) != to-from+1 {
-		return nil, errors.New("incomplete refusal diff range")
+	for _, d := range j.diffs {
+		if d.Nonce < from || d.Nonce > to {
+			continue
+		}
+		cost := proto.Size(&types.DiffContent{Txs: d.Txs}) + ChallengeDiffWireOverhead
+		if len(page) > 0 && (len(page) == ChallengePageMaxNonces || stored+cost > ChallengePageMaxBytes) {
+			if err := flush(true); err != nil {
+				return err
+			}
+		}
+		page = append(page, d)
+		stored += cost
 	}
-	if len(out) > 1 && (len(out) > refusalPageMaxNonces || stored > refusalPageMaxBytes) {
-		j.t.Fatalf("RefusalJournal.Diffs(%d, %d) is %d diffs and %d bytes; a challenge page is at most %d nonces or %d bytes",
-			from, to, len(out), stored, refusalPageMaxNonces, refusalPageMaxBytes)
-	}
-	j.calls = append(j.calls, struct{ from, to uint64 }{from, to})
-	return out, nil
+	return flush(false)
 }
 
 func diffWithStoredBytes(nonce uint64, root []byte, want int) types.Diff {
@@ -345,21 +365,55 @@ func diffWithStoredBytes(nonce uint64, root []byte, want int) types.Diff {
 	return d
 }
 
-// TestRefusalJournalOnePageAtATime pins the page the refused-timeout walk
-// may read. Today VerifyRefusedProgress asks for the whole suffix in one
-// Diffs call, so both cases fail.
+func answeredStep() []struct {
+	receipt []byte
+	mempool []*types.DevshardTx
+	err     error
+} {
+	return []struct {
+		receipt []byte
+		mempool []*types.DevshardTx
+		err     error
+	}{{}}
+}
+
+func runOnePage(t *testing.T, st types.EscrowState, peer *progressPeer, journal RefusalJournal) (bool, error) {
+	t.Helper()
+	return VerifyRefusedProgress(
+		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+		peer, nil, newEvidenceGroup(t).sm, peer, journal,
+		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+	)
+}
+
+func assertPagedSends(t *testing.T, pages [][]types.Diff) {
+	t.Helper()
+	require.NotEmpty(t, pages)
+	for _, page := range pages {
+		if len(page) <= 1 {
+			continue
+		}
+		if len(page) > ChallengePageMaxNonces || challengePageCost(page) > ChallengePageMaxBytes {
+			t.Fatalf("ChallengeReceipt carried %d diffs and %d bytes", len(page), challengePageCost(page))
+		}
+	}
+}
+
+func sentNonces(pages [][]types.Diff) []uint64 {
+	var out []uint64
+	for _, page := range pages {
+		for _, d := range page {
+			out = append(out, d.Nonce)
+		}
+	}
+	return out
+}
+
+// TestRefusalJournalOnePageAtATime pins the page the refused-timeout walk sends.
 func TestRefusalJournalOnePageAtATime(t *testing.T) {
 	root := bytes.Repeat([]byte{1}, 32)
-	run := func(t *testing.T, st types.EscrowState, peer *progressPeer, journal *onePageJournal) (bool, error) {
-		t.Helper()
-		return VerifyRefusedProgress(
-			context.Background(), st, 1, testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
-		)
-	}
 	t.Run("nonce cap", func(t *testing.T) {
-		latest := uint64(refusalPageMaxNonces + 2)
+		latest := uint64(ChallengePageMaxNonces + 2)
 		st := progressState(latest)
 		peer := &progressPeer{
 			heads: []struct {
@@ -367,20 +421,21 @@ func TestRefusalJournalOnePageAtATime(t *testing.T) {
 				root  []byte
 				err   error
 			}{{nonce: 1, root: root}},
-			steps: []struct {
-				receipt []byte
-				mempool []*types.DevshardTx
-				err     error
-			}{{err: errAnswered}},
+			steps: answeredStep(),
 		}
 		journal := &onePageJournal{t: t, diffs: progressDiffs(int(latest), root)}
-		accept, err := run(t, st, peer, journal)
+		accept, err := runOnePage(t, st, peer, journal)
 		require.NoError(t, err)
 		require.True(t, accept)
-		require.NotEmpty(t, journal.calls)
+		assertPagedSends(t, peer.pages)
+		want := make([]uint64, latest-1)
+		for i := range want {
+			want[i] = uint64(i + 2)
+		}
+		require.Equal(t, want, sentNonces(peer.pages))
 	})
 	t.Run("byte cap", func(t *testing.T) {
-		half := refusalPageMaxBytes/2 + 1024
+		half := ChallengePageMaxBytes/2 + 1024
 		st := progressState(2)
 		diffs := []types.Diff{
 			diffWithStoredBytes(1, root, half),
@@ -391,17 +446,400 @@ func TestRefusalJournalOnePageAtATime(t *testing.T) {
 				nonce uint64
 				root  []byte
 				err   error
-			}{{err: errAnswered}},
+			}{{err: errors.New("session not found")}},
+			steps: answeredStep(),
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := runOnePage(t, st, peer, journal)
+		require.NoError(t, err)
+		require.True(t, accept)
+		assertPagedSends(t, peer.pages)
+		require.Equal(t, []uint64{1, 2}, sentNonces(peer.pages))
+		require.Greater(t, len(peer.pages), 1)
+	})
+}
+
+func TestRefusalCursorChoosesTheSuffix(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	journal := &progressJournal{diffs: progressDiffs(4, root)}
+	st := progressState(4)
+
+	t.Run("ahead of verifier", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{nonce: st.LatestNonce + 5, root: root}},
+			steps: answeredStep(),
+		}
+		accept, err := runProgress(t, st, peer, journal, newEvidenceGroup(t).sm)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Equal(t, 1, peer.headN)
+		require.Equal(t, []int{0}, pageLens(peer.pages))
+		require.Equal(t, []bool{true}, peer.sawPayload)
+	})
+
+	t.Run("storage busy", func(t *testing.T) {
+		busy := errors.New("storage busy")
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{err: busy}},
+			steps: answeredStep(),
+		}
+		accept, err := VerifyRefusedProgress(
+			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+			peer, nil, newEvidenceGroup(t).sm, peer, journal,
+			time.Second, 2*time.Second, deadlinePassedRefused(st, 1),
+			func(err error) bool { return err != nil && !errors.Is(err, busy) },
+		)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Equal(t, []int{0}, pageLens(peer.pages))
+		require.Empty(t, sentNonces(peer.pages))
+	})
+
+	t.Run("session not found", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{err: errors.New("session not found")}},
+			steps: answeredStep(),
+		}
+		accept, err := runProgress(t, st, peer, journal, newEvidenceGroup(t).sm)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Equal(t, []uint64{1, 2, 3, 4}, sentNonces(peer.pages))
+	})
+
+	t.Run("suffix carries the payload", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{nonce: 1, root: root}},
+			steps: answeredStep(),
+		}
+		accept, err := runProgress(t, st, peer, journal, newEvidenceGroup(t).sm)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Equal(t, []int{3}, pageLens(peer.pages))
+		require.Equal(t, []bool{true}, peer.sawPayload)
+		require.Equal(t, []uint64{2, 3, 4}, sentNonces(peer.pages))
+	})
+}
+
+type scriptedPeer struct {
+	progressPeer
+	cancel context.CancelFunc
+	block  bool
+}
+
+func (p *scriptedPeer) ChallengeReceipt(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if p.block {
+		<-ctx.Done()
+		return nil, nil, ctx.Err()
+	}
+	if p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
+	}
+	return p.progressPeer.ChallengeReceipt(ctx, id, payload, diffs)
+}
+
+func TestRefusalWalkStops(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	latest := uint64(ChallengePageMaxNonces + 2)
+	st := progressState(latest)
+	diffs := progressDiffs(int(latest), root)
+
+	t.Run("cancel between pages", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		peer := &scriptedPeer{
+			progressPeer: progressPeer{
+				heads: []struct {
+					nonce uint64
+					root  []byte
+					err   error
+				}{{nonce: 1, root: root}},
+				steps: answeredStep(),
+			},
+			cancel: cancel,
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := VerifyRefusedProgress(
+			ctx, st, 1, st.Inferences[1], testPayload(), nil,
+			peer, nil, newEvidenceGroup(t).sm, peer, journal,
+			time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		)
+		require.ErrorIs(t, err, context.Canceled)
+		require.False(t, accept)
+		require.NotContains(t, sentNonces(peer.pages), latest)
+	})
+
+	t.Run("deadline does not accept", func(t *testing.T) {
+		peer := &scriptedPeer{
+			progressPeer: progressPeer{
+				heads: []struct {
+					nonce uint64
+					root  []byte
+					err   error
+				}{{nonce: 1, root: root}},
+				steps: answeredStep(),
+			},
+			block: true,
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := VerifyRefusedProgress(
+			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+			peer, nil, newEvidenceGroup(t).sm, peer, journal,
+			50*time.Millisecond, 400*time.Millisecond, deadlinePassedRefused(st, 1), progressUnreachable,
+		)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.False(t, accept)
+	})
+
+	t.Run("oversized diff is sent alone", func(t *testing.T) {
+		wide := progressState(1)
+		journal := &onePageJournal{t: t, diffs: []types.Diff{
+			diffWithStoredBytes(1, root, ChallengePageMaxBytes),
+		}}
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{err: errors.New("session not found")}},
 			steps: []struct {
 				receipt []byte
 				mempool []*types.DevshardTx
 				err     error
 			}{{err: errAnswered}},
 		}
-		journal := &onePageJournal{t: t, diffs: diffs}
-		accept, err := run(t, st, peer, journal)
+		accept, err := runOnePage(t, wide, peer, journal)
 		require.NoError(t, err)
 		require.True(t, accept)
-		require.NotEmpty(t, journal.calls)
+		require.Equal(t, []int{1, 0}, pageLens(peer.pages))
+		require.Equal(t, []bool{false, true}, peer.sawPayload)
+	})
+
+	t.Run("tip advance skips applied nonces", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{
+				{nonce: 1, root: root},
+				{nonce: latest, root: root},
+			},
+			steps: answeredStep(),
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := runOnePage(t, st, peer, journal)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.NotContains(t, sentNonces(peer.pages), latest)
+		require.Contains(t, sentNonces(peer.pages), uint64(2))
+	})
+
+	t.Run("tip with a different root does not skip", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{
+				{nonce: 1, root: root},
+				{nonce: latest, root: bytes.Repeat([]byte{9}, 32)},
+			},
+			steps: answeredStep(),
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := runOnePage(t, st, peer, journal)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Contains(t, sentNonces(peer.pages), latest)
+	})
+
+	t.Run("tip past the verifier does not skip", func(t *testing.T) {
+		peer := &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{
+				{nonce: 1, root: root},
+				{nonce: latest + 5, root: root},
+			},
+			steps: answeredStep(),
+		}
+		journal := &onePageJournal{t: t, diffs: diffs}
+		accept, err := runOnePage(t, st, peer, journal)
+		require.NoError(t, err)
+		require.True(t, accept)
+		require.Contains(t, sentNonces(peer.pages), latest)
+	})
+}
+
+func TestSessionNotFoundMatch(t *testing.T) {
+	require.True(t, sessionNotFound(errors.New("session not found")))
+	require.True(t, sessionNotFound(storage.ErrSessionNotFound))
+	require.True(t, sessionNotFound(fmt.Errorf("get state: %w", connect.NewError(connect.CodeNotFound, errors.New("missing row")))))
+	require.False(t, sessionNotFound(errors.New("storage busy: session not found in replica")))
+	require.False(t, sessionNotFound(fmt.Errorf("get state: %w", connect.NewError(connect.CodeInternal, errors.New("session not found")))))
+}
+
+func TestRefusalCursorRejectsABuriedSessionPhrase(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	journal := &progressJournal{diffs: progressDiffs(4, root)}
+	st := progressState(4)
+	buried := errors.New("storage busy: session not found in replica")
+	peer := &progressPeer{
+		heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{err: buried}},
+		steps: answeredStep(),
+	}
+	accept, err := VerifyRefusedProgress(
+		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+		peer, nil, newEvidenceGroup(t).sm, peer, journal,
+		time.Second, 2*time.Second, deadlinePassedRefused(st, 1),
+		func(err error) bool { return err != nil && !errors.Is(err, buried) },
+	)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Empty(t, sentNonces(peer.pages))
+	require.Equal(t, []bool{true}, peer.sawPayload)
+}
+
+func TestRefusalAnsweredCatchUpStillSendsPayload(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	half := ChallengePageMaxBytes/2 + 1024
+	st := progressState(2)
+	journal := &onePageJournal{t: t, diffs: []types.Diff{
+		diffWithStoredBytes(1, root, half),
+		diffWithStoredBytes(2, root, half),
+	}}
+	peer := &progressPeer{
+		heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{err: errors.New("session not found")}},
+		steps: []struct {
+			receipt []byte
+			mempool []*types.DevshardTx
+			err     error
+		}{{err: errAnswered}, {err: errAnswered}},
+	}
+	accept, err := runOnePage(t, st, peer, journal)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.Equal(t, []uint64{1}, sentNonces(peer.pages))
+	require.Equal(t, []bool{false, true}, peer.sawPayload)
+}
+
+func TestRefusalAnsweredCatchUpReceiptRejects(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	half := ChallengePageMaxBytes/2 + 1024
+	st := progressState(2)
+	g := newEvidenceGroup(t)
+	confirm, sig := signedConfirm(t, g.signers[1], st.EscrowID, st, 1, 2000)
+	journal := &onePageJournal{t: t, diffs: []types.Diff{
+		diffWithStoredBytes(1, root, half),
+		diffWithStoredBytes(2, root, half),
+	}}
+	peer := &progressPeer{
+		heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{err: errors.New("session not found")}},
+		steps: []struct {
+			receipt []byte
+			mempool []*types.DevshardTx
+			err     error
+		}{
+			{err: errAnswered},
+			{receipt: sig, mempool: []*types.DevshardTx{confirm}},
+		},
+	}
+	accept, err := VerifyRefusedProgress(
+		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+		peer, nil, g.sm, peer, journal,
+		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+	)
+	require.NoError(t, err)
+	require.False(t, accept)
+	require.Equal(t, []bool{false, true}, peer.sawPayload)
+	require.Equal(t, []uint64{1}, sentNonces(peer.pages))
+}
+
+type blockingHeadPeer struct {
+	progressPeer
+	blockFrom int
+}
+
+func (p *blockingHeadPeer) SessionHead(ctx context.Context) (uint64, []byte, error) {
+	n := p.headN
+	p.headN++
+	if n >= p.blockFrom {
+		<-ctx.Done()
+		return 0, nil, ctx.Err()
+	}
+	if n >= len(p.heads) {
+		n = len(p.heads) - 1
+	}
+	h := p.heads[n]
+	return h.nonce, h.root, h.err
+}
+
+func TestRefusalProbeTimeoutDoesNotAccept(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	st := progressState(2)
+	journal := &progressJournal{diffs: progressDiffs(2, root)}
+
+	t.Run("initial head", func(t *testing.T) {
+		peer := &blockingHeadPeer{blockFrom: 0}
+		accept, err := VerifyRefusedProgress(
+			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+			peer, nil, newEvidenceGroup(t).sm, peer, journal,
+			50*time.Millisecond, time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.False(t, accept)
+		require.Empty(t, peer.pages)
+	})
+
+	t.Run("retry head", func(t *testing.T) {
+		peer := &blockingHeadPeer{
+			progressPeer: progressPeer{
+				heads: []struct {
+					nonce uint64
+					root  []byte
+					err   error
+				}{{nonce: 1, root: root}},
+				steps: answeredStep(),
+			},
+			blockFrom: 1,
+		}
+		accept, err := VerifyRefusedProgress(
+			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+			peer, nil, newEvidenceGroup(t).sm, peer, journal,
+			50*time.Millisecond, time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.False(t, accept)
 	})
 }

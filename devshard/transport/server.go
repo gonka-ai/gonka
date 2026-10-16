@@ -642,7 +642,10 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 		s.host.ApplyCatchUpDiffs(diffs)
 	}
 
-	st := s.host.SnapshotState()
+	st, rec, ok := s.host.SnapshotForTimeout(req.InferenceID)
+	if !ok || rec == nil {
+		return nil, fmt.Errorf("inference %d not found", req.InferenceID)
+	}
 	localMempool := s.host.MempoolTxs()
 
 	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
@@ -656,9 +659,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}

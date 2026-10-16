@@ -584,6 +584,14 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
+// SnapshotForTimeout copies the escrow summary and one inference record under
+// the same lock. The returned state has a nil inference map.
+func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types.InferenceRecord, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.SnapshotWithInference(inferenceID)
+}
+
 // IsWarmKeyAddress returns true if addr is a known warm key in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
