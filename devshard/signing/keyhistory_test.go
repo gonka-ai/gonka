@@ -11,8 +11,8 @@ import (
 //  2. Assert the binding covers nonces 10 to 49 and nothing outside.
 func TestWarmKeyBindingCoversItsNonceRange(t *testing.T) {
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.NoError(t, h.Revoke(0, "gonka1warm", 50, 50))
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
+	require.NoError(t, h.Revoke(0, "gonka1warm", 50, 5000))
 
 	require.Empty(t, h.ActiveAt(0, 9))
 	require.Equal(t, []string{"gonka1warm"}, h.ActiveAt(0, 10))
@@ -28,9 +28,9 @@ func TestWarmKeyBindingCoversItsNonceRange(t *testing.T) {
 func TestWarmKeyRotationKeepsTheOldKeyUntilItsRevoke(t *testing.T) {
 	slots := map[uint32]string{0: "gonka1cold"}
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1old", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1new", FromNonce: 30, Sequence: 30, Height: 1200}))
-	require.NoError(t, h.Revoke(0, "gonka1old", 40, 40))
+	require.NoError(t, h.Bind(0, "gonka1old", 10, 1000))
+	require.NoError(t, h.Bind(0, "gonka1new", 30, 1200))
+	require.NoError(t, h.Revoke(0, "gonka1old", 40, 4000))
 
 	require.True(t, h.Allows(slots, 0, "gonka1old", 20))
 	require.False(t, h.Allows(slots, 0, "gonka1new", 20))
@@ -49,13 +49,13 @@ func TestWarmKeyRotationKeepsTheOldKeyUntilItsRevoke(t *testing.T) {
 func TestWarmKeyHistoryAllowsASiblingSlotOnlyWhileUnbound(t *testing.T) {
 	slots := map[uint32]string{0: "gonka1cold", 1: "gonka1cold", 2: "gonka1other"}
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 10, Height: 1000}))
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
 
 	require.True(t, h.Allows(slots, 1, "gonka1warm", 20), "sibling slot of the same validator")
 	require.False(t, h.Allows(slots, 2, "gonka1warm", 20), "another validator's slot")
 	require.False(t, h.Allows(slots, 1, "gonka1warm", 5), "before the sibling binding")
 
-	require.NoError(t, h.Bind(1, WarmKeyBinding{Addr: "gonka1otherwarm", FromNonce: 30, Sequence: 30, Height: 1100}))
+	require.NoError(t, h.Bind(1, "gonka1otherwarm", 30, 1100))
 	require.False(t, h.Allows(slots, 1, "gonka1warm", 30), "a bound slot is exclusive")
 	require.True(t, h.Allows(slots, 1, "gonka1otherwarm", 30))
 	require.True(t, h.Allows(slots, 1, "gonka1cold", 30))
@@ -68,9 +68,9 @@ func TestWarmKeyHistoryAllowsASiblingSlotOnlyWhileUnbound(t *testing.T) {
 func TestWarmKeyRevokeOnASlotIsNotUndoneByASibling(t *testing.T) {
 	slots := map[uint32]string{0: "gonka1cold", 1: "gonka1cold"}
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.NoError(t, h.Bind(1, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 20))
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
+	require.NoError(t, h.Bind(1, "gonka1warm", 10, 1000))
+	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 2000))
 
 	require.True(t, h.Allows(slots, 0, "gonka1warm", 19))
 	require.False(t, h.Allows(slots, 0, "gonka1warm", 20))
@@ -84,15 +84,15 @@ func TestWarmKeyRevokeOnASlotIsNotUndoneByASibling(t *testing.T) {
 //  2. Assert each is refused with its own error and the history is unchanged.
 func TestWarmKeyHistoryRefusesInvalidEntries(t *testing.T) {
 	h := WarmKeyHistory{}
-	require.ErrorIs(t, h.Bind(0, WarmKeyBinding{FromNonce: 10, Sequence: 10, Height: 1000}), ErrWarmKeyEmpty)
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.ErrorIs(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 20, Sequence: 20, Height: 1000}), ErrWarmKeyLive)
-	require.ErrorIs(t, h.Revoke(0, "gonka1stranger", 20, 20), ErrWarmKeyNotFound)
-	require.ErrorIs(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1late", FromNonce: 5, Sequence: 5, Height: 1000}), ErrWarmKeyNonce)
-	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 20))
-	require.ErrorIs(t, h.Revoke(0, "gonka1warm", 25, 25), ErrWarmKeyNotLive)
-	require.ErrorIs(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1again", FromNonce: 15, Sequence: 15, Height: 1000}), ErrWarmKeyNonce, "a bind before the revoke nonce")
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 30, Sequence: 30, Height: 1300}), "a revoked key can be bound again")
+	require.ErrorIs(t, h.Bind(0, "", 10, 1000), ErrWarmKeyEmpty)
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
+	require.ErrorIs(t, h.Bind(0, "gonka1warm", 20, 1000), ErrWarmKeyLive)
+	require.ErrorIs(t, h.Revoke(0, "gonka1stranger", 20, 2000), ErrWarmKeyNotFound)
+	require.ErrorIs(t, h.Bind(0, "gonka1late", 5, 1000), ErrWarmKeyNonce)
+	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 2000))
+	require.ErrorIs(t, h.Revoke(0, "gonka1warm", 25, 2500), ErrWarmKeyNotLive)
+	require.ErrorIs(t, h.Bind(0, "gonka1again", 15, 1000), ErrWarmKeyNonce, "a bind before the revoke nonce")
+	require.NoError(t, h.Bind(0, "gonka1warm", 30, 2500), "a revoked key can be bound again with a later grant")
 
 	require.Len(t, h[0], 2)
 	require.Equal(t, []string{"gonka1warm"}, h.Live(0))
@@ -103,11 +103,11 @@ func TestWarmKeyHistoryRefusesInvalidEntries(t *testing.T) {
 //  2. Assert a revoke on the clone does not touch the original, and a nil history clones to nil.
 func TestWarmKeyHistoryClonesIndependently(t *testing.T) {
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1old", FromNonce: 10, Sequence: 10, Height: 1000}))
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1new", FromNonce: 30, Sequence: 30, Height: 1200}))
+	require.NoError(t, h.Bind(0, "gonka1old", 10, 1000))
+	require.NoError(t, h.Bind(0, "gonka1new", 30, 1200))
 
 	clone := h.Clone()
-	require.NoError(t, clone.Revoke(0, "gonka1old", 40, 40))
+	require.NoError(t, clone.Revoke(0, "gonka1old", 40, 4000))
 	require.Equal(t, uint64(0), h[0][0].RevokedAtNonce, "the clone is independent")
 	require.Nil(t, WarmKeyHistory(nil).Clone())
 }
@@ -126,18 +126,19 @@ func TestWarmKeyHistoryAllowsColdKeyAndRefusesStrangers(t *testing.T) {
 }
 
 // Test flow:
-//  1. Bind a key with the attestation sequence 5, revoke it with sequence 6.
-//  2. Assert the original bind attestation (sequence 5) cannot bind the key again, a stale revoke (sequence 4) cannot
-//     end a later binding, and a fresh grant (sequence 7) can.
-func TestWarmKeyAttestationsCannotBeReplayed(t *testing.T) {
+//  1. Bind a key whose grant is at height 1000, revoke it with the chain's revoke at height 2000.
+//  2. Assert the same grant (height 1000) cannot bind the key again, a revoke height at or below the grant is refused,
+//     and a later grant (height 3000) binds the key again.
+func TestWarmKeyGrantHeightsOrderBindsAndRevokes(t *testing.T) {
 	h := WarmKeyHistory{}
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 10, Sequence: 5, Height: 1000}))
-	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 6))
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
+	require.ErrorIs(t, h.Revoke(0, "gonka1warm", 20, 1000), ErrWarmKeyHeight, "a revoke at the grant height")
+	require.NoError(t, h.Revoke(0, "gonka1warm", 20, 2000))
 
-	require.ErrorIs(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1warm", FromNonce: 30, Sequence: 5, Height: 1000}), ErrWarmKeySequence,
-		"the bind attestation replayed after the revoke")
-	require.NoError(t, h.Bind(0, WarmKeyBinding{Addr: "gonka1next", FromNonce: 30, Sequence: 7, Height: 1300}))
-	require.ErrorIs(t, h.Revoke(0, "gonka1next", 40, 4), ErrWarmKeySequence, "a revoke attestation older than the binding")
-	require.Equal(t, []string{"gonka1next"}, h.Live(0))
-	require.Equal(t, uint64(6), h[0][0].RevokeSequence)
+	require.ErrorIs(t, h.Bind(0, "gonka1warm", 30, 1000), ErrWarmKeyHeight, "the old grant after the revoke")
+	require.ErrorIs(t, h.Bind(0, "gonka1warm", 30, 2000), ErrWarmKeyHeight, "a grant at the revoke height")
+	require.NoError(t, h.Bind(0, "gonka1warm", 30, 3000))
+	require.Equal(t, []string{"gonka1warm"}, h.Live(0))
+	require.Equal(t, uint64(2000), h[0][0].RevokedAtHeight)
+	require.Equal(t, uint64(3000), h[0][1].GrantedAtHeight)
 }

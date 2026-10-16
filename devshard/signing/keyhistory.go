@@ -6,35 +6,27 @@ import (
 	"sort"
 )
 
-// WarmKeyBinding is one warm key bound to a slot for a range of nonces. It
-// comes from a MsgWarmKeyBind applied at FromNonce and ends at the nonce of
-// the MsgWarmKeyRevoke that ends it; RevokedAtNonce is zero while the key is
-// live.
+// WarmKeyBinding is one warm key bound to a slot for a range of diff nonces.
+// It comes from a MsgWarmKeyBind applied at FromNonce and ends at the nonce
+// of the MsgWarmKeyRevoke that ends it; RevokedAtNonce is zero while the key
+// is live.
 //
-// Sequence is the granter's account sequence of the chain transaction that
-// attests the binding (the cold-signed MsgGrant), and RevokeSequence that of
-// the transaction that ends it (the MsgRevoke). Sequences only grow, so an
-// attestation cannot be replayed: a bind must carry a sequence above every
-// entry the slot has seen, and a revoke ends only a binding with a lower
-// sequence than its own. Height is the chain height the attestation was
-// confirmed at; ExpiresAt is the grant's expiry as unix seconds, zero for
-// none. Attestation is the signed transaction, kept so a snapshot carries
-// the proof with the history.
-//
-// See docs/warm-keys-v7.md.
+// GrantedAtHeight and RevokedAtHeight name the entries of the chain's warm-key
+// log that the bind and the revoke point at: the heights at which the chain
+// recorded the grant and its end. The log is append-only, so the question
+// "was this key a warm key of this slot's validator at that height" has one
+// answer for ever, and every host verifies a binding the same way whenever
+// it asks. See docs/warm-keys-v7.md.
 type WarmKeyBinding struct {
-	Addr           string
-	FromNonce      uint64
-	Sequence       uint64
-	Height         uint64
-	ExpiresAt      int64
-	Attestation    []byte
-	RevokedAtNonce uint64
-	RevokeSequence uint64
+	Addr            string
+	FromNonce       uint64
+	GrantedAtHeight uint64
+	RevokedAtNonce  uint64
+	RevokedAtHeight uint64
 }
 
-// Covers reports whether the binding is in force for a signature produced at
-// nonce: at or after FromNonce and before the revoke, if any.
+// Covers reports whether the binding is in force in the diff at nonce: at or
+// after FromNonce and before the revoke, if any.
 func (b WarmKeyBinding) Covers(nonce uint64) bool {
 	if nonce < b.FromNonce {
 		return false
@@ -53,43 +45,19 @@ var (
 	ErrWarmKeyLive     = errors.New("warm key is already live on this slot")
 	ErrWarmKeyNotLive  = errors.New("warm key is not live on this slot")
 	ErrWarmKeyNonce    = errors.New("warm key nonce is not after the previous entry")
-	ErrWarmKeySequence = errors.New("warm key attestation sequence is not above the slot's latest")
+	ErrWarmKeyHeight   = errors.New("warm key height is not after the previous entry")
 	ErrWarmKeyNotFound = errors.New("warm key is not bound on this slot")
 )
 
-// Bind appends the live binding b to slot. b.FromNonce is the diff that
-// carries it. A key that is already live on the slot cannot be bound twice;
-// a key revoked earlier can be bound again with a newer attestation. Entries
-// are append-only and ordered by nonce, so a bind at a nonce before the
-// slot's latest entry is refused: the diffs would have been applied out of
-// order. The attestation sequence must be above every sequence the slot has
-// seen, bind or revoke, so a replayed attestation is refused too.
-func (h WarmKeyHistory) Bind(slot uint32, b WarmKeyBinding) error {
-	if b.Addr == "" {
-		return ErrWarmKeyEmpty
-	}
-	b.RevokedAtNonce, b.RevokeSequence = 0, 0
-	entries := h[slot]
-	if last, ok := latestEntryNonce(entries); ok && b.FromNonce < last {
-		return fmt.Errorf("%w: slot %d nonce %d after %d", ErrWarmKeyNonce, slot, b.FromNonce, last)
-	}
-	if last := latestSequence(entries); b.Sequence <= last {
-		return fmt.Errorf("%w: slot %d sequence %d after %d", ErrWarmKeySequence, slot, b.Sequence, last)
-	}
-	for _, e := range entries {
-		if e.Addr == b.Addr && e.RevokedAtNonce == 0 {
-			return fmt.Errorf("%w: slot %d %s", ErrWarmKeyLive, slot, b.Addr)
-		}
-	}
-	h[slot] = append(entries, b)
-	return nil
-}
-
-// Revoke ends the live binding of addr on slot at nonce, with the revoking
-// attestation's sequence. The sequence must be above the slot's latest, so a
-// stale revoke cannot end a binding made after it. Signatures in diffs before
-// nonce keep verifying; from nonce on the key is refused on this slot.
-func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, sequence uint64) error {
+// Bind appends a live binding of addr to slot from nonce on, pointing at the
+// chain log entry at grantedAtHeight. A key that is already live on the slot
+// cannot be bound twice; a key revoked earlier can be bound again with a
+// later grant. Entries are append-only and ordered by nonce, so a bind at a
+// nonce before the slot's latest entry is refused: the diffs would have been
+// applied out of order. The grant height must be above the height at which
+// the same key was last revoked on this slot, so an old grant cannot bring a
+// revoked key back.
+func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantedAtHeight uint64) error {
 	if addr == "" {
 		return ErrWarmKeyEmpty
 	}
@@ -97,19 +65,46 @@ func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, sequence uint64)
 	if last, ok := latestEntryNonce(entries); ok && nonce < last {
 		return fmt.Errorf("%w: slot %d nonce %d after %d", ErrWarmKeyNonce, slot, nonce, last)
 	}
-	if last := latestSequence(entries); sequence <= last {
-		return fmt.Errorf("%w: slot %d sequence %d after %d", ErrWarmKeySequence, slot, sequence, last)
+	for _, b := range entries {
+		if b.Addr != addr {
+			continue
+		}
+		if b.RevokedAtNonce == 0 {
+			return fmt.Errorf("%w: slot %d %s", ErrWarmKeyLive, slot, addr)
+		}
+		if grantedAtHeight <= b.RevokedAtHeight {
+			return fmt.Errorf("%w: slot %d %s granted at %d, revoked at %d", ErrWarmKeyHeight, slot, addr, grantedAtHeight, b.RevokedAtHeight)
+		}
+	}
+	h[slot] = append(entries, WarmKeyBinding{Addr: addr, FromNonce: nonce, GrantedAtHeight: grantedAtHeight})
+	return nil
+}
+
+// Revoke ends the live binding of addr on slot at nonce, pointing at the
+// chain log entry at revokedAtHeight, which must be after the binding's
+// grant. Signatures in diffs before nonce keep verifying; from nonce on the
+// key is refused on this slot.
+func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, revokedAtHeight uint64) error {
+	if addr == "" {
+		return ErrWarmKeyEmpty
+	}
+	entries := h[slot]
+	if last, ok := latestEntryNonce(entries); ok && nonce < last {
+		return fmt.Errorf("%w: slot %d nonce %d after %d", ErrWarmKeyNonce, slot, nonce, last)
 	}
 	for i := range entries {
 		if entries[i].Addr != addr || entries[i].RevokedAtNonce != 0 {
 			continue
 		}
+		if revokedAtHeight <= entries[i].GrantedAtHeight {
+			return fmt.Errorf("%w: slot %d %s revoked at %d, granted at %d", ErrWarmKeyHeight, slot, addr, revokedAtHeight, entries[i].GrantedAtHeight)
+		}
 		entries[i].RevokedAtNonce = nonce
-		entries[i].RevokeSequence = sequence
+		entries[i].RevokedAtHeight = revokedAtHeight
 		return nil
 	}
-	for _, e := range entries {
-		if e.Addr == addr {
+	for _, b := range entries {
+		if b.Addr == addr {
 			return fmt.Errorf("%w: slot %d %s", ErrWarmKeyNotLive, slot, addr)
 		}
 	}
@@ -209,21 +204,6 @@ func (h WarmKeyHistory) Clone() WarmKeyHistory {
 		out[slot] = append([]WarmKeyBinding(nil), entries...)
 	}
 	return out
-}
-
-// latestSequence is the highest attestation sequence the slot has seen, bind
-// or revoke; zero for an empty slot.
-func latestSequence(entries []WarmKeyBinding) uint64 {
-	var latest uint64
-	for _, b := range entries {
-		if b.Sequence > latest {
-			latest = b.Sequence
-		}
-		if b.RevokeSequence > latest {
-			latest = b.RevokeSequence
-		}
-	}
-	return latest
 }
 
 // latestEntryNonce is the nonce of the slot's most recent change: the last
