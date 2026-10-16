@@ -1,0 +1,155 @@
+schema_version: v1
+scenario: prod-like-steady
+seed: 1515
+
+# prod-like-15m without its timed faults: the same topology, traffic stages
+# (with the peak stage) and request mix. It is the baseline error rate and
+# latency the fault scenarios are compared with. P4's boot-time peer budget
+# (host-over-peer-chat-budget) is a whole-run condition, so it stays here and nowhere else: its
+# marker must go wherever the budget goes, and the budget would cap P4 in the
+# load ladder and overlap P4's faults elsewhere.
+# P2 = versiond-3, P3 = versiond-4, P4 = versiond-5.
+
+cases:
+  - {id: host-over-peer-chat-budget, title: Chat refused because P4's peer budget is spent, known_bug: "#1988"}
+  - {id: escrow-rotation-per-model-settlement, title: escrow rotation with per-model settlement}
+  - {id: deactivated-escrow-runtime-retired, title: no resident runtime for a deactivated escrow}
+  - {id: logprobs-responses-compress, title: responses with logprobs compress}
+  - {id: sqlite-payloads-in-zstd-files, title: payload files are zstd on the sqlite host}
+  # session-nonce-within-max-nonce: run 3 escrow 15 reached session nonce 1766 against max_nonce 1700 and
+  # never settled. No issue is filed yet; "nonce-overrun" stands in for it.
+  - {id: session-nonce-within-max-nonce, title: session nonce never passes chain max_nonce, known_bug: "nonce-overrun"}
+  - {id: honest-hosts-get-no-http-5xx, title: honest hosts get no http_5xx attempt failures}
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 5
+  chain:
+    # The gateway keeps a 200-nonce margin, so escrows deactivate at about
+    # 1500 nonces: model-a rotates about every 2.3 min, model-b about every 5.
+    # max_nonce is one global mock-chain param (POST /testenv/params), so session-nonce-within-max-nonce
+    # cannot get a lower cap on one escrow; it is judged on this run's rotations.
+    escrow_amount: 5000000000
+    max_nonce: 1700
+  hosts:
+    # host-over-peer-chat-budget: 6 Chats a minute per sender (6 weight at Chat weight 1, #1988).
+    # At 300, P4's measured 2.1 Chats/s (8 rps) and 3.8-4.1 (16 rps) never
+    # reached it, and the gateway paces its Chats to any advertised budget of
+    # 10 a minute or more (transport/rpc_budget.go), so it would wait, not be
+    # refused. Under 10 the gateway neither paces nor skips (that needs the
+    # 6000 default): it sends, P4 refuses, and the gateway pauses P4 1 s
+    # (quarantines-match-faults sender_rate). P4 is over its 0.1/s budget the whole run.
+    - id: versiond-5
+      rpc_chats_per_min: 6
+    # P3 keeps payloads in zstd files only (sqlite-payloads-in-zstd-files, payload-files-are-zstd). sqlite keeps no
+    # validation leases, so no-skipped-validation-leases excludes it by name.
+    - id: versiond-4
+      env: {DEVSHARD_STORAGE_MODE: sqlite}
+  mock_ml:
+    allocator: round_robin
+    # One node per versiond container, bound to it, so an ML fault lands on
+    # one participant only.
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+      - {name: mock-openai-5, profile: prod-like, host: versiond-5}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  max_in_flight: 256
+  duration: 15m
+  report_interval: 30s
+  traffic:
+    type: stages
+    # The prod-like-15m stages, peak included (peak_rps 16, as there).
+    peak_rps: 16
+    stages:
+      - {duration: 1m, rps: 8}
+      - {duration: 1m, rps: 16}
+      - {duration: 8m, rps: 16}
+      - {duration: 2m, peak: true}
+      - {duration: 3m, rps: 16}
+  request:
+    model: model-a
+    stream: false
+    max_tokens: 128
+    timeout: 2m
+    messages:
+      - {role: user, content: "Summarise the main idea of this sentence briefly."}
+    mix:
+      stream_ratio: 0.5
+      logprobs_ratio: 0.5
+      top_logprobs: 5
+      max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 20}, {value: 2048, weight: 5}]
+      temperature: [{value: 0, weight: 50}, {value: 0.7, weight: 50}]
+      prompts:
+        - {value: [{role: user, content: "Summarise the main idea of this sentence briefly."}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across ho Why?"}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a gr Explain it."}], weight: 1}
+      models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
+  events:
+    # P4's budget is set at boot, so it bites all run: a background marker
+    # yields misses and quarantines inside P4's other windows to those cases.
+    - {id: host-over-peer-chat-budget, case: host-over-peer-chat-budget, action: marker, target: versiond-5, at: 0s, until: 15m,
+       params: {background: true, observe: host_rate_limited, waive_misses: true, expect_quarantine: sender_rate}}
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+  participant_throttle:
+    transport_failure_quarantine: 45s
+    http_quarantine: 45s
+    empty_stream_quarantine: 45s
+    stalled_winner_quarantine: 45s
+  escrow_rotation:
+    enabled: true
+    settlement_enabled: true
+    pre_poc_blocks: 1
+    temp_count: 1
+    target_count: 1
+    amount: 5000000000
+    private_key_env: DEVSHARD_PRIVATE_KEY
+    models:
+      - {model: model-b, settlement_enabled: false}
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # No timed fault: 2 % is the racing bound every single-fault window meets.
+    # prod-like-15m's 12 % paid for gateway-killed-mid-race and epoch-change-with-poc, which are not here.
+    error_rate: 0.02
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  escrow_rotation:
+    require_new_escrow: true
+  invariants:
+    enabled: true
+    baseline: {from: 1m, to: 2m}
+    trend_early: {from: 3m, to: 5m}
+    trend_late: {from: 13m30s, to: 15m}
+    cases: {escrow-accounting-reconciles.final_nonce_le_max: session-nonce-within-max-nonce, no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired, responses-compress: logprobs-responses-compress, payload-files-are-zstd: sqlite-payloads-in-zstd-files, no-http-5xx-on-honest-hosts: honest-hosts-get-no-http-5xx}
+
+drain_timeout: 3m
+
+diagnostics:
+  logs:
+    tail: all
+  heap_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m20s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 14m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+  goroutine_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m20s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 14m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
