@@ -62,6 +62,23 @@ func TestWarmKeyHistoryAllowsASiblingSlotOnlyWhileUnbound(t *testing.T) {
 }
 
 // Test flow:
+//  1. Bind the same warm key on slots 0 and 1 of one validator, then revoke it on slot 0 only.
+//  2. Assert the key is refused on slot 0 from the revoke nonce on, although slot 1 still has it live: the sibling
+//     rule must not undo a revoke on the slot it names. Slot 1 keeps accepting it.
+func TestWarmKeyRevokeOnASlotIsNotUndoneByASibling(t *testing.T) {
+	slots := map[uint32]string{0: "gonka1cold", 1: "gonka1cold"}
+	h := WarmKeyHistory{}
+	require.NoError(t, h.Bind(0, "gonka1warm", 10, 1000))
+	require.NoError(t, h.Bind(1, "gonka1warm", 10, 1000))
+	require.NoError(t, h.Revoke(0, "gonka1warm", 20))
+
+	require.True(t, h.Allows(slots, 0, "gonka1warm", 19))
+	require.False(t, h.Allows(slots, 0, "gonka1warm", 20))
+	require.False(t, h.Allows(slots, 0, "gonka1warm", 99))
+	require.True(t, h.Allows(slots, 1, "gonka1warm", 99))
+}
+
+// Test flow:
 //  1. Try the refused operations: an empty key, a key that is already live, a revoke of a key that is not bound or
 //     not live, and an entry at a nonce before the slot's latest change.
 //  2. Assert each is refused with its own error and the history is unchanged.
@@ -82,18 +99,12 @@ func TestWarmKeyHistoryRefusesInvalidEntries(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a history with two keys covering the same nonce on one slot.
-//  2. Assert the SlotActors projection keeps the most recently bound key, and that a clone is independent.
-func TestWarmKeyHistoryProjectsAndClones(t *testing.T) {
-	slots := map[uint32]string{0: "gonka1cold"}
+//  1. Build a history with two keys on one slot and clone it.
+//  2. Assert a revoke on the clone does not touch the original, and a nil history clones to nil.
+func TestWarmKeyHistoryClonesIndependently(t *testing.T) {
 	h := WarmKeyHistory{}
 	require.NoError(t, h.Bind(0, "gonka1old", 10, 1000))
 	require.NoError(t, h.Bind(0, "gonka1new", 30, 1200))
-
-	actors := h.ActorsAt(slots, 35)
-	require.Equal(t, map[uint32]string{0: "gonka1new"}, actors.WarmKeys)
-	require.True(t, actors.Allows(0, "gonka1new"))
-	require.Empty(t, h.ActorsAt(slots, 5).WarmKeys)
 
 	clone := h.Clone()
 	require.NoError(t, clone.Revoke(0, "gonka1old", 40))

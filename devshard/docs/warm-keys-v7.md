@@ -14,10 +14,13 @@ dapi parts follow in the same branch, in the order under
 
 A host signs with its cold key (the slot address in the escrow group) or with a
 warm key: an account the cold key authorised on chain through an authz
-`GenericAuthorization` for `MsgStartInference`. The chain answers "who are the
-grantees of this granter" through `GranteesByMessageType`
-(`inference-chain/x/inference/keeper/query_grantees_by_message_type.go`),
-dropping expired grants. Both binaries verify host signatures with
+`GenericAuthorization`. The grant marker is `MsgClaimRewards`
+(`WarmKeyGrantMarkerTypeURL`, `inference-chain/x/inference/types/authz.go`); the
+`MsgStartInference` marker devshard still queries is legacy, and
+`GranteesByMessageType`
+(`inference-chain/x/inference/keeper/query_grantees_by_message_type.go`)
+translates the legacy query to the current marker and drops expired grants.
+Anything that reads raw authz events must filter on the current marker itself. Both binaries verify host signatures with
 `signing.SlotActors.Allows` (`signing/actors.go`): the cold key, or the warm key
 bound to that slot, or, while the slot has no binding, a warm key bound to a
 sibling slot of the same validator, or a live chain lookup.
@@ -39,9 +42,15 @@ sibling slot of the same validator, or a live chain lookup.
   `session/manager.go`). The wire `Diff` (`transport/v1/session.proto`) carries
   no such field, so every peer still performs its own first lookup, at its own
   time, against its own chain node.
-- The bridge caches a lookup for ever (`bridge/grpc.go`, `warmCache`;
-  `cmd/devshardd/bridge/chain.go`). A revoked key stays accepted by a host that
-  cached it and stays unknown to one that did not.
+- Three caches keep a lookup for ever: the bridge (`bridge/grpc.go`,
+  `warmCache`; `cmd/devshardd/bridge/chain.go`), the gateway session's
+  `warmChecks` (`user/session.go`, `warmKeyAuthorized`) and the host's roster
+  entry `peers` for payload fetches (`cmd/devshardd/session/manager_escrow_lookup.go`,
+  `payloadPeerAllowed`, positive and negative). A revoked key stays accepted
+  where it was cached, a new grant stays refused where its absence was cached.
+- The chain checks warm signers of a settlement at submission time
+  (`HasWarmKeyGrant`, `msg_server_settle_devshard_escrow.go`), against the
+  grants of that moment, not against any history.
 
 ## Model
 
@@ -56,15 +65,31 @@ WarmKeyHistory  map[slot][]WarmKeyBinding
 `Height` is the chain height at which the grant was known to exist;
 `RevokedAtNonce` is the nonce of the revoke entry, zero while the key is live.
 
-The acceptance rule for a signature produced at nonce N is a function of the
-history and of N only (`WarmKeyHistory.Allows`): the cold key; a warm key
-whose binding for that slot covers N; while the slot has no binding covering
-N, a key that covers N on a sibling slot of the same validator. No chain call,
-no wall clock. Replaying the same diffs on any host yields the same answer.
+The acceptance rule for a host signature is a function of the history and of
+one nonce only (`WarmKeyHistory.Allows`): the cold key; a warm key whose
+binding for that slot covers the nonce; while the slot has no binding covering
+it, a key that covers it on a sibling slot of the same validator, unless the
+key was revoked on this slot at or before it. No chain call, no wall clock.
+Replaying the same diffs on any host yields the same answer.
+
+The nonce is the **authorization nonce**: the nonce of the diff that carries
+the signed message. Receipts, finishes, votes and HeightAcks do not sign a
+production time, and they do not need one. A message signed by a key that is
+live at the diff that includes it is accepted; a message the gateway includes
+after the key's revoke is refused, whenever it was produced. The gateway is
+the sequencer, so it decides what it includes before a revoke, and a host that
+rotates keeps the old key live until its pending messages are through
+([Rotation](#rotation-step-by-step)).
 
 Two keys may cover the same nonce range on one slot. That is the rotation
-window: the old grant stays valid until its revoke entry, so a signature made
-before the revoke still verifies on replay.
+window: the old grant stays valid until its revoke entry, so a diff that was
+valid when applied stays valid on replay.
+
+Every verifier that takes `signing.SlotActors` today (HeightAck, repair,
+gossip, settlement) moves to a rule built from the history for the diff at
+hand. A projection that keeps one key per slot is not an option: it would
+refuse the old key inside the rotation window, including from another HA
+replica of the same host.
 
 The history replaces `WarmKeys` in `EscrowState`, in the state-root hash (a new
 hash version, since the input changes) and in the snapshot
@@ -82,24 +107,41 @@ MsgWarmKeyBind   { slot, address, height }
 MsgWarmKeyRevoke { slot, address, height }
 ```
 
-The gateway is the sequencer and the only author of these entries. When a host
-signs with a key that the history does not cover, the gateway checks the grant
-through its grant source ([below](#grant-source)) and, if the grant exists at
-height H, includes `MsgWarmKeyBind{slot, key, H}` in the next diff. Applying
-the diff appends the binding with `FromNonce` = that nonce. A revoke entry is
-produced from a revoke or expiry seen in the grant source.
+The gateway is the sequencer and the only author of these entries, but it is
+not the authority for them: its signature authenticates the diff, not the
+grant, and a gateway that could bind a key of its own to a host's slot could
+forge that host's finishes, votes and HeightAcks. The entry therefore carries
+a **proof that every host checks from the log alone**, so that applying a diff
+never depends on local chain state, a local cache or the wall clock:
 
-A host does not trust the gateway for this. Before it accepts signatures by a
-newly bound key it verifies the grant itself: the grant exists at a height at
-or after `H`, from its own grant source. Today's `ResolveWarmKey` lookup moves
-here, with one difference: the lookup verifies a binding that is already in
-the log, it does not create one. A host that cannot verify yet (its chain node
-is behind `H`, its dapi is down) applies the diff, keeps the binding marked
-unverified, and refuses signatures by that key until it can verify; the diff
-itself stays valid, because the gateway's signature and, once finalized, the
-quorum signatures over the post-state root cover it. The height in the entry
-is what makes "exists at or after H" a well-defined question for every host,
-whenever it gets to ask it.
+```
+MsgWarmKeyBind   { slot, address, height, attestation }
+MsgWarmKeyRevoke { slot, address, height, attestation }
+```
+
+The attestation is a signature by the slot's cold key over
+`(escrow, slot, address, height, bind|revoke)`. The cold key is the account
+that grants on chain, so it is the right authority, and every host knows it
+from the group. The host obtains the attestation through its dapi, which
+holds the account key for chain transactions, when the operator grants or
+revokes (see [Open questions](#open-questions) for a cold key that is not
+reachable). `height` records the chain height at which the grant existed when
+the bind was requested; it is informational for operators and for the grant
+source, not an input to acceptance.
+
+Application is staged: the bind and revoke entries of a diff apply before its
+other transactions, so a key bound at nonce N is live for the messages of
+nonce N. Compose, the log-plane checks (`checkLogPlaneLocked`), application
+and replay all evaluate host signatures against the history as of the diff
+being applied, with that diff's own entries included. The gateway keeps one
+rule on top for simplicity of reasoning: it includes a host's first message by
+a new key no earlier than the diff after the bind.
+
+The grant source ([below](#grant-source)) is the gateway's precondition for
+proposing an entry and every host's monitoring of its own grants; it is not
+on the apply path. A host that sees a bind it does not recognise in its grant
+source logs it and raises a metric, and otherwise applies the diff like any
+other, because the attestation is the proof.
 
 ## Grant source
 
@@ -108,34 +150,49 @@ height" without a chain round trip on the apply path.
 
 1. dapi host events. `GetHostEvents` (`common/nodemanager/nodemanager.proto`)
    gains `HOST_EVENT_KIND_KEY_GRANTED` and `HOST_EVENT_KIND_KEY_REVOKED` with
-   `{granter, grantee, msg_type_url, height, expiration}`, produced by the dapi
-   event listener from the chain's authz `EventGrant` / `EventRevoke`, plus a
-   snapshot of the current grants with the height it was taken at when the
-   long-poll starts. devshardd keeps a local grant log from this stream, the
-   way it keeps the escrow cache today (`cmd/devshardd/hostevents_sink.go`).
+   `{granter, grantee, height, expiration}`, produced by the dapi event
+   listener from the chain's authz `EventGrant` / `EventRevoke` filtered on
+   the current marker, with the legacy marker translated as the query does.
+   The stream keeps its cursor and `needs_reset` contract: on a reset, and at
+   the first poll, dapi answers with a snapshot of the current grants stamped
+   with the height and cursor it was taken at, and devshardd replaces its
+   grant log with that snapshot before it applies later events. A grant log is
+   therefore never older than the last reset. devshardd keeps the log the way
+   it keeps the escrow cache today (`cmd/devshardd/hostevents_sink.go`).
 2. Direct chain query, as today, when dapi is unavailable or does not serve the
-   event kinds (an old dapi answers the request without them).
+   event kinds (an old dapi answers the request without them), with a TTL
+   instead of a forever-cache.
 
-The bridge's forever-cache goes away; the grant log is the cache and it sees
-revocations.
+The three forever-caches ([above](#what-v6-does-and-why-it-cannot-rotate)) go
+away: the bridge's `warmCache`, the session's `warmChecks` and the roster
+`peers` decisions all read the grant log, which sees revocations, or the
+history, which is consensus.
 
 ## Rotation, step by step
 
-1. The operator grants a new warm key on chain (dapi admin flow, unchanged).
-2. The host's devshardd starts signing with it. Peers refuse until the binding
-   is in the log; the gateway's next diff carries `MsgWarmKeyBind`.
-3. Peers apply the diff, verify the grant, accept the new key from that nonce.
-4. The operator revokes the old grant. The gateway sees the revoke in its grant
-   source and emits `MsgWarmKeyRevoke`; from that nonce the old key is refused.
-   Signatures from before it keep verifying on replay.
+1. The operator grants a new warm key on chain (dapi admin flow, unchanged)
+   and dapi produces the bind attestation with the account key.
+2. The host's devshardd sends the attested bind to the gateways of its
+   escrows and starts signing with the new key. Peers refuse the key until the
+   binding is in the log; the gateway's next diff carries `MsgWarmKeyBind`.
+3. Peers apply the diff; the new key is live from that nonce.
+4. The old key stays live, and the host may keep using it, until every escrow
+   that has signatures by it in flight is past them. The chain checks a
+   settlement's warm signers against the grants at submission
+   (`HasWarmKeyGrant`), so the old grant must stay on chain until the
+   settlements signed by the old key are submitted, or the gateway re-collects
+   those signatures with the new key. The operator revokes on chain only then;
+   dapi produces the revoke attestation, the gateway emits
+   `MsgWarmKeyRevoke`, and from that nonce the old key is refused. Diffs from
+   before it replay unchanged.
 
 ## Catch-up and snapshots
 
-A lagging host pulls diffs or a snapshot. Both carry the history, so the host
-ends with the same key state as everyone else without touching the chain. The
-verification mark is local and not part of consensus: a host restoring from a
-snapshot re-verifies live bindings against its grant source in the background
-and refuses signatures by a binding only while that check is pending.
+A lagging host pulls diffs or a snapshot. Both carry the history, and every
+bind and revoke carries its attestation, so the host ends with the same key
+state as everyone else without touching the chain, however long it was away
+and whatever has been revoked or pruned on chain since. Nothing is "pending
+verification" on the apply path.
 
 ## Compatibility
 
@@ -145,17 +202,23 @@ sessions. Snapshots keep the old map for reading.
 
 ## Open questions
 
-- Verification at height. A node that prunes history cannot answer "was the
-  grant there at H". The rule above is "exists at or after H", which the current
-  state answers; a host whose node is behind H waits. If a grant is revoked
-  between H and the host's check, the host sees it as never valid; the revoke
-  entry that follows resolves the window, but the host refuses that key's
-  signatures in between. Is that acceptable, or should the dapi grant log be the
-  authority for the past?
+- The attestation key. The design signs binds with the cold key through dapi,
+  where the account key lives for chain transactions. If a deployment keeps
+  that key elsewhere, the alternative is a chain proof of the grant (a Merkle
+  proof against a block header the hosts can verify), which is heavier and
+  depends on the light-client story; or an attestation by the old warm key for
+  a rotation, with the cold key needed only for the first bind.
+- Settlement and rotation. `HasWarmKeyGrant` checks grants at submission. The
+  rule above makes the operator keep the old grant until pending settlements
+  are through. The alternative is a chain change that accepts signers granted
+  at the escrow's epoch; that belongs to the 0.2.18 settlement branch.
 - Several live keys per slot. The model allows it; the operator flow may want
   "one new, one old" only.
-- Who may bind. The gateway as the sole author keeps determinism simple. A host
-  that signs with a new key while the gateway is down waits; is that fine?
+- Who may bind. The gateway as the sole author keeps sequencing simple. A host
+  that rotates while the gateway is down waits with the old key; is that fine?
+- A slot reassigned to another validator in a later epoch, and HA replicas of
+  one host that share a warm key, follow the same rule (the history is per
+  slot and the attestation is per cold key); both need a test.
 
 ## Implementation order
 
@@ -164,12 +227,19 @@ one buildable and tested on its own.
 
 1. `signing/keyhistory.go`: the pure model and its acceptance rule, with
    tests. No caller yet.
-2. `types`, `state`: `EscrowState.WarmKeyHistory`, hash version, apply rules for
-   the two transactions, snapshot codec, `SlotActors` built from the history.
-3. `bridge`: grant log fed by dapi host events, direct-query fallback.
-4. `cmd/devshardctl`: bind and revoke proposals in the sequencer; admin listing.
-5. `cmd/devshardd`, `user`: verification mark, refusal while unverified, replay
-   and snapshot paths.
-6. dapi: event kinds, snapshot of grants, event listener.
-7. Tests: rotation mid-session; lagging host replaying a bind and a revoke;
-   dapi down; snapshot restore; a bind the host cannot verify yet.
+2. `types`, `state`: `EscrowState.WarmKeyHistory`, hash version, the two
+   transactions with their attestation, staged application, journal undo/redo,
+   snapshot codec, every verifier (HeightAck, repair, gossip, settlement)
+   reading the history for the diff at hand.
+3. `bridge`: grant log fed by dapi host events with the reset rule, direct-query
+   fallback with a TTL; the three forever-caches removed.
+4. `cmd/devshardctl`: bind and revoke proposals in the sequencer with the
+   "first use after the bind" rule; admin listing.
+5. `cmd/devshardd`, `user`: the host's attestation request to dapi, sending the
+   bind, replay and snapshot paths.
+6. dapi: attestation endpoint, event kinds, grant snapshot on reset, event
+   listener on the current marker.
+7. Tests: rotation mid-session; lagging host replaying a bind and a revoke
+   after the grant was revoked and pruned on chain; dapi down; snapshot
+   restore; a settlement with old-key signatures across a rotation; a slot
+   reassigned to another validator; two HA replicas sharing a key.

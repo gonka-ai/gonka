@@ -115,15 +115,16 @@ func (h WarmKeyHistory) Live(slot uint32) []string {
 	return keys
 }
 
-// Allows reports whether recovered may act for slot on a signature produced
-// at nonce. slotKeys maps every slot of the group to its cold address.
+// Allows reports whether recovered may act for slot in the diff at nonce.
+// slotKeys maps every slot of the group to its cold address.
 //
 // The rule mirrors SlotActors.Allows, with the history in place of the single
 // binding: the cold key; a warm key covering nonce on this slot; and, only
 // while nothing covers nonce on this slot, a warm key covering nonce on a
-// sibling slot of the same validator. There is no chain fallback here: a key
-// the history does not cover is refused until a MsgWarmKeyBind for it is
-// applied.
+// sibling slot of the same validator. A key revoked on this slot at or before
+// nonce is refused on this slot whatever its sibling bindings say: a revoke
+// is final for the slot it names. There is no chain fallback here: a key the
+// history does not cover is refused until a MsgWarmKeyBind for it is applied.
 func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovered string, nonce uint64) bool {
 	if recovered == "" {
 		return false
@@ -144,6 +145,9 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 		}
 		return false
 	}
+	if h.revokedOn(slot, recovered, nonce) {
+		return false
+	}
 	siblings := make([]uint32, 0, len(h))
 	for other := range h {
 		if other != slot && slotKeys[other] == cold {
@@ -161,17 +165,15 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 	return false
 }
 
-// ActorsAt projects the history at nonce onto SlotActors, for callers that
-// still take the single-binding form. A slot with several keys covering nonce
-// keeps the most recently bound one; Allows is the complete rule.
-func (h WarmKeyHistory) ActorsAt(slotKeys map[uint32]string, nonce uint64) SlotActors {
-	warm := make(map[uint32]string, len(h))
-	for slot := range h {
-		if active := h.ActiveAt(slot, nonce); len(active) > 0 {
-			warm[slot] = active[len(active)-1]
+// revokedOn reports whether addr has a binding on slot that was revoked at
+// or before nonce.
+func (h WarmKeyHistory) revokedOn(slot uint32, addr string, nonce uint64) bool {
+	for _, b := range h[slot] {
+		if b.Addr == addr && b.RevokedAtNonce != 0 && b.RevokedAtNonce <= nonce {
+			return true
 		}
 	}
-	return SlotActors{SlotKeys: slotKeys, WarmKeys: warm}
+	return false
 }
 
 // Clone returns a deep copy, for state snapshots and journal undo.
