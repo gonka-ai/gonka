@@ -170,7 +170,7 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 		expiredN int
 	)
 	iterate(ctx, func(granter, grantee sdk.AccAddress, grant authz.Grant) bool {
-		auth, ok := grant.Authorization.GetCachedValue().(*authz.GenericAuthorization)
+		auth, ok := k.genericAuthorization(grant)
 		if !ok || !IsWarmKeyMarker(auth.Msg) {
 			skipped++
 			return false
@@ -191,6 +191,23 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 	}
 	k.LogInfo("warm-key log seeded", types.Upgrades, "entries", count, "other_grants", skipped, "expired", expiredN)
 	return count, nil
+}
+
+// genericAuthorization reads a grant's authorization as a GenericAuthorization:
+// from the Any's cached value when the codec unpacked it, otherwise from its
+// bytes, as the earlier authz migrations do.
+func (k Keeper) genericAuthorization(grant authz.Grant) (*authz.GenericAuthorization, bool) {
+	if auth, ok := grant.Authorization.GetCachedValue().(*authz.GenericAuthorization); ok {
+		return auth, true
+	}
+	if grant.Authorization == nil || grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
+		return nil, false
+	}
+	var generic authz.GenericAuthorization
+	if err := k.cdc.Unmarshal(grant.Authorization.Value, &generic); err != nil {
+		return nil, false
+	}
+	return &generic, true
 }
 
 // WarmKeyLogEntries returns every entry of granter in id order.
