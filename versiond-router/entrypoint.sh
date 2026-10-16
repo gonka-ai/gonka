@@ -916,13 +916,21 @@ run_catalog_reconciler() {
     # has been collected; a child reparented to the entrypoint would
     # otherwise outlive the loop until the container is torn down. A TERM
     # that lands between the launch and the pid being recorded is kept as a
-    # flag and acted on right after.
+    # flag and acted on right after. The program handles TERM only between
+    # polls, so the collection is bounded well inside the 10 s the fleet
+    # adds to Docker's stop budget: after 5 s the program is killed.
     reconciler_child=
     reconciler_stopping=0
     end_reconciler_child() {
         reconciler_stopping=1
         if [ -n "$reconciler_child" ]; then
             kill "$reconciler_child" 2>/dev/null || true
+            waited=0
+            while kill -0 "$reconciler_child" 2>/dev/null && [ "$waited" -lt 50 ]; do
+                sleep 0.1
+                waited=$((waited + 1))
+            done
+            kill -s KILL "$reconciler_child" 2>/dev/null || true
             wait "$reconciler_child" 2>/dev/null || true
             exit 0
         fi

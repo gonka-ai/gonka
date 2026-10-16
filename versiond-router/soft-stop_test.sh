@@ -490,7 +490,9 @@ docker rm -f "$proxy" >/dev/null 2>&1 || true
 # The test backend is the one versiond of a v4 pool: its /readyz and
 # /v4/healthz answer at once, so the router admits it and routes a held
 # Watch to it. The catalog is unreachable, so the reconciler loop is in its
-# retry cycle the whole time. The backend is named by the host gateway's
+# retry cycle the whole time, with a poll long enough that its program is
+# asleep, deferring TERM, when the stop comes: the entrypoint then has to
+# kill it to bound the cleanup. The backend is named by the host gateway's
 # address: a name from --add-host is not visible to HAProxy's Docker DNS
 # resolver, an IPv4 literal needs no resolver.
 gateway_ip=$(docker run --rm --add-host=host.docker.internal:host-gateway "$haproxy_image" \
@@ -500,9 +502,9 @@ docker run -d --name "$proxy" \
     -p 127.0.0.1::8080 -p 127.0.0.1::8081 \
     -e "VERSIOND_HOSTS=${gateway_ip}:${port}" -e VERSIOND_VERSIONS=v4 \
     -e VERSIOND_ROUTER_BACKEND_H2=false \
-    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=8 \
+    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=12 \
     -e VERSIOND_ROUTING_CATALOG_URL=http://127.0.0.1:1/versions \
-    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=60 \
     -e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=1 \
     "$router_image" >/dev/null
 loaded=0
@@ -547,17 +549,18 @@ grep -q 'PeerAuthService/Watch' "$tmpdir/paths" || fail "held watch did not reac
 restarts_before=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
 docker kill --signal SIGUSR1 "$proxy" >/dev/null
 signaled_at=$(proxy_age)
-sleep 3
+# The program is asleep for its 60 s poll: the entrypoint kills it after 5 s.
+sleep 7
 proxy_running || fail "the router image exited at soft stop while a watch was held"
 if docker exec "$proxy" ps -o comm 2>/dev/null | grep -q 'catalog-reconci'; then
-    fail "the catalog reconciler is still running after the soft stop: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+    fail "the catalog reconciler is still running 7 s after the soft stop: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
 fi
 restarts_after=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
 (( restarts_after <= restarts_before + 1 )) || \
     fail "the reconciler loop kept restarting during the drain: $restarts_before before the stop, $restarts_after after"
 wait_exit 80 || fail "the router image did not exit at hard-stop-after with a watch held: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
 exited_at=$(proxy_age)
-(( exited_at - signaled_at <= 18 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
+(( exited_at - signaled_at <= 20 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
 wait_for watch-reset 20 || fail "the held watch was not reset by the router image's hard stop: $(cat "$tmpdir/client.status")"
 [[ $(docker inspect --format '{{.State.ExitCode}}' "$proxy") == 0 ]] \
     || fail "the router image exited with status $(docker inspect --format '{{.State.ExitCode}}' "$proxy")"
