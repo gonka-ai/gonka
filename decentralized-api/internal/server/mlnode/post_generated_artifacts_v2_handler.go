@@ -3,14 +3,11 @@ package mlnode
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 
 	"common/logging"
 	"common/utils"
-	"decentralized-api/broker"
-	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
@@ -34,6 +31,10 @@ func decodeCallbackModelID(encoded string) (string, error) {
 // Stores artifacts locally for off-chain proofs. Store commits and weight distributions
 // are submitted to chain separately by CommitWorker and the block dispatcher.
 func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
+	return s.postGeneratedArtifacts(ctx, types.PocScheme_POC_SCHEME_PREFILL)
+}
+
+func (s *Server) postGeneratedArtifacts(ctx echo.Context, scheme types.PocScheme) error {
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
@@ -82,38 +83,30 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 		"nodeId", nodeId,
 		"nodeNum", body.NodeId)
 
-	scheme, n, schemeErr := s.generatedArtifactScheme(epochState, modelID, body.BlockHeight)
-	if schemeErr != nil {
-		logging.Error("ArtifactBatchV2-callback. Missing generation scheme", types.PoC,
-			"blockHeight", body.BlockHeight, "modelId", modelID, "error", schemeErr)
-		msg := "missing poc stage recipe"
-		if poc.GeneratingChallengeWork(epochState) != nil {
-			msg = "missing live poc params"
-		}
-		return echo.NewHTTPError(http.StatusServiceUnavailable, msg)
+	recipe, err := s.callbackRecipe(body.BlockHeight, poc.GeneratingChallengeWork(epochState))
+	if err != nil {
+		return err
 	}
-	decode := scheme == types.PocScheme_POC_SCHEME_DECODE
+	if recipe.Scheme != scheme {
+		return echo.NewHTTPError(http.StatusBadRequest, "callback version does not match stage scheme")
+	}
+	model, ok := recipe.GetModelConfig(modelID)
+	if !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "model missing from stage recipe")
+	}
+	n, ok := model.MaxTokensForScheme(scheme)
+	if !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "model missing stage scheme")
+	}
 
 	// Convert artifacts from JSON format to proto format for local storage
 	protoArtifacts := make([]*types.PoCArtifactV2, 0, len(body.Artifacts))
 	for _, a := range body.Artifacts {
 		var vectorBytes []byte
-		if decode {
-			if len(a.KPointsSteps) == 0 {
-				logging.Error("ArtifactBatchV2-callback. DECODE stage requires k_points_steps", types.PoC,
-					"nonce", a.Nonce)
-				return echo.NewHTTPError(http.StatusBadRequest, "DECODE stage requires k_points_steps")
-			}
-			vectorBytes, err = mlnodeclient.KStepsToBytes(a.KPointsSteps)
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			vectorBytes, err = decodeArtifactVector(a, n)
 			if err != nil {
-				logging.Error("ArtifactBatchV2-callback. Invalid k_points_steps", types.PoC,
-					"nonce", a.Nonce, "error", err)
 				return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-			}
-			if int64(len(vectorBytes)) != n+1 {
-				logging.Error("ArtifactBatchV2-callback. Invalid trajectory length", types.PoC,
-					"nonce", a.Nonce, "got", len(vectorBytes), "want", n+1)
-				return echo.NewHTTPError(http.StatusBadRequest, "invalid trajectory length")
 			}
 		} else {
 			vectorBytes, err = base64.StdEncoding.DecodeString(a.VectorB64)
@@ -157,52 +150,28 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 	return ctx.NoContent(http.StatusOK)
 }
 
-// generatedArtifactScheme is the encoding of this batch.
-// A long-running challenge reads the live regular scheme, the same params generation uses.
-// Regular PoC and confirmation PoC keep the recipe frozen at stage start.
-func (s *Server) generatedArtifactScheme(epochState *chainphase.EpochState, modelID string, stageHeight int64) (types.PocScheme, int64, error) {
-	if poc.GeneratingChallengeWork(epochState) != nil {
-		return liveRegularScheme(s.broker, modelID)
+// Challenges keep their own work height but use their epoch's regular recipe.
+func (s *Server) callbackRecipe(stageHeight int64, challenge *types.OpenPoCChallenge) (*types.PocStageRecipe, error) {
+	var recipe *types.PocStageRecipe
+	var err error
+	if challenge != nil && challenge.StartHeight() == stageHeight {
+		recipe, err = s.broker.EpochRecipe(challenge.Challenge.EpochIndex)
+	} else {
+		recipe, err = s.broker.StageRecipe(stageHeight)
 	}
-	recipe, err := s.broker.StageRecipe(stageHeight)
 	if err != nil || recipe == nil {
-		return 0, 0, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+		return nil, echo.NewHTTPError(http.StatusServiceUnavailable, "missing poc stage recipe")
 	}
-	n := int64(0)
-	if mc, ok := recipe.GetModelConfig(modelID); ok {
-		if steps, ok := mc.MaxTokensForScheme(recipe.Scheme); ok {
-			n = steps
-		}
-	}
-	return recipe.Scheme, n, nil
-}
-
-func liveRegularScheme(b *broker.Broker, modelID string) (types.PocScheme, int64, error) {
-	if b == nil || b.GetChainBridge() == nil {
-		return 0, 0, fmt.Errorf("missing live poc params")
-	}
-	resp, err := b.GetChainBridge().GetParams()
-	if err != nil {
-		return 0, 0, err
-	}
-	if resp == nil || resp.Params.PocParams == nil {
-		return 0, 0, fmt.Errorf("missing live poc params")
-	}
-	pocParams := resp.Params.PocParams
-	mc, ok := pocParams.GetModelConfig(modelID)
-	if !ok || mc == nil {
-		return 0, 0, fmt.Errorf("model %s missing from live poc params", modelID)
-	}
-	steps, ok := mc.MaxTokensForScheme(pocParams.PocScheme)
-	if !ok {
-		return 0, 0, fmt.Errorf("model %s missing live scheme block", modelID)
-	}
-	return pocParams.PocScheme, steps, nil
+	return recipe, nil
 }
 
 // postValidatedArtifactsV2 handles PoC v2 validation result callbacks from MLNode.
 // Receives validation results and submits them to chain via MsgSubmitPocValidationsV2 (batch).
 func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
+	return s.postValidatedArtifacts(ctx, types.PocScheme_POC_SCHEME_PREFILL)
+}
+
+func (s *Server) postValidatedArtifacts(ctx echo.Context, scheme types.PocScheme) error {
 	var body mlnodeclient.ValidatedResultV2
 
 	if err := ctx.Bind(&body); err != nil {
@@ -231,12 +200,6 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "not in PoC validate phase")
 	}
 
-	if body.ShouldAbstain() {
-		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
-			"nNanSteps", body.NNanSteps, "nExcluded", body.NExcluded, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
-		return ctx.NoContent(http.StatusOK)
-	}
-
 	// Convert public key to bech32 address
 	// PoC validation provides hex-encoded public keys
 	address, err := utils.PubKeyHexToAddress(body.PublicKey)
@@ -247,6 +210,23 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 			"fraudDetected", body.FraudDetected,
 			"error", err)
 		return err
+	}
+
+	recipe, err := s.callbackRecipe(body.BlockHeight, poc.OpenChallenges.VoteFor(address, body.BlockHeight))
+	if err != nil {
+		return err
+	}
+	if recipe.Scheme != scheme {
+		return echo.NewHTTPError(http.StatusBadRequest, "callback version does not match stage scheme")
+	}
+	if _, ok := recipe.GetModelConfig(modelID); !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "model missing from stage recipe")
+	}
+
+	if body.ShouldAbstain() {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
+			"nNanSteps", body.NNanSteps, "nExcluded", body.NExcluded, "nMismatch", body.NMismatch, "nTotal", body.NTotal)
+		return ctx.NoContent(http.StatusOK)
 	}
 
 	// Convert fraud_detected + n_total to validated_weight

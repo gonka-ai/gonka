@@ -282,7 +282,7 @@ func DefaultPocParams() *PocParams {
 		PocDataPruningEpochThreshold: 1,
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
-		SeqLen:                       256,                     // Sequence length for PoC
+		SeqLen:                       1024,                    // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
 		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
@@ -304,7 +304,7 @@ func DefaultPoCModelConfig() *PoCModelConfig {
 		PenaltyStartEpoch: 0,
 		Schemes: []*PocSchemeParams{{
 			Scheme:   PocScheme_POC_SCHEME_PREFILL,
-			SeqLen:   256,
+			SeqLen:   1024,
 			StatTest: DefaultPoCStatTestParams(),
 			DynamicCoefficient: &DynamicCoefficientModelConfig{
 				CoeffMin:           DecimalFromFloat(1.0),
@@ -312,7 +312,7 @@ func DefaultPoCModelConfig() *PoCModelConfig {
 				RelativeDifficulty: DecimalFromFloat(1.0),
 				TargetShareBps:     10000,
 			},
-		}},
+		}, DefaultDecodeScheme("")},
 	}
 }
 
@@ -1001,7 +1001,7 @@ func (p *PocParams) Validate() error {
 			return err
 		}
 	}
-	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && len(p.GetModelConfigs()) == 0 {
+	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && p.PocScheme == PocScheme_POC_SCHEME_DECODE && len(p.GetModelConfigs()) == 0 {
 		return fmt.Errorf("DECODE requires at least one model with a DECODE scheme block")
 	}
 	if p.DynamicCoefficientParams != nil {

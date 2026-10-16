@@ -19,7 +19,7 @@ func TestPrepareGenesisPocModels_ReplacesEmptyPlaceholder(t *testing.T) {
 	for _, model := range params.PocParams.Models {
 		block, ok := model.SchemeParams(PocScheme_POC_SCHEME_PREFILL)
 		require.True(t, ok)
-		require.Equal(t, int64(256), block.SeqLen)
+		require.Equal(t, int64(1024), block.SeqLen)
 		require.Equal(t, int64(0), block.MaxTokens)
 		require.NotNil(t, block.StatTest)
 		require.NotNil(t, block.DynamicCoefficient)

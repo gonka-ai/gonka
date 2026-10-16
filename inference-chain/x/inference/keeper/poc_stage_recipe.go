@@ -21,7 +21,7 @@ func (k Keeper) GetPocStageRecipe(ctx context.Context, stageHeight int64) (types
 
 // FreezePocStageRecipe writes the live params snapshot for this stage height once.
 // A later MsgUpdateParams must not change an in-flight stage.
-func (k Keeper) FreezePocStageRecipe(ctx context.Context, stageHeight int64, event *types.ConfirmationPoCEvent) (*types.PocStageRecipe, error) {
+func (k Keeper) FreezePocStageRecipe(ctx context.Context, stageHeight int64) (*types.PocStageRecipe, error) {
 	existing, found, err := k.GetPocStageRecipe(ctx, stageHeight)
 	if err != nil {
 		return nil, err
@@ -34,9 +34,7 @@ func (k Keeper) FreezePocStageRecipe(ctx context.Context, stageHeight int64, eve
 	if err != nil {
 		return nil, err
 	}
-	epoch, _ := k.GetEffectiveEpochIndex(ctx)
-	graceEpoch, graceFound := k.GetPocSchemeEnabledEpoch(ctx)
-	recipe, err := types.SnapshotPocStageRecipe(params.PocParams, event, stageHeight, epoch, graceEpoch, graceFound)
+	recipe, err := types.SnapshotPocStageRecipe(params.PocParams, stageHeight)
 	if err != nil {
 		return nil, err
 	}
@@ -44,4 +42,18 @@ func (k Keeper) FreezePocStageRecipe(ctx context.Context, stageHeight int64, eve
 		return nil, err
 	}
 	return recipe, nil
+}
+
+// GetEpochPocRecipe is the regular recipe behind an epoch's measured weights.
+func (k Keeper) GetEpochPocRecipe(ctx context.Context, epochIndex uint64) (types.PocStageRecipe, bool, error) {
+	epoch, found := k.GetEpoch(ctx, epochIndex)
+	if !found || epoch == nil {
+		return types.PocStageRecipe{}, false, nil
+	}
+	height := epoch.PocStartBlockHeight
+	// A liveness fallback retains the measurement height of the carried weights.
+	if participants, ok := k.GetActiveParticipants(ctx, epochIndex); ok {
+		height = participants.PocStartBlockHeight
+	}
+	return k.GetPocStageRecipe(ctx, height)
 }

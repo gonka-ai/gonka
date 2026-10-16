@@ -1395,7 +1395,7 @@ func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
 		},
 	}}
 
-	result, err := am.resolveEpochCoefficients(ctx, active, 2)
+	result, err := am.resolveEpochCoefficients(ctx, active, 2, 200)
 	require.NoError(t, err)
 	require.Equal(t, "0.750000000000000000", result.Effective["a"].String())
 	require.Equal(t, "1.050000000000000000", result.Effective["b"].String())
@@ -1418,7 +1418,7 @@ func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
 		Models:  []string{"a"},
 		MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}}},
 	}}
-	result, err := am.resolveEpochCoefficients(ctx, active, 1)
+	result, err := am.resolveEpochCoefficients(ctx, active, 1, 0)
 	require.NoError(t, err)
 	require.Equal(t, "0.500000000000000000", result.Effective["a"].String())
 	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
@@ -1467,7 +1467,7 @@ func TestResolveEpochCoefficients_SchemeChangeDropsPriorController(t *testing.T)
 		MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}}},
 	}}
 
-	result, err := am.resolveEpochCoefficients(ctx, active, 2)
+	result, err := am.resolveEpochCoefficients(ctx, active, 2, 200)
 	require.NoError(t, err)
 	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
 	require.Equal(t, "0.500000000000000000", result.Effective["a"].String())

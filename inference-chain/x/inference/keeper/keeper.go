@@ -81,7 +81,6 @@ type (
 		LastUpgradeHeightItem          collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
 		PocStageRecipes                collections.Map[int64, types.PocStageRecipe]
-		PocSchemeEnabledEpoch          collections.Item[uint64]
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap   collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
@@ -110,11 +109,11 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Devshard escrow collections
-		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
-		DevshardEscrowCounter     collections.Item[uint64]
-		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
-		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
-		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter       collections.Item[uint64]
+		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
@@ -144,9 +143,9 @@ type (
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
-		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		ClaimRecipientsByEpoch  collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges           collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits     collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
 		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
 	}
 )
@@ -455,12 +454,6 @@ func NewKeeper(
 			"poc_stage_recipes",
 			collections.Int64Key,
 			codec.CollValue[types.PocStageRecipe](cdc),
-		),
-		PocSchemeEnabledEpoch: collections.NewItem(
-			sb,
-			types.PocSchemeEnabledEpochPrefix,
-			"poc_scheme_enabled_epoch",
-			collections.Uint64Value,
 		),
 		BridgeContractAddresses: collections.NewMap(
 			sb,

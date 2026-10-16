@@ -6,40 +6,6 @@ import (
 	gogoproto "github.com/cosmos/gogoproto/proto"
 )
 
-// SchemeForStage is the leaf recipe for a stage from live params. Call only when
-// freezing a PocStageRecipe. After that, generate/validate/evaluate read the store.
-// Regular PoC: event == nil → poc_scheme. CPoC EventSequence < K uses slot 17.
-func SchemeForStage(p *PocParams, event *ConfirmationPoCEvent) PocScheme {
-	if p == nil {
-		return PocScheme_POC_SCHEME_PREFILL
-	}
-	if event != nil && p.ConfirmationSchemeEvents > 0 &&
-		event.EventSequence < uint64(p.ConfirmationSchemeEvents) {
-		return p.ConfirmationPocScheme
-	}
-	return p.PocScheme
-}
-
-// IsSchemeTracking is dry-run CPoC: the event's scheme differs from regular PoC.
-// Regular PoC (event == nil) is never tracking.
-func IsSchemeTracking(p *PocParams, event *ConfirmationPoCEvent) bool {
-	if p == nil || event == nil {
-		return false
-	}
-	return SchemeForStage(p, event) != p.PocScheme
-}
-
-// IsSchemeTrackingWithGrace also dry-runs CPoC in the epoch of a poc_scheme change.
-func IsSchemeTrackingWithGrace(p *PocParams, event *ConfirmationPoCEvent, epoch, graceEpoch uint64, graceFound bool) bool {
-	if event == nil {
-		return false
-	}
-	if IsSchemeTracking(p, event) {
-		return true
-	}
-	return graceFound && epoch == graceEpoch
-}
-
 // SchemeParams returns the recipe block for scheme.
 // A populated schemes list never falls back to another scheme.
 // An empty list still reads the flat prefill fields (flat genesis and the
@@ -114,22 +80,16 @@ func (m *PoCModelConfig) MaxTokensForScheme(scheme PocScheme) (int64, bool) {
 	return block.MaxTokens, true
 }
 
-// activePocSchemes is the regular slot plus the confirmation slot when K > 0.
+// activePocSchemes includes the first confirmation event's DECODE trial while
+// PREFILL is the regular mode. DECODE is the permanent, single-scheme mode.
 func activePocSchemes(p *PocParams) (map[PocScheme]struct{}, error) {
-	required := map[PocScheme]struct{}{}
-	if p == nil {
-		required[PocScheme_POC_SCHEME_PREFILL] = struct{}{}
-		return required, nil
+	scheme := p.GetPocScheme()
+	if !knownPocScheme(scheme) {
+		return nil, fmt.Errorf("unknown poc_scheme %d", scheme)
 	}
-	if !knownPocScheme(p.PocScheme) {
-		return nil, fmt.Errorf("poc_params.poc_scheme has unknown value %d", p.PocScheme)
-	}
-	required[p.PocScheme] = struct{}{}
-	if p.ConfirmationSchemeEvents > 0 {
-		if !knownPocScheme(p.ConfirmationPocScheme) {
-			return nil, fmt.Errorf("poc_params.confirmation_poc_scheme has unknown value %d", p.ConfirmationPocScheme)
-		}
-		required[p.ConfirmationPocScheme] = struct{}{}
+	required := map[PocScheme]struct{}{PocScheme_POC_SCHEME_DECODE: {}}
+	if scheme == PocScheme_POC_SCHEME_PREFILL {
+		required[scheme] = struct{}{}
 	}
 	return required, nil
 }
@@ -156,7 +116,7 @@ func (m *PoCModelConfig) validateSchemeBlocks(required map[PocScheme]struct{}) e
 		if m.SeqLen < 0 {
 			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
 		}
-		if needDecode {
+		if needDecode && !needPrefill {
 			return fmt.Errorf("model %q requires a DECODE scheme block", m.ModelId)
 		}
 		return nil
@@ -198,39 +158,56 @@ func (m *PoCModelConfig) validateSchemeBlocks(required map[PocScheme]struct{}) e
 	return nil
 }
 
-// SnapshotPocStageRecipe copies live params into a write-once stage snapshot.
-// A model without a block for the stage scheme rejects the whole snapshot.
-func SnapshotPocStageRecipe(
-	p *PocParams,
-	event *ConfirmationPoCEvent,
-	stageHeight int64,
-	epoch, graceEpoch uint64,
-	graceFound bool,
-) (*PocStageRecipe, error) {
-	if p == nil {
-		p = &PocParams{}
+// SnapshotPocStageRecipe freezes the epoch's recipes at regular PoC start.
+// PREFILL keeps both blocks for its first confirmation event's DECODE trial.
+func SnapshotPocStageRecipe(p *PocParams, stageHeight int64) (*PocStageRecipe, error) {
+	required, err := activePocSchemes(p)
+	if err != nil {
+		return nil, err
 	}
-	scheme := SchemeForStage(p, event)
-	models := make([]*PoCModelConfig, 0, len(p.GetModelConfigs()))
-	for _, m := range p.GetModelConfigs() {
-		if m == nil {
-			continue
-		}
-		cloned := gogoproto.Clone(m).(*PoCModelConfig)
-		block, ok := cloned.SchemeParams(scheme)
-		if !ok || block == nil {
-			return nil, fmt.Errorf("model %q has no %s scheme block", cloned.ModelId, scheme.String())
-		}
-		cloned.Schemes = []*PocSchemeParams{gogoproto.Clone(block).(*PocSchemeParams)}
-		models = append(models, cloned)
-	}
-	return &PocStageRecipe{
+	recipe := &PocStageRecipe{
 		StageHeight:           stageHeight,
-		Scheme:                scheme,
-		Tracking:              IsSchemeTrackingWithGrace(p, event, epoch, graceEpoch, graceFound),
-		PocStrongerRngEnabled: p.PocStrongerRngEnabled,
-		Models:                models,
-	}, nil
+		Scheme:                p.GetPocScheme(),
+		PocStrongerRngEnabled: p.GetPocStrongerRngEnabled(),
+	}
+	for _, model := range p.GetModelConfigs() {
+		if model == nil {
+			return nil, fmt.Errorf("nil PoC model")
+		}
+		cloned := gogoproto.Clone(model).(*PoCModelConfig)
+		cloned.Schemes = nil
+		for _, scheme := range []PocScheme{PocScheme_POC_SCHEME_PREFILL, PocScheme_POC_SCHEME_DECODE} {
+			if _, needed := required[scheme]; !needed {
+				continue
+			}
+			block, ok := model.SchemeParams(scheme)
+			if !ok {
+				return nil, fmt.Errorf("model %q has no %s scheme block", model.ModelId, scheme)
+			}
+			cloned.Schemes = append(cloned.Schemes, gogoproto.Clone(block).(*PocSchemeParams))
+		}
+		recipe.Models = append(recipe.Models, cloned)
+	}
+	return recipe, nil
+}
+
+// ConfirmationRecipe derives an event from its epoch, never from live params.
+// The first confirmation in transitional PREFILL mode only trials DECODE.
+func (r *PocStageRecipe) ConfirmationRecipe(event *ConfirmationPoCEvent) (*PocStageRecipe, error) {
+	out := gogoproto.Clone(r).(*PocStageRecipe)
+	out.StageHeight = event.TriggerHeight
+	out.Tracking = r.Scheme == PocScheme_POC_SCHEME_PREFILL && event.EventSequence == 0
+	if out.Tracking {
+		out.Scheme = PocScheme_POC_SCHEME_DECODE
+	}
+	for _, model := range out.Models {
+		block, ok := model.SchemeParams(out.Scheme)
+		if !ok {
+			return nil, fmt.Errorf("model %q has no %s scheme block", model.ModelId, out.Scheme)
+		}
+		model.Schemes = []*PocSchemeParams{block}
+	}
+	return out, nil
 }
 
 // ApplyStageRecipe returns a PocParams view of a frozen recipe so generate/validate
@@ -244,7 +221,6 @@ func ApplyStageRecipe(p *PocParams, recipe *PocStageRecipe) *PocParams {
 		return out
 	}
 	out.PocScheme = recipe.Scheme
-	out.ConfirmationSchemeEvents = 0
 	out.PocStrongerRngEnabled = recipe.PocStrongerRngEnabled
 	out.Models = recipe.Models
 	return out

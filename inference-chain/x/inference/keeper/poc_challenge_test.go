@@ -49,6 +49,8 @@ func setupChallengeCreate(t *testing.T, height int64) (keeper.Keeper, sdk.Contex
 	require.NoError(t, k.SetParams(ctx, params))
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	_, freezeErr := k.FreezePocStageRecipe(ctx, 0)
+	require.NoError(t, freezeErr)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex:   2,
 		EpochGroupId: 7,

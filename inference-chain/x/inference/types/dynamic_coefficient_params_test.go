@@ -21,7 +21,7 @@ func testDynamicPocParams() *PocParams {
 						RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
 						TargetShareBps:     5000,
 					},
-				}},
+				}, DefaultDecodeScheme("")},
 			},
 			{
 				ModelId:           "b",
@@ -35,7 +35,7 @@ func testDynamicPocParams() *PocParams {
 						RelativeDifficulty: &Decimal{Value: 1, Exponent: 0},
 						TargetShareBps:     5000,
 					},
-				}},
+				}, DefaultDecodeScheme("")},
 			},
 		},
 		DynamicCoefficientParams: &DynamicCoefficientParams{

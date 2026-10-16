@@ -2,13 +2,13 @@ package types
 
 import gogoproto "github.com/cosmos/gogoproto/proto"
 
-// PrepareGenesisPocModels gives a fresh chain one PREFILL block per governance
+// PrepareGenesisPocModels gives a fresh chain both recipe blocks per governance
 // model. A new chain does not run the v0.2.17 upgrade, and DAPI mines only from
 // poc_params.models. An empty model_id placeholder, or a genesis that only has
 // the model list and the old top-level model_id, is rewritten here.
 //
-// Models that already cover every id and whose PREFILL shares sum to 10000 are
-// left alone, aside from copying a flat prefill recipe onto the scheme block.
+// Existing recipe values are retained; missing blocks and invalid share totals
+// are initialized for the configured model set.
 func PrepareGenesisPocModels(params *Params, modelIDs []string) {
 	if params == nil {
 		return
@@ -26,7 +26,7 @@ func PrepareGenesisPocModels(params *Params, modelIDs []string) {
 	}
 	seqLen := p.SeqLen
 	if seqLen <= 0 {
-		seqLen = 256
+		seqLen = 1024
 	}
 	stat := p.StatTest
 	if stat == nil {
@@ -59,8 +59,25 @@ func PrepareGenesisPocModels(params *Params, modelIDs []string) {
 	for _, model := range kept {
 		ensureGenesisPrefillBlock(model, seqLen, stat)
 	}
-	if !genesisPrefillSharesReady(kept) {
+	if !genesisSharesReady(kept, PocScheme_POC_SCHEME_PREFILL) {
 		assignGenesisPrefillShares(kept, p.DynamicCoefficientParams.TargetZoneBps)
+	}
+	for _, model := range kept {
+		if _, ok := model.SchemeParams(PocScheme_POC_SCHEME_DECODE); !ok {
+			model.Schemes = append(model.Schemes, DefaultDecodeScheme(model.ModelId))
+		}
+	}
+	// Genesis can run any subset of the production models. Allocate both schemes
+	// over that set while keeping their independent difficulty and bounds.
+	if !genesisSharesReady(kept, PocScheme_POC_SCHEME_DECODE) {
+		shares := genesisTargetShares(len(kept), p.DynamicCoefficientParams.TargetZoneBps)
+		for i, model := range kept {
+			block, _ := model.SchemeParams(PocScheme_POC_SCHEME_DECODE)
+			if block.DynamicCoefficient == nil {
+				block.DynamicCoefficient = DefaultDecodeScheme(model.ModelId).DynamicCoefficient
+			}
+			block.DynamicCoefficient.TargetShareBps = shares[i]
+		}
 	}
 	p.Models = kept
 }
@@ -128,10 +145,10 @@ func ensureGenesisPrefillBlock(model *PoCModelConfig, seqLen int64, stat *PoCSta
 	model.DynamicCoefficient = nil
 }
 
-func genesisPrefillSharesReady(models []*PoCModelConfig) bool {
+func genesisSharesReady(models []*PoCModelConfig, scheme PocScheme) bool {
 	var total uint64
 	for _, model := range models {
-		coeff := model.DynamicCoefficientFor(PocScheme_POC_SCHEME_PREFILL)
+		coeff := model.DynamicCoefficientFor(scheme)
 		if coeff == nil {
 			return false
 		}

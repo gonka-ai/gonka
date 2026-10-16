@@ -618,6 +618,13 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 		CoeffMax:           &inferencetypes.Decimal{Value: 8, Exponent: -1},
 		RelativeDifficulty: &inferencetypes.Decimal{Value: 3, Exponent: 0}, TargetShareBps: 6000,
 	}
+	// The current governance handler requires the v0.2.17 recipe format.
+	for _, model := range params.PocParams.Models {
+		model.Schemes = []*inferencetypes.PocSchemeParams{
+			{Scheme: inferencetypes.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024, DynamicCoefficient: model.DynamicCoefficient},
+			inferencetypes.DefaultDecodeScheme(model.ModelId),
+		}
+	}
 	ms := keeper.NewMsgServerImpl(k)
 	_, err = ms.UpdateParams(ctx, &inferencetypes.MsgUpdateParams{Authority: k.GetAuthority(), Params: params})
 	require.NoError(t, err)
