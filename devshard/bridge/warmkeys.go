@@ -406,7 +406,12 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	}
 	done := make(chan struct{})
 	c.loading[granter] = done
-	if g := c.granters[granter]; g != nil && !background {
+	if !background {
+		g := c.granters[granter]
+		if g == nil {
+			g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
+			c.granters[granter] = g
+		}
 		g.attemptedAt = c.now()
 	}
 	c.mu.Unlock()

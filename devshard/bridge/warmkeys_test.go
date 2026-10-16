@@ -218,9 +218,11 @@ func TestWarmKeyLogCopy_MissSchedulesAReload(t *testing.T) {
 	require.True(t, ok)
 	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"}, WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "next"})
 
-	ok, err = IsWarmKeyLive(cp, "cold", "next", now)
-	require.NoError(t, err)
-	require.False(t, ok, "a miss right after the load does not reload")
+	for i := 0; i < 3; i++ {
+		ok, err = IsWarmKeyLive(cp, "cold", "next", now)
+		require.NoError(t, err)
+		require.False(t, ok, "a miss right after the load does not reload")
+	}
 	require.Equal(t, 1, chain.count())
 
 	now = now.Add(10 * time.Second)
@@ -231,6 +233,7 @@ func TestWarmKeyLogCopy_MissSchedulesAReload(t *testing.T) {
 		ok, err := IsWarmKeyLive(cp, "cold", "next", now)
 		return err == nil && ok
 	}, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, 2, chain.count())
 }
 
 // Test flow:
@@ -256,9 +259,9 @@ func TestWarmKeyLogCopy_MissReloadsAreThrottledWhileTheChainFails(t *testing.T) 
 			require.NoError(t, err)
 			require.False(t, ok)
 		}
-		// The first miss after the load is due at once (no attempt yet),
-		// the next ones every six seconds.
-		if second == 1 || second == 7 {
+		// The load counts as an attempt, so a reload is due six seconds
+		// after it and every six seconds from then on.
+		if second == 6 || second == 12 {
 			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
 		} else {
 			require.Equal(t, before, chain.count(), "second %d", second)
@@ -292,7 +295,7 @@ func TestWarmKeyLogCopy_StaleRefreshesAreThrottledWhileTheChainFails(t *testing.
 			require.NoError(t, err, "second %d", second)
 			require.Len(t, live, 1, "the stale copy keeps answering")
 		}
-		if second == 2 || second == 8 {
+		if second == 6 || second == 12 {
 			require.Eventually(t, func() bool { return chain.count() == before+1 }, time.Second, time.Millisecond, "second %d", second)
 		} else {
 			require.Equal(t, before, chain.count(), "second %d", second)

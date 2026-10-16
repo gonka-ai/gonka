@@ -926,4 +926,16 @@ func TestServeGossipNonce_AdmitsAFutureNonceByAGrantedKey(t *testing.T) {
 	require.ErrorIs(t, srv.ServeGossipNonce(sign(warmSigner, 1)), ErrGossipInvalidStateSig, "nonce 1 is judged by the history at nonce 1")
 	stranger := testutil.MustGenerateKey(t)
 	require.ErrorIs(t, srv.ServeGossipNonce(sign(stranger, 3)), ErrGossipInvalidStateSig)
+
+	// Bind and revoke the key, then re-grant it on chain: peers may have
+	// bound it again in diffs this host has not applied, so a future nonce
+	// signed by it still starts recovery, while nonces at or below the head
+	// follow the history.
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 3, []*types.DevshardTx{testutil.WarmKeyRevokeTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+	require.NoError(t, srv.ServeGossipNonce(sign(warmSigner, 5)), "a revoked key with a live grant may be bound again ahead")
+	require.ErrorIs(t, srv.ServeGossipNonce(sign(warmSigner, 3)), ErrGossipInvalidStateSig, "revoked at 3")
 }

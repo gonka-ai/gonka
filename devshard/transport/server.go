@@ -966,11 +966,11 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	// are (history plus the grant source) and the notification can start
 	// the catch-up that brings those bindings in. A nonce at or below the
 	// head is judged by the history at that nonce.
-	actors := s.host.SlotActorsAt(req.Nonce)
 	if req.Nonce > s.host.LatestNonce() {
-		actors = s.host.SlotActors()
-	}
-	if !actors.Allows(req.SlotID, addr) {
+		if !s.host.SlotActors().Allows(req.SlotID, addr) && !s.futureSignerGranted(req.SlotID, addr) {
+			return ErrGossipInvalidStateSig
+		}
+	} else if !s.host.SlotActorsAt(req.Nonce).Allows(req.SlotID, addr) {
 		return ErrGossipInvalidStateSig
 	}
 
@@ -984,6 +984,23 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 		logging.Debug("accumulate gossip sig skipped", "subsystem", "server", "nonce", req.Nonce, "error", err)
 	}
 	return nil
+}
+
+// futureSignerGranted reports whether addr holds a live grant from the slot's
+// validator according to the bridge: a key the history revoked may be bound
+// again by a later grant in diffs this host has not applied, and a
+// notification signed by it has to start that catch-up. Signature
+// accumulation still checks the signer against the recovered history.
+func (s *Server) futureSignerGranted(slotID uint32, addr string) bool {
+	if s.bridge == nil {
+		return false
+	}
+	group := s.host.Group()
+	if int(slotID) >= len(group) {
+		return false
+	}
+	ok, err := s.bridge.VerifyWarmKey(addr, group[slotID].ValidatorAddress)
+	return err == nil && ok
 }
 
 func (s *Server) HandleGossipTxs(c echo.Context) (err error) {
