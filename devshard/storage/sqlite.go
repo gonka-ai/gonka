@@ -834,6 +834,54 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	return recs, nil
 }
 
+func (s *SQLite) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.readDB.Query(
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM diffs
+		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
+		 ORDER BY nonce`,
+		escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.DiffWire
+	for rows.Next() {
+		var w types.DiffWire
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLite) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	var hash []byte
+	err = p.readDB.QueryRow(
+		`SELECT state_hash FROM diffs WHERE escrow_id = ? AND nonce = ?`,
+		escrowID, nonce,
+	).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return hash, true, nil
+}
+
 func (s *SQLite) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	if fromNonce > toNonce || limit <= 0 {
 		return nil, nil

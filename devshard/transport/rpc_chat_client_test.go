@@ -51,7 +51,7 @@ func (c chatLookup) SessionForOwner(string, string) (rpcserver.SessionCore, erro
 	return c.SessionServerExisting("")
 }
 
-func (c chatLookup) SessionForStartProof(string, string, []types.Diff, string) (rpcserver.SessionCore, error) {
+func (c chatLookup) SessionForStartProof(string, string, func() ([]types.Diff, error), string) (rpcserver.SessionCore, error) {
 	return c.SessionServerExisting("")
 }
 

@@ -652,6 +652,48 @@ func txPriority(tx *types.DevshardTx) int {
 	}
 }
 
+// MemoryCounts is the size of the maps that retain an escrow in this process.
+// Lengths only: nothing is copied and no record is visited.
+type MemoryCounts struct {
+	EscrowID        string
+	Live            int
+	Sealed          int
+	RetainedDiffs   int
+	PendingTxs      int
+	SignatureNonces int
+	NonceStates     int
+	AppliedTxKeys   int
+	PendingTxKeys   int
+	HostsCatchingUp int
+}
+
+// MemoryCounts reads those lengths. The map lengths are taken under s.mu.
+// catchingUp is a fixed slice of counters and is read the same way the session
+// picker reads it, without s.mu.
+func (s *Session) MemoryCounts() MemoryCounts {
+	if s == nil {
+		return MemoryCounts{}
+	}
+	out := MemoryCounts{EscrowID: s.escrowID}
+	if s.sm != nil {
+		out.Live, out.Sealed = s.sm.LiveAndSealedCounts()
+	}
+	s.mu.Lock()
+	out.RetainedDiffs = len(s.diffs)
+	out.PendingTxs = len(s.pendingTxs)
+	out.SignatureNonces = len(s.signatures)
+	out.NonceStates = len(s.nonceStates)
+	out.AppliedTxKeys = len(s.appliedTxKeys)
+	out.PendingTxKeys = len(s.pendingTxKeys)
+	s.mu.Unlock()
+	for i := range s.catchingUp {
+		if s.catchingUp[i].Load() > 0 {
+			out.HostsCatchingUp++
+		}
+	}
+	return out
+}
+
 // diffsForHost returns catch-up diffs for a host (from its last sync nonce to current).
 // Caller must hold s.mu.
 func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
