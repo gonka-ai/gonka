@@ -578,7 +578,7 @@ func (m *DevshardMetrics) RecordStartupSkippedEscrow(escrowID, model, reason str
 }
 
 // ClearStartupSkippedEscrow drops the startup-skipped series of an escrow whose
-// runtime has started, so the gauge shows only escrows still waiting.
+// wait has ended, whether it started or became inactive.
 func (m *DevshardMetrics) ClearStartupSkippedEscrow(escrowID string) {
 	if m == nil {
 		return

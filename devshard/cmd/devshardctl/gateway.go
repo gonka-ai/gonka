@@ -3677,7 +3677,6 @@ func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDev
 	// background retry gets to it; the retry must not build it again, and the
 	// startup-skipped series must not keep reporting it.
 	g.stopAwaitingStart(record.ID)
-	g.metrics.ClearStartupSkippedEscrow(record.ID)
 	startEscrowWarmup(rt, g.accounting, g.metrics)
 	return record, nil
 }
@@ -4280,6 +4279,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 	g.runtimeOrder = append(g.runtimeOrder, rt)
 	g.attachRuntimeSharedState(rt)
 	g.sortRuntimeOrderLocked()
+	g.stopAwaitingStart(record.ID)
 	writeJSON(w, map[string]any{
 		"id":           record.ID,
 		"active":       true,

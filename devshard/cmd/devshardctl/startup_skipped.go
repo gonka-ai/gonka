@@ -16,9 +16,10 @@ import (
 // balance-check tick retries the build; a start registers the runtime, a final
 // reason deactivates the escrow, anything else waits for the next tick.
 //
-// Ownership: the retry registers its runtime only while the escrow is still
-// waiting, unclaimed, and active in the store, and it checks all three under
-// g.mu in the same critical section that registers. A manual settlement of a
+// Ownership: the retry registers its runtime or deactivates the escrow only
+// while it is still waiting, unclaimed, and has no resident runtime. It checks
+// ownership under g.mu in the same critical section as the change; registration
+// also checks that the escrow is still active in the store. A manual settlement of a
 // waiting escrow claims it under g.mu for its own duration (several
 // settlements may overlap; the claim is a count), so a runtime the retry built
 // in the meantime is dropped instead of registered. A claimed escrow still
@@ -71,6 +72,7 @@ func (g *Gateway) stopAwaitingStart(escrowID string) {
 	defer g.awaitingStartMu.Unlock()
 	delete(g.awaitingStart, escrowID)
 	delete(g.startClaims, escrowID)
+	g.metrics.ClearStartupSkippedEscrow(escrowID)
 }
 
 // claimAwaitingStart takes a waiting escrow away from the retry for the
@@ -152,12 +154,7 @@ func (g *Gateway) retrySkippedEscrows(ctx context.Context) {
 			continue
 		case errors.Is(buildErr, user.ErrLocalStateUnrecoverable), errors.Is(buildErr, bridge.ErrEscrowNotFound),
 			errors.Is(buildErr, bridge.ErrEscrowSettled), errors.Is(buildErr, errRuntimePrivateKeyMissing):
-			log.Printf("devshard %s can no longer start, marking inactive: %v", escrowID, buildErr)
-			if deactivateErr := g.store.SetDevshardActive(ctx, escrowID, false); deactivateErr != nil {
-				log.Printf("devshard %s deactivate: %v", escrowID, deactivateErr)
-				continue
-			}
-			g.stopAwaitingStart(escrowID)
+			g.deactivateFailedRetry(ctx, escrowID, buildErr)
 			continue
 		case buildErr != nil:
 			log.Printf("devshard %s start retry failed (%s), will retry: %v", escrowID, reason, buildErr)
@@ -165,6 +162,28 @@ func (g *Gateway) retrySkippedEscrows(ctx context.Context) {
 		}
 		g.registerRetriedRuntime(ctx, escrowID, reason, runtime)
 	}
+}
+
+// A final error belongs to the build that just finished. Another path may have
+// started or claimed the escrow in the meantime. Check ownership and persist
+// deactivation under the same lock used by admin registration and settlement
+// claims, just as registerRetriedRuntime does for a successful build.
+func (g *Gateway) deactivateFailedRetry(ctx context.Context, escrowID string, buildErr error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, exists := g.runtimes[escrowID]; exists {
+		g.stopAwaitingStart(escrowID)
+		return
+	}
+	if !g.awaitsRetry(escrowID) {
+		return
+	}
+	log.Printf("devshard %s can no longer start, marking inactive: %v", escrowID, buildErr)
+	if err := g.store.SetDevshardActive(ctx, escrowID, false); err != nil {
+		log.Printf("devshard %s deactivate: %v", escrowID, err)
+		return
+	}
+	g.stopAwaitingStart(escrowID)
 }
 
 // registerRetriedRuntime publishes a runtime the retry built, unless the escrow
@@ -178,7 +197,6 @@ func (g *Gateway) registerRetriedRuntime(ctx context.Context, escrowID, reason s
 		g.stopAwaitingStart(escrowID)
 		g.mu.Unlock()
 		runtime.discard()
-		g.metrics.ClearStartupSkippedEscrow(escrowID)
 		log.Printf("devshard %s started by another path while the retry was building, dropping the retried runtime", escrowID)
 		return
 	}
@@ -209,6 +227,5 @@ func (g *Gateway) registerRetriedRuntime(ctx context.Context, escrowID, reason s
 	g.sortRuntimeOrderLocked()
 	g.stopAwaitingStart(escrowID)
 	g.mu.Unlock()
-	g.metrics.ClearStartupSkippedEscrow(escrowID)
 	log.Printf("devshard %s runtime started after a startup skip (%s)", escrowID, reason)
 }
