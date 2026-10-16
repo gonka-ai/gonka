@@ -70,7 +70,12 @@ func TestLiquidityPoolBypass_Cw20SendTarget(t *testing.T) {
 	}{
 		{"send to pool", `{"send":{"contract":"gonka1pool","amount":"1000","msg":"e30="}}`, true},
 		{"unpadded base64 msg", `{"send":{"contract":"gonka1pool","amount":"1000","msg":"e30"}}`, true},
-		{"empty msg", `{"send":{"contract":"gonka1pool","amount":"1","msg":""}}`, true},
+		{"padded hook with whitespace", `{"send":{"contract":"gonka1pool","amount":"1","msg":"IHsgfSA="}}`, true},
+		{"empty msg", `{"send":{"contract":"gonka1pool","amount":"1","msg":""}}`, false},
+		{"non-json hook", `{"send":{"contract":"gonka1pool","amount":"1","msg":"bm90IGpzb24="}}`, false},
+		{"non-empty hook", `{"send":{"contract":"gonka1pool","amount":"1","msg":"eyJhIjoxfQ=="}}`, false},
+		{"array hook", `{"send":{"contract":"gonka1pool","amount":"1","msg":"W10="}}`, false},
+		{"hook with trailing data", `{"send":{"contract":"gonka1pool","amount":"1","msg":"e317fQ=="}}`, false},
 		{"zero amount", `{"send":{"contract":"gonka1pool","amount":"0","msg":"e30="}}`, false},
 		{"missing amount", `{"send":{"contract":"gonka1pool","msg":"e30="}}`, false},
 		{"numeric amount", `{"send":{"contract":"gonka1pool","amount":1,"msg":"e30="}}`, false},
