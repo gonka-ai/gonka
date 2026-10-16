@@ -1,8 +1,10 @@
 package mlnodeclient
 
 import (
+	"encoding/json"
 	"testing"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,4 +48,13 @@ func TestToValidatedWeight_ValidSmall(t *testing.T) {
 		FraudDetected: false,
 	}
 	require.Equal(t, int64(1), v.ToValidatedWeight())
+}
+
+func TestStatTestParamsFromChain_AlphaReachesMLNodeAsFraudThreshold(t *testing.T) {
+	body, err := json.Marshal(StatTestParamsFromChain(&types.PoCStatTestParams{PValueThreshold: types.DecimalFromFloat(0.02)}))
+	require.NoError(t, err)
+	var wire map[string]float64
+	require.NoError(t, json.Unmarshal(body, &wire))
+	require.InDelta(t, 0.02, wire["fraud_threshold"], 1e-9)
+	require.NotContains(t, wire, "p_value_threshold")
 }
