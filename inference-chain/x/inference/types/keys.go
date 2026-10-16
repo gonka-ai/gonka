@@ -133,6 +133,12 @@ var (
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
 	ParamsKey                      = []byte("p_inference")
+
+	// Pending inbound bridge records by (epoch, id); epochs to re-check after a removal (value: cursor).
+	// Not 115: 's' starts the "stats/" keys of this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
 )
 
 func KeyPrefix(p string) []byte {

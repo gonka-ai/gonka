@@ -34,6 +34,13 @@ func CreateUpgradeHandler(
 
 		// Future v0.2.17 migration steps land below this line.
 
+		// Index records left pending before the recheck existed; EndBlock re-evaluates them.
+		if n, err := k.BackfillBridgePendingIndex(ctx); err != nil {
+			k.LogError("bridge pending backfill failed", types.Upgrades, "error", err)
+		} else {
+			k.LogInfo("bridge pending backfill", types.Upgrades, "records", n)
+		}
+
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
 			return toVM, err
