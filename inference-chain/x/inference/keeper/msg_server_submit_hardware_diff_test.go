@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	storetypes "cosmossdk.io/store/types"
+
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -340,4 +342,47 @@ func TestMsgServer_SubmitHardwareDiff_IdempotentOnNoChange(t *testing.T) {
 	stillThere, found := k.GetHardwareNodes(sdkCtx, testutil.Creator)
 	require.True(t, found)
 	require.Equal(t, 1, len(stillThere.HardwareNodes))
+}
+
+// Two nodes on one model cost less gas than two nodes on two models of the
+// same name length: the shared model is looked up once.
+func TestMsgServer_SubmitHardwareDiff_SharedModelCheckedOnce(t *testing.T) {
+	gasFor := func(models ...string) uint64 {
+		k, ms, gctx := setupMsgServer(t)
+		ctx := sdk.UnwrapSDKContext(gctx)
+		MustAddParticipant(t, ms, ctx, *NewMockAccount(testutil.Creator))
+		registerTestModels(t, k, ms, ctx, "model1", "model2")
+		nodes := make([]*types.HardwareNode, len(models))
+		for i, m := range models {
+			nodes[i] = &types.HardwareNode{
+				LocalId:  "node" + string(rune('1'+i)),
+				Status:   types.HardwareNodeStatus_INFERENCE,
+				Models:   []string{m},
+				Hardware: []*types.Hardware{{Type: "GPU", Count: 1}},
+				Host:     "localhost",
+				Port:     "8080",
+			}
+		}
+		ctx = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+		_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{Creator: testutil.Creator, NewOrModified: nodes})
+		require.NoError(t, err)
+		return ctx.GasMeter().GasConsumed()
+	}
+	shared, distinct := gasFor("model1", "model1"), gasFor("model1", "model2")
+	require.Less(t, shared, distinct)
+}
+
+// A model is still rejected when it follows an already checked one.
+func TestMsgServer_SubmitHardwareDiff_InvalidModelAfterSharedModel(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	MustAddParticipant(t, ms, ctx, *NewMockAccount(testutil.Creator))
+	registerTestModels(t, k, ms, ctx, "model1")
+	_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator: testutil.Creator,
+		NewOrModified: []*types.HardwareNode{
+			{LocalId: "node1", Models: []string{"model1"}},
+			{LocalId: "node2", Models: []string{"model1", "unknown"}},
+		},
+	})
+	require.ErrorIs(t, err, types.ErrInvalidModel)
 }

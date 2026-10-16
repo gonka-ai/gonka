@@ -369,8 +369,11 @@ func (am AppModule) loadRegularDelegationSnapshotState(
 
 // captureDelegationSnapshot stores the frozen delegation state used later at
 // validation start. Intents are intentionally excluded from this snapshot.
-func (am AppModule) captureDelegationSnapshot(ctx context.Context, blockHeight, pocStageStartBlockHeight int64) {
-	snapshot, err := am.buildDelegationSnapshot(ctx, blockHeight, pocStageStartBlockHeight)
+func (am AppModule) captureDelegationSnapshot(
+	ctx context.Context, blockHeight int64,
+	effectiveState effectiveValidationBaseState, committers map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+) {
+	snapshot, err := am.buildDelegationSnapshot(ctx, blockHeight, effectiveState, committers)
 	if err != nil {
 		am.LogError("captureDelegationSnapshot: failed to build", types.PoC, "error", err)
 		return
@@ -389,14 +392,11 @@ func (am AppModule) captureDelegationSnapshot(ctx context.Context, blockHeight, 
 
 // buildDelegationSnapshot captures delegations and refusals from N-1 effective
 // participants plus current-stage PoC store committers.
-func (am AppModule) buildDelegationSnapshot(ctx context.Context, blockHeight, pocStageStartBlockHeight int64) (types.DelegationSnapshot, error) {
+func (am AppModule) buildDelegationSnapshot(
+	ctx context.Context, blockHeight int64,
+	effectiveState effectiveValidationBaseState, committers map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+) (types.DelegationSnapshot, error) {
 	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		return types.DelegationSnapshot{}, err
-	}
-
-	effectiveState := am.getEffectiveValidationBaseState(ctx)
-	committers, err := am.keeper.GetAllPoCV2StoreCommitsForStage(ctx, pocStageStartBlockHeight)
 	if err != nil {
 		return types.DelegationSnapshot{}, err
 	}

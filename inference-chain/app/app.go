@@ -96,7 +96,6 @@ import (
 	// WASM
 
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
-	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
 	"github.com/productscience/inference/docs"
 )
@@ -246,6 +245,7 @@ func New(
 				// Supply the logger
 				app.GetWasmKeeper,
 				logger,
+				GonkaMintFn(),
 			),
 		)
 	)
@@ -335,7 +335,7 @@ func New(
 	app.sm = module.NewSimulationManagerFromAppModules(app.ModuleManager.Modules, overrideModules)
 	app.sm.RegisterStoreDecoders()
 
-	app.setAnteHandler(app.txConfig, nodeConfig, app.GetKey(wasmtypes.StoreKey))
+	app.setAnteHandler(app.txConfig, nodeConfig, app.UnsafeFindStoreKey("transient:"+inferencetypes.ModuleName)) // runtime names module transient keys "transient:<module>"
 
 	app.registerMigrations()
 

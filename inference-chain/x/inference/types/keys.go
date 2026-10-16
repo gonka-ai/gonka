@@ -132,6 +132,8 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
+	ReputationAggregatesPrefix     = collections.NewPrefix(114)
+	DevshardSettledEscrowsPrefix   = collections.NewPrefix(116) // not 115: 's' starts the "stats/" keys
 	ParamsKey                      = []byte("p_inference")
 )
 
@@ -150,6 +152,6 @@ var (
 	FinishedInferenceQueueEntryPrefix = collections.NewPrefix(1)
 	FinishedInferenceQueueNextSeqKey  = collections.NewPrefix(2)
 	TransientSPRTValuesKey            = collections.NewPrefix(3)
-	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
-	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
+	// TransientTxCounterKey holds the app ante's tx position in the block (wasm env.transaction.index).
+	TransientTxCounterKey = collections.NewPrefix(6)
 )

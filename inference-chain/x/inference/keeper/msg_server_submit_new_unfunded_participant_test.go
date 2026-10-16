@@ -1,8 +1,12 @@
 package keeper_test
 
 import (
+	"bytes"
 	"encoding/base64"
+	"strings"
 	"testing"
+
+	"cosmossdk.io/collections"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -141,4 +145,41 @@ func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
 		Status:            types.ParticipantStatus_ACTIVE,
 		CurrentEpochStats: types.NewCurrentEpochStats(),
 	}, savedParticipant)
+}
+
+// The account was absent, so is the participant: registration does not read it.
+func TestMsgServer_SubmitNewUnfundedParticipant_DoesNotReadParticipant(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	pubKey := secp256k1.GenPrivKey().PubKey()
+	encodedPubKey := base64.StdEncoding.EncodeToString(pubKey.Bytes())
+	addr := sdk.AccAddress(pubKey.Address())
+
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
+			return &authtypes.BaseAccount{Address: addr.String()}
+		}).AnyTimes()
+	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).AnyTimes()
+
+	m := k.Participants
+	key, err := collections.EncodeKeyWithPrefix(m.GetPrefix(), m.KeyCodec(), addr)
+	require.NoError(t, err)
+	readOp := `"operation":"read","key":"` + base64.StdEncoding.EncodeToString(key) + `"`
+
+	var trace bytes.Buffer
+	sdkCtx.MultiStore().SetTracer(&trace)
+	gasBefore := sdkCtx.GasMeter().GasConsumed()
+	_, err = ms.SubmitNewUnfundedParticipant(sdkCtx, &types.MsgSubmitNewUnfundedParticipant{
+		Creator: testutil.Creator,
+		Address: addr.String(),
+		PubKey:  encodedPubKey,
+	})
+	t.Logf("gas %d", sdkCtx.GasMeter().GasConsumed()-gasBefore)
+	sdkCtx.MultiStore().SetTracer(nil)
+	require.NoError(t, err)
+	require.Equal(t, 0, strings.Count(trace.String(), readOp))
+	_, found := k.GetParticipant(sdkCtx, addr.String())
+	require.True(t, found)
 }

@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -12,54 +14,187 @@ const (
 	LookbackMultiplier               = int64(5)
 	ClaimRecipientPruningThreshold   = uint64(5)
 	ClaimRecipientPruningMaxPerBlock = int64(1000)
+	// Seeds and CPoC events are read only for the current or upcoming epoch.
+	EpochRecordPruningThreshold   = uint64(5)
+	EpochRecordPruningMaxPerBlock = int64(1000)
+	// PruneWorkPerBlock caps removals of all pruners in one EndBlock. Reads are not
+	// charged; the epoch-0 pass bounds its reads separately.
+	PruneWorkPerBlock = int64(5000)
+	// Epoch-0 inference pass: removals and keys read per block.
+	EpochZeroInferencePruningMaxPerBlock = 1000
+	EpochZeroInferenceScanMaxPerBlock    = 4000
 )
 
+// Prune runs every pruner within one shared PruneWorkPerBlock budget. The first pruner
+// rotates with the height, so each pruner runs first at least once per len(pruners) blocks
+// and then removes up to its PruningMax; in other blocks a backlog ahead of it may take the rest.
+// A failing pruner stops only itself; the errors are joined.
 func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	err = k.GetInferencePruner(params).Prune(ctx, k, currentEpochIndex)
+	pruners := []budgetedPruner{
+		k.GetInferencePruner(params),
+		k.GetPoCBatchesPruner(params),
+		k.GetPoCValidationsPruner(params),
+		k.GetPoCValidationsV2Pruner(params),
+		k.GetPoCV2StoreCommitPruner(params),
+		k.GetMLNodeWeightDistributionPruner(params),
+		k.GetPoCValidationSnapshotPruner(params),
+		k.GetEpochGroupValidationPruner(params),
+		k.GetDevshardPruner(params),
+		k.GetClaimRecipientPruner(params),
+		k.GetEpochZeroInferencePruner(params),
+		k.GetRandomSeedPruner(),
+		k.GetConfirmationPoCEventPruner(),
+	}
+	budget := PruneWorkPerBlock
+	first := int(uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()) % uint64(len(pruners)))
+	var errs []error
+	for i := range pruners {
+		p := pruners[(first+i)%len(pruners)]
+		if err := p.prune(ctx, k, currentEpochIndex, &budget); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// epochZeroInferencePruner removes finished or expired inferences left with EpochId 0
+// (started or finished without the other half), which the indexed pruner never reaches.
+// It runs once epoch 0 is past the inference threshold, a bounded slice per block.
+type epochZeroInferencePruner struct {
+	params types.Params
+	remove func(ctx context.Context, id string) error // nil: k.Inferences.Remove
+}
+
+func (k Keeper) GetEpochZeroInferencePruner(params types.Params) epochZeroInferencePruner {
+	return epochZeroInferencePruner{params: params}
+}
+
+func (p epochZeroInferencePruner) prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error {
+	if currentEpochIndex < int64(p.params.EpochParams.InferencePruningEpochThreshold) {
+		return nil
+	}
+	limit := int64(EpochZeroInferencePruningMaxPerBlock)
+	if budget != nil {
+		limit = min(limit, *budget)
+		if limit <= 0 {
+			return nil
+		}
+	}
+	state, err := k.PruningState.Get(ctx)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCBatchesPruner(params).Prune(ctx, k, currentEpochIndex)
+	if state.EpochZeroInferencesPruned {
+		return nil
+	}
+	// Early records were indexed under epoch 0, which the indexed pruner never visits.
+	dropped, err := k.pruneEpochZeroIndex(ctx, limit)
+	if budget != nil {
+		*budget -= dropped
+	}
+	if err != nil || dropped >= limit {
+		return err
+	}
+	limit -= dropped
+	rng := new(collections.Range[string])
+	if state.EpochZeroInferencesCursor != "" {
+		rng = rng.StartExclusive(state.EpochZeroInferencesCursor)
+	}
+	iter, err := k.Inferences.Iterate(ctx, rng)
 	if err != nil {
 		return err
 	}
-	err = k.GetPoCValidationsPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	var toRemove []string
+	cursor, scanned := state.EpochZeroInferencesCursor, 0
+	for ; iter.Valid() && scanned < EpochZeroInferenceScanMaxPerBlock && int64(len(toRemove)) < limit; iter.Next() {
+		kv, err := iter.KeyValue()
+		if err != nil {
+			iter.Close()
+			return err
+		}
+		scanned++
+		cursor = kv.Key
+		status := kv.Value.Status
+		if kv.Value.EpochId == 0 && status != types.InferenceStatus_STARTED && status != types.InferenceStatus_VOTING {
+			toRemove = append(toRemove, kv.Key)
+		}
 	}
-	err = k.GetPoCValidationsV2Pruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	done := !iter.Valid()
+	iter.Close()
+	if budget != nil {
+		*budget -= int64(len(toRemove))
 	}
-	err = k.GetPoCV2StoreCommitPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	remove := p.remove
+	if remove == nil {
+		remove = k.Inferences.Remove
 	}
-	err = k.GetMLNodeWeightDistributionPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	// The cursor is saved only after every removal succeeded; on error it stays put
+	// and the next block scans the same range again.
+	for _, id := range toRemove {
+		if err := remove(ctx, id); err != nil {
+			return err
+		}
 	}
-	err = k.GetPoCValidationSnapshotPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	state.EpochZeroInferencesCursor = cursor
+	state.EpochZeroInferencesPruned = done
+	if done {
+		state.EpochZeroInferencesCursor = ""
+		k.LogInfo("Epoch-0 inference pruning complete", types.Pruning)
 	}
-	err = k.GetEpochGroupValidationPruner(params).Prune(ctx, k, currentEpochIndex)
+	return k.PruningState.Set(ctx, state)
+}
+
+// pruneEpochZeroIndex removes up to max InferencesToPrune keys of epoch 0.
+func (k Keeper) pruneEpochZeroIndex(ctx context.Context, max int64) (int64, error) {
+	iter, err := k.InferencesToPrune.Iterate(ctx, collections.NewPrefixedPairRange[int64, string](0))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	err = k.GetDevshardPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	var keys []collections.Pair[int64, string]
+	for ; iter.Valid() && int64(len(keys)) < max; iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			iter.Close()
+			return 0, err
+		}
+		keys = append(keys, key)
 	}
-	err = k.GetClaimRecipientPruner(params).Prune(ctx, k, currentEpochIndex)
-	if err != nil {
-		return err
+	iter.Close()
+	for i, key := range keys {
+		if err := k.InferencesToPrune.Remove(ctx, key); err != nil {
+			return int64(i), err
+		}
 	}
-	return nil
+	return int64(len(keys)), nil
+}
+
+// pocStagePruneBound returns the first PoC stage kept when pruning epochID: the next
+// epoch's PoC start. Confirmation PoC data is keyed by trigger height, which lies between
+// the two regular stages, so pruning by the epoch's own stage alone never removes it.
+// Without the next epoch only the epoch's own stage is pruned, as before.
+func (k Keeper) pocStagePruneBound(ctx context.Context, epochID int64) (stage int64, before bool) {
+	next, found := k.GetEpoch(ctx, uint64(epochID+1))
+	if found && next.PocStartBlockHeight > 0 {
+		return next.PocStartBlockHeight, true
+	}
+	epoch, found := k.GetEpoch(ctx, uint64(epochID))
+	if !found {
+		k.LogError("Failed to get epoch", types.Pruning, "epoch", epochID)
+		return 0, false
+	}
+	return epoch.PocStartBlockHeight, false
+}
+
+// pocStageRanger covers every stage below stage when before is set, otherwise stage only.
+func pocStageRanger[K2, K3 any](stage int64, before bool) collections.Ranger[collections.Triple[int64, K2, K3]] {
+	if before {
+		return collections.NewPrefixUntilTripleRange[int64, K2, K3](stage - 1)
+	}
+	return collections.NewPrefixedTripleRange[int64, K2, K3](stage)
 }
 
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {
@@ -68,12 +203,7 @@ func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collection
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCValidationsV2,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocValidationsV2PrunedEpoch
@@ -94,12 +224,7 @@ func (k Keeper) GetPoCV2StoreCommitPruner(params types.Params) Pruner[collection
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCV2StoreCommits,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocV2StoreCommitsPrunedEpoch
@@ -120,12 +245,7 @@ func (k Keeper) GetMLNodeWeightDistributionPruner(params types.Params) Pruner[co
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.MLNodeWeightDistributions,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.MlnodeWeightDistributionsPrunedEpoch
@@ -202,9 +322,33 @@ func (k Keeper) GetInferencePruner(params types.Params) Pruner[collections.Pair[
 			state.InferencePrunedEpoch = epoch
 		},
 		Remover: func(ctx context.Context, key collections.Pair[int64, string]) error {
-			err := k.Inferences.Remove(ctx, key.K2())
-			if err != nil {
+			inference, found := k.GetInference(ctx, key.K2())
+			if found && (inference.Status == types.InferenceStatus_VOTING || inference.Status == types.InferenceStatus_STARTED) {
+				retryEpoch, retryFound := k.GetEffectiveEpochIndex(ctx)
+				if !retryFound {
+					return fmt.Errorf("cannot defer pruning inference %q: effective epoch not found", key.K2())
+				}
+				if int64(retryEpoch) <= key.K1() {
+					return fmt.Errorf("cannot defer pruning inference %q from epoch %d to epoch %d", key.K2(), key.K1(), retryEpoch)
+				}
+
+				// Move active inferences forward so the completed epoch can advance
+				// while the inference remains discoverable by a later pruning pass.
+				if err := k.InferencesToPrune.Set(ctx, collections.Join(int64(retryEpoch), key.K2()), collections.NoValue{}); err != nil {
+					return err
+				}
+				return k.InferencesToPrune.Remove(ctx, key)
+			}
+
+			if err := k.Inferences.Remove(ctx, key.K2()); err != nil {
 				return err
+			}
+			// A status update can re-add the inference under its original epoch
+			// after an active record was deferred. Remove that stale index too.
+			if found && int64(inference.EpochId) != key.K1() {
+				if err := k.InferencesToPrune.Remove(ctx, collections.Join(int64(inference.EpochId), key.K2())); err != nil {
+					return err
+				}
 			}
 			return k.InferencesToPrune.Remove(ctx, key)
 		},
@@ -218,13 +362,7 @@ func (k Keeper) GetPoCBatchesPruner(params types.Params) Pruner[collections.Trip
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCBatches,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, string]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				// Impossible as far as I know.
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, string](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocBatchesPrunedEpoch
@@ -272,6 +410,9 @@ func (k Keeper) GetDevshardPruner(params types.Params) Pruner[collections.Pair[u
 			if err := k.DevshardEscrowsByEpoch.Remove(ctx, collections.Join(epochIndex, escrowID)); err != nil {
 				k.LogError("failed to remove devshard escrow index", types.Pruning, "escrow_id", escrowID, "error", err)
 			}
+			if err := k.DevshardSettledEscrows.Remove(ctx, escrowID); err != nil {
+				k.LogError("failed to remove devshard settled mark", types.Pruning, "escrow_id", escrowID, "error", err)
+			}
 			return nil
 		},
 		PostPruneEpoch: func(ctx context.Context, epoch int64) error {
@@ -314,19 +455,55 @@ func (k Keeper) GetClaimRecipientPruner(params types.Params) Pruner[collections.
 	}
 }
 
+func (k Keeper) GetRandomSeedPruner() Pruner[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed] {
+	return Pruner[collections.Pair[uint64, sdk.AccAddress], types.RandomSeed]{
+		Threshold:  EpochRecordPruningThreshold,
+		PruningMax: EpochRecordPruningMaxPerBlock,
+		List:       k.RandomSeeds,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, sdk.AccAddress]] {
+			return collections.NewPrefixedPairRange[uint64, sdk.AccAddress](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.RandomSeedsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.RandomSeedsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
+			return k.RandomSeeds.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
+func (k Keeper) GetConfirmationPoCEventPruner() Pruner[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent] {
+	return Pruner[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent]{
+		Threshold:  EpochRecordPruningThreshold,
+		PruningMax: EpochRecordPruningMaxPerBlock,
+		List:       k.ConfirmationPoCEvents,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, uint64]] {
+			return collections.NewPrefixedPairRange[uint64, uint64](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.ConfirmationPocEventsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.ConfirmationPocEventsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, uint64]) error {
+			return k.ConfirmationPoCEvents.Remove(ctx, key)
+		},
+		Logger: k,
+	}
+}
+
 func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation] {
 	return Pruner[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]{
 		Threshold:  params.PocParams.PocDataPruningEpochThreshold,
 		PruningMax: params.EpochParams.PocPruningMax,
 		List:       k.PoCValidations,
 		Ranger: func(ctx context.Context, epochIndex int64) collections.Ranger[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress]] {
-			epoch, found := k.GetEpoch(ctx, uint64(epochIndex))
-			if !found {
-				// Impossible?
-				k.LogError("Failed to get epoch", types.Pruning, "epoch", epochIndex)
-				return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](0)
-			}
-			return collections.NewPrefixedTripleRange[int64, sdk.AccAddress, sdk.AccAddress](epoch.PocStartBlockHeight)
+			return pocStageRanger[sdk.AccAddress, sdk.AccAddress](k.pocStagePruneBound(ctx, epochIndex))
 		},
 		GetLastPruned: func(state types.PruningState) int64 {
 			return state.PocValidationsPrunedEpoch
@@ -339,6 +516,10 @@ func (k Keeper) GetPoCValidationsPruner(params types.Params) Pruner[collections.
 		},
 		Logger: k,
 	}
+}
+
+type budgetedPruner interface {
+	prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error
 }
 
 type Pruner[K any, V any] struct {
@@ -354,10 +535,15 @@ type Pruner[K any, V any] struct {
 }
 
 func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, prunesLeft int64) (int64, error) {
+	if prunesLeft <= 0 {
+		return 0, nil
+	}
+	p.Logger.LogDebug("PruneEpoch called", types.Pruning, "epoch", currentEpochIndex, "prunesLeft", prunesLeft, "list", p.List.GetName())
 	prunedCount := int64(0)
 	iter, err := p.List.Iterate(ctx, p.Ranger(ctx, currentEpochIndex))
 	if err != nil {
 		p.Logger.LogError("Failed to iterate over list to prune", types.Pruning, "error", err, "list", p.List.GetName())
+		return 0, err
 	}
 	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
@@ -379,7 +565,22 @@ func (p Pruner[K, V]) PruneEpoch(ctx context.Context, currentEpochIndex int64, p
 	return prunedCount, nil
 }
 
+// Prune runs this pruner alone, bounded by its own PruningMax.
 func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int64) error {
+	return p.prune(ctx, k, currentEpochIndex, nil)
+}
+
+// prune removes at most PruningMax entries; a non-nil budget is shared with other
+// pruners and is charged one unit per removal.
+func (p Pruner[K, V]) prune(ctx context.Context, k Keeper, currentEpochIndex int64, budget *int64) error {
+	if p.PruningMax <= 0 {
+		p.Logger.LogError("Skipping pruning with non-positive limit", types.Pruning,
+			"max", p.PruningMax,
+			"list", p.List.GetName(),
+		)
+		return nil
+	}
+
 	pruningState, err := k.PruningState.Get(ctx)
 	if err != nil {
 		p.Logger.LogError("Failed to get pruning state", types.Pruning,
@@ -393,21 +594,40 @@ func (p Pruner[K, V]) Prune(ctx context.Context, k Keeper, currentEpochIndex int
 		p.Logger.LogDebug("No epochs to prune", types.Pruning)
 		return nil
 	}
+	limit := p.PruningMax
+	if budget != nil {
+		limit = min(limit, *budget)
+		if limit <= 0 {
+			return nil
+		}
+	}
+	prunedCount := int64(0)
+	if budget != nil {
+		defer func() { *budget -= prunedCount }()
+	}
 	p.Logger.LogInfo("Starting pruning", types.Pruning,
 		"start_epoch", startEpoch,
 		"end_epoch", endEpoch,
 		"threshold", p.Threshold,
 		"list", p.List.GetName())
-	prunedCount := int64(0)
 	for epoch := startEpoch; epoch <= endEpoch; epoch++ {
-		prunesLeft := p.PruningMax - prunedCount
+		prunesLeft := limit - prunedCount
 		prunedForEpoch, err := p.PruneEpoch(ctx, epoch, prunesLeft)
+		prunedCount += prunedForEpoch
 		if err != nil {
 			p.Logger.LogError("Failed to prune epoch", types.Pruning,
 				"epoch", epoch,
 				"error", err,
 			)
-			continue
+			return err
+		}
+		if prunedCount >= limit {
+			p.Logger.LogInfo("Reached per-block pruning limit", types.Pruning,
+				"pruned", prunedCount,
+				"max", limit,
+				"list", p.List.GetName(),
+			)
+			return nil
 		}
 		if prunedForEpoch == 0 {
 			p.Logger.LogInfo("Pruning epoch complete", types.Pruning, "epoch", epoch, "list", p.List.GetName())
