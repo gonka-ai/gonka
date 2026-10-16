@@ -54,34 +54,38 @@ type refusalJournal struct {
 }
 
 func (j refusalJournal) Anchor(nonce uint64, root []byte) (bool, error) {
-	recs, err := j.store.GetDiffs(j.escrowID, nonce, nonce)
-	if err != nil {
+	hash, ok, err := j.store.DiffStateHash(j.escrowID, nonce)
+	if err != nil || !ok {
 		return false, err
 	}
-	if len(recs) != 1 || recs[0].Diff.Nonce != nonce {
-		return false, nil
-	}
-	return bytes.Equal(recs[0].StateHash, root), nil
+	return bytes.Equal(hash, root), nil
 }
 
 func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() uint64, fn func([]types.DiffWire, bool) (func(context.Context) error, error)) error {
 	if from > to {
 		return nil
 	}
+	var pending []storage.DiffSize
 	for n := from; n <= to; {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		sizes, err := j.store.DiffSizes(j.escrowID, n, to, host.ChallengePageMaxNonces)
-		if err != nil {
-			return fmt.Errorf("get diff sizes: %w", err)
+		// A cursor jump leaves the leftover rows behind this nonce. A hole
+		// leaves the next stored nonce ahead of it, which is reported below.
+		if len(pending) == 0 || pending[0].Nonce < n {
+			var err error
+			pending, err = j.store.DiffSizes(j.escrowID, n, to, host.ChallengePageMaxNonces)
+			if err != nil {
+				return fmt.Errorf("get diff sizes: %w", err)
+			}
 		}
-		if len(sizes) == 0 {
+		if len(pending) == 0 {
 			return &storage.DiffGapError{Expected: n, To: to}
 		}
-		if sizes[0].Nonce != n {
-			return &storage.DiffGapError{Expected: n, Next: sizes[0].Nonce, To: to}
+		if pending[0].Nonce != n {
+			return &storage.DiffGapError{Expected: n, Next: pending[0].Nonce, To: to}
 		}
+		sizes := pending
 		count := host.PackChallengePage(sizes)
 		last := sizes[count-1].Nonce
 		wires, err := j.store.GetDiffWires(j.escrowID, n, last)
@@ -129,6 +133,7 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() 
 		if !more {
 			return nil
 		}
+		pending = pending[count:]
 		n = last + 1
 		if next != nil {
 			if cur := next(); cur > n {

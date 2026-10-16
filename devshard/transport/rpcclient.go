@@ -766,10 +766,9 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 			djList[i] = dj
 		}
 		inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
-			InferenceID:     inferenceID,
-			Payload:         PayloadToJSON(payload),
-			Diffs:           djList,
-			ProtocolVersion: types.StartProtocolVersion(diffs),
+			InferenceID: inferenceID,
+			Payload:     PayloadToJSON(payload),
+			Diffs:       djList,
 		})
 		return proto.Marshal(inner)
 	})
@@ -823,7 +822,7 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 	if !c.Uses(EndpointChallengeReceipt) {
 		return c.HTTPClient.PrepareChallengeCatchUp(inferenceID, diffs, protocolVersion)
 	}
-	raw, err := ChallengeCatchUpBody(inferenceID, diffs, protocolVersion)
+	raw, err := ChallengeCatchUpBody(inferenceID, diffs)
 	if err != nil {
 		return nil, err
 	}
@@ -851,12 +850,11 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 
 // ChallengeCatchUpBody is the Connect payload of a nil-payload catch-up page.
 // Each diff's Txs is the stored blob with the nonce field prepended.
-func ChallengeCatchUpBody(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) ([]byte, error) {
+func ChallengeCatchUpBody(inferenceID uint64, diffs []types.DiffWire) ([]byte, error) {
 	return recordRefusalBody(true, nil, func() ([]byte, error) {
 		req := &rpcpb.ChallengeReceiptRequest{
-			InferenceId:     inferenceID,
-			ProtocolVersion: protocolVersion,
-			Diffs:           make([]*rpcpb.Diff, len(diffs)),
+			InferenceId: inferenceID,
+			Diffs:       make([]*rpcpb.Diff, len(diffs)),
 		}
 		for i, d := range diffs {
 			req.Diffs[i] = &rpcpb.Diff{

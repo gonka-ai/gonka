@@ -212,10 +212,11 @@ func (h *Host) applyClaimedDiffsLocked(ctx context.Context, wires []types.DiffWi
 			queued: make(chan struct{}),
 		}
 		h.writer.claims = append(h.writer.claims, claim)
-		// Decode off the host lock. The claim is already published, so another
-		// request waits or stacks instead of decoding the same nonces.
+		// Decode and check signatures off the host lock. The claim is already
+		// published, so another request waits or stacks instead of decoding
+		// the same nonces. A bad signature stops the run there.
 		h.mu.Unlock()
-		decoded, decErr := decodeClaim(run, known)
+		decoded, decErr, sigErr := screenClaim(ctx, h, run, known)
 		h.mu.Lock()
 		for _, d := range decoded {
 			mark(d.Nonce, &claimedN)
@@ -225,6 +226,8 @@ func (h *Host) applyClaimedDiffsLocked(ctx context.Context, wires []types.DiffWi
 			flush()
 			return nil, decErr
 		}
+		// A cancel during the signature check must not queue the batch. The
+		// claim ends here, and a waiter applies the nonces from its own bytes.
 		if err := ctx.Err(); err != nil {
 			h.endClaimLocked(claim, err)
 			flush()
@@ -236,17 +239,6 @@ func (h *Host) applyClaimedDiffsLocked(ctx context.Context, wires []types.DiffWi
 				flush()
 				return nil, err
 			}
-		}
-
-		h.mu.Unlock()
-		decoded, sigErr := verifyClaimSigs(h, decoded)
-		h.mu.Lock()
-		// A cancel during the signature check must not queue the batch. The
-		// claim ends here, and a waiter applies the nonces from its own bytes.
-		if err := ctx.Err(); err != nil && len(decoded) > 0 {
-			h.endClaimLocked(claim, err)
-			flush()
-			return nil, err
 		}
 		if len(decoded) == 0 {
 			err := sigErr
@@ -299,6 +291,11 @@ func (h *Host) applyClaimedDiffsLocked(ctx context.Context, wires []types.DiffWi
 					known[d.Nonce] = d
 				}
 			}
+			continue
+		}
+		// A hole stops this run early. The prefix is applied; the next pass
+		// reports the gap instead of returning success for the page.
+		if err == nil && h.sm.LatestNonce() >= claim.to {
 			continue
 		}
 		flush()
@@ -410,9 +407,16 @@ func stackedWaitContext(parent context.Context) (context.Context, context.Cancel
 	return context.WithTimeout(parent, limit)
 }
 
-func decodeClaim(run []types.DiffWire, known map[uint64]types.Diff) ([]types.Diff, error) {
-	out := make([]types.Diff, 0, len(run))
+// screenClaim decodes a claimed run one diff at a time. Each user signature is
+// checked before the next wire is decoded. decoded is the prefix that passed.
+// decErr means the run was not usable, and the caller applies nothing. sigErr
+// means the following wire failed its signature; the caller queues decoded.
+func screenClaim(ctx context.Context, h *Host, run []types.DiffWire, known map[uint64]types.Diff) (decoded []types.Diff, decErr, sigErr error) {
+	decoded = make([]types.Diff, 0, len(run))
 	for _, w := range run {
+		if err := ctx.Err(); err != nil {
+			return decoded, err, nil
+		}
 		d, ok := known[w.Nonce]
 		if !ok {
 			if testBeforeClaimDecode != nil {
@@ -421,24 +425,18 @@ func decodeClaim(run []types.DiffWire, known map[uint64]types.Diff) ([]types.Dif
 			var err error
 			d, err = types.DecodeDiffWire(w)
 			if err != nil {
-				return out, fmt.Errorf("diff %d: %w", w.Nonce, err)
+				return decoded, fmt.Errorf("diff %d: %w", w.Nonce, err), nil
 			}
 		}
-		out = append(out, d)
-	}
-	return out, nil
-}
-
-func verifyClaimSigs(h *Host, decoded []types.Diff) ([]types.Diff, error) {
-	if testBeforeClaimSig != nil {
-		testBeforeClaimSig()
-	}
-	for i, diff := range decoded {
-		if err := h.sm.VerifyDiffUserSig(diff); err != nil {
-			return decoded[:i], fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
+		if testBeforeClaimSig != nil {
+			testBeforeClaimSig()
 		}
+		if err := h.sm.VerifyDiffUserSig(d); err != nil {
+			return decoded, nil, fmt.Errorf("validate diff nonce %d: %w", d.Nonce, err)
+		}
+		decoded = append(decoded, d)
 	}
-	return decoded, nil
+	return decoded, nil, nil
 }
 
 func waitClaims(ctx context.Context, claims []*nonceClaim) error {

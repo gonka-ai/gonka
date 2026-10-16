@@ -394,7 +394,7 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 		decoded, decErr = transport.DiffsFromJSON(jsonReq.Diffs)
 		return decoded, decErr
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", decode, jsonReq.ProtocolVersion)
+	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", decode, "")
 	if err != nil {
 		return nil, err
 	}

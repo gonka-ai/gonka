@@ -733,6 +733,20 @@ func (m *Memory) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]typ
 	return out, err
 }
 
+func (m *Memory) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, false, fmt.Errorf("session %s not found", escrowID)
+	}
+	idx, ok := s.nonceToIndex[nonce]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), s.diffs[idx].StateHash...), true, nil
+}
+
 func (m *Memory) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

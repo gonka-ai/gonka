@@ -165,6 +165,9 @@ func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
 func TestPostgres_DiffSizes(t *testing.T) {
 	runDiffSizes(t, newTestPostgres(t))
 }
+func TestPostgres_DiffStateHash(t *testing.T) {
+	runDiffStateHash(t, newTestPostgres(t))
+}
 func TestPostgres_GetDiffWires(t *testing.T) {
 	runGetDiffWires(t, newTestPostgres(t))
 }

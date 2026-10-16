@@ -291,6 +291,51 @@ func TestChallengeFailedClaimWaitDoesNotBurnTheCap(t *testing.T) {
 	require.Equal(t, float64(failures), promtest.ToFloat64(observability.ChallengeClaimRetryCounter("claim_failed"))-before)
 }
 
+func TestChallengeBadSignatureStopsTheDecode(t *testing.T) {
+	f := newWriterFixture(t, 4)
+	wires, err := diffWiresFromDiffs(f.diffs)
+	require.NoError(t, err)
+
+	t.Run("first diff", func(t *testing.T) {
+		bad := append([]types.DiffWire(nil), wires...)
+		bad[0].UserSig = []byte{1, 2, 3}
+		require.Equal(t, int32(1), applyBadClaim(t, f, bad))
+		require.Equal(t, uint64(0), f.host.LatestNonce())
+	})
+
+	t.Run("third diff", func(t *testing.T) {
+		bad := append([]types.DiffWire(nil), wires...)
+		bad[2].UserSig = []byte{1, 2, 3}
+		require.Equal(t, int32(3), applyBadClaim(t, f, bad))
+		require.Equal(t, uint64(2), f.host.LatestNonce())
+	})
+}
+
+func applyBadClaim(t *testing.T, f *writerFixture, wires []types.DiffWire) int32 {
+	t.Helper()
+	var decodes atomic.Int32
+	testBeforeClaimDecode = func() { decodes.Add(1) }
+	t.Cleanup(func() { testBeforeClaimDecode = nil })
+	f.host.mu.Lock()
+	_, err := f.host.applyClaimedDiffsLocked(context.Background(), wires, nil)
+	f.host.mu.Unlock()
+	require.ErrorIs(t, err, types.ErrInvalidUserSig)
+	return decodes.Load()
+}
+
+func TestChallengeHoleAfterAPrefixReportsTheGap(t *testing.T) {
+	f := newWriterFixture(t, 4)
+	wires, err := diffWiresFromDiffs(f.diffs)
+	require.NoError(t, err)
+	wires = []types.DiffWire{wires[0], wires[1], wires[3]}
+
+	f.host.mu.Lock()
+	_, err = f.host.applyClaimedDiffsLocked(context.Background(), wires, nil)
+	f.host.mu.Unlock()
+	require.ErrorIs(t, err, ErrReconcileGap)
+	require.Equal(t, uint64(2), f.host.LatestNonce())
+}
+
 func TestChallengeBelowLatestDecodesNothing(t *testing.T) {
 	f := newWriterFixture(t, 2)
 	f.host.mu.Lock()

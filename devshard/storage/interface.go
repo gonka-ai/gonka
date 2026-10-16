@@ -76,6 +76,10 @@ type Storage interface {
 	// order, at most limit of them, with the stored txs_proto length. It is
 	// one indexed read and does not decode transactions.
 	DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error)
+	// DiffStateHash returns the stored state_hash for one nonce. ok is false
+	// when that nonce is not stored. The read does not fetch transactions or
+	// signatures.
+	DiffStateHash(escrowID string, nonce uint64) (hash []byte, ok bool, err error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error
 	GetSignatures(escrowID string, nonce uint64) (map[uint32][]byte, error)
 	GetSessionMeta(escrowID string) (*SessionMeta, error)

@@ -128,7 +128,7 @@ func TestChallengeCatchUpAppliesTheSameRoot(t *testing.T) {
 		Txs:           stored,
 		UserSig:       diff.UserSig,
 		PostStateRoot: diff.PostStateRoot,
-	}}, "")
+	}})
 	require.NoError(t, err)
 	var req rpcpb.ChallengeReceiptRequest
 	require.NoError(t, proto.Unmarshal(body, &req))
@@ -181,12 +181,12 @@ func TestChallengeCatchUpBodyAllocsIgnoreTxCount(t *testing.T) {
 	many := types.DiffWire{Nonce: 1, Txs: manyStored, UserSig: sig, PostStateRoot: root}
 
 	oneAllocs := testing.AllocsPerRun(20, func() {
-		if _, err := ChallengeCatchUpBody(1, []types.DiffWire{one}, ""); err != nil {
+		if _, err := ChallengeCatchUpBody(1, []types.DiffWire{one}); err != nil {
 			panic(err)
 		}
 	})
 	manyAllocs := testing.AllocsPerRun(20, func() {
-		if _, err := ChallengeCatchUpBody(1, []types.DiffWire{many}, ""); err != nil {
+		if _, err := ChallengeCatchUpBody(1, []types.DiffWire{many}); err != nil {
 			panic(err)
 		}
 	})

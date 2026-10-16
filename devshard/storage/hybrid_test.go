@@ -40,6 +40,10 @@ func (r *recordingStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint
 	r.lastMethod = "GetDiffWires"
 	return nil, nil
 }
+func (r *recordingStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	r.lastMethod = "DiffStateHash"
+	return nil, false, nil
+}
 func (r *recordingStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	r.lastMethod = "DiffSizes"
 	return nil, nil

@@ -252,6 +252,22 @@ func runDiffSizes(t *testing.T, store Storage) {
 	require.Equal(t, []uint64{1, 2, 3}, got)
 }
 
+func runDiffStateHash(t *testing.T, store Storage) {
+	t.Helper()
+	require.NoError(t, store.CreateSession(defaultParams()))
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      types.Diff{Nonce: 4, UserSig: []byte("sig")},
+		StateHash: []byte{0xab, 0xcd},
+	}))
+	hash, ok, err := store.DiffStateHash("escrow-1", 4)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, []byte{0xab, 0xcd}, hash)
+	_, ok, err = store.DiffStateHash("escrow-1", 5)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
 func runGetSignatures(t *testing.T, store Storage) {
 	t.Helper()
 

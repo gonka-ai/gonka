@@ -118,8 +118,8 @@ func (e *recordingExecutor) GetMempool(context.Context) ([]*types.DevshardTx, er
 	return nil, nil
 }
 
-func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint64, diffs []types.DiffWire, version string) error {
-	raw, err := transport.ChallengeCatchUpBody(inferenceID, diffs, version)
+func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint64, diffs []types.DiffWire, _ string) error {
+	raw, err := transport.ChallengeCatchUpBody(inferenceID, diffs)
 	require.NoError(e.t, err)
 	nonces := make([]uint64, len(diffs))
 	for i, d := range diffs {
@@ -164,10 +164,9 @@ func challengeReceiptBody(inferenceID uint64, payload *host.InferencePayload, di
 		djList[i] = dj
 	}
 	return proto.Marshal(transport.ChallengeReceiptRequestToProto(transport.ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Payload:         transport.PayloadToJSON(payload),
-		Diffs:           djList,
-		ProtocolVersion: types.StartProtocolVersion(diffs),
+		InferenceID: inferenceID,
+		Payload:     transport.PayloadToJSON(payload),
+		Diffs:       djList,
 	}))
 }
 

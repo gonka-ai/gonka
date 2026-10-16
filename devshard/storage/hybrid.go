@@ -655,6 +655,14 @@ func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, li
 	return b.DiffSizes(escrowID, fromNonce, toNonce, limit)
 }
 
+func (h *HybridStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.DiffStateHash(escrowID, nonce)
+}
+
 func (h *HybridStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	b, err := h.routed(escrowID)
 	if err != nil {

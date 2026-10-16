@@ -116,6 +116,10 @@ func TestSQLite_DiffSizes(t *testing.T) {
 	runDiffSizes(t, newTestSQLite(t))
 }
 
+func TestSQLite_DiffStateHash(t *testing.T) {
+	runDiffStateHash(t, newTestSQLite(t))
+}
+
 func TestSQLite_GetDiffWires(t *testing.T) {
 	runGetDiffWires(t, newTestSQLite(t))
 }

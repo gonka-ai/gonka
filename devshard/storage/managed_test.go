@@ -92,6 +92,9 @@ func (s *legacyOnlyStorage) GetDiffWires(escrowID string, fromNonce, toNonce uin
 func (s *legacyOnlyStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	return s.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
 }
+func (s *legacyOnlyStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	return s.inner.DiffStateHash(escrowID, nonce)
+}
 func (s *legacyOnlyStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	return s.inner.AddSignature(escrowID, nonce, slotID, sig)
 }

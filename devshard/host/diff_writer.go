@@ -45,7 +45,8 @@ var testBeforeClaimWait func()
 // that is not already known. h.mu is not held.
 var testBeforeClaimDecode func()
 
-// testBeforeClaimSig, when set, runs before a challenge claim checks signatures.
+// testBeforeClaimSig, when set, runs before each user-signature check of a
+// challenge claim, after that diff is decoded and before the next one is.
 // h.mu is not held.
 var testBeforeClaimSig func()
 

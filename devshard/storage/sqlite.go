@@ -898,6 +898,25 @@ func (s *SQLite) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]typ
 	return out, rows.Err()
 }
 
+func (s *SQLite) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	var hash []byte
+	err = p.readDB.QueryRow(
+		`SELECT state_hash FROM diffs WHERE escrow_id = ? AND nonce = ?`,
+		escrowID, nonce,
+	).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return hash, true, nil
+}
+
 func (s *SQLite) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	if fromNonce > toNonce || limit <= 0 {
 		return nil, nil

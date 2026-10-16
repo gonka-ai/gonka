@@ -53,6 +53,15 @@ func (m refusalMapStore) GetDiffWires(_ string, from, to uint64) ([]types.DiffWi
 	return out, nil
 }
 
+func (m refusalMapStore) DiffStateHash(_ string, nonce uint64) ([]byte, bool, error) {
+	for _, rec := range m.recs {
+		if rec.Nonce == nonce {
+			return append([]byte(nil), rec.StateHash...), true, nil
+		}
+	}
+	return nil, false, nil
+}
+
 func (m refusalMapStore) DiffSizes(_ string, from, to uint64, limit int) ([]storage.DiffSize, error) {
 	var out []storage.DiffSize
 	for _, rec := range m.recs {
@@ -148,6 +157,50 @@ func TestRefusalJournalSkipsNoncesTheCursorPassed(t *testing.T) {
 	require.Equal(t, []uint64{1, 3}, seen)
 	require.Equal(t, []uint64{1, 3}, store.sizeFrom)
 	require.Equal(t, [][2]uint64{{1, 1}, {3, 3}}, store.wireSpans)
+}
+
+func TestRefusalJournalReusesUnreadSizes(t *testing.T) {
+	const n = 250
+	recs := make([]types.DiffRecord, n)
+	for i := range recs {
+		recs[i] = types.DiffRecord{Diff: types.Diff{Nonce: uint64(i + 1)}}
+	}
+	// Each stored diff is about 40 KiB, so a 4 MiB page holds about 100 of them.
+	// The first size read covers the whole journal; later pages reuse it.
+	store := &sizeReuseStore{refusalMapStore: refusalMapStore{recs: recs}, bytes: 40 << 10}
+	journal := refusalJournal{store: store, escrowID: "escrow-1"}
+
+	var pages int
+	err := journal.Pages(context.Background(), 1, n, nil, func(page []types.DiffWire, _ bool) (func(context.Context) error, error) {
+		require.NotEmpty(t, page)
+		pages++
+		return func(context.Context) error { return nil }, nil
+	})
+	require.NoError(t, err)
+	require.Greater(t, pages, 1)
+	require.Equal(t, []uint64{1}, store.from)
+}
+
+// sizeReuseStore serves contiguous nonce rows of a fixed txs_proto length.
+type sizeReuseStore struct {
+	refusalMapStore
+	bytes int
+	from  []uint64
+}
+
+func (s *sizeReuseStore) DiffSizes(_ string, from, to uint64, limit int) ([]storage.DiffSize, error) {
+	s.from = append(s.from, from)
+	var out []storage.DiffSize
+	for _, rec := range s.recs {
+		if rec.Nonce < from || rec.Nonce > to {
+			continue
+		}
+		out = append(out, storage.DiffSize{Nonce: rec.Nonce, Bytes: s.bytes})
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func TestExecutorUnreachableIgnoresAnHTTPAnswer(t *testing.T) {
