@@ -37,8 +37,16 @@ type RPCClient struct {
 	// session client.
 	sessionQuery rpcpbconnect.SessionServiceClient
 	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
-	// read cap (VerifyTimeout, VerifyErrorMiss, ChallengeReceipt responses).
+	// read cap (VerifyTimeout, VerifyErrorMiss, and a decoded
+	// ChallengeReceipt). Catch-up pages use challengeLarge with the same
+	// gzip options.
 	sessionLarge rpcpbconnect.SessionServiceClient
+	// challengeLarge sends ChallengeReceipt: a nil-payload catch-up page and
+	// the page that carries the payload. The codec writes the page into
+	// Connect's send buffer, so no separate body is kept while the executor
+	// applies it, and Connect gzips that buffer once it reaches
+	// MinGzipBodyBytes. The read cap is 10 MiB.
+	challengeLarge, challengeLargeGRPC challengeClient
 	// sessionChat is SessionService.Chat: 10 MiB envelope, no per-frame gzip.
 	sessionChat rpcpbconnect.SessionServiceClient
 	gossip      rpcpbconnect.GossipServiceClient
@@ -85,12 +93,14 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.session = rpcpbconnect.NewSessionServiceClient(conn.http, base, opts...)
 		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
+		c.challengeLarge = newChallengeClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes))
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		if conn.cfg.GRPC {
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
+			c.challengeLargeGRPC = newChallengeClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true))
 			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
 		}
@@ -332,6 +342,7 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 		connect.WithReadMaxBytes(maxBytes),
 		withGzipReadCap(maxBytes),
 		connect.WithSendGzip(),
+		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
 }
 
@@ -393,6 +404,7 @@ func chatClientOptions() []connect.ClientOption {
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
 		withGzipReadCap(int(DefaultMaxBodySize)),
 		connect.WithSendGzip(),
+		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
 }
 
@@ -735,29 +747,61 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 	if !c.Uses(EndpointChallengeReceipt) {
 		return c.HTTPClient.ChallengeReceipt(ctx, inferenceID, payload, diffs)
 	}
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		dj, err := DiffToJSON(d)
-		if err != nil {
-			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
+	raw, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
 		}
-		djList[i] = dj
-	}
-	inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Payload:         PayloadToJSON(payload),
-		Diffs:           djList,
-		ProtocolVersion: types.StartProtocolVersion(diffs),
+		inner := ChallengeReceiptRequestToProto(ChallengeReceiptRequest{
+			InferenceID: inferenceID,
+			Payload:     PayloadToJSON(payload),
+			Diffs:       djList,
+		})
+		return proto.Marshal(inner)
 	})
-	raw, err := proto.Marshal(inner)
 	if err != nil {
 		return nil, nil, err
 	}
+	return c.challengeReceiptRaw(ctx, raw)
+}
+
+// ChallengeReceiptWires sends the payload and one page of stored wires. The
+// page is not decoded. It is encoded into Connect's send buffer and dropped;
+// a retry reads it again through reload. A nil reload keeps the page.
+func (c *RPCClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, reload host.WireReload) ([]byte, []*types.DevshardTx, error) {
+	if !c.Uses(EndpointChallengeReceipt) {
+		return c.HTTPClient.ChallengeReceiptWires(ctx, inferenceID, payload, diffs, reload)
+	}
+	body, err := newChallengeBody(inferenceID, payload, diffs)
+	if err != nil {
+		return nil, nil, err
+	}
+	recordRefusalSize(false, ctx, body.size())
+	body.wires = nil
+	page := &challengePage{wires: diffs, reload: reload}
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+	resp, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page)
+	if err != nil {
+		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+	}
+	mempool, err := DevshardTxsFromBytes(resp.GetMempool())
+	if err != nil {
+		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+	}
+	return resp.GetReceipt(), mempool, nil
+}
+
+func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte, []*types.DevshardTx, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 	var receipt []byte
 	var mempool []*types.DevshardTx
-	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
 		env, err := c.signEnvelope(raw)
 		if err != nil {
 			return err
@@ -782,6 +826,59 @@ func (c *RPCClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, pa
 		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
 	}
 	return receipt, mempool, nil
+}
+
+// ChallengeCatchUp sends one encoded page with a nil payload and drops the
+// response.
+func (c *RPCClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {
+	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, nil, protocolVersion)
+	if err != nil {
+		return err
+	}
+	return send(ctx)
+}
+
+// PrepareChallengeCatchUp returns the send for one page. Each attempt encodes
+// the page into Connect's send buffer. With a reload, the first attempt drops
+// the page and a retry reads it again, so the send func does not reference
+// diffs while the executor applies them. A nil reload keeps the page.
+func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, reload host.WireReload, protocolVersion string) (func(context.Context) error, error) {
+	if !c.Uses(EndpointChallengeReceipt) {
+		return c.HTTPClient.PrepareChallengeCatchUp(inferenceID, diffs, reload, protocolVersion)
+	}
+	body, err := newChallengeBody(inferenceID, nil, diffs)
+	if err != nil {
+		return nil, err
+	}
+	recordRefusalSize(true, nil, body.size())
+	body.wires = nil
+	page := &challengePage{wires: diffs, reload: reload}
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+		defer cancel()
+		if _, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page); err != nil {
+			return fmt.Errorf("challenge-receipt: %w", err)
+		}
+		return nil
+	}, nil
+}
+
+// ChallengeReceiptWireBody is the Connect payload of a challenge that carries
+// the prompt and one page of stored wires. Each diff's Txs is the stored blob
+// with the nonce field prepended. The page is not decoded. RPCClient encodes
+// these bytes straight into the envelope it sends.
+func ChallengeReceiptWireBody(inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, error) {
+	body, err := newChallengeBody(inferenceID, payload, diffs)
+	if err != nil {
+		return nil, err
+	}
+	return body.appendTo(nil), nil
+}
+
+// ChallengeCatchUpBody is the Connect payload of a nil-payload catch-up page.
+// Each diff's Txs is the stored blob with the nonce field prepended.
+func ChallengeCatchUpBody(inferenceID uint64, diffs []types.DiffWire) ([]byte, error) {
+	return ChallengeReceiptWireBody(inferenceID, nil, diffs)
 }
 
 // VerifyTimeout must be on *RPCClient: the HTTP wrapper calls SendVerifyTimeout

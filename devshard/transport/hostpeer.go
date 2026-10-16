@@ -44,4 +44,9 @@ func (c *RPCClient) CloneWithSigner(signer signing.Signer, timeout time.Duration
 var (
 	_ HostPeerClient = (*HTTPClient)(nil)
 	_ HostPeerClient = (*RPCClient)(nil)
+
+	_ host.ChallengeCatchUpPreparer   = (*HTTPClient)(nil)
+	_ host.ChallengeCatchUpPreparer   = (*RPCClient)(nil)
+	_ host.ChallengeReceiptWireSender = (*HTTPClient)(nil)
+	_ host.ChallengeReceiptWireSender = (*RPCClient)(nil)
 )

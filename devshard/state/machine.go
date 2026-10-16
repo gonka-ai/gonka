@@ -924,7 +924,23 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	src := sm.state
+	return snapshotNoInferencesLocked(sm.state)
+}
+
+// SnapshotWithInference copies the escrow summary and one inference record
+// under the same lock. The returned state has a nil inference map.
+func (sm *StateMachine) SnapshotWithInference(id uint64) (types.EscrowState, *types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	st := snapshotNoInferencesLocked(sm.state)
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return st, nil, false
+	}
+	return st, copyInferenceRecord(rec), true
+}
+
+func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
 	// only ever replaced wholesale (append to a nil slice), never mutated in
 	// place, so readers of the snapshot see a stable value.

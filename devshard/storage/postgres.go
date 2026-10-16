@@ -1416,6 +1416,61 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	return recs, nil
 }
 
+func (s *Postgres) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []types.DiffWire
+	for rows.Next() {
+		var w types.DiffWire
+		// pgx scans bytea into a fresh slice, so the row buffer is not aliased.
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+// DiffStateHash reads one state_hash. Transactions and signatures stay in the table.
+func (s *Postgres) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var hash []byte
+	err = s.pool.QueryRow(ctx,
+		`SELECT state_hash FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce = $3`,
+		epochID, escrowID, nonce,
+	).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), hash...), true, nil
+}
+
 // DiffSizes reads octet_length from the TOAST header, so a large txs_proto is
 // not fetched or decompressed.
 func (s *Postgres) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
