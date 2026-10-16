@@ -405,13 +405,12 @@ the endpoint file, health from `/readyz`. **Use
 commands and FSM. The v4 nginx `VERSIOND_HOSTS` + `nginx -s reload` design is
 historical; do not treat it as current join behavior.
 
-JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` **share
-placement**. `proxy`'s h2 frontend uses the same version + escrow hash as
-`versiond_router_in`. Failing `/readyz` withdraws the host from both hops. Do not
-add a second evacuation procedure for `/rpc/`. That check is the versiond
-listen. It does not prove the router's HTTP/2 bind matches the proxy dial
-port, and the placement contract does not include that bind. Both are known
-limitations in
+JSON on InferenceUrl and phase 6 `/rpc/` over HTTP/2 on the same port **share
+placement**. `proxy`'s `rpc_h2` frontend uses the same version + escrow hash as
+`versiond_router_in`, and the router selects the `_rpc` twin by path on its one
+`:8080`. Failing `/readyz` withdraws the host from both. Do not add a second
+evacuation procedure for `/rpc/`. That check is HTTP/1.1 on the versiond listen;
+it does not send an HTTP/2 request, a known limitation in
 [grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations).
 
 #### Target flow (evacuate one versiond host)
@@ -538,8 +537,10 @@ enough to be rescheduled.
 - Put a **sticky** layer in front for escrow affinity: either the existing
   `versiond-router` pattern (HAProxy consistent hash on escrow ID, including
   `/rpc/`) or an ingress / service mesh with consistent hashing on the escrow
-  path segment. Phase 6 also needs a **second published port** on that sticky
-  hop (`DEVSHARD_RPC_H2_PORT`, HTTP/2, skip nginx). JSON stays on InferenceUrl.
+  path segment. Phase 6 needs that sticky hop to recognise peer RPC on the
+  InferenceUrl port (HTTP/2 preface, or ALPN `gonka-rpc/1` on TLS) and to
+  carry it as HTTP/2 past nginx; no second published port. JSON stays on
+  InferenceUrl.
 - **Pod/host evacuation** (Part 1 §1.8) maps to Service endpoint removal +
   `preStop` below — not to the in-versiond devshardd binary swap in §1.1.
 

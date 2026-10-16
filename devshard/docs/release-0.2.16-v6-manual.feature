@@ -3,8 +3,7 @@
 # proxy is the nginx ingress. proxy-router is the HAProxy ingress.
 # On join the HAProxy service may still be named proxy; confirm the image.
 # Count connections from the client while N calls are in flight:
-#   ss -tn dst :443     InferenceUrl, HTTP/1.1
-#   ss -tn dst :9443    v6 proxy-router
+#   ss -tn dst :443     InferenceUrl; the same port on every cell
 
 Feature: v6 peer RPC follows the wrapping, not the binary
 
@@ -12,8 +11,11 @@ Feature: v6 peer RPC follows the wrapping, not the binary
   running. Peer RPC is then Connect over HTTP/1.1, and in-flight requests
   do not share a connection. After versiond, versiond-router, proxy, and
   proxy-router move to the v6 images, proxy-router serves the same RPC over
-  HTTP/2 on port 9443, one connection per peer. JSON on ports 80 and 443
-  stays in place for v4 and v4.2.
+  HTTP/2 on the same InferenceUrl port, one connection per peer: it
+  recognises a peer by the HTTP/2 preface on port 80 or ALPN gonka-rpc/1 on
+  port 443 and keeps nginx out of that connection. A peer whose host still
+  runs the old wrapping finds that out on its first Attach and continues
+  over HTTP/1.1. JSON on ports 80 and 443 stays in place for v4 and v4.2.
 
   A chat that works on one cell and fails on the next is a release failure.
 
@@ -38,7 +40,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     Then every call succeeds
     And peer RPC is Connect over HTTP/1.1 on InferenceUrl
     And the established connection count to port 443 tracks N, not 1
-    And nothing completes a dial to port 9443
+    And the HTTP/2 probe on that port misses once per host and is logged once
     And the wire has no application/grpc content type
     And the nginx or policy-worker access log shows /rpc/
     And the public connection-rate limits do not fire
@@ -81,7 +83,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     And the cell is <cell>
     And the ingress image is proxy-router
     When one peer opens N concurrent RPCs, including a long Chat and Watch
-    Then the client dials the InferenceUrl host on port 9443
+    Then the client dials the InferenceUrl host on the InferenceUrl port and no other
     And those N RPCs share one TCP connection on every hop from the client to the child
     And a second peer has its own connection
     And the nginx access log has no /rpc/
@@ -98,17 +100,19 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     Given the cell is SR
     And InferenceUrl is HTTPS
     And the wrapping images are v6
-    When the peer dials port 9443
-    Then the handshake is TLS with ALPN h2
+    When the peer dials the InferenceUrl port
+    Then the handshake is TLS with ALPN gonka-rpc/1
     And the certificate is the same material nginx serves
+    And a browser on the same port still negotiates h2 with nginx
 
   @v6-wrapping @http2
-  Scenario: a cleartext InferenceUrl uses h2c on port 9443
+  Scenario: a cleartext InferenceUrl uses h2c on the InferenceUrl port
     Given the cell is SR
     And InferenceUrl is HTTP
     And the wrapping images are v6
-    When the peer dials port 9443
-    Then the connection is cleartext HTTP/2
+    When the peer dials the InferenceUrl port
+    Then the connection opens with the HTTP/2 client preface and is cleartext HTTP/2
+    And an HTTP/1.1 request on the same port still reaches nginx
 
   @v6-wrapping @ha @http2
   Scenario: HA placement on HTTP/2 matches the HTTP/1.1 path
@@ -120,14 +124,26 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     And the version in the URL still selects that child
 
   @v6-wrapping @http2
-  Scenario: unsetting the HTTP/2 port returns the peer to HTTP/1.1
+  Scenario: turning the probe off returns the peer to HTTP/1.1
     Given the cell is SR
     And the wrapping images are v6
-    And the peer was using port 9443
-    When DEVSHARD_RPC_H2_PORT is unset or DEVSHARD_RPC_H2_UPGRADE is off
+    And the peer was using HTTP/2
+    When DEVSHARD_RPC_H2_UPGRADE is false
     And the peer opens N concurrent chats
     Then peer RPC is Connect over HTTP/1.1 on InferenceUrl
     And the established connection count tracks N, not 1
+
+  @v6-wrapping @http2 @fallback
+  Scenario: a host that loses HTTP/2 is reached over HTTP/1.1 and recovered later
+    Given the cell is SR
+    And the wrapping images are v6
+    And the peer was using HTTP/2
+    When the host's proxy image is swapped for one that does not recognise the preface
+    Then the peer's next Attach misses HTTP/2, is logged once, and completes over HTTP/1.1
+    And chats keep completing
+    When the v6 proxy image is restored
+    Then within about 30 minutes the peer's next Attach or refresh is HTTP/2 again
+    And no process was restarted for either change
 
   @v6-wrapping @http11
   Scenario Outline: a v6 nginx proxy does not become the HTTP/2 listen
@@ -137,7 +153,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     When both peers open N concurrent chats
     Then peer RPC is Connect over HTTP/1.1 on InferenceUrl
     And the established connection count tracks N, not 1
-    And the host does not require port 9443
+    And the host needs no port beyond InferenceUrl's
     And JSON is still served
 
     Examples:
@@ -172,7 +188,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     Given the cell is <cell>
     And the wrapping images are v6
     And the ingress image is proxy-router
-    And peer A has one established connection to port 9443
+    And peer A has one established HTTP/2 connection to the InferenceUrl port
     When peer A sends more than 400 GetDiffs in 10 seconds on that connection
     Then further GetDiffs return HTTP 429
     And a Chat on that same connection still completes
@@ -188,7 +204,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
   Scenario: connection rate is per source address and is absent on HTTP/1.1
     Given the cell is SR
     And the wrapping images are v6
-    When one address opens connections to port 9443 faster than 200 per second
+    When one address opens connections that start with the HTTP/2 preface faster than 200 per second
     Then further handshakes die before Attach
     And the child logs no signature work for the refused handshakes
     And a second address opening one connection in the same second attaches and chats
@@ -240,7 +256,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     Examples:
       | transport                         |
       | HTTP/1.1 on InferenceUrl          |
-      | HTTP/2 on port 9443 after section 2 |
+      | HTTP/2 on InferenceUrl after section 2 |
 
   @catch-up @both-wrappings
   Scenario: one oversized diff is its own page
@@ -268,7 +284,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     When a peer chats, gossips, reads diffs, and reads /healthz on InferenceUrl
     Then every call succeeds over HTTP/1.1
     And the old binary is not required to answer /rpc/ or HTTP/2
-    And publishing port 9443 does not break port 443
+    And recognising the HTTP/2 preface does not break JSON on port 80 or 443
     And a failed /rpc/ against that child does not take down its JSON routes
     And the version in the URL still selects that child
 
