@@ -26,7 +26,7 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.NoError(t, err)
 	text := string(src)
 	require.Regexp(t, `(?m)^  proxy:`, text)
-	require.Contains(t, text, `"127.0.0.1:8443:8443"`)
+	require.Contains(t, text, `"127.0.0.1:18443:8080"`)
 	require.Contains(t, text, "./proxy/haproxy-rpc.cfg")
 	require.Contains(t, text, "versiond-router")
 	require.Contains(t, text, "ipv4_address: 172.30.0.70")
@@ -37,8 +37,8 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.NoError(t, err)
 
 	got := rewriteProxyCompose(text)
-	require.Contains(t, got, `"127.0.0.1::8443"`)
-	require.NotContains(t, got, `"127.0.0.1:8443:8443"`)
+	require.Contains(t, got, `"127.0.0.1::8080"`)
+	require.NotContains(t, got, `"127.0.0.1:18443:8080"`)
 	require.Contains(t, got, "./proxy/grpc-exhausted.http")
 	require.NotContains(t, got, "../../proxy-router/grpc-exhausted.http")
 }
@@ -47,9 +47,15 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	cfg, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
 	require.NoError(t, err)
 	text := string(cfg)
-	require.Contains(t, text, "bind *:8443 proto h2")
+	require.Contains(t, text, "bind *:8080\n")
+	require.Contains(t, text, "acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a")
+	require.Contains(t, text, "use_backend rpc_h2c_in if peer_rpc_h2c")
+	require.Contains(t, text, "server local abns@rpc_h2c send-proxy-v2")
+	require.Contains(t, text, "bind abns@rpc_h2c accept-proxy proto h2")
 	require.Contains(t, text, "tune.h2.max-concurrent-streams 16384")
-	require.Contains(t, text, "versiond-router:8081 proto h2")
+	require.Contains(t, text, "versiond-router:8080 proto h2")
+	require.NotContains(t, text, "8081")
+	require.NotContains(t, text, "8443")
 	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
 	require.Contains(t, text, "store conn_rate(1s),sess_rate(1s)")
@@ -68,7 +74,6 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, text, "track-sc1 src table st_rpc_attach")
 	require.Contains(t, text, "track-sc1 src table st_rpc_chat")
 	require.Contains(t, text, "track-sc1 src table st_rpc_diffs")
-	require.NotContains(t, text, "bind *:8080")
 
 	prod, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "proxy-router", "haproxy.cfg.template"))
 	require.NoError(t, err)
@@ -94,12 +99,13 @@ func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
 	require.NotContains(t, string(pool), "sess_rate")
 	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
 	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 16384")
-	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2")
+	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:8080\n")
+	require.NotContains(t, string(router), "proto h2\n", "no bind forces proto h2: JSON and the HTTP/2 preface share :8080")
 	require.Contains(t, string(router), "expose-experimental-directives")
 	require.Contains(t, string(router), "normalize-uri percent-decode-unreserved strict")
 	require.Contains(t, string(router), "normalize-uri percent-to-uppercase")
-	require.Contains(t, string(router), "dst_port 8080")
-	require.Contains(t, string(router), "var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/")
+	require.NotContains(t, string(router), "dst_port")
+	require.Contains(t, string(router), "acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/")
 	require.NotContains(t, string(router), "path_sub /rpc/")
 }
 
@@ -126,8 +132,8 @@ func TestComposeFileArgsProxyOverlay(t *testing.T) {
 func TestDefaultInferenceURLStaysRouter8080(t *testing.T) {
 	require.Equal(t, "http://versiond-router:8080", config.DefaultEscrowSlotURL)
 	require.Equal(t, 8080, config.DefaultVersiondRouterPort)
-	require.Equal(t, 8081, config.DefaultVersiondRouterH2Port)
-	require.Equal(t, 8443, config.DefaultRPCH2Port)
+	require.Equal(t, 8080, config.DefaultProxyPort)
+	require.Equal(t, "http://proxy:8080", config.ProxyOverlayURL)
 	require.Equal(t, "proxy", config.DefaultProxyService)
 }
 

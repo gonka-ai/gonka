@@ -50,9 +50,7 @@ func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	t.Setenv(harness.EnvVersiondImage, baselineVersion)
 	t.Setenv(harness.EnvVersiondRouterImage, baselineRouter)
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "")
-	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "")
+	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
 	t.Setenv("TESTENV_PROXY_OVERLAY", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_PER_MIN", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_BURST", "")
@@ -98,9 +96,7 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 		t.Fatal("overlay limits use current versiond and versiond-router; unset TESTENV_VERSIOND_IMAGE and TESTENV_VERSIOND_ROUTER_IMAGE")
 	}
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
-	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "true")
+	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_PER_MIN", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_BURST", "")
 	t.Setenv("DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL", "")
@@ -300,7 +296,7 @@ func proveConnRate(t *testing.T, stack *harness.Stack, proxy string) {
 	require.Greater(t, refused, 0, "conn_rate must refuse the flooding src before HTTP")
 
 	netName := containerNetwork(t, stack.ComposeProject+"-proxy-1")
-	cmd := exec.Command("docker", "run", "--rm", "--network", netName, "alpine:3.21", "nc", "-z", "-w", "2", "proxy", "8443")
+	cmd := exec.Command("docker", "run", "--rm", "--network", netName, "alpine:3.21", "nc", "-z", "-w", "2", "proxy", strconv.Itoa(config.DefaultProxyPort))
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "second src must still connect: %s", out)
 }

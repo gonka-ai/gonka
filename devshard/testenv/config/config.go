@@ -246,14 +246,15 @@ const (
 	DefaultKeyringPassword    = "testenv1"
 	DefaultVersiondRouterHost = "versiond-router"
 	DefaultVersiondRouterPort = 8080
-	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
-	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
-	// on DefaultVersiondRouterPort.
-	DefaultVersiondRouterH2Port = 8081
-	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
-	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
-	DefaultProxyService     = "proxy"
-	DefaultRPCH2Port        = 8443
+	// DefaultProxyService / DefaultProxyPort are the opt-in overlay public
+	// hop (docker-compose.proxy.yml): a one-port stand-in for join's
+	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
+	// as they share join's :80/:443. With the overlay on, pooled hosts'
+	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
+	DefaultProxyService = "proxy"
+	DefaultProxyPort    = 8080
+	ProxyOverlayURL     = "http://proxy:8080"
+	ProxyOverlayEnv     = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
@@ -454,6 +455,18 @@ func (c *File) ApplyDefaults() {
 		if c.Hosts[i].Port == 0 {
 			c.Hosts[i].Port = DefaultHostPort
 		}
+	}
+}
+
+// ProxyOverlayFromEnv is whether TESTENV_PROXY_OVERLAY asks for the proxy
+// overlay. Default citest leaves it unset: peers dial versiond-router:8080
+// directly. The overlay rerun puts the proxy in front of that port.
+func ProxyOverlayFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(ProxyOverlayEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
 	}
 }
 

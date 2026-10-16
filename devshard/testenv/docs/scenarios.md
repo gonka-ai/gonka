@@ -135,8 +135,9 @@ Run: `make citest-grpc-transport` from `devshard/testenv/`.
 
 ### No-proxy baseline versus current
 
-Peer RPC on the default compose. No `proxy` overlay and no `DEVSHARD_RPC_H2_PORT`.
-HTTP/2 and native gRPC are not in this grid. Checklist:
+Peer RPC on the default compose. No `proxy` overlay; `DEVSHARD_RPC_H2_UPGRADE=false`
+keeps every cell on Connect over HTTP/1.1. HTTP/2 and native gRPC are not in
+this grid. Checklist:
 [`grpc-transport-phase6-plan.md`](../../docs/grpc-transport-phase6-plan.md) §8.2.
 
 | Column | versiond + router | Client |
@@ -145,9 +146,9 @@ HTTP/2 and native gRPC are not in this grid. Checklist:
 | **B1+RPC** | same pin | Connect HTTP/1.1 on `versiond-router:8080` |
 | **N0 JSON** | this tree (`:latest`) | JSON |
 
-Peer RPC on this tree’s versiond and router is HTTP/2 on the proxy overlay
-(plan §8.4). This grid does not run that dial, and it does not run Connect
-HTTP/1.1 against those images.
+Peer RPC on this tree’s versiond and router is HTTP/2 by default, on
+`versiond-router:8080` directly or through the proxy overlay (plan §8.4).
+This grid forces HTTP/1.1 and so does not run that dial.
 
 RPC-on cells set:
 
@@ -182,8 +183,10 @@ targets; they are not inside the grid script.
 
 ### Proxy overlay hop (§8.3)
 
-Peer RPC on this tree’s versiond and router, through `proxy:8443`. `:8080` stays
-JSON and healthz. A closed h2 port does not fall back to Connect.
+Peer RPC on this tree’s versiond and router, through `proxy:8080`, the same
+port that carries JSON and healthz. The second half of the test makes the
+proxy reset the HTTP/2 preface and requires the same peers to continue over
+Connect on HTTP/1.1 through that port.
 
 ```bash
 cd devshard/testenv
@@ -221,10 +224,10 @@ cd devshard/testenv
 ### HTTP/2 suite rerun (§9.1)
 
 The §8.2 suite list on this tree’s versiond and versiond-router, with
-`TESTENV_PROXY_OVERLAY=1` and Connect over HTTP/2 on `proxy:8443`. Rate limits
-stay at the defaults. `DEVSHARD_RPC_H2_FRONT_HOST=versiond-router` keeps a
-direct participant (a solo `http://versiond-N:8080`) on h2c to that host.
-The 0.2.15-v5 pin and native gRPC are not in this grid.
+`TESTENV_PROXY_OVERLAY=1` and Connect over HTTP/2 on `proxy:8080`, the
+pooled InferenceUrl. Rate limits stay at the defaults. A solo participant
+(`http://versiond-N:8080`) keeps dialing that host directly, on h2c. The
+0.2.15-v5 pin and native gRPC are not in this grid.
 
 ```bash
 cd devshard/testenv

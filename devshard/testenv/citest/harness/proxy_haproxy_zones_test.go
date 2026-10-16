@@ -33,7 +33,8 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
 	require.NoError(t, err)
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", defaultRPCProxyTestLimits())
-	require.Contains(t, got, "bind *:8443 proto h2")
+	require.Contains(t, got, "bind *:8080\n")
+	require.Contains(t, got, "bind abns@rpc_h2c accept-proxy proto h2")
 	require.Contains(t, got, "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, got, "http-request del-header X-Real-IP")
 	require.Contains(t, got, "X-Real-IP %[src]")
@@ -339,7 +340,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		fx.alias = "proxy"
 		args = append(args, "--network", netName, "--network-alias", "proxy")
 	} else {
-		args = append(args, "-p", "127.0.0.1::8443")
+		args = append(args, "-p", "127.0.0.1::8080")
 	}
 	args = append(args, "haproxy:3.2-alpine")
 	out, err := exec.Command("docker", args...).CombinedOutput()
@@ -347,7 +348,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 
 	if userNet {
-		fx.url = "http://proxy:8443"
+		fx.url = "http://proxy:8080"
 		peer := startCurlPeer(t, fx.network)
 		waitHAProxyReady(t, name, func() (int, error) {
 			got := peer.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.SessionService/Chat", 1)
@@ -360,7 +361,7 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		return fx
 	}
 
-	portOut, err := exec.Command("docker", "port", name, "8443/tcp").Output()
+	portOut, err := exec.Command("docker", "port", name, "8080/tcp").Output()
 	require.NoError(t, err, "%s", portOut)
 	mapped, err := publishedLocalPort(string(portOut))
 	require.NoError(t, err)
@@ -471,7 +472,7 @@ func startCurlPeer(t *testing.T, network string) *curlPeer {
 
 func (p *curlPeer) flood(t *testing.T, alias, path string, n int) string {
 	t.Helper()
-	target := "http://" + alias + ":8443" + path
+	target := "http://" + alias + ":8080" + path
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		cmd := exec.Command("docker", "exec", p.name,
