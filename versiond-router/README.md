@@ -312,6 +312,7 @@ long as data continues to flow within that interval.
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | `timeout client` / `timeout server`: idle time allowed on a stream |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | idle timeout after HTTP Upgrade/CONNECT; does not apply to SSE |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect to an upstream, and header read timeout |
+| `VERSIOND_ROUTER_HARD_STOP_SECONDS` | `1800` | `hard-stop-after`: how long a soft stop waits for streams still in flight before it resets them and exits |
 
 The SSE and tunnel settings control different HAProxy modes and are independent.
 Reducing `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` reduces the maximum quiet period
@@ -468,6 +469,7 @@ lock.
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
+| `VERSIOND_ROUTER_HARD_STOP_SECONDS` | `1800` | `hard-stop-after` for the SIGUSR1 soft stop; keep it at or below the stop budget given to Docker |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private live/readiness listener consumed by the parent proxy and fleet checks |
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(all interfaces)* | per-slot front-network address used for data and admin listeners |
 | `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
@@ -530,13 +532,17 @@ unrelated public APIs remain available through the policy tier.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
-uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. On that signal the
-router closes Watch streams and lets an in-flight inference finish on its own
-stream, so an idle Watch does not hold the process until Docker's grace period
-kills it and a body that is still streaming is not reset. The shipped Compose
-overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
-`10s`) before Docker forces termination, so selecting one image cannot override
-the shutdown contract of the other.
+uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. That signal is
+HAProxy's own soft stop: the listeners close, every HTTP/2 connection receives
+`GOAWAY`, streams in flight finish on their own, and the process exits after the
+last stream ends or at `hard-stop-after` (`VERSIOND_ROUTER_HARD_STOP_SECONDS`).
+A peer cannot open a new stream on a drained connection; it reopens Watch on
+its next token refresh, on a new connection that the parent proxy sends to
+another slot. The shipped Compose overlay bounds routine cleanup with
+`VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default `10s`); a fleet rollout passes
+`VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS` to `docker stop --time`, and
+`hard-stop-after` must not exceed that budget, or Docker kills the process
+before HAProxy resets the last streams itself.
 
 `VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
 registry to be reachable before a slot operation. During a registry incident,

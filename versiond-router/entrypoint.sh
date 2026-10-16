@@ -1,9 +1,11 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
-# Watch streams. An in-flight Chat keeps its own stream until the response
-# finishes, so a rollout does not wait out an idle Watch or reset a body
-# that is still streaming.
+# environment, then execs HAProxy. SIGUSR1 is HAProxy's soft stop: the
+# listeners close, every HTTP/2 connection gets GOAWAY, streams in flight
+# finish on their own, and the process exits after the last stream ends or
+# at hard-stop-after (VERSIOND_ROUTER_HARD_STOP_SECONDS). A peer reopens
+# Watch on its next token refresh, on a new connection through the parent
+# proxy, so an idle Watch moves to another slot by itself.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -42,6 +44,10 @@
 #   GONKA_HA                  set by the HA compose overlay; keeps the
 #                             Devshard-Ha request header on the HA backend even
 #                             while all but one pool member are unavailable
+#   VERSIOND_ROUTER_HARD_STOP_SECONDS
+#                             hard-stop-after: a stream still open this long
+#                             after SIGUSR1 is reset and the process exits.
+#                             Default 1800, the fleet drain budget.
 #   VERSIOND_ROUTER_*         proxy policy, see README
 #
 # Pool membership is discovered from DNS, protocol names from governance, and
@@ -84,6 +90,10 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
 # an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
+# Soft stop waits for streams in flight; this caps that wait. Keep it at or
+# below the stop budget the caller gives Docker (the fleet passes
+# VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS to `docker stop --time`).
+HARD_STOP="${VERSIOND_ROUTER_HARD_STOP_SECONDS:-1800}"
 VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
 CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
@@ -341,7 +351,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -349,6 +359,10 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$HARD_STOP" -eq 0 ]; then
+    echo "versiond-router: VERSIOND_ROUTER_HARD_STOP_SECONDS must be at least 1" >&2
+    exit 1
+fi
 if [ "$H2_PORT" -eq 0 ] || [ "$H2_PORT" -eq 8080 ] || [ "$H2_PORT" -eq "$ADMIN_PORT" ]; then
     echo "versiond-router: VERSIOND_ROUTER_H2_PORT must be a distinct positive port (not 8080 or the admin port)" >&2
     exit 1
@@ -827,6 +841,7 @@ sed \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "s|\${HARD_STOP_SECONDS}|$HARD_STOP|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
     -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
@@ -879,4 +894,4 @@ if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
 fi
 
-exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"
+exec "$HAPROXY_BIN" -W -db -f "$OUT"
