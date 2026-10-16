@@ -842,41 +842,36 @@ if [ -n "$RENDER_ONLY" ]; then
     exit 0
 fi
 
-run_catalog_reconciler() {
-    while :; do
-        status=0
-        ROUTING_CATALOG_COMPONENT=versiond-router \
-        ROUTING_CATALOG_URL="$CATALOG_URL" \
-        ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
-        ROUTING_CATALOG_PROJECTION_MAP="$VERSIONS_MAP" \
-        ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
-        ROUTING_CATALOG_BACKEND_PREFIX=versiond_dynamic_ \
-        ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \
-        ROUTING_CATALOG_SERVER_PREFIX=versiond \
-        ROUTING_CATALOG_SERVER_CAPACITY="$SLOTS" \
-        ROUTING_CATALOG_ACTIVATION_MIN_READY="$CATALOG_ACTIVATION_MIN_READY" \
-        ROUTING_CATALOG_ALLOW_REMOVALS="$CATALOG_ALLOW_REMOVALS" \
-        ROUTING_CATALOG_EXCLUDE="${VERSIOND_NON_HA_VERSIONS:-} ${VERSIOND_VERSIONS:-}" \
-        ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
-        ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
-        ROUTING_CATALOG_MAX_BYTES="$CATALOG_MAX_BYTES" \
-        ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS="$CATALOG_RUNTIME_TIMEOUT" \
-        ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
-        ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
-        ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="$CATALOG_CACHE_MAX_AGE" \
-        ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
-        ROUTING_CATALOG_STATUS_BACKEND=router_catalog_status \
-        ROUTING_CATALOG_STATUS_SERVER=catalog \
-        ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
-        ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
-            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
-        echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
-        sleep 1
-    done
-}
-
 if [ -n "$CATALOG_URL" ]; then
-    run_catalog_reconciler &
+    ROUTING_CATALOG_COMPONENT=versiond-router \
+    ROUTING_CATALOG_URL="$CATALOG_URL" \
+    ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
+    ROUTING_CATALOG_PROJECTION_MAP="$VERSIONS_MAP" \
+    ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
+    ROUTING_CATALOG_BACKEND_PREFIX=versiond_dynamic_ \
+    ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \
+    ROUTING_CATALOG_SERVER_PREFIX=versiond \
+    ROUTING_CATALOG_SERVER_CAPACITY="$SLOTS" \
+    ROUTING_CATALOG_ACTIVATION_MIN_READY="$CATALOG_ACTIVATION_MIN_READY" \
+    ROUTING_CATALOG_ALLOW_REMOVALS="$CATALOG_ALLOW_REMOVALS" \
+    ROUTING_CATALOG_EXCLUDE="${VERSIOND_NON_HA_VERSIONS:-} ${VERSIOND_VERSIONS:-}" \
+    ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
+    ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
+    ROUTING_CATALOG_MAX_BYTES="$CATALOG_MAX_BYTES" \
+    ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS="$CATALOG_RUNTIME_TIMEOUT" \
+    ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
+    ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
+    ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="$CATALOG_CACHE_MAX_AGE" \
+    ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
+    ROUTING_CATALOG_STATUS_BACKEND=router_catalog_status \
+    ROUTING_CATALOG_STATUS_SERVER=catalog \
+    ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
+    ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
+        exec /usr/local/lib/router-runtime/router-supervisor \
+            /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"
 fi
 
+# h2-watch-drain runs HAProxy and closes Watch streams on soft-stop. With a
+# catalog it is itself the child of router-supervisor, which owns the
+# reconciler loop and forwards SIGUSR1/SIGTERM to it.
 exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"

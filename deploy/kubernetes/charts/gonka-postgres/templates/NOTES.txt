@@ -1,0 +1,25 @@
+Database cluster: {{ include "gonka-postgres.fullname" . }}
+Application writer service: {{ include "gonka-postgres.fullname" . }}-rw:5432
+Credentials Secret: {{ .Values.credentialsSecret }} (username/password)
+
+Wait for CloudNativePG readiness before starting the application:
+  kubectl -n {{ .Release.Namespace }} wait --for=condition=Ready --timeout=20m cluster/{{ include "gonka-postgres.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} get cluster/{{ include "gonka-postgres.fullname" . }}
+
+The operator must be >= 1.28.0: the shared API version alone cannot prove that.
+Three distinct schedulable nodes and suitable persistent storage are required.
+No standby acknowledgements means writes block; no failover quorum means
+automatic promotion waits. Do not disable synchronous_commit in application SQL.
+
+The Cluster has helm.sh/resource-policy=keep. Keep this database release separate
+from gonka-ha and preserve it across application upgrades/removal. The annotation
+does not protect against deleting the Cluster or namespace directly.
+
+{{- if .Values.snapshots.enabled }}
+Cold snapshot schedule is enabled. Check Backup and VolumeSnapshot completion,
+retain snapshot metadata, and test restoration into a NEW release. The schedule
+does not prune snapshots or provide off-site backups/PITR.
+{{- else }}
+No backup schedule is configured. Establish backup, off-site retention and tested
+restore procedures before storing production data. Replication is not a backup.
+{{- end }}

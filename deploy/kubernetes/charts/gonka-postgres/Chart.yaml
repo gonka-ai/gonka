@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gonka-postgres
+description: Independently managed CloudNativePG HA database for Gonka devshard
+type: application
+version: 0.1.0
+appVersion: "16"
+kubeVersion: '>=1.33.0-0'
+annotations:
+  gonka.ai/minimum-cloudnative-pg-version: "1.28.0"

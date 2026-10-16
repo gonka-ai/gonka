@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-rpc-h2-cert test-compose test-routing
+.PHONY: all build-docker release test-render test-public-bind test-route-status test-h2-upstream-check test-rpc-h2-cert test-compose test-routing test-pod-routing
 
 include ../scripts/blst-portable.mk
 
@@ -7,13 +7,16 @@ HAPROXY_IMAGE ?= haproxy:3.2-alpine
 test-route-status:
 	@./route-status_test.sh
 
+test-public-bind:
+	@sh ./public-bind_test.sh
+
 test-h2-upstream-check:
 	@./h2-upstream-check_test.sh
 
 test-rpc-h2-cert:
 	@./rpc-h2-cert_test.sh
 
-test-render: test-route-status test-rpc-h2-cert
+test-render: test-route-status test-public-bind test-rpc-h2-cert
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -453,6 +456,9 @@ test-render: test-route-status test-rpc-h2-cert
 test-routing:
 	@./test-routing.sh
 
+test-pod-routing:
+	@bash ./pod-routing_test.sh
+
 test-compose:
 	@set -eu; \
 	root=$$(cd .. && pwd); \
@@ -460,6 +466,7 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.yml" \
 		-f "$$root/deploy/join/docker-compose.edge-api-multi.yml" \
 		config --format json 2>/dev/null); \
+	printf '%s\n' "$$edge" | jq -e '.services.proxy.stop_signal == "SIGTERM"' >/dev/null || { echo "test-compose: public proxy must release its exclusive host ports without graceful drain" >&2; exit 1; }; \
 	printf '%s\n' "$$edge" | jq -e '.services["edge-api-router"] != null and .services["proxy-policy"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy2"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy2"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy"].environment.PROXY_POLICY_READINESS_HOST == "proxy-policy-app-network" and .services["proxy-policy"].networks.default.aliases == ["proxy-policy-app-network"] and .services["proxy-policy"].stop_grace_period == "30m0s" and .services["proxy-policy2"].stop_grace_period == "30m0s" and (.services.proxy.environment | has("EDGE_API_POOL_HOST") | not) and (.services.proxy.environment | has("PROXY_EDGE_API_PORT") | not)' >/dev/null || { echo "test-compose: legacy edge-api router contract changed" >&2; exit 1; }; \
 	short_grace=$$(PROXY_POLICY_STOP_GRACE_PERIOD=25m docker compose \
 		-f "$$root/deploy/join/docker-compose.yml" config --format json); \
@@ -469,6 +476,7 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.yml" \
 		-f "$$root/deploy/join/docker-compose.versiond.yml" \
 		config --format json 2>/dev/null); \
+	printf '%s\n' "$$versiond" | jq -e '.services.proxy.stop_signal == "SIGTERM"' >/dev/null || { echo "test-compose: HA overlay changed the singleton public proxy stop signal" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router-fleet" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "8404" and .services.proxy.environment.VERSIOND_ROUTER_FLEET_CAPACITY == "16" and (.services.proxy.environment | has("VERSIOND_ROUTER_HEALTH_CONTRACT") | not) and (.services | has("versiond-router") | not) and (.services.proxy.networks | has("versiond-router-front")) and (.services.proxy.networks | has("versiond-router-back"))' >/dev/null || { echo "test-compose: versiond fleet distributor contract changed" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' >/dev/null || { echo "test-compose: inner router delays public proxy startup" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e '([.services["proxy-policy"], .services["proxy-policy2"]] | all(((.depends_on // {}) | has("versiond") | not) and .depends_on.api.condition == "service_started" and .depends_on["proxy-ssl"].required == false))' >/dev/null || { echo "test-compose: HA versiond or PostgreSQL delays policy startup" >&2; exit 1; }; \
@@ -518,3 +526,7 @@ release:
 		-f Dockerfile \
 		-t ghcr.io/product-science/proxy-router:$(VERSION) \
 		--push ..
+
+.PHONY: test-supervisor
+test-supervisor:
+	@../router-runtime/router-supervisor_test.sh

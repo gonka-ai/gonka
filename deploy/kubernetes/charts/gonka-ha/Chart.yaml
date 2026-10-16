@@ -1,0 +1,7 @@
+apiVersion: v2
+name: gonka-ha
+description: Optional Kubernetes deployment of the existing Gonka HA serving tier
+type: application
+version: 0.1.0
+appVersion: devshard-0.2.x-v6
+kubeVersion: '>=1.33.0-0'

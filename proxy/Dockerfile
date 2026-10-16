@@ -34,6 +34,9 @@ RUN mkdir -p /var/log/nginx /etc/nginx/ssl
 # Expose ports
 EXPOSE 80 443 8081
 
+# Complete accepted requests before exiting during Compose or Kubernetes stops.
+STOPSIGNAL SIGQUIT
+
 # Use custom entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
 

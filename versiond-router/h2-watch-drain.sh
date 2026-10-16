@@ -186,6 +186,10 @@ supervise() {
     trap '' PIPE
     trap 'stopping=1' USR1
     trap 'stopping=1; hard=1' TERM INT
+    # Master-worker reload and HUP are HAProxy's, not a stop. A supervisor in
+    # front of this script forwards them here; pass them on to the master.
+    trap 'kill -USR2 "$pid" 2>/dev/null || true' USR2
+    trap 'kill -HUP "$pid" 2>/dev/null || true' HUP
     "$bin" -W -db -f "$cfg" &
     pid=$!
     while kill -0 "$pid" 2>/dev/null; do

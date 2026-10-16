@@ -1,0 +1,123 @@
+# See ../../README.md. Explicit image references are required: build from the
+# same tested revision, including the proxy-router Kubernetes bind support.
+fullnameOverride: ''
+clusterDomain: cluster.local
+# Only the offline maintenance procedure may enable this after routing Pods exit.
+# Desired replica counts remain unchanged; ingress/router are held at zero.
+maintenance: false
+images:
+  versiond: ''
+  router: ''
+  proxyRouter: ''
+  proxyPolicy: ''
+  edgeApi: ''
+  oracle: python:3.13-alpine
+imagePullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Only governance-approved, PostgreSQL-capable protocols belong here.
+# The chart's read-only oracle filters the external catalog for ALL consumers.
+# This is an allowlist, not static router bootstrap: each newly seen protocol
+# needs activationMinReady ready peers before either router tier publishes it.
+# Accepted catalog snapshots remain available below that reserve after restart.
+protocols: [v6]
+external:
+  oracleUrl: ''
+  dapiHost: ''
+  dapiPort: 9000
+  chainRpcUrl: ''
+  chainGrpcUrl: ''
+  # Enable system-root TLS when the external chain gRPC endpoint requires it.
+  chainGrpcTls: false
+  nodeManagerAddress: ''
+
+# Existing Secrets in the release namespace; chart never stores secret values.
+# keyringSecret contains the files from .inference/keyring-file, flattened.
+identity:
+  keyName: ''
+  accountPubKey: ''
+  keyringSecret: ''
+  passwordSecret: ''
+  passwordKey: password
+postgres:
+  host: ''
+  port: 5432
+  database: devshardd
+  user: devshardd
+  credentialsSecret: ''
+  passwordKey: password
+  # Explicitly select disable only for an existing plaintext PostgreSQL
+  # endpoint reachable over a trusted private network (for example Compose).
+  sslMode: require
+  # Optional Secret containing ca.crt. Required for verify-ca / verify-full.
+  caSecret: ''
+  poolMaxConns: 4
+
+# Replicas of each component must reside on different worker nodes by default.
+# Disable only for a development cluster; it removes protection from node loss.
+scheduling:
+  requireDistinctNodes: true
+networkPolicy:
+  # Disable only when equivalent isolation is enforced outside this chart.
+  # Inner routers trust forwarded client identity from the ingress tier.
+  enabled: true
+
+versiond:
+  replicas: 3
+  storage: {size: 20Gi, storageClass: ''}
+  terminationGracePeriodSeconds: 1800
+  hostShutdownBudgetSeconds: 1500
+  drainAnnounceSeconds: 5
+  resources:
+    requests: {cpu: 500m, memory: 1Gi}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+router:
+  replicas: 3
+  storage: {size: 1Gi, storageClass: ''}
+  terminationGracePeriodSeconds: 1800
+  versionCapacity: 32
+  activationMinReady: 2
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+ingress:
+  replicas: 3
+  storage: {size: 1Gi, storageClass: ''}
+  terminationGracePeriodSeconds: 1800
+  service:
+    # Enable LoadBalancer after storage verification and private route tests.
+    type: ClusterIP
+    annotations: {}
+    externalTrafficPolicy: Local
+  # Standard kubernetes.io/tls Secret; absent means HTTP, for a private L4 LB.
+  tlsSecret: ''
+  serverName: ''
+  # Set only when the upstream L4 load balancer sends PROXY protocol.
+  trustedProxyCidrs: ''
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+  policyResources:
+    requests: {cpu: 100m, memory: 128Mi}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+  policyExtraEnv: []
+edgeApi:
+  replicas: 2
+  terminationGracePeriodSeconds: 30
+  resources:
+    requests: {cpu: 100m, memory: 128Mi}
+  nodeSelector: {}
+  tolerations: []
+  extraEnv: []
+oracle:
+  replicas: 2
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {memory: 128Mi}
+  nodeSelector: {}
+  tolerations: []

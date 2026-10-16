@@ -2,6 +2,10 @@
 
 Devshard inference that stays available, backed by multiple `versiond` instances.
 
+For the optional Kubernetes deployment of the v6 HA serving tier, see
+[Kubernetes for the HA serving tier](../deploy/kubernetes/README.md). This document
+remains the Docker Compose operator path; Kubernetes is not required for Compose HA.
+
 ## Contents
 
 - [Why this matters](#why-this-matters)

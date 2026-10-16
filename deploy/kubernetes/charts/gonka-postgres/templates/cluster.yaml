@@ -1,0 +1,82 @@
+{{- include "gonka-postgres.validate" . -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "gonka-postgres.fullname" . }}
+  labels:
+    {{- include "gonka-postgres.labels" . | nindent 4 }}
+  annotations:
+    # Do not destroy the database when removing its Helm release. This is NOT
+    # protection against kubectl deletion, namespace deletion or storage loss.
+    helm.sh/resource-policy: keep
+spec:
+  instances: {{ .Values.instances }}
+  imageName: {{ required "imageName must specify a tested CloudNativePG-compatible PostgreSQL 16 image" .Values.imageName | quote }}
+  imagePullPolicy: {{ .Values.imagePullPolicy }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  enableSuperuserAccess: false
+  enablePDB: true
+  primaryUpdateStrategy: unsupervised
+  primaryUpdateMethod: switchover
+  postgresql:
+    parameters:
+      synchronous_commit: 'on'
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: required
+      # Native field from CNPG 1.28; do not replace with the deprecated alpha
+      # annotation, which takes precedence over this value in the webhook.
+      failoverQuorum: true
+  bootstrap:
+    {{- if .Values.recovery.volumeSnapshot }}
+    recovery:
+      database: {{ .Values.database | quote }}
+      owner: {{ .Values.owner | quote }}
+      secret:
+        name: {{ required "credentialsSecret is required" .Values.credentialsSecret | quote }}
+      volumeSnapshots:
+        storage:
+          name: {{ .Values.recovery.volumeSnapshot | quote }}
+          kind: VolumeSnapshot
+          apiGroup: snapshot.storage.k8s.io
+    {{- else }}
+    initdb:
+      database: {{ .Values.database | quote }}
+      owner: {{ .Values.owner | quote }}
+      secret:
+        name: {{ required "credentialsSecret is required" .Values.credentialsSecret | quote }}
+      dataChecksums: true
+    {{- end }}
+  storage:
+    size: {{ .Values.storage.size | quote }}
+    {{- with .Values.storage.storageClass }}
+    storageClass: {{ . | quote }}
+    {{- end }}
+    pvcTemplate:
+      accessModes: [ReadWriteOnce]
+  resources:
+    {{- toYaml .Values.resources | nindent 4 }}
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: required
+    topologyKey: kubernetes.io/hostname
+    {{- with .Values.nodeSelector }}
+    nodeSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.tolerations }}
+    tolerations:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- if .Values.snapshots.enabled }}
+  backup:
+    target: prefer-standby
+    volumeSnapshot:
+      className: {{ .Values.snapshots.className | quote }}
+      online: false
+      snapshotOwnerReference: none
+  {{- end }}

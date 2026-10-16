@@ -1,0 +1,17 @@
+{{- if .Values.snapshots.enabled }}
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: {{ include "gonka-postgres.fullname" . }}-snapshot
+  labels:
+    {{- include "gonka-postgres.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.snapshots.schedule | quote }}
+  immediate: {{ .Values.snapshots.immediate }}
+  backupOwnerReference: none
+  cluster:
+    name: {{ include "gonka-postgres.fullname" . }}
+  method: volumeSnapshot
+  target: prefer-standby
+  online: false
+{{- end }}
