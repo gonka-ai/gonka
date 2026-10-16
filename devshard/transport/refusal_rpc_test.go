@@ -110,6 +110,8 @@ type recordingExecutor struct {
 	calls   []recordedChallenge
 }
 
+var _ host.ChallengeReceiptWireSender = (*recordingExecutor)(nil)
+
 func (e *recordingExecutor) SessionHead(context.Context) (uint64, []byte, error) {
 	return e.nonce, e.root, e.headErr
 }
@@ -129,7 +131,7 @@ func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint
 	return nil
 }
 
-func (e *recordingExecutor) ChallengeReceiptWires(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+func (e *recordingExecutor) ChallengeReceiptWires(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, _ host.WireReload) ([]byte, []*types.DevshardTx, error) {
 	raw, err := transport.ChallengeReceiptWireBody(inferenceID, payload, diffs)
 	require.NoError(e.t, err)
 	nonces := make([]uint64, len(diffs))

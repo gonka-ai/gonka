@@ -53,6 +53,8 @@ type refusalJournal struct {
 	escrowID string
 }
 
+var _ host.RefusalWireReader = refusalJournal{}
+
 func (j refusalJournal) Anchor(nonce uint64, root []byte) (bool, error) {
 	hash, ok, err := j.store.DiffStateHash(j.escrowID, nonce)
 	if err != nil || !ok {
@@ -66,6 +68,9 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() 
 		return nil
 	}
 	var pending []storage.DiffSize
+	// capped is set when the read that filled pending hit its row limit, so
+	// stored rows may follow the last one in hand.
+	var capped bool
 	for n := from; n <= to; {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -78,6 +83,7 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() 
 			if err != nil {
 				return fmt.Errorf("get diff sizes: %w", err)
 			}
+			capped = len(pending) >= host.ChallengePageMaxNonces
 		}
 		if len(pending) == 0 {
 			return &storage.DiffGapError{Expected: n, To: to}
@@ -88,35 +94,11 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() 
 		sizes := pending
 		count := host.PackChallengePage(sizes)
 		last := sizes[count-1].Nonce
-		wires, err := j.store.GetDiffWires(j.escrowID, n, last)
+		page, err := j.readRun(n, last, to)
 		if err != nil {
-			return fmt.Errorf("get diff wires: %w", err)
+			return err
 		}
-		page := make([]types.DiffWire, 0, len(wires))
-		expect := n
-		var gap *storage.DiffGapError
-		for _, w := range wires {
-			if w.Nonce != expect {
-				next := uint64(0)
-				if w.Nonce > expect {
-					next = w.Nonce
-				}
-				gap = &storage.DiffGapError{Expected: expect, Next: next, To: to}
-				break
-			}
-			page = append(page, w)
-			if expect == last {
-				break
-			}
-			expect++
-		}
-		if gap == nil && uint64(len(page)) != last-n+1 {
-			gap = &storage.DiffGapError{Expected: n + uint64(len(page)), To: to}
-		}
-		if gap != nil {
-			return gap
-		}
-		more, err := j.pageHasMore(ctx, sizes, count, last, to)
+		more, err := j.pageHasMore(ctx, sizes, count, capped, last, to)
 		if err != nil {
 			return err
 		}
@@ -144,9 +126,47 @@ func (j refusalJournal) Pages(ctx context.Context, from, to uint64, next func() 
 	return nil
 }
 
-// pageHasMore reports whether another challenge page follows last.
+// Wires reads [from, to] again for a retried send. A hole is an error.
+func (j refusalJournal) Wires(from, to uint64) ([]types.DiffWire, error) {
+	if from > to {
+		return nil, nil
+	}
+	return j.readRun(from, to, to)
+}
+
+// readRun reads [n, last] and requires every nonce in it. A gap error names to.
+func (j refusalJournal) readRun(n, last, to uint64) ([]types.DiffWire, error) {
+	wires, err := j.store.GetDiffWires(j.escrowID, n, last)
+	if err != nil {
+		return nil, fmt.Errorf("get diff wires: %w", err)
+	}
+	page := make([]types.DiffWire, 0, len(wires))
+	expect := n
+	for _, w := range wires {
+		if w.Nonce != expect {
+			next := uint64(0)
+			if w.Nonce > expect {
+				next = w.Nonce
+			}
+			return nil, &storage.DiffGapError{Expected: expect, Next: next, To: to}
+		}
+		page = append(page, w)
+		if expect == last {
+			break
+		}
+		expect++
+	}
+	if uint64(len(page)) != last-n+1 {
+		return nil, &storage.DiffGapError{Expected: n + uint64(len(page)), To: to}
+	}
+	return page, nil
+}
+
+// pageHasMore reports whether another challenge page follows last. capped
+// is whether the size read behind sizes hit its row limit; only then can a
+// stored row follow the last one in sizes.
 // A hole is returned without the caller delivering the page it already built.
-func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSize, count int, last, to uint64) (bool, error) {
+func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSize, count int, capped bool, last, to uint64) (bool, error) {
 	if last == to {
 		return false, nil
 	}
@@ -157,7 +177,7 @@ func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSiz
 		}
 		return true, nil
 	}
-	if len(sizes) < host.ChallengePageMaxNonces {
+	if !capped {
 		return false, &storage.DiffGapError{Expected: last + 1, To: to}
 	}
 	peek, err := j.store.DiffSizes(j.escrowID, last+1, to, 1)

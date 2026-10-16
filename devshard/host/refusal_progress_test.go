@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+	"weak"
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
@@ -43,6 +45,11 @@ type progressPeer struct {
 	decodedReceipts int
 	payloadOnWires  int
 }
+
+var (
+	_ ChallengeReceiptWireSender = (*progressPeer)(nil)
+	_ ChallengeReceiptWireSender = (*scriptedPeer)(nil)
+)
 
 func (p *progressPeer) SessionHead(context.Context) (uint64, []byte, error) {
 	idx := p.headN
@@ -85,7 +92,7 @@ func (p *progressPeer) ChallengeReceipt(_ context.Context, _ uint64, payload *In
 	return p.takeStep(payload != nil, diffs)
 }
 
-func (p *progressPeer) ChallengeReceiptWires(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+func (p *progressPeer) ChallengeReceiptWires(_ context.Context, _ uint64, payload *InferencePayload, diffs []types.DiffWire, _ WireReload) ([]byte, []*types.DevshardTx, error) {
 	if payload != nil && len(diffs) > 0 {
 		p.payloadOnWires++
 	}
@@ -624,11 +631,11 @@ func (p *scriptedPeer) ChallengeReceipt(ctx context.Context, id uint64, payload 
 	return p.progressPeer.ChallengeReceipt(ctx, id, payload, diffs)
 }
 
-func (p *scriptedPeer) ChallengeReceiptWires(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+func (p *scriptedPeer) ChallengeReceiptWires(ctx context.Context, id uint64, payload *InferencePayload, diffs []types.DiffWire, reload WireReload) ([]byte, []*types.DevshardTx, error) {
 	if err := p.interrupt(ctx); err != nil {
 		return nil, nil, err
 	}
-	return p.progressPeer.ChallengeReceiptWires(ctx, id, payload, diffs)
+	return p.progressPeer.ChallengeReceiptWires(ctx, id, payload, diffs, reload)
 }
 
 func journalWires(diffs []types.Diff) ([]types.DiffWire, error) {
@@ -996,6 +1003,100 @@ func TestRefusalCorruptCatchUpDoesNotAccept(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, accept)
 	require.Empty(t, peer.pages)
+}
+
+// preparingPeer builds catch-up sends through prepare, the way RPCClient does.
+type preparingPeer struct {
+	*progressPeer
+	prepare func(diffs []types.DiffWire, reload WireReload) func(context.Context) error
+}
+
+func (p *preparingPeer) PrepareChallengeCatchUp(_ uint64, diffs []types.DiffWire, reload WireReload, _ string) (func(context.Context) error, error) {
+	return p.prepare(diffs, reload), nil
+}
+
+var _ ChallengeCatchUpPreparer = (*preparingPeer)(nil)
+
+// rereadJournal is a wireListJournal whose range reads fail.
+type rereadJournal struct {
+	*wireListJournal
+	err error
+}
+
+func (j rereadJournal) Wires(uint64, uint64) ([]types.DiffWire, error) {
+	return nil, j.err
+}
+
+func TestRefusalReloadFailureDoesNotAccept(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	readErr := errors.New("journal read failed")
+	var reloaded bool
+	peer := &preparingPeer{
+		progressPeer: &progressPeer{
+			heads: []struct {
+				nonce uint64
+				root  []byte
+				err   error
+			}{{nonce: 1, root: root}},
+			steps: answeredStep(),
+		},
+		// A retried send reads the page again; the read fails.
+		prepare: func(_ []types.DiffWire, reload WireReload) func(context.Context) error {
+			return func(context.Context) error {
+				reloaded = true
+				_, err := reload()
+				return fmt.Errorf("challenge-receipt: %w", err)
+			}
+		},
+	}
+	journal := rereadJournal{err: readErr, wireListJournal: &wireListJournal{
+		root: root,
+		pages: [][]types.DiffWire{
+			{{Nonce: 2, PostStateRoot: root}},
+			{{Nonce: 3, PostStateRoot: root}},
+		},
+	}}
+	st := progressState(3)
+	accept, err := VerifyRefusedProgress(
+		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
+		peer, nil, newEvidenceGroup(t).sm, peer, journal,
+		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+	)
+	require.True(t, reloaded)
+	require.ErrorIs(t, err, readErr)
+	var answered *executorCallError
+	require.False(t, errors.As(err, &answered), "a local journal read is not an executor answer")
+	require.False(t, accept)
+	require.Empty(t, peer.pages, "the payload is not sent after a local read failure")
+}
+
+func TestCatchUpSendDoesNotHoldThePage(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	peer := &preparingPeer{
+		progressPeer: &progressPeer{heads: []struct {
+			nonce uint64
+			root  []byte
+			err   error
+		}{{nonce: 0}}},
+		prepare: func([]types.DiffWire, WireReload) func(context.Context) error {
+			return func(context.Context) error { return nil }
+		},
+	}
+	cursor := uint64(2)
+	send, alive := func() (func(context.Context) error, func() bool) {
+		blob := new([64 << 10]byte)
+		ref := weak.Make(blob)
+		page := []types.DiffWire{{Nonce: 2, Txs: blob[:0], PostStateRoot: root}}
+		send, err := prepareCatchUp(context.Background(), 1, &cursor, page, peer, peer, &wireListJournal{root: root}, 3, time.Second, progressUnreachable)
+		require.NoError(t, err)
+		return send, func() bool { return ref.Value() != nil }
+	}()
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return !alive()
+	}, 5*time.Second, 10*time.Millisecond, "the send func keeps the page")
+	require.NoError(t, send(context.Background()))
+	require.Equal(t, uint64(2), cursor)
 }
 
 func TestRefusalCatchUpVersionStaysEmpty(t *testing.T) {

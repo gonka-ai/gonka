@@ -30,12 +30,19 @@ func PredecodedDiffs(ctx context.Context) []types.Diff {
 // recordRefusalBody measures a refused-timeout request body. always records
 // a catch-up page. A payload call records only when ctx was marked.
 func recordRefusalBody(always bool, ctx context.Context, build func() ([]byte, error)) ([]byte, error) {
-	track := always || memwatch.ChallengeStatsOn(ctx)
 	raw, err := build()
-	if err != nil || !track {
-		return raw, err
+	if err != nil {
+		return nil, err
 	}
-	observability.ObserveRefusalChallengeBytes(len(raw))
-	memwatch.RecordChallengeRequest(len(raw))
+	recordRefusalSize(always, ctx, len(raw))
 	return raw, nil
+}
+
+// recordRefusalSize records a body of n bytes that is encoded at send time.
+func recordRefusalSize(always bool, ctx context.Context, n int) {
+	if !always && !memwatch.ChallengeStatsOn(ctx) {
+		return
+	}
+	observability.ObserveRefusalChallengeBytes(n)
+	memwatch.RecordChallengeRequest(n)
 }

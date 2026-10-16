@@ -3,7 +3,9 @@ package transport
 import (
 	"bytes"
 	"context"
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -241,4 +243,85 @@ func TestChallengeReceiptWireBodyKeepsStoredBytes(t *testing.T) {
 		}
 	})
 	require.LessOrEqual(t, manyAllocs, oneAllocs+2)
+}
+
+func TestChallengeEnvelopeMatchesProtoMarshal(t *testing.T) {
+	sig := bytes.Repeat([]byte{1}, 65)
+	root := bytes.Repeat([]byte{2}, 32)
+	wires := []types.DiffWire{
+		{Nonce: 0, Txs: []byte{0x12, 0x00}},
+		{Nonce: 7, Txs: bytes.Repeat([]byte{0xab}, 300), UserSig: sig, PostStateRoot: root},
+		{Nonce: 1 << 40, UserSig: sig},
+	}
+	prompt := &host.InferencePayload{Prompt: bytes.Repeat([]byte("p"), 200), Model: "llama", InputLength: 5, MaxTokens: 10, StartedAt: 1000}
+	cases := []struct {
+		name        string
+		inferenceID uint64
+		payload     *host.InferencePayload
+		wires       []types.DiffWire
+	}{
+		{name: "catch-up page", inferenceID: 9, wires: wires},
+		{name: "payload and page", inferenceID: 3, payload: prompt, wires: wires[1:2]},
+		{name: "empty payload", payload: &host.InferencePayload{}},
+		{name: "empty"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			want := &rpcpb.ChallengeReceiptRequest{
+				InferenceId: tc.inferenceID,
+				Payload:     PayloadJSONToProto(PayloadToJSON(tc.payload)),
+			}
+			for _, w := range tc.wires {
+				want.Diffs = append(want.Diffs, &rpcpb.Diff{
+					Nonce:         w.Nonce,
+					Txs:           DiffWireTxs(w.Nonce, w.Txs),
+					UserSig:       w.UserSig,
+					PostStateRoot: w.PostStateRoot,
+				})
+			}
+			wantBody, err := proto.Marshal(want)
+			require.NoError(t, err)
+
+			body, err := newChallengeBody(tc.inferenceID, tc.payload, tc.wires)
+			require.NoError(t, err)
+			require.Equal(t, len(wantBody), body.size())
+			require.True(t, bytes.Equal(wantBody, body.appendTo(nil)), "body bytes")
+
+			env := &challengeEnvelope{escrowID: "escrow-1", body: body, bodySize: body.size(), sig: sig, ts: 1_700_000_000}
+			require.Equal(t, signatureMessage("escrow-1", wantBody, env.ts), env.signatureMessage())
+			wantEnv, err := proto.Marshal(&rpcpb.SignedEnvelope{Payload: wantBody, Signature: sig, Timestamp: env.ts, EscrowId: "escrow-1"})
+			require.NoError(t, err)
+			require.Equal(t, len(wantEnv), env.size())
+			got, err := challengeCodec{}.MarshalAppend(nil, env)
+			require.NoError(t, err)
+			require.True(t, bytes.Equal(wantEnv, got), "envelope bytes")
+			require.Nil(t, env.body.wires, "the encoded envelope drops the page")
+			_, err = challengeCodec{}.MarshalAppend(nil, env)
+			require.ErrorIs(t, err, errChallengeEnvelopeSent)
+		})
+	}
+}
+
+func TestChallengeEnvelopeEncodesIntoTheSendBuffer(t *testing.T) {
+	const n, each = 100, 40 << 10
+	sig := bytes.Repeat([]byte{1}, 65)
+	root := bytes.Repeat([]byte{2}, 32)
+	page := make([]types.DiffWire, n)
+	for i := range page {
+		page[i] = types.DiffWire{Nonce: uint64(i + 1), Txs: bytes.Repeat([]byte{byte(i)}, each), UserSig: sig, PostStateRoot: root}
+	}
+	body, err := newChallengeBody(1, nil, page)
+	require.NoError(t, err)
+	env := &challengeEnvelope{escrowID: "escrow-1", body: body, bodySize: body.size(), sig: sig, ts: 1}
+	dst := make([]byte, 0, env.size())
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_ = env.signatureMessage()
+	out, err := challengeCodec{}.MarshalAppend(dst, env)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Equal(t, env.size(), len(out))
+	require.Same(t, unsafe.SliceData(dst[:1]), unsafe.SliceData(out), "the page is written into the buffer it was given")
+	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<10), "signing and encoding a %d KiB page", n*each>>10)
 }

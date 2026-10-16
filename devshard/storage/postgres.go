@@ -1469,12 +1469,10 @@ func (s *Postgres) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]t
 	var out []types.DiffWire
 	for rows.Next() {
 		var w types.DiffWire
+		// pgx scans bytea into a fresh slice, so the row buffer is not aliased.
 		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
 			return nil, err
 		}
-		w.Txs = append([]byte(nil), w.Txs...)
-		w.UserSig = append([]byte(nil), w.UserSig...)
-		w.PostStateRoot = append([]byte(nil), w.PostStateRoot...)
 		out = append(out, w)
 	}
 	return out, rows.Err()

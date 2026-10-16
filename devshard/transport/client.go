@@ -1045,7 +1045,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 // ChallengeReceiptWires posts the payload and one page of stored wires. The
 // page is not decoded. The JSON session route is retired, so this returns
 // ErrHTTPSessionRetired unless the test client allows that route.
-func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error) {
+func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, _ host.WireReload) ([]byte, []*types.DevshardTx, error) {
 	if err := c.errIfRetiredHTTP(); err != nil {
 		return nil, nil, err
 	}
@@ -1093,7 +1093,7 @@ func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint
 // ChallengeCatchUp sends one encoded page with a nil payload. The body is one
 // JSON marshal of the stored bytes with the nonce field prepended.
 func (c *HTTPClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {
-	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, protocolVersion)
+	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, nil, protocolVersion)
 	if err != nil {
 		return err
 	}
@@ -1101,8 +1101,9 @@ func (c *HTTPClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, d
 }
 
 // PrepareChallengeCatchUp marshals the page. The returned function posts that
-// body and does not reference diffs.
-func (c *HTTPClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error) {
+// body and does not reference diffs. The body is kept for retries, so reload
+// is not used.
+func (c *HTTPClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, _ host.WireReload, protocolVersion string) (func(context.Context) error, error) {
 	if err := c.errIfRetiredHTTP(); err != nil {
 		return nil, err
 	}

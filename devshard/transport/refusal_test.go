@@ -181,6 +181,33 @@ func TestRefusalJournalReusesUnreadSizes(t *testing.T) {
 	require.Equal(t, []uint64{1}, store.from)
 }
 
+func TestRefusalJournalShortLeftoverIsNotTheEnd(t *testing.T) {
+	n := host.ChallengePageMaxNonces + 10
+	recs := make([]types.DiffRecord, n)
+	for i := range recs {
+		recs[i] = types.DiffRecord{Diff: types.Diff{Nonce: uint64(i + 1)}}
+	}
+	// About 4000 rows fit a page, so the first 8192-row read leaves a short
+	// leftover that is used up while stored rows still follow it.
+	store := &sizeReuseStore{refusalMapStore: refusalMapStore{recs: recs}, bytes: 1 << 10}
+	journal := refusalJournal{store: store, escrowID: "escrow-1"}
+
+	var got []uint64
+	err := journal.Pages(context.Background(), 1, uint64(n), nil, func(page []types.DiffWire, _ bool) (func(context.Context) error, error) {
+		for _, w := range page {
+			got = append(got, w.Nonce)
+		}
+		return func(context.Context) error { return nil }, nil
+	})
+	require.NoError(t, err)
+	require.Len(t, got, n)
+	for i, nonce := range got {
+		require.Equal(t, uint64(i+1), nonce)
+	}
+	window := uint64(host.ChallengePageMaxNonces + 1)
+	require.Equal(t, []uint64{1, window, window}, store.from, "the first window, the one-row check past it, the next window")
+}
+
 // sizeReuseStore serves contiguous nonce rows of a fixed txs_proto length.
 type sizeReuseStore struct {
 	refusalMapStore

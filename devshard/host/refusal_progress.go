@@ -41,6 +41,53 @@ func (e *catchUpCallError) Unwrap() error { return e.err }
 func (e *executorCallError) Error() string { return e.err.Error() }
 func (e *executorCallError) Unwrap() error { return e.err }
 
+// WireReload reads a sent page from the journal again. A client that drops
+// the page once it is encoded calls it when it retries the send.
+type WireReload func() ([]types.DiffWire, error)
+
+// RefusalWireReader is a RefusalJournal that can read one contiguous range
+// again. With it, a send in flight does not hold the page.
+type RefusalWireReader interface {
+	// Wires returns [from, to]. A hole is an error.
+	Wires(from, to uint64) ([]types.DiffWire, error)
+}
+
+// journalReloadError is a WireReload failure. The read is this verifier's own
+// storage, so it is returned unwrapped and does not count as an answer.
+type journalReloadError struct{ err error }
+
+func (e *journalReloadError) Error() string { return e.err.Error() }
+func (e *journalReloadError) Unwrap() error { return e.err }
+
+// pageReload reads page's range again and screens it the way the first send
+// was. It is nil when the journal cannot read a range.
+func pageReload(journal RefusalJournal, page []types.DiffWire) WireReload {
+	reader, ok := journal.(RefusalWireReader)
+	if !ok || len(page) == 0 {
+		return nil
+	}
+	from, to := page[0].Nonce, page[len(page)-1].Nonce
+	return func() ([]types.DiffWire, error) {
+		wires, err := reader.Wires(from, to)
+		if err == nil {
+			err = screenCatchUpPage(wires)
+		}
+		if err != nil {
+			return nil, &journalReloadError{err: err}
+		}
+		return wires, nil
+	}
+}
+
+// localSendError returns the reload failure inside err, if any.
+func localSendError(err error) error {
+	var reload *journalReloadError
+	if errors.As(err, &reload) {
+		return reload.err
+	}
+	return nil
+}
+
 // VerifyRefusedProgress is the verifier's refused-timeout check.
 // Deadline, mempool, and payload checks do not contact the executor; a rejection is final.
 // SessionHead nonce T selects diffs from T+1, for any root and for a tip past LatestNonce.
@@ -436,7 +483,7 @@ func challengeFrom(
 	if coldLeadFrom(ctx) == nil && pageFitsPayload(last, payload) {
 		page := last
 		last = nil
-		return finishPayloadWires(ctx, st.EscrowID, inferenceID, rec, payload, page, executorClient, ingest, ev, unreachable)
+		return finishPayloadWires(ctx, st.EscrowID, inferenceID, rec, payload, page, executorClient, ingest, ev, journal, unreachable)
 	}
 	if len(last) > 0 {
 		send, err := prepareCatchUp(walkCtx, inferenceID, &from, last, executorClient, tip, journal, st.LatestNonce, queryTimeout, unreachable)
@@ -455,24 +502,26 @@ func challengeFrom(
 	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)
 }
 
-// challengeCatchUpPreparer copies a page into the request body. The returned
-// send func does not reference the page, so the caller can drop it before the
-// request goes out.
-type challengeCatchUpPreparer interface {
-	PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, protocolVersion string) (func(context.Context) error, error)
+// ChallengeCatchUpPreparer builds the send for one page. With a non-nil
+// reload, the send func does not hold the page once it is encoded; a retry
+// reads it again.
+type ChallengeCatchUpPreparer interface {
+	PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, reload WireReload, protocolVersion string) (func(context.Context) error, error)
 }
 
-// challengeReceiptWireSender sends a payload and one page of stored wires
-// without decoding the page. Clients that do not implement it still receive
-// the decoded diffs through ChallengeReceipt.
-type challengeReceiptWireSender interface {
-	ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.DiffWire) ([]byte, []*types.DevshardTx, error)
+// ChallengeReceiptWireSender sends a payload and one page of stored wires
+// without decoding the page. reload is as for ChallengeCatchUpPreparer.
+// Clients that do not implement it still receive the decoded diffs through
+// ChallengeReceipt.
+type ChallengeReceiptWireSender interface {
+	ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.DiffWire, reload WireReload) ([]byte, []*types.DevshardTx, error)
 }
 
 // prepareCatchUp checks the stored bytes and builds the catch-up send.
 // A diff that is not well-framed is returned as-is, so a damaged journal row
 // does not become an answered executor error. The send func does not retain
-// page. protocolVersion is empty; a cold executor reads it from the diffs.
+// page, and a failed reload of it is returned as-is too. protocolVersion is
+// empty; a cold executor reads it from the diffs.
 func prepareCatchUp(
 	walkCtx context.Context,
 	inferenceID uint64,
@@ -495,12 +544,16 @@ func prepareCatchUp(
 	if err := screenCatchUpPage(page); err != nil {
 		return nil, err
 	}
-	send, err := catchUpSender(executor, inferenceID, page)
+	pageEnd := page[len(page)-1].Nonce + 1
+	send, err := catchUpSender(executor, inferenceID, page, pageReload(journal, page))
 	if err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context) error {
 		err := send(ctx)
+		if local := localSendError(err); local != nil {
+			return local
+		}
 		noteRefusalPage(err, ctx, unreachable)
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
@@ -521,18 +574,15 @@ func prepareCatchUp(
 		}
 		// The tip stays put on a cold executor, so the next unread nonce is
 		// the one after this page unless the tip jumped further.
-		advanced := *cursor
-		if len(page) > 0 && page[len(page)-1].Nonce+1 > advanced {
-			advanced = page[len(page)-1].Nonce + 1
-		}
+		advanced := max(*cursor, pageEnd)
 		noteColdCursor(ctx, advanced)
 		return nil
 	}, nil
 }
 
-func catchUpSender(executor ExecutorClient, inferenceID uint64, page []types.DiffWire) (func(context.Context) error, error) {
-	if prep, ok := executor.(challengeCatchUpPreparer); ok {
-		return prep.PrepareChallengeCatchUp(inferenceID, page, "")
+func catchUpSender(executor ExecutorClient, inferenceID uint64, page []types.DiffWire, reload WireReload) (func(context.Context) error, error) {
+	if prep, ok := executor.(ChallengeCatchUpPreparer); ok {
+		return prep.PrepareChallengeCatchUp(inferenceID, page, reload, "")
 	}
 	kept := append([]types.DiffWire(nil), page...)
 	return func(ctx context.Context) error {
@@ -579,7 +629,8 @@ func finishPayload(
 }
 
 // finishPayloadWires sends the last page with the payload as stored bytes.
-// A client without ChallengeReceiptWires still gets the decoded diffs.
+// The call takes the page, so the page is not held here while the executor
+// answers. A client without ChallengeReceiptWires still gets the decoded diffs.
 func finishPayloadWires(
 	ctx context.Context,
 	escrowID string,
@@ -590,9 +641,10 @@ func finishPayloadWires(
 	executor ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
+	journal RefusalJournal,
 	unreachable func(error) bool,
 ) (refusedChallenge, error) {
-	sender, ok := executor.(challengeReceiptWireSender)
+	sender, ok := executor.(ChallengeReceiptWireSender)
 	if !ok {
 		decoded, err := decodeWires(wires)
 		if err != nil {
@@ -603,8 +655,12 @@ func finishPayloadWires(
 	if err := screenCatchUpPage(wires); err != nil {
 		return 0, err
 	}
+	reload := pageReload(journal, wires)
+	held := wires
 	return finishChallengeCall(ctx, escrowID, inferenceID, rec, ingest, ev, unreachable, func(ctx context.Context) ([]byte, []*types.DevshardTx, error) {
-		return sender.ChallengeReceiptWires(ctx, inferenceID, payload, wires)
+		page := held
+		held = nil
+		return sender.ChallengeReceiptWires(ctx, inferenceID, payload, page, reload)
 	})
 }
 
@@ -625,6 +681,9 @@ func finishChallengeCall(
 	outcome, err := judgeRefusedChallenge(escrowID, inferenceID, rec, ingest, ev, func() ([]byte, []*types.DevshardTx, error) {
 		return call(ctx)
 	})
+	if local := localSendError(err); local != nil {
+		return 0, local
+	}
 	noteRefusalPage(err, nil, unreachable)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
