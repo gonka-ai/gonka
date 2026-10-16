@@ -168,7 +168,7 @@ func TestSplitScenariosKeepFaultsApart(t *testing.T) {
 
 // Test flow:
 // 1. Load prod-like-15m and every split scenario.
-// 2. Require seed 1515, prod-like's protocol and gateway, its topology without P4's peer budget, or in prod-like-steady with P4's lower peer chat budget (host-over-peer-chat-budget), and its request mix except the load ladder's max_tokens weights.
+// 2. Require seed 1515, prod-like's protocol with a 90 s execution timeout outside the timeout scenarios, prod-like's gateway, its topology without P4's peer budget, or in prod-like-steady with P4's lower peer chat budget (host-over-peer-chat-budget), and its request mix except the load ladder's max_tokens weights.
 // 3. Require every event to copy a prod-like event's case, action, target and params, with its length unchanged except participant-absent-on-chain's, and every prod-like event to land in exactly one split scenario.
 // 4. Require every declared case to match prod-like's title; TestSplitScenarioKnownBugMarkers pins the known_bug markers.
 func TestSplitScenariosCopyProdLikeFaults(t *testing.T) {
@@ -193,7 +193,11 @@ func TestSplitScenariosCopyProdLikeFaults(t *testing.T) {
 	for _, name := range splitScenarios {
 		s := loadSplitScenario(t, name)
 		require.Equal(t, int64(1515), s.Seed, name)
-		require.Equal(t, prod.Protocol, s.Protocol, name)
+		protocol := prod.Protocol
+		if _, testsTimeouts := executionTimeoutScenarios[name]; !testsTimeouts {
+			protocol.ExecutionTimeout = "90s"
+		}
+		require.Equal(t, protocol, s.Protocol, name)
 		require.Equal(t, prod.Gateway, s.Gateway, name)
 		if name == "prod-like-steady" {
 			withSteadyBudget := prod.Topology
@@ -320,5 +324,42 @@ func TestSplitScenarioKnownBugMarkers(t *testing.T) {
 		}
 
 		require.Equal(t, want[name], bugs, name)
+	}
+}
+
+const generationTailTimeout = 90 * time.Second
+
+var executionTimeoutScenarios = map[string]string{
+	"missrate-catch-up": "requires an applied timeout from a 30 s pause",
+	"vote-fanout":       "timeout-vote-fanout: hosts vote the nonces of a 45 s hang timed out",
+	"prod-like-15m":     "carries timeout-vote-fanout and keeps its timing so old reports stay comparable",
+}
+
+// Test flow:
+// 1. Load every scenarios/*.yaml file that sets protocol.execution_timeout.
+// 2. Require the scenarios that test execution timeouts to keep a timeout below the generation tail, with a reason.
+// 3. Require every other one to set at least 90 s, above the longest generation, so no honest host is cut at its deadline.
+// 4. Require each of those to pin the grace at 3m10s, so its fault spacing still holds.
+func TestScenariosSetExecutionTimeoutAboveTheGenerationTail(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("scenarios", "*.yaml"))
+	require.NoError(t, err)
+	for name := range executionTimeoutScenarios {
+		require.Contains(t, paths, filepath.Join("scenarios", name+".yaml"))
+	}
+	for _, path := range paths {
+		s, err := LoadScenario(path)
+		require.NoError(t, err, path)
+		if s.Protocol.ExecutionTimeout == "" {
+			continue
+		}
+		execution, err := time.ParseDuration(s.Protocol.ExecutionTimeout)
+		require.NoError(t, err, path)
+
+		if reason, testsTimeouts := executionTimeoutScenarios[s.Scenario]; testsTimeouts {
+			require.Less(t, execution, generationTailTimeout, "%s: %s", s.Scenario, reason)
+			continue
+		}
+		require.GreaterOrEqual(t, execution, generationTailTimeout, s.Scenario)
+		require.Equal(t, 3*time.Minute+10*time.Second, resolveInvariantSettings(s).Grace, s.Scenario)
 	}
 }

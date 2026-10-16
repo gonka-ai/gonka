@@ -313,6 +313,46 @@ func TestInvariantPendingAge(t *testing.T) {
 }
 
 // Test flow:
+// 1. Give one pending sample an open nonce 400 s old, above the 220 s bound, and require max_pending_age to fail.
+// 2. Record that nonce as burned by the gateway.
+// 3. Require max_pending_age to pass and the burned nonce to be reported apart: burned max age 400 s, one sample over the bound.
+// 4. Drop the per-nonce start times, as runs before them were written, and require the burned nonce to count again, with a note.
+func TestInvariantPendingAgeLeavesOutBurnedNonces(t *testing.T) {
+	stuck := func() InvariantInputs {
+		in := passingInputs()
+		s := &in.Pending[20]
+		s.Open, s.MaxAgeSeconds, s.OldestInference, s.OldestStatus = 2, 400, "77", "pending"
+		s.OpenStarted = map[string]int64{"20": s.At.Add(-4 * time.Second).Unix(), "77": s.At.Add(-400 * time.Second).Unix()}
+		return in
+	}
+	table := func(t *testing.T, report InvariantReport) map[string]any {
+		t.Helper()
+		body, err := json.Marshal(report.Tables["no-nonce-left-pending"])
+		require.NoError(t, err)
+		var decoded map[string]any
+		require.NoError(t, json.Unmarshal(body, &decoded))
+		return decoded
+	}
+
+	checks, _ := evaluateInvariants(stuck())
+	require.False(t, checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0].Passed)
+
+	in := stuck()
+	in.Burns = []gatewayBurn{{At: at(-200 * time.Second), EscrowID: "11", Nonce: "77", Host: "p2", Reason: "participant_ejected_no_send"}, {EscrowID: "10", Nonce: "20"}}
+	checks, report := evaluateInvariants(in)
+	check := checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+	require.Contains(t, check.Actual, "burned_max=400s burned_samples_over=1")
+	require.Equal(t, 400.0, table(t, report)["burned_max_age_seconds"])
+	require.Equal(t, 1.0, table(t, report)["burned_samples_over_limit"])
+
+	in.Pending[20].OpenStarted = nil
+	checks, report = evaluateInvariants(in)
+	require.False(t, checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0].Passed)
+	require.Contains(t, table(t, report)["note"], "per-nonce start times")
+}
+
+// Test flow:
 // 1. Keep a deactivated escrow resident in the gateway registry.
 // 2. Require no-runtime-for-deactivated-escrow to fail, carry the case from the settings, and pass otherwise.
 func TestInvariantResidentRuntimes(t *testing.T) {
@@ -594,6 +634,64 @@ func TestInvariantTrends(t *testing.T) {
 			}
 		})},
 	})
+}
+
+// Test flow:
+// 1. Fill the gateway chat cache at 30 MiB a minute up to its 256 MiB cap, with heap in use rising by the same bytes.
+// 2. Require heap_slope to pass and the gateway row to report the heap slope with the cache subtracted.
+// 3. Drop the cache series from every gateway sample.
+// 4. Require heap_slope to fail and the gateway row to note that the cache was not subtracted.
+func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
+	const cacheKey = "devshard_gateway_cache_bytes{}"
+	filling := func() InvariantInputs {
+		in := passingInputs()
+		for i := range in.Metrics {
+			s := &in.Metrics[i]
+			if s.Target != "gateway" {
+				continue
+			}
+			cache := min(s.At.Sub(fixtureT0).Minutes()*float64(30<<20), float64(256<<20))
+			s.Values["go_memstats_heap_inuse_bytes"] += cache
+			if s.Domain == nil {
+				s.Domain = map[string]float64{}
+			}
+			s.Domain[cacheKey] = cache
+		}
+		return in
+	}
+	gatewayRow := func(t *testing.T, report InvariantReport) map[string]any {
+		t.Helper()
+		body, err := json.Marshal(report.Tables["no-restarts-or-resource-growth"])
+		require.NoError(t, err)
+		var rows []map[string]any
+		require.NoError(t, json.Unmarshal(body, &rows))
+		for _, row := range rows {
+			if row["target"] == "gateway" {
+				return row
+			}
+		}
+		require.FailNow(t, "no gateway row")
+		return nil
+	}
+
+	checks, report := evaluateInvariants(filling())
+	check := checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+	row := gatewayRow(t, report)
+	require.Equal(t, true, row["heap_minus_cache"])
+	require.InDelta(t, 0, row["heap_inuse_slope_bytes_per_min"], 1)
+
+	in := filling()
+	for i := range in.Metrics {
+		delete(in.Metrics[i].Domain, cacheKey)
+	}
+	checks, report = evaluateInvariants(in)
+	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
+	require.False(t, check.Passed)
+	require.Contains(t, check.Details, "gateway heap in-use")
+	row = gatewayRow(t, report)
+	require.Nil(t, row["heap_minus_cache"])
+	require.Contains(t, row["note"], "devshard_gateway_cache_bytes missing")
 }
 
 // Test flow:

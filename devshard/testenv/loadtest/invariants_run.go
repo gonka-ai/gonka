@@ -95,97 +95,69 @@ func (r *invariantRun) warnBinding(samples []DapiHostSample, warmup time.Time, b
 	log.Printf("loadtest: stage=binding_check result=ok hosts=%d", len(bound))
 }
 
-// evaluate runs after drain: it stops the pollers, reads the end state and
-// writes invariants.json.
-func (r *invariantRun) evaluate(ctx context.Context, requests []RequestResult, events []EventRecord, rotationModels []string, logPath string) []AssertionResult {
-	in := InvariantInputs{
-		Started:            r.started,
-		Workload:           r.scenario.Duration(),
-		Settings:           r.settings,
-		NodeHosts:          map[string]string{},
-		Events:             events,
-		Requests:           requests,
-		Accounting:         r.accounting.stop("final"),
-		Throttle:           r.throttle.stop("final"),
-		Pending:            r.pending.stop("final"),
-		HostStats:          r.hostStats.stop("final"),
-		DapiHosts:          r.dapiHosts.stop("final"),
-		SettlementDisabled: settlementDisabledModels(r.scenario, rotationModels),
-	}
-	for _, node := range r.scenario.Topology.MockML.Nodes {
-		in.NodeHosts[node.Name] = node.Host
-	}
+// collectEndState runs after drain: it stops the pollers and reads what the invariants need once,
+// from the stack and from compose-pre-drain.log at logPath.
+func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []string, logPath string) invariantEndState {
+	r.stop()
+	end := invariantEndState{SettlementDisabled: settlementDisabledModels(r.scenario, rotationModels), DidNotCompress: -1}
 	if ticks, err := readReconcileTicks(logPath); err != nil {
 		log.Printf("loadtest: invariants read versiond reconcile ticks: %v", err)
 	} else {
-		in.ReconcileTicks = ticks
-	}
-	for _, host := range r.cfg.Hosts {
-		in.Hosts = append(in.Hosts, InvariantHost{ID: host.ID, Participant: participantAddress(r.cfg, host)})
+		end.ReconcileTicks = ticks
 	}
 	var err error
-	if in.Metrics, err = readMetricsSamples(r.opts.OutputDir); err != nil {
+	if end.MetricsBytes, err = completeLinesSize(filepath.Join(r.opts.OutputDir, "metrics.jsonl")); err != nil {
 		log.Printf("loadtest: invariants read metrics.jsonl: %v", err)
 	}
 	if devshards, err := fetchGatewayDevshards(ctx, r.gatewayURL, r.apiKey); err != nil {
 		log.Printf("loadtest: invariants gateway devshards: %v", err)
 	} else {
-		in.Devshards = devshards
-		in.Inferences = map[string]map[string]DebugInference{}
+		end.Devshards = devshards
+		end.Inferences = map[string]map[string]DebugInference{}
 		for _, d := range devshards {
 			inferences, err := fetchDebugInferences(ctx, scopedGatewayURL(r.gatewayURL, d.ID), r.apiKey)
 			if err != nil {
 				log.Printf("loadtest: invariants inferences for %s: %v", d.ID, err)
 				continue
 			}
-			in.Inferences[d.ID] = inferences
+			end.Inferences[d.ID] = inferences
 		}
 	}
 	chainURL := fmt.Sprintf("http://127.0.0.1:%d", r.cfg.MockChain.TestenvPort)
-	if in.SettleTxs, in.Escrows, err = fetchChainLedger(ctx, chainURL); err != nil {
-		in.ChainError = err.Error()
+	if end.SettleTxs, end.Escrows, err = fetchChainLedger(ctx, chainURL); err != nil {
+		end.ChainError = err.Error()
 	}
-	in.ChainMaxNonce = r.scenario.Topology.Chain.MaxNonce
 	if ids, err := readEscrowMissing(logPath); err != nil {
 		log.Printf("loadtest: invariants read escrow-missing lines: %v", err)
 	} else {
-		in.EscrowMissing = ids
+		end.EscrowMissing = ids
 	}
 	if r.cfg.Postgres.Enabled {
 		// sqlite hosts never write the Postgres lease table, so no-skipped-validation-leases names them as excluded.
 		for _, host := range zstdPayloadHosts(r.scenario) {
-			if in.LeaseExcluded == nil {
-				in.LeaseExcluded = map[string]string{}
+			if end.LeaseExcluded == nil {
+				end.LeaseExcluded = map[string]string{}
 			}
-			in.LeaseExcluded[host] = sqliteLeaseExclusion
+			end.LeaseExcluded[host] = sqliteLeaseExclusion
 			log.Printf("loadtest: invariants no-skipped-validation-leases excludes %s: %s", host, sqliteLeaseExclusion)
 		}
-		if in.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg.Postgres); err != nil {
-			in.LeasesError = err.Error()
-		} else if in.Leases == nil {
-			in.Leases = []LeaseCount{}
+		if end.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg.Postgres); err != nil {
+			end.LeasesError = err.Error()
+		} else if end.Leases == nil {
+			end.Leases = []LeaseCount{}
 		}
 	}
-	in.DidNotCompress = -1
 	if count, err := countLogLines(logPath, "did not compress"); err == nil {
-		in.DidNotCompress = count
+		end.DidNotCompress = count
 	}
 	for _, host := range zstdPayloadHosts(r.scenario) {
-		if in.PayloadFiles == nil {
-			in.PayloadFiles = map[string]PayloadFileStats{}
+		if end.PayloadFiles == nil {
+			end.PayloadFiles = map[string]PayloadFileStats{}
 		}
 		dest := filepath.Join(r.opts.OutputDir, "payload-sample", host)
-		in.PayloadFiles[host] = samplePayloadFiles(ctx, r.opts.TestenvDir, r.project, r.compose, host, r.cfg.Versiond.VersionName, dest)
+		end.PayloadFiles[host] = samplePayloadFiles(ctx, r.opts.TestenvDir, r.project, r.compose, host, r.cfg.Versiond.VersionName, dest)
 	}
-	checks, report := evaluateInvariants(in)
-	log.Printf("loadtest: stage=harness_health stalls=%d invalid_fraction=%s invalid_checks=%d", len(report.Health.Stalls), formatInvalidFraction(report.Health.InvalidFraction), len(report.Health.InvalidChecks))
-	for _, stall := range report.Health.Stalls {
-		log.Printf("loadtest: harness stall %s %s..%s gap=%s period=%s", stall.Source, stall.From.Format(time.RFC3339), stall.To.Format(time.RFC3339), stall.Gap, stall.Period)
-	}
-	if err := writeInvariantReport(r.opts.OutputDir, report); err != nil {
-		log.Printf("loadtest: write invariants.json: %v", err)
-	}
-	return checks
+	return end
 }
 
 // settlementDisabledModels mirrors the gateway rule: a per-model override

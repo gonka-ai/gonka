@@ -53,7 +53,8 @@ topology:
 
 protocol:
   refusal_timeout: 5s
-  execution_timeout: 30s
+  # Above the generation tail (up to 35 s here), so no honest host is cut at its deadline.
+  execution_timeout: 90s
 
 workload:
   # About 8 s per request makes 260 in flight at 32 rps (Little's law); 1024
@@ -125,6 +126,9 @@ assertions:
     require_new_escrow: true
   invariants:
     enabled: true
+    # Kept at the 30 s timeout's value: each fault here is refused or lifted at its
+    # end, so no nonce waits out the 90 s deadline past it, and the spacing holds.
+    grace: 3m10s
     baseline: {from: 1m, to: 2m}
     trend_early: {from: 2m30s, to: 4m}
     trend_late: {from: 8m30s, to: 10m}

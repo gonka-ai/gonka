@@ -27,7 +27,26 @@ func main() {
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
 	flag.Parse()
+	if *recheckDir != "" {
+		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, note := range notes {
+			log.Printf("loadtest: recheck: %s", note)
+		}
+		report, err := loadtest.WriteReport(*recheckDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		if !passed {
+			os.Exit(1)
+		}
+		return
+	}
 	if *reportDir != "" {
 		report, err := loadtest.WriteReport(*reportDir)
 		if err != nil {
@@ -138,6 +157,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		fmt.Fprintf(os.Stdout, "  finished:         %d\n", terminal.Finished)
 		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
+		fmt.Fprintf(os.Stdout, "  ghost excluded:   %d\n", terminal.GhostExcluded)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
 		statuses := formatIntCounts(terminal.Statuses)

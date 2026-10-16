@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -268,7 +267,9 @@ type PendingSample struct {
 	MaxAgeSeconds   float64   `json:"max_age_seconds"`
 	OldestInference string    `json:"oldest_inference,omitempty"`
 	OldestStatus    string    `json:"oldest_status,omitempty"`
-	Error           string    `json:"error,omitempty"`
+	// OpenStarted maps each open nonce to its started_at, so no-nonce-left-pending can leave burned nonces out.
+	OpenStarted map[string]int64 `json:"open_started,omitempty"`
+	Error       string           `json:"error,omitempty"`
 }
 
 // DebugInference is the subset of a /v1/debug/inferences record the
@@ -335,6 +336,10 @@ func summarizePending(sample *PendingSample, inferences map[string]DebugInferenc
 		if inference.StartedAt <= 0 {
 			continue
 		}
+		if sample.OpenStarted == nil {
+			sample.OpenStarted = map[string]int64{}
+		}
+		sample.OpenStarted[id] = inference.StartedAt
 		age := sample.At.Sub(time.Unix(inference.StartedAt, 0)).Seconds()
 		if age > sample.MaxAgeSeconds {
 			sample.MaxAgeSeconds, sample.OldestInference, sample.OldestStatus = age, id, inference.Status
@@ -659,23 +664,4 @@ func readEscrowMissing(path string) ([]string, error) {
 		}
 	}
 	return ids, scanner.Err()
-}
-
-func readMetricsSamples(outputDir string) ([]MetricsSample, error) {
-	file, err := os.Open(filepath.Join(outputDir, "metrics.jsonl"))
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	var samples []MetricsSample
-	decoder := json.NewDecoder(file)
-	for {
-		var sample MetricsSample
-		if err := decoder.Decode(&sample); err == io.EOF {
-			return samples, nil
-		} else if err != nil {
-			return samples, err
-		}
-		samples = append(samples, sample)
-	}
 }

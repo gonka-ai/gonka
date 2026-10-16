@@ -202,6 +202,12 @@ reports stay comparable. Its split scenarios (scenarios/README.md) dropped the
 gives P4 a budget low enough for `host-over-peer-chat-budget` to fire,
 because 300 never does: P4 serves about 4 Chats a second at 16 rps.
 
+prod-like-15m keeps `execution_timeout: 30s`, because `timeout-vote-fanout` needs the
+timeout to fire inside its 45 s hang. Generations here run up to about 35 s, so
+a 30 s timeout also cuts honest hosts at their deadline and charges them misses.
+The split scenarios that do not test timeouts use 90 s (scenarios/README.md,
+"Execution timeout").
+
 P4's budget is set at boot, so `host-over-peer-chat-budget` is a
 `background: true` marker over the whole workload. A background window may
 overlap other events on its host; misses and quarantines inside those events'
@@ -235,12 +241,12 @@ lists it in the check's expected value and in the `no-skipped-validation-leases`
 | `misses-only-in-fault-windows` | No protocol miss on honest participants; every miss lies in a fault window; waived windows charge none |
 | `escrow-accounting-reconciles` | One settle per deactivated escrow; balance, settled nonce and cost reconcile; `final_nonce_le_max`: final session nonce <= chain `max_nonce` |
 | `honest-hosts-agree-on-state` | Honest hosts agree on state roots; settles match; no fork detected |
-| `no-nonce-left-pending` | Pending work stays younger than the sweep bound; clean end state |
+| `no-nonce-left-pending` | Pending work stays younger than the sweep bound, burned nonces apart; clean end state |
 | `no-runtime-for-deactivated-escrow` | No resident runtime for a deactivated escrow |
 | `quarantines-match-faults` | Quarantines only on faulty participants, with the expected reason family and duration |
 | `error-rate-and-latency` | Quiet-window latency and error rate; per-event error-rate bounds over the requests only that event touched |
 | `recovery-after-fault` | Error rate recovers within 60 s (90 s after a gateway restart), judged before the next fault starts |
-| `no-restarts-or-resource-growth` | No unplanned restarts; goroutine and heap trends |
+| `no-restarts-or-resource-growth` | No unplanned restarts; goroutine and heap trends, the gateway chat cache left out of the heap |
 | `faults-fired-and-ml-nodes-bound` | Every event fired; ML nodes stay bound to their hosts |
 | `no-skipped-validation-leases` | No skipped validation lease for honest hosts (Postgres hosts; sqlite hosts excluded) |
 | `no-admission-during-poc` | No admission during PoC-blocking phases |
@@ -342,8 +348,8 @@ cross-checks for the paused participant:
 
 ```yaml
 protocol:
-  refusal_timeout: 2s
-  execution_timeout: 5s
+  refusal_timeout: 10s
+  execution_timeout: 30s
 
 workload:
   host_faults:
@@ -785,6 +791,8 @@ finalization and settlement. This keeps the test aligned with the same
 
 When `assertions.devshard.no_orphaned_work` is enabled, the runner polls `/v1/debug/inferences` until every non-ghost record of an active escrow has a terminal status (`finished`, `validated`, `invalidated`, or `timed_out`). With escrow rotation it reads every runtime the gateway lists: an unfinished record of a deactivated escrow counts as `sealed`, because settlement closes it as it stands and `escrow-accounting-reconciles` judges that settlement, including escrows whose model has settlement off. With invariants enabled, an unfinished record of an active escrow younger than the pending-age bound of `no-nonce-left-pending` counts as `in_flight`: the timeout sweep has not reached it yet. The check fails only on `orphaned` records, those past that bound or, without invariants, any unfinished one at the drain deadline. The DevShard record count does not have to equal the number of client requests: cache hits, speculative attempts, and ghost probes can make those counts different. An empty successful debug snapshot is also considered clean.
 
+A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records. A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host. Burns outside fault windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
+
 ## Assertions
 
 Assertions are declared in the scenario and are evaluated after the workload:
@@ -814,12 +822,17 @@ assertions:
     baseline: {from: 1m, to: 2m}       # reference for quiet-window latency
     trend_early: {from: 3m, to: 5m}    # goroutine comparison of no-restarts-or-resource-growth
     trend_late: {from: 13m30s, to: 15m}
-    grace: 95s                         # default refusal + execution + 2 x 30 s sweep tick
-    max_pending_age: 3m40s             # default adds the gateway's 2m5s sweep grace
+    grace: 3m10s                       # default refusal + execution + 2m5s sweep grace + 30 s sweep tick
+    max_pending_age: 3m40s             # default is the grace formula plus 30 s
     # ties a run-level invariant, or one check such as
     # escrow-accounting-reconciles.final_nonce_le_max, to a known_bug case
     cases: {no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired}
 ```
+
+Two bounds in detail:
+
+- `no-nonce-left-pending.max_pending_age` leaves out the nonces the gateway burned. A burned nonce is never sent, so no timeout is voted on it and it stays pending until its escrow closes. The check reports burned nonces apart, as `burned_max` and `burned_samples_over` in its actual value and `burned_max_age_seconds` and `burned_samples_over_limit` in its table. A `pending.jsonl` written before samples kept `open_started` keeps its old ages, with a note in the table.
+- `no-restarts-or-resource-growth.heap_slope` subtracts `devshard_gateway_cache_bytes` from `go_memstats_heap_inuse_bytes` in each sample before taking the slope. The gateway's chat cache fills to its 256 MiB cap in about 7 minutes and then stays flat, so counting it would read a bounded cache as growth. When any steady sample lacks the cache series, as on devshardctl, which does not export it, the slope is taken without subtracting it and the gateway's row notes it. `heap_minus_cache` in the row says the cache was subtracted.
 
 Event params can state what a fault should cause: `expect_quarantine` (`none`
 or a comma list of `http`, `transport`, `empty_stream`, `stalled_winner`,
@@ -846,6 +859,8 @@ Every run ends with `report.md` in its directory, also printed to the console, b
 | `PASS` | The bound held. |
 
 `go run ./cmd/loadtest -report <run directory>` rebuilds the report of an earlier run without starting a stack.
+
+`go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there; copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
 
 #### Old codes
 
@@ -917,7 +932,8 @@ records, summaries, state snapshots, and logs:
 | `events.json` | Planned and real windows of every scheduled event, and command errors. |
 | `invariants.json` | Invariant results, honest set, fault windows, and per-invariant tables. |
 | `payload-sample/<host>/` | `payload-files-are-zstd` copy of up to 256 payload files from each sqlite host. |
-| `accounting-snapshots.jsonl`, `throttle.jsonl`, `pending.jsonl`, `host-stats.jsonl` | Invariant inputs sampled during the run. |
+| `accounting-snapshots.jsonl`, `throttle.jsonl`, `pending.jsonl`, `host-stats.jsonl`, `dapi-host-stats.jsonl` | Invariant inputs sampled during the run. Each `pending.jsonl` sample keeps every open nonce's start time (`open_started`). |
+| `run-inputs.json` | What the checks read from the stack after the workload: the drain check's last read, burned nonces, allocations, escrow IDs, accounting, the gateway devshard list and inferences, the chain ledger, leases, payload sample stats, log-derived counts, and how much of `metrics.jsonl` was judged. `-recheck` reads it. |
 | `cpu-profiles.json`, `contention-profiles.json`, `profiles/` | Optional CPU, goroutine, mutex, and block profile manifests and captures. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |

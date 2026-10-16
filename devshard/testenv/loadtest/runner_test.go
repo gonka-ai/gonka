@@ -147,9 +147,9 @@ func TestAssertRunReportsExpectedAndActualValues(t *testing.T) {
 		DroppedRate: 0.25,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	checks := assertRun(scenario, summary, RunInputs{}, nil)
+	err := &assertionFailures{Checks: failedChecks(checks)}
 
-	require.Error(t, err)
 	require.Len(t, checks, 2)
 	require.Equal(t, "requests.error_rate", checks[0].Name)
 	require.False(t, checks[0].Passed)
@@ -173,9 +173,9 @@ func TestAssertRunEvaluatesAllEnabledAssertions(t *testing.T) {
 		ErrorRate: 0.5,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	checks := assertRun(scenario, summary, RunInputs{}, nil)
+	err := &assertionFailures{Checks: failedChecks(checks)}
 
-	require.Error(t, err)
 	require.Len(t, checks, 4)
 	require.Equal(t, []string{
 		"requests.error_rate",
@@ -206,7 +206,7 @@ func TestAssertRunJudgesGeneratorDropsOnTheirOwnBound(t *testing.T) {
 			scenario.Assertions.Requests.ErrorRate = 0.12
 			scenario.Assertions.Requests.DroppedRate = testCase.droppedRate
 
-			_, checks, _ := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+			checks := assertRun(scenario, summary, RunInputs{}, nil)
 
 			require.Equal(t, "requests.dropped_rate", checks[1].Name)
 			require.Equal(t, testCase.passed, checks[1].Passed)
@@ -221,7 +221,7 @@ func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testin
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.5, map[string]struct{}{"2": {}}, time.Second, 0)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.5, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Finished)
 	require.Zero(t, summary.Orphaned)
@@ -233,7 +233,7 @@ func TestWaitForNoOrphanedWork_RejectsGhostRateAboveThreshold(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.25, map[string]struct{}{"2": {}}, time.Second, 0)
+	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.25, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
 	require.ErrorContains(t, err, "ghost inference rate 0.5000")
 }
 
@@ -243,7 +243,7 @@ func TestWaitForNoOrphanedWorkDoesNotRequireOneInferencePerRequest(t *testing.T)
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, time.Second, 0)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Total)
 	require.Equal(t, 1, summary.Finished)
@@ -255,7 +255,7 @@ func TestWaitForNoOrphanedWorkRejectsPendingInference(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, 10*time.Millisecond, 0)
+	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond})
 	require.ErrorContains(t, err, "orphaned=1")
 	require.ErrorContains(t, err, "pending=1")
 }
@@ -266,7 +266,7 @@ func TestWaitForNoOrphanedWorkAcceptsTerminalStatuses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, time.Second, 0)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
 	require.Equal(t, 3, summary.Total)
@@ -290,7 +290,7 @@ func TestWaitForNoOrphanedWorkLeavesDeactivatedEscrowsToTheSettleCheck(t *testin
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, 10*time.Millisecond, 0, true)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond}, true)
 
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
@@ -318,21 +318,12 @@ func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
 			}))
 			defer server.Close()
 
-			summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, 10*time.Millisecond, time.Minute)
+			_, summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: time.Minute})
 
 			require.Equal(t, testCase.orphaned, summary.Orphaned)
 			require.Equal(t, testCase.inFlight, summary.InFlight)
 		})
 	}
-}
-
-func TestReadGhostInferenceIDs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "compose.log")
-	require.NoError(t, os.WriteFile(path, []byte("devshardctl | request=r1 stage=ghost_probe_skipped escrow=1 nonce=9 reason=no_compatible_request_after_stale\n"), 0o644))
-
-	ghosts, err := readGhostInferenceIDs(path)
-	require.NoError(t, err)
-	require.Equal(t, map[string]struct{}{"9": {}}, ghosts)
 }
 
 func TestFetchGatewayStateSizes(t *testing.T) {

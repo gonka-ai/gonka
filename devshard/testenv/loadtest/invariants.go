@@ -35,6 +35,7 @@ const (
 	goroutineGrowthMul  = 1.2
 	goroutineGrowthAdd  = 50
 	heapSlopeLimit      = float64(1 << 20)
+	gatewayCacheFamily  = "devshard_gateway_cache_bytes"
 	throttlePollEvery   = 5 * time.Second
 	pendingPollEvery    = 10 * time.Second
 	hostStatsPollEvery  = 30 * time.Second
@@ -145,6 +146,8 @@ type InvariantInputs struct {
 	DidNotCompress int
 	// PayloadFiles is the payload-files-are-zstd sample per sqlite host: docker exec tar of {data-dir}/payloads.
 	PayloadFiles map[string]PayloadFileStats
+	// Burns are the nonces the gateway committed and never sent, from compose-pre-drain.log.
+	Burns []gatewayBurn
 }
 
 // timeSpan is a closed interval of wall-clock time.
@@ -849,11 +852,22 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 		return []AssertionResult{invariantCheck("no-nonce-left-pending.max_pending_age", caseID, false, "pending samples available", "none", "GW-dbg pending poller produced no usable sample")}, nil
 	}
 	limit := c.in.Settings.MaxPendingAge.Seconds()
+	burned := burnedNonces(c.in.Burns)
 	var worst PendingSample
 	var over []string
 	var overSpans []timeSpan
+	var burnedMax float64
+	burnedOver, legacy := 0, 0
 	latest := usable[0].At
 	for _, s := range usable {
+		if s.Open > 0 && s.OpenStarted == nil {
+			legacy++
+		}
+		s, burnedAge := withoutBurned(s, burned[s.EscrowID])
+		burnedMax = max(burnedMax, burnedAge)
+		if burnedAge > limit {
+			burnedOver++
+		}
 		if s.MaxAgeSeconds > worst.MaxAgeSeconds {
 			worst = s
 		}
@@ -880,9 +894,45 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	}
 	sort.Strings(dirty)
 	return []AssertionResult{
-		withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs samples_over=%d", worst.MaxAgeSeconds, len(over)), strings.Join(firstN(over, 10), "; ")), overSpans...),
+		withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), burnedMax, burnedOver), strings.Join(firstN(over, 10), "; ")), overSpans...),
 		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx", fmt.Sprintf("dirty=%d", len(dirty)), strings.Join(dirty, "; ")),
-	}, map[string]any{"max_age_seconds": worst.MaxAgeSeconds, "max_age_escrow": worst.EscrowID, "limit_seconds": limit, "over_limit": len(over)}
+	}, pendingTable(worst, limit, len(over), burnedMax, burnedOver, legacy)
+}
+
+// withoutBurned returns the sample with its oldest open nonce recomputed over the nonces the gateway
+// did not burn, and the oldest burned age. A burned nonce is never sent, so no timeout is voted on
+// it and it stays pending until the escrow closes. A sample without per-nonce start times is kept.
+func withoutBurned(s PendingSample, burned map[string]bool) (PendingSample, float64) {
+	if s.OpenStarted == nil || len(burned) == 0 {
+		return s, 0
+	}
+	var burnedAge float64
+	original := s
+	s.MaxAgeSeconds, s.OldestInference, s.OldestStatus = 0, "", ""
+	for id, started := range s.OpenStarted {
+		age := s.At.Sub(time.Unix(started, 0)).Seconds()
+		switch {
+		case burned[id]:
+			burnedAge = max(burnedAge, age)
+		case age > s.MaxAgeSeconds:
+			s.MaxAgeSeconds, s.OldestInference = age, id
+		}
+	}
+	if s.OldestInference == original.OldestInference {
+		s.OldestStatus = original.OldestStatus
+	} else if s.OldestInference != "" {
+		s.OldestStatus = "open"
+	}
+	return s, burnedAge
+}
+
+func pendingTable(worst PendingSample, limit float64, over int, burnedMax float64, burnedOver, legacy int) map[string]any {
+	table := map[string]any{"max_age_seconds": worst.MaxAgeSeconds, "max_age_escrow": worst.EscrowID, "limit_seconds": limit, "over_limit": over,
+		"burned_max_age_seconds": burnedMax, "burned_samples_over_limit": burnedOver}
+	if legacy > 0 {
+		table["note"] = fmt.Sprintf("%d samples with open work carry no per-nonce start times, so burned nonces in them count", legacy)
+	}
+	return table
 }
 
 func firstN(values []string, n int) []string {
@@ -1470,8 +1520,10 @@ type trendRow struct {
 	EarlyGoroutines   float64 `json:"early_goroutines_median"`
 	LateGoroutines    float64 `json:"late_goroutines_median"`
 	HeapSlopeBytesMin float64 `json:"heap_inuse_slope_bytes_per_min"`
-	RSSSlopeBytesMin  float64 `json:"rss_slope_bytes_per_min"`
-	Note              string  `json:"note,omitempty"`
+	// HeapMinusCache is set when the heap slope was taken over heap in use minus devshard_gateway_cache_bytes.
+	HeapMinusCache   bool    `json:"heap_minus_cache,omitempty"`
+	RSSSlopeBytesMin float64 `json:"rss_slope_bytes_per_min"`
+	Note             string  `json:"note,omitempty"`
 }
 
 // nextFaultAfter is the first moment from end on that another fault is
@@ -1564,7 +1616,12 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 				goroutineBad = append(goroutineBad, fmt.Sprintf("%s goroutines %.0f -> %.0f", target, row.EarlyGoroutines, row.LateGoroutines))
 			}
 		}
-		if slope, ok := c.metricSlope(steady, "go_memstats_heap_inuse_bytes"); ok {
+		heap, minusCache, note := heapLessCache(target, steady)
+		row.HeapMinusCache = minusCache
+		if note != "" {
+			row.Note = strings.TrimPrefix(row.Note+"; "+note, "; ")
+		}
+		if slope, ok := c.seriesSlope(heap); ok {
 			row.HeapSlopeBytesMin = slope
 			if slope >= heapSlopeLimit {
 				heapBad = append(heapBad, fmt.Sprintf("%s heap in-use +%.0f B/min", target, slope))
@@ -1579,7 +1636,7 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 	return []AssertionResult{
 		invariantCheck("no-restarts-or-resource-growth.restarts", caseID, len(restartBad) == 0, "no process restarts except injected ones", fmt.Sprintf("violations=%d", len(restartBad)), strings.Join(restartBad, "; ")),
 		invariantCheck("no-restarts-or-resource-growth.goroutines", caseID, len(goroutineBad) == 0, fmt.Sprintf("late median <= %.1fx early median + %d", goroutineGrowthMul, goroutineGrowthAdd), fmt.Sprintf("violations=%d", len(goroutineBad)), strings.Join(goroutineBad, "; ")),
-		invariantCheck("no-restarts-or-resource-growth.heap_slope", caseID, len(heapBad) == 0, "Theil-Sen heap in-use slope < 1 MiB/min over steady samples", fmt.Sprintf("violations=%d", len(heapBad)), strings.Join(heapBad, "; ")),
+		invariantCheck("no-restarts-or-resource-growth.heap_slope", caseID, len(heapBad) == 0, "Theil-Sen heap in-use slope < 1 MiB/min over steady samples, gateway chat cache bytes subtracted", fmt.Sprintf("violations=%d", len(heapBad)), strings.Join(heapBad, "; ")),
 	}, rows
 }
 
@@ -1595,15 +1652,51 @@ func (c *invariantContext) metricWindow(samples []MetricsSample, window [2]time.
 }
 
 func (c *invariantContext) metricSlope(samples []MetricsSample, name string) (float64, bool) {
-	var xs, ys []float64
+	var points []metricPoint
 	for _, s := range samples {
 		if value, ok := s.Values[name]; ok {
-			xs = append(xs, s.At.Sub(c.in.Started).Minutes())
-			ys = append(ys, value)
+			points = append(points, metricPoint{at: s.At, value: value})
 		}
+	}
+	return c.seriesSlope(points)
+}
+
+func (c *invariantContext) seriesSlope(points []metricPoint) (float64, bool) {
+	var xs, ys []float64
+	for _, p := range points {
+		xs = append(xs, p.at.Sub(c.in.Started).Minutes())
+		ys = append(ys, p.value)
 	}
 	slope, _, ok := theilSen(xs, ys)
 	return slope, ok
+}
+
+// heapLessCache returns heap in use per sample minus devshard_gateway_cache_bytes. The gateway chat
+// cache fills to its cap and then stays flat, so counting it reads a bounded cache as growth. A
+// sample set where any sample lacks the cache series is left whole, with a note on the gateway.
+func heapLessCache(target string, samples []MetricsSample) ([]metricPoint, bool, string) {
+	var heap []metricPoint
+	var cached []float64
+	for _, s := range samples {
+		value, ok := s.Values["go_memstats_heap_inuse_bytes"]
+		if !ok {
+			continue
+		}
+		heap = append(heap, metricPoint{at: s.At, value: value})
+		if cache, ok := domainSum(s, gatewayCacheFamily); ok {
+			cached = append(cached, cache)
+		}
+	}
+	if len(heap) > 0 && len(cached) == len(heap) {
+		for i := range heap {
+			heap[i].value -= cached[i]
+		}
+		return heap, true, ""
+	}
+	if target != "gateway" || len(heap) == 0 {
+		return heap, false, ""
+	}
+	return heap, false, fmt.Sprintf("%s missing in %d of %d steady samples, heap slope taken without subtracting the cache", gatewayCacheFamily, len(heap)-len(cached), len(heap))
 }
 
 // ---- faults-fired-and-ml-nodes-bound: every fault actually fired (all sources) ----
