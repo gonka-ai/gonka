@@ -1023,7 +1023,10 @@ docker run -d --name gonka-pr-router-a --network "$network" \
     python:3.12-alpine python /app.py >/dev/null
 router_a_ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
     gonka-pr-router-a)
-for _ in $(seq 40); do
+# The docker resolver keeps the previous answer for hold valid (5s). The new
+# address then starts fully-down and needs rise 2 at a 1s interval, after the
+# replacement process is listening. Ten seconds closes inside that window.
+for _ in $(seq 120); do
     proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" && break
     sleep 0.25
 done
