@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -90,6 +91,16 @@ func TestRefusalRetryUsesThePeerRPC(t *testing.T) {
 
 const refusalJournalDiffs = 30_000
 
+// refusalLargeJournalDiffs is the soak's journal: about 148,000 diffs of
+// about 500 bytes, 74 MiB of wire.
+const refusalLargeJournalDiffs = 148_000
+
+// largeJournalHeapPages is how far HeapAlloc may sit above the seeded journal
+// during one catch-up call. The live set is the stored page plus the body
+// this stub marshals to measure it. A decoded journal is on the order of
+// 100 MiB and fails the bound.
+const largeJournalHeapPages = 4
+
 const refusalJournalEscrow = "escrow-refusal-journal"
 
 // recordedChallenge is one ChallengeReceipt the executor was sent, measured
@@ -103,11 +114,17 @@ type recordedChallenge struct {
 // recordingExecutor stands in for the executor. SessionHead is configured
 // per case. ChallengeReceipt records the body and answers without a receipt.
 type recordingExecutor struct {
-	t       *testing.T
-	nonce   uint64
-	root    []byte
-	headErr error
-	calls   []recordedChallenge
+	t            *testing.T
+	nonce        uint64
+	root         []byte
+	headErr      error
+	calls        []recordedChallenge
+	block        bool
+	queryBudget  time.Duration
+	verifyBudget time.Duration
+	trackHeap    bool
+	baseline     uint64
+	high         uint64
 }
 
 var _ host.ChallengeReceiptWireSender = (*recordingExecutor)(nil)
@@ -120,33 +137,36 @@ func (e *recordingExecutor) GetMempool(context.Context) ([]*types.DevshardTx, er
 	return nil, nil
 }
 
-func (e *recordingExecutor) ChallengeCatchUp(_ context.Context, inferenceID uint64, diffs []types.DiffWire, _ string) error {
+func (e *recordingExecutor) RefusalQueryBudget() time.Duration { return e.queryBudget }
+
+func (e *recordingExecutor) RefusalVerifyBudget() time.Duration { return e.verifyBudget }
+
+func (e *recordingExecutor) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, _ string) error {
+	if err := e.wait(ctx); err != nil {
+		return err
+	}
 	raw, err := transport.ChallengeCatchUpBody(inferenceID, diffs)
 	require.NoError(e.t, err)
-	nonces := make([]uint64, len(diffs))
-	for i, d := range diffs {
-		nonces[i] = d.Nonce
-	}
-	e.calls = append(e.calls, recordedChallenge{size: len(raw), nonces: nonces})
+	e.record(len(raw), diffs, false)
+	e.sampleHeap()
 	return nil
 }
 
-func (e *recordingExecutor) ChallengeReceiptWires(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, _ host.WireReload) ([]byte, []*types.DevshardTx, error) {
+func (e *recordingExecutor) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, _ host.WireReload) ([]byte, []*types.DevshardTx, error) {
+	if err := e.wait(ctx); err != nil {
+		return nil, nil, err
+	}
 	raw, err := transport.ChallengeReceiptWireBody(inferenceID, payload, diffs)
 	require.NoError(e.t, err)
-	nonces := make([]uint64, len(diffs))
-	for i, d := range diffs {
-		nonces[i] = d.Nonce
-	}
-	e.calls = append(e.calls, recordedChallenge{
-		size:    len(raw),
-		nonces:  nonces,
-		payload: payload != nil,
-	})
+	e.record(len(raw), diffs, payload != nil)
+	e.sampleHeap()
 	return nil, nil, nil
 }
 
-func (e *recordingExecutor) ChallengeReceipt(_ context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+func (e *recordingExecutor) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
+	if err := e.wait(ctx); err != nil {
+		return nil, nil, err
+	}
 	raw, err := challengeReceiptBody(inferenceID, payload, diffs)
 	require.NoError(e.t, err)
 	nonces := make([]uint64, len(diffs))
@@ -158,7 +178,39 @@ func (e *recordingExecutor) ChallengeReceipt(_ context.Context, inferenceID uint
 		nonces:  nonces,
 		payload: payload != nil,
 	})
+	e.sampleHeap()
 	return nil, nil, nil
+}
+
+func (e *recordingExecutor) wait(ctx context.Context) error {
+	if !e.block {
+		return nil
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (e *recordingExecutor) record(size int, diffs []types.DiffWire, payload bool) {
+	nonces := make([]uint64, len(diffs))
+	for i, d := range diffs {
+		nonces[i] = d.Nonce
+	}
+	e.calls = append(e.calls, recordedChallenge{size: size, nonces: nonces, payload: payload})
+}
+
+// sampleHeap records retained heap while this call's page is still reachable.
+// A GC first drops pages the walk has already finished, so the high-water is
+// the live page rather than bytes the collector has not swept.
+func (e *recordingExecutor) sampleHeap() {
+	if !e.trackHeap {
+		return
+	}
+	runtime.GC()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	if m.HeapAlloc > e.high {
+		e.high = m.HeapAlloc
+	}
 }
 
 func (e *recordingExecutor) HeightSyncRepair(context.Context, *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
@@ -212,7 +264,7 @@ func txsAbout500() []*types.DevshardTx {
 	return txs
 }
 
-func seedRefusalDiffs(t *testing.T, store *storage.SQLite, root []byte) {
+func seedRefusalDiffs(t *testing.T, store *storage.SQLite, root []byte, n int) {
 	t.Helper()
 	txs := txsAbout500()
 	stored := proto.Size(&types.DiffContent{Txs: txs})
@@ -220,7 +272,7 @@ func seedRefusalDiffs(t *testing.T, store *storage.SQLite, root []byte) {
 	require.LessOrEqual(t, stored, 520)
 	const batch = 1000
 	recs := make([]types.DiffRecord, 0, batch)
-	for nonce := 1; nonce <= refusalJournalDiffs; nonce++ {
+	for nonce := 1; nonce <= n; nonce++ {
 		recs = append(recs, types.DiffRecord{
 			Diff: types.Diff{
 				Nonce:         uint64(nonce),
@@ -229,7 +281,7 @@ func seedRefusalDiffs(t *testing.T, store *storage.SQLite, root []byte) {
 			},
 			StateHash: root,
 		})
-		if len(recs) == batch || nonce == refusalJournalDiffs {
+		if len(recs) == batch || nonce == n {
 			require.NoError(t, store.AppendDiffBatch(context.Background(), refusalJournalEscrow, recs))
 			recs = recs[:0]
 		}
@@ -255,6 +307,14 @@ func refusalPayloadRequest() transport.VerifyTimeoutRequest {
 // inference map stays one pending record; the journal is not replayed into it.
 func newRefusalJournalServer(t *testing.T) (*transport.Server, []byte) {
 	t.Helper()
+	return newRefusalJournalServerN(t, refusalJournalDiffs)
+}
+
+// newRefusalJournalServerN is a verifier whose store holds n contiguous diffs
+// and whose escrow state says the same tip. The live inference map stays one
+// pending record; the journal is not replayed into it.
+func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
+	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
@@ -274,13 +334,13 @@ func newRefusalJournalServer(t *testing.T) (*transport.Server, []byte) {
 		Group:          group,
 		InitialBalance: 100000,
 	}))
-	seedRefusalDiffs(t, store, root)
+	seedRefusalDiffs(t, store, root, n)
 
 	sm, err := state.NewStateMachine(refusalJournalEscrow, config, group, 100000, user.Address(), verifier,
 		testutil.MustMemoryStore(t, refusalJournalEscrow, user.Address(), config, group, 100000))
 	require.NoError(t, err)
 	st := sm.ExportState()
-	st.LatestNonce = refusalJournalDiffs
+	st.LatestNonce = uint64(n)
 	hash := testutil.TestPromptHash
 	st.Inferences = map[uint64]*types.InferenceRecord{
 		1: {
@@ -301,7 +361,7 @@ func newRefusalJournalServer(t *testing.T) (*transport.Server, []byte) {
 	h, err := host.NewHost(sm, hosts[0], stub.NewInferenceEngine(), refusalJournalEscrow, group, nil, host.WithStorage(store))
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
-	require.Equal(t, uint64(refusalJournalDiffs), h.SnapshotState().LatestNonce)
+	require.Equal(t, uint64(n), h.SnapshotState().LatestNonce)
 
 	srv, err := transport.NewServer(h, store, verifier, user.Address())
 	require.NoError(t, err)
@@ -318,6 +378,13 @@ func assertBodiesUnderReadCap(t *testing.T, calls []recordedChallenge) {
 
 func assertColdJournalThenPayload(t *testing.T, calls []recordedChallenge) {
 	t.Helper()
+	assertNoncesThenPayload(t, calls, 1, refusalJournalDiffs)
+}
+
+// assertNoncesThenPayload requires one contiguous nonce run, each nonce once,
+// and the payload on the last call only.
+func assertNoncesThenPayload(t *testing.T, calls []recordedChallenge, from uint64, n int) {
+	t.Helper()
 	assertBodiesUnderReadCap(t, calls)
 	var got []uint64
 	for i, c := range calls {
@@ -328,10 +395,34 @@ func assertColdJournalThenPayload(t *testing.T, calls []recordedChallenge) {
 		got = append(got, c.nonces...)
 	}
 	require.True(t, calls[len(calls)-1].payload)
-	require.Len(t, got, refusalJournalDiffs)
+	require.Len(t, got, n)
 	for i, nonce := range got {
-		require.Equalf(t, uint64(i+1), nonce, "nonce at position %d", i)
+		require.Equalf(t, from+uint64(i), nonce, "nonce at position %d", i)
 	}
+}
+
+func assertWalkHeap(t *testing.T, e *recordingExecutor) {
+	t.Helper()
+	require.NotZero(t, e.high)
+	if e.high <= e.baseline {
+		return
+	}
+	limit := uint64(largeJournalHeapPages) * host.ChallengePageMaxBytes
+	over := e.high - e.baseline
+	t.Logf("heap above seeded journal: %d bytes (limit %d)", over, limit)
+	require.LessOrEqualf(t, over, limit, "retained heap during catch-up")
+}
+
+func runRefusalCheck(t *testing.T, srv *transport.Server, exec *recordingExecutor, req transport.VerifyTimeoutRequest) *transport.VerifyTimeoutResponse {
+	t.Helper()
+	srv.SetPeerClients(map[int]transport.HostPeerClient{1: exec})
+	ctx, cancel := context.WithTimeout(context.Background(), host.RefusalVerifyBudget)
+	defer cancel()
+	start := time.Now()
+	resp, err := srv.ServeVerifyTimeout(ctx, req)
+	require.NoError(t, err)
+	require.Less(t, time.Since(start), host.RefusalVerifyBudget)
+	return resp
 }
 
 // TestRefusalChallengePagesStayUnderReadCap pins the refused-timeout
@@ -366,5 +457,78 @@ func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, resp.Accept)
 		assertColdJournalThenPayload(t, exec.calls)
+	})
+}
+
+// TestRefusalLargeJournal is the soak's journal, about 148,000 diffs of about
+// 500 bytes, checked in process. HeapAlloc is sampled on every catch-up call
+// after a GC, while that call's page is still reachable. The rise above the
+// seeded journal stays within a few challenge pages. One refused-timeout
+// check covers a down executor, one behind, and one caught up. A verify
+// budget that expires returns the error and does not accept.
+func TestRefusalLargeJournal(t *testing.T) {
+	srv, root := newRefusalJournalServerN(t, refusalLargeJournalDiffs)
+	runtime.GC()
+	var seeded runtime.MemStats
+	runtime.ReadMemStats(&seeded)
+	baseline := seeded.HeapAlloc
+	req := refusalPayloadRequest()
+	n := refusalLargeJournalDiffs
+	half := uint64(n / 2)
+
+	// The deadline runs first. A finished cold walk remembers that it sent
+	// the journal, and the next cold check would send the payload only.
+	t.Run("deadline", func(t *testing.T) {
+		exec := &recordingExecutor{
+			t:            t,
+			headErr:      errors.New("session not found"),
+			block:        true,
+			verifyBudget: time.Second,
+		}
+		srv.SetPeerClients(map[int]transport.HostPeerClient{1: exec})
+		resp, err := srv.ServeVerifyTimeout(context.Background(), req)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Nil(t, resp)
+	})
+	t.Run("down", func(t *testing.T) {
+		exec := &recordingExecutor{
+			t:         t,
+			headErr:   errors.New("session not found"),
+			trackHeap: true,
+			baseline:  baseline,
+		}
+		resp := runRefusalCheck(t, srv, exec, req)
+		require.True(t, resp.Accept)
+		assertNoncesThenPayload(t, exec.calls, 1, n)
+		assertWalkHeap(t, exec)
+	})
+	t.Run("behind", func(t *testing.T) {
+		exec := &recordingExecutor{
+			t:         t,
+			nonce:     half,
+			root:      root,
+			trackHeap: true,
+			baseline:  baseline,
+		}
+		resp := runRefusalCheck(t, srv, exec, req)
+		require.True(t, resp.Accept)
+		assertNoncesThenPayload(t, exec.calls, half+1, n-int(half))
+		assertWalkHeap(t, exec)
+	})
+	t.Run("caught up", func(t *testing.T) {
+		exec := &recordingExecutor{
+			t:         t,
+			nonce:     uint64(n),
+			root:      root,
+			trackHeap: true,
+			baseline:  baseline,
+		}
+		resp := runRefusalCheck(t, srv, exec, req)
+		require.True(t, resp.Accept)
+		require.Len(t, exec.calls, 1)
+		require.Empty(t, exec.calls[0].nonces)
+		require.True(t, exec.calls[0].payload)
+		assertBodiesUnderReadCap(t, exec.calls)
+		assertWalkHeap(t, exec)
 	})
 }
