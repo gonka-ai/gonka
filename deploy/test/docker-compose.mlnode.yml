@@ -44,8 +44,8 @@ services:
     image: nginx:1.28.0
     hostname: inference
     ports:
-      - "${PORT:-8080}:8080"
-      - "${INFERENCE_PORT:-5050}:5000"
+      - "127.0.0.1:${PORT:-8080}:8080"
+      - "127.0.0.1:${INFERENCE_PORT:-5050}:5000"
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
     restart: always

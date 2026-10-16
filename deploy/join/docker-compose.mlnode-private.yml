@@ -1,0 +1,9 @@
+# GPU machine reached by the network node over a private address.
+# Uncomment MLNODE_BIND_IP in config.env, then:
+#   docker compose -f docker-compose.mlnode.yml -f docker-compose.mlnode-private.yml up -d
+
+services:
+  inference:
+    ports:
+      - "${MLNODE_BIND_IP:?set MLNODE_BIND_IP in config.env}:${PORT:-8080}:8080"
+      - "${MLNODE_BIND_IP:?set MLNODE_BIND_IP in config.env}:${INFERENCE_PORT:-5050}:5000"

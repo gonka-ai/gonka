@@ -150,7 +150,7 @@ services:
       - PGUSER=${POSTGRES_USER:-payloads}
       - PGPASSWORD=${POSTGRES_PASSWORD:-}
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
       - "127.0.0.1:9200:9200"
     restart: always
 

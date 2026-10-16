@@ -10,7 +10,8 @@
 #
 #   NETWORK_NODE_PRIVATE_IP   private address of the network node, where
 #                             docker-compose.private-endpoints.yml publishes
-#                             chain gRPC/RPC, the node manager and PostgreSQL
+#                             chain gRPC/RPC, the versions API on 9100, the
+#                             node manager and PostgreSQL
 #   VERSIOND_BIND_IP          private address of this machine on which the
 #                             routers reach versiond (entry in the endpoint
 #                             file of the network node)

@@ -1,7 +1,7 @@
 # Publish, on the private interface of the network node only, the endpoints a
-# versiond on another machine needs: chain gRPC and RPC, the node manager, and
-# the shared PostgreSQL. The API's /versions feed on port 9100 is already
-# published by the base file.
+# versiond on another machine needs: chain gRPC and RPC, the node manager, the
+# shared PostgreSQL, and the API /versions feed on port 9100. The base compose
+# publishes 9100 on loopback only.
 #
 # Add this file after docker-compose.versiond.yml in every Compose command of
 # the network node, set GONKA_PRIVATE_BIND_IP in config.env, and firewall these
@@ -17,6 +17,7 @@ services:
 
   api:
     ports:
+      - "${GONKA_PRIVATE_BIND_IP:?set GONKA_PRIVATE_BIND_IP in config.env}:9100:9100"
       - "${GONKA_PRIVATE_BIND_IP:?set GONKA_PRIVATE_BIND_IP in config.env}:${NODE_MANAGER_GRPC_PORT:-9400}:${NODE_MANAGER_GRPC_PORT:-9400}"
 
   devshard-postgres:
