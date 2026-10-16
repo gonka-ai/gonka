@@ -879,7 +879,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		if msg := tx.GetConfirmStart(); msg != nil {
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.Receipt = true
-				state.ReceiptAt = msg.ConfirmedAt
+				if state.ReceiptAt <= 0 {
+					state.ReceiptAt = now.Unix()
+				}
 				e.reclassify(msg.InferenceId, state, now)
 			}
 			continue

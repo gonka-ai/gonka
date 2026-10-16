@@ -154,3 +154,10 @@ func TestSessionConfigWithPrice_WrapsBuilder(t *testing.T) {
 		)
 	})
 }
+
+func TestSessionConfigFromEscrowCarriesTimeoutBlockTime(t *testing.T) {
+	cfg := SessionConfigFromEscrow(16, EscrowSessionFields{TimeoutBlockTimeMs: 5000})
+	require.Equal(t, uint32(5000), cfg.TimeoutBlockTimeMs)
+	round := EscrowStateFromProto(EscrowStateToProto(&EscrowState{Config: cfg}))
+	require.Equal(t, uint32(5000), round.Config.TimeoutBlockTimeMs)
+}

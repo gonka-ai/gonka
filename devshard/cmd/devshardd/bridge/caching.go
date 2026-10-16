@@ -123,6 +123,7 @@ func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		RefusalTimeout:            e.RefusalTimeout,
 		ExecutionTimeout:          e.ExecutionTimeout,
+		TimeoutBlockTimeMs:        e.TimeoutBlockTimeMs,
 		EpochID:                   e.EpochID,
 	}
 }
@@ -145,6 +146,7 @@ func EscrowInfoFromCache(c *storage.EscrowCacheInfo) *bridge.EscrowInfo {
 		VoteThresholdFactor:       c.VoteThresholdFactor,
 		RefusalTimeout:            c.RefusalTimeout,
 		ExecutionTimeout:          c.ExecutionTimeout,
+		TimeoutBlockTimeMs:        c.TimeoutBlockTimeMs,
 		EpochID:                   c.EpochID,
 	}
 }

@@ -35,7 +35,7 @@ func signedExecutorReceipt(t *testing.T, session *Session, hosts []*signing.Secp
 	require.True(t, ok)
 	require.Less(t, int(rec.ExecutorSlot), len(hosts))
 	return testutil.SignExecutorReceipt(t, hosts[rec.ExecutorSlot], session.escrowID, nonce,
-		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt)
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, floorStampOf(&rec))
 }
 
 // A confirmation timestamp only becomes chain state through the receipt that signs it. Without the
@@ -99,7 +99,7 @@ func TestProcessResponse_AReceiptFromAnotherSlotIsNotBelieved(t *testing.T) {
 	other := hosts[(int(rec.ExecutorSlot)+1)%len(hosts)]
 	confirmedAt := time.Now().Unix()
 	receipt := testutil.SignExecutorReceipt(t, other, session.escrowID, nonce,
-		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt)
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens)
 
 	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
 		Nonce: nonce, Receipt: receipt, ConfirmedAt: confirmedAt,
@@ -122,7 +122,7 @@ func TestProcessResponse_AForgedMempoolConfirmCannotShadowTheReceipt(t *testing.
 		Nonce: nonce, Receipt: receipt, ConfirmedAt: confirmedAt,
 		Mempool: []*types.DevshardTx{{
 			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: nonce, ExecutorSig: []byte("forged"), ConfirmedAt: confirmedAt,
+				InferenceId: nonce, ExecutorSig: []byte("forged"),
 			}},
 		}},
 	}, nonce))
@@ -148,7 +148,7 @@ func TestProcessResponse_AForgedMempoolConfirmIsNotBelieved(t *testing.T) {
 		Nonce: nonce,
 		Mempool: []*types.DevshardTx{{
 			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: nonce, ExecutorSig: []byte("forged"), ConfirmedAt: time.Now().Unix(),
+				InferenceId: nonce, ExecutorSig: []byte("forged"),
 			}},
 		}},
 	}, nonce))

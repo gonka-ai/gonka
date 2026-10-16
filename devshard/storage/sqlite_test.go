@@ -375,7 +375,7 @@ func TestSQLite_LargeSession(t *testing.T) {
 			}})
 		case 1:
 			txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
-				ConfirmStart: &types.MsgConfirmStart{InferenceId: i, ExecutorSig: []byte("exec-sig"), ConfirmedAt: int64(i)},
+				ConfirmStart: &types.MsgConfirmStart{InferenceId: i, ExecutorSig: []byte("exec-sig")},
 			}})
 		case 2:
 			txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{

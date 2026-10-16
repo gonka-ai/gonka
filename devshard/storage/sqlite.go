@@ -979,7 +979,7 @@ func sqliteSealedInferenceArgs(escrowID string, row InferenceRow) []any {
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAt, row.SealedConfirmedAt,
+		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight,
 	}
 }
 
@@ -1081,7 +1081,7 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAt, &out.SealedConfirmedAt,
+		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return InferenceRow{}, false, nil

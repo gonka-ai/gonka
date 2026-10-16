@@ -58,16 +58,17 @@ func TestOwedValidationSetMatchesScan(t *testing.T) {
 	// Confirm then execution-timeout. The confirm gives the state clock a
 	// ConfirmedAt, which auto-seal requires before it will fold anything.
 	// The terminal record then seals once the nonce gate clears.
-	require.NoError(t, applyOwed(sm, 1, []*types.DevshardTx{startTx(1)}))
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, 1, []*types.DevshardTx{startTx(1)}))
 	assertOwedMatchesScan(t, sm, pred)
-	require.NoError(t, applyOwed(sm, 2, []*types.DevshardTx{confirmTx(t, hosts, escrowID, 1)}))
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, 2, []*types.DevshardTx{confirmTx(t, hosts, escrowID, 1)}))
 	assertOwedMatchesScan(t, sm, pred)
-	require.NoError(t, applyOwed(sm, 3, []*types.DevshardTx{
+	makeTimeoutDue(t, sm, 1)
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, 3, []*types.DevshardTx{
 		timeoutTx(t, hosts, escrowID, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
 	}))
 	assertOwedMatchesScan(t, sm, pred)
 	for nonce := uint64(4); nonce <= 5; nonce++ {
-		require.NoError(t, applyOwed(sm, nonce, nil))
+		require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce, nil))
 		assertOwedMatchesScan(t, sm, pred)
 	}
 	require.Greater(t, sm.SealedNonceCount(), 0, "terminal inference must seal and leave the set")
@@ -78,6 +79,7 @@ func TestOwedValidationSetMatchesScan(t *testing.T) {
 	nonce := uint64(6)
 	for step := 0; step < 48; step++ {
 		action := nextOwedAction(t, rng, sm, hosts, escrowID, nonce)
+		action.txs = restamp(t, sm, hosts, escrowID, nonce, action.txs)
 		switch {
 		case action.reject:
 			before := owedIDSet(sm)
@@ -127,9 +129,9 @@ func TestOwedValidationSetMatchesScan(t *testing.T) {
 	// set must follow the restored live map, not the entries it had before.
 	sm2 := newSM()
 	sm2.SetOwedValidationPredicate(pred)
-	require.NoError(t, applyOwed(sm2, 1, []*types.DevshardTx{startTx(1)}))
-	require.NoError(t, applyOwed(sm2, 2, []*types.DevshardTx{confirmTx(t, hosts, escrowID, 1)}))
-	require.NoError(t, applyOwed(sm2, 3, []*types.DevshardTx{finishTx(t, hosts, escrowID, 1)}))
+	require.NoError(t, applyOwedStamped(t, sm2, hosts, escrowID, 1, []*types.DevshardTx{startTx(1)}))
+	require.NoError(t, applyOwedStamped(t, sm2, hosts, escrowID, 2, []*types.DevshardTx{confirmTx(t, hosts, escrowID, 1)}))
+	require.NoError(t, applyOwedStamped(t, sm2, hosts, escrowID, 3, []*types.DevshardTx{finishTx(t, hosts, escrowID, 1)}))
 	assertOwedMatchesScan(t, sm2, pred)
 	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
 	require.NoError(t, err)
@@ -140,17 +142,17 @@ func TestOwedValidationSetMatchesScan(t *testing.T) {
 	// Finalize with a challenged record still owed. The settlement drain seals
 	// every live record, so the set must empty with it.
 	for nonce%uint64(len(hosts)) == 0 {
-		require.NoError(t, applyOwed(sm, nonce, nil))
+		require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce, nil))
 		nonce++
 	}
 	disputed := nonce
-	require.NoError(t, applyOwed(sm, nonce, []*types.DevshardTx{startTx(disputed)}))
-	require.NoError(t, applyOwed(sm, nonce+1, []*types.DevshardTx{confirmTx(t, hosts, escrowID, disputed)}))
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce, []*types.DevshardTx{startTx(disputed)}))
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce+1, []*types.DevshardTx{confirmTx(t, hosts, escrowID, disputed)}))
 	challenger := uint32((disputed + 1) % uint64(len(hosts)))
 	if challenger == 0 {
 		challenger = 1
 	}
-	require.NoError(t, applyOwed(sm, nonce+2, []*types.DevshardTx{
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce+2, []*types.DevshardTx{
 		finishTx(t, hosts, escrowID, disputed),
 		validationTx(t, hosts, escrowID, disputed, challenger, false),
 	}))
@@ -158,11 +160,11 @@ func TestOwedValidationSetMatchesScan(t *testing.T) {
 	assertOwedMatchesScan(t, sm, pred)
 	require.Contains(t, sm.OwedValidationIDs(), disputed)
 
-	require.NoError(t, applyOwed(sm, nonce, []*types.DevshardTx{txFinalize()}))
+	require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce, []*types.DevshardTx{txFinalize()}))
 	for sm.Phase() != types.PhaseSettlement {
 		assertOwedMatchesScan(t, sm, pred)
 		nonce++
-		require.NoError(t, applyOwed(sm, nonce, nil))
+		require.NoError(t, applyOwedStamped(t, sm, hosts, escrowID, nonce, nil))
 	}
 	assertOwedMatchesScan(t, sm, pred)
 	require.Empty(t, sm.OwedValidationIDs())
@@ -269,6 +271,10 @@ func owedFreeSlot(rng *rand.Rand, rec *types.InferenceRecord, n int) (uint32, bo
 		return 0, false
 	}
 	return free[rng.IntN(len(free))], true
+}
+
+func applyOwedStamped(t *testing.T, sm *StateMachine, hosts []*signing.Secp256k1Signer, escrowID string, nonce uint64, txs []*types.DevshardTx) error {
+	return applyOwed(sm, nonce, restamp(t, sm, hosts, escrowID, nonce, txs))
 }
 
 func applyOwed(sm *StateMachine, nonce uint64, txs []*types.DevshardTx) error {

@@ -158,6 +158,7 @@ type EscrowCacheInfo struct {
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
 	RefusalTimeout            int64    `json:"refusal_timeout,omitempty"`
 	ExecutionTimeout          int64    `json:"execution_timeout,omitempty"`
+	TimeoutBlockTimeMs        uint32   `json:"timeout_block_time_ms,omitempty"`
 	EpochID                   uint64   `json:"epoch_id"`
 	// SlotURLs is {validator address → InferenceUrl} captured at warm time
 	// when this host is in Slots. Local directory metadata, not the state
@@ -235,15 +236,15 @@ type InferenceRow struct {
 	SealedVotesInvalid uint32
 	SealedValidatedBy  []byte // up to 16 bytes (ValidatedBy bitmap)
 	// Statistics snapshot for API lookup after live record eviction.
-	SealedModel        string
-	SealedPromptHash   []byte
-	SealedResponseHash []byte
-	SealedInputLength  uint64
-	SealedMaxTokens    uint64
-	SealedInputTokens  uint64
-	SealedOutputTokens uint64
-	SealedReservedCost uint64
-	SealedActualCost   uint64
-	SealedStartedAt    int64
-	SealedConfirmedAt  int64
+	SealedModel             string
+	SealedPromptHash        []byte
+	SealedResponseHash      []byte
+	SealedInputLength       uint64
+	SealedMaxTokens         uint64
+	SealedInputTokens       uint64
+	SealedOutputTokens      uint64
+	SealedReservedCost      uint64
+	SealedActualCost        uint64
+	SealedStartedAtHeight   int64
+	SealedConfirmedAtHeight int64
 }

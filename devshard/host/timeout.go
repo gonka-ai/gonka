@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -28,6 +29,7 @@ type FinishProposerVerifier interface {
 // stands.
 type EvidenceVerifier interface {
 	CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardTx) error
+	TimeoutDue(inferenceID uint64, reason types.TimeoutReason) error
 }
 
 // maxEvidenceChecks bounds signature recoveries per mempool scan. An honest
@@ -48,6 +50,35 @@ func (h *Host) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
 
 func (h *Host) CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardTx) error {
 	return h.sm.CheckEvidence(rec, txs...)
+}
+
+const localTipTimeout = 2 * time.Second
+
+func (h *Host) TimeoutDue(inferenceID uint64, reason types.TimeoutReason) error {
+	if err := h.sm.TimeoutDue(inferenceID, reason); err != nil {
+		return err
+	}
+	if h.oracle == nil {
+		return nil
+	}
+	due, err := h.sm.TimeoutDueHeight(inferenceID, reason)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), localTipTimeout)
+	defer cancel()
+	tip, err := h.LatestHeight(ctx)
+	if err != nil || tip <= 0 {
+		return nil
+	}
+	if uint64(tip) < due {
+		return fmt.Errorf("%w: local tip %d is below due height %d", types.ErrTimeoutNotDue, tip, due)
+	}
+	return nil
+}
+
+func timeoutDue(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) bool {
+	return ev != nil && ev.TimeoutDue(inferenceID, reason) == nil
 }
 
 var (
@@ -175,6 +206,27 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 	return out
 }
 
+func VerifiedRecoveryTxsFor(ev EvidenceVerifier, st types.EscrowState, inferenceID uint64, pool []*types.DevshardTx) []*types.DevshardTx {
+	rec := st.Inferences[inferenceID]
+	if rec == nil {
+		return nil
+	}
+	var out []*types.DevshardTx
+	var confirm *types.DevshardTx
+	if rec.Status == types.StatusPending {
+		if confirm = verifiedConfirm(ev, inferenceID, rec, nil, pool); confirm == nil {
+			return nil
+		}
+		out = append(out, confirm)
+	}
+	if rec.Status == types.StatusPending || rec.Status == types.StatusStarted {
+		if finish := verifiedFinish(ev, st.EscrowID, inferenceID, rec, confirm, pool); finish != nil {
+			out = append(out, finish)
+		}
+	}
+	return out
+}
+
 // VerifyRefusedTimeout checks if a refused timeout is valid.
 //
 // Flow:
@@ -195,10 +247,8 @@ func VerifyRefusedTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-	config types.SessionConfig,
-	nowUnix int64,
 ) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, executorClient, ingest, ev, config, nowUnix)
+	return verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, executorClient, ingest, ev)
 }
 
 type refusedChallenge int
@@ -219,8 +269,6 @@ func verifyRefusedTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-	config types.SessionConfig,
-	nowUnix int64,
 ) (bool, error) {
 	rec, ok := st.Inferences[inferenceID]
 	if !ok {
@@ -230,8 +278,9 @@ func verifyRefusedTimeout(
 		return false, fmt.Errorf("inference %d: expected pending, got %d", inferenceID, rec.Status)
 	}
 
-	// Reject if refusal timeout deadline has not passed.
-	if nowUnix-rec.StartedAt < config.RefusalTimeout {
+	// Reject unless the height floor the next diff applies at has cleared
+	// the start anchor by the refusal window: the gate applyTimeout runs.
+	if !timeoutDue(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) {
 		return false, nil
 	}
 
@@ -247,7 +296,7 @@ func verifyRefusedTimeout(
 	}
 
 	// Verifier validates payload against on-chain record (same checks executor does).
-	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return false, nil // bad payload -> reject timeout
 	}
 
@@ -321,8 +370,6 @@ func VerifyExecutionTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-	config types.SessionConfig,
-	nowUnix int64,
 ) (bool, error) {
 	rec, ok := st.Inferences[inferenceID]
 	if !ok {
@@ -332,9 +379,9 @@ func VerifyExecutionTimeout(
 		return false, fmt.Errorf("inference %d: expected started, got %d", inferenceID, rec.Status)
 	}
 
-	// Reject if execution timeout deadline has not passed.
-	// Anchored to ConfirmedAt (executor-signed wall clock), not StartedAt (user-controlled).
-	if nowUnix-rec.ConfirmedAt < config.ExecutionTimeout {
+	// Reject unless the height floor the next diff applies at has cleared
+	// the confirm anchor by the execution window: the gate applyTimeout runs.
+	if !timeoutDue(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION) {
 		return false, nil
 	}
 

@@ -61,7 +61,7 @@ func TestSendPendingDiffKeepsProtocolTxsForFinalizationPastTheActiveCap(t *testi
 	session, _, _ := setupSession(t, 3, 1_000_000, 0)
 	capAtCurrentNonce(session)
 	before := session.Nonce()
-	receipt := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig"), ConfirmedAt: 1}}}
+	receipt := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig")}}}
 	session.mu.Lock()
 	session.addPendingTx(receipt)
 	session.mu.Unlock()
@@ -98,7 +98,7 @@ func TestOnlyFinalizeRoundsSpendNoncesWhileFinalizing(t *testing.T) {
 	require.NoError(t, session.sendDiffRound(context.Background(), []*types.DevshardTx{finalizeRoundTx()}, true))
 	before := session.Nonce()
 	session.mu.Lock()
-	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig"), ConfirmedAt: 1}}})
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig")}}})
 	session.mu.Unlock()
 
 	err := session.SendPendingDiff(context.Background())
@@ -136,7 +136,7 @@ func TestSyncHostsSpendsNoFinalizationReserve(t *testing.T) {
 	capAtCurrentNonce(session)
 	before := session.Nonce()
 	session.mu.Lock()
-	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig"), ConfirmedAt: 1}}})
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("sig")}}})
 	session.mu.Unlock()
 
 	err := session.SyncHosts(context.Background())

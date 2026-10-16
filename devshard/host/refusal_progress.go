@@ -36,7 +36,6 @@ func VerifyRefusedProgress(
 	journal RefusalJournal,
 	queryTimeout time.Duration,
 	verifyBudget time.Duration,
-	nowUnix int64,
 	unreachable func(error) bool,
 ) (bool, error) {
 	requestCtx := ctx
@@ -46,7 +45,7 @@ func VerifyRefusedProgress(
 	if unreachable == nil {
 		unreachable = func(error) bool { return true }
 	}
-	localAccept, localErr := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, nil, ev, st.Config, nowUnix)
+	localAccept, localErr := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, nil, nil, ev)
 	if localErr != nil || !localAccept {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
@@ -54,7 +53,7 @@ func VerifyRefusedProgress(
 		return localAccept, localErr
 	}
 	if tip == nil || executorClient == nil || st.LatestNonce == 0 {
-		accept, err := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, ev, st.Config, nowUnix)
+		accept, err := VerifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, executorClient, ingest, ev)
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
@@ -131,7 +130,7 @@ func VerifyRefusedProgress(
 	if ctx.Err() != nil {
 		return false, ctx.Err()
 	}
-	accept, err := verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, diffs, executorClient, ingest, ev, st.Config, nowUnix)
+	accept, err := verifyRefusedTimeout(ctx, st, inferenceID, payload, localMempool, diffs, executorClient, ingest, ev)
 	if requestCtx.Err() != nil {
 		return false, requestCtx.Err()
 	}

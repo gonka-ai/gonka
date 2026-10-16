@@ -26,7 +26,7 @@ type refusalBudgetClient interface {
 // verifyRefusedTimeout fetches the executor tip, checks it against the stored
 // state hash, and challenges with the diffs after that nonce. A tip the
 // verifier cannot check falls back to the diffs from nonce 1.
-func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient, nowUnix int64) (bool, error) {
+func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, payload *host.InferencePayload, mempool []*types.DevshardTx, executor host.ExecutorClient) (bool, error) {
 	var tip host.SessionTip
 	if sh, ok := executor.(host.SessionTip); ok {
 		tip = sh
@@ -44,7 +44,7 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	if s.store != nil {
 		journal = refusalJournal{store: s.store, escrowID: s.host.EscrowID()}
 	}
-	return host.VerifyRefusedProgress(ctx, st, inferenceID, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, nowUnix, executorUnreachable)
+	return host.VerifyRefusedProgress(ctx, st, inferenceID, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, executorUnreachable)
 }
 
 type refusalJournal struct {

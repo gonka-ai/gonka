@@ -427,6 +427,8 @@ data class DevshardEscrowParams(
     val validationRate: Long = 0,
     @SerializedName("vote_threshold_factor")
     val voteThresholdFactor: Long = 0,
+    @SerializedName("timeout_block_time_ms")
+    val timeoutBlockTimeMs: Long = 0,
 )
 
 data class PocParams(

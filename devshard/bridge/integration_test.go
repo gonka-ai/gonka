@@ -3,8 +3,8 @@
 package bridge
 
 import (
-	"os"
 	"devshard/types"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"

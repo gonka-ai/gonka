@@ -985,24 +985,20 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 // MsgConfirmStart queued in the mempool. A receipt this host already queued is
 // returned as is, so every retry hands out the same bytes: whichever copy lands
 // in a diff, RemoveIncluded clears the queued one. Otherwise it signs a new
-// receipt with a wall-clock confirmed_at and the reference stamp for
-// inferenceID, and queues it. Caller must hold h.mu.
+// receipt stamped with the height-sync floor as of inferenceID, and queues it.
+// Caller must hold h.mu.
 func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
 	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
 		return queued, nil
 	}
-	confirmedAt := time.Now().Unix()
-	obsH, obsHash := headerStamp(hdr, hdrErr)
-	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
+	obsH, obsHash := state.StartStamp(&rec)
 	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
 		Model:             rec.Model,
 		InputLength:       rec.InputLength,
 		MaxTokens:         rec.MaxTokens,
-		StartedAt:         rec.StartedAt,
 		EscrowId:          h.escrowID,
-		ConfirmedAt:       confirmedAt,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 	})
@@ -1016,7 +1012,6 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 	confirm := &types.MsgConfirmStart{
 		InferenceId:       inferenceID,
 		ExecutorSig:       sig,
-		ConfirmedAt:       confirmedAt,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 	}
@@ -1037,7 +1032,7 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 }
 
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
-// Returns the receipt sig, confirmed_at timestamp, and an ExecuteRequest if this host is the executor.
+// Returns the receipt sig, the local time it was handed out, and an ExecuteRequest if this host is the executor.
 // A reconnect does not get the body here: resolveStoredResponse loads it from payload storage.
 //
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
@@ -1079,7 +1074,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	}
 
 	// Verify payload against the applied record (not unverified request-diff fields).
-	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
 	}
 
@@ -1116,7 +1111,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	if err != nil {
 		return nil, 0, nil, nil, outcome, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
+	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
 	outcome.observedHeight = confirm.ObservedHeight
 	outcome.observedHash = confirm.ObservedBlockHash
 
@@ -2076,7 +2071,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	if payload == nil {
 		return nil, 0, nil, nil
 	}
-	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return nil, 0, nil, nil
 	}
 
@@ -2091,7 +2086,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
+	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
 
 	// Dedup: return receipt (proves executor alive) but skip execution
 	// if already in-flight or already finished in mempool.
@@ -2180,7 +2175,7 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 // VerifyPayload checks that an InferencePayload matches the expected on-chain fields
 // and that those accounting fields cover the actual prompt workload.
 // Used by both executor (signReceipt) and verifier (VerifyRefusedTimeout) paths.
-func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt int64) error {
+func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64) error {
 	hash, err := devshard.CanonicalPromptHash(p.Prompt)
 	if err != nil {
 		return fmt.Errorf("%w: %v", types.ErrPromptHashMismatch, err)
@@ -2193,9 +2188,6 @@ func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLe
 	}
 	if p.MaxTokens != maxTokens {
 		return fmt.Errorf("%w: max_tokens %d vs %d", types.ErrPayloadMismatch, p.MaxTokens, maxTokens)
-	}
-	if p.StartedAt != startedAt {
-		return fmt.Errorf("%w: started_at %d vs %d", types.ErrPayloadMismatch, p.StartedAt, startedAt)
 	}
 	if p.Model != model {
 		return fmt.Errorf("%w: model %s vs %s", types.ErrPayloadMismatch, p.Model, model)

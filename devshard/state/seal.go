@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/storage"
 	"devshard/types"
@@ -14,7 +15,7 @@ import (
 // stateClockWindowFactor sets how many recent live inferences the deterministic
 // state clock scans, as a multiple of the group size N. Concurrency is bounded
 // by the number of slots, so N*factor comfortably covers the in-flight window
-// whose ConfirmedAt timestamps approximate "now".
+// whose ConfirmedAtHeight anchors approximate "now".
 const stateClockWindowFactor = 3
 
 func autoSealInterval(cfg types.SessionConfig) uint64 {
@@ -37,7 +38,7 @@ func shouldAutoSealAtNonce(interval uint64, nonce uint64) bool {
 }
 
 // FinishedClockRequiredSeconds is the Finished (Trigger C) clock-gate
-// threshold: stateClock - ConfirmedAt must be at least this many seconds.
+// threshold in seconds, before it is converted to blocks.
 // ExecutionTimeout is the session inference timeout anchored at ConfirmStart;
 // adding it leaves InferenceSealGraceSeconds after the latest legal Finish.
 func FinishedClockRequiredSeconds(graceSeconds, executionTimeout int64) int64 {
@@ -438,7 +439,7 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 
 	for _, id := range ids {
 		rec, _ := sm.inferenceForWriteLocked(id)
-		sm.settleLiveRecordLocked(rec)
+		sm.settleLiveRecordLocked(rec, sealNonce)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}
@@ -480,21 +481,21 @@ func terminalAutoSealStatus(s types.InferenceStatus) bool {
 	}
 }
 
-// StateClockWindow holds the deterministic state-clock value (max ConfirmedAt
+// StateClockWindow holds the deterministic state-clock value (max ConfirmedAtHeight
 // over the tail window) plus min/max extents from that scan for diagnostics.
 type StateClockWindow struct {
-	Clock          int64
-	MinConfirmedAt int64
-	MaxConfirmedAt int64
-	Known          bool
+	Clock              uint64
+	MinConfirmedHeight uint64
+	MaxConfirmedHeight uint64
+	Known              bool
 }
 
 // stateClockLocked derives a deterministic "current time" purely from state:
-// the max ConfirmedAt over confirmed live inferences in the latest
+// the max ConfirmedAtHeight over confirmed live inferences in the latest
 // N*stateClockWindowFactor tail (N = group size), plus the min and max
-// ConfirmedAt among those confirmed records for diagnostics. Pending and other
-// never-confirmed inferences (ConfirmedAt <= 0) are excluded so they do not
-// pull window_min_confirmed_at to zero. Returns Known=false when there are no
+// ConfirmedAtHeight among those confirmed records for diagnostics. Pending and
+// unanchored inferences (ConfirmedAtHeight == 0) are excluded so they do not
+// pull window_min_confirmed_height to zero. Returns Known=false when there are no
 // live inferences or no confirmed records in the tail window. Caller holds sm.mu.
 func (sm *StateMachine) stateClockLocked() StateClockWindow {
 	if len(sm.state.Inferences) == 0 {
@@ -517,11 +518,11 @@ func (sm *StateMachine) stateClockLocked() StateClockWindow {
 	if len(ids) > window {
 		start = len(ids) - window
 	}
-	var minConfirmed, maxConfirmed int64
+	var minConfirmed, maxConfirmed uint64
 	confirmedInWindow := 0
 	for _, id := range ids[start:] {
-		c := sm.state.Inferences[id].ConfirmedAt
-		if c <= 0 {
+		c := sm.state.Inferences[id].ConfirmedAtHeight
+		if c == 0 {
 			continue
 		}
 		if confirmedInWindow == 0 {
@@ -542,10 +543,10 @@ func (sm *StateMachine) stateClockLocked() StateClockWindow {
 		return StateClockWindow{}
 	}
 	return StateClockWindow{
-		Clock:          maxConfirmed,
-		MinConfirmedAt: minConfirmed,
-		MaxConfirmedAt: maxConfirmed,
-		Known:          true,
+		Clock:              maxConfirmed,
+		MinConfirmedHeight: minConfirmed,
+		MaxConfirmedHeight: maxConfirmed,
+		Known:              true,
 	}
 }
 
@@ -562,11 +563,11 @@ func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 type autoSealCandidate struct {
 	ID               uint64 `json:"id"`
 	Status           uint8  `json:"status"`
-	ConfirmedAt      int64  `json:"confirmed_at"`
+	ConfirmedHeight  uint64 `json:"confirmed_at_height"`
 	NonceGateOK      bool   `json:"nonce_gate_ok"`
 	ClockGateSkipped bool   `json:"clock_gate_skipped"`
 	ClockGateOK      bool   `json:"clock_gate_ok"`
-	GraceRemaining   int64  `json:"grace_remaining_sec,omitempty"`
+	GraceRemaining   uint64 `json:"grace_remaining_blocks,omitempty"`
 	Eligible         bool   `json:"eligible"`
 }
 
@@ -576,7 +577,7 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	clockWin StateClockWindow,
 	sealGraceNonces uint64,
 	graceSeconds int64,
-	stateClock int64,
+	stateClock uint64,
 	candidates []autoSealCandidate,
 	sealed []uint64,
 ) {
@@ -593,16 +594,16 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
 		"execution_timeout", executionTimeout,
-		"finished_clock_required_seconds", FinishedClockRequiredSeconds(graceSeconds, executionTimeout),
-		"state_clock_confirmed_at", stateClock,
+		"finished_clock_required_blocks", sm.timeoutBlocks(FinishedClockRequiredSeconds(graceSeconds, executionTimeout)),
+		"state_clock_confirmed_height", stateClock,
 		"candidates_count", len(candidates),
 		"sealed_count", len(sealed),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
 	if clockWin.Known {
 		args = append(args,
-			"window_min_confirmed_at", clockWin.MinConfirmedAt,
-			"window_max_confirmed_at", clockWin.MaxConfirmedAt,
+			"window_min_confirmed_height", clockWin.MinConfirmedHeight,
+			"window_max_confirmed_height", clockWin.MaxConfirmedHeight,
 		)
 	}
 	logging.Info("auto-seal evaluation", args...)
@@ -617,10 +618,10 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 //
 // Per live, seal-eligible inference:
 //   - nonce gate (always):  sealNonce >= id + InferenceSealGraceNonces   (id == start nonce)
-//   - clock gate (Finished only): stateClock - ConfirmedAt >=
-//     InferenceSealGraceSeconds + ExecutionTimeout
+//   - clock gate (Finished only): stateClock - ConfirmedAtHeight >=
+//     blocks(InferenceSealGraceSeconds + ExecutionTimeout)
 //
-// ConfirmedAt is written at ConfirmStart, so ExecutionTimeout is added to
+// ConfirmedAtHeight is written at ConfirmStart, so ExecutionTimeout is added to
 // keep a full grace window after the latest legal Finish. Mixed binaries
 // that disagree on this sum diverge on SealedAcc / post_state_root.
 //
@@ -638,14 +639,9 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	sealGraceNonces := uint64(sm.state.Config.InferenceSealGraceNonces)
 	graceSeconds := int64(sm.state.Config.InferenceSealGraceSeconds)
 	executionTimeout := sm.state.Config.ExecutionTimeout
-	requiredClockSeconds := FinishedClockRequiredSeconds(graceSeconds, executionTimeout)
+	requiredBlocks := sm.timeoutBlocks(FinishedClockRequiredSeconds(graceSeconds, executionTimeout))
 	clockWin := sm.stateClockLocked()
 	stateClock := clockWin.Clock
-
-	// No confirmed records in the tail window — skip sealing until the clock is known.
-	if stateClock == 0 {
-		return nil, StateClockWindow{}, nil
-	}
 
 	var candidates []autoSealCandidate
 	var eligible []uint64
@@ -654,9 +650,9 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 			continue
 		}
 		candidate := autoSealCandidate{
-			ID:          id,
-			Status:      uint8(rec.Status),
-			ConfirmedAt: rec.ConfirmedAt,
+			ID:              id,
+			Status:          uint8(rec.Status),
+			ConfirmedHeight: rec.ConfirmedAtHeight,
 		}
 		candidate.NonceGateOK = sealNonce >= id+sealGraceNonces
 		if !candidate.NonceGateOK {
@@ -671,9 +667,14 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 			eligible = append(eligible, id)
 			continue
 		}
-		remaining := requiredClockSeconds - (stateClock - rec.ConfirmedAt)
-		candidate.GraceRemaining = remaining
-		candidate.ClockGateOK = remaining <= 0
+		var elapsed uint64
+		if stateClock > rec.ConfirmedAtHeight {
+			elapsed = stateClock - rec.ConfirmedAtHeight
+		}
+		if elapsed < requiredBlocks {
+			candidate.GraceRemaining = requiredBlocks - elapsed
+		}
+		candidate.ClockGateOK = clockWin.Known && candidate.GraceRemaining == 0
 		candidate.Eligible = candidate.ClockGateOK
 		candidates = append(candidates, candidate)
 		if !candidate.ClockGateOK {
@@ -831,6 +832,13 @@ func (sm *StateMachine) SealedNonceCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return len(sm.sealedNonces)
+}
+
+func (sm *StateMachine) InferenceSealed(id uint64) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, ok := sm.sealedNonces[id]
+	return ok
 }
 
 // FillSealedInferenceIndexGaps inserts a bare index row for each sealed id that
@@ -1031,7 +1039,10 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 					InputLength:  msg.InputLength,
 					MaxTokens:    msg.MaxTokens,
 					ReservedCost: reserved,
-					StartedAt:    msg.StartedAt,
+				}
+				if heightsync.StampPresent(msg.ObservedBlockHash) {
+					out[msg.InferenceId].StartedAtHeight = msg.ObservedHeight
+					out[msg.InferenceId].StartedAtBlockHash = append([]byte(nil), msg.ObservedBlockHash...)
 				}
 			case *types.DevshardTx_ConfirmStart:
 				msg := inner.ConfirmStart
@@ -1043,7 +1054,6 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 					continue
 				}
 				inf.Status = types.StatusStarted
-				inf.ConfirmedAt = msg.ConfirmedAt
 			case *types.DevshardTx_FinishInference:
 				msg := inner.FinishInference
 				if msg == nil {
@@ -1212,22 +1222,22 @@ func (sm *StateMachine) upsertInferenceObsLocked(id, sealedNonce uint64, rec *ty
 
 func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage.InferenceRow {
 	row := storage.InferenceRow{
-		InferenceID:        id,
-		SealedNonce:        sealedNonce,
-		ObsPresent:         true,
-		SealedStatus:       uint32(rec.Status),
-		SealedExecutorSlot: rec.ExecutorSlot,
-		SealedVotesValid:   rec.VotesValid,
-		SealedVotesInvalid: rec.VotesInvalid,
-		SealedModel:        rec.Model,
-		SealedInputLength:  rec.InputLength,
-		SealedMaxTokens:    rec.MaxTokens,
-		SealedInputTokens:  rec.InputTokens,
-		SealedOutputTokens: rec.OutputTokens,
-		SealedReservedCost: rec.ReservedCost,
-		SealedActualCost:   rec.ActualCost,
-		SealedStartedAt:    rec.StartedAt,
-		SealedConfirmedAt:  rec.ConfirmedAt,
+		InferenceID:             id,
+		SealedNonce:             sealedNonce,
+		ObsPresent:              true,
+		SealedStatus:            uint32(rec.Status),
+		SealedExecutorSlot:      rec.ExecutorSlot,
+		SealedVotesValid:        rec.VotesValid,
+		SealedVotesInvalid:      rec.VotesInvalid,
+		SealedModel:             rec.Model,
+		SealedInputLength:       rec.InputLength,
+		SealedMaxTokens:         rec.MaxTokens,
+		SealedInputTokens:       rec.InputTokens,
+		SealedOutputTokens:      rec.OutputTokens,
+		SealedReservedCost:      rec.ReservedCost,
+		SealedActualCost:        rec.ActualCost,
+		SealedStartedAtHeight:   int64(rec.StartedAtHeight),
+		SealedConfirmedAtHeight: int64(rec.ConfirmedAtHeight),
 	}
 	if len(rec.PromptHash) > 0 {
 		row.SealedPromptHash = append([]byte(nil), rec.PromptHash...)
@@ -1243,21 +1253,21 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 
 func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
 	return types.InferenceRecord{
-		Status:       types.InferenceStatus(row.SealedStatus),
-		ExecutorSlot: row.SealedExecutorSlot,
-		Model:        row.SealedModel,
-		PromptHash:   append([]byte(nil), row.SealedPromptHash...),
-		ResponseHash: append([]byte(nil), row.SealedResponseHash...),
-		InputLength:  row.SealedInputLength,
-		MaxTokens:    row.SealedMaxTokens,
-		InputTokens:  row.SealedInputTokens,
-		OutputTokens: row.SealedOutputTokens,
-		ReservedCost: row.SealedReservedCost,
-		ActualCost:   row.SealedActualCost,
-		StartedAt:    row.SealedStartedAt,
-		ConfirmedAt:  row.SealedConfirmedAt,
-		VotesValid:   row.SealedVotesValid,
-		VotesInvalid: row.SealedVotesInvalid,
-		ValidatedBy:  types.Bitmap128FromBytes(row.SealedValidatedBy),
+		Status:            types.InferenceStatus(row.SealedStatus),
+		ExecutorSlot:      row.SealedExecutorSlot,
+		Model:             row.SealedModel,
+		PromptHash:        append([]byte(nil), row.SealedPromptHash...),
+		ResponseHash:      append([]byte(nil), row.SealedResponseHash...),
+		InputLength:       row.SealedInputLength,
+		MaxTokens:         row.SealedMaxTokens,
+		InputTokens:       row.SealedInputTokens,
+		OutputTokens:      row.SealedOutputTokens,
+		ReservedCost:      row.SealedReservedCost,
+		ActualCost:        row.SealedActualCost,
+		StartedAtHeight:   uint64(row.SealedStartedAtHeight),
+		ConfirmedAtHeight: uint64(row.SealedConfirmedAtHeight),
+		VotesValid:        row.SealedVotesValid,
+		VotesInvalid:      row.SealedVotesInvalid,
+		ValidatedBy:       types.Bitmap128FromBytes(row.SealedValidatedBy),
 	}
 }

@@ -38,6 +38,7 @@ func EscrowInfoFromQuery(id uint64, e *inferencetypes.DevshardEscrow) (*EscrowIn
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		RefusalTimeout:            e.RefusalTimeout,
 		ExecutionTimeout:          e.ExecutionTimeout,
+		TimeoutBlockTimeMs:        e.TimeoutBlockTimeMs,
 		EpochID:                   e.EpochIndex,
 		Settled:                   e.Settled,
 	}, nil

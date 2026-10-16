@@ -18,15 +18,16 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 	nonce := prepareNonce(t, session)
 	record, tracked := session.sm.GetInference(nonce)
 	require.True(t, tracked)
+	stamp := floorStampOf(&record)
 	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
-		InferenceId: nonce,
-		PromptHash:  record.PromptHash,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   record.StartedAt,
-		EscrowId:    session.escrowID,
-		ConfirmedAt: confirmedAt,
+		InferenceId:       nonce,
+		PromptHash:        record.PromptHash,
+		Model:             record.Model,
+		InputLength:       record.InputLength,
+		MaxTokens:         record.MaxTokens,
+		EscrowId:          session.escrowID,
+		ObservedHeight:    stamp.Height,
+		ObservedBlockHash: stamp.Hash,
 	})
 	require.NoError(t, err)
 	signature, err := hosts[record.ExecutorSlot].Sign(receipt)
@@ -34,6 +35,7 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 
 	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
 		Nonce: nonce, Receipt: signature, ConfirmedAt: confirmedAt,
+		ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
 	}, nonce))
 	_, err = session.sendPendingDiff(context.Background(), nil, nil)
 	require.NoError(t, err)
@@ -47,21 +49,24 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 // Test flow:
 //  1. Start an inference whose executor receipt has landed in the record.
 //  2. Forget the session's in-memory outcome for it, as a gateway restart does.
-//  3. Expect an execution deadline counted from the record's confirmation stamp, since the chain rejects a refused timeout against a started record.
-func TestTimeoutDeadlineReadsTheConfirmStampFromTheRecordAfterARestart(t *testing.T) {
-	session, hosts, _ := setupSession(t, 3, 1_000_000, 0)
-	confirmedAt := time.Now().Unix()
-	nonce := startedNonce(t, session, hosts, confirmedAt)
+//  3. Expect an execution deadline counted from the record's confirm anchor at the floor, since the chain rejects a refused timeout against a started record.
+func TestTimeoutDeadlineReadsTheConfirmAnchorFromTheRecordAfterARestart(t *testing.T) {
+	session, hosts, _, _ := setupArmedSession(t, 3, 1_000_000, 0)
+	nonce := startedNonce(t, session, hosts, time.Now().Unix())
 
 	session.mu.Lock()
 	delete(session.nonceStates, nonce)
 	session.mu.Unlock()
 
+	before := time.Now()
 	reason, deadline := session.TimeoutDeadline(nonce, time.Now())
 
 	require.Equal(t, "execution", reason, "the record carries the receipt this session forgot")
-	want := time.Unix(confirmedAt, 0).Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second + TimeoutBuffer)
-	require.Equal(t, want, deadline, "the deadline is counted from the record's own stamp")
+	remaining, err := session.sm.TimeoutRemaining(nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	require.NoError(t, err)
+	require.Positive(t, remaining)
+	window := session.sm.BlocksToDuration(remaining) + TimeoutBuffer
+	require.WithinDuration(t, before.Add(window), deadline, time.Second, "the deadline is the blocks the floor still has to rise past the record's anchor")
 }
 
 // Test flow:

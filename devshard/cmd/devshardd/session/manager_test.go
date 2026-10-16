@@ -170,7 +170,6 @@ func startTx(inferenceID uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}}}
 }
 
@@ -257,7 +256,7 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 
 	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, Model: "llama", InputLength: 100,
-		MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		MaxTokens: testutil.TestMaxTokens - 1,
 	}}}}
 	_, err = sm.ApplyLocal(1, txs)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")

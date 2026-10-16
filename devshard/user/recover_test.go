@@ -166,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -535,7 +535,7 @@ func TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, composed)
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), seedNonce)
+	confirmNonce, confirmH, ok := firstRaisingFinish(session.Diffs(), seedNonce)
 	require.True(t, ok)
 	require.Equal(t, uint64(150), confirmH)
 	span := heartbeatDiffsAfter(session.Diffs(), seedNonce)
@@ -1660,11 +1660,11 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	txs1 := []*types.DevshardTx{
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: confirmSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: confirmSig,
 		}}},
 	}
 	root1, err := sm.ApplyLocal(1, txs1)
@@ -2005,12 +2005,12 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	appendAppliedDiff(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{
 			InferenceId: 1, PromptHash: promptHash, Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		},
 	}}})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens)
 	appendAppliedDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{
-		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig},
 	}}})
 	finish := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
@@ -2839,7 +2839,6 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   1,
-			StartedAt:   1000,
 		},
 	}}}
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)

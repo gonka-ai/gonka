@@ -108,6 +108,8 @@ const (
 	DefaultDevshardExecutionTimeout    int64  = 32 * 60
 	DefaultDevshardValidationRate      uint32 = 1000
 	DefaultDevshardVoteThresholdFactor uint32 = 50
+	DefaultDevshardTimeoutBlockTimeMs  uint32 = 5000
+	MaxDevshardTimeoutBlockTimeMs      uint32 = 60_000
 
 	DefaultMaintenanceEnabled                         = false
 	DefaultMaintenanceMinScheduleLeadBlocks    uint64 = 100
@@ -414,6 +416,7 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		ExecutionTimeout:                 DefaultDevshardExecutionTimeout,
 		ValidationRate:                   DefaultDevshardValidationRate,
 		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
+		TimeoutBlockTimeMs:               DefaultDevshardTimeoutBlockTimeMs,
 	}
 }
 
@@ -535,6 +538,9 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor > 100 {
 		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
+	}
+	if p.TimeoutBlockTimeMs > MaxDevshardTimeoutBlockTimeMs {
+		return fmt.Errorf("devshard escrow timeout_block_time_ms (%d) must be <= %d", p.TimeoutBlockTimeMs, MaxDevshardTimeoutBlockTimeMs)
 	}
 	return nil
 }

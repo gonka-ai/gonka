@@ -110,7 +110,7 @@ func progressDiffs(n int, root []byte) []types.Diff {
 
 func runProgress(t *testing.T, st types.EscrowState, peer *progressPeer, journal *progressJournal, ev EvidenceVerifier) (bool, error) {
 	t.Helper()
-	return VerifyRefusedProgress(context.Background(), st, 1, testPayload(), nil, peer, nil, ev, peer, journal, time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable)
+	return VerifyRefusedProgress(context.Background(), st, 1, testPayload(), nil, peer, nil, due(ev), peer, journal, time.Second, 2*time.Second, progressUnreachable)
 }
 
 func TestRefusalRecheckRetriesAdvancedNonce(t *testing.T) {
