@@ -1,79 +1,70 @@
 package keeper_test
 
 import (
-	"testing"
-
 	keeper2 "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
-
-func TestSetParams_PocSchemeChangeSetsGraceEpoch(t *testing.T) {
-	k, ctx, _ := keeper2.InferenceKeeperReturningMocks(t)
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 5, PocStartBlockHeight: 100}))
-	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
-
-	params := types.DefaultParams()
-	require.NoError(t, k.SetParams(ctx, params))
-	_, found := k.GetPocSchemeEnabledEpoch(ctx)
-	require.False(t, found, "storing PREFILL when store was empty must not set grace")
-
-	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_DECODE
-	require.NoError(t, k.SetParams(ctx, params))
-	epoch, found := k.GetPocSchemeEnabledEpoch(ctx)
-	require.True(t, found)
-	require.Equal(t, uint64(5), epoch)
-
-	require.NoError(t, k.SetParams(ctx, params))
-	epoch, found = k.GetPocSchemeEnabledEpoch(ctx)
-	require.True(t, found)
-	require.Equal(t, uint64(5), epoch, "no-op SetParams must not reset grace")
-
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 6, PocStartBlockHeight: 200}))
-	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 6))
-	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
-	require.NoError(t, k.SetParams(ctx, params))
-	epoch, found = k.GetPocSchemeEnabledEpoch(ctx)
-	require.True(t, found)
-	require.Equal(t, uint64(6), epoch, "DECODE→PREFILL must set grace again")
-}
 
 func TestFreezePocStageRecipe_WriteOnce(t *testing.T) {
 	k, ctx, _ := keeper2.InferenceKeeperReturningMocks(t)
 	params := types.DefaultParams()
 	params.PocParams.PocStrongerRngEnabled = true
 	require.NoError(t, k.SetParams(ctx, params))
-
-	first, err := k.FreezePocStageRecipe(ctx, 100, nil)
+	first, err := k.FreezePocStageRecipe(ctx, 100)
 	require.NoError(t, err)
-	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, first.Scheme)
-	require.True(t, first.PocStrongerRngEnabled)
-
 	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_DECODE
 	params.PocParams.PocStrongerRngEnabled = false
-	params.PocParams.ConfirmationPocScheme = types.PocScheme_POC_SCHEME_DECODE
-	params.PocParams.ConfirmationSchemeEvents = 1
+	params.PocParams.Models[0].Schemes[1].MaxTokens = 99
 	require.NoError(t, k.SetParams(ctx, params))
-
-	second, err := k.FreezePocStageRecipe(ctx, 100, nil)
+	second, err := k.FreezePocStageRecipe(ctx, 100)
 	require.NoError(t, err)
-	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, second.Scheme)
-	require.True(t, second.PocStrongerRngEnabled)
+	require.Equal(t, first, second)
+	trial, err := second.ConfirmationRecipe(&types.ConfirmationPoCEvent{EventSequence: 0, TriggerHeight: 150})
+	require.NoError(t, err)
+	require.True(t, trial.Tracking)
+	require.True(t, trial.PocStrongerRngEnabled)
+	require.Equal(t, int64(256), trial.Models[0].Schemes[0].MaxTokens)
+	next, err := k.FreezePocStageRecipe(ctx, 200)
+	require.NoError(t, err)
+	require.Equal(t, types.PocScheme_POC_SCHEME_DECODE, next.Scheme)
+	require.Equal(t, int64(99), next.Models[0].Schemes[0].MaxTokens)
+}
 
-	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
-	params.PocParams.ConfirmationPocScheme = types.PocScheme_POC_SCHEME_DECODE
-	params.PocParams.ConfirmationSchemeEvents = 1
-	for _, model := range params.PocParams.Models {
-		model.Schemes = append(model.Schemes, &types.PocSchemeParams{
-			Scheme:    types.PocScheme_POC_SCHEME_DECODE,
-			SeqLen:    256,
-			MaxTokens: 256,
-		})
+func TestEpochRecipeKeepsFallbackProvenance(t *testing.T) {
+	k, ctx, _ := keeper2.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 200}))
+	require.NoError(t, k.PocStageRecipes.Set(ctx, 100, types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_PREFILL}))
+	require.NoError(t, k.PocStageRecipes.Set(ctx, 200, types.PocStageRecipe{StageHeight: 200, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{EpochId: 2, PocStartBlockHeight: 100}))
+	recipe, found, err := k.GetEpochPocRecipe(ctx, 2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, int64(100), recipe.StageHeight)
+	response, err := k.PocStageRecipe(ctx, &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_EpochIndex{EpochIndex: 2}})
+	require.NoError(t, err)
+	require.Equal(t, &recipe, response.Recipe)
+	round, _, err := k.GetPocStageRecipe(ctx, 200)
+	require.NoError(t, err)
+	require.Equal(t, types.PocScheme_POC_SCHEME_DECODE, round.Scheme, "failed round remains immutable")
+}
+
+func TestPocStageRecipeQueryRequiresExplicitLookup(t *testing.T) {
+	k, ctx, _ := keeper2.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.PocStageRecipes.Set(ctx, 0, types.PocStageRecipe{StageHeight: 0}))
+	for _, request := range []*types.QueryPocStageRecipeRequest{nil, {}} {
+		_, err := k.PocStageRecipe(ctx, request)
+		require.Equal(t, codes.InvalidArgument, status.Code(err))
 	}
-	require.NoError(t, k.SetParams(ctx, params))
-
-	canary, err := k.FreezePocStageRecipe(ctx, 200, &types.ConfirmationPoCEvent{EventSequence: 0, TriggerHeight: 200})
+	// Zero is a valid stage height, not a signal to select the other lookup.
+	response, err := k.PocStageRecipe(ctx, &types.QueryPocStageRecipeRequest{
+		Lookup: &types.QueryPocStageRecipeRequest_StageHeight{StageHeight: 0},
+	})
 	require.NoError(t, err)
-	require.Equal(t, types.PocScheme_POC_SCHEME_DECODE, canary.Scheme)
-	require.True(t, canary.Tracking)
+	require.True(t, response.Found)
+	require.Equal(t, int64(0), response.Recipe.StageHeight)
 }

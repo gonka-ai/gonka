@@ -205,9 +205,20 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
 		PocSeedBlockHash:      "", // Will be set when transitioning to GENERATION phase
 	}
-	recipe, err := am.keeper.FreezePocStageRecipe(ctx, blockHeight, &event)
+	epochRecipe, found, err := am.keeper.GetEpochPocRecipe(ctx, event.EpochIndex)
+	if err != nil {
+		return err
+	}
+	if !found {
+		am.LogInfo("Skipping confirmation before the first frozen regular PoC", types.PoC, "epoch", event.EpochIndex)
+		return nil
+	}
+	recipe, err := epochRecipe.ConfirmationRecipe(&event)
 	if err != nil {
 		return fmt.Errorf("failed to freeze confirmation PoC recipe: %w", err)
+	}
+	if err := am.keeper.PocStageRecipes.Set(ctx, blockHeight, *recipe); err != nil {
+		return err
 	}
 	event.Recipe = recipe
 

@@ -115,7 +115,7 @@ type participantWork struct {
 	pubKey     string
 	count      uint32
 	rootHash   []byte
-	decodeMax  int64     // frozen scheme block max_tokens; 0 = prefill
+	decodeMax  int64 // frozen scheme block max_tokens; 0 = prefill
 	treeDepth  uint32
 	attempt    int       // current attempt number (0-based)
 	retryAfter time.Time // don't process before this time
@@ -133,8 +133,8 @@ func hasModelList(snapshotFound bool, modelSampling map[string]*modelSamplingDat
 	return snapshotFound && len(modelSampling) > 0
 }
 
-func buildValidationCallbackURL(callbackBase, modelID string) string {
-	return callbackBase + "/v2/poc-batches/" + url.PathEscape(url.PathEscape(modelID))
+func buildValidationCallbackURL(callbackBase, modelID string, scheme types.PocScheme) string {
+	return mlnodeclient.PoCCallbackBase(callbackBase, scheme) + "/" + url.PathEscape(url.PathEscape(modelID))
 }
 
 // absInt32 returns the absolute value of an int32 as int64,
@@ -956,7 +956,7 @@ func (v *OffChainValidator) dispatchToMLNode(
 	}
 
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
-	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId, pocParams.PocScheme)
 	// Commits are gated on governance models, not on PoC params, so a model can
 	// legitimately be committed without a config here.
 	modelConfig, ok := pocParams.GetModelConfig(work.modelId)
@@ -1093,7 +1093,7 @@ func loadStageRecipe(
 	if queryClient == nil {
 		return nil, fmt.Errorf("no query client")
 	}
-	resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{StageHeight: stageHeight})
+	resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_StageHeight{StageHeight: stageHeight}})
 	if err != nil {
 		return nil, err
 	}

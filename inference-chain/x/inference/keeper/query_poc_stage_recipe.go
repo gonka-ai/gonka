@@ -13,7 +13,17 @@ func (k Keeper) PocStageRecipe(ctx context.Context, req *types.QueryPocStageReci
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	recipe, found, err := k.GetPocStageRecipe(ctx, req.StageHeight)
+	var recipe types.PocStageRecipe
+	var found bool
+	var err error
+	switch lookup := req.Lookup.(type) {
+	case *types.QueryPocStageRecipeRequest_StageHeight:
+		recipe, found, err = k.GetPocStageRecipe(ctx, lookup.StageHeight)
+	case *types.QueryPocStageRecipeRequest_EpochIndex:
+		recipe, found, err = k.GetEpochPocRecipe(ctx, lookup.EpochIndex)
+	default:
+		return nil, status.Error(codes.InvalidArgument, "specify stage_height or epoch_index")
+	}
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}

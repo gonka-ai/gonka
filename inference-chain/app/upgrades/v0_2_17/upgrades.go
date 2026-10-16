@@ -1,10 +1,9 @@
-// Package v0_2_17 moves each model onto a PREFILL scheme block.
+// Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes.
 //
 // v0.2.16 has already run. It left seq_len and stat_test on the model, wrote
 // dynamic_coefficient on the model, and cleared weight_scale_factor. This
 // upgrade copies that recipe and that coefficient onto schemes[PREFILL], then
-// clears the flat fields. It does not add a DECODE block and does not change
-// poc_scheme, confirmation_poc_scheme, or confirmation_scheme_events.
+// clears the flat fields, adds independent DECODE templates, and keeps poc_scheme.
 //
 // A chain that has not run v0.2.16 still has the flat recipe and the flat
 // weight_scale_factor. The same handler copies the recipe and leaves that
@@ -118,6 +117,10 @@ func migrateModelScheme(model *types.PoCModelConfig) (bool, error) {
 	}
 	if model.DynamicCoefficient != nil && block.DynamicCoefficient != nil {
 		model.DynamicCoefficient = nil
+		changed = true
+	}
+	if _, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_DECODE); !ok {
+		model.Schemes = append(model.Schemes, types.DefaultDecodeScheme(model.ModelId))
 		changed = true
 	}
 	return changed, nil

@@ -27,8 +27,6 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 		TargetShareBps:     10000,
 	}
 	params.PocParams.PocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
-	params.PocParams.ConfirmationPocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
-	params.PocParams.ConfirmationSchemeEvents = 0
 	params.PocParams.DynamicCoefficientParams = &inferencetypes.DynamicCoefficientParams{
 		TargetZoneBps:     500,
 		StepMin:           inferencetypes.DecimalFromFloat(0.005),
@@ -51,15 +49,13 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
-	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, got.PocParams.ConfirmationPocScheme)
-	require.Equal(t, uint32(0), got.PocParams.ConfirmationSchemeEvents)
 	model := got.PocParams.Models[0]
 	require.Equal(t, int64(0), model.SeqLen)
 	require.Nil(t, model.StatTest)
 	require.Nil(t, model.WeightScaleFactor)
 	require.Nil(t, model.DynamicCoefficient)
 	require.Equal(t, uint64(4), model.PenaltyStartEpoch)
-	require.Len(t, model.Schemes, 1)
+	require.Len(t, model.Schemes, 2)
 	block := model.Schemes[0]
 	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, block.Scheme)
 	require.Equal(t, int64(128), block.SeqLen)
@@ -92,7 +88,7 @@ func TestMigratePocSchemeBlocksFromFlatWeight(t *testing.T) {
 	require.Equal(t, weight, model.WeightScaleFactor)
 	require.Nil(t, model.DynamicCoefficient)
 	require.Equal(t, int64(0), model.SeqLen)
-	require.Len(t, model.Schemes, 1)
+	require.Len(t, model.Schemes, 2)
 	require.Nil(t, model.Schemes[0].DynamicCoefficient)
 	require.Equal(t, int64(128), model.Schemes[0].SeqLen)
 	require.NoError(t, got.Validate())

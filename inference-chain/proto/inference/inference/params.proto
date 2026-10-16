@@ -236,8 +236,8 @@ message DynamicCoefficientParams {
 }
 
 // PocStageRecipe is the frozen generate/validate/evaluate snapshot for one stage height.
-// Written once when regular PoC starts or a CPoC event is created. Later MsgUpdateParams
-// must not overwrite it.
+// Regular PoC freezes the epoch configuration, retaining both model blocks in
+// transitional PREFILL mode. Confirmation events derive their recipe from it.
 message PocStageRecipe {
   option (gogoproto.equal) = true;
   int64 stage_height = 1;
@@ -266,8 +266,6 @@ message PocParams {
   uint32 validation_vote_threshold_bps = 15;  // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
   DynamicCoefficientParams dynamic_coefficient_params = 16;
   PocScheme poc_scheme = 17;  // Regular (epoch) PoC leaf recipe. Default PREFILL.
-  PocScheme confirmation_poc_scheme = 18;  // CPoC canary slot; ignored when confirmation_scheme_events = 0
-  uint32 confirmation_scheme_events = 19;  // K: CPoC EventSequence < K uses slot 18. 0 = CPoC follows poc_scheme
 }
 
 message Decimal {

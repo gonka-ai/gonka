@@ -58,7 +58,13 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 				"target", ch.Target(), "start_height", ch.StartHeight())
 			continue
 		}
-		workItems := v.challengeWorkItems(queryClient, ch, pocParams)
+		resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_EpochIndex{EpochIndex: ch.Challenge.EpochIndex}})
+		if err != nil || resp == nil || !resp.Found || resp.Recipe == nil {
+			logging.Warn("Skipping challenge without frozen epoch recipe", types.PoC, "target", ch.Target(), "error", err)
+			continue
+		}
+		challengeParams := types.ApplyStageRecipe(pocParams, resp.Recipe)
+		workItems := v.challengeWorkItems(queryClient, ch, challengeParams)
 		if len(workItems) == 0 {
 			logging.Info("OffChainValidator: no challenge work items", types.PoC,
 				"target", ch.Target(), "start_height", ch.StartHeight())
@@ -66,7 +72,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		}
 		logging.Info("OffChainValidator: validating open PoC challenge", types.PoC,
 			"target", ch.Target(), "start_height", ch.StartHeight(), "work_items", len(workItems))
-		v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, pocParams, sampleSize, nodes, workItems, nil, true)
+		v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, challengeParams, sampleSize, nodes, workItems, nil, true)
 	}
 }
 

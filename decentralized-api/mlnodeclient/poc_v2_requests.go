@@ -15,6 +15,14 @@ import (
 // Must match the plugin codebook (gonka_poc SPHERE_POINTS). Wire is still one byte.
 const DecodeSpherePoints = 16
 
+// PoCCallbackBase separates permanent DECODE callbacks from transitional PREFILL.
+func PoCCallbackBase(base string, scheme types.PocScheme) string {
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		return base + "/v3/poc-batches"
+	}
+	return base + "/v2/poc-batches"
+}
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`

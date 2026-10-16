@@ -447,7 +447,12 @@ service Query {
   // Frozen generate/validate/evaluate snapshot for a PoC stage height
   // (regular PocStartBlockHeight or CPoC trigger height).
   rpc PocStageRecipe (QueryPocStageRecipeRequest) returns (QueryPocStageRecipeResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/poc_stage_recipe/{stage_height}";
+    option (google.api.http) = {
+      get: "/productscience/inference/inference/poc_stage_recipe/{stage_height}"
+      additional_bindings {
+        get: "/productscience/inference/inference/epoch_poc_recipe/{epoch_index}"
+      }
+    };
   }
 
   rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
@@ -1256,7 +1261,10 @@ message QueryPoCValidationSnapshotResponse {
 }
 
 message QueryPocStageRecipeRequest {
-  int64 stage_height = 1;
+  oneof lookup {
+    int64 stage_height = 1; // Exact regular or confirmation PoC stage.
+    uint64 epoch_index = 2; // Regular recipe behind this epoch's measured weights.
+  }
 }
 
 message QueryPocStageRecipeResponse {

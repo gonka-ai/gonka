@@ -172,6 +172,14 @@ func (m *MockBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.Que
 	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(epochIndex)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
 type MockRandomSeedManager struct {
 	mock.Mock
 	onGenerate func(epochIndex uint64)

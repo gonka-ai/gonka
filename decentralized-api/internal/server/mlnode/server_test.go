@@ -124,6 +124,10 @@ func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.Quer
 	}, nil
 }
 
+func (s stubBrokerChainBridge) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	return s.GetPocStageRecipe(int64(epochIndex))
+}
+
 func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...string) *broker.Broker {
 	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 1, 0, modelIDs...)
 }
@@ -379,7 +383,7 @@ func TestV2GeneratedCallback_ChallengeStageRejectsOldHeight(t *testing.T) {
 	assert.Equal(t, uint32(1), modelStore.Count())
 }
 
-func TestV2GeneratedCallback_ChallengeUsesLivePrefillWhenFrozenRecipeIsDecode(t *testing.T) {
+func TestV3GeneratedCallback_ChallengeUsesFrozenEpochRecipe(t *testing.T) {
 	poc.OpenChallenges.Reset()
 	t.Cleanup(poc.OpenChallenges.Reset)
 	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
@@ -421,7 +425,17 @@ func TestV2GeneratedCallback_ChallengeUsesLivePrefillWhenFrozenRecipeIsDecode(t 
 	server := NewServer(nil, testBroker, WithArtifactStore(artifactStore))
 
 	rec := postGeneratedBatch(t, server, testModelA, 777)
-	assert.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "v2 must not interpret a DECODE stage as PREFILL")
+	body, err := json.Marshal(map[string]any{
+		"block_height": 777, "public_key": "pub", "node_id": 1,
+		"artifacts": []map[string]any{{"nonce": 1, "k_points_steps": []int{1, 2, 3}}},
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v3/poc-batches/model-a/generated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	modelStore, err := artifactStore.GetStore(777, testModelA)
 	assert.NoError(t, err)
@@ -612,4 +626,40 @@ func TestV2ValidatedCallback_AbstainsOnNanSteps(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+}
+
+func TestV3ValidatedCallbackUsesPathModelID(t *testing.T) {
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.
+		On("SubmitPocValidationsV2", mock.MatchedBy(func(msg *types.MsgSubmitPocValidationsV2) bool {
+			return msg != nil &&
+				msg.PocStageStartBlockHeight == 100 &&
+				len(msg.Validations) == 1 &&
+				msg.Validations[0].ModelId == testModelA
+		})).
+		Return(nil).
+		Once()
+
+	server := NewServer(mockRecorder, newMLNodeTestBrokerWithBridge(t, types.PoCValidatePhase, stubBrokerChainBridge{models: []string{testModelA}, scheme: types.PocScheme_POC_SCHEME_DECODE, seqLen: 256, decodeMax: 256}))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v3/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertExpectations(t)
 }
