@@ -168,7 +168,7 @@ func TestSplitScenariosKeepFaultsApart(t *testing.T) {
 
 // Test flow:
 // 1. Load prod-like-15m and every split scenario.
-// 2. Require seed 1515, prod-like's protocol with a 90 s execution timeout outside the timeout scenarios, prod-like's gateway, its topology without P4's peer budget, or in prod-like-steady with P4's lower peer chat budget (host-over-peer-chat-budget), and its request mix except the load ladder's max_tokens weights.
+// 2. Require seed 1515, prod-like's protocol (its 90 s execution timeout included), prod-like's gateway, its topology without P4's peer budget, or in prod-like-steady with P4's lower peer chat budget (host-over-peer-chat-budget), and its request mix except the load ladder's max_tokens weights.
 // 3. Require every event to copy a prod-like event's case, action, target and params, with its length unchanged except participant-absent-on-chain's, and every prod-like event to land in exactly one split scenario.
 // 4. Require every declared case to match prod-like's title; TestSplitScenarioKnownBugMarkers pins the known_bug markers.
 func TestSplitScenariosCopyProdLikeFaults(t *testing.T) {
@@ -193,11 +193,7 @@ func TestSplitScenariosCopyProdLikeFaults(t *testing.T) {
 	for _, name := range splitScenarios {
 		s := loadSplitScenario(t, name)
 		require.Equal(t, int64(1515), s.Seed, name)
-		protocol := prod.Protocol
-		if _, testsTimeouts := executionTimeoutScenarios[name]; !testsTimeouts {
-			protocol.ExecutionTimeout = "90s"
-		}
-		require.Equal(t, protocol, s.Protocol, name)
+		require.Equal(t, prod.Protocol, s.Protocol, name)
 		require.Equal(t, prod.Gateway, s.Gateway, name)
 		if name == "prod-like-steady" {
 			withSteadyBudget := prod.Topology
@@ -331,20 +327,27 @@ const generationTailTimeout = 90 * time.Second
 
 var executionTimeoutScenarios = map[string]string{
 	"missrate-catch-up": "requires an applied timeout from a 30 s pause",
-	"vote-fanout":       "timeout-vote-fanout: hosts vote the nonces of a 45 s hang timed out",
-	"prod-like-15m":     "carries timeout-vote-fanout and keeps its timing so old reports stay comparable",
+}
+
+// hangScenarios hold nonces to the execution deadline, so they keep the default grace.
+var hangScenarios = map[string]string{
+	"vote-fanout":   "timeout-vote-fanout: hosts vote the nonces of a hang that outlasts the timeout",
+	"prod-like-15m": "carries timeout-vote-fanout",
 }
 
 // Test flow:
 // 1. Load every scenarios/*.yaml file that sets protocol.execution_timeout.
 // 2. Require the scenarios that test execution timeouts to keep a timeout below the generation tail, with a reason.
 // 3. Require every other one to set at least 90 s, above the longest generation, so no honest host is cut at its deadline.
-// 4. Require each of those to pin the grace at 3m10s, so its fault spacing still holds.
+// 4. Require the hang scenarios to keep the default grace and to hang longer than refusal plus execution timeout, so the timeout fires inside the hang.
+// 5. Require every other one to pin the grace at 3m10s, so its fault spacing still holds.
 func TestScenariosSetExecutionTimeoutAboveTheGenerationTail(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("scenarios", "*.yaml"))
 	require.NoError(t, err)
-	for name := range executionTimeoutScenarios {
-		require.Contains(t, paths, filepath.Join("scenarios", name+".yaml"))
+	for _, names := range []map[string]string{executionTimeoutScenarios, hangScenarios} {
+		for name := range names {
+			require.Contains(t, paths, filepath.Join("scenarios", name+".yaml"))
+		}
 	}
 	for _, path := range paths {
 		s, err := LoadScenario(path)
@@ -360,6 +363,22 @@ func TestScenariosSetExecutionTimeoutAboveTheGenerationTail(t *testing.T) {
 			continue
 		}
 		require.GreaterOrEqual(t, execution, generationTailTimeout, s.Scenario)
+		if reason, hangs := hangScenarios[s.Scenario]; hangs {
+			refusal, err := time.ParseDuration(s.Protocol.RefusalTimeout)
+			require.NoError(t, err, path)
+			require.Empty(t, s.Assertions.Invariants.Grace, "%s: %s", s.Scenario, reason)
+			var hangs []eventWindow
+			for _, event := range s.Workload.Events {
+				if event.ID == "timeout-vote-fanout" {
+					window, err := parseEventWindow(event, eventActions[event.Action], s.Duration())
+					require.NoError(t, err, path)
+					hangs = append(hangs, window)
+				}
+			}
+			require.Len(t, hangs, 1, s.Scenario)
+			require.Greater(t, hangs[0].end-hangs[0].start, refusal+execution, "%s: %s", s.Scenario, reason)
+			continue
+		}
 		require.Equal(t, 3*time.Minute+10*time.Second, resolveInvariantSettings(s).Grace, s.Scenario)
 	}
 }

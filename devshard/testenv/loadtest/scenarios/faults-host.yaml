@@ -54,7 +54,7 @@ topology:
 
 protocol:
   refusal_timeout: 5s
-  # Above the generation tail (up to 35 s here), so no honest host is cut at its deadline.
+  # Above the generation tail (the 2048-token class runs 45–63 s), so no honest host is cut at its deadline.
   execution_timeout: 90s
 
 workload:

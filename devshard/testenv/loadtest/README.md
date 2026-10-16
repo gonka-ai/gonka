@@ -176,7 +176,7 @@ by every stage marked `peak: true`.
 | 08:45-09:30 | P2 | `host-withholds-payload` | the drop-payload trip file makes the host withhold payloads |
 | 09:00-10:00 | P3 | `host-under-poc-challenge` | a PoC challenge: ML-node acquires answer ResourceExhausted |
 | 00:00-15:00 | P4 | `host-over-peer-chat-budget` | the host's peer Chat budget is spent (background marker, see below) |
-| 10:30-11:15 | P3 | `timeout-vote-fanout` | the ML node hangs during the 32 rps stage, so every host votes the nonces timed out |
+| 10:30-12:15 | P3 | `timeout-vote-fanout` | the ML node hangs during the 32 rps stage, so every host votes the nonces timed out |
 | 12:30-13:15 | P2 | `host-public-port-down` | `devshard-fault-public-down`: the public port answers 503 while admin `/ready` answers 200 |
 | 13:00-13:30 | P4 | `participant-unavailable-on-chain` | the chain reports the participant unavailable |
 | 13:30-14:00 | P4 | `participant-absent-on-chain` | the chain no longer lists the participant |
@@ -196,17 +196,19 @@ whole run. Cases with known bugs on `devshard-0.2.x-v6` are XFAIL:
 `no-escrow-falsely-marked-missing` is a normal check. An XPASS means the fix
 landed and the marker should go. `logprobs-responses-compress` relies on the
 mock fix of #1987, merged into the tip. prod-like-15m keeps its faults and timing so old
-reports stay comparable. Its split scenarios (scenarios/README.md) dropped the
+reports stay comparable, except the execution timeout and the `timeout-vote-fanout` hang (below). Its split scenarios (scenarios/README.md) dropped the
 `deactivated-escrow-runtime-retired` marker after
 `no-runtime-for-deactivated-escrow` passed in every v6 run. prod-like-steady
 gives P4 a budget low enough for `host-over-peer-chat-budget` to fire,
 because 300 never does: P4 serves about 4 Chats a second at 16 rps.
 
-prod-like-15m keeps `execution_timeout: 30s`, because `timeout-vote-fanout` needs the
-timeout to fire inside its 45 s hang. Generations here run up to about 35 s, so
-a 30 s timeout also cuts honest hosts at their deadline and charges them misses.
-The split scenarios that do not test timeouts use 90 s (scenarios/README.md,
-"Execution timeout").
+prod-like-15m uses `execution_timeout: 90s`, as the split scenarios do
+(scenarios/README.md, "Execution timeout"). The protocol timeout also cancels a
+live model run (#2003), and the 2048-token class runs 45–63 s, so a 30 s timeout
+cut honest hosts off at their deadline and charged them misses.
+`timeout-vote-fanout` needs the timeout to fire inside its hang, so the hang
+lasts 1m45s: a hung nonce times out 90–95 s after it starts. prod-like-15m pins
+no grace, so its grace is the default 4m10s (5 s + 90 s + 2m5s + 30 s).
 
 P4's budget is set at boot, so `host-over-peer-chat-budget` is a
 `background: true` marker over the whole workload. A background window may

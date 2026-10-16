@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -168,6 +169,51 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	return nil
+}
+
+// AppendDiffBatch implements DiffBatchWriter: every record is checked before
+// any is written, so a fork leaves the session unchanged.
+func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	}
+	for i, rec := range recs {
+		if i > 0 && rec.Nonce <= recs[i-1].Nonce {
+			return fmt.Errorf("diff batch nonces must ascend: %d after %d", rec.Nonce, recs[i-1].Nonce)
+		}
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			if err := checkDiffReplayIdentity(escrowID, rec, s.diffs[idx]); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rec := range recs {
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			existing := s.diffs[idx]
+			if existing.Signatures == nil {
+				existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
+			}
+			for slotID, sig := range rec.Signatures {
+				existing.Signatures[slotID] = append([]byte(nil), sig...)
+			}
+			s.diffs[idx] = existing
+			continue
+		}
+		rec.Signatures = copySignatures(rec.Signatures)
+		rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
+		s.diffs = append(s.diffs, rec)
+		s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	}
 	return nil
 }
 

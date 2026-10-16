@@ -71,7 +71,8 @@ topology:
 
 protocol:
   refusal_timeout: 5s
-  execution_timeout: 30s
+  # Above the generation tail (the 2048-token class runs 45–63 s), so no honest host is cut at its deadline.
+  execution_timeout: 90s
 
 workload:
   max_in_flight: 256
@@ -125,7 +126,9 @@ workload:
     # yields misses and quarantines inside P4's other windows to those cases.
     - {id: host-over-peer-chat-budget, case: host-over-peer-chat-budget, action: marker, target: versiond-5, at: 0s, until: 15m,
        params: {background: true, observe: host_rate_limited, waive_misses: true, expect_quarantine: sender_rate}}
-    - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 10m30s, until: 11m15s,
+    # 1m45s: a hung nonce times out 90–95 s after it starts, so the hang outlasts the
+    # execution timeout and the first timeout votes fire before it lifts.
+    - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 10m30s, until: 12m15s,
        params: {patch: {hang: true}}}
     - {id: host-public-port-down, case: host-public-port-down, action: tripfile, target: versiond-3, at: 12m30s, until: 13m15s,
        params: {file: devshard-fault-public-down, expect_quarantine: "http,transport"}}

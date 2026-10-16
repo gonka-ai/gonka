@@ -26,7 +26,7 @@ func TestLoadScenario_ProdLike15m(t *testing.T) {
 		require.Equal(t, "prod-like", node.Profile)
 	}
 	require.Equal(t, "5s", s.Protocol.RefusalTimeout)
-	require.Equal(t, "30s", s.Protocol.ExecutionTimeout)
+	require.Equal(t, "90s", s.Protocol.ExecutionTimeout)
 	require.Equal(t, 15*time.Minute, s.Duration())
 	require.Equal(t, 256, s.Workload.MaxInFlight)
 	var stages []string

@@ -45,26 +45,46 @@ func attachNowUnix(cfg PeerAuthConfig) int64 {
 }
 
 func startLimitEnv(t *testing.T, cfg PeerAuthConfig, lookup SessionLookup, opts ...MuxOption) limitEnv {
+	return startLimitEnvProto(t, false, cfg, lookup, opts...)
+}
+
+// startLimitEnvProto is startLimitEnv over prior-knowledge h2c when h2c is
+// true, the child's production listen.
+func startLimitEnvProto(t *testing.T, h2c bool, cfg PeerAuthConfig, lookup SessionLookup, opts ...MuxOption) limitEnv {
 	t.Helper()
 	auth := newTestAuth(cfg)
 	mux := NewMux(auth, NewSessionHandler(lookup), opts...)
-	srv := httptest.NewServer(withTestEscrow(mux))
+	srv := httptest.NewUnstartedServer(withTestEscrow(mux))
+	if h2c {
+		srv.Config.Protocols = new(http.Protocols)
+		srv.Config.Protocols.SetHTTP1(true)
+		srv.Config.Protocols.SetUnencryptedHTTP2(true)
+	}
+	srv.Start()
 	t.Cleanup(srv.Close)
+	client := srv.Client()
+	if h2c {
+		protocols := new(http.Protocols)
+		protocols.SetUnencryptedHTTP2(true)
+		tr := &http.Transport{Protocols: protocols}
+		t.Cleanup(tr.CloseIdleConnections)
+		client = &http.Client{Transport: tr}
+	}
 
 	signer := devtest.MustGenerateKey(t)
-	authc := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	authc := rpcpbconnect.NewPeerAuthServiceClient(client, srv.URL)
 	nonce := []byte("channel-limit-attach-0123456")
 	attached := attachAt(t, authc, signer, nonce, attachNowUnix(cfg))
 	return limitEnv{
-		session: rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL),
+		session: rpcpbconnect.NewSessionServiceClient(client, srv.URL),
 		authc:   authc,
-		payload: rpcpbconnect.NewPayloadServiceClient(srv.Client(), srv.URL),
-		gossip:  rpcpbconnect.NewGossipServiceClient(srv.Client(), srv.URL),
+		payload: rpcpbconnect.NewPayloadServiceClient(client, srv.URL),
+		gossip:  rpcpbconnect.NewGossipServiceClient(client, srv.URL),
 		token:   attached.SessionToken,
 		signer:  signer,
 		now:     cfg.Now,
 		url:     srv.URL,
-		client:  srv.Client(),
+		client:  client,
 		auth:    auth,
 	}
 }
@@ -745,7 +765,7 @@ func TestChannelLimit_ChatRateLimitRecordsNoReceipt(t *testing.T) {
 			MessagesPerMin: 10,
 			MessagesBurst:  transport.RPCWeightChat,
 		},
-	}, stubLookup{core: stubCore{}})
+	}, stubLookup{core: stubCore{owner: true}})
 
 	counter := observability.RequestTerminalCounterForTest(
 		observability.TerminalNoReceiptInterrupted, observability.ReasonRateLimited)
@@ -773,7 +793,7 @@ func TestChannelLimit_ChatChargesAfterAcquire(t *testing.T) {
 			MessagesPerMin: 10,
 			MessagesBurst:  transport.RPCWeightChat,
 		},
-	}, stubLookup{core: stubCore{}})
+	}, stubLookup{core: stubCore{owner: true}})
 
 	chat, err := e.session.Chat(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.SignedEnvelope{EscrowId: "1"}), e.token))
@@ -782,6 +802,24 @@ func TestChannelLimit_ChatChargesAfterAcquire(t *testing.T) {
 	require.NotEqual(t, connect.CodeUnimplemented, connect.CodeOf(chat.Err()))
 	_ = chat.Close()
 	requireResourceExhausted(t, e.getSigs(), "rate limit exceeded")
+}
+
+func TestChannelLimit_ChatNonOwnerDoesNotCharge(t *testing.T) {
+	e := startLimitEnv(t, PeerAuthConfig{
+		Limits: &transport.ChannelLimitConfig{
+			MaxStreams:     8,
+			MessagesPerMin: 10,
+			MessagesBurst:  transport.RPCWeightChat,
+		},
+	}, stubLookup{core: stubCore{}})
+
+	chat, err := e.session.Chat(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.SignedEnvelope{EscrowId: "1"}), e.token))
+	require.NoError(t, err)
+	require.False(t, chat.Receive())
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(chat.Err()))
+	_ = chat.Close()
+	require.NoError(t, e.getSigs(), "a refused non-owner Chat must not spend weight")
 }
 
 func TestChannelLimit_UnimplementedDoesNotCharge(t *testing.T) {

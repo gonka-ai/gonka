@@ -236,9 +236,27 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
+type warmCheckKey struct {
+	warm string
+	cold string
+}
+
+type warmCheckResult struct {
+	done    chan struct{}
+	valid   bool
+	retryAt time.Time
+}
+
+type cachedSignatureSigner struct {
+	signature []byte
+	address   string
+}
+
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
+	warmCheckMu sync.Mutex
+	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -277,19 +295,23 @@ type Session struct {
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
 	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
 	// the nonce for the vote round and compose so Finish+ErrorMiss land together.
-	pinnedFinishIDs map[uint64]int
-	signatures      map[uint64]map[uint32][]byte // nonce -> slotID -> sig
-	store           storage.Storage              // optional persistent storage
-	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
-	confirmWait     chan struct{}                // closed when a receipt is queued, so a refusal wait can stop
-	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
-	diffObserver    func(types.Diff)
+	pinnedFinishIDs  map[uint64]int
+	signatures       map[uint64]map[uint32][]byte // nonce -> slotID -> sig
+	signatureSigners map[uint64]map[uint32]cachedSignatureSigner
+	store            storage.Storage          // optional persistent storage
+	nonceStates      map[uint64]*nonceOutcome // nonce -> protocol outcome
+	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
+	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
+	diffObserver     func(types.Diff)
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
 	sigsTrimmedThrough uint64
 	// hostCatchUp holds one lock per host index for chunked catch-up.
 	hostCatchUp map[int]*sync.Mutex
+	// catchingUp counts the chunked catch-ups running per host index. It is
+	// read without s.mu (the session picker's chooser runs under s.mu).
+	catchingUp []atomic.Int32
 
 	chainMaxNonce          atomic.Uint32
 	composingFinalizeRound bool
@@ -299,6 +321,15 @@ type Session struct {
 	laggingSyncCancel context.CancelFunc
 	laggingSyncClosed bool
 	laggingSyncs      sync.WaitGroup
+
+	// Chunked catch-ups started for a send; they outlive the attempt and
+	// stop only at Close. sendCatchUpNext holds, per host, the run queued
+	// behind the one in flight; later sends join it.
+	sendCatchUpCtx    context.Context
+	sendCatchUpCancel context.CancelFunc
+	sendCatchUpClosed bool
+	sendCatchUps      sync.WaitGroup
+	sendCatchUpNext   map[int]*hostCatchUpRun
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -548,23 +579,26 @@ func NewSession(
 		addrToSlots[s.ValidatorAddress] = append(addrToSlots[s.ValidatorAddress], s.SlotID)
 	}
 	sess := &Session{
-		sm:              sm,
-		signer:          signer,
-		verifier:        verifier,
-		escrowID:        escrowID,
-		group:           group,
-		addrToSlots:     addrToSlots,
-		participantKeys: make([]string, len(group)),
-		clients:         clients,
-		hostSyncNonce:   make(map[int]uint64),
-		pendingTxKeys:   make(map[string]struct{}),
-		appliedTxKeys:   make(map[string]struct{}),
-		pinnedFinishIDs: make(map[uint64]int),
-		signatures:      make(map[uint64]map[uint32][]byte),
-		nonceStates:     make(map[uint64]*nonceOutcome),
-		confirmWait:     make(chan struct{}),
-		verifierQueue:   SharedVerifierQueue,
-		diffObserver:    func(types.Diff) {},
+		sm:               sm,
+		signer:           signer,
+		verifier:         verifier,
+		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
+		escrowID:         escrowID,
+		group:            group,
+		addrToSlots:      addrToSlots,
+		participantKeys:  make([]string, len(group)),
+		clients:          clients,
+		hostSyncNonce:    make(map[int]uint64),
+		catchingUp:       make([]atomic.Int32, len(group)),
+		pendingTxKeys:    make(map[string]struct{}),
+		appliedTxKeys:    make(map[string]struct{}),
+		pinnedFinishIDs:  make(map[uint64]int),
+		signatures:       make(map[uint64]map[uint32][]byte),
+		signatureSigners: make(map[uint64]map[uint32]cachedSignatureSigner),
+		nonceStates:      make(map[uint64]*nonceOutcome),
+		confirmWait:      make(chan struct{}),
+		verifierQueue:    SharedVerifierQueue,
+		diffObserver:     func(types.Diff) {},
 		//TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
@@ -620,7 +654,7 @@ func txPriority(tx *types.DevshardTx) int {
 
 // diffsForHost returns catch-up diffs for a host (from its last sync nonce to current).
 // Caller must hold s.mu.
-func (s *Session) diffsForHost(hostIdx int) []types.Diff {
+func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 	return s.diffRangeLocked(s.hostSyncNonce[hostIdx]+1, s.nonce)
 }
 
@@ -629,47 +663,16 @@ func (s *Session) diffsForHost(hostIdx int) []types.Diff {
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
 // the lock. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool) {
+func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
-		return nil, false
+		return nil, false, nil
 	}
-	return s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1)), true
-}
-
-// catchUpForSend returns the inline catch-up for a request to hostIdx that
-// carries target. A host more than one chunk behind is first sent every nonce
-// before target through chunked catch-up, so no request carries more than
-// one chunk: the host applies target only after every nonce before it.
-// Concurrent sends to the same host share one chunked catch-up.
-func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64) ([]types.Diff, error) {
-	s.mu.Lock()
-	diffs, ok := s.inlineCatchUpLocked(hostIdx, target)
-	s.mu.Unlock()
-	if ok {
-		return diffs, nil
+	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	if err != nil {
+		return nil, false, err
 	}
-
-	hostMu := s.hostCatchUpLock(hostIdx)
-	hostMu.Lock()
-	defer hostMu.Unlock()
-	s.mu.Lock()
-	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
-	s.mu.Unlock()
-	if ok {
-		return diffs, nil
-	}
-	if err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], target-1); err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
-	if !ok {
-		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
-			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
-	}
-	return diffs, nil
+	return diffs, true, nil
 }
 
 // hostCatchUpLock serializes chunked catch-up to one host.
@@ -702,27 +705,67 @@ func (s *Session) firstRetainedNonceLocked() uint64 {
 }
 
 // diffRangeLocked returns the diffs in [from, to] in nonce order. Nonces below
-// the retained suffix come from the store. A failed store read keeps the
-// contiguous prefix it returned, so the host stops at the gap.
-// Caller must hold s.mu.
-func (s *Session) diffRangeLocked(from, to uint64) []types.Diff {
+// the retained suffix come from the store. A failed store read returns the
+// error and no diffs: the in-memory tail starts above from, and sending it
+// would be a gap. The caller retries once the store answers. Caller must hold s.mu.
+func (s *Session) diffRangeLocked(from, to uint64) ([]types.Diff, error) {
 	if from > to {
-		return nil
+		return nil, nil
 	}
 	var out []types.Diff
 	if first := s.firstRetainedNonceLocked(); s.store != nil && from < first {
-		storeTo := min(to, first-1)
-		err := storage.ReadDiffPages(s.store, s.escrowID, from, storeTo, func(page []types.DiffRecord) error {
-			for _, rec := range page {
-				out = append(out, rec.Diff)
-			}
-			return nil
-		})
+		var err error
+		out, err = s.storedDiffs(from, min(to, first-1))
 		if err != nil {
-			logging.Warn("read trimmed diffs from store", "subsystem", "session",
-				"escrow", s.escrowID, "from", from, "to", storeTo, "read", len(out), "error", err)
+			return nil, err
 		}
 	}
+	return s.appendRetainedLocked(out, from, to), nil
+}
+
+// diffRange is diffRangeLocked with the store read done after s.mu is
+// released. A nonce below the retained suffix was persisted before it was
+// retained and is never rewritten, so that read needs no lock. A failed
+// store read returns the error and no diffs.
+func (s *Session) diffRange(from, to uint64) ([]types.Diff, error) {
+	if from > to {
+		return nil, nil
+	}
+	s.mu.Lock()
+	first := s.firstRetainedNonceLocked()
+	retained := s.appendRetainedLocked(nil, from, to)
+	s.mu.Unlock()
+	if s.store == nil || from >= first {
+		return retained, nil
+	}
+	stored, err := s.storedDiffs(from, min(to, first-1))
+	if err != nil {
+		return nil, err
+	}
+	return append(stored, retained...), nil
+}
+
+// storedDiffs reads [from, to] from the store. A failed read returns the
+// error and no diffs: a partial page plus the in-memory tail would be a gap.
+func (s *Session) storedDiffs(from, to uint64) ([]types.Diff, error) {
+	var out []types.Diff
+	err := storage.ReadDiffPages(s.store, s.escrowID, from, to, func(page []types.DiffRecord) error {
+		for _, rec := range page {
+			out = append(out, rec.Diff)
+		}
+		return nil
+	})
+	if err != nil {
+		logging.Warn("read trimmed diffs from store", "subsystem", "session",
+			"escrow", s.escrowID, "from", from, "to", to, "read", len(out), "error", err)
+		return nil, err
+	}
+	return out, nil
+}
+
+// appendRetainedLocked appends the in-memory diffs in [from, to] to out.
+// Caller must hold s.mu.
+func (s *Session) appendRetainedLocked(out []types.Diff, from, to uint64) []types.Diff {
 	for _, d := range s.diffs {
 		if d.Nonce >= from && d.Nonce <= to {
 			out = append(out, d)
@@ -791,45 +834,110 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 		return
 	}
 	s.sigsTrimmedThrough = floor
-	highest := make(map[string]uint64, len(s.addrToSlots))
+	highest := make(map[[2]string]uint64, len(s.addrToSlots))
+	keep := make(map[uint64]struct{})
 	for nonce, slotSigs := range s.signatures {
-		for slotID := range slotSigs {
-			addr := s.sm.SlotAddress(slotID)
-			highest[addr] = max(highest[addr], nonce)
+		var root []byte
+		var rootErr error
+		rootChecked := false
+		for slotID, sig := range slotSigs {
+			owner := s.sm.SlotAddress(slotID)
+			if owner == "" {
+				continue
+			}
+			cached, ok := s.signatureSigners[nonce][slotID]
+			if !ok || !bytes.Equal(cached.signature, sig) {
+				if !rootChecked {
+					root, rootErr = s.expectedStateRootLocked(nonce)
+					rootChecked = true
+				}
+				if rootErr != nil {
+					keep[nonce] = struct{}{}
+					break
+				}
+				signer, err := s.recoverStateSignatureAddress(nonce, root, sig)
+				if err != nil {
+					signer = ""
+				}
+				cached = cachedSignatureSigner{signature: bytes.Clone(sig), address: signer}
+				s.rememberSignatureSignerLocked(nonce, slotID, cached)
+			}
+			if cached.address == "" {
+				continue
+			}
+			key := [2]string{owner, cached.address}
+			highest[key] = max(highest[key], nonce)
 		}
 	}
-	keep := make(map[uint64]struct{}, len(highest))
 	for _, nonce := range highest {
 		keep[nonce] = struct{}{}
 	}
 	for nonce := range s.signatures {
 		if _, ok := keep[nonce]; nonce <= floor && !ok {
 			delete(s.signatures, nonce)
+			delete(s.signatureSigners, nonce)
 		}
 	}
 }
 
-// signaturesAtLocked returns the signatures held for nonce. A nonce at or
-// below sigsTrimmedThrough is read from the store and merged with what memory
-// still holds. The result must not be mutated. Caller must hold s.mu.
+func (s *Session) rememberSignatureSignerLocked(nonce uint64, slot uint32, cached cachedSignatureSigner) {
+	if s.signatureSigners == nil {
+		s.signatureSigners = make(map[uint64]map[uint32]cachedSignatureSigner)
+	}
+	if s.signatureSigners[nonce] == nil {
+		s.signatureSigners[nonce] = make(map[uint32]cachedSignatureSigner)
+	}
+	s.signatureSigners[nonce][slot] = cached
+}
+
 func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
 	held := s.signatures[nonce]
-	if s.store == nil || nonce == 0 || nonce > s.sigsTrimmedThrough {
-		return held
+	if s.store != nil && nonce != 0 && nonce <= s.sigsTrimmedThrough {
+		stored, err := s.store.GetSignatures(s.escrowID, nonce)
+		if err != nil {
+			logging.Warn("read trimmed signatures from store", "subsystem", "session",
+				"escrow", s.escrowID, "nonce", nonce, "error", err)
+		} else if len(stored) > 0 {
+			merged := make(map[uint32][]byte, len(stored)+len(held))
+			maps.Copy(merged, stored)
+			maps.Copy(merged, held)
+			held = merged
+		}
 	}
-	stored, err := s.store.GetSignatures(s.escrowID, nonce)
+	if len(held) == 0 {
+		return nil
+	}
+	return held
+}
+
+func (s *Session) signatureSnapshot(nonce uint64) (map[uint32][]byte, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	root, err := s.expectedStateRootLocked(nonce)
 	if err != nil {
-		logging.Warn("read trimmed signatures from store", "subsystem", "session",
-			"escrow", s.escrowID, "nonce", nonce, "error", err)
-		return held
+		return nil, nil, err
 	}
-	if len(stored) == 0 {
-		return held
+	raw := s.signaturesAtLocked(nonce)
+	sigs := make(map[uint32][]byte, len(raw))
+	for slot, sig := range raw {
+		sigs[slot] = append([]byte(nil), sig...)
 	}
-	merged := make(map[uint32][]byte, len(stored)+len(held))
-	maps.Copy(merged, stored)
-	maps.Copy(merged, held)
-	return merged
+	return sigs, append([]byte(nil), root...), nil
+}
+
+func (s *Session) verifiedSignatures(nonce uint64) (map[uint32][]byte, error) {
+	raw, root, err := s.signatureSnapshot(nonce)
+	if err != nil {
+		return nil, err
+	}
+	valid := make(map[uint32][]byte, len(raw))
+	for slot, sig := range raw {
+		addr := s.sm.SlotAddress(slot)
+		if addr != "" && s.verifyStateSignature(nonce, root, sig, addr) == nil {
+			valid[slot] = sig
+		}
+	}
+	return valid, nil
 }
 
 // validateCatchUp warns if the catch-up diffs for a host are non-contiguous
@@ -922,11 +1030,51 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool, error) {
 	return nil, false, nil
 }
 
+func (s *Session) expectedStateRootLocked(nonce uint64) ([]byte, error) {
+	root, ok, err := s.postStateRootForNonce(nonce)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if len(root) != 32 {
+			return nil, fmt.Errorf("%w: invalid local root length %d at nonce %d", types.ErrStateHashMismatch, len(root), nonce)
+		}
+		return root, nil
+	}
+	if nonce != s.nonce {
+		return nil, fmt.Errorf("%w: no post-state-root at nonce %d (session nonce %d)", types.ErrStateHashMismatch, nonce, s.nonce)
+	}
+	root, err = s.sm.ComputeStateRoot()
+	if err != nil {
+		return nil, fmt.Errorf("compute local state root: %w", err)
+	}
+	if len(root) != 32 {
+		return nil, fmt.Errorf("%w: invalid local root length %d at nonce %d", types.ErrStateHashMismatch, len(root), nonce)
+	}
+	return root, nil
+}
+
 // processResponse updates session state from a host response.
 // inferenceNonce is the nonce assigned during PrepareInference (the logical inference ID).
 // resp.Nonce may differ when the host has already advanced past inferenceNonce.
 // Caller must hold s.mu.
+//
+// A response without a state hash proves only that the host took the request,
+// which carried diffs through inferenceNonce, so the cursor stops there.
 func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
+	var syncCap uint64
+	if resp != nil && len(resp.StateHash) == 0 {
+		syncCap = inferenceNonce
+	}
+	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap)
+}
+
+// processResponseWithSyncCap is processResponse with an optional hostSyncNonce
+// ceiling. syncCap 0 means no ceiling. Catch-up passes its chunk's last nonce
+// for a response without a state hash: that resp.Nonce is unchecked, so it
+// must not mark the host current past diffs the chunk did not send.
+// Caller must hold s.mu.
+func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostResponse, inferenceNonce uint64, syncCap uint64) error {
 	if resp == nil {
 		return ErrNilHostResponse
 	}
@@ -936,31 +1084,15 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		return fmt.Errorf("%w: host %d at nonce %d (session nonce %d)",
 			ErrHostNonceAhead, hostIdx, resp.Nonce, s.nonce)
 	}
-	// Verify state hash if the host returned one. Contact/overlap wait until
-	// verification succeeds so a bad hash cannot inflate monitoring.
-	if len(resp.StateHash) > 0 {
-		var expected []byte
-		root, ok, rootErr := s.postStateRootForNonce(resp.Nonce)
-		if rootErr != nil {
-			return fmt.Errorf("host %d at nonce %d: %w", hostIdx, resp.Nonce, rootErr)
+	var expected []byte
+	if len(resp.StateHash) > 0 || resp.StateSig != nil {
+		if resp.StateSig != nil && len(resp.StateHash) != 32 {
+			return fmt.Errorf("%w: host %d at nonce %d: state hash length %d with signature", types.ErrStateHashMismatch, hostIdx, resp.Nonce, len(resp.StateHash))
 		}
-		if ok {
-			expected = root
-		} else if resp.Nonce == s.nonce {
-			// Finalize/recovery path: the nonce is beyond the diffs array
-			// (empty or suffix-only after snapshot recovery). The SM's live
-			// root is authoritative only for the current frozen nonce.
-			var err error
-			expected, err = s.sm.ComputeStateRoot()
-			if err != nil {
-				return fmt.Errorf("compute local state root: %w", err)
-			}
-		} else {
-			// No stored root for a non-current nonce: we cannot reconstruct
-			// the expected root, so reject rather than compare against the
-			// wrong nonce's live root.
-			return fmt.Errorf("%w: host %d at nonce %d: no post-state-root (session nonce %d)",
-				types.ErrStateHashMismatch, hostIdx, resp.Nonce, s.nonce)
+		var err error
+		expected, err = s.expectedStateRootLocked(resp.Nonce)
+		if err != nil {
+			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 		if !bytes.Equal(expected, resp.StateHash) {
 			return fmt.Errorf("%w: host %d at nonce %d (local %x, host %x)",
@@ -971,7 +1103,8 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Verify and store state signature.
 	if resp.StateSig != nil {
 		expectedAddr := s.group[hostIdx].ValidatorAddress
-		if err := s.verifyStateSignature(resp.Nonce, resp.StateHash, resp.StateSig, expectedAddr); err != nil {
+		signer, err := s.verifiedStateSignatureAddress(resp.Nonce, expected, resp.StateSig, expectedAddr)
+		if err != nil {
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 
@@ -979,8 +1112,10 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		if _, ok := s.signatures[resp.Nonce]; !ok {
 			s.signatures[resp.Nonce] = make(map[uint32][]byte)
 		}
+		cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[resp.Nonce][slot] = resp.StateSig
+			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
 			if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
 					logging.Warn("failed to persist signature",
@@ -995,8 +1130,12 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 
 	// Update sync nonce -- only advance, never regress. A cursor move can
 	// make a prefix useless to every host; drop it before the next copy.
-	if resp.Nonce > s.hostSyncNonce[hostIdx] {
-		s.hostSyncNonce[hostIdx] = resp.Nonce
+	advanceTo := resp.Nonce
+	if syncCap > 0 && advanceTo > syncCap {
+		advanceTo = syncCap
+	}
+	if advanceTo > s.hostSyncNonce[hostIdx] {
+		s.hostSyncNonce[hostIdx] = advanceTo
 		s.dropDiffPrefixLocked()
 	}
 
@@ -1049,7 +1188,17 @@ type PreparedInference struct {
 	farBehind bool
 	params    InferenceParams
 	isProbe   bool
+	// onSend, when set, runs once the catch-up is done, right before the
+	// request goes out.
+	onSend func()
 }
+
+// NeedsCatchUp reports whether SendOnly must first run a chunked catch-up.
+func (p *PreparedInference) NeedsCatchUp() bool { return p.farBehind }
+
+// OnSend registers fn to run once SendOnly has finished any catch-up and is
+// about to send the request. Set it before SendOnly.
+func (p *PreparedInference) OnSend(fn func()) { p.onSend = fn }
 
 // HostBinding describes the host slot that the next nonce will be
 // dispatched to. It is supplied to ParamsForHost so the chooser can make
@@ -1610,7 +1759,10 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline := s.inlineCatchUpLocked(hostIdx, nonce)
+	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
+	if err != nil {
+		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
+	}
 	if inline {
 		// TODO: remove this when we are sure that there is no bug in CatchUp
 		s.validateCatchUp(catchUp, nonce, hostIdx)
@@ -1658,6 +1810,9 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		if err != nil {
 			return nil, fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
+	}
+	if p.onSend != nil {
+		p.onSend()
 	}
 	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
@@ -1721,6 +1876,12 @@ func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse,
 	if rec.Status != types.StatusPending {
 		logging.Debug("dropped confirm for an inference already started", "subsystem", "session",
 			"escrow", s.escrowID, "nonce", msg.InferenceId, "source", source, "status", rec.Status)
+		return
+	}
+	// The receipt callback queues a confirm; the final response and the host's
+	// mempool carry the same one again. An identical copy is dropped by the
+	// queue anyway, so skip its signature recovery under s.mu.
+	if queued := s.pendingConfirmLocked(msg.InferenceId); queued != nil && proto.Equal(queued.GetConfirmStart(), msg) {
 		return
 	}
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
@@ -1924,9 +2085,10 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			return nil
 		}
 
-		s.mu.Lock()
-		chunk := s.diffRangeLocked(from, min(from+catchUpChunkSize-1, nonce))
-		s.mu.Unlock()
+		chunk, readErr := s.diffRange(from, min(from+catchUpChunkSize-1, nonce))
+		if readErr != nil {
+			return fmt.Errorf("catch-up chunk %d to host %s: read diffs from nonce %d: %w", chunkNum, hostLabel, from, readErr)
+		}
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
 		}
@@ -1939,9 +2101,7 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			"chunk_first_nonce", chunk[0].Nonce,
 			"chunk_last_nonce", chunkNonce)
 
-		chunkCtx, cancel := context.WithTimeout(ctx, catchUpChunkTimeout)
-		resp, err := client.Send(chunkCtx, host.HostRequest{Diffs: chunk, Nonce: chunkNonce}, nil, nil)
-		cancel()
+		resp, err := s.sendCatchUpChunk(ctx, hostIdx, client, chunk)
 		if err != nil {
 			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
@@ -1954,8 +2114,15 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			"chunk", chunkNum,
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
+		// Only a hashed response is checked against our root for resp.Nonce.
+		// Without one, credit no more than this chunk delivered.
+		verified := len(resp.StateHash) > 0
+		var syncCap uint64
+		if !verified {
+			syncCap = chunkNonce
+		}
 		s.mu.Lock()
-		err = s.processResponse(hostIdx, resp, chunkNonce)
+		err = s.processResponseWithSyncCap(hostIdx, resp, chunkNonce, syncCap)
 		if err == nil {
 			s.logSignatureProgress(resp.Nonce)
 		}
@@ -1965,11 +2132,11 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			return err
 		}
 
-		// Skip forward: if the host is already ahead of what we're about
-		// to send (e.g. it caught up via gossip), continue from resp.Nonce+1
-		// to avoid sending diffs the host already has.
+		// Skip forward: a host that is verifiably ahead of this chunk (it
+		// applied later diffs on another path, e.g. a refused-timeout
+		// ChallengeReceipt) does not need them resent.
 		from = chunkNonce + 1
-		if resp.Nonce > chunkNonce {
+		if verified && resp.Nonce > chunkNonce {
 			logging.Info("sendCatchUp skip-forward", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostLabel, "host_idx", hostIdx,
 				"resp_nonce", resp.Nonce,
@@ -2595,6 +2762,26 @@ func (s *Session) Signatures() map[uint64]map[uint32][]byte {
 	return s.signatures
 }
 
+func (s *Session) SettlementSignatures(nonce uint64) (map[uint32][]byte, error) {
+	sigs, err := s.verifiedSignatures(nonce)
+	if err != nil {
+		return nil, err
+	}
+	settlementSigs := make(map[uint32][]byte, len(sigs))
+	for slot, sig := range sigs {
+		addr := s.sm.SlotAddress(slot)
+		for _, ownedSlot := range s.addrToSlots[addr] {
+			settlementSigs[ownedSlot] = sig
+		}
+	}
+	weight := uint32(len(settlementSigs))
+	threshold := s.sm.QuorumThreshold()
+	if weight < threshold {
+		return nil, fmt.Errorf("insufficient valid signatures: %d/%d weight", weight, threshold)
+	}
+	return settlementSigs, nil
+}
+
 func (s *Session) Nonce() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2657,8 +2844,6 @@ func (s *Session) FinishTxFor(inferenceID uint64) []byte {
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
 
-// sigWeight computes the slot-weighted signature count for a set of slot signatures,
-// deduplicating by validator address. Caller must hold s.mu.
 func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
 	counted := make(map[string]bool, len(s.addrToSlots))
 	var weight uint32
@@ -2676,30 +2861,26 @@ func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {
 // hasQuorum returns true if signatures at the given nonce meet the threshold.
 // Thread-safe.
 func (s *Session) hasQuorum(nonce uint64, threshold uint32) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sigs := s.signaturesAtLocked(nonce)
-	if len(sigs) == 0 {
+	sigs, err := s.verifiedSignatures(nonce)
+	if err != nil || len(sigs) == 0 {
 		return false
 	}
 	return s.sigWeight(sigs) >= threshold
 }
 
-// hostSignedLocked reports whether any slot of addr signed nonce. Caller must
-// hold s.mu.
-func (s *Session) hostSignedLocked(nonce uint64, addr string) bool {
-	sigs := s.signaturesAtLocked(nonce)
+func (s *Session) hostSigned(nonce uint64, addr string) bool {
+	sigs, root, err := s.signatureSnapshot(nonce)
+	if err != nil {
+		return false
+	}
 	for _, slot := range s.addrToSlots[addr] {
-		if _, ok := sigs[slot]; ok {
+		if sig, ok := sigs[slot]; ok && s.verifyStateSignature(nonce, root, sig, addr) == nil {
 			return true
 		}
 	}
 	return false
 }
 
-// HasQuorumAt reports whether in-memory signatures at nonce meet the session
-// quorum threshold. Used by settle to decide whether Finalize must re-run
-// after a snapshot-only recovery left PhaseSettlement but empty signatures.
 func (s *Session) HasQuorumAt(nonce uint64) bool {
 	return s.hasQuorum(nonce, s.sm.QuorumThreshold())
 }
@@ -2767,22 +2948,74 @@ func (s *Session) getFinalizeClients() []HostClient {
 // processResponse (inbound host responses) and fetchSignature (pulled signatures)
 // so a host cannot get bytes that don't verify against its slot into the pool.
 func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte, expectedAddr string) error {
+	_, err := s.verifiedStateSignatureAddress(nonce, postRoot, signature, expectedAddr)
+	return err
+}
+
+func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signature []byte, expectedAddr string) (string, error) {
+	recovered, err := s.recoverStateSignatureAddress(nonce, postRoot, signature)
+	if err != nil {
+		return "", err
+	}
+	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
+	}
+	return recovered, nil
+}
+
+func (s *Session) warmKeyAuthorized(warm, cold string) bool {
+	if s.sm.HostSignerBoundAddr(cold, warm) {
+		return true
+	}
+	key := warmCheckKey{warm: warm, cold: cold}
+	for {
+		s.warmCheckMu.Lock()
+		check := s.warmChecks[key]
+		if check != nil {
+			if check.done != nil {
+				done := check.done
+				s.warmCheckMu.Unlock()
+				<-done
+				continue
+			}
+			if check.valid || time.Now().Before(check.retryAt) {
+				valid := check.valid
+				s.warmCheckMu.Unlock()
+				return valid
+			}
+		}
+		check = &warmCheckResult{done: make(chan struct{})}
+		s.warmChecks[key] = check
+		s.warmCheckMu.Unlock()
+
+		valid := s.sm.CheckWarmKey(warm, cold)
+		s.warmCheckMu.Lock()
+		check.valid = valid
+		if !check.valid {
+			check.retryAt = time.Now().Add(30 * time.Second)
+		}
+		close(check.done)
+		check.done = nil
+		accepted := check.valid
+		s.warmCheckMu.Unlock()
+		return accepted
+	}
+}
+
+func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
 	sigData, err := proto.Marshal(&types.StateSignatureContent{
 		StateRoot: postRoot,
 		EscrowId:  s.escrowID,
 		Nonce:     nonce,
 	})
 	if err != nil {
-		return fmt.Errorf("marshal state sig content: %w", err)
+		return "", fmt.Errorf("marshal state sig content: %w", err)
 	}
 	recovered, err := s.verifier.RecoverAddress(sigData, signature)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
+		return "", fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
 	}
-	if recovered != expectedAddr && !s.sm.HostSignerAllowedAddr(expectedAddr, recovered) {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
-	}
-	return nil
+	return recovered, nil
 }
 
 func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReason, vote *types.TimeoutVote, expectedAddr string) error {
@@ -2829,32 +3062,16 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	postRoot, ok, rootErr := s.postStateRootForNonce(nonce)
-	if rootErr != nil {
+	postRoot, err := s.expectedStateRootLocked(nonce)
+	if errors.Is(err, ErrLocalRootUnavailable) {
 		logging.Warn("fetchSignature: read post-state root", "subsystem", "finalize",
-			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", rootErr)
+			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
 		return false
 	}
-	if !ok {
-		// A trimmed suffix can omit this nonce while the SM is already at
-		// s.nonce. Mirror processResponse: the live root is authoritative
-		// only for that current nonce. For any other nonce we have no way
-		// to reconstruct the root, so refuse rather than verify against a
-		// root for a different nonce.
-		if nonce != s.nonce {
-			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
-				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "session_nonce", s.nonce)
-			return false
-		}
-		var err error
-		postRoot, err = s.sm.ComputeStateRoot()
-		if err != nil {
-			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
-				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
-			return false
-		}
-		logging.Info("fetchSignature: using live state root", "subsystem", "finalize",
-			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx)
+	if err != nil {
+		logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
+			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
+		return false
 	}
 
 	for slotID := range sigs {
@@ -2862,7 +3079,8 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		if addr != expectedAddr {
 			continue
 		}
-		if err := s.verifyStateSignature(nonce, postRoot, sigs[slotID], expectedAddr); err != nil {
+		signer, err := s.verifiedStateSignatureAddress(nonce, postRoot, sigs[slotID], expectedAddr)
+		if err != nil {
 			logging.Warn("fetchSignature: rejected unverified signature", "subsystem", "finalize",
 				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "slot", slotID, "error", err)
 			return false
@@ -2870,8 +3088,10 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		if _, ok := s.signatures[nonce]; !ok {
 			s.signatures[nonce] = make(map[uint32][]byte)
 		}
+		cached := cachedSignatureSigner{signature: bytes.Clone(sigs[slotID]), address: signer}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[nonce][slot] = sigs[slotID]
+			s.rememberSignatureSignerLocked(nonce, slot, cached)
 			if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, nonce, slot, sigs[slotID]); sigErr != nil {
 					logging.Warn("failed to persist fetched signature",
@@ -2928,13 +3148,11 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 
 	// Filter to hosts that don't already have a signature at the final nonce.
 	var missing []hostEntry
-	s.mu.Lock()
 	for _, h := range hosts {
-		if !s.hostSignedLocked(nonce, h.addr) {
+		if !s.hostSigned(nonce, h.addr) {
 			missing = append(missing, h)
 		}
 	}
-	s.mu.Unlock()
 
 	logging.Info("collecting signatures: fan-out", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "missing_hosts", len(missing), "total_hosts", len(hosts))
@@ -2968,10 +3186,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				}
 
 				// Already got it on a previous retry?
-				s.mu.Lock()
-				hasSig := s.hostSignedLocked(nonce, h.addr)
-				s.mu.Unlock()
-				if hasSig {
+				if s.hostSigned(nonce, h.addr) {
 					return
 				}
 
@@ -2999,9 +3214,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	}
 	wg.Wait()
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sigs := s.signaturesAtLocked(nonce); len(sigs) > 0 {
+	if sigs, err := s.verifiedSignatures(nonce); err == nil && len(sigs) > 0 {
 		weight = s.sigWeight(sigs)
 	}
 
@@ -3009,7 +3222,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	if weight < threshold {
 		var missing []string
 		for _, h := range hosts {
-			if !s.hostSignedLocked(nonce, h.addr) {
+			if !s.hostSigned(nonce, h.addr) {
 				missing = append(missing, fmt.Sprintf("%d(%s)", h.idx, shortAddress(h.addr)))
 			}
 		}
@@ -3033,21 +3246,23 @@ type SignatureStatusEntry struct {
 // nonce that has reached 2/3+1 quorum. Thread-safe.
 func (s *Session) SignatureStatus() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.signatureStatusLocked()
-}
+	candidates := make([]uint64, 0, len(s.signatures))
+	for nonce := range s.signatures {
+		candidates = append(candidates, nonce)
+	}
+	s.mu.Unlock()
 
-// signatureStatusLocked computes signature status using the monotonic property:
-// a validator that signed nonce M implicitly accepted all nonces <= M.
-// For each nonce N, effective weight = sum of slots for all validators whose
-// highest signed nonce >= N.
-// Caller must hold s.mu.
-func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highestQuorum uint64, hasAny bool) {
 	total := s.sm.TotalSlots()
 	threshold := s.sm.QuorumThreshold()
 
 	addrMaxNonce := make(map[string]uint64)
-	for nonce, slotSigs := range s.signatures {
+	nonces := make([]uint64, 0, len(candidates))
+	for _, nonce := range candidates {
+		slotSigs, err := s.verifiedSignatures(nonce)
+		if err != nil || len(slotSigs) == 0 {
+			continue
+		}
+		nonces = append(nonces, nonce)
 		for slotID := range slotSigs {
 			addr := s.sm.SlotAddress(slotID)
 			if nonce > addrMaxNonce[addr] {
@@ -3056,10 +3271,6 @@ func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highe
 		}
 	}
 
-	nonces := make([]uint64, 0, len(s.signatures))
-	for n := range s.signatures {
-		nonces = append(nonces, n)
-	}
 	sort.Slice(nonces, func(i, j int) bool { return nonces[i] < nonces[j] })
 
 	nonceWeight := make(map[uint64]uint32, len(addrMaxNonce))
@@ -4019,6 +4230,7 @@ func (s *Session) Close() error {
 	s.stopHeightSyncFlush()
 	s.stopQuietSettle()
 	s.stopLaggingSync()
+	s.stopSendCatchUps()
 	closeHostClients(s.clients)
 	if s.store != nil {
 		return s.store.Close()

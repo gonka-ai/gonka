@@ -85,17 +85,30 @@ func (r sessionResolver) resolveSession(ctx context.Context, route string, bind 
 }
 
 func (r sessionResolver) openSigned(ctx context.Context, env *rpcpb.SignedEnvelope, route string) (peer string, srv SessionCore, payload []byte, err error) {
-	return r.openSignedBound(ctx, env, route, bindParticipant)
+	return r.openSignedBound(ctx, env, route, bindParticipant, nil)
 }
 
 func (r sessionResolver) openSignedOwner(ctx context.Context, env *rpcpb.SignedEnvelope, route string) (peer string, srv SessionCore, payload []byte, err error) {
-	return r.openSignedBound(ctx, env, route, bindOwner)
+	return r.openSignedBound(ctx, env, route, bindOwner, nil)
 }
 
-func (r sessionResolver) openSignedBound(ctx context.Context, env *rpcpb.SignedEnvelope, route string, bind sessionBind) (peer string, srv SessionCore, payload []byte, err error) {
+// openSignedOwnerAdmit is openSignedOwner with admit run once the peer is
+// the owner and before the envelope signature is checked, so the charge
+// precedes ECDSA. An admit error is returned as is; it records its own
+// terminal.
+func (r sessionResolver) openSignedOwnerAdmit(ctx context.Context, env *rpcpb.SignedEnvelope, route string, admit func() error) (peer string, srv SessionCore, payload []byte, err error) {
+	return r.openSignedBound(ctx, env, route, bindOwner, admit)
+}
+
+func (r sessionResolver) openSignedBound(ctx context.Context, env *rpcpb.SignedEnvelope, route string, bind sessionBind, admit func() error) (peer string, srv SessionCore, payload []byte, err error) {
 	peer, escrow, srv, err := r.resolveSession(ctx, route, bind)
 	if err != nil {
 		return "", nil, nil, err
+	}
+	if admit != nil {
+		if err := admit(); err != nil {
+			return "", nil, nil, err
+		}
 	}
 	reject := func(reason observability.Reason, err error) (string, SessionCore, []byte, error) {
 		if bind == bindOwner {

@@ -219,7 +219,9 @@ func mempoolHasFinish(txs []*types.DevshardTx) bool {
 	return false
 }
 
-func TestServeInference_ReceiptFlushFailureDoesNotRunExecution(t *testing.T) {
+// The receipt's ConfirmStart is already in the mempool when the write fails,
+// so the host is bound to the inference and executes it without the client.
+func TestServeInference_ReceiptFlushFailureStillExecutesDetached(t *testing.T) {
 	engine := &countingInferenceEngine{inner: stub.NewInferenceEngine()}
 	env := setupServerEnvEngine(t, engine, nil)
 	sink := NewChatFrameSink(func([]byte) error {
@@ -233,8 +235,9 @@ func TestServeInference_ReceiptFlushFailureDoesNotRunExecution(t *testing.T) {
 		Sink:      sink,
 	})
 	require.ErrorContains(t, err, "peer gone")
-	require.Zero(t, engine.n.Load(), "receipt Flush failure must not start ML")
-	require.False(t, mempoolHasFinish(env.server.Host().MempoolTxs()))
+	require.Eventually(t, func() bool {
+		return engine.n.Load() == 1 && mempoolHasFinish(env.server.Host().MempoolTxs())
+	}, 5*time.Second, 5*time.Millisecond, "a bound execution still queues its Finish")
 }
 
 func TestServeInference_TokenFlushFailureAfterReceiptStillFinishes(t *testing.T) {

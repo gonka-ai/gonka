@@ -106,6 +106,7 @@ const (
 	ghostExclude                 // queue had no compatible request after pickerStaleThreshold
 	ghostThrottled               // host is reactively throttled (tokens<1)
 	ghostStateDiverged           // host's escrow state root diverged from ours
+	ghostCatchingUp              // host is still being caught up and another host is ready
 )
 
 func (g ghostKind) reason() string {
@@ -118,6 +119,8 @@ func (g ghostKind) reason() string {
 		return "participant_throttled_no_send"
 	case ghostStateDiverged:
 		return "participant_state_diverged_no_send"
+	case ghostCatchingUp:
+		return "participant_catching_up_no_send"
 	default:
 		return ""
 	}
@@ -175,6 +178,11 @@ type throttleChecker func(participantKey string) bool
 // The block is a property of the participant, not of the request, so the checker cannot see one.
 type stateBlockChecker func(participantKey string) (string, bool)
 
+// catchUpChecker reports whether a real request bound to hostIdx would wait
+// on that host's chunked catch-up while another host could serve it. Same
+// locking contract as throttleChecker.
+type catchUpChecker func(hostIdx int) bool
+
 // sessionPicker serializes nonce dispatch for one Session. It owns the
 // run loop goroutine that drains the queue.
 type sessionPicker struct {
@@ -183,6 +191,7 @@ type sessionPicker struct {
 	dispatchGhost   ghostDispatcher
 	throttleBlocked throttleChecker
 	stateBlocked    stateBlockChecker
+	catchingUp      catchUpChecker
 	logCtx          context.Context
 
 	mu     sync.Mutex
@@ -332,6 +341,8 @@ func (p *sessionPicker) run() {
 			continue
 		}
 
+		nonceBefore := p.session.Nonce()
+
 		// Phase 2: try to dispatch one nonce. The chooser runs under
 		// Session.mu and decides between five outcomes, all handled
 		// by the same PrepareInferenceFn-produced diff:
@@ -377,6 +388,15 @@ func (p *sessionPicker) run() {
 			// spending a real request's retry budget on a host the admission gate would reject anyway.
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
+				ghostParticipantKey = b.ParticipantKey
+				return ghostProbeParams(p.model), true, p.logCtx, nil
+			}
+
+			// Branch 1c: the host is still working through a chunked
+			// catch-up. A real request here would wait out the catch-up;
+			// burning the nonce moves it to the next host instead.
+			if p.catchingUp != nil && len(p.queue) > 0 && p.catchingUp(b.HostIdx) {
+				ghost = ghostCatchingUp
 				ghostParticipantKey = b.ParticipantKey
 				return ghostProbeParams(p.model), true, p.logCtx, nil
 			}
@@ -458,6 +478,16 @@ func (p *sessionPicker) run() {
 		case err != nil:
 			if chosen != nil {
 				chosen.reply <- pickerResult{err: err}
+				continue
+			}
+			if ghost != ghostNone && p.session.Nonce() > nonceBefore {
+				// The ghost MsgStart is already in the diff. The queue was
+				// not chosen, so failing it would drop requests this burn
+				// did not touch. The next iteration uses the next nonce.
+				// A ghost error that left the nonce in place still drains
+				// below: retrying that would spin on the same prepare.
+				logRequestStage(p.logCtx, "session_picker_ghost_prepare_error",
+					"error", err, "nonce", p.session.Nonce())
 				continue
 			}
 			// Unclassified error from chooser. Should not happen with

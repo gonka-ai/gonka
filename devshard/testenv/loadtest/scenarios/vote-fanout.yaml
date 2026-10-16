@@ -6,9 +6,13 @@ seed: 1515
 # budget is the hosts' real default (6000 weight a minute, Chat weight 1
 # since #1988: about 100 Chats a second per sender), so no host gets a tight
 # budget here and the fan-out is the timeout votes, capped at 64 by #1988.
-# The hang starts 30 s into the 2-minute 32 rps stage, as in prod-like-15m.
-# The run goes on 5m45s after it: the sweep votes on hung nonces for up to
-# 3m10s after the fault, and the legacy run's machine-wide stall began there.
+# The hang starts 30 s into the 32 rps stage, as in prod-like-15m, and lasts
+# 1m45s: a hung nonce times out 90–95 s (the execution timeout, plus up to the
+# refusal timeout) after it starts, so the first timeouts fire 10–15 s before
+# the hang lifts, as the 30 s timeout's did inside the old 45 s hang. The
+# 32 rps stage runs to 8m, past the last of those timeouts (6m15s + 95 s).
+# The run goes on 5m45s after the hang: the sweep votes on hung nonces for up
+# to 4m10s after the fault, and the legacy run's machine-wide stall began there.
 # P3 = versiond-4; P0/P1 are never faulted.
 
 cases:
@@ -52,13 +56,14 @@ topology:
 
 protocol:
   refusal_timeout: 5s
-  execution_timeout: 30s
+  # Above the generation tail (the 2048-token class runs 45–63 s), so no honest host is cut at its deadline.
+  execution_timeout: 90s
 
 workload:
   # About 8 s per request makes 260 in flight at 32 rps (Little's law), so
   # 256 would drop requests from a healthy gateway; 1024 leaves 4x headroom.
   max_in_flight: 1024
-  duration: 11m
+  duration: 12m
   report_interval: 30s
   traffic:
     type: stages
@@ -69,8 +74,8 @@ workload:
     stages:
       - {duration: 1m, rps: 8}
       - {duration: 3m, rps: 16}
-      - {duration: 2m, peak: true}
-      - {duration: 5m, rps: 16}
+      - {duration: 4m, peak: true}
+      - {duration: 4m, rps: 16}
   request:
     model: model-a
     stream: false
@@ -90,7 +95,7 @@ workload:
         - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a gr Explain it."}], weight: 1}
       models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
   events:
-    - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 4m30s, until: 5m15s,
+    - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 4m30s, until: 6m15s,
        params: {patch: {hang: true}}}
 
 gateway:
@@ -130,7 +135,7 @@ assertions:
     enabled: true
     baseline: {from: 1m, to: 2m}
     trend_early: {from: 2m, to: 4m}
-    trend_late: {from: 9m30s, to: 11m}
+    trend_late: {from: 10m30s, to: 12m}
     cases: {escrow-accounting-reconciles.final_nonce_le_max: session-nonce-within-max-nonce, no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired, responses-compress: logprobs-responses-compress, payload-files-are-zstd: sqlite-payloads-in-zstd-files, no-http-5xx-on-honest-hosts: honest-hosts-get-no-http-5xx}
 
 drain_timeout: 3m
@@ -141,8 +146,8 @@ diagnostics:
   heap_profiles:
     - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
     - {start_after: 3m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
-    - {start_after: 10m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 11m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
   goroutine_profiles:
     - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
     - {start_after: 3m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
-    - {start_after: 10m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 11m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}

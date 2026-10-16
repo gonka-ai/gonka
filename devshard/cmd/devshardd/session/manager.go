@@ -1026,10 +1026,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
 	}
-	if err := m.wireHostToHost(srv, escrowID, group); err != nil {
-		closeTransportServer(srv)
-		return nil, err
-	}
+	m.wireHostToHost(srv, escrowID, group)
 
 	return srv, nil
 }
@@ -1473,10 +1470,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		h.Close()
 		return nil, nil, fmt.Errorf("create server: %w", err)
 	}
-	if err := m.wireHostToHost(srv, escrowID, meta.Group); err != nil {
-		closeTransportServer(srv)
-		return nil, nil, err
-	}
+	m.wireHostToHost(srv, escrowID, meta.Group)
 
 	return srv, obsRepair, nil
 }
@@ -2285,14 +2279,30 @@ func closeTransportServer(srv *transport.Server) {
 // Both go through the peer RPC client. Attach identity is m.signer. Gossip stays
 // unwired: s.gossip is nil, so inbound gossip nonces and txs are dropped and
 // nothing is broadcast.
-func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) error {
+//
+// Chat never uses these clients, so binding does not wait for them: every
+// slot is resolved in the background, and a slot whose URL lookup fails is
+// retried on its next use instead of failing the session.
+func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, group []types.SlotAssignment) {
 	if srv == nil || m.signer == nil || m.bridge == nil {
-		return nil
+		return
 	}
-	h := srv.Host()
-	if h == nil {
-		return nil
+	if srv.Host() == nil {
+		return
 	}
+	srv.SetPeerClients(map[int]transport.HostPeerClient{})
+	srv.SetPeerResolver(m.peerResolver(escrowID, group))
+	slots := make([]int, 0, len(group))
+	for _, slot := range group {
+		slots = append(slots, int(slot.SlotID))
+	}
+	srv.StartPeerLookups(slots...)
+}
+
+// peerResolver builds the host-signed client for one slot from escrow_cache
+// or the chain URL. A participant with no URL is transport.ErrPeerURLMissing.
+// Failures are logged here because the lookup runs off the bind path.
+func (m *HostManager) peerResolver(escrowID string, group []types.SlotAssignment) transport.PeerResolver {
 	routePrefix := devshardpkg.DefaultRoutePrefix()
 	if v := strings.TrimSpace(m.boundVersion); v != "" {
 		routePrefix = devshardpkg.VersionedRoutePrefix(v)
@@ -2300,43 +2310,42 @@ func (m *HostManager) wireHostToHost(srv *transport.Server, escrowID string, gro
 	cfg := transport.DefaultClientConfig()
 	cfg.RoutePrefix = routePrefix
 	endpoints := transport.RPCEndpointsFromEnv()
-	hostPeers := make(map[int]transport.HostPeerClient, len(group))
-	var created []transport.HostPeerClient
-	var err error
-	defer func() {
-		if err != nil {
-			for _, pc := range created {
-				pc.Close()
-			}
-		}
-	}()
-	for i, slot := range group {
-		url := m.cachedSlotURL(escrowID, slot.ValidatorAddress)
+	addrs := make(map[int]string, len(group))
+	for _, slot := range group {
+		addrs[int(slot.SlotID)] = slot.ValidatorAddress
+	}
+	resolve := func(slotID int, addr string) (transport.HostPeerClient, error) {
+		url := m.cachedSlotURL(escrowID, addr)
 		if url == "" {
-			info, infoErr := m.bridge.GetHostInfo(slot.ValidatorAddress)
-			if infoErr != nil {
-				err = fmt.Errorf("get host info for slot %d %s: %w", i, slot.ValidatorAddress, infoErr)
-				return err
+			info, err := m.bridge.GetHostInfo(addr)
+			if err != nil {
+				return nil, fmt.Errorf("get host info for slot %d %s: %w", slotID, addr, err)
 			}
 			if info != nil {
 				url = strings.TrimSpace(info.URL)
 			}
 		}
 		if url == "" {
-			err = fmt.Errorf("get host info for slot %d %s: empty url", i, slot.ValidatorAddress)
-			return err
+			return nil, fmt.Errorf("slot %d %s: %w", slotID, addr, transport.ErrPeerURLMissing)
 		}
 		hostHTTP := transport.NewHTTPClient(url, escrowID, m.signer, cfg)
-		selected := transport.SelectTransport(hostHTTP, slot.ValidatorAddress, endpoints, nil)
+		selected := transport.SelectTransport(hostHTTP, addr, endpoints, nil)
 		pc, ok := selected.(transport.HostPeerClient)
 		if !ok {
-			err = fmt.Errorf("peer slot %d: SelectTransport returned %T", i, selected)
-			return err
+			return nil, fmt.Errorf("peer slot %d: SelectTransport returned %T", slotID, selected)
 		}
-		created = append(created, pc)
-		hostPeers[int(slot.SlotID)] = pc
+		return pc, nil
 	}
-	srv.SetPeerClients(hostPeers)
-	created = nil
-	return nil
+	return func(slotID int) (transport.HostPeerClient, error) {
+		addr, ok := addrs[slotID]
+		if !ok {
+			return nil, fmt.Errorf("peer slot %d: not in group", slotID)
+		}
+		pc, err := resolve(slotID, addr)
+		if err != nil {
+			logging.Warn("devshard peer client unresolved; retried on next use", inferenceTypes.System,
+				"escrow_id", escrowID, "slot", slotID, "participant", addr, "error", err)
+		}
+		return pc, err
+	}
 }

@@ -326,6 +326,19 @@ func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
 	}
 }
 
+func TestReadGatewayBurnsJSONLogs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.log")
+	log := `devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"1","nonce":271,"reason":"participant_catching_up_no_send"}` + "\n" +
+		`devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
+
+	burns, err := readGatewayBurns(path)
+	require.NoError(t, err)
+	require.Equal(t, []gatewayBurn{
+		{At: time.Date(2026, 10, 14, 12, 28, 14, 0, time.UTC), EscrowID: "1", Nonce: "271", Reason: "participant_catching_up_no_send"},
+	}, burns)
+}
+
 func TestFetchGatewayStateSizes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/v1/debug/state-sizes", r.URL.Path)

@@ -1,17 +1,21 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -221,7 +225,6 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 
 	clients := make([]HostClient, len(group))
 	participantKeys := make([]string, len(group))
-	clientCache := make(map[string]HostClient)
 	var sharedPeerTips *transport.HeightSyncPeerTips
 	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 		if cfg.ExtraClientConfig.HeightSyncPeerTips != nil {
@@ -238,23 +241,32 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			endpoints = transport.ResolveRPCEndpoints(cfg.ExtraClientConfig.RPCEndpoints)
 		}
 	}
+	build := func(addr string) (HostClient, error) {
+		info, err := cfg.Bridge.GetHostInfo(addr)
+		if err != nil {
+			err = fmt.Errorf("get host info for %s: %w", addr, err)
+		} else if info == nil || strings.TrimSpace(info.URL) == "" {
+			err = fmt.Errorf("host %s: %w", addr, transport.ErrPeerURLMissing)
+		}
+		if err != nil {
+			if !errors.Is(err, bridge.ErrParticipantNotFound) {
+				logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
+					"escrow", cfg.EscrowID, "participant", addr, "error", err)
+			}
+			return nil, err
+		}
+		httpClient := transport.NewHTTPClient(strings.TrimSpace(info.URL), cfg.EscrowID, signer,
+			hostClientConfig(cfg, routePrefix, addr, sharedPeerTips))
+		return asHostClient(transport.SelectTransport(httpClient, addr, endpoints, cfg.ExtraClientConfig)), nil
+	}
+	clientCache, err := openHostClients(cfg.EscrowID, group, build)
+	if err != nil {
+		sqlStore.Close()
+		return nil, nil, err
+	}
 	for i, slot := range group {
 		participantKeys[i] = slot.ValidatorAddress
-		if c, ok := clientCache[slot.ValidatorAddress]; ok {
-			clients[i] = c
-			continue
-		}
-		info, err := cfg.Bridge.GetHostInfo(slot.ValidatorAddress)
-		if err != nil {
-			closeHostClients(hostClientsFromCache(clientCache))
-			sqlStore.Close()
-			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
-		}
-		httpClient := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer,
-			hostClientConfig(cfg, routePrefix, slot.ValidatorAddress, sharedPeerTips))
-		c := asHostClient(transport.SelectTransport(httpClient, slot.ValidatorAddress, endpoints, cfg.ExtraClientConfig))
-		clientCache[slot.ValidatorAddress] = c
-		clients[i] = c
+		clients[i] = clientCache[slot.ValidatorAddress]
 	}
 
 	// Check if there is an existing session to recover from.
@@ -326,6 +338,65 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	session.SetHeightSyncPeerTips(sharedPeerTips)
 
 	return session, sm, nil
+}
+
+// hostLookupOpenWait bounds how long opening a session waits for its hosts'
+// URL lookups, which all run at once. A host still unresolved after it opens
+// lazily and keeps its lookup running.
+var hostLookupOpenWait = transport.DefaultLazyWait
+
+// openHostClients builds one client per distinct participant in group. A
+// participant whose lookup fails transiently, publishes no URL, or outlasts
+// hostLookupOpenWait does not fail the session: it gets a lazyHostClient that
+// resolves on use, which the gateway's chat picker skips until then.
+// bridge.ErrParticipantNotFound is a definitive chain answer and still fails
+// the open, so the gateway parks the escrow until the participant appears.
+func openHostClients(escrowID string, group []types.SlotAssignment, build func(addr string) (HostClient, error)) (map[string]HostClient, error) {
+	lazies := make(map[string]*transport.Lazy[HostClient], len(group))
+	for _, slot := range group {
+		addr := slot.ValidatorAddress
+		if _, ok := lazies[addr]; ok {
+			continue
+		}
+		lazies[addr] = transport.NewLazy(func() (HostClient, error) { return build(addr) }, releaseHostClient, 0, 0)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), hostLookupOpenWait)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, l := range lazies {
+		wg.Add(1)
+		go func(l *transport.Lazy[HostClient]) {
+			defer wg.Done()
+			_, _ = l.Get(ctx)
+		}(l)
+	}
+	wg.Wait()
+
+	for _, l := range lazies {
+		if _, err := l.Failure(); errors.Is(err, bridge.ErrParticipantNotFound) {
+			for _, l := range lazies {
+				l.Close()
+			}
+			return nil, err
+		}
+	}
+	out := make(map[string]HostClient, len(lazies))
+	var unresolved []string
+	for addr, l := range lazies {
+		if hc, ok := l.Peek(); ok {
+			out[addr] = hc
+			continue
+		}
+		out[addr] = newLazyHostClient(l)
+		unresolved = append(unresolved, addr)
+	}
+	if len(unresolved) > 0 {
+		sort.Strings(unresolved)
+		logging.Warn("session opened with unresolved hosts", "subsystem", "session",
+			"escrow", escrowID, "unresolved", strings.Join(unresolved, ","), "participants", len(lazies))
+	}
+	return out, nil
 }
 
 func hostClientsFromCache(cache map[string]HostClient) []HostClient {

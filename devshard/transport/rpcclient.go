@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -329,6 +330,7 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 	}
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(maxBytes),
+		withGzipReadCap(maxBytes),
 		connect.WithSendGzip(),
 	}
 }
@@ -382,12 +384,14 @@ func (c *RPCClient) gossipClient() rpcpbconnect.GossipServiceClient {
 }
 
 // chatClientOptions gzips the request envelope (prompt + catch-up diffs) like
-// the unary clients and HTTP Send. gzip must stay registered for WithSendGzip
-// to resolve; the handler never compresses ChatFrames, so response chunks are
-// still one application gzip stream and are not compressed twice.
+// the unary clients and HTTP Send. withGzipReadCap keeps that gzip registered
+// for WithSendGzip and stops response inflation at the read cap. The handler
+// never compresses ChatFrames, so response chunks are still one application
+// gzip stream and are not compressed twice.
 func chatClientOptions() []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
+		withGzipReadCap(int(DefaultMaxBodySize)),
 		connect.WithSendGzip(),
 	}
 }
@@ -936,6 +940,12 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	readyCtx, cancelReady := context.WithTimeout(ctx, chatReadyTimeout)
 	defer cancelReady()
 	if err := c.WaitReady(readyCtx); err != nil {
+		// The handshake budget expired while the caller is still running:
+		// the executor never became ready. A closed local session returns
+		// before that budget and stays a plain ErrPeerNotReady.
+		if readyCtx.Err() != nil && ctx.Err() == nil {
+			return nil, fmt.Errorf("get payload: %w", ErrPeerPayloadUnanswered)
+		}
 		return nil, fmt.Errorf("get payload: %w", err)
 	}
 	client, err := c.payloadClient(maxBytes)
@@ -948,6 +958,9 @@ func (c *RPCClient) GetPayload(ctx context.Context, req *rpcpb.GetPayloadRequest
 	err = c.rpcAttempt(ctx, rpcpbconnect.PayloadServiceGetPayloadProcedure, func() error {
 		creq, err := tokenRequest(ctx, c, req)
 		if err != nil {
+			if errors.Is(err, ErrPeerNotReady) {
+				return ErrPeerPayloadUnanswered
+			}
 			return err
 		}
 		resp, err := client.GetPayload(ctx, creq)

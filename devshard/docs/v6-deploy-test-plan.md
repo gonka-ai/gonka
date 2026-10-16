@@ -2,7 +2,7 @@
 
 [v5-deploy-test-plan.md](./v5-deploy-test-plan.md) is the operator walkthrough for the 0.2.15 / v5 line — HA join overlay, router health and catalog admission, the gateway chain follower, host ping, warm cutover. All of it still applies. Do not edit it to describe v6.
 
-This note is what changed for the **0.2.16 / v6** line: the two legs between the gateway and a devshard host are compressed. The response leg needs no flag and no decision. The request leg is behind one, and it is the only switch in this line that can break inference across a whole roster if it is turned on early.
+This note is what changed for the **0.2.16 / v6** line: the host→gateway answer is gzip when the caller asks. The gateway→host HTTP request stays the signed plaintext. `DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES` used to gzip that request; the gateway no longer reads it.
 
 Related: [gzip-in-transit.md](../../docs/proposal/gzip-in-transit.md) (design, measurements, compatibility matrix), [compressed-payloads.md](../../docs/proposal/compressed-payloads.md) (the payload-storage work this builds on), [v5-deploy-test-plan.md](./v5-deploy-test-plan.md).
 
@@ -13,9 +13,9 @@ Related: [gzip-in-transit.md](../../docs/proposal/gzip-in-transit.md) (design, m
 | Leg | Ships as | Operator decision |
 | --- | --- | --- |
 | host → gateway (the SSE answer) | **on**, negotiated, no flag | none — check the proxies below once |
-| gateway → host (the request body) | **off**, behind a flag | yes — it has a precondition on the whole roster |
+| gateway → host (the HTTP request body) | plaintext, the signed bytes | none — there is no switch |
 
-Neither leg persists anything and neither changes host state. Rollback on either is a restart.
+Neither leg persists anything and neither changes host state. Response rollback is a restart onto a build that does not compress.
 
 ## Response compression (no flag)
 
@@ -27,23 +27,13 @@ What to check once, and only if you run a non-standard edge:
 
 - **nginx** — the streaming location already sets `proxy_buffering off`, `proxy_request_buffering off` and `gzip off` (`proxy/entrypoint.sh`, `STREAMING_CONFIG`). `gzip off` stops nginx compressing on its own; it does not unwrap what a host compressed. Do **not** add `gunzip on`.
 - **HAProxy** (`versiond-router/haproxy.cfg.template`) has no compression directives at all and forwards both directions untouched.
-- Any proxy of your own must not decompress a **request** body. See the precondition below for why that specific one is fatal.
+- Any proxy of your own must not decompress a **request** body before the host. A host still unwraps `Content-Encoding: gzip` before it checks the signature. Decompressing earlier changes the bytes the signature covers.
 
-## Request compression (`DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES`)
+## Request bodies stay plaintext
 
-The gateway may gzip the request bodies it sends hosts. Requests have no `Accept-Encoding` equivalent — a sender cannot ask whether the far side understands gzip — so this one is **off by default**.
+`DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES` used to gzip HTTP request bodies the gateway sends a host. That path is retired. The gateway does not read the variable, and the POST body on the wire is the signed plaintext.
 
-| | |
-| --- | --- |
-| Env | `DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES` |
-| Enable | `1` / `t` / `true` / `yes` / `on` (case-insensitive) |
-| Default | **off**. Unset, empty, `0` / `f` / `false` / `no` / `off` leave bodies uncompressed. Any other value fails the runtime rather than reading as off. |
-| What it changes | Bodies from 1 KiB up leave gzipped; the signature still covers the plaintext |
-| Precondition | **Every host in the roster must already decompress.** Ship the read side first |
-| Observability cost | `http.request_content_length` drops off the span for a compressed POST, because the header no longer describes the body once it is unwrapped. `/chat/completions` still reports the decoded size separately; the protocol routes report none |
-| Failure if the precondition is unmet | The host verifies the compressed bytes, recovers a different address, and answers **403 sender-not-in-group** — which reads as a key or registration problem, not a compression one |
-
-That last row is the one to remember. The signature covers the body with no canonicalisation, and ECDSA recovery does not fail on the wrong bytes — it returns somebody else. A host without the read side therefore does not say "I cannot read this"; it says "I do not know you".
+A host still accepts a gzipped request: it unwraps `Content-Encoding: gzip` before authentication, and the signature is over that plaintext. The gateway simply never sets the header. Peer RPC is a separate path and always sends Connect gzip; this variable never controlled it.
 
 ---
 
@@ -54,12 +44,10 @@ That last row is the one to remember. The signature covers the body with no cano
 - [ ] No action. Confirm chat still streams token by token after the upgrade; a stalled first token is the symptom to escalate on.
 - [ ] If you run your own edge, confirm it does not set `gunzip on` and does not buffer the `/chat/completions` response.
 
-### Request leg (only when turning the flag on)
+### Request leg
 
-- [ ] Confirm **every** host in the roster runs v6 or later. A single host on the old build answers 403 sender-not-in-group for every request the gateway compresses to it.
-- [ ] Turn it on for one gateway first and watch that host's 403 rate, not just the gateway's error rate.
-- [ ] Confirm no proxy between gateway and hosts decompresses request bodies. Decompression must happen at the host, under its verifier.
-- [ ] Rollback is clearing the variable and restarting. Nothing is persisted; hosts need no coordinated change.
+- [ ] No action. The gateway does not gzip HTTP request bodies. `DEVSHARD_GATEWAY_COMPRESS_REQUEST_BODIES` is not read.
+- [ ] If you run your own edge, confirm it does not decompress a request body before the host. The host unwraps gzip itself, under its verifier.
 
 ---
 

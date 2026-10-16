@@ -265,6 +265,9 @@ func paceArrivals(ctx context.Context, profile TrafficProfile, workload time.Dur
 
 func waitForArrival(ctx context.Context, at time.Time) bool {
 	delay := time.Until(at)
+	if err := ctx.Err(); err != nil {
+		return false
+	}
 	if delay <= 0 {
 		return true
 	}
