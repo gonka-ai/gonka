@@ -141,7 +141,7 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 		"http-request deny deny_status 429 if is_diffs { sc_http_req_rate(1) gt 400 }",
 		fmt.Sprintf("http-request deny deny_status 429 if is_diffs { sc_http_req_rate(1) gt %d }", lim.DiffsRate), 1)
 	out = strings.Replace(out,
-		"server router versiond-router:8080 proto h2 resolvers docker resolve-prefer ipv4 init-addr last,libc,none",
+		"server router versiond-router:8081 proto h2 resolvers docker resolve-prefer ipv4 init-addr last,libc,none",
 		"server router "+backend, 1)
 	return out
 }

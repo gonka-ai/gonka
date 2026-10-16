@@ -29,6 +29,12 @@ POLICY_POOL_SLOTS="${PROXY_POLICY_POOL_SLOTS:-4}"
 ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
+# The router's peer-RPC listen. Every v6 router generation binds :8081
+# (the previous one as a proto h2 frontend, the current one as a second
+# bind of its data frontend), so the proxy's HTTP/2 dial works across a
+# fleet or proxy replacement in either order. JSON and the HTTP/1.1
+# fallback use ROUTER_PORT.
+ROUTER_RPC_PORT=8081
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 # Peer RPC shares :80/:443 with the JSON API. The public frontends hand a
 # connection that opens with the HTTP/2 preface (:80) or offers ALPN
@@ -235,9 +241,9 @@ case "$RPC_H2_VERSIOND_HOST" in
 esac
 
 # HA sets VERSIOND_ROUTER_POOL_HOST (the fleet). Non-HA leaves it unset and
-# the h2 hop goes straight to versiond:8080. The router hop is the same
-# data listen JSON uses (VERSIOND_ROUTER_PORT, 8080): HAProxy detects the
-# HTTP/2 preface on a cleartext bind, so there is no second router port.
+# the h2 hop goes straight to versiond:8080. The router hop is the router's
+# :8081 (ROUTER_RPC_PORT, see above); the router routes by path, so the
+# same twins also serve the HTTP/1.1 fallback that arrives on :8080.
 # The data connection stays proto h2. The check is HTTP/1.1 GET /readyz on
 # the router admin port, the same question the JSON backends ask. Without
 # check-proto h1 the probe would follow proto h2, and without a check at all
@@ -247,7 +253,7 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
     RPC_H2_CHECK_CONNECT="http-check connect port ${ROUTER_ADMIN_PORT} proto h1"
     RPC_H2_CHECK_SEND="http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}"
     RPC_H2_CHECK_EXPECT='http-check expect status 200'
-    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
 else
     RPC_H2_HTTPCHK=
     RPC_H2_CHECK_CONNECT=
@@ -418,7 +424,7 @@ render_rpc_backend() {
         -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
-        -e "s|\${ROUTER_PORT}|$ROUTER_PORT|g" \
+        -e "s|\${ROUTER_RPC_PORT}|$ROUTER_RPC_PORT|g" \
         -e "s|\${SERVER_STATE}|$server_state|g" \
         "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }

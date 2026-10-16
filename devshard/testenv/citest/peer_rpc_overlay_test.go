@@ -81,11 +81,11 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	gatewayConns := settledPersistentTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort)
 	require.GreaterOrEqual(t, gatewayConns, 1, "gateway holds no persistent connection to the proxy")
 	require.LessOrEqual(t, gatewayConns, 2, "gateway opened more than a peer mux and one JSON keep-alive to the proxy")
-	// The proxy muxes that peer onto one HTTP/2 connection to the router.
-	// A host peer dial through the same proxy can hold a second one.
-	proxyBackend := settledPersistentTCP(t, stack, "proxy", "", 8080)
+	// The proxy muxes that peer onto one HTTP/2 connection to the router's
+	// :8081. A host peer dial through the same proxy can hold a second one.
+	proxyBackend := settledPersistentTCP(t, stack, "proxy", "", 8081)
 	require.GreaterOrEqual(t, proxyBackend, 1)
-	require.LessOrEqual(t, proxyBackend, 3, "proxy opened more than a gateway mux and one other peer dial to versiond-router:8080")
+	require.LessOrEqual(t, proxyBackend, 2, "proxy opened more than a gateway mux and one other peer dial to versiond-router:8081")
 	escrowID := config.PrimaryEscrowID(cfg)
 	upstream := harness.RequireResponseHeader(t, client, harness.RouterSessionURL(eps.RouterHTTP, version, escrowID, "/healthz"), harness.StickyUpstreamHeader)
 	hostID := harness.HostIDForUpstream(cfg, upstream)
@@ -102,8 +102,8 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	launchParallelChats(t, client, eps, cfg, 4)
 	require.Equal(t, gatewayConns, settledPersistentTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort),
 		"parallel RPCs opened new gateway connections to the proxy")
-	require.Equal(t, proxyBackend, settledPersistentTCP(t, stack, "proxy", "", 8080),
-		"parallel RPCs opened new proxy connections to versiond-router:8080")
+	require.Equal(t, proxyBackend, settledPersistentTCP(t, stack, "proxy", "", 8081),
+		"parallel RPCs opened new proxy connections to versiond-router:8081")
 	require.Equal(t, routerConns, settledPersistentTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
 		"parallel RPCs opened new versiond-router connections to %s", hostID)
 	requireChildMux(t, stack, hostID)

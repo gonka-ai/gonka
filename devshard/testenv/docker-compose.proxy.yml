@@ -6,7 +6,7 @@
 # no-proxy: peers dial versiond-router:8080 directly.
 #
 # In-network hop, one port for everything, as join's :80:
-#   proxy:8080  HTTP/2 preface  → rpc_h2 (path zones, X-Real-IP) → versiond-router:8080 proto h2
+#   proxy:8080  HTTP/2 preface  → rpc_h2 (path zones, X-Real-IP) → versiond-router:8081 proto h2
 #   proxy:8080  anything else   → versiond-router:8080 (TCP passthrough, JSON)
 # gencompose points pooled hosts' InferenceUrl at http://proxy:8080 when
 # TESTENV_PROXY_OVERLAY is set, so the gateway and the hosts dial this hop.

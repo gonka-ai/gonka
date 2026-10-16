@@ -214,6 +214,8 @@ type PeerConn struct {
 	// authHostProbe Attaches on the h2 origin only (refreshLive). Nil when
 	// H2URL is empty.
 	authHostProbe rpcpbconnect.PeerAuthServiceClient
+	// httpH2 is pinned to the h2 origin; native gRPC clients use it.
+	httpH2 *http.Client
 	// authDoorGRPC / authHostGRPC are native gRPC (connect.WithGRPC). Used
 	// only while usingH2(); HTTP/1.1 fallback keeps authDoor / authHost.
 	authDoorGRPC rpcpbconnect.PeerAuthServiceClient
@@ -311,27 +313,33 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	if hostBase != doorBase {
 		authHost = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, opts...)
 	}
+	// Native gRPC needs HTTP/2 framing end to end, so its clients are pinned
+	// to the h2 origin and never follow the switch onto HTTP/1.1. A gRPC
+	// request selected just before the switch flips off still fails on the
+	// dead mux rather than reaching nginx with gRPC framing.
+	var httpH2 *http.Client
+	if h2 := origin.h2Only(); h2 != nil {
+		httpH2 = &http.Client{Transport: h2, CheckRedirect: noFollowRedirects}
+	}
 	// The live-session HTTP/2 probe Attaches on a client pinned to the h2
 	// origin, so the shared switch flips only after that probe succeeded.
 	var authHostProbe rpcpbconnect.PeerAuthServiceClient
-	if h2 := origin.h2Only(); h2 != nil {
-		authHostProbe = rpcpbconnect.NewPeerAuthServiceClient(&http.Client{
-			Transport:     h2,
-			CheckRedirect: noFollowRedirects,
-		}, hostBase, opts...)
+	if httpH2 != nil {
+		authHostProbe = rpcpbconnect.NewPeerAuthServiceClient(httpH2, hostBase, opts...)
 	}
 	var authDoorGRPC, authHostGRPC rpcpbconnect.PeerAuthServiceClient
-	if cfg.GRPC {
-		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, doorBase, grpcOpts...)
+	if cfg.GRPC && httpH2 != nil {
+		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpH2, doorBase, grpcOpts...)
 		authHostGRPC = authDoorGRPC
 		if hostBase != doorBase {
-			authHostGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, grpcOpts...)
+			authHostGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpH2, hostBase, grpcOpts...)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PeerConn{
 		cfg:            cfg,
 		http:           httpClient,
+		httpH2:         httpH2,
 		origin:         origin,
 		authDoor:       authDoor,
 		authHost:       authHost,
@@ -1046,12 +1054,17 @@ func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 		return nil, time.Time{}, err
 	}
 	if p.authHostProbe != nil && !p.origin.usingH2() && p.shouldProbeH2() {
-		tok, exp, err := p.attachOnce(ctx, p.authHostProbe, msg)
+		// The probe gets half of the refresh budget. An origin that takes
+		// the whole deadline to answer the probe must still leave time for
+		// the HTTP/1.1 renewal below; a probe timeout is not a miss.
+		probeCtx, cancelProbe := context.WithTimeout(ctx, halfRemaining(ctx))
+		tok, exp, err := p.attachOnce(probeCtx, p.authHostProbe, msg)
+		cancelProbe()
 		if err == nil {
 			p.origin.setH2(true)
 			return tok, exp, nil
 		}
-		if p.ctx.Err() != nil {
+		if p.ctx.Err() != nil || ctx.Err() != nil {
 			return nil, time.Time{}, err
 		}
 		if isRPCH2Miss(err) {
@@ -1073,6 +1086,20 @@ func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 		}
 	}
 	return p.attachOnce(ctx, p.peerAuthClient(true), msg)
+}
+
+// halfRemaining is half of ctx's remaining time, or DefaultAttachTimeout/2
+// when ctx has no deadline.
+func halfRemaining(ctx context.Context) time.Duration {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return DefaultAttachTimeout / 2
+	}
+	rem := time.Until(d) / 2
+	if rem <= 0 {
+		return time.Millisecond
+	}
+	return rem
 }
 
 // noteH2Miss records that this InferenceUrl host does not speak HTTP/2
@@ -1134,6 +1161,15 @@ func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthS
 // missed HTTP/2 inside the miss TTL.
 func (p *PeerConn) shouldProbeH2() bool {
 	return p != nil && p.cfg.DialSet.H2URL != "" && !skipRPCH2(p.cfg.BaseURL)
+}
+
+// httpFor is the HTTP client for a Connect client: the h2-pinned one for
+// native gRPC, the switching one otherwise.
+func (p *PeerConn) httpFor(grpc bool) *http.Client {
+	if grpc && p.httpH2 != nil {
+		return p.httpH2
+	}
+	return p.http
 }
 
 func (p *PeerConn) useGRPC() bool {

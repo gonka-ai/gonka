@@ -88,11 +88,11 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		if conn.cfg.GRPC {
-			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
-			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
-			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
-			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
-			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
+			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
+			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
+			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
+			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(chatClientOptions(), true)...)
+			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
 		}
 	}
 	return c
@@ -913,7 +913,7 @@ func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceCl
 		return nil, fmt.Errorf("no peer connection")
 	}
 	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
-	client := rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), grpc)...)
+	client := rpcpbconnect.NewPayloadServiceClient(c.conn.httpFor(grpc), base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), grpc)...)
 	if grpc {
 		c.payloadGRPC[i] = client
 	} else {

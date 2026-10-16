@@ -51,7 +51,7 @@ frontend in the same process, which skips nginx.
     |
     +-- :80 HTTP/2 preface / :443 ALPN gonka-rpc/1 --> rpc_h2 (same process; skips nginx)
             |
-            +--> same versiond-router fleet :8080 (proto h2) --> versiond (h2c) --> child (h2c)
+            +--> same versiond-router fleet :8081 (proto h2) --> versiond (h2c) --> child (h2c)
 ```
 
 `proxy-router` selects a ready router replica with the same escrow-derived
@@ -90,7 +90,7 @@ failover.
 | 22 Tier A `/v1/*` query routes | `proxy-router :18082` → ready `edge-api` | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
 | `/devshard/<version>/sessions/...` (JSON protocol) | `proxy-router :18081` → `versiond-router` fleet → `versiond` → `devshardd` | Chat, gossip, payloads — version binds on owner chat. HTTP/1.1. nginx is on this hop. |
-| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **HTTP/2:** `:80`/`:443` on `proxy-router` (preface / ALPN hand-off) → versiond-router `:8080` (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. **HTTP/1.1 fallback:** same as JSON (nginx), reaching the same `_rpc` twin by path. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
+| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **HTTP/2:** `:80`/`:443` on `proxy-router` (preface / ALPN hand-off) → versiond-router `:8081` (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. **HTTP/1.1 fallback:** same as JSON (nginx), reaching the same `_rpc` twin by path. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
 | `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
 | `/devshard/<version>/sessions/.../diffs\|mempool\|signatures` (legacy) | join proxy **internal rewrite** → versionless | Backward-compat for scrapers |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
@@ -298,7 +298,7 @@ evacuation stay the same operation:
 ```text
 client
   → public proxy-router :80 (HTTP/2 preface) or :443 (TLS, ALPN gonka-rpc/1, nginx's cert)
-  → one ready versiond-router replica :8080 (proto h2)
+  → one ready versiond-router replica :8081 (proto h2)
   → versiond-N:8080 (h2c)
   → devshardd :500x (h2c)
 ```
@@ -333,7 +333,7 @@ Known limitations of this hop, recorded in
 - `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
   not send an HTTP/2 request. The `_rpc` health check is HTTP/1.1
   `GET /readyz` on router admin `:8404`; data is `proto h2` to the router's
-  `:8080`, the same listen JSON uses. A remote endpoint `{id, host, port}` is
+  `:8081`, a second bind of the frontend JSON uses. A remote endpoint `{id, host, port}` is
   the versiond listen (`8080`); that process has to speak h2c, and the
   updater on the network node cannot see which image a remote host runs.
 - Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only

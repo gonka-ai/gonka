@@ -82,6 +82,11 @@ func TestRPCH2MissClassifiesSilentClose(t *testing.T) {
 	require.True(t, isRPCH2Miss(fmt.Errorf("attach: %w", io.ErrUnexpectedEOF)))
 	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
 	require.False(t, isRPCH2Miss(errAttachTTL))
+	// Watch reports a clean stream end as io.EOF; that reopens Watch on the
+	// same transport and must not read as a dead origin.
+	require.False(t, isRPCH2TransportMiss(io.EOF))
+	require.False(t, isRPCH2TransportMiss(io.ErrUnexpectedEOF))
+	require.True(t, watchReopen(io.EOF))
 }
 
 func TestH2MissCacheRemembersInferenceHost(t *testing.T) {

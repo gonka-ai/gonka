@@ -1507,11 +1507,11 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/mixed.cfg" \
 		|| fail "JSON and peer RPC data listener is not on :8080"; \
 	grep -q '^[[:space:]]*bind :8081$$' "$$tmpdir/mixed.cfg" \
-		|| fail "the previous proxy generation's :8081 dial has no listener"; \
+		|| fail "the proxy's peer-RPC dial :8081 has no listener"; \
 	if grep -q 'proto h2' <<<"$$(grep '^[[:space:]]*bind ' "$$tmpdir/mixed.cfg")"; then \
 		fail "a bind forces proto h2: JSON HTTP/1.1 and peer RPC HTTP/2 share :8080 by preface detection"; \
 	fi; \
-	if grep -q 'dst_port' "$$tmpdir/mixed.cfg"; then \
+	if grep -q 'use_backend.*dst_port' "$$tmpdir/mixed.cfg"; then \
 		fail "peer RPC twins must be selected by path, not by port"; \
 	fi; \
 	grep -Fq 'acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/' "$$tmpdir/mixed.cfg" \

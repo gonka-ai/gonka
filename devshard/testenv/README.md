@@ -271,7 +271,7 @@ converges.
 
 ### Public-proxy overlay (optional)
 
-Adds a `proxy` service on in-network **`proxy:8080`**, a one-port stand-in for join's `proxy-router`. Peer RPC (HTTP/2 preface) and JSON share that port, as they share join's `:80`/`:443`: the preface is handed to an HAProxy frontend with the production path zones, which dials `versiond-router:8080` with `proto h2`; everything else passes through to the same `versiond-router:8080`. With `TESTENV_PROXY_OVERLAY=1`, gencompose makes `http://proxy:8080` the pooled InferenceUrl, so the gateway and the hosts dial the proxy. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
+Adds a `proxy` service on in-network **`proxy:8080`**, a one-port stand-in for join's `proxy-router`. Peer RPC (HTTP/2 preface) and JSON share that port, as they share join's `:80`/`:443`: the preface is handed to an HAProxy frontend with the production path zones, which dials `versiond-router:8081` with `proto h2` as join's proxy-router does; everything else passes through to `versiond-router:8080`. With `TESTENV_PROXY_OVERLAY=1`, gencompose makes `http://proxy:8080` the pooled InferenceUrl, so the gateway and the hosts dial the proxy. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
 
 ```bash
 cd devshard/testenv

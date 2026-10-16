@@ -336,12 +336,26 @@ func noteRPCH2Miss(host, h2URL string, err error) {
 	logging.Debug("peer rpc origin does not speak HTTP/2; using HTTP/1.1", kv...)
 }
 
-// isRPCH2Miss is a failed h2 origin (closed, not h2c, refuse, preface,
-// ALPN, dial or TLS that hit the probe timeout). Connect status from a
-// working HTTP/2 server — including Unavailable / Unknown after an RPC —
-// is not a miss. A context deadline on the Attach call is not a miss
-// either: that RPC has the full DefaultAttachTimeout.
+// isRPCH2Miss is a failed h2 origin on Attach (closed, not h2c, refuse,
+// preface, ALPN, dial or TLS that hit the probe timeout, or a close with no
+// answer). Connect status from a working HTTP/2 server — including
+// Unavailable / Unknown after an RPC — is not a miss. A context deadline on
+// the Attach call is not a miss either: that RPC has the full
+// DefaultAttachTimeout.
+//
+// A bare EOF on Attach is a miss: a TLS terminator that drops an
+// unsupported ClientHello without an alert, or a cleartext server that
+// swallows the preface and closes, both end the handshake with io.EOF or
+// io.ErrUnexpectedEOF and never say anything the client could act on. It
+// is an Attach-only rule: Watch turns a clean stream end into io.EOF, and
+// that one reopens Watch (watchReopen), it does not change transport.
 func isRPCH2Miss(err error) bool {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
 	return isRPCH2TransportMiss(err)
 }
 
@@ -349,18 +363,12 @@ func isContextDone(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
 }
 
-// isRPCH2TransportMiss is a dead origin (RST, refuse, not h2c, preface,
-// a close with no answer). DeadlineExceeded / Canceled are not transport
-// misses. A plain EOF is: a TLS terminator that drops an unsupported
-// ClientHello without an alert, or a cleartext server that swallows the
-// preface and closes, both end the handshake with io.EOF or
-// io.ErrUnexpectedEOF and never say anything the client could act on.
+// isRPCH2TransportMiss is a dead origin (RST, refuse, not h2c, preface).
+// DeadlineExceeded / Canceled are not transport misses, and neither is a
+// bare EOF: on a live session that is a clean Watch end.
 func isRPCH2TransportMiss(err error) bool {
 	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
 		return false
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
 	}
 	var op *net.OpError
 	if errors.As(err, &op) {

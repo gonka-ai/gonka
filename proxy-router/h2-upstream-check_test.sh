@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The HA peer-RPC backend is proto h2 on the router data listen (8080), but
-# its health check is HTTP/1.1 GET /readyz on the router admin port. A live show stat must say
+# The HA peer-RPC backend is proto h2 on the router peer-RPC listen (8081),
+# but its health check is HTTP/1.1 GET /readyz on the router admin port. A live show stat must say
 # DOWN until that check passes, then UP/L7OK, and a 503 must take it off UP.
 # The pre-fix line, with no check, stays "no check" beside it.
 set -Eeuo pipefail
@@ -99,7 +99,7 @@ grep -q 'http-check send meth GET uri /readyz hdr Host router' "$tmpdir/backend.
     || fail "rendered peer RPC check is not GET /readyz"
 grep -q 'http-check expect status 200' "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC check does not expect 200"
-grep -q 'server-template router 1 router:8080 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' \
+grep -q 'server-template router 1 router:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' \
     "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC server line is not a checked proto h2 dial"
 
@@ -134,7 +134,7 @@ frontend fe
 $(cat "$tmpdir/backend.cfg")
 
 backend rpc_h2_unchecked
-    server router router:8080 proto h2 resolvers docker init-addr none
+    server router router:8081 proto h2 resolvers docker init-addr none
 EOF
 
 docker network create "$net" >/dev/null

@@ -268,10 +268,10 @@ test-render: test-route-status test-rpc-h2-cert
 	VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
 	VERSIOND_ROUTER_FLEET_CAPACITY=16 \
 	./entrypoint.sh; \
-	grep -q 'server-template router 16 versiond-router-fleet:8080 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' "$$tmpdir/ha.cfg" \
-		|| fail "HA peer RPC does not dial the router data listen :8080 proto h2 with an HTTP/1.1 check"; \
-	if grep -q 'versiond-router-fleet:8081' "$$tmpdir/ha.cfg"; then \
-		fail "HA peer RPC still dials a second router port"; \
+	grep -q 'server-template router 16 versiond-router-fleet:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC does not dial the router peer-RPC listen :8081 proto h2 with an HTTP/1.1 check"; \
+	if grep -q 'versiond-router-fleet:8080 proto h2' "$$tmpdir/ha.cfg"; then \
+		fail "HA peer RPC dials the JSON listen; the previous router generation refuses /rpc/ there"; \
 	fi; \
 	awk ' \
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
@@ -285,7 +285,7 @@ test-render: test-route-status test-rpc-h2-cert
 	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\]' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not select the per-version _rpc backend"; \
 	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
-		inside && /server-template router 16 versiond-router-fleet:8080 proto h2/ { dial = 1 } \
+		inside && /server-template router 16 versiond-router-fleet:8081 proto h2/ { dial = 1 } \
 		inside && /regsub\(_rpc/ { check = 1 } \
 		inside && /disabled$$/ { down = 1 } \
 		END { exit !(dial && check && down) }' "$$tmpdir/ha.cfg" \

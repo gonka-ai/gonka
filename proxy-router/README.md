@@ -31,7 +31,7 @@ client
 peer RPC (same :80/:443, skips nginx)
   -> proxy-router :80  (HTTP/2 preface)  -> rpc_h2 frontend (h2c)
   -> proxy-router :443 (ALPN gonka-rpc/1) -> rpc_h2 frontend (TLS with nginx's cert, HTTP/2)
-       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8080 proto h2
+       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
        non-HA: versiond:8080 proto h2
 ```
 
