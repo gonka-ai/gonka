@@ -11,15 +11,17 @@ import (
 // of the MsgWarmKeyRevoke that ends it; RevokedAtNonce is zero while the key
 // is live.
 //
-// GrantedAtHeight and RevokedAtHeight name the entries of the chain's warm-key
-// log that the bind and the revoke point at: the heights at which the chain
-// recorded the grant and its end. The log is append-only, so the question
-// "was this key a warm key of this slot's validator at that height" has one
-// answer for ever, and every host verifies a binding the same way whenever
-// it asks. See docs/warm-keys-v7.md.
+// GrantID names the entry of the chain's warm-key log the binding points at:
+// the id the module gave the grant, increasing per granter, so a later grant
+// of the same key has a larger id and the same grant can never be bound twice
+// after its revoke. GrantedAtHeight and RevokedAtHeight are the heights the
+// chain recorded on that entry. The log is append-only, so every host that
+// looks the entry up gets the same answer, whenever it asks.
+// See docs/warm-keys-v7.md.
 type WarmKeyBinding struct {
 	Addr            string
 	FromNonce       uint64
+	GrantID         uint64
 	GrantedAtHeight uint64
 	RevokedAtNonce  uint64
 	RevokedAtHeight uint64
@@ -45,19 +47,21 @@ var (
 	ErrWarmKeyLive     = errors.New("warm key is already live on this slot")
 	ErrWarmKeyNotLive  = errors.New("warm key is not live on this slot")
 	ErrWarmKeyNonce    = errors.New("warm key nonce is not after the previous entry")
-	ErrWarmKeyHeight   = errors.New("warm key height is not after the previous entry")
+	ErrWarmKeyGrant    = errors.New("warm key grant id is not after the previous grant of this key")
+	ErrWarmKeyHeight   = errors.New("warm key revoke height is not after the grant height")
 	ErrWarmKeyNotFound = errors.New("warm key is not bound on this slot")
 )
 
 // Bind appends a live binding of addr to slot from nonce on, pointing at the
-// chain log entry at grantedAtHeight. A key that is already live on the slot
-// cannot be bound twice; a key revoked earlier can be bound again with a
-// later grant. Entries are append-only and ordered by nonce, so a bind at a
-// nonce before the slot's latest entry is refused: the diffs would have been
-// applied out of order. The grant height must be above the height at which
-// the same key was last revoked on this slot, so an old grant cannot bring a
-// revoked key back.
-func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantedAtHeight uint64) error {
+// chain log entry grantID recorded at grantedAtHeight. A key that is already
+// live on the slot cannot be bound twice; a key revoked earlier can be bound
+// again with a later grant, one whose id is above the id of every earlier
+// grant of that key on the slot, so an old grant cannot bring a revoked key
+// back, and a grant replaced in the same block as its predecessor still
+// orders after it. Entries are append-only and ordered by nonce, so a bind
+// at a nonce before the slot's latest entry is refused: the diffs would have
+// been applied out of order.
+func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantID, grantedAtHeight uint64) error {
 	if addr == "" {
 		return ErrWarmKeyEmpty
 	}
@@ -72,19 +76,19 @@ func (h WarmKeyHistory) Bind(slot uint32, addr string, nonce, grantedAtHeight ui
 		if b.RevokedAtNonce == 0 {
 			return fmt.Errorf("%w: slot %d %s", ErrWarmKeyLive, slot, addr)
 		}
-		if grantedAtHeight <= b.RevokedAtHeight {
-			return fmt.Errorf("%w: slot %d %s granted at %d, revoked at %d", ErrWarmKeyHeight, slot, addr, grantedAtHeight, b.RevokedAtHeight)
+		if grantID <= b.GrantID {
+			return fmt.Errorf("%w: slot %d %s grant %d after %d", ErrWarmKeyGrant, slot, addr, grantID, b.GrantID)
 		}
 	}
-	h[slot] = append(entries, WarmKeyBinding{Addr: addr, FromNonce: nonce, GrantedAtHeight: grantedAtHeight})
+	h[slot] = append(entries, WarmKeyBinding{Addr: addr, FromNonce: nonce, GrantID: grantID, GrantedAtHeight: grantedAtHeight})
 	return nil
 }
 
-// Revoke ends the live binding of addr on slot at nonce, pointing at the
-// chain log entry at revokedAtHeight, which must be after the binding's
-// grant. Signatures in diffs before nonce keep verifying; from nonce on the
-// key is refused on this slot.
-func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, revokedAtHeight uint64) error {
+// Revoke ends the live binding of addr on slot at nonce: the binding whose
+// grant is grantID, with the chain's revoke height, which must be at or after
+// the grant height. Signatures in diffs before nonce keep verifying; from
+// nonce on the key is refused on this slot.
+func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, grantID, revokedAtHeight uint64) error {
 	if addr == "" {
 		return ErrWarmKeyEmpty
 	}
@@ -96,7 +100,10 @@ func (h WarmKeyHistory) Revoke(slot uint32, addr string, nonce, revokedAtHeight 
 		if entries[i].Addr != addr || entries[i].RevokedAtNonce != 0 {
 			continue
 		}
-		if revokedAtHeight <= entries[i].GrantedAtHeight {
+		if entries[i].GrantID != grantID {
+			return fmt.Errorf("%w: slot %d %s grant %d, live binding is grant %d", ErrWarmKeyGrant, slot, addr, grantID, entries[i].GrantID)
+		}
+		if revokedAtHeight < entries[i].GrantedAtHeight {
 			return fmt.Errorf("%w: slot %d %s revoked at %d, granted at %d", ErrWarmKeyHeight, slot, addr, revokedAtHeight, entries[i].GrantedAtHeight)
 		}
 		entries[i].RevokedAtNonce = nonce
