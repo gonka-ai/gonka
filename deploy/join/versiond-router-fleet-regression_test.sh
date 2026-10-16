@@ -1074,7 +1074,7 @@ scenario_h2_parent_drain() {
     cat >"$model/parent-stat.csv" <<'EOF'
 # pxname,svname,status,check_status,check_code,addr
 versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
-rpc_h2_upstream,router1,no check,,,10.0.0.8:8081
+rpc_h2_upstream,router1,no check,,,10.0.0.8:8080
 versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 EOF
     docker_exec() { cat "$model/parent-stat.csv"; }
@@ -1091,10 +1091,10 @@ EOF
     cat >"$model/parent-stat.csv" <<'EOF'
 # pxname,svname,status,check_status,check_code,addr
 versiond_router_coarse,router1,UP,L7OK,200,10.0.0.8:8080
-rpc_h2_upstream,router1,UP,L7OK,200,10.0.0.8:8081
+rpc_h2_upstream,router1,UP,L7OK,200,10.0.0.8:8080
 versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 policy_http,policy1,UP,L4OK,0,10.0.0.8
-rpc_h2_upstream,router2,UP,L7OK,200,10.0.0.9:8081
+rpc_h2_upstream,router2,UP,L7OK,200,10.0.0.9:8080
 EOF
     local want
     refs=$(parent_server_refs 10.0.0.8 | sort) || true
@@ -1113,7 +1113,7 @@ EOF
     cat >"$model/parent-stat.csv" <<'EOF'
 # pxname,svname,status,check_status,check_code,addr
 versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
-rpc_h2_upstream,router1,DRAIN,L7OK,200,10.0.0.8:8081
+rpc_h2_upstream,router1,DRAIN,L7OK,200,10.0.0.8:8080
 versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 EOF
     if ! parent_address_withdrawal_state 10.0.0.8; then

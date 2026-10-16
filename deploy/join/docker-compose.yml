@@ -192,10 +192,6 @@ services:
       - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
-      # Children inherit this. HA peers refuse /rpc/ on :8080, so dial the
-      # proxy-router HTTP/2 port.
-      - DEVSHARD_RPC_H2_UPGRADE=true
-      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -270,13 +266,12 @@ services:
     image: >-
       ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.16}
     ports:
+      # Peer RPC between hosts shares these two ports with the JSON API;
+      # proxy-router tells them apart by the first bytes of a connection.
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
-      # Peer RPC. Not :443 (API_SSL_PORT): those stay TCP to proxy-policy.
-      - "${DEVSHARD_RPC_H2_PORT:-9443}:${DEVSHARD_RPC_H2_PORT:-9443}"
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
-      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
       - PROXY_POLICY_POOL_HOST=proxy-policy-front
       - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
       - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
