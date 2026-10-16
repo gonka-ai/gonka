@@ -79,6 +79,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
 				k.SetBridgeTransaction(ctx, existingTx)
+				k.removeBridgePending(ctx, existingTx.EpochIndex, existingTx.Id)
 
 				// Handle token minting / native release for completed transaction
 				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
@@ -142,6 +143,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	proposedTx.Validators = nil
 
 	k.SetBridgeTransaction(ctx, proposedTx)
+	k.addBridgePending(ctx, proposedTx.EpochIndex, proposedTx.Id)
 
 	k.LogInfo("Bridge exchange: New transaction created",
 		types.Messages,

@@ -134,7 +134,11 @@ func (k Keeper) removeFromEpochGroups(ctx context.Context, participant *types.Pa
 		k.LogError("Failed to get current epoch group", types.Validation, "error", err)
 		return err
 	}
-	return parentGroup.RemoveMember(ctx, participant)
+	if err := parentGroup.RemoveMember(ctx, participant); err != nil {
+		return err
+	}
+	k.MarkBridgeEpochForRecheck(ctx, parentGroup.GroupData.EpochIndex)
+	return nil
 }
 
 func (k Keeper) recordExclusion(ctx context.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) {
