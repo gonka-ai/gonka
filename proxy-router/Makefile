@@ -210,7 +210,12 @@ test-render: test-route-status test-rpc-h2-cert
 		END { exit !h1 } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA HTTP/1.1 fallback backend does not dial versiond"; \
-	if grep -q 'versiond-router-fleet' "$$tmpdir/proxy.cfg" | grep -q rpc; then \
+	if awk ' \
+		$$0 ~ "^backend (rpc_h2_upstream|rpc_versiond_h1)$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { inside = 0 } \
+		inside && /versiond-router-fleet/ { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/proxy.cfg"; then \
 		fail "non-HA peer RPC references the router fleet"; \
 	fi; \
 	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
