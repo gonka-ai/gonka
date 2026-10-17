@@ -345,6 +345,33 @@ func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
 	assert.True(t, result.IsSuccessful(), "validator re-exec 422 must autopass per mainnet 4xx semantics")
 }
 
+// The validator's own node can refuse the replay for reasons that say nothing about the executor's
+// answer: it no longer serves the model, or the request went to a path it doesn't route. Such an
+// answer is the validator's failure, like a 5xx, and must not become a verdict.
+func TestExecuteValidation_ValidatorNodeRefusal_IsNotAVerdict(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   []byte
+	}{
+		{"model not served", http.StatusNotFound, []byte(`{"object":"error","message":"The model ` + "`m`" + ` does not exist.","type":"NotFoundError","param":null,"code":404}`)},
+		{"path not routed", http.StatusNotFound, []byte(`{"detail":"Not Found"}`)},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			result, err := ExecuteValidation(
+				context.Background(), "inf-1",
+				minimalPrompt,
+				responsePayloadJSON("42", -0.5),
+				staticExecutor(testCase.status, testCase.body),
+				0, 0, "processed_logprobs", 0,
+			)
+			require.Error(t, err, "the validator's node failed; there is nothing to judge")
+			assert.Nil(t, result)
+		})
+	}
+}
+
 // Test flow:
 // 1. The executor stores a token id below the replay cap, so the replay reaches the validator node.
 // 2. The node answers 400 naming exactly enforced_tokens (its vocab check) and the validation is invalid.
