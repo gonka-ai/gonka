@@ -169,9 +169,11 @@ Both compression steps ship on. The logprobs optimization no longer costs the er
 |---|---|---|
 | `DEVSHARD_PAYLOAD_ZSTD_ENABLED` | `true` | write payload files zstd-encoded. Reading accepts both suffixes either way, so the gate governs writing alone |
 | `DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED` | `true` | the executor's own default. Off, it stores whole and forwards the stored bytes; `true` compresses what it stores and forwards the served view to a gateway that did not ask for logprobs. Either way the gateway receives a signed view |
-| `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | what the gateway asks executors for, per inference. Unset says nothing and leaves every executor its own default |
+| `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | bootstrap-only initial value for what the gateway asks executors for, per inference. Unset leaves every executor its own default when the settings are first created |
 
-The gateway's override also moves at runtime, without restarting the gateway or any host:
+Once the gateway settings exist in the database, their stored value takes priority over this environment variable. Changing or unsetting the variable and restarting the gateway does not replace or clear the stored override, for either SQLite or Postgres. Use the admin endpoint below to change or clear the persisted value; do not delete the gateway database to change this setting.
+
+The gateway's override moves at runtime, without restarting the gateway or any host:
 
 ```
 POST /v1/admin/settings  {"logprobs_optimization": {"enabled": false}}

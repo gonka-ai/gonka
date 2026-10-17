@@ -28,7 +28,17 @@ const (
 	defaultSessionTTL        = 2 * time.Minute
 	defaultHeartbeat         = 30 * time.Second
 	defaultWatchWriteTimeout = 10 * time.Second
-	minAttachNonceBytes      = 16
+	// defaultChatReadTimeout is how long a Chat may take to deliver its
+	// envelope (10 MiB at most). The child has no server ReadTimeout and
+	// the proxy streams the body, so without it an unread Chat waits for
+	// the proxy's client timeout.
+	defaultChatReadTimeout = 15 * time.Second
+	// defaultChatSendTimeout bounds one ChatFrame send. A gateway that
+	// stops reading blocks Send; the deadline fails that Send and frees
+	// the Chat slot. The generation may still be running. It is per frame,
+	// not per inference.
+	defaultChatSendTimeout = 30 * time.Second
+	minAttachNonceBytes    = 16
 	// maxAttachNonceBytes is a UUID or 256-bit id. The token carries only
 	// its SHA-256, so the bound is about request size, not token size.
 	maxAttachNonceBytes = 32
@@ -71,6 +81,12 @@ type PeerAuthConfig struct {
 	SessionTTL        time.Duration
 	Heartbeat         time.Duration
 	WatchWriteTimeout time.Duration
+	// ChatReadTimeout bounds reading a Chat envelope. Zero means
+	// defaultChatReadTimeout; negative disables it.
+	ChatReadTimeout time.Duration
+	// ChatSendTimeout bounds one ChatFrame send. Zero means
+	// defaultChatSendTimeout; negative disables it.
+	ChatSendTimeout time.Duration
 	// MaxSessions caps concurrent Watch streams. Zero means
 	// defaultMaxSessions. It does not cap Attach or live tokens.
 	MaxSessions int
@@ -135,6 +151,12 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 	}
 	if cfg.WatchWriteTimeout == 0 {
 		cfg.WatchWriteTimeout = defaultWatchWriteTimeout
+	}
+	if cfg.ChatReadTimeout == 0 {
+		cfg.ChatReadTimeout = defaultChatReadTimeout
+	}
+	if cfg.ChatSendTimeout == 0 {
+		cfg.ChatSendTimeout = defaultChatSendTimeout
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -267,7 +289,14 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 	// A live X-Devshard-Session skips the anonymous bucket and spends the
 	// token peer's renewal bucket instead. peer_address is unsigned, so it
 	// is not the key for either.
-	tokenPeer, tokenLive := h.liveSessionToken(req.Header())
+	tokenPeer, tokenLive, tokenExpired := h.sessionHeaderToken(req.Header())
+	// `_` is not a roster, so it cannot open a session. Without a live token
+	// the renewal is refused before ECDSA and the anonymous bucket, and the
+	// client clears its token and Attaches on a real escrow.
+	onHostURL := EscrowIDFromContext(ctx) == transport.HostRPCEscrowID
+	if onHostURL && !tokenLive {
+		return nil, hostRenewalRefused(tokenExpired)
+	}
 	if tokenLive {
 		if err := h.limiter.takeRenewal(ctx, tokenPeer); err != nil {
 			return nil, err
@@ -299,6 +328,9 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("recovered address %s does not match peer_address", recovered))
 	}
 	wasLive := tokenLive && recovered == tokenPeer
+	if onHostURL && !wasLive {
+		return nil, hostRenewalRefused(false)
+	}
 	// Live renewals on /sessions/_/rpc skip the door: the URL is not a
 	// roster. Any real escrow URL is checked even when the peer already
 	// has a host session, so a Watch drop cannot re-Attach on a settled id.
@@ -413,22 +445,37 @@ func (h *PeerAuthHandler) inspectToken(token []byte) (peer string, ok, expired b
 	return peer, true, false
 }
 
-// liveSessionToken is the peer bound to a still-valid X-Devshard-Session.
-// A missing, forged, or expired header is not live. The unsigned
+// sessionHeaderToken is the peer bound to a still-valid X-Devshard-Session.
+// A missing, forged, or expired header is not live; expired is true only
+// for a token this host issued that is past its TTL. The unsigned
 // peer_address is not consulted.
-func (h *PeerAuthHandler) liveSessionToken(header http.Header) (string, bool) {
+func (h *PeerAuthHandler) sessionHeaderToken(header http.Header) (peer string, live, expired bool) {
 	if h == nil || header == nil {
-		return "", false
+		return "", false, false
 	}
 	enc := header.Get(transport.SessionHeader)
 	if enc == "" || len(enc) > maxSessionTokenBytes*2 {
-		return "", false
+		return "", false, false
 	}
 	raw, err := hex.DecodeString(enc)
 	if err != nil || len(raw) == 0 {
-		return "", false
+		return "", false, false
 	}
-	return h.LookupToken(raw)
+	peer, live, expired = h.inspectToken(raw)
+	if !live {
+		return "", false, expired
+	}
+	return peer, true, false
+}
+
+// hostRenewalRefused answers an Attach on HostRPCEscrowID that has no live
+// session for its signer. It carries no X-Devshard-Error, so versiond does
+// not charge the origin for a token that simply ran out.
+func hostRenewalRefused(expired bool) error {
+	if expired {
+		return connect.NewError(connect.CodeUnauthenticated, errSessionExpired)
+	}
+	return handshakeRequired()
 }
 
 // acquireAttachVerify takes one anonymous-bucket token and an in-flight

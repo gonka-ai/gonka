@@ -43,6 +43,42 @@ func TestClassifyPayloadFetchError_ClosedPeerIsNotExecutorFault(t *testing.T) {
 	require.ErrorIs(t, classifyPayloadFetchError(context.Background(), tooLarge), errExecutorPayloadFault)
 }
 
+func TestClassifyPayloadFetchError_ReleasedPeersWithRateLimitDoesNotVote(t *testing.T) {
+	t.Cleanup(transport.ResetOutboundPeerReleaseForTest)
+	transport.ReleaseOutboundPeerConns()
+	phase := new(chain.Phase)
+	phase.SetEpoch(10)
+
+	bare := fmt.Errorf("get payload: %w", ErrPayloadRateLimited)
+	retried := fmt.Errorf("%w: %w", errPayloadRateLimitRetried, bare)
+	for _, err := range []error{bare, retried} {
+		classified := classifyPayloadFetchError(context.Background(), err)
+		require.ErrorIs(t, classified, ErrPayloadRateLimited)
+		require.NotErrorIs(t, classified, errExecutorPayloadFault)
+		require.Nil(t, executorFaultVerdict(context.Background(), phase, faultReq(10), 10, classified, true))
+	}
+}
+
+func TestFetchPayloadsWithRateLimitRetry_Second429AfterReleaseDoesNotVote(t *testing.T) {
+	t.Cleanup(transport.ResetOutboundPeerReleaseForTest)
+	setPayloadRateLimitRetryDelay(t, time.Millisecond, time.Millisecond)
+	calls := 0
+	_, err := fetchPayloadsWithRateLimitRetry(context.Background(), faultReq(10), func(context.Context) (*commonvalidation.PayloadResponse, error) {
+		calls++
+		if calls == 2 {
+			transport.ReleaseOutboundPeerConns()
+		}
+		return nil, fmt.Errorf("get payload: %w", ErrPayloadRateLimited)
+	})
+	require.Equal(t, 2, calls)
+	require.ErrorIs(t, err, errPayloadRateLimitRetried)
+	classified := classifyPayloadFetchError(context.Background(), err)
+	require.NotErrorIs(t, classified, errExecutorPayloadFault)
+	phase := new(chain.Phase)
+	phase.SetEpoch(10)
+	require.Nil(t, executorFaultVerdict(context.Background(), phase, faultReq(10), 10, classified, true))
+}
+
 func TestFetchSignedPayloads_AttachTimeoutIsExecutorFault(t *testing.T) {
 	t.Cleanup(transport.ResetOutboundPeerReleaseForTest)
 	prev := payloadFetchHeaderTimeout

@@ -784,89 +784,102 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	return &meta, nil
 }
 
+// GetDiffs loads each nonce's txs_proto once, then that nonce's signatures.
+// One read transaction keeps the two statements on the same snapshot. A join
+// would repeat the blob once per signature row.
 func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	p, _, err := s.poolFor(escrowID)
 	if err != nil {
 		return nil, err
 	}
+	tx, err := p.readDB.BeginTx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
 
+	rows, err := tx.Query(
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		 FROM diffs
+		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
+		 ORDER BY nonce`,
+		escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := readDiffRecords(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return recs, nil
+	}
+
+	sigRows, err := tx.Query(
+		`SELECT nonce, slot_id, sig FROM signatures
+		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
+		 ORDER BY nonce, slot_id`,
+		escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = attachDiffSignatureRows(sigRows, recs)
+	sigRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+func (s *SQLite) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := p.readDB.Query(
-		`SELECT d.nonce, d.txs_proto, d.user_sig, d.post_state_root, d.state_hash, d.warm_keys_json, d.created_at,
-		        s.slot_id, s.sig
-		 FROM diffs d
-		 LEFT JOIN signatures s ON d.escrow_id = s.escrow_id AND d.nonce = s.nonce
-		 WHERE d.escrow_id = ? AND d.nonce >= ? AND d.nonce <= ?
-		 ORDER BY d.nonce, s.slot_id`,
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM diffs
+		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
+		 ORDER BY nonce`,
 		escrowID, fromNonce, toNonce,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var result []types.DiffRecord
-	var current *types.DiffRecord
-	var currentNonce uint64
-
+	var out []types.DiffWire
 	for rows.Next() {
-		var nonce uint64
-		var txsProto []byte
-		var userSig, postStateRoot, stateHash []byte
-		var warmJSON *string
-		var createdAt int64
-		var slotID *uint32
-		var sig []byte
-
-		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt, &slotID, &sig); err != nil {
+		var w types.DiffWire
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
 			return nil, err
 		}
-
-		if current == nil || nonce != currentNonce {
-			if current != nil {
-				result = append(result, *current)
-			}
-
-			txs, err := unmarshalTxs(txsProto)
-			if err != nil {
-				return nil, err
-			}
-
-			rec := types.DiffRecord{
-				Diff: types.Diff{
-					Nonce:         nonce,
-					Txs:           txs,
-					UserSig:       userSig,
-					PostStateRoot: postStateRoot,
-				},
-				StateHash: stateHash,
-				CreatedAt: createdAt,
-			}
-
-			if warmJSON != nil {
-				wk := make(map[uint32]string)
-				if err := json.Unmarshal([]byte(*warmJSON), &wk); err != nil {
-					return nil, fmt.Errorf("unmarshal warm keys: %w", err)
-				}
-				rec.WarmKeyDelta = wk
-			}
-
-			current = &rec
-			currentNonce = nonce
-		}
-
-		if slotID != nil && sig != nil {
-			if current.Signatures == nil {
-				current.Signatures = make(map[uint32][]byte)
-			}
-			current.Signatures[*slotID] = sig
-		}
+		out = append(out, w)
 	}
+	return out, rows.Err()
+}
 
-	if current != nil {
-		result = append(result, *current)
+func (s *SQLite) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, false, err
 	}
-
-	return result, rows.Err()
+	var hash []byte
+	err = p.readDB.QueryRow(
+		`SELECT state_hash FROM diffs WHERE escrow_id = ? AND nonce = ?`,
+		escrowID, nonce,
+	).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return hash, true, nil
 }
 
 func (s *SQLite) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {

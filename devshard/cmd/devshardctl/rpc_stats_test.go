@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -119,6 +120,127 @@ func TestGatewayRPCStatsCollectorAggregatesNoPeerSeries(t *testing.T) {
 	families = gatherRPCStats(t, g)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_"}, 3)
 	requireNoMetricFamily(t, families, "devshard_gateway_rpc_peer_requests_last_minute")
+}
+
+func TestGatewayRPCStatsEmitCapsSnapshotLabels(t *testing.T) {
+	const (
+		hostRequests = 9.0
+		getDiffs     = 4.0
+		sharedExtra  = 1.0
+	)
+	snap := transport.RPCStatsSnapshot{
+		MinuteUnix: 1_710_000_000,
+		Host: transport.RPCStatsHost{
+			Requests: uint64(hostRequests),
+			Banned:   1,
+			Endpoints: []transport.RPCStatsEndpoint{
+				{Endpoint: "GetDiffs", Requests: uint64(getDiffs), Banned: 1},
+				{Endpoint: "nope-1", Requests: 2, Banned: 1},
+				{Endpoint: "nope-2", Requests: 3, Banned: 2},
+			},
+			Zones: []transport.RPCStatsZone{
+				{Zone: "shared", Requests: uint64(getDiffs), Banned: 1},
+				{Zone: "shared", Requests: uint64(sharedExtra), Banned: 0},
+				{Zone: "zzz", Requests: 5, Banned: 2},
+				{Zone: "yyy", Requests: 6, Banned: 3},
+			},
+		},
+	}
+	var wantReconnects uint64
+	for i := 0; i < rpcStatsMaxReconnectRows+10; i++ {
+		n := uint64(i + 1)
+		snap.Host.Reconnects = append(snap.Host.Reconnects, transport.RPCStatsReconnect{
+			Peer: fmt.Sprintf("peer-%d", i), Reason: "watch", Attempts: n,
+		})
+		wantReconnects += n
+	}
+	snap.Host.Reconnects = append(snap.Host.Reconnects, transport.RPCStatsReconnect{
+		Peer: "peer-0", Reason: "invented", Attempts: 7,
+	})
+	wantReconnects += 7
+
+	for i := 0; i < rpcStatsMaxShardRows+10; i++ {
+		n := uint64(i + 1)
+		snap.Shards = append(snap.Shards, transport.RPCStatsShard{
+			EscrowID: fmt.Sprintf("e-%04d", i),
+			Requests: n,
+			Banned:   1,
+			Endpoints: []transport.RPCStatsEndpoint{
+				{Endpoint: "nope", Requests: n, Banned: 1},
+			},
+		})
+	}
+	snap.Shards = append(snap.Shards, transport.RPCStatsShard{
+		EscrowID: "42",
+		Requests: 1_000_000,
+		Endpoints: []transport.RPCStatsEndpoint{
+			{Endpoint: "GetDiffs", Requests: 1_000_000},
+		},
+	})
+	snap.Shards = append(snap.Shards, transport.RPCStatsShard{
+		EscrowID: "_",
+		Requests: 50,
+		Endpoints: []transport.RPCStatsEndpoint{
+			{Endpoint: "Chat", Requests: 50},
+		},
+	})
+
+	p := &rpcStatsPoller{byHost: map[string]*rpcStatsHostState{
+		"gonka1a": {Participant: "gonka1a", Up: true, HasSnap: true, Snap: snap},
+	}}
+	families := gatherRPCStats(t, &Gateway{rpcStats: p})
+
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_"}, hostRequests)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "GetDiffs"}, getDiffs)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "other"}, 5)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_banned_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "other"}, 3)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "_", "endpoint": "nope-1"})
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_zone_requests_last_minute", map[string]string{"host": "gonka1a", "zone": "shared"}, getDiffs+sharedExtra)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_zone_requests_last_minute", map[string]string{"host": "gonka1a", "zone": "other"}, 11)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_zone_banned_last_minute", map[string]string{"host": "gonka1a", "zone": "other"}, 5)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_zone_requests_last_minute", map[string]string{"host": "gonka1a", "zone": "zzz"})
+
+	reconnects := metricFamily(t, families, "devshard_gateway_rpc_reconnects_last_minute")
+	require.Len(t, reconnects.GetMetric(), rpcStatsMaxReconnectRows)
+	var gotReconnects uint64
+	for _, m := range reconnects.GetMetric() {
+		gotReconnects += uint64(m.GetGauge().GetValue())
+	}
+	require.Equal(t, wantReconnects, gotReconnects)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_reconnects_last_minute", map[string]string{"host": "gonka1a", "peer": "peer-137", "reason": "watch"}, 138)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_reconnects_last_minute", map[string]string{"host": "gonka1a", "peer": "peer-0", "reason": "watch"})
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_reconnects_last_minute", map[string]string{"host": "gonka1a", "peer": "other", "reason": "other"}, 73)
+
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "42"}, 1_000_000)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "42", "endpoint": "GetDiffs"}, 1_000_000)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "e-0000"})
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "e-0137"}, 138)
+	// "_" shard must not overwrite the process total. Its 50 plus the 12
+	// smallest invented escrows (1+...+12) land on escrow "other".
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "other"}, 128)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "other", "endpoint": "Chat"}, 50)
+
+	var shardRows int
+	requests := metricFamily(t, families, "devshard_gateway_rpc_requests_last_minute")
+	for _, m := range requests.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == "escrow" && lp.GetValue() != "_" {
+				shardRows++
+			}
+		}
+	}
+	require.LessOrEqual(t, shardRows, rpcStatsMaxShardRows)
+}
+
+func metricFamily(t *testing.T, families []*dto.MetricFamily, name string) *dto.MetricFamily {
+	t.Helper()
+	for _, family := range families {
+		if family.GetName() == name {
+			return family
+		}
+	}
+	t.Fatalf("metric family %s not found", name)
+	return nil
 }
 
 func TestGatewayRPCStatsUpZeroKeepsLastGood(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,7 +52,9 @@ func TestSession_RetainedDiffsAreCappedWithAStore(t *testing.T) {
 	require.Len(t, session.diffs, maxRetainedDiffs, "a host at cursor 0 no longer keeps the whole journal in memory")
 	require.Equal(t, uint64(n-maxRetainedDiffs+1), session.diffs[0].Nonce)
 
-	requireContiguous(t, session.diffsForHost(0), 1, n)
+	hostDiffs, err := session.diffsForHost(0)
+	require.NoError(t, err)
+	requireContiguous(t, hostDiffs, 1, n)
 
 	root, ok, err := session.postStateRootForNonce(1)
 	require.NoError(t, err)
@@ -188,7 +191,9 @@ func TestSession_RewindWithAStoreReachesTheStartOfTheJournal(t *testing.T) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	require.Zero(t, session.hostSyncNonce[2], "the store holds the journal from nonce 1")
-	requireContiguous(t, session.diffsForHost(2), 1, n)
+	hostDiffs, err := session.diffsForHost(2)
+	require.NoError(t, err)
+	requireContiguous(t, hostDiffs, 1, n)
 }
 
 type recordingCatchUpClient struct {
@@ -239,8 +244,11 @@ func (c *aheadCatchUpClient) Send(ctx context.Context, req host.HostRequest, str
 	c.mu.Unlock()
 	if c.jump && first {
 		c.session.mu.Lock()
-		all := append([]types.Diff(nil), c.session.diffRangeLocked(1, c.session.nonce)...)
+		all, readErr := c.session.diffRangeLocked(1, c.session.nonce)
 		c.session.mu.Unlock()
+		if readErr != nil {
+			return nil, readErr
+		}
 		c.Host.ApplyCatchUpDiffs(all)
 	}
 	resp, err := c.InProcessClient.Send(ctx, req, stream, onReceipt)
@@ -331,15 +339,18 @@ func TestSession_InlineCatchUpIsAtMostOneChunk(t *testing.T) {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	_, ok := session.inlineCatchUpLocked(0, n)
+	_, ok, err := session.inlineCatchUpLocked(0, n)
+	require.NoError(t, err)
 	require.False(t, ok, "a host at 0 is more than one chunk behind the tip")
 
-	diffs, ok := session.inlineCatchUpLocked(0, catchUpChunkSize)
+	diffs, ok, err := session.inlineCatchUpLocked(0, catchUpChunkSize)
+	require.NoError(t, err)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 1, catchUpChunkSize)
 
 	session.hostSyncNonce[0] = 60
-	diffs, ok = session.inlineCatchUpLocked(0, n)
+	diffs, ok, err = session.inlineCatchUpLocked(0, n)
+	require.NoError(t, err)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 61, n)
 }
@@ -464,4 +475,74 @@ func TestSession_QuorumAtATrimmedNonceIsReadFromTheStore(t *testing.T) {
 	require.True(t, session.hasQuorum(2, session.sm.QuorumThreshold()),
 		"a quorum check below the trim floor reads the stored signatures")
 	require.False(t, session.hasQuorum(3, session.sm.QuorumThreshold()))
+}
+
+var errDiffRead = errors.New("diff store unavailable")
+
+// failDiffReadStore fails DiffSizes and GetDiffs while fail is set. ReadDiffPages
+// uses both, so a catch-up cannot assemble a trimmed range.
+type failDiffReadStore struct {
+	storage.Storage
+	fail atomic.Bool
+}
+
+func (s *failDiffReadStore) DiffSizes(escrowID string, from, to uint64, limit int) ([]storage.DiffSize, error) {
+	if s.fail.Load() {
+		return nil, errDiffRead
+	}
+	return s.Storage.DiffSizes(escrowID, from, to, limit)
+}
+
+func (s *failDiffReadStore) GetDiffs(escrowID string, from, to uint64) ([]types.DiffRecord, error) {
+	if s.fail.Load() {
+		return nil, errDiffRead
+	}
+	return s.Storage.GetDiffs(escrowID, from, to)
+}
+
+type countingCatchUpClient struct {
+	*InProcessClient
+	sends atomic.Int32
+}
+
+func (c *countingCatchUpClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, onReceipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.sends.Add(1)
+	return c.InProcessClient.Send(ctx, req, stream, onReceipt)
+}
+
+// A trimmed journal whose store read fails must not be sent as the in-memory
+// tail. The host would reject that gap and the chunk would be retried. The
+// same catch-up succeeds once the store answers again.
+func TestSession_CatchUpStoreFailureDoesNotSendTheMemoryTail(t *testing.T) {
+	inner := storage.NewMemory()
+	store := &failDiffReadStore{Storage: inner}
+	session := setupStoredSession(t, store)
+	const n = maxRetainedDiffs + 40
+	composeEmptyDiffs(t, session, n)
+
+	session.mu.Lock()
+	require.Equal(t, uint64(n-maxRetainedDiffs+1), session.firstRetainedNonceLocked())
+	diffs, err := session.diffRangeLocked(1, catchUpChunkSize)
+	session.mu.Unlock()
+	require.NoError(t, err)
+	requireContiguous(t, diffs, 1, catchUpChunkSize)
+
+	store.fail.Store(true)
+	session.mu.Lock()
+	diffs, err = session.diffRangeLocked(1, catchUpChunkSize)
+	session.mu.Unlock()
+	require.ErrorIs(t, err, errDiffRead)
+	require.Empty(t, diffs, "the in-memory tail is not a substitute for the missing prefix")
+
+	client := &countingCatchUpClient{InProcessClient: session.clients[0].(*InProcessClient)}
+	err = session.sendCatchUpWith(context.Background(), 0, client)
+	require.ErrorIs(t, err, errDiffRead)
+	require.Zero(t, client.sends.Load(), "a store failure is not sent, so the host does not reject and retry the gap")
+
+	store.fail.Store(false)
+	require.NoError(t, session.sendCatchUpWith(context.Background(), 0, client))
+	require.NotZero(t, client.sends.Load())
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.Equal(t, uint64(n), session.hostSyncNonce[0])
 }

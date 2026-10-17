@@ -39,8 +39,11 @@ var errCatchUpClosed = errors.New("session closed")
 // for the next request. Concurrent sends to the same host share it.
 func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64) ([]types.Diff, error) {
 	s.mu.Lock()
-	diffs, ok := s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err := s.inlineCatchUpLocked(hostIdx, target)
 	s.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	if ok {
 		return diffs, nil
 	}
@@ -57,7 +60,10 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	diffs, ok = s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err = s.inlineCatchUpLocked(hostIdx, target)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
 			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])

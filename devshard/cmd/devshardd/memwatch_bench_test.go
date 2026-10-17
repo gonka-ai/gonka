@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"log/slog"
+
+	"devshard/memwatch"
 )
 
 // BenchmarkMemorySnapshot10GB times one memory snapshot while 10 GB stays live.
@@ -17,7 +19,7 @@ import (
 // outside that window on purpose: the testing package calls ReadMemStats
 // inside both, and that call stops the world for about 20 µs. Counting those
 // calls made an earlier run report one pause in the 0.020–0.025 ms bucket
-// for logMemory, which does not stop the world itself.
+// for Logger.Sample, which does not stop the world itself.
 //
 //	go test -bench=BenchmarkMemorySnapshot10GB -benchtime=200ms -count=1 -v ./cmd/devshardd/
 func BenchmarkMemorySnapshot10GB(b *testing.B) {
@@ -40,7 +42,7 @@ func BenchmarkMemorySnapshot10GB(b *testing.B) {
 
 	b.Run("RuntimeMetrics", func(b *testing.B) {
 		reportLoopPauses(b, func() {
-			if _, err := readProcessMemory(); err != nil {
+			if _, err := memwatch.ReadProcess(); err != nil {
 				b.Fatal(err)
 			}
 		})
@@ -48,20 +50,21 @@ func BenchmarkMemorySnapshot10GB(b *testing.B) {
 	})
 
 	b.Run("TopHeapInUse", func(b *testing.B) {
-		if top := topHeapInUse(memoryHeapTopN); len(top) == 0 {
+		if top := memwatch.TopHeap(memwatch.DefaultHeapTopN, memwatch.DefaultStackDepth); len(top) == 0 {
 			b.Fatal("empty heap profile")
 		}
-		var top []heapTop
+		var top []memwatch.HeapTop
 		reportLoopPauses(b, func() {
-			top = topHeapInUse(memoryHeapTopN)
+			top = memwatch.TopHeap(memwatch.DefaultHeapTopN, memwatch.DefaultStackDepth)
 		})
 		runtime.KeepAlive(top)
 		runtime.KeepAlive(hold)
 	})
 
 	b.Run("LogMemory", func(b *testing.B) {
+		logger := memwatch.New(memwatch.Config{})
 		reportLoopPauses(b, func() {
-			logMemory(nil)
+			logger.Sample()
 		})
 		runtime.KeepAlive(hold)
 	})
@@ -109,11 +112,11 @@ func retainHeap(b *testing.B, nbytes int) [][]byte {
 	// GC is off for the timed section, so fold this fill in now.
 	runtime.GC()
 
-	proc, err := readProcessMemory()
+	proc, err := memwatch.ReadProcess()
 	if err != nil {
 		b.Fatal(err)
 	}
-	top := topHeapInUse(1)
+	top := memwatch.TopHeap(1, memwatch.DefaultStackDepth)
 	b.Logf("retained %d chunks of %d bytes, fill+gc %s; heap_inuse=%d heap_alloc=%d heap_objects=%d gomaxprocs=%d top=%v",
 		n, chunk, time.Since(started).Round(time.Millisecond),
 		proc.HeapInuse, proc.HeapAlloc, proc.HeapObjects, runtime.GOMAXPROCS(0), top)
