@@ -100,12 +100,13 @@ message VerifyErrorMissResponse {
 }
 
 message ChallengeReceiptRequest {
-  uint64        inference_id     = 1;
-  Payload       payload          = 2;
-  repeated Diff diffs            = 3;
-  // protocol_version must match MsgStartInference.protocol_version in diffs
-  // (the gateway-signed start). Required to CreateSession on a cold host.
-  string        protocol_version = 4;
+  uint64        inference_id = 1;
+  Payload       payload      = 2;
+  repeated Diff diffs        = 3;
+  // The protocol tag is MsgStartInference.protocol_version inside diffs.
+  // A cold host reads that signed start; this request does not carry a copy.
+  reserved 4;
+  reserved "protocol_version";
 }
 
 message ChallengeReceiptResponse {

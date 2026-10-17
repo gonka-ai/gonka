@@ -52,17 +52,20 @@ func NewMux(auth *PeerAuthHandler, session *SessionHandler, opts ...MuxOption) h
 	unaryOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(maxRecvBytes),
 		transport.WithGzipReadCap(maxRecvBytes),
+		connect.WithCompressMinBytes(transport.MinGzipBodyBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	largeOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(transport.DefaultRPCLargeReadMaxBytes),
 		transport.WithGzipReadCap(transport.DefaultRPCLargeReadMaxBytes),
+		connect.WithCompressMinBytes(transport.MinGzipBodyBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	payloadOpts := []connect.HandlerOption{
 		connect.WithReadMaxBytes(int(transport.DefaultMaxBodySize)),
 		transport.WithGzipReadCap(int(transport.DefaultMaxBodySize)),
 		connect.WithSendMaxBytes(transport.DefaultRPCPayloadSendMaxBytes),
+		connect.WithCompressMinBytes(transport.MinGzipBodyBytes),
 		connect.WithInterceptors(&sessionInterceptor{auth: auth}, &rateLimitInterceptor{auth: auth}),
 	}
 	// Chat is 10 MiB (prompt + catch-up). The request envelope is gzipped like

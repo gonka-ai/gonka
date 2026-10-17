@@ -450,7 +450,7 @@ func (payloadGroupLookup) SessionForOwner(id, addr string) (rpcserver.SessionCor
 	return payloadGroupLookup{}.SessionServerExisting(id)
 }
 
-func (payloadGroupLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (payloadGroupLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return payloadGroupLookup{}.SessionForParticipant(id, addr)
 }
 

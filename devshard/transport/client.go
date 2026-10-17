@@ -1003,24 +1003,29 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
-	djList := make([]DiffJSON, len(diffs))
-	for i, d := range diffs {
-		dj, err := DiffToJSON(d)
-		if err != nil {
-			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
+	body, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
 		}
-		djList[i] = dj
-	}
-
-	req := ChallengeReceiptRequest{
-		InferenceID:     inferenceID,
-		Payload:         PayloadToJSON(payload),
-		Diffs:           djList,
-		ProtocolVersion: types.StartProtocolVersion(diffs),
-	}
-	body, err := json.Marshal(req)
+		req := ChallengeReceiptRequest{
+			InferenceID:     inferenceID,
+			Payload:         PayloadToJSON(payload),
+			Diffs:           djList,
+			ProtocolVersion: types.StartProtocolVersion(diffs),
+		}
+		body, err := json.Marshal(req)
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return body, nil
+	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("marshal: %w", err)
+		return nil, nil, err
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
@@ -1035,6 +1040,102 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 		return nil, nil, fmt.Errorf("decode mempool: %w", err)
 	}
 	return resp.Receipt, mempool, nil
+}
+
+// ChallengeReceiptWires posts the payload and one page of stored wires. The
+// page is not decoded. The JSON session route is retired, so this returns
+// ErrHTTPSessionRetired unless the test client allows that route.
+func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.DiffWire, _ host.WireReload) ([]byte, []*types.DevshardTx, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+
+	body, err := recordRefusalBody(false, ctx, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			djList[i] = DiffJSON{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
+		}
+		encoded, err := json.Marshal(ChallengeReceiptRequest{
+			InferenceID: inferenceID,
+			Payload:     PayloadToJSON(payload),
+			Diffs:       djList,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return encoded, nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
+	if err != nil {
+		return nil, nil, err
+	}
+	var resp ChallengeReceiptResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return nil, nil, fmt.Errorf("unmarshal: %w", err)
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Receipt, mempool, nil
+}
+
+// ChallengeCatchUp sends one encoded page with a nil payload. The body is one
+// JSON marshal of the stored bytes with the nonce field prepended.
+func (c *HTTPClient) ChallengeCatchUp(ctx context.Context, inferenceID uint64, diffs []types.DiffWire, protocolVersion string) error {
+	send, err := c.PrepareChallengeCatchUp(inferenceID, diffs, nil, protocolVersion)
+	if err != nil {
+		return err
+	}
+	return send(ctx)
+}
+
+// PrepareChallengeCatchUp marshals the page. The returned function posts that
+// body and does not reference diffs. The body is kept for retries, so reload
+// is not used.
+func (c *HTTPClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.DiffWire, _ host.WireReload, protocolVersion string) (func(context.Context) error, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
+	body, err := recordRefusalBody(true, nil, func() ([]byte, error) {
+		djList := make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			djList[i] = DiffJSON{
+				Nonce:         d.Nonce,
+				Txs:           DiffWireTxs(d.Nonce, d.Txs),
+				UserSig:       d.UserSig,
+				PostStateRoot: d.PostStateRoot,
+			}
+		}
+		body, err := json.Marshal(ChallengeReceiptRequest{
+			InferenceID:     inferenceID,
+			Diffs:           djList,
+			ProtocolVersion: protocolVersion,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("marshal: %w", err)
+		}
+		return body, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) error {
+		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+		defer cancel()
+		_, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
+		return err
+	}, nil
 }
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
