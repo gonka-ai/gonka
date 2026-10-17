@@ -32,6 +32,10 @@ services:
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
       - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
+      # hard-stop-after for the SIGUSR1 soft stop. The fleet stops a slot with
+      # this drain timeout plus a headroom, so HAProxy resets the last streams
+      # and exits before Docker's SIGKILL.
+      - VERSIOND_ROUTER_HARD_STOP_SECONDS=${VERSIOND_ROUTER_HARD_STOP_SECONDS:-${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}}
     labels:
       ai.gonka.component: versiond-router
       ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
@@ -72,9 +76,13 @@ services:
       retries: 10
       start_period: 15s
     stop_signal: SIGUSR1
-    # Routine cleanup stays bounded. The fleet rollout passes its explicit,
-    # longer SSE drain budget to `docker compose stop --timeout`.
-    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    # Every stop path lets the soft stop run to hard-stop-after. The fleet
+    # script exports this as the effective hard stop plus the 10 s headroom it
+    # also gives `docker stop --time`, and refuses a smaller explicit value;
+    # the default here matches the default hard stop for a raw render.
+    # HAProxy exits as soon as its last stream ends, so a stop waits this long
+    # only for a stream that never ends.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-1810s}
     restart: always
     cap_drop:
       - ALL
