@@ -215,9 +215,15 @@ if [ -n "$TRUSTED_PROXY_CIDRS" ]; then
     done
     PUBLIC_PROXY_ACL="acl trusted_external_proxy src $TRUSTED_PROXY_CIDRS"
     PUBLIC_PROXY_EXPECT='tcp-request connection expect-proxy layer4 if trusted_external_proxy'
+    # rpc_h2 skips connection-time tracking for this ACL, then keys the
+    # PROXY client at session time. The name has to exist in both modes.
+    RPC_PROXY_ACL="$PUBLIC_PROXY_ACL"
 else
     PUBLIC_PROXY_ACL='# No trusted external PROXY-protocol sources configured.'
     PUBLIC_PROXY_EXPECT='# Direct client connection; no incoming PROXY preamble.'
+    # 0.0.0.0/32 matches no real client, so `unless trusted_external_proxy`
+    # still tracks every direct connection. An empty ACL would not load.
+    RPC_PROXY_ACL='acl trusted_external_proxy src 0.0.0.0/32'
 fi
 
 case "$NGINX_MODE" in
@@ -565,6 +571,7 @@ sed \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
+    -e "s|\${RPC_PROXY_ACL}|$RPC_PROXY_ACL|g" \
     -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
     -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
     -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \

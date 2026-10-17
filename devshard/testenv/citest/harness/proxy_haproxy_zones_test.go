@@ -40,16 +40,17 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "X-Real-IP %[src]")
 	require.Contains(t, got, "path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$")
 	require.Contains(t, got, "path_end /devshard.transport.v1.PeerAuthService/Watch")
-	require.Contains(t, got, "track-sc1 src table st_rpc_watch")
+	require.Contains(t, got, "track-sc1 src,ipmask(32,64) table st_rpc_watch")
 	require.Contains(t, got, "path_end /devshard.transport.v1.PeerAuthService/Attach")
 	require.Contains(t, got, "path_end /devshard.transport.v1.SessionService/GetDiffs")
-	require.Contains(t, got, "track-sc1 src table st_rpc_attach")
-	require.Contains(t, got, "track-sc1 src table st_rpc_chat")
+	require.Contains(t, got, "track-sc1 src,ipmask(32,64) table st_rpc_attach")
+	require.Contains(t, got, "track-sc1 src,ipmask(32,64) table st_rpc_chat")
 	require.Contains(t, got, "if is_diffs { sc_http_req_rate(1) gt 3 }")
 	require.Contains(t, got, "if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 32 }")
+	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 32 }")
 	require.Contains(t, got, "server router versiond-router:19081\n")
 	require.NotContains(t, got, "server router versiond-router:19081 proto h2")
 	require.NotContains(t, got, "server router versiond-router:19081 resolvers docker")
@@ -198,7 +199,51 @@ func TestRewriteRPCProxyForTestLowersConnCur(t *testing.T) {
 	lim.ConnCur = 3
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", lim)
 	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 3 }")
+	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 3 }")
 	require.NotContains(t, got, "sc_conn_cur(0) gt 32")
+}
+
+func TestEnableRPCProxyProtocolExpectsPreamble(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
+	require.NoError(t, err)
+	got, err := enableRPCProxyProtocol(string(src), "0.0.0.0/0 ::/0")
+	require.NoError(t, err)
+	require.Contains(t, got, "acl trusted_external_proxy src 0.0.0.0/0 ::/0")
+	require.Contains(t, got, "tcp-request connection expect-proxy layer4 if trusted_external_proxy")
+	require.Contains(t, got, "tcp-request connection track-sc0 src,ipmask(32,64) unless trusted_external_proxy")
+	require.Contains(t, got, "tcp-request session track-sc0 src,ipmask(32,64) if { fc_rcvd_proxy }")
+	require.NotContains(t, got, "src 0.0.0.0/32")
+}
+
+func TestProxyHAProxy_ProxyProtocolCapIsPerClient(t *testing.T) {
+	lim := defaultRPCProxyTestLimits()
+	lim.ConnCur = 3
+	fx := startRPCProxyHAProxyTrusted(t, lim)
+
+	for i := 1; i <= 6; i++ {
+		_, closed := dialProxyIdle(t, fx.hostAddr, fmt.Sprintf("10.0.0.%d", i))
+		require.False(t, closed, "PROXY client 10.0.0.%d must have its own cap", i)
+	}
+
+	open := 0
+	for i := 0; i < 6; i++ {
+		_, closed := dialProxyIdle(t, fx.hostAddr, "10.1.0.9")
+		if !closed {
+			open++
+		}
+	}
+	require.Equal(t, lim.ConnCur, open, "one PROXY client must share one conn_cur key")
+
+	open = 0
+	for i := 1; i <= 4; i++ {
+		_, closed := dialProxyIdle(t, fx.hostAddr, fmt.Sprintf("2001:db8:1::%x", i))
+		if !closed {
+			open++
+		}
+	}
+	require.Equal(t, lim.ConnCur, open, "IPv6 clients in one /64 must share one conn_cur key")
+	_, closed := dialProxyIdle(t, fx.hostAddr, "2001:db8:2::1")
+	require.False(t, closed, "a different IPv6 /64 must have its own conn_cur key")
 }
 
 func TestProxyHAProxy_IdleConnsCappedPerSrc(t *testing.T) {
@@ -248,13 +293,98 @@ func dialIdle(t *testing.T, addr string) (net.Conn, bool) {
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
-	buf := make([]byte, 512)
+	closed, err := connClosedWithin(conn, time.Second)
+	require.NoError(t, err)
+	return conn, closed
+}
+
+var proxyHeaderPort atomic.Int32
+
+// enableRPCProxyProtocol turns the no-op trusted-proxy ACL into a real one
+// and requires a PROXY preamble from those sources. Connection rules then
+// skip the balancer; session rules key the address in the preamble.
+func enableRPCProxyProtocol(cfg, trusted string) (string, error) {
+	const noop = "\n    acl trusted_external_proxy src 0.0.0.0/32\n"
+	if !strings.Contains(cfg, noop) {
+		return "", fmt.Errorf("rpc cfg has no no-op trusted_external_proxy ACL")
+	}
+	repl := "\n    acl trusted_external_proxy src " + trusted + "\n" +
+		"    tcp-request connection expect-proxy layer4 if trusted_external_proxy\n"
+	return strings.Replace(cfg, noop, repl, 1), nil
+}
+
+// dialProxyIdle writes a PROXY v1 header advertising clientIP, then holds the
+// socket. closed is true when the proxy resets the connection.
+func dialProxyIdle(t *testing.T, addr, clientIP string) (net.Conn, bool) {
+	t.Helper()
+	conn, closed, err := openProxyIdle(addr, clientIP, 400*time.Millisecond)
+	require.NoError(t, err)
+	if conn != nil {
+		t.Cleanup(func() { _ = conn.Close() })
+	}
+	return conn, closed
+}
+
+func openProxyIdle(addr, clientIP string, wait time.Duration) (net.Conn, bool, error) {
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return nil, false, err
+	}
+	header, err := proxyV1Header(clientIP)
+	if err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if _, err := conn.Write([]byte(header)); err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	closed, err := connClosedWithin(conn, wait)
+	if err != nil {
+		_ = conn.Close()
+		return nil, false, err
+	}
+	if closed {
+		_ = conn.Close()
+		return nil, true, nil
+	}
+	return conn, false, nil
+}
+
+func proxyV1Header(clientIP string) (string, error) {
+	ip := net.ParseIP(clientIP)
+	if ip == nil {
+		return "", fmt.Errorf("client ip %q", clientIP)
+	}
+	family := "TCP4"
+	dst := "203.0.113.1"
+	if ip.To4() == nil {
+		family = "TCP6"
+		dst = "2001:db8:ffff::1"
+	}
+	sport := 40000 + proxyHeaderPort.Add(1)
+	return fmt.Sprintf("PROXY %s %s %s %d 8443\r\n", family, clientIP, dst, sport), nil
+}
+
+func connClosedWithin(conn net.Conn, wait time.Duration) (bool, error) {
+	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		return false, err
+	}
+	buf := make([]byte, 64)
 	for {
-		if _, err := conn.Read(buf); err != nil {
-			var ne net.Error
-			return conn, !errors.As(err, &ne) || !ne.Timeout()
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue
 		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return false, nil
+		}
+		return true, nil
 	}
 }
 
@@ -271,7 +401,7 @@ func TestProxyHAProxy_MoreThan100StreamsShareOneTCP(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	fx := startRPCProxyHAProxyHandler(t, defaultRPCProxyTestLimits(), false, nil, h)
+	fx := startRPCProxyHAProxyHandler(t, defaultRPCProxyTestLimits(), false, nil, h, "")
 
 	var dials atomic.Int32
 	client := newH2CClientOnDial(t, func() { dials.Add(1) })
@@ -341,15 +471,22 @@ type rpcProxyFixture struct {
 
 func startRPCProxyHAProxy(t *testing.T, lim rpcProxyTestLimits) *rpcProxyFixture {
 	t.Helper()
-	return startRPCProxyHAProxyOpt(t, lim, false)
+	return startRPCProxyHAProxyOpt(t, lim, false, "")
 }
 
 func startRPCProxyHAProxyOnNetwork(t *testing.T, lim rpcProxyTestLimits) *rpcProxyFixture {
 	t.Helper()
-	return startRPCProxyHAProxyOpt(t, lim, true)
+	return startRPCProxyHAProxyOpt(t, lim, true, "")
 }
 
-func startRPCProxyHAProxyOpt(t *testing.T, lim rpcProxyTestLimits, userNet bool) *rpcProxyFixture {
+// startRPCProxyHAProxyTrusted requires a PROXY preamble from every IPv4 and
+// IPv6 source, which is what a published Docker port looks like to HAProxy.
+func startRPCProxyHAProxyTrusted(t *testing.T, lim rpcProxyTestLimits) *rpcProxyFixture {
+	t.Helper()
+	return startRPCProxyHAProxyOpt(t, lim, false, "0.0.0.0/0 ::/0")
+}
+
+func startRPCProxyHAProxyOpt(t *testing.T, lim rpcProxyTestLimits, userNet bool, trustedProxy string) *rpcProxyFixture {
 	t.Helper()
 	fx := &rpcProxyFixture{}
 	return startRPCProxyHAProxyHandler(t, lim, userNet, fx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -363,10 +500,10 @@ func startRPCProxyHAProxyOpt(t *testing.T, lim rpcProxyTestLimits, userNet bool)
 			fx.chat.Add(1)
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
+	}), trustedProxy)
 }
 
-func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet bool, fx *rpcProxyFixture, handler http.Handler) *rpcProxyFixture {
+func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet bool, fx *rpcProxyFixture, handler http.Handler, trustedProxy string) *rpcProxyFixture {
 	t.Helper()
 	RequireDocker(t)
 	if fx == nil {
@@ -392,6 +529,11 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 	// cannot reach a tcp4 httptest. Pin the IPv4 gateway in the server line.
 	backendAddr := net.JoinHostPort(dockerHostIPv4(t), port)
 	cfg := rewriteRPCProxyForTest(string(src), backendAddr, lim)
+	if trustedProxy != "" {
+		var err error
+		cfg, err = enableRPCProxyProtocol(cfg, trustedProxy)
+		require.NoError(t, err)
+	}
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "haproxy.cfg"), []byte(cfg), 0o644))
 
@@ -435,6 +577,24 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 	}
 
 	fx.url = "http://" + fx.hostAddr
+	if trustedProxy != "" {
+		// The HTTP probe has no PROXY preamble. A held proxied socket is
+		// enough to know the frontend accepted the header and tracked it.
+		waitHAProxyReady(t, name, func() (int, error) {
+			conn, closed, err := openProxyIdle(fx.hostAddr, "10.255.0.1", 400*time.Millisecond)
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if err != nil {
+				return 0, err
+			}
+			if closed {
+				return 0, fmt.Errorf("proxied idle conn closed")
+			}
+			return http.StatusOK, nil
+		})
+		return fx
+	}
 
 	client := newH2CClient(t)
 	waitHAProxyReady(t, name, func() (int, error) {

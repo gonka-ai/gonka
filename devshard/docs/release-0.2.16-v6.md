@@ -257,11 +257,15 @@ HA that address is `proxy-router`, and collapsing every peer into one bucket
 is a failed rollout.
 
 The concurrent cap is what bounds idle sockets: the open rate only slows how
-fast one address fills `maxconn 4096`, and an idle socket holds its slot until
-`timeout client`. 32 leaves room for reconnect overlap, HA replicas, and
-several peers behind one NAT address. Behind an L4 load balancer the cap is
-only per client if `PROXY_ROUTER_PROXY_PROTOCOL_FROM` is set; without PROXY
-protocol every client arrives from the balancer's address and shares 32.
+fast one address fills `maxconn 4096`, and an idle socket that is already
+tracked holds its slot until `timeout client`. 32 leaves room for reconnect
+overlap, HA replicas, and several peers behind one NAT address. The key is one
+IPv4 address, or one IPv6 /64. Direct clients are keyed at accept. With
+`PROXY_ROUTER_PROXY_PROTOCOL_FROM`, the balancer address is skipped and the
+cap uses the address in the PROXY preamble, after that preamble is accepted.
+A preamble that stalls before the TLS handshake is closed by `timeout
+client-hs` (5s) and is not counted yet. Without PROXY protocol, clients
+behind one L4 balancer share that balancer's address and its 32 slots.
 
 ## Manual test plan
 

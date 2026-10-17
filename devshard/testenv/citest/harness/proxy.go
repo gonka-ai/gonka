@@ -126,12 +126,14 @@ func rewriteRPCProxyForTest(src, backend string, lim rpcProxyTestLimits) string 
 		lim.ChatRate = 50
 	}
 	out := src
-	out = strings.Replace(out,
-		"tcp-request connection reject if { sc_conn_cur(0) gt 32 }",
-		fmt.Sprintf("tcp-request connection reject if { sc_conn_cur(0) gt %d }", lim.ConnCur), 1)
-	out = strings.Replace(out,
-		"tcp-request connection reject if { sc_conn_rate(0) gt 200 }",
-		fmt.Sprintf("tcp-request connection reject if { sc_conn_rate(0) gt %d }", lim.ConnRate), 1)
+	// Connection rules key direct clients. Session rules key a PROXY client
+	// after the preamble. Both ceilings have to move together.
+	out = strings.ReplaceAll(out,
+		"sc_conn_cur(0) gt 32",
+		fmt.Sprintf("sc_conn_cur(0) gt %d", lim.ConnCur))
+	out = strings.ReplaceAll(out,
+		"sc_conn_rate(0) gt 200",
+		fmt.Sprintf("sc_conn_rate(0) gt %d", lim.ConnRate))
 	out = strings.Replace(out,
 		"http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 100 }",
 		fmt.Sprintf("http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt %d }", lim.AttachRate), 1)
@@ -180,6 +182,8 @@ func LowerProxyRPCRates(t *testing.T, s *Stack, connRate, attachRate, diffsRate,
 	out := string(text)
 	out = replaceProxyRate(out, `tcp-request connection reject if \{ sc_conn_rate\(0\) gt \d+ \}`,
 		fmt.Sprintf("tcp-request connection reject if { sc_conn_rate(0) gt %d }", lim.ConnRate))
+	out = replaceProxyRate(out, `tcp-request session reject if \{ sc_conn_rate\(0\) gt \d+ \}`,
+		fmt.Sprintf("tcp-request session reject if { sc_conn_rate(0) gt %d }", lim.ConnRate))
 	out = replaceProxyRate(out, `http-request return status 200 errorfile /etc/haproxy/grpc-exhausted\.http if is_native_grpc is_attach \{ sc_http_req_rate\(1\) gt \d+ \}`,
 		fmt.Sprintf("http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt %d }", lim.AttachRate))
 	out = replaceProxyRate(out, `http-request deny deny_status 429 if is_attach \{ sc_http_req_rate\(1\) gt \d+ \}`,
