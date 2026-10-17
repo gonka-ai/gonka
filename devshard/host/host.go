@@ -122,6 +122,9 @@ const (
 	defaultExecutionBudget = 32 * time.Minute
 
 	finishObsMinRetention = 2 * time.Hour
+	// finishObsPruneEvery bounds how often the finishObs map is swept; a
+	// per-Finish sweep is O(entries) under h.mu.
+	finishObsPruneEvery = time.Minute
 )
 
 type inferenceFinishObs struct {
@@ -204,7 +207,8 @@ type Host struct {
 	// finishObs is host-local observability: Finish nonce and wall clock when
 	// this host applied MsgFinishInference. Used when validation later finds
 	// the live record gone (sealed/drained). Not part of consensus.
-	finishObs map[uint64]inferenceFinishObs
+	finishObs         map[uint64]inferenceFinishObs
+	finishObsPrunedAt time.Time
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -915,10 +919,13 @@ func (h *Host) recordFinishObsLocked(inferenceID, finishNonce uint64, at time.Ti
 		h.finishObs = make(map[uint64]inferenceFinishObs)
 	}
 	h.finishObs[inferenceID] = inferenceFinishObs{nonce: finishNonce, at: at}
-	h.pruneFinishObsLocked(at)
+	if at.Sub(h.finishObsPrunedAt) >= finishObsPruneEvery {
+		h.pruneFinishObsLocked(at)
+	}
 }
 
 func (h *Host) pruneFinishObsLocked(now time.Time) {
+	h.finishObsPrunedAt = now
 	retention := h.finishObsRetention()
 	for id, obs := range h.finishObs {
 		if now.Sub(obs.at) > retention {
