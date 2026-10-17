@@ -199,10 +199,8 @@ func LowerProxyRPCRates(t *testing.T, s *Stack, connRate, attachRate, diffsRate,
 	text, err := os.ReadFile(path)
 	require.NoError(t, err)
 	out := string(text)
-	out = replaceProxyRate(out, `tcp-request connection reject if \{ sc_conn_rate\(0\) gt \d+ \}`,
-		fmt.Sprintf("tcp-request connection reject if { sc_conn_rate(0) gt %d }", lim.ConnRate))
-	out = replaceProxyRate(out, `tcp-request session reject if \{ sc_conn_rate\(0\) gt \d+ \}`,
-		fmt.Sprintf("tcp-request session reject if { sc_conn_rate(0) gt %d }", lim.ConnRate))
+	out = replaceProxyRate(out, `tcp-request content reject if peer_rpc_h2c \{ sc_conn_rate\(0\) gt \d+ \}`,
+		fmt.Sprintf("tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt %d }", lim.ConnRate))
 	out = replaceProxyRate(out, `http-request return status 200 errorfile /etc/haproxy/grpc-exhausted\.http if is_native_grpc is_attach \{ sc_http_req_rate\(1\) gt \d+ \}`,
 		fmt.Sprintf("http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt %d }", lim.AttachRate))
 	out = replaceProxyRate(out, `http-request deny deny_status 429 if is_attach \{ sc_http_req_rate\(1\) gt \d+ \}`,

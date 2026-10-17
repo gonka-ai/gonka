@@ -1,11 +1,11 @@
 package harness
 
 import (
+	"devshard/testenv/config"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"devshard/testenv/config"
 
 	"github.com/stretchr/testify/require"
 )
@@ -62,16 +62,19 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.NotContains(t, text, "8443")
 	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
-	require.Contains(t, text, "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)")
+	require.Contains(t, text, "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)\n")
 	require.Contains(t, text, "acl trusted_external_proxy src 0.0.0.0/32")
 	require.Contains(t, text, "timeout client-hs 5s")
-	require.Contains(t, text, "tcp-request session track-sc0 src,ipmask(32,64)\n")
-	require.Contains(t, text, "tcp-request session reject if { sc_conn_cur(0) gt 32 }")
+	require.Contains(t, text, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
+	require.Contains(t, text, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 32 }")
 	require.NotContains(t, text, "tcp-request connection track-sc0")
+	require.NotContains(t, text, "tcp-request session track-sc0")
+	require.True(t, strings.Index(text, "track-sc0 src,ipmask(32,64) table rpc_h2") < strings.Index(text, "use_backend rpc_h2c_in"),
+		"the public port must count a peer connection before handing it off")
 	// A rejected hand-off must not be retried: every retry is another
 	// rpc_h2 session and a second of delay before the client sees the close.
 	require.Contains(t, text, "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
-	require.Contains(t, text, "tcp-request session reject if { sc_conn_rate(0) gt 200 }")
+	require.Contains(t, text, "tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }")
 	require.NotContains(t, text, "tcp-request connection expect-proxy")
 	require.Contains(t, text, "expose-experimental-directives")
 	require.Contains(t, text, "normalize-uri percent-decode-unreserved strict")
@@ -88,7 +91,7 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_chat")
 	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_diffs")
 	require.Contains(t, text, "stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)")
-	require.Contains(t, text, "tcp-request session track-sc0 src,ipmask(32,64)\n")
+	require.Contains(t, text, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
 	require.NotContains(t, text, "tcp-request connection track-sc0")
 
 	prod, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "proxy-router", "haproxy.cfg.template"))
@@ -101,13 +104,17 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, string(prod), "${PUBLIC_PROXY_EXPECT}")
 	require.NotContains(t, string(prod), "${RPC_PROXY_ACL}")
 	require.Contains(t, string(prod), "timeout client-hs 5s")
-	require.Contains(t, string(prod), "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)")
-	require.Contains(t, string(prod), "tcp-request session track-sc0 src,ipmask(32,64)\n")
+	require.Contains(t, string(prod), "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)\n")
+	require.Contains(t, string(prod), "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
+	require.Contains(t, string(prod), "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_tls\n")
 	require.NotContains(t, string(prod), "tcp-request connection track-sc0")
-	require.Contains(t, string(prod), "tcp-request session reject if { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }")
+	require.NotContains(t, string(prod), "tcp-request session track-sc0")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }")
 	require.Contains(t, string(prod), "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
 	require.Contains(t, string(prod), "backend rpc_tls_in\n    mode tcp\n    retries 0\n")
-	require.Contains(t, string(prod), "tcp-request session reject if { sc_conn_rate(0) gt 200 }")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }")
 	require.Contains(t, string(prod), "path-strip-dotdot")
 	require.Contains(t, string(prod), "deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }")
 	require.Contains(t, string(prod), "st_rpc_watch")

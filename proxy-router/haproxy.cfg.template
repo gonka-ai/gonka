@@ -75,6 +75,14 @@ frontend public_http
     # waits for the whole 24-byte preface instead.
     acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
     acl peer_rpc_h2c_prefix req.payload(0,14) -m bin 505249202a20485454502f322e30
+    # A peer connection is counted and capped per client address here,
+    # before the hand-off. src is already the client: a trusted balancer's
+    # PROXY preamble was consumed above. Inside rpc_h2 the address would be
+    # known only after its own preamble and TLS handshake, so a stalled
+    # handshake would hold a slot uncounted. The table lives on rpc_h2.
+    tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c
+    tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
+    tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }
     tcp-request content accept if peer_rpc_h2c
     tcp-request content accept if HTTP !peer_rpc_h2c_prefix
     use_backend rpc_h2c_in if peer_rpc_h2c
@@ -90,6 +98,11 @@ frontend public_https
     timeout client ${PUBLIC_IDLE_SECONDS}s
     tcp-request inspect-delay ${PUBLIC_INSPECT_SECONDS}s
     acl peer_rpc_tls req.ssl_alpn -i ${RPC_ALPN}
+    # Same cap as :80, keyed from the ClientHello before any handshake. A
+    # peer that offers the token on an HTTP InferenceUrl is counted too.
+    tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_tls
+    tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
+    tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }
     tcp-request content accept if { req.ssl_hello_type 1 }
     ${PUBLIC_HTTPS_RPC_ROUTE}
     default_backend policy_https
@@ -97,10 +110,10 @@ frontend public_https
 # Hand a peer connection to rpc_h2 inside this process. send-proxy-v2
 # carries the client address (already the one a trusted external PROXY
 # hop restored) so rpc_h2's stick tables and X-Real-IP see the peer.
-# retries 0: rpc_h2 rejects a connection over its per-source cap by closing
-# the hand-off socket at session time. The default retries would reopen it
-# (one more rpc_h2 session per retry, counted in conn_rate / sess_rate) and
-# hold the client for a second each time before it sees the close.
+# retries 0: the hand-off target is this process, so a failure there is not
+# transient. The default retries would reopen the abstract socket (another
+# rpc_h2 connection each time) and hold the client for a second per retry
+# before it sees the close.
 backend rpc_h2c_in
     mode tcp
     retries 0
@@ -148,32 +161,27 @@ backend policy_https
 # conn_cur / conn_rate / path zones key src,ipmask(32,64): one IPv4 address,
 # or one IPv6 /64. accept-proxy restores the client from the PROXY v2
 # preamble of the hand-off (the public frontend already consumed a trusted
-# balancer's preamble, so src is the real client in both modes). X-Real-IP
-# stays the full client address. Do not copy the tables onto
-# versiond_router_in: that hop's src is the policy worker, and X-Real-IP
-# there is already the address nginx derived from PROXY v2.
+# balancer's preamble, so src is the real client in both modes). The
+# connection cap is enforced by the public frontends before the hand-off,
+# into the table defined here. X-Real-IP stays the full client address. Do
+# not copy the tables onto versiond_router_in: that hop's src is the policy
+# worker, and X-Real-IP there is already the address nginx derived from
+# PROXY v2.
 frontend rpc_h2
     bind abns@rpc_h2c accept-proxy proto h2
     ${RPC_TLS_BIND}
     maxconn 4096
-    # src is the hand-off client only once the PROXY v2 preamble is parsed,
-    # which happens after the connection rules (and the TLS handshake on the
-    # TLS bind). A connection rule here would key the abstract socket, so
-    # everything is tracked at session time. timeout client-hs closes a TLS
-    # handshake that stalls; those sockets are not in conn_cur yet. Cleartext
-    # h2c has no handshake, so an idle socket there is bounded by the cap
-    # and timeout client. A socket that never sends the preface or the ALPN
-    # token never reaches this listen: the public frontend passes it to
-    # nginx after its inspect delay.
+    # A TLS handshake that stalls is closed here. It already holds a
+    # conn_cur slot: public_https tracked it from the ClientHello.
     timeout client-hs 5s
-    # type ipv6 stores native IPv6. type ip would keep only IPv4.
-    stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)
-    tcp-request session track-sc0 src,ipmask(32,64)
-    # conn_rate only slows the fill. An idle socket that is already tracked
-    # holds a maxconn slot until timeout client.
-    tcp-request session reject if { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
-    tcp-request session reject if { sc_conn_rate(0) gt 200 }
-    tcp-request session reject if { sc_sess_rate(0) gt 400 }
+    # Per-source conn_cur / conn_rate. public_http and public_https track
+    # into this table before the hand-off and reject there. No track here:
+    # src is known only after the preamble (and the TLS handshake), and a
+    # second track would count every connection twice. conn_rate only slows
+    # the fill; an idle socket that is already tracked holds a maxconn slot
+    # until timeout client. type ipv6 stores native IPv6. type ip would
+    # keep only IPv4.
+    stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)
 
     http-request del-header X-Real-IP
     http-request set-header X-Real-IP %[src]

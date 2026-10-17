@@ -50,7 +50,7 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 2 }")
-	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 32 }")
+	require.Contains(t, got, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 32 }")
 	require.Contains(t, got, "server router versiond-router:19081\n")
 	require.NotContains(t, got, "server router versiond-router:19081 proto h2")
 	require.NotContains(t, got, "server router versiond-router:19081 resolvers docker")
@@ -198,8 +198,9 @@ func TestRewriteRPCProxyForTestLowersConnCur(t *testing.T) {
 	lim := defaultRPCProxyTestLimits()
 	lim.ConnCur = 3
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", lim)
-	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 3 }")
+	require.Contains(t, got, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 3 }")
 	require.NotContains(t, got, "tcp-request connection track-sc0")
+	require.NotContains(t, got, "tcp-request session track-sc0")
 	require.NotContains(t, got, "sc_conn_cur(0) gt 32")
 }
 
@@ -210,11 +211,11 @@ func TestEnableRPCProxyProtocolExpectsPreamble(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, got, "acl trusted_external_proxy src 0.0.0.0/0 ::/0")
 	require.Contains(t, got, "tcp-request connection expect-proxy layer4 if trusted_external_proxy")
-	require.Contains(t, got, "tcp-request session track-sc0 src,ipmask(32,64)\n")
+	require.Contains(t, got, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
 	require.NotContains(t, got, "src 0.0.0.0/32")
-	// The preamble is consumed on the public port; rpc_h2 keys the client it
-	// forwarded over the abstract socket.
-	require.True(t, strings.Index(got, "expect-proxy") < strings.Index(got, "frontend rpc_h2"))
+	// The preamble is consumed at accept on the public port, so the content
+	// rule that keys the connection sees the client it named.
+	require.True(t, strings.Index(got, "expect-proxy") < strings.Index(got, "track-sc0 src,ipmask(32,64) table rpc_h2"))
 }
 
 func TestProxyHAProxy_ProxyProtocolCapIsPerClient(t *testing.T) {

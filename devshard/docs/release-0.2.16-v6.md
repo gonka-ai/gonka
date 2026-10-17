@@ -84,7 +84,7 @@ recognises peer RPC; behind the nginx image every peer stays on HTTP/1.1.
 | **Peer RPC and authentication** | Connect on `/devshard/{version}/sessions/{id}/rpc/...`. `Attach` opens a session; `Watch` keeps it. Admission after that is the session token. The signed envelope still covers dispute-bearing bodies |
 | **gzip** | Chat responses are one gzip stream for the whole completion (compression window kept across events, not one gzip per frame). Request gzip is inflated only up to a decoded cap, and a body past that cap is rejected before the handler. `GET /devshard/stats/rpc` is gzip when the caller sends `Accept-Encoding: gzip` |
 | **Per-peer rate limits** | After `Attach`, the child charges the authenticated peer: 6000 weight/min, burst 600. Concurrent chats per peer default to 2560, a quarter of the 10240 process cap. Only the escrow owner takes a chat slot. `GetDiffs` is expensive (weight 60) so it cannot spend the chat budget. Anonymous `Attach` is capped before the signature check |
-| **Per-connection rate limits** | v6 `proxy-router` only, on connections it recognised as peer RPC. One HTTP/2 connection per peer. That connection is limited per client address: 32 concurrent connections, 200 new connections/s, 400 new sessions/s, plus a separate request budget per RPC path |
+| **Per-connection rate limits** | v6 `proxy-router` only, on connections it recognised as peer RPC. One HTTP/2 connection per peer. That connection is limited per client address: 32 concurrent connections, 200 new connections/s, plus a separate request budget per RPC path |
 | **Gateway Postgres** | `DEVSHARD_STORAGE_MODE=hybrid` or `postgres` keeps gateway management state in Postgres. `sqlite` stays on local `gateway.db` and ignores `PGHOST`. The same mode applies to `perf.db` |
 | **Load testing** | YAML scenarios drive the gateway through an isolated Docker testenv: concurrent traffic, mock ML-node faults, host pause, catch-up, escrow rotation, and miss-rate checks. In-process `loadsim` remains for gateway and `perf.db` profiles |
 | **Refusal vote** | Already on `devshard/v4.2` and included here. A receipt that arrives during the refusal wait ends that wait. The gateway does not ask verifiers for a refusal once the inference is confirmed. An unsigned or forged receipt cannot cancel the vote |
@@ -249,9 +249,8 @@ A second peer (a second address) has its own connection and its own counters.
 
 | Check | Threshold | Over-limit response |
 | --- | --- | --- |
-| Concurrent connections per address | 32 (`PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) | connection rejected, before `Attach` |
-| New TCP connections | 200/s | connection rejected, before `Attach` |
-| New HTTP/2 sessions | 400/s | session rejected |
+| Concurrent connections per address | 32 (`PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) | connection closed on the preface / ALPN, before the hand-off |
+| New TCP connections | 200/s | connection closed on the preface / ALPN, before the hand-off |
 | `Attach`, `Watch` | 100 / 10s | Connect: HTTP 429. Native gRPC: HTTP 200, `grpc-status` 8 |
 | Gossip, `GetPayload`, seed / repair / verify / challenge | 200 / 10s | same |
 | `GetDiffs`, `GetMempool` | 400 / 10s | same |
@@ -272,14 +271,15 @@ The concurrent cap is what bounds idle sockets: the open rate only slows how
 fast one address fills `maxconn 4096`, and an idle socket that is already
 tracked holds its slot until `timeout client`. 32 leaves room for reconnect
 overlap, HA replicas, and several peers behind one NAT address. The key is one
-IPv4 address, or one IPv6 /64, restored from the PROXY v2 hand-off between
-the public port and the peer RPC listen. With `PROXY_ROUTER_PROXY_PROTOCOL_FROM`
+IPv4 address, or one IPv6 /64. The public port counts the connection as soon
+as it sees the HTTP/2 preface or the peer RPC ALPN, before the hand-off, so a
+TLS handshake that then stalls holds its slot until `timeout client-hs` (5s)
+closes it instead of sitting uncounted. With `PROXY_ROUTER_PROXY_PROTOCOL_FROM`
 the public port consumes the balancer's preamble first, so the cap uses the
-client address it named. A TLS handshake that stalls is closed by `timeout
-client-hs` (5s) and is not counted yet. A socket that never sends the preface
-or the ALPN token goes to nginx after the inspect delay and never counts.
-Without PROXY protocol, clients behind one L4 balancer share that balancer's
-address and its 32 slots.
+client address it named. A socket that never sends the preface or the ALPN
+token goes to nginx after the inspect delay and never counts. Without PROXY
+protocol, clients behind one L4 balancer share that balancer's address and
+its 32 slots.
 
 ## Manual test plan
 
@@ -414,10 +414,13 @@ opening a single connection in the same second, attaches and chats. Repeat
 against InferenceUrl on the old wrapping: this reject must not appear.
 
 **D2. Concurrent connections (v6 only).** From one address, open 33 TCP
-connections to `:9443` at under 200/s and send nothing on them. The first 32
-stay open; the 33rd is closed at accept. A second address opens a connection
-in the same window, attaches, and chats. Close one of the 32 and the next open
-from the first address is accepted again.
+connections to InferenceUrl's port at under 200/s; on each send only the
+HTTP/2 preface (HTTPS: a ClientHello offering ALPN `gonka-rpc/1`) and nothing
+more. The first 32 stay open; the 33rd is closed before the hand-off. A
+second address opens a connection in the same window, attaches, and chats.
+Close one of the 32 and the next open from the first address is accepted
+again. 33 connections that send nothing at all are not capped: they go to
+nginx after the inspect delay.
 
 **E. Forged `X-Real-IP` (v6 only).** Peer A sets `X-Real-IP` to peer B's
 address. A's flood still counts against A's real address. B is not pushed
