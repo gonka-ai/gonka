@@ -67,9 +67,13 @@ services:
       MOCK_CHAIN_GRPC_ADDR: "{{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}"
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
-      MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_ENDPOINT: "{{ primaryMLEndpoint . }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - ./binaries:/testenv-binaries:ro
     ports:
@@ -80,22 +84,38 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mockMLNodes . }}
+      - {{ .Name }}
+{{ end }}
     restart: unless-stopped
+{{ range $i, $node := mockMLNodes . }}
 
-  mock-openai:
+  {{ $node.Name }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_TTFT: "{{ $node.TTFT }}"
+      MOCK_OPENAI_TOKEN_INTERVAL: "{{ $node.TokenInterval }}"
+      MOCK_OPENAI_WORKERS: "{{ $node.Workers }}"
+      MOCK_OPENAI_QUEUE: "{{ $node.Queue }}"
+      MOCK_OPENAI_HANG: "{{ $node.Hang }}"
+      MOCK_OPENAI_FAILURE_RATE: "{{ $node.FailureRate }}"
+      MOCK_OPENAI_HTTP_STATUS: "{{ $node.HTTPStatus }}"
+{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ end }}
+{{ if $.MockOpenAI.ReplayFile }}    volumes:
+      - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro
+{{ end }}
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ mlNodeHostPort $ $i }}:{{ $.MockOpenAI.HTTPPort }}"
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+        ipv4_address: {{ $.Network.BaseIP }}.{{ mlNodeIPOffset $i }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
 
   devshard-postgres:
@@ -141,20 +161,34 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
-      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
+      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
       DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
       DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
+      DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
+      DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
+      # Client dial. Empty keeps InferenceUrl. Citest sets 8081 + grpc so
+      # peer RPC uses versiond-router's proto h2 bind, not the proxy overlay.
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
-      # GONKA_HA is intentionally omitted from versiond in this fixture. The
-      # SQLite-to-HA scenario first boots children before enabling HA at the
-      # router, where Devshard-Ha exercises the request-time storage guard.
+      LOG_FORMAT: ${LOG_FORMAT:-json}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # HA replicas declare GONKA_HA for the shared-storage guard.
+      # The sqlite migration clears this before booting these hosts on sqlite.
+      GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
       PGHOST: {{ $.Postgres.Host }}
@@ -163,8 +197,16 @@ services:
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
 {{ else if eq $.Versiond.Mode "multi" }}
-      # Solo executor: local sqlite so it does not multi-write shared PG diffs.
-      DEVSHARD_STORAGE_MODE: sqlite
+      # Solo hosts omit GONKA_HA (not in the sticky shared-writer pair).
+      # Hybrid+PG still shares session meta and validation leases so HA can
+      # warm/catch up after a solo executor, and citest can observe pending
+      # leases when the solo validates (sqlite Acquire never writes PG rows).
+      DEVSHARD_STORAGE_MODE: hybrid
+      PGHOST: {{ $.Postgres.Host }}
+      PGPORT: "{{ $.Postgres.Port }}"
+      PGDATABASE: {{ $.Postgres.Database }}
+      PGUSER: {{ $.Postgres.User }}
+      PGPASSWORD: {{ $.Postgres.Password }}
 {{ end }}
     volumes:
       - {{ $.Versiond.HostBinaryMount }}:{{ $.Versiond.OverridePath }}:ro
@@ -185,8 +227,10 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mockMLNodes $ }}
+      {{ .Name }}:
         condition: service_started
+{{ end }}
 {{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
@@ -198,7 +242,9 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mockMLNodes $ }}
+      - {{ .Name }}
+{{ end }}
 {{ end }}
     stop_grace_period: 30m
     restart: unless-stopped
@@ -211,6 +257,7 @@ services:
     image: devshard-versiond-router:latest
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
+      VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_PORT: "8080"
       # Pin only versions that actually have a child. A fictional v1 makes
       # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
@@ -224,12 +271,15 @@ services:
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
-      # Only the router is told this deployment is HA. The versiond containers
-      # are not, so scenarios that deliberately run the pool on sqlite still
-      # boot and fail at request time on the storage guard instead.
+      # HA replicas set GONKA_HA too, for the shared-storage guard.
+      # Solo sqlite hosts omit it. Scenarios that run the pool on sqlite clear
+      # GONKA_HA before boot and still fail at request time on Devshard-Ha.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+      # proto h2 frontend. Citest dials Connect here; :8080 denies /sessions/*/rpc.
+      # 18082 is the host side so it does not take the gateway's default 8081.
+      - "18082:8081"
     volumes:
       - versiond-router-state:/var/lib/gonka-router
     networks:
@@ -256,6 +306,7 @@ services:
     entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
+      DEVSHARD_STATS_PORT: "{{ .Devshardctl.StatsPort }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
       DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
@@ -267,18 +318,36 @@ services:
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
+      DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
+      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
+      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
+      DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}
+      DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}
+      DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}
+      DEVSHARD_LOG_PAYLOADS_MAX_BYTES: ${DEVSHARD_LOG_PAYLOADS_MAX_BYTES:-16384}
       # Host ping (gateway → used hosts). On by default; observability only.
       DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
       DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
       DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
       DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
+      # Production default is 5m; keep 5s so WaitGatewaySessionSettled (90s) still passes.
+      DEVSHARD_QUIET_SETTLE_DELAY: ${DEVSHARD_QUIET_SETTLE_DELAY:-5s}
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
       - "{{ .Devshardctl.Port }}:{{ .Devshardctl.Port }}"
+      - "{{ .Devshardctl.StatsPort }}:{{ .Devshardctl.StatsPort }}"
     networks:
       testenv:
         ipv4_address: {{ .Devshardctl.IP }}
@@ -308,8 +377,14 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
 		"legacyVersiondHost":        legacyVersiondHost,
+		"mockMLNodes":               mockMLNodes,
+		"mockMLNodesEnv":            mockMLNodesEnv,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
+		"mlNodeIDs":                 mlNodeIDs,
+		"mlNodeIPOffset":            config.MLNodeIPOffset,
+		"mlNodeHostPort":            mlNodeHostPort,
+		"primaryMLEndpoint":         primaryMLEndpoint,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -338,7 +413,32 @@ func writeEnvFile(cfg *config.File, outPath string) error {
 	b.WriteString(fmt.Sprintf("TESTENV_KEYRING_PASSWORD=%s\n", cfg.Versiond.KeyringPassword))
 	b.WriteString("TESTENV_OTEL_ENABLED=false\n")
 	b.WriteString("TESTENV_OTEL_ENDPOINT=\n")
+	b.WriteString("LOG_FORMAT=json\n")
 	return os.WriteFile(outPath, []byte(b.String()), 0o600)
+}
+
+func mockMLNodes(cfg *config.File) []config.MockOpenAINodeCfg {
+	if cfg != nil && len(cfg.MockOpenAI.Nodes) > 0 {
+		return cfg.MockOpenAI.Nodes
+	}
+	ids := []string{"mock-openai-0"}
+	if cfg != nil {
+		ids = cfg.MLNodeIDs()
+	}
+	nodes := make([]config.MockOpenAINodeCfg, 0, len(ids))
+	for _, id := range ids {
+		nodes = append(nodes, config.MockOpenAINodeCfg{Name: id})
+	}
+	return nodes
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	nodes := mockMLNodes(cfg)
+	entries := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
 }
 
 func versionEnvSuffix(versionName string) string {
@@ -415,4 +515,32 @@ func primaryEscrowID(cfg *config.File) string {
 
 func primaryModelID(cfg *config.File) string {
 	return config.PrimaryModelID(cfg)
+}
+
+func mlNodeIDs(cfg *config.File) []string {
+	if cfg == nil {
+		return []string{config.MLNodeID(0)}
+	}
+	return cfg.MLNodeIDs()
+}
+
+func primaryMLEndpoint(cfg *config.File) string {
+	nodes := mockMLNodes(cfg)
+	if len(nodes) == 0 {
+		return "http://mock-openai-0:8088"
+	}
+	port := config.DefaultMockOpenAIHTTPPort
+	if cfg != nil && cfg.MockOpenAI.HTTPPort > 0 {
+		port = cfg.MockOpenAI.HTTPPort
+	}
+	return fmt.Sprintf("http://%s:%d", nodes[0].Name, port)
+}
+
+// mlNodeHostPort publishes a distinct host port per pool member (container port unchanged).
+func mlNodeHostPort(cfg *config.File, i int) int {
+	port := config.DefaultMockOpenAIHTTPPort
+	if cfg != nil && cfg.MockOpenAI.HTTPPort > 0 {
+		port = cfg.MockOpenAI.HTTPPort
+	}
+	return port + i
 }

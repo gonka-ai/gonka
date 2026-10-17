@@ -124,6 +124,14 @@ fleet_id=${VERSIOND_ROUTER_FLEET_ID:-$project_prefix}
 slot_list=${VERSIOND_ROUTER_FLEET_SLOTS:-0 1 2}
 min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
+# The slot compose renders hard-stop-after from VERSIOND_ROUTER_HARD_STOP_SECONDS,
+# which defaults to drain_timeout, so HAProxy resets the last streams and exits
+# on its own at that point. Docker's SIGKILL comes this much later on every
+# stop path: `docker stop --time` here, and the slot's stop_grace_period for
+# compose stop, down, restart and a recreate, which is derived below from the
+# same number unless the site sets it at least as high.
+hard_stop=${VERSIOND_ROUTER_HARD_STOP_SECONDS:-$drain_timeout}
+stop_headroom=10
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
@@ -173,9 +181,53 @@ fi
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
-for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
+for value in "$drain_timeout" "$hard_stop" "$wait_timeout" "$version_wait_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
+# Decimal, whatever the spelling in config.env: shell arithmetic would read a
+# leading zero as octal, while HAProxy reads the same string as decimal.
+stop_timeout=$((10#$hard_stop + stop_headroom))
+
+# Seconds in a Compose duration made of whole hours, minutes and seconds
+# (30m, 1810s, 1h30m10s). Compose refuses a bare number, so this does too;
+# fractions and sub-second units are not accepted for a stop budget.
+compose_duration_seconds() {
+    local value=$1 h m s
+    [[ $value =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?$ ]] || return 1
+    h=${BASH_REMATCH[2]:-0}
+    m=${BASH_REMATCH[4]:-0}
+    s=${BASH_REMATCH[6]:-0}
+    [[ -n ${BASH_REMATCH[1]}${BASH_REMATCH[3]}${BASH_REMATCH[5]} ]] || return 1
+    echo $((10#$h * 3600 + 10#$m * 60 + 10#$s))
+}
+
+# The stop budget for one running router: its own hard-stop-after (recorded
+# in the container's environment) plus the headroom, or the configured one
+# when that is larger or the container predates the setting. A lowered
+# configuration must not shorten the stop of a generation still running the
+# old value, so a container whose environment cannot be read is not stopped
+# on the configured budget: the caller fails instead.
+generation_stop_timeout() {
+    local id=$1 environment recorded
+    environment=$("$docker_bin" inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id") || return 1
+    recorded=$(sed -n 's/^VERSIOND_ROUTER_HARD_STOP_SECONDS=//p' <<<"$environment" | head -n 1)
+    case $recorded in
+        '' | *[!0-9]* | 0) echo "$stop_timeout" ;;
+        *)
+            recorded=$((10#$recorded + stop_headroom))
+            if ((recorded > stop_timeout)); then echo "$recorded"; else echo "$stop_timeout"; fi
+            ;;
+    esac
+}
+
+if [[ -z ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-} ]]; then
+    export VERSIOND_ROUTER_STOP_GRACE_PERIOD="${stop_timeout}s"
+else
+    grace_seconds=$(compose_duration_seconds "$VERSIOND_ROUTER_STOP_GRACE_PERIOD") || fail \
+        "VERSIOND_ROUTER_STOP_GRACE_PERIOD must be a Compose duration in s, m or h: '$VERSIOND_ROUTER_STOP_GRACE_PERIOD'"
+    ((grace_seconds >= stop_timeout)) || fail \
+        "VERSIOND_ROUTER_STOP_GRACE_PERIOD=$VERSIOND_ROUTER_STOP_GRACE_PERIOD is below the hard stop plus headroom (${stop_timeout}s): Docker would kill a router before hard-stop-after"
+fi
 
 read -r -a slots <<<"$slot_list"
 ((${#slots[@]} >= 2)) || fail "at least two router slots are required"
@@ -608,6 +660,8 @@ parent_diagnostic_available() {
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
+# Coarse and versioned listeners are :8080. Peer RPC is a second listen, so
+# its parent backend has to leave rotation in the same drain window.
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
@@ -628,7 +682,8 @@ parent_server_refs() {
             backend = $(column["pxname"])
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
-                    backend ~ /^versiond_routers_/) &&
+                    backend ~ /^versiond_routers_/ ||
+                    backend == "rpc_h2_upstream") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
                 $(column["status"]) ~ status_pattern) {
@@ -681,10 +736,12 @@ parent_address_withdrawal_state() {
             backend = $(column["pxname"])
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
-                    backend ~ /^versiond_routers_/) &&
+                    backend ~ /^versiond_routers_/ ||
+                    backend == "rpc_h2_upstream") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
-                $(column["status"]) ~ /^UP/) admitted = 1
+                ($(column["status"]) ~ /^UP/ ||
+                    $(column["status"]) == "no check")) admitted = 1
         }
         END {
             if (!valid) exit 2
@@ -767,13 +824,18 @@ reset_parent_slot_health() {
 # leaves it stopped next to its replacement. restore_generation switches
 # `always` back on.
 stop_generation() {
-    local slot=$1 id=$2 status=0
+    local slot=$1 id=$2 status=0 timeout
     prepare_parent_slot_stop "$slot" "$id" || return 1
+    timeout=$(generation_stop_timeout "$id") || {
+        echo "versiond-router-fleet: cannot read the stop budget of router container $id" >&2
+        reset_parent_slot_health || true
+        return 1
+    }
     "$docker_bin" update --restart=unless-stopped "$id" >/dev/null || {
         reset_parent_slot_health || true
         return 1
     }
-    "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null || status=$?
+    "$docker_bin" stop --time "$timeout" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
 }
@@ -1987,8 +2049,8 @@ stop_slot() {
 }
 
 stop_fleet_containers() {
-    local id state pid failed=0
-    local -a ids=() pids=()
+    local id state pid timeout i failed=0
+    local -a ids=() targets=() timeouts=() pids=()
     fleet_inventory
     ids=("${inventory_ids[@]}")
     if ((${#ids[@]} == 0)); then
@@ -1996,19 +2058,28 @@ stop_fleet_containers() {
         return 0
     fi
 
-    # All routers receive their soft-stop together. The maintenance deadline is
-    # therefore one fleet-wide wall-clock budget rather than N sequential waits.
+    # Every router's state and stop budget are read first. A container that
+    # cannot be read fails the command before any router has been signaled,
+    # so a maintenance stop is all or nothing rather than a partial drain.
     for id in "${ids[@]}"; do
         state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
             "router container $id disappeared before maintenance stop"
         case $state in
             running | restarting | paused)
-                "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null &
-                pids+=("$!")
+                timeout=$(generation_stop_timeout "$id") || fail \
+                    "cannot read the stop budget of router container $id"
+                targets+=("$id")
+                timeouts+=("$timeout")
                 ;;
             created | exited | dead) ;;
             *) fail "router container $id has unsupported state '$state'" ;;
         esac
+    done
+    # All routers receive their soft-stop together. The maintenance deadline is
+    # therefore one fleet-wide wall-clock budget rather than N sequential waits.
+    for i in "${!targets[@]}"; do
+        "$docker_bin" stop --time "${timeouts[$i]}" "${targets[$i]}" >/dev/null &
+        pids+=("$!")
     done
     for pid in "${pids[@]}"; do
         wait "$pid" || failed=1

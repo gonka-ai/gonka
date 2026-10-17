@@ -4,7 +4,8 @@ ARG PLACEMENT_PROTOCOL_VERSION=1
 ARG CATALOG_CACHE_PROTOCOL_VERSION=2
 LABEL ai.gonka.component="versiond-router" \
       ai.gonka.placement-protocol-version="${PLACEMENT_PROTOCOL_VERSION}" \
-      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}"
+      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}" \
+      ai.gonka.peer-rpc-h2="1"
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes
@@ -12,11 +13,12 @@ LABEL ai.gonka.component="versiond-router" \
 # state. SSE is streamed without response buffering and bounded by an idle
 # timeout rather than by a total request deadline.
 
-# Root only long enough to install socat and hand the writable paths to the
-# haproxy user the base image already defines: the entrypoint renders into
-# /etc/haproxy, and the stats socket lives under /var/run/haproxy. (/var/run is
-# a symlink to /run; a runtime that mounts a tmpfs over /run would discard the
-# directory — none of the shipped compose files do.)
+# Root only long enough to install socat (pool-status and the catalog
+# reconciler talk to the Runtime API through it) and hand the writable paths
+# to the haproxy user the base image already defines: the entrypoint renders
+# into /etc/haproxy, and the stats socket lives under /var/run/haproxy.
+# (/var/run is a symlink to /run; a runtime that mounts a tmpfs over /run
+# would discard the directory — none of the shipped compose files do.)
 USER root
 RUN apk add --no-cache curl jq socat \
     && mkdir -p /etc/haproxy /var/run/haproxy /var/lib/gonka-router \
@@ -39,8 +41,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 
 USER haproxy
 
-# HAProxy interprets SIGUSR1 as a soft stop: listeners close while established
-# connections continue until the runtime grace period expires.
+# HAProxy interprets SIGUSR1 as a soft stop: listeners close, streams in
+# flight finish, hard-stop-after in the rendered config bounds the wait.
 STOPSIGNAL SIGUSR1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

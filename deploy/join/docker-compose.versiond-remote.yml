@@ -46,6 +46,9 @@ services:
       - DEVSHARD_OTEL_ENABLED=${DEVSHARD_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # Children inherit this and dial each peer's proxy-router HTTP/2 port.
+      - DEVSHARD_RPC_H2_UPGRADE=true
+      - DEVSHARD_RPC_H2_PORT=${DEVSHARD_RPC_H2_PORT:-9443}
       - PGHOST=${DEVSHARD_POSTGRES_HOST:-${NETWORK_NODE_PRIVATE_IP}}
       - PGPORT=${DEVSHARD_POSTGRES_PORT:-5432}
       - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}

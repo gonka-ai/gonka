@@ -19,6 +19,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const (
+	// replayTokenIDLimit is the exclusive token id bound used when the model's vocab size is unknown; it sits above any real vocab.
+	replayTokenIDLimit = 9_999_999
+	// maxReplayTopTokensPerPosition is the vLLM plugin's per-position top_tokens limit; wider positions are rejected before replay.
+	maxReplayTopTokensPerPosition = 64
+)
+
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
 // and the inference is post-upgrade (no on-chain fallback available).
 var ErrPayloadUnavailable = errors.New("payload unavailable after all retries")
@@ -137,6 +144,27 @@ func HasNonNumericTokens(et completionapi.EnforcedTokens) bool {
 	return false
 }
 
+// hasUnreplayableTokens reports whether replaying the enforced tokens would crash or be refused by the validator node.
+func hasUnreplayableTokens(enforcedTokens completionapi.EnforcedTokens, tokenIDLimit int) bool {
+	for _, enforcedToken := range enforcedTokens.Tokens {
+		tokenID, err := strconv.Atoi(enforcedToken.Token)
+		if err != nil || tokenID >= tokenIDLimit || len(enforcedToken.TopTokens) > maxReplayTopTokensPerPosition {
+			return true
+		}
+	}
+	return false
+}
+
+// rejectsEnforcedTokens reports whether a vLLM error body blames exactly the enforced_tokens field (the plugin's vocab check).
+func rejectsEnforcedTokens(body []byte) bool {
+	var errorBody struct {
+		Error struct {
+			Param string `json:"param"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &errorBody) == nil && errorBody.Error.Param == "enforced_tokens"
+}
+
 func validationReplaySeed(inferenceID string) int32 {
 	parsed, err := strconv.ParseUint(inferenceID, 10, 64)
 	if err != nil {
@@ -155,8 +183,20 @@ func TokenCountInflated(claimed, validation uint64) bool {
 	return claimed > validation && claimed-validation > tokenCountTolerance
 }
 
-// CompareLogits compares original and validation logits and returns a ValidationResult.
-func CompareLogits(
+// CompareLogitsWithPolicy compares original and validation logits under policy.
+func CompareLogitsWithPolicy(
+	originalLogits, validationLogits []completionapi.Logprob,
+	baseComparisonResult BaseValidationResult,
+	policy ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
+	if mismatch := compareTokens(originalLogits, validationLogits, baseComparisonResult); mismatch != nil {
+		return mismatch
+	}
+	return shortOutputVerdict(originalLogits, validationLogits, policy, logprobsMode, baseComparisonResult)
+}
+
+func compareTokens(
 	originalLogits []completionapi.Logprob,
 	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,
@@ -177,57 +217,7 @@ func CompareLogits(
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 	}
-	similarity := customSimilarity(originalLogits, validationLogits)
-
-	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
-}
-
-func customSimilarity(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) float64 {
-	distance, err := customDistance(originalLogprobs, validationLogprobs)
-	if err != nil {
-		logging.Error("Error calculating custom distance", types.Validation, "error", err)
-		return 0
-	}
-	if math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return 0
-	}
-	similarity := 1 - distance
-	if similarity < 0 {
-		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
-		return 0
-	}
-	return similarity
-}
-
-func customDistance(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) (float64, error) {
-	if len(originalLogprobs) == 0 {
-		return 0.0, nil
-	}
-	distance := 0.0
-	for i := range originalLogprobs {
-		o := originalLogprobs[i]
-		v := validationLogprobs[i]
-		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
-		originalTopLogprobs := o.TopLogprobs
-		if len(originalTopLogprobs) > len(v.TopLogprobs) {
-			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
-		}
-		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
-		if err != nil {
-			logging.Error("Error calculating position distance", types.Validation, "error", err)
-			return math.Inf(1), err
-		}
-		distance += posDistance
-	}
-	totalLogprobs := max(100, len(originalLogprobs))
-
-	return distance / float64(totalLogprobs), nil
+	return nil
 }
 
 // maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
@@ -297,8 +287,10 @@ func DecimalFromFloat(f float64) *inference.Decimal {
 // then compares logits. execute receives the constructed JSON body and should POST
 // it to the validator's ML node; the response is compared against the original.
 // claimedInputTokens and claimedOutputTokens are what the executor reported; if
-// the validator's re-execution uses fewer tokens, validation fails to catch inflation.
+// the validator's re-execution uses fewer tokens, validation checks for inflation.
+// DeepSeek V4 Flash 0731 permits the known 78/79-token input prefix difference.
 // Pass 0 for both to skip the token count check.
+// vocabularySize bounds enforced token ids before replay; pass 0 when unknown to use replayTokenIDLimit.
 func ExecuteValidation(
 	ctx context.Context,
 	inferenceID string,
@@ -307,6 +299,23 @@ func ExecuteValidation(
 	execute func(ctx context.Context, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
+	vocabularySize int,
+) (ValidationResult, error) {
+	return ExecuteValidationWithPolicy(ctx, inferenceID, promptPayload, responsePayload, execute,
+		claimedInputTokens, claimedOutputTokens, logprobsMode, vocabularySize, DefaultShortOutputScoringPolicy)
+}
+
+// ExecuteValidationWithPolicy is ExecuteValidation under an explicit scoring policy.
+func ExecuteValidationWithPolicy(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	responsePayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
+	vocabularySize int,
+	scoring ScoringPolicy,
 ) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
@@ -339,6 +348,35 @@ func ExecuteValidation(
 		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
 	}
 
+	tokenIDLimit := replayTokenIDLimit
+	if vocabularySize > 0 {
+		tokenIDLimit = vocabularySize
+	}
+	if !isEmptySentinel && hasUnreplayableTokens(enforcedTokens, tokenIDLimit) {
+		logging.Warn("validation failed: enforced tokens exceed the replay limits, not sent to the validator node", types.Validation,
+			"inferenceId", inferenceID)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens exceed the replay limits."}, nil
+	}
+
+	if !isEmptySentinel {
+		if maxTokens, err := completionapi.EffectiveMaxTokens(modifiedRequest.NewBody); err == nil && uint64(len(enforcedTokens.Tokens)) > maxTokens {
+			logging.Warn("validation failed: more output positions than max_tokens, not sent to the validator node", types.Validation,
+				"inferenceId", inferenceID, "positions", len(enforcedTokens.Tokens), "maxTokens", maxTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "More output positions than max_tokens."}, nil
+		}
+	}
+
+	stopTokenIDs := completionapi.StopTokenIDsOf(requestMap)
+	// Runs for the empty-sentinel replay too: both forward stop_token_ids to the node.
+	if err := completionapi.ValidateStopTokenIDs(requestMap, vocabularySize); err != nil {
+		if vocabularySize > 0 {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "stop_token_ids outside the model vocabulary.", Error: err}, nil
+		}
+		// Unknown vocab on this validator is not the executor's fault: replay without the ids so
+		// the node cannot index out of range, and keep the stop-before-end check below.
+		delete(requestMap, "stop_token_ids")
+	}
+
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
 			"inferenceId", inferenceID)
@@ -364,6 +402,12 @@ func ExecuteValidation(
 	respBodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
+	}
+
+	if resp.StatusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
+		logging.Warn("validation failed: validator node rejected the executor's enforced tokens", types.Validation,
+			"inferenceId", inferenceID, "status", resp.StatusCode)
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens rejected by validator node."}, nil
 	}
 
 	// A 4xx (400/422) from the validator's own re-execution means the validator
@@ -396,12 +440,19 @@ func ExecuteValidation(
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
-		if TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens) ||
-			TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
+		inputInflated := TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens)
+		suspectedCause := ""
+		if inputInflated {
+			var exempt bool
+			exempt, suspectedCause = handleDeepSeekFormatterException(inferenceID, requestMap, claimedInputTokens, claimedOutputTokens, validationUsage)
+			inputInflated = !exempt
+		}
+		if inputInflated || TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn("validation failed: inflated token counts", types.Validation,
 				"inferenceId", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
-				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
+				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
+				"suspected_cause", suspectedCause, "resolution", "invalid")
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 		}
 	}
@@ -409,7 +460,7 @@ func ExecuteValidation(
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
-	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// CompareLogitsWithPolicy short-circuits to perfect similarity (1.0) when the ORIGINAL
 	// logits are empty, so an executor that stored a response with no logprobs
 	// would always pass. Reject only the asymmetric case (exactly one side empty):
 	// the executor's output cannot be verified against the validator's
@@ -438,24 +489,35 @@ func ExecuteValidation(
 		)
 	}
 
-	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
-	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
-	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
-	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
-	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
-	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
-	// above; empty-sentinel errors are exempt.
+	return shortOutputChecks(inferenceID, requestMap, originalLogits, validationLogits,
+		stopTokenIDs, isEmptySentinel, baseResult, scoring, logprobsMode), nil
+}
+
+// shortOutputChecks enforces a caller min_tokens on the output length and that a requested stop id
+// only ends the output, then scores the output under the short-output rule.
+func shortOutputChecks(
+	inferenceID string,
+	requestMap map[string]interface{},
+	originalLogits, validationLogits []completionapi.Logprob,
+	stopTokenIDs map[string]struct{},
+	isEmptySentinel bool,
+	baseResult BaseValidationResult,
+	scoring ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
 	if !isEmptySentinel && len(originalLogits) > 0 {
-		minTokens := completionapi.MinTokensOf(requestMap)
-		if minTokens > 0 && len(originalLogits) < minTokens {
-			logging.Warn("validation failed: output below min_tokens floor",
-				types.Validation, "inferenceId", inferenceID,
-				"outputTokens", len(originalLogits), "minTokens", minTokens)
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		if minTokens := completionapi.MinTokensOf(requestMap); minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below the requested min_tokens", types.Validation,
+				"inferenceId", inferenceID, "outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than the requested min_tokens."}
+		}
+		if stopTokenBeforeEnd(originalLogits, stopTokenIDs) {
+			logging.Warn("validation failed: output continues past a requested stop token", types.Validation, "inferenceId", inferenceID)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output continues past a requested stop token."}
 		}
 	}
 
-	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+	return CompareLogitsWithPolicy(originalLogits, validationLogits, baseResult, scoring.ForRequest(requestMap), logprobsMode)
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
@@ -472,4 +534,58 @@ func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)
 	}
 	return resp, err
+}
+
+// handleDeepSeekFormatterException checks two known DeepSeek V4 Flash 0731 issues.
+// We expect these to be rare and caused by an old MLNode on either the executor
+// or validator. These checks do not confirm which MLNode version is running.
+//
+//   - Extra instruction: old and new formatters can differ by 78 or 79 input tokens.
+//     We allow this difference and log the exception. Output counts and logits
+//     still go through the normal checks.
+//   - Missing history: old formatters can leave out reasoning from earlier messages.
+//     We suspect this when the input difference is larger, output counts match,
+//     and the request contains earlier assistant reasoning. We log the suspected
+//     cause but still reject the inference because the input histories are too
+//     different to reliably compare model outputs.
+func handleDeepSeekFormatterException(
+	inferenceID string,
+	request map[string]interface{},
+	claimedInput, claimedOutput uint64,
+	usage *completionapi.Usage,
+) (exempt bool, suspectedCause string) {
+	model, _ := request["model"].(string)
+	if model != "deepseek-ai/DeepSeek-V4-Flash-0731" || claimedInput <= usage.PromptTokens {
+		return false, ""
+	}
+	delta := claimedInput - usage.PromptTokens
+	if delta == 78 || delta == 79 {
+		logging.Warn("validation input usage exception applied", types.Validation,
+			"inferenceId", inferenceID, "model", model,
+			"exception", "deepseek_formatter_prefix", "input_delta", delta,
+			"claimedInput", claimedInput, "validationInput", usage.PromptTokens,
+			"resolution", "continue_validation")
+		return true, ""
+	}
+	// A heuristic only: different thinking defaults can omit historical reasoning.
+	if delta > 79 && claimedOutput == usage.CompletionTokens && hasAssistantReasoning(request) {
+		return false, "deepseek_formatter_history"
+	}
+	return false, ""
+}
+
+// hasAssistantReasoning checks for history that thinking and chat modes may render differently.
+func hasAssistantReasoning(request map[string]interface{}) bool {
+	messages, _ := request["messages"].([]interface{})
+	for _, raw := range messages {
+		message, _ := raw.(map[string]interface{})
+		if message["role"] != "assistant" {
+			continue
+		}
+		reasoning, _ := message["reasoning_content"].(string)
+		if reasoning != "" {
+			return true
+		}
+	}
+	return false
 }

@@ -28,7 +28,11 @@ import (
 )
 
 const (
-	childLoopbackHost      = "127.0.0.1"
+	childLoopbackHost = "127.0.0.1"
+	// peerReleasePath is the retiring child's admin endpoint. It stops that
+	// process from signing Attach as this host. Old binaries answer 404;
+	// callers log and continue.
+	peerReleasePath        = "/rpc/release"
 	maxChildPort           = 65535
 	storageModePostgres    = "postgres"
 	installedVersionRetain = 3
@@ -50,7 +54,9 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
-	fleetCompat   string
+	// childH2C is set from --print-child-h2c. False dials the child over HTTP/1.1.
+	childH2C    bool
+	fleetCompat string
 	// haDeployment is populated by binary preflight. Nil means the generation
 	// has not yet established whether it belongs to the HA PostgreSQL set.
 	haDeployment    *bool
@@ -177,6 +183,12 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.RecoveryTimeout <= 0 {
 		cfg.RecoveryTimeout = 30 * time.Minute
+	}
+	if cfg.ReadyMaxWait <= 0 {
+		cfg.ReadyMaxWait = 32 * time.Minute
+	}
+	if cfg.ReadyMaxWait < cfg.ReadyTimeout {
+		cfg.ReadyMaxWait = cfg.ReadyTimeout
 	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
@@ -306,6 +318,39 @@ func (m *Manager) ServesVersion(name string) bool {
 	running := c != nil && c.status == statusRunning
 	m.mu.Unlock()
 	return running && c.servingFresh()
+}
+
+// ServesPeerRPC reports whether the child serving version accepts
+// prior-knowledge HTTP/2. Connect is hashed only onto that child. A binary
+// that rejects --print-child-h2c stays on HTTP/1.1 and is not a peer-RPC target.
+func (m *Manager) ServesPeerRPC(name string) bool {
+	if !m.ServesVersion(name) {
+		return false
+	}
+	m.mu.Lock()
+	c := m.processes[name]
+	h2c := c != nil && c.childH2C
+	m.mu.Unlock()
+	return h2c
+}
+
+// PeerRPCHostReady is the host-level peer-RPC answer. Every running child
+// must have advertised h2c. One HTTP/1.1 child keeps the host out of the
+// coarse peer pool so versionless Connect is not hashed onto it.
+func (m *Manager) PeerRPCHostReady() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	anyRunning := false
+	for _, c := range m.processes {
+		if c == nil || c.status != statusRunning || !c.servingFresh() {
+			continue
+		}
+		anyRunning = true
+		if !c.childH2C {
+			return false
+		}
+	}
+	return anyRunning
 }
 
 // watchChildReadiness keeps one generation's serving flag current. It is bound to
@@ -1125,6 +1170,11 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 
 	slog.Info("swapped child route; old child draining", "version", v.Name, "old_port", old.port, "new_port", newChild.child.port)
+	// The new child is the only process that may sign as this host. Release
+	// after the route is published so peers reconnect onto it.
+	if err := m.requestPeerRelease(context.Background(), old); err != nil {
+		slog.Warn("peer identity release failed", "version", v.Name, "port", old.port, "error", err)
+	}
 	go m.drainAfterProxy(old, proxyDrained)
 	return nil
 }
@@ -1357,9 +1407,42 @@ func (m *Manager) BeginHostDrain() {
 	m.cancelOperations()
 }
 
-// RequestChildrenDrain removes every child route before issuing lifecycle
-// drain requests. Calls run concurrently and never hold m.mu during network I/O.
+// ReleasePeers tells every live child to stop Attach and Watch. Host drain
+// calls this before WaitIdle: an open Watch otherwise holds the host until
+// the drain budget is gone and child /drain is skipped. Old binaries answer
+// 404; the caller logs and continues.
+func (m *Manager) ReleasePeers(ctx context.Context) error {
+	children := m.snapshotChildren()
+	errCh := make(chan error, len(children))
+	var wg sync.WaitGroup
+	for _, c := range children {
+		if childDone(c) {
+			continue
+		}
+		wg.Add(1)
+		go func(c *child) {
+			defer wg.Done()
+			if err := m.requestPeerRelease(ctx, c); err != nil {
+				errCh <- fmt.Errorf("release peers for %s: %w", c.version.Name, err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// RequestChildrenDrain drops peer identity, then removes every child route
+// before issuing lifecycle drain requests. Calls run concurrently and never
+// hold m.mu during network I/O.
 func (m *Manager) RequestChildrenDrain(ctx context.Context) error {
+	if err := m.ReleasePeers(ctx); err != nil {
+		slog.Warn("peer identity release failed", "error", err)
+	}
 	children := m.prepareChildrenForDrain()
 	errCh := make(chan error, len(children))
 	var wg sync.WaitGroup
@@ -1512,6 +1595,35 @@ func (m *Manager) snapshotChildren() []*child {
 	return m.allChildrenLocked()
 }
 
+// PeerMemberTarget is one local devshardd the membership forwarder can reach.
+type PeerMemberTarget struct {
+	Version  string
+	AdminURL string
+}
+
+// PeerMemberTargets lists children that have an admin listener. versiond
+// forwards the router membership to each of them.
+func (m *Manager) PeerMemberTargets() []PeerMemberTarget {
+	if m == nil {
+		return nil
+	}
+	var out []PeerMemberTarget
+	for _, c := range m.snapshotChildren() {
+		if c == nil || childDone(c) {
+			continue
+		}
+		addr := c.adminAddr()
+		if addr == "" || c.version.Name == "" {
+			continue
+		}
+		out = append(out, PeerMemberTarget{
+			Version:  c.version.Name,
+			AdminURL: "http://" + addr,
+		})
+	}
+	return out
+}
+
 func (m *Manager) ForceStopChildren() {
 	m.cancelOperations()
 	m.cancelChildren()
@@ -1639,6 +1751,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	c.childH2C = preflight.childH2C
 	c.fleetCompat = preflight.fleetCompat
 	if preflight.haDeployment != nil {
 		ha := *preflight.haDeployment
@@ -1719,10 +1832,17 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(
-			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, proc.Done(),
-		) {
-			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
+		// ReadyTimeout is the floor on every attempt. An initializing or
+		// absent /ready already waits up to ReadyMaxWait; raising the floor
+		// after a slow timeout would only hold a later hung child longer.
+		ready, lastProbe := waitForChildServingReadyUntil(
+			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, m.cfg.ReadyMaxWait, proc.Done(),
+		)
+		if !ready {
+			slog.Warn("child did not become ready in time",
+				"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
+				"ready_path", m.cfg.ReadyPath, "ready_timeout", m.cfg.ReadyTimeout,
+				"ready_max_wait", m.cfg.ReadyMaxWait, "probe", lastProbe.String())
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
@@ -1756,7 +1876,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.nextProofGeneration++
 		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
-		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+		c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
@@ -2068,9 +2188,47 @@ func (c *child) adminAddr() string {
 	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
+type readyProbeResult int
+
+const (
+	readyProbeUnreachable readyProbeResult = iota
+	readyProbeNotReady
+	readyProbeInitializing
+	readyProbeReadyAbsent
+	readyProbeReady
+)
+
+func (r readyProbeResult) String() string {
+	switch r {
+	case readyProbeUnreachable:
+		return "unreachable"
+	case readyProbeNotReady:
+		return "not_ready"
+	case readyProbeInitializing:
+		return "initializing"
+	case readyProbeReadyAbsent:
+		return "ready_absent"
+	case readyProbeReady:
+		return "ready"
+	default:
+		return "unknown"
+	}
+}
+
+// probeAllowsReadyWaitExtension reports whether a not-yet-ready probe should
+// keep waiting up to maxWait instead of failing at minWait. Initializing is
+// the modern /ready body. ready_absent is older binaries (v3/v4): Echo returns
+// 404/405/501 for an unregistered /ready, so there is no body to inspect and
+// the wait still runs to ReadyMaxWait.
+func probeAllowsReadyWaitExtension(r readyProbeResult) bool {
+	return r == readyProbeInitializing || r == readyProbeReadyAbsent
+}
+
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
+// processDone ends the wait when the child exits; a nil channel means the
+// caller is not watching a process.
 func waitForChildServingReady(
 	ctx context.Context,
 	c *child,
@@ -2078,51 +2236,132 @@ func waitForChildServingReady(
 	timeout time.Duration,
 	processDone <-chan struct{},
 ) bool {
-	adminPort := int(c.adminPort.Load())
-	if adminPort == 0 {
-		return waitForReadiness(
-			ctx,
-			timeout,
-			processDone,
-			func(probeCtx context.Context, client *http.Client) bool {
-				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
-				if viaLegacy {
-					c.noteLegacyFallback(path)
-				}
-				return ready
-			},
-		)
-	}
-	return waitForReadiness(ctx, timeout, processDone, func(probeCtx context.Context, client *http.Client) bool {
-		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
-		return ready && publicEndpointReady(probeCtx, client, c.port)
-	})
+	ready, _ := waitForChildServingReadyUntil(ctx, c, path, timeout, timeout, processDone)
+	return ready
 }
 
-func waitForReadiness(
+// waitForChildServingReadyUntil is the same gate with a progress-aware bound.
+// It always waits at least minWait (the process may not have bound a port yet).
+// After that it keeps waiting up to maxWait while /ready is reachable and
+// either reports initializing, or is absent (404/405/501 on older binaries
+// that never registered the route). An unreachable or draining endpoint fails
+// promptly instead of stretching to maxWait. A closed processDone also fails
+// promptly, so a dead child is not held for the rest of the window.
+func waitForChildServingReadyUntil(
 	ctx context.Context,
-	timeout time.Duration,
+	c *child,
+	path string,
+	minWait, maxWait time.Duration,
 	processDone <-chan struct{},
-	probe func(context.Context, *http.Client) bool,
-) bool {
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+) (bool, readyProbeResult) {
+	if maxWait < minWait {
+		maxWait = minWait
+	}
+	start := time.Now()
+	probeCtx, cancel := context.WithTimeout(ctx, maxWait)
 	defer cancel()
 	client := &http.Client{Timeout: 500 * time.Millisecond}
+	last := readyProbeUnreachable
+	extended := false
 	for {
-		if probe(probeCtx, client) {
-			return true
+		last = probeChildServing(probeCtx, client, c, path)
+		if last == readyProbeReady {
+			return true, last
+		}
+		elapsed := time.Since(start)
+		if elapsed >= maxWait {
+			return false, last
+		}
+		if elapsed >= minWait && !probeAllowsReadyWaitExtension(last) {
+			return false, last
+		}
+		if elapsed >= minWait && probeAllowsReadyWaitExtension(last) && !extended {
+			extended = true
+			slog.Info("child still starting; extending readiness wait",
+				"version", c.version.Name, "port", c.port, "elapsed", elapsed,
+				"max_wait", maxWait, "probe", last.String())
 		}
 		retry := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-probeCtx.Done():
 			retry.Stop()
-			return false
+			return false, last
 		case <-processDone:
 			retry.Stop()
-			return false
+			return false, last
 		case <-retry.C:
 		}
 	}
+}
+
+func probeChildServing(ctx context.Context, client *http.Client, c *child, path string) readyProbeResult {
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
+		return probeReadyEndpoint(ctx, client, c.port, path, true, c)
+	}
+	admin := probeReadyEndpoint(ctx, client, adminPort, path, false, nil)
+	if admin != readyProbeReady {
+		return admin
+	}
+	if publicEndpointReady(ctx, client, c.port) {
+		return readyProbeReady
+	}
+	return readyProbeInitializing
+}
+
+func probeReadyEndpoint(
+	ctx context.Context,
+	client *http.Client,
+	port int,
+	path string,
+	allowLegacy bool,
+	c *child,
+) readyProbeResult {
+	readyPath := normalizeHTTPPath(path)
+	status, body, err := getHTTPStatusAndBody(ctx, client, port, readyPath)
+	if err != nil {
+		return readyProbeUnreachable
+	}
+	if status == http.StatusOK {
+		return readyProbeReady
+	}
+	if allowLegacy && legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
+		if c != nil {
+			c.noteLegacyFallback(path)
+		}
+		return readyProbeReady
+	}
+	if status == http.StatusServiceUnavailable && readyBodyInitializing(body) {
+		return readyProbeInitializing
+	}
+	if readyPathAbsent(status) {
+		return readyProbeReadyAbsent
+	}
+	return readyProbeNotReady
+}
+
+func readyPathAbsent(status int) bool {
+	switch status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
+}
+
+func readyBodyInitializing(body []byte) bool {
+	var status struct {
+		Ready        bool `json:"ready"`
+		Draining     bool `json:"draining"`
+		StorageReady bool `json:"storage_ready"`
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		return false
+	}
+	if status.Draining {
+		return false
+	}
+	return !status.Ready || !status.StorageReady
 }
 
 // readyEndpointReady reports readiness and whether the answer came through the
@@ -2150,17 +2389,26 @@ func publicEndpointReady(ctx context.Context, client *http.Client, port int) boo
 }
 
 func getHTTPStatus(ctx context.Context, client *http.Client, port int, path string) (int, error) {
+	status, _, err := getHTTPStatusAndBody(ctx, client, port, path)
+	return status, err
+}
+
+func getHTTPStatusAndBody(ctx context.Context, client *http.Client, port int, path string) (int, []byte, error) {
 	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, normalizeHTTPPath(path))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode, nil
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // getChildRecoveryStatus probes the admin readiness endpoint and returns the
@@ -2281,12 +2529,7 @@ func legacyReadyFallbackAllowed(path string, status int) bool {
 	if path != "/ready" {
 		return false
 	}
-	switch status {
-	case 0, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
-		return true
-	default:
-		return false
-	}
+	return status == 0 || readyPathAbsent(status)
 }
 
 func legacyReady(ctx context.Context, client *http.Client, port int) bool {
@@ -2345,6 +2588,32 @@ func (m *Manager) requestDrain(ctx context.Context, c *child) error {
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("drain request returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// requestPeerRelease tells the retiring child to stop Attach/Watch. Both
+// generations sign with the same host key; the one still dialing wins the
+// single peer session. A child that does not know the endpoint is ignored
+// by the caller.
+func (m *Manager) requestPeerRelease(ctx context.Context, c *child) error {
+	if c == nil {
+		return nil
+	}
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, c.lifecyclePort(), peerReleasePath)
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("peer release returned %d", resp.StatusCode)
 	}
 	return nil
 }
@@ -2456,6 +2725,12 @@ func (m *Manager) stopRetiredChild(
 	c *child,
 	proxyDrained <-chan struct{},
 ) error {
+	// Drop this generation's peer identity before waiting. An open Watch
+	// from this child is an acquired request on the peer's proxy; leaving
+	// it up stalls the other host's stop/start.
+	if err := m.requestPeerRelease(context.Background(), c); err != nil {
+		slog.Warn("peer identity release failed", "version", c.version.Name, "port", c.port, "error", err)
+	}
 	timer := time.NewTimer(m.cfg.DrainTimeout)
 	defer timer.Stop()
 	select {
@@ -2562,7 +2837,7 @@ func (m *Manager) rebuildRoutes() {
 	for _, c := range m.processes {
 		if c.status == statusRunning {
 			if c.proxyTarget == nil {
-				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+				c.proxyTarget = proxy.NewChildTarget(fmt.Sprintf("localhost:%d", c.port), c.childH2C)
 			}
 			routes[c.version.Name] = c.proxyTarget
 		}

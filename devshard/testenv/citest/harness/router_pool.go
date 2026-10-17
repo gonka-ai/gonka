@@ -100,6 +100,20 @@ func WaitRouterVersionBackend(t *testing.T, stack *Stack, version string, timeou
 	return backend
 }
 
+// SetRouterServerEnabled toggles one HAProxy backend server through the
+// router's admin-only runtime socket. Tests use this to force a request onto a
+// particular versiond host without changing DNS or stopping the process.
+func SetRouterServerEnabled(t *testing.T, stack *Stack, backend, server string, enabled bool) {
+	t.Helper()
+	action := "disable"
+	if enabled {
+		action = "enable"
+	}
+	query := fmt.Sprintf(`sock=${HAPROXY_RECONCILER_SOCKET:-/var/run/haproxy/reconciler.sock}; printf '%s server %s/%s\n' | socat stdio "UNIX-CONNECT:$sock"`, action, backend, server)
+	out, err := stack.ComposeExecOutput("versiond-router", "sh", "-c", query)
+	require.NoError(t, err, "set router server %s/%s enabled=%t\n%s", backend, server, enabled, out)
+}
+
 func routerVersionBackend(stack *Stack, version string) (string, error) {
 	out, err := stack.ComposeExecOutput("versiond-router", "sh", "-c", routerVersionMapQuery)
 	if err != nil {

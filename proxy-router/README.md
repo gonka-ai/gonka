@@ -10,9 +10,11 @@ It has three data-plane responsibilities:
 3. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
    router network.
 
-The nginx workers still own TLS, HTTP/2, CORS, rate limits, path rewrites, and
-the on-chain route table. This keeps one policy implementation while allowing
-the service-pool distributors to scale and restart independently.
+The nginx workers still own TLS and HTTP/2 on `:80` and `:443`, plus CORS,
+rate limits, path rewrites, and the on-chain route table. Peer RPC is a
+separate HAProxy listen (`DEVSHARD_RPC_H2_PORT`, default 9443) and does not
+enter those workers. This keeps one policy implementation for JSON while
+allowing the service-pool distributors to scale and restart independently.
 
 ## Request path
 
@@ -22,6 +24,11 @@ client
   -> proxy-policy2 + proxy-policy (fixed rolling slots)
        -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
+
+peer RPC (skips nginx)
+  -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
+       HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
+       non-HA: versiond:8080 proto h2
 ```
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between
@@ -195,6 +202,7 @@ availability.
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
+| `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC` | `32` | concurrent connections one client address may hold on the peer RPC listen (`DEVSHARD_RPC_H2_PORT`); the next one is closed before Attach. Direct clients are keyed at accept. With `PROXY_ROUTER_PROXY_PROTOCOL_FROM`, the cap uses the address in the PROXY preamble (one IPv4 address, or one IPv6 /64) once that preamble is accepted. A preamble that stalls before the TLS handshake is closed by `timeout client-hs` (5s). Without PROXY protocol, clients behind one L4 balancer share that balancer's address |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 | `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |
