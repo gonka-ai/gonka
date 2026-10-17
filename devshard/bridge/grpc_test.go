@@ -1,7 +1,10 @@
 package bridge_test
 
 import (
+	"context"
+	"net"
 	"testing"
+	"time"
 
 	"common/chain"
 	devshardpkg "devshard"
@@ -10,11 +13,46 @@ import (
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockchain/store"
 
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
+
+type stalledEscrowQueryServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
+
+func (*stalledEscrowQueryServer) DevshardEscrow(ctx context.Context, _ *inferencetypes.QueryGetDevshardEscrowRequest) (*inferencetypes.QueryGetDevshardEscrowResponse, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, status.Error(codes.Internal, "missing request deadline")
+	}
+	<-ctx.Done()
+	return nil, status.FromContextError(ctx.Err()).Err()
+}
+
+func TestGRPCBridge_GetEscrowBoundsAnAcceptedButUnansweredRPC(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	inferencetypes.RegisterQueryServer(server, &stalledEscrowQueryServer{})
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(server.Stop)
+	conn, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close() })
+	b := bridge.NewGRPCBridge(chain.NewFromConn(conn))
+
+	started := time.Now()
+	_, err = b.GetEscrow("1")
+
+	require.ErrorIs(t, err, bridge.ErrChainUnavailable)
+	require.Equal(t, codes.DeadlineExceeded, status.Code(err))
+	require.Less(t, time.Since(started), 20*time.Second)
+}
 
 func startGRPCBridge(t *testing.T) *bridge.GRPCBridge {
 	t.Helper()

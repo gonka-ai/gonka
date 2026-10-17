@@ -25,6 +25,9 @@ const warmKeyQueryTimeout = 10 * time.Second
 // caller forever.
 const hostInfoQueryTimeout = 10 * time.Second
 
+// GetEscrow has no caller context; bound startup and background retry reads.
+const escrowQueryTimeout = 10 * time.Second
+
 type warmCacheKey struct {
 	host string
 	warm string
@@ -70,7 +73,9 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		return nil, err
 	}
 
-	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), escrowQueryTimeout)
+	defer cancel()
+	resp, err := b.client.InferenceQueryClient().DevshardEscrow(ctx,
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
 		return nil, ClassifyQueryError(fmt.Errorf("DevshardEscrow %s: %w", escrowID, err))

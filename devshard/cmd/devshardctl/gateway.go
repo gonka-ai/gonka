@@ -87,7 +87,8 @@ type Gateway struct {
 	executionTimeoutSweepRunning atomic.Bool
 	awaitingStartMu              sync.Mutex
 	awaitingStart                map[string]string // escrow id -> startup skip reason
-	startClaims                  map[string]int    // escrow id -> settlements in flight on a waiting escrow
+	startClaims                  map[string]int    // escrow id -> non-resident settlements in flight
+	startBuilds                  map[string]bool   // escrow id -> retry build in flight; guarded by awaitingStartMu
 	awaitingStartRetrying        atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
@@ -722,8 +723,8 @@ func (rt *devshardRuntime) stopRedundancy() {
 }
 
 // discard releases a built runtime that will not be registered: the dispatcher
-// goroutine the builder started, then the session. No snapshot is flushed, as
-// nothing ran on this runtime.
+// goroutine the builder started, then the session. A rejected registration does
+// not flush a final snapshot.
 func (rt *devshardRuntime) discard() {
 	if rt == nil {
 		return
@@ -3631,6 +3632,9 @@ func firstNonZeroUint64(values ...uint64) uint64 {
 func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDevshardState) (GatewayDevshardState, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.startIsBusy(record.ID) {
+		return record, errDevshardBusy
+	}
 
 	state, ok, err := g.store.LoadState(ctx)
 	if err != nil {
@@ -3641,6 +3645,9 @@ func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDev
 	}
 	if _, exists := g.runtimes[record.ID]; exists {
 		return record, fmt.Errorf("devshard %s already exists: %w", record.ID, errDevshardAlreadyExists)
+	}
+	if current, found := findGatewayDevshard(state.Devshards, record.ID); found {
+		record.OnHoldSince = current.OnHoldSince
 	}
 	if record.Model == "" {
 		record.Model = state.Settings.DefaultModel
@@ -3669,6 +3676,7 @@ func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDev
 		rt.discard()
 		return record, err
 	}
+	restoreHoldFromRecord(rt, record)
 	g.runtimes[record.ID] = rt
 	g.runtimeOrder = append(g.runtimeOrder, rt)
 	g.attachRuntimeSharedState(rt)
@@ -4159,6 +4167,10 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.startIsBusy(req.ID) {
+		http.Error(w, `{"error":{"message":"devshard start or settlement is in progress"}}`, http.StatusConflict)
+		return
+	}
 
 	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {
@@ -4275,6 +4287,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
+	restoreHoldFromRecord(rt, record)
 	g.runtimes[record.ID] = rt
 	g.runtimeOrder = append(g.runtimeOrder, rt)
 	g.attachRuntimeSharedState(rt)
@@ -4296,7 +4309,22 @@ func (g *Gateway) handleAdminDeactivateDevshard(w http.ResponseWriter, r *http.R
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
 	if !ok {
+		_, found, err := g.store.GetDevshard(r.Context(), id)
+		if err == nil && found {
+			err = g.store.SetDevshardActive(r.Context(), id, false)
+			if err == nil {
+				g.stopAwaitingStart(id)
+			}
+		}
 		g.mu.Unlock()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		if found {
+			writeJSON(w, map[string]any{"id": id, "active": false})
+			return
+		}
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is not active"}}`, id), http.StatusNotFound)
 		return
 	}
@@ -4369,7 +4397,11 @@ func (g *Gateway) handleAdminActivateDevshard(w http.ResponseWriter, r *http.Req
 	record.Active = true
 	record, err = g.addCreatedEscrowRuntime(r.Context(), record)
 	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
+		statusCode := http.StatusBadGateway
+		if errors.Is(err, errDevshardBusy) {
+			statusCode = http.StatusConflict
+		}
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), statusCode)
 		return
 	}
 	log.Printf("devshard_activated escrow=%s model=%s storage=%s", record.ID, record.Model, record.StoragePath)
@@ -4397,6 +4429,10 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 	}()
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.startIsBusy(id) {
+		http.Error(w, `{"error":{"message":"devshard start or settlement is in progress"}}`, http.StatusConflict)
+		return
+	}
 
 	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {

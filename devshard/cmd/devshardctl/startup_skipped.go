@@ -16,16 +16,13 @@ import (
 // balance-check tick retries the build; a start registers the runtime, a final
 // reason deactivates the escrow, anything else waits for the next tick.
 //
-// Ownership: the retry registers its runtime or deactivates the escrow only
-// while it is still waiting, unclaimed, and has no resident runtime. It checks
-// ownership under g.mu in the same critical section as the change; registration
-// also checks that the escrow is still active in the store. A manual settlement of a
-// waiting escrow claims it under g.mu for its own duration (several
-// settlements may overlap; the claim is a count), so a runtime the retry built
-// in the meantime is dropped instead of registered. A claimed escrow still
-// waits: it has no runtime, so rotation must not count it as serving. The wait
-// ends when a runtime is registered by any path, when the escrow is
-// deactivated, or when settlement has marked it inactive in the store.
+// Ownership: a retry reserves the escrow under g.mu before building, because
+// session workers can already write its journal during the build. Admin builds
+// hold g.mu throughout; non-resident settlements claim the escrow under g.mu
+// for their whole operation, even after marking it inactive. Conflicting starts
+// and settlements return busy before building. Registration rechecks that the
+// escrow is still waiting and active, since an operator may deactivate it while
+// the retry builds. A claimed escrow has no runtime and takes no rotation target.
 
 func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
 	for _, escrow := range skipped {
@@ -71,23 +68,45 @@ func (g *Gateway) stopAwaitingStart(escrowID string) {
 	g.awaitingStartMu.Lock()
 	defer g.awaitingStartMu.Unlock()
 	delete(g.awaitingStart, escrowID)
-	delete(g.startClaims, escrowID)
 	g.metrics.ClearStartupSkippedEscrow(escrowID)
 }
 
-// claimAwaitingStart takes a waiting escrow away from the retry for the
-// duration of a settlement on it; the escrow keeps waiting. The returned
-// function drops the claim, for a settlement that fails before the escrow is
-// marked inactive, so the retry looks after the escrow again once the last
-// claim is gone. It does nothing for an escrow that is not waiting. The caller
-// holds g.mu, so the claim and the retry's registration check cannot
-// interleave.
-func (g *Gateway) claimAwaitingStart(escrowID string) func() {
+// Callers hold g.mu while deciding to build or claim a non-resident escrow.
+func (g *Gateway) startIsBusy(escrowID string) bool {
 	g.awaitingStartMu.Lock()
 	defer g.awaitingStartMu.Unlock()
-	if _, waiting := g.awaitingStart[escrowID]; !waiting {
-		return func() {}
+	return g.startBuilds[escrowID] || g.startClaims[escrowID] > 0
+}
+
+// Reserve before building: a build starts session workers and can write the
+// journal, so discarding a duplicate after it returns is too late. Admin builds
+// hold g.mu throughout; settlements reserve a claim under that same lock.
+func (g *Gateway) reserveRetryBuild(escrowID string) (func(), bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, resident := g.runtimes[escrowID]; resident || !g.awaitsRetry(escrowID) || g.startIsBusy(escrowID) {
+		return nil, false
 	}
+	g.awaitingStartMu.Lock()
+	if g.startBuilds == nil {
+		g.startBuilds = make(map[string]bool)
+	}
+	g.startBuilds[escrowID] = true
+	g.awaitingStartMu.Unlock()
+	return func() {
+		g.awaitingStartMu.Lock()
+		delete(g.startBuilds, escrowID)
+		g.awaitingStartMu.Unlock()
+	}, true
+}
+
+// claimEscrowForSettlement excludes starts for the full lifetime of a
+// non-resident settlement. Ending the startup wait does not release the claim:
+// the transient session may still be finalizing or broadcasting. The caller
+// holds g.mu; the returned function releases ownership when the operation ends.
+func (g *Gateway) claimEscrowForSettlement(escrowID string) func() {
+	g.awaitingStartMu.Lock()
+	defer g.awaitingStartMu.Unlock()
 	if g.startClaims == nil {
 		g.startClaims = make(map[string]int)
 	}
@@ -148,20 +167,30 @@ func (g *Gateway) retrySkippedEscrows(ctx context.Context) {
 			g.stopAwaitingStart(escrowID)
 			continue
 		}
-		runtime, buildErr := gatewayRuntimeBuilder(record.RuntimeConfig, g.runtimeBuildDepsFromSettings(g.perf, state.Settings))
-		switch {
-		case errors.Is(buildErr, bridge.ErrParticipantNotFound):
-			continue
-		case errors.Is(buildErr, user.ErrLocalStateUnrecoverable), errors.Is(buildErr, bridge.ErrEscrowNotFound),
-			errors.Is(buildErr, bridge.ErrEscrowSettled), errors.Is(buildErr, errRuntimePrivateKeyMissing):
-			g.deactivateFailedRetry(ctx, escrowID, buildErr)
-			continue
-		case buildErr != nil:
-			log.Printf("devshard %s start retry failed (%s), will retry: %v", escrowID, reason, buildErr)
-			continue
-		}
-		g.registerRetriedRuntime(ctx, escrowID, reason, runtime)
+		g.retrySkippedEscrow(ctx, record, reason, state.Settings)
 	}
+}
+
+func (g *Gateway) retrySkippedEscrow(ctx context.Context, record GatewayDevshardState, reason string, settings GatewaySettings) {
+	leave, reserved := g.reserveRetryBuild(record.ID)
+	if !reserved {
+		return
+	}
+	defer leave()
+	escrowID := record.ID
+	runtime, buildErr := gatewayRuntimeBuilder(record.RuntimeConfig, g.runtimeBuildDepsFromSettings(g.perf, settings))
+	switch {
+	case errors.Is(buildErr, bridge.ErrParticipantNotFound):
+		return
+	case errors.Is(buildErr, user.ErrLocalStateUnrecoverable), errors.Is(buildErr, bridge.ErrEscrowNotFound),
+		errors.Is(buildErr, bridge.ErrEscrowSettled), errors.Is(buildErr, errRuntimePrivateKeyMissing):
+		g.deactivateFailedRetry(ctx, escrowID, buildErr)
+		return
+	case buildErr != nil:
+		log.Printf("devshard %s start retry failed (%s), will retry: %v", escrowID, reason, buildErr)
+		return
+	}
+	g.registerRetriedRuntime(ctx, escrowID, reason, runtime)
 }
 
 // A final error belongs to the build that just finished. Another path may have

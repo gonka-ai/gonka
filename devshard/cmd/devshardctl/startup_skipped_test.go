@@ -173,19 +173,15 @@ func useRuntimeBuilder(t *testing.T, builder func(cfg RuntimeConfig, deps runtim
 	t.Cleanup(func() { gatewayRuntimeBuilder = saved })
 }
 
-// A retry finishes after the operator has started the escrow through either
-// admin endpoint. Its stale final error must not deactivate the serving escrow.
-func TestAFinalRetryErrorKeepsAnEscrowStartedByTheOperatorActive(t *testing.T) {
+// An in-flight retry owns the build before it can start workers. Admin starts
+// must wait for it to finish, then may start the escrow on a later request.
+func TestAdminStartsDoNotBuildOverAnInFlightRetry(t *testing.T) {
 	for _, action := range []string{"add", "activate"} {
 		t.Run(action, func(t *testing.T) {
 			gateway := skippedEscrowGateway(t)
 			gateway.baseStorageDir = t.TempDir()
 			builds := 0
-			useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
-				builds++
-				if builds > 1 {
-					return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
-				}
+			start := func() *httptest.ResponseRecorder {
 				response := httptest.NewRecorder()
 				if action == "add" {
 					gateway.handleAdminAddDevshard(response, httptest.NewRequest(http.MethodPost,
@@ -194,12 +190,27 @@ func TestAFinalRetryErrorKeepsAnEscrowStartedByTheOperatorActive(t *testing.T) {
 					gateway.handleAdminActivateDevshard(response, httptest.NewRequest(http.MethodPost,
 						"/v1/admin/devshards/12/activate", nil), "12")
 				}
-				require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-				return nil, fmt.Errorf("stale retry: %w", user.ErrLocalStateUnrecoverable)
+				return response
+			}
+			useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+				builds++
+				if builds == 1 {
+					gateway.retrySkippedEscrows(context.Background())
+					response := start()
+					require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+					_, err := gateway.settleDevshardOnChain(context.Background(), cfg.ID, adminSettleEscrowRequest{})
+					require.ErrorIs(t, err, errDevshardBusy)
+					return nil, errors.New("temporary recovery failure")
+				}
+				return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
 			})
 
 			gateway.retrySkippedEscrows(context.Background())
-
+			require.Equal(t, 1, builds)
+			require.True(t, gateway.isAwaitingStart("12"))
+			response := start()
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(t, 2, builds)
 			require.Contains(t, gateway.runtimes, "12")
 			require.True(t, devshardIDs(t, gateway.store)["12"].Active)
 			require.False(t, gateway.isAwaitingStart("12"))
@@ -211,6 +222,7 @@ func TestAFinalRetryErrorKeepsAnEscrowStartedByTheOperatorActive(t *testing.T) {
 func TestAnAdminAddEndsTheWaitAndCountsTheServingEscrowForRotation(t *testing.T) {
 	gateway := skippedEscrowGateway(t)
 	gateway.baseStorageDir = t.TempDir()
+	staleRecord := devshardIDs(t, gateway.store)["12"]
 	builds := 0
 	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
 		builds++
@@ -227,7 +239,103 @@ func TestAnAdminAddEndsTheWaitAndCountsTheServingEscrowForRotation(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
 	gateway.retrySkippedEscrows(context.Background())
+	gateway.retrySkippedEscrow(context.Background(), staleRecord, startupSkipReasonRuntimeBuildFailed, gateway.settings)
 	require.Equal(t, 1, builds, "the admin-started escrow must not be rebuilt on the retry tick")
+}
+
+func TestSettlementExcludesAdminStartsUntilItsClaimIsReleased(t *testing.T) {
+	for _, action := range []string{"add", "activate"} {
+		t.Run(action, func(t *testing.T) {
+			gateway := skippedEscrowGateway(t)
+			gateway.mu.Lock()
+			release := gateway.claimEscrowForSettlement("12")
+			gateway.mu.Unlock()
+			defer release()
+			builds := 0
+			useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+				builds++
+				return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
+			})
+			for _, endedWait := range []bool{false, true} {
+				if endedWait {
+					gateway.stopAwaitingStart("12")
+				}
+				response := httptest.NewRecorder()
+				if action == "add" {
+					gateway.handleAdminAddDevshard(response, httptest.NewRequest(http.MethodPost,
+						"/v1/admin/devshards", strings.NewReader(`{"id":"12"}`)))
+				} else {
+					gateway.handleAdminActivateDevshard(response, httptest.NewRequest(http.MethodPost,
+						"/v1/admin/devshards/12/activate", nil), "12")
+				}
+				require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+			}
+			require.Zero(t, builds, "a conflicting builder must never start its workers")
+			require.Empty(t, gateway.runtimes)
+		})
+	}
+}
+
+func TestAdminStartsRestoreThePersistedHoldOfASkippedEscrow(t *testing.T) {
+	for _, action := range []string{"add", "activate"} {
+		t.Run(action, func(t *testing.T) {
+			gateway := skippedEscrowGateway(t)
+			gateway.baseStorageDir = t.TempDir()
+			heldSince := time.Now().UTC()
+			_, held, err := gateway.store.HoldDevshardIfActive(context.Background(), "12", heldSince)
+			require.NoError(t, err)
+			require.True(t, held)
+			useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+				rt := &devshardRuntime{id: cfg.ID, model: cfg.Model}
+				rt.active.Store(true)
+				return rt, nil
+			})
+			response := httptest.NewRecorder()
+			if action == "add" {
+				gateway.handleAdminAddDevshard(response, httptest.NewRequest(http.MethodPost,
+					"/v1/admin/devshards", strings.NewReader(`{"id":"12"}`)))
+			} else {
+				gateway.handleAdminActivateDevshard(response, httptest.NewRequest(http.MethodPost,
+					"/v1/admin/devshards/12/activate", nil), "12")
+			}
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			rt := gateway.runtimes["12"]
+			require.Equal(t, heldSince.UnixNano(), rt.holdSince.Load())
+			accepts, reason := rt.acceptsNewInferences()
+			require.False(t, accepts)
+			require.Equal(t, "on_hold", reason)
+			count, err := gateway.activeRotationEscrowCount(context.Background(), rotationRoleRegular, 1, "m")
+			require.NoError(t, err)
+			require.Zero(t, count)
+		})
+	}
+}
+
+func TestAdminCanDeactivateASkippedEscrowDuringItsRetryBuild(t *testing.T) {
+	gateway := skippedEscrowGateway(t)
+	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
+		response := httptest.NewRecorder()
+		gateway.handleAdminDeactivateDevshard(response, httptest.NewRequest(http.MethodPost,
+			"/v1/admin/devshards/12/deactivate", nil), cfg.ID)
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		cleanup := httptest.NewRecorder()
+		gateway.handleAdminCleanDevshard(cleanup, httptest.NewRequest(http.MethodPost,
+			"/v1/admin/devshards/12/clean", nil), cfg.ID)
+		require.Equal(t, http.StatusConflict, cleanup.Code, "cleanup must wait for the builder to stop")
+		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
+	})
+
+	gateway.retrySkippedEscrows(context.Background())
+
+	require.False(t, devshardIDs(t, gateway.store)["12"].Active)
+	require.False(t, gateway.isAwaitingStart("12"))
+	require.Empty(t, gateway.runtimes)
+	require.Zero(t, promtestutil.CollectAndCount(gateway.metrics.startupSkippedEscrows))
+	cleanup := httptest.NewRecorder()
+	gateway.handleAdminCleanDevshard(cleanup, httptest.NewRequest(http.MethodPost,
+		"/v1/admin/devshards/12/clean", nil), "12")
+	require.Equal(t, http.StatusOK, cleanup.Code, cleanup.Body.String())
+	require.NotContains(t, devshardIDs(t, gateway.store), "12")
 }
 
 func TestAFinalRetryErrorDoesNotDeactivateAnEscrowTakenAwayWhileBuilding(t *testing.T) {
@@ -238,7 +346,7 @@ func TestAFinalRetryErrorDoesNotDeactivateAnEscrowTakenAwayWhileBuilding(t *test
 				gateway.mu.Lock()
 				defer gateway.mu.Unlock()
 				if action == "claimed" {
-					gateway.claimAwaitingStart(cfg.ID)
+					gateway.claimEscrowForSettlement(cfg.ID)
 				} else if action == "resident" {
 					gateway.runtimes[cfg.ID] = &devshardRuntime{id: cfg.ID, model: cfg.Model}
 				} else {
@@ -326,7 +434,7 @@ func TestASkippedEscrowIsNotRegisteredOnceSettlementClaimedItWhileBuilding(t *te
 	gateway := skippedEscrowGateway(t)
 	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
 		gateway.mu.Lock()
-		gateway.claimAwaitingStart(cfg.ID)
+		gateway.claimEscrowForSettlement(cfg.ID)
 		gateway.mu.Unlock()
 		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
 	})
@@ -381,13 +489,9 @@ func TestAFailedSettlementGivesASkippedEscrowBackToTheRetry(t *testing.T) {
 	require.True(t, devshardIDs(t, gateway.store)["12"].Active)
 }
 
-// Test flow:
-//  1. Hold a skipped escrow. Settle it manually; while that settlement builds its runtime, a second manual settlement
-//     of the same escrow runs and fails (its build fails too).
-//  2. Assert that after the second settlement failed the retry still may not register a runtime: the first settlement
-//     still owns the escrow.
-//  3. Let the first settlement fail as well and assert the retry looks after the escrow again.
-func TestOverlappingSettlementsKeepASkippedEscrowClaimedUntilTheLastOneEnds(t *testing.T) {
+// A second settlement must return busy before building another transient
+// session, while the first keeps ownership until its failed build returns.
+func TestOverlappingSettlementsDoNotBuildASkippedEscrowTwice(t *testing.T) {
 	gateway := skippedEscrowGateway(t)
 	retriableAfterInnerFailure := true
 	builds := 0
@@ -395,7 +499,7 @@ func TestOverlappingSettlementsKeepASkippedEscrowClaimedUntilTheLastOneEnds(t *t
 		builds++
 		if builds == 1 {
 			_, innerErr := gateway.settleDevshardOnChain(context.Background(), cfg.ID, adminSettleEscrowRequest{})
-			require.Error(t, innerErr)
+			require.ErrorIs(t, innerErr, errDevshardBusy)
 			retriableAfterInnerFailure = gateway.awaitsRetry(cfg.ID)
 		}
 		return nil, errors.New("recover session: database is locked")
@@ -404,7 +508,7 @@ func TestOverlappingSettlementsKeepASkippedEscrowClaimedUntilTheLastOneEnds(t *t
 	_, err := gateway.settleDevshardOnChain(context.Background(), "12", adminSettleEscrowRequest{})
 
 	require.Error(t, err)
-	require.Equal(t, 2, builds)
+	require.Equal(t, 1, builds)
 	require.False(t, retriableAfterInnerFailure)
 	require.True(t, gateway.awaitsRetry("12"))
 }
@@ -417,7 +521,7 @@ func TestOverlappingSettlementsKeepASkippedEscrowClaimedUntilTheLastOneEnds(t *t
 func TestAClaimedEscrowTakesNoRotationTarget(t *testing.T) {
 	gateway := skippedEscrowGateway(t)
 	gateway.mu.Lock()
-	gateway.claimAwaitingStart("12")
+	gateway.claimEscrowForSettlement("12")
 	gateway.mu.Unlock()
 
 	count, err := gateway.activeRotationEscrowCount(context.Background(), rotationRoleRegular, 1, "m")
@@ -436,7 +540,7 @@ func TestARejectedRetriedRuntimeStopsItsDispatcher(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	useRuntimeBuilder(t, func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
 		gateway.mu.Lock()
-		gateway.claimAwaitingStart(cfg.ID)
+		gateway.claimEscrowForSettlement(cfg.ID)
 		gateway.mu.Unlock()
 		return &devshardRuntime{id: cfg.ID, model: cfg.Model, proxy: env.proxy}, nil
 	})
