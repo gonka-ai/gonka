@@ -602,7 +602,7 @@ func TestVerifyRefused_ShortReservationAccepted(t *testing.T) {
 	rec := st.Inferences[1]
 	rec.PromptHash, rec.InputLength, rec.MaxTokens = promptHash, uint64(len(prompt)), 8
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, payload, nil, nil, nil, newEvidenceGroup(t).sm, st.Config, deadlinePassedRefused(st, 1))
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, rec, payload, nil, nil, nil, newEvidenceGroup(t).sm, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.True(t, accept)
 }
