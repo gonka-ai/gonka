@@ -199,3 +199,36 @@ func TestInvariantTrendsStartAHostWhenItServes(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+// 1. Require rotation_gap_errors and max_nonce_errors to pass on a run whose requests all completed.
+// 2. Answer two requests 400 unsupported model and one 503 temporarily unavailable at 3m10s, as in the gap between an escrow's deactivation and its replacement, and one 502 nonce exceeds chain max_nonce limit at 5m.
+// 3. Require both checks to fail with those counts, under their own names, although the error rate stays within its bound.
+func TestInvariantRotationGapAndMaxNonceErrorsFail(t *testing.T) {
+	in := passingInputs()
+	checks, _ := evaluateInvariants(in)
+	for _, name := range []string{"error-rate-and-latency.rotation_gap_errors", "error-rate-and-latency.max_nonce_errors"} {
+		check := checksNamed(t, checks, name)[0]
+		require.True(t, check.Passed, "%s actual=%s details=%s", name, check.Actual, check.Details)
+	}
+
+	failed := func(offset time.Duration, status int, message string) RequestResult {
+		return RequestResult{StartedAt: at(offset), Duration: time.Millisecond, Status: status, Outcome: "error", Model: "model-a", Error: fmt.Sprintf(`{"error":{"message":%q}}`, message)}
+	}
+	in.Requests = append(in.Requests,
+		failed(3*time.Minute+10*time.Second, 400, `unsupported model "model-a"; supported models: model-b`),
+		failed(3*time.Minute+10*time.Second, 400, `unsupported model "model-a"; supported models: model-b`),
+		failed(3*time.Minute+11*time.Second, 503, `model "model-a" is temporarily unavailable`),
+		failed(5*time.Minute, 502, "prepare: escrow 9 nonce 1695: nonce exceeds chain max_nonce limit"))
+	checks, _ = evaluateInvariants(in)
+
+	gap := checksNamed(t, checks, "error-rate-and-latency.rotation_gap_errors")[0]
+	require.False(t, gap.Passed)
+	require.Equal(t, "3", gap.Actual)
+	require.Contains(t, gap.Details, "400=2 503=1")
+	require.Contains(t, gap.Details, "model-a=3")
+	overrun := checksNamed(t, checks, "error-rate-and-latency.max_nonce_errors")[0]
+	require.False(t, overrun.Passed)
+	require.Equal(t, "1", overrun.Actual)
+	require.True(t, checksNamed(t, checks, "error-rate-and-latency.quiet_error_rate")[0].Passed)
+}

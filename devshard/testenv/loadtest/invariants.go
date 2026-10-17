@@ -1163,7 +1163,10 @@ func expectedQuarantine(record EventRecord) (allowed map[string]bool, forbidden 
 			return map[string]bool{"http": true}, nil, true
 		case patch["pause_stream"] == true, patch["hang"] == true:
 			// The host has sent its receipt but no content when the gateway gives up on the
-			// attempt, which it reports as an empty stream.
+			// attempt, which it reports as an empty stream: the gateway counts any attempt with a
+			// receipt and no content chunk as one, cancelled or not, while stalled_winner needs a
+			// winner that sent content and its own cancel is never a transport failure. Under
+			// pause_stream only the requests holding the mock's workers get the first token.
 			return map[string]bool{"stalled_winner": true, "transport": true, "empty_stream": true}, nil, true
 		}
 	case "dapi_challenge":
@@ -1469,6 +1472,7 @@ func evalErrorRateAndLatency(c *invariantContext) ([]AssertionResult, any) {
 	checks = append(checks,
 		invariantCheck("error-rate-and-latency.quiet_error_rate", caseID, calm.ErrorRate <= quietErrorRate, fmt.Sprintf("error rate <= %.1f%%", quietErrorRate*100), fmt.Sprintf("%.2f%% (%d/%d)", calm.ErrorRate*100, calm.Errors, calm.Requests), ""),
 		invariantCheck("error-rate-and-latency.quiet_empty_streams", caseID, calm.EmptyStreams == 0, "no streamed request ends empty outside fault windows", fmt.Sprintf("empty_streams=%d", calm.EmptyStreams), ""))
+	checks = append(checks, gatewayErrorClassChecks(c)...)
 	for _, s := range spans {
 		stats := windowStats(s.record.ID, perEvent[s.record.ID])
 		tables = append(tables, stats)
@@ -1496,6 +1500,66 @@ func evalErrorRateAndLatency(c *invariantContext) ([]AssertionResult, any) {
 		tables = append(tables, requestWindowStats{Window: "excluded_invalid", Requests: excluded})
 	}
 	return checks, tables
+}
+
+// gatewayErrorClassChecks counts two gateway answers that the error-rate bounds would absorb, each
+// under its own name and allowed none, wherever in the run they fall:
+//   - rotation_gap_errors: 400 "unsupported model" (503 "temporarily unavailable" when the model is in
+//     model_limits). Routing skips an escrow at its nonce limit, and the gateway deactivates it before it
+//     creates the replacement on chain, so with one escrow per model no runtime serves the model until
+//     the replacement is resident.
+//   - max_nonce_errors: 502 "nonce exceeds chain max_nonce limit". The gateway stops routing to an
+//     escrow a fixed 200 nonces before its hosts' active cap, and requests already routed to it can need
+//     more nonces than that.
+func gatewayErrorClassChecks(c *invariantContext) []AssertionResult {
+	var gapSeconds, overrunSeconds []string
+	gapStatus, gapModels := map[int]int{}, map[string]int{}
+	overrun := 0
+	for _, r := range c.in.Requests {
+		second := r.StartedAt.UTC().Format("15:04:05")
+		switch {
+		case r.Status == 400 && strings.Contains(r.Error, "unsupported model"), r.Status == 503 && strings.Contains(r.Error, "is temporarily unavailable"):
+			gapStatus[r.Status]++
+			gapModels[r.Model]++
+			gapSeconds = append(gapSeconds, second)
+		case r.Status == 502 && strings.Contains(r.Error, "nonce exceeds chain max_nonce limit"):
+			overrun++
+			overrunSeconds = append(overrunSeconds, second)
+		}
+	}
+	gaps := 0
+	var gapDetails []string
+	for _, status := range slices.Sorted(maps.Keys(gapStatus)) {
+		gaps += gapStatus[status]
+		gapDetails = append(gapDetails, fmt.Sprintf("%d=%d", status, gapStatus[status]))
+	}
+	for _, model := range slices.Sorted(maps.Keys(gapModels)) {
+		gapDetails = append(gapDetails, fmt.Sprintf("%s=%d", model, gapModels[model]))
+	}
+	if gaps > 0 {
+		gapDetails = append(gapDetails, "started "+secondsWithCounts(gapSeconds))
+	}
+	overrunDetails := ""
+	if overrun > 0 {
+		overrunDetails = "started " + secondsWithCounts(overrunSeconds)
+	}
+	return []AssertionResult{
+		invariantCheck("error-rate-and-latency.rotation_gap_errors", c.checkCase("error-rate-and-latency", "rotation_gap_errors"), gaps == 0, "no request answered 400 unsupported model or 503 temporarily unavailable for lack of a runtime (escrow rotation gap)", strconv.Itoa(gaps), strings.Join(gapDetails, " ")),
+		invariantCheck("error-rate-and-latency.max_nonce_errors", c.checkCase("error-rate-and-latency", "max_nonce_errors"), overrun == 0, "no request answered 502 nonce exceeds chain max_nonce limit", strconv.Itoa(overrun), overrunDetails),
+	}
+}
+
+// secondsWithCounts lists each second once, in order, with how many entries fell in it.
+func secondsWithCounts(seconds []string) string {
+	counts := map[string]int{}
+	for _, second := range seconds {
+		counts[second]++
+	}
+	var out []string
+	for _, second := range slices.Sorted(maps.Keys(counts)) {
+		out = append(out, fmt.Sprintf("%s x%d", second, counts[second]))
+	}
+	return strings.Join(out, ", ")
 }
 
 // ---- recovery-after-fault: recovery time after each event (Requests, Events) ----

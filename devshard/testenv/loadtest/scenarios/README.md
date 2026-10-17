@@ -128,6 +128,8 @@ Before mock-openai read the body of a hung request, it never saw P3's host give 
 
 The generator allows 1024 requests in flight, because about 260 are in flight at 32 requests a second with a healthy gateway. If the load ladder shows that this machine cannot hold 32 requests a second, lower `peak_rps`.
 
+After the hang, P3 refuses nonces it has no diff for yet (`target_diff_absent`) while it catches up, and the gateway counts those receipts without content as empty streams, so its last quarantine starts about 80 s after the hang lifts, inside the fault's grace. The run at 5b905ff2 also showed the two gateway answers that `error-rate-and-latency.rotation_gap_errors` and `max_nonce_errors` fail on: 56 × 400 `unsupported model` in the rotation gaps, which grow to 1 s while the loaded machine slows the chain transaction, and 11 × 502 `nonce exceeds chain max_nonce limit` from escrow 9, which still held 399 routed requests when it reached its nonce limit. All eight saved runs at 3e5990cc and 5b905ff2 fail `rotation_gap_errors` (5 to 56 each), and runs will keep failing it until the gateway closes the gap; `max_nonce: 1700` makes rotations frequent, but the 200-nonce margin is the same at the chain's default of 1 000 000.
+
 `timeout-vote-fanout` keeps its #1988 marker until a run on 192318583 confirms the fixes (Chat weight 1, the 64-vote cap, the 1 s sender-rate quarantine) and reports XFAIL or XPASS.
 
 Good:
