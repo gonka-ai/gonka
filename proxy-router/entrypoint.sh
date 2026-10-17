@@ -38,6 +38,9 @@ RPC_H2_VERSIOND_HOST="${DEVSHARD_RPC_H2_VERSIOND_HOST:-versiond}"
 RPC_H2_VERSIOND_PORT="${DEVSHARD_RPC_H2_VERSIOND_PORT:-8080}"
 RPC_H2_CERT_DIR="${DEVSHARD_RPC_H2_CERT_DIR:-/etc/haproxy/ssl}"
 RPC_H2_PEM="${DEVSHARD_RPC_H2_PEM:-/var/lib/gonka-router/rpc-h2.pem}"
+# Concurrent peer RPC connections one client address may hold. Keyed on src,
+# so a load balancer that does not send PROXY protocol counts as one address.
+RPC_H2_MAX_CONNS_PER_SRC="${PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC:-32}"
 ROUTER_HEALTH_CONTRACT="${VERSIOND_ROUTER_HEALTH_CONTRACT:-readyz}"
 VERSIOND_FRONTEND_PORT="${PROXY_VERSIOND_PORT:-18081}"
 ADMIN_PORT=8404
@@ -160,7 +163,7 @@ fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
     "$RPC_H2_PORT" "$RPC_H2_ROUTER_PORT" "$RPC_H2_VERSIOND_PORT" \
-    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
+    "$RPC_H2_MAX_CONNS_PER_SRC" "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
     "$CATALOG_ACTIVATION_MIN_READY" \
@@ -179,6 +182,10 @@ if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_ACTIVATION_MIN_READY" -gt "$ROUTER_POOL_SLOTS" ] || \
     [ "$CATALOG_PROXY_PORT" -eq 0 ] || [ "$CATALOG_UPSTREAM_PORT" -eq 0 ]; then
     echo "proxy-router: catalog capacity and timing values must be positive" >&2
+    exit 1
+fi
+if [ "$RPC_H2_MAX_CONNS_PER_SRC" -eq 0 ]; then
+    echo "proxy-router: PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC must be positive" >&2
     exit 1
 fi
 if [ -n "$CATALOG_URL" ] && [ "$ROUTER_POOL_SLOTS" -gt "$ROUTER_RUNTIME_BATCH_SERVER_LIMIT" ]; then
@@ -208,9 +215,15 @@ if [ -n "$TRUSTED_PROXY_CIDRS" ]; then
     done
     PUBLIC_PROXY_ACL="acl trusted_external_proxy src $TRUSTED_PROXY_CIDRS"
     PUBLIC_PROXY_EXPECT='tcp-request connection expect-proxy layer4 if trusted_external_proxy'
+    # rpc_h2 skips connection-time tracking for this ACL, then keys the
+    # PROXY client at session time. The name has to exist in both modes.
+    RPC_PROXY_ACL="$PUBLIC_PROXY_ACL"
 else
     PUBLIC_PROXY_ACL='# No trusted external PROXY-protocol sources configured.'
     PUBLIC_PROXY_EXPECT='# Direct client connection; no incoming PROXY preamble.'
+    # 0.0.0.0/32 matches no real client, so `unless trusted_external_proxy`
+    # still tracks every direct connection. An empty ACL would not load.
+    RPC_PROXY_ACL='acl trusted_external_proxy src 0.0.0.0/32'
 fi
 
 case "$NGINX_MODE" in
@@ -558,7 +571,9 @@ sed \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
+    -e "s|\${RPC_PROXY_ACL}|$RPC_PROXY_ACL|g" \
     -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
+    -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
     -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \
     -e "s|\${RPC_H2_CHECK_CONNECT}|$RPC_H2_CHECK_CONNECT|g" \
     -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \
