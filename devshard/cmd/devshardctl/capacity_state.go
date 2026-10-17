@@ -76,9 +76,16 @@ type CapacityState struct {
 	// admin add/remove.
 	escrowMembership map[string]map[string]int
 
+	// escrowID -> model the escrow serves; absent if unknown.
+	escrowModels map[string]string
+
 	// Cache of total slots per host across all escrows. Recomputed
 	// whenever escrowMembership changes.
 	hostTotalSlots map[string]int
+
+	// Cache of slots per host across the escrows of each model:
+	// model -> hostKey -> slots. Recomputed with hostTotalSlots.
+	hostModelSlots map[string]map[string]int
 }
 
 // NewCapacityState returns an empty state. All inputs are pushed via
@@ -91,7 +98,9 @@ func NewCapacityState() *CapacityState {
 		fullWeightsByModel:    map[string]map[string]float64{},
 		currentWeightsByModel: map[string]map[string]float64{},
 		escrowMembership:      map[string]map[string]int{},
+		escrowModels:          map[string]string{},
 		hostTotalSlots:        map[string]int{},
+		hostModelSlots:        map[string]map[string]int{},
 	}
 }
 
@@ -99,6 +108,13 @@ func NewCapacityState() *CapacityState {
 // escrow. slotCounts maps host participant key to the number of slots
 // the host occupies in this escrow.
 func (m *CapacityState) SetEscrowMembership(escrowID string, slotCounts map[string]int) {
+	m.SetEscrowMembershipForModel(escrowID, "", slotCounts)
+}
+
+// SetEscrowMembershipForModel is SetEscrowMembership for an escrow that
+// serves model, so EscrowWeightForModel splits a host only across the
+// escrows of that model.
+func (m *CapacityState) SetEscrowMembershipForModel(escrowID, model string, slotCounts map[string]int) {
 	if m == nil {
 		return
 	}
@@ -111,10 +127,14 @@ func (m *CapacityState) SetEscrowMembership(escrowID string, slotCounts map[stri
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	delete(m.escrowModels, escrowID)
 	if len(clean) == 0 {
 		delete(m.escrowMembership, escrowID)
 	} else {
 		m.escrowMembership[escrowID] = clean
+		if model = strings.TrimSpace(model); model != "" {
+			m.escrowModels[escrowID] = model
+		}
 	}
 	m.recomputeTotalSlotsLocked()
 }
@@ -127,17 +147,27 @@ func (m *CapacityState) RemoveEscrow(escrowID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.escrowMembership, escrowID)
+	delete(m.escrowModels, escrowID)
 	m.recomputeTotalSlotsLocked()
 }
 
 func (m *CapacityState) recomputeTotalSlotsLocked() {
 	totals := map[string]int{}
-	for _, slots := range m.escrowMembership {
+	byModel := map[string]map[string]int{}
+	for id, slots := range m.escrowMembership {
+		model, hasModel := m.escrowModels[id]
+		if hasModel && byModel[model] == nil {
+			byModel[model] = map[string]int{}
+		}
 		for k, c := range slots {
 			totals[k] += c
+			if hasModel {
+				byModel[model][k] += c
+			}
 		}
 	}
 	m.hostTotalSlots = totals
+	m.hostModelSlots = byModel
 }
 
 // SetHostWeights replaces per-host raw poc_weight capacity. The pocActive flag
@@ -371,7 +401,9 @@ func (m *CapacityState) EscrowWeight(escrowID string) float64 {
 }
 
 // EscrowWeightForModel computes W(e) using model-specific raw poc_weight capacity
-// when they have been observed for the requested model.
+// when they have been observed for the requested model. If the escrow's model
+// is known, total_slots(h) counts only the host's slots in escrows of that
+// model, since the host's weight for one model is not shared with others.
 func (m *CapacityState) EscrowWeightForModel(escrowID, model string) float64 {
 	if m == nil {
 		return 0
@@ -389,6 +421,11 @@ func (m *CapacityState) escrowWeightLocked(escrowID, model string) float64 {
 	var sum float64
 	for host, count := range slots {
 		total := m.hostTotalSlots[host]
+		if model != "" {
+			if escrowModel, ok := m.escrowModels[escrowID]; ok {
+				total = m.hostModelSlots[escrowModel][host]
+			}
+		}
 		if total <= 0 {
 			continue
 		}

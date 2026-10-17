@@ -970,7 +970,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
 	if g.capacity != nil {
-		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
+		g.capacity.SetEscrowMembershipForModel(rt.id, rt.model, rt.participantSlotCounts)
 	}
 }
 
