@@ -248,7 +248,10 @@ func requireHTTP11PeerRPCServed(t *testing.T, client *http.Client, router, versi
 		router+"/"+version+"/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach",
 		strings.NewReader("{}"))
 	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/connect+json")
+	// Attach is unary: Connect expects application/json here and answers
+	// 415 to the streaming application/connect+json before it looks at
+	// the body or the protocol version header.
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Connect-Protocol-Version", "1")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
