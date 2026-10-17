@@ -255,7 +255,7 @@ func TestOnlyFreshSuccessfulExecutionEarnsCredit(t *testing.T) {
 	store := &memoryPayloads{}
 	phase := new(chain.Phase)
 	phase.SetEpoch(5)
-	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, true)
+	e := NewEngine(ml, nil, nil, store, fixedChainParams{}, phase, true, nil)
 	req := recoveryRequest(t, devshard.RecoveryNone, 5)
 	_, err := e.Execute(context.Background(), req)
 	require.NoError(t, err)
@@ -488,8 +488,8 @@ func (s *sharedCreditFake) RefundValidationCredit(_ context.Context, h storage.V
 
 func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
 	store := &sharedCreditFake{}
-	earner := NewEngine(nil, nil, nil, nil, nil, nil, false)
-	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	earner := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	earner.UseSharedValidationCredits(store, "gonka1pair")
 	survivor.UseSharedValidationCredits(store, "gonka1pair")
 
@@ -498,7 +498,7 @@ func TestSharedValidationCreditIsSpendableByTheOtherReplica(t *testing.T) {
 	require.Empty(t, earner.validationBudget.credits["m"], "the shared store replaces the process-local budget")
 	// A replica that has not probed yet must observe the sibling's earn.
 	// survivor's negative probe is cached for creditProbeFresh.
-	late := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	late := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	late.UseSharedValidationCredits(store, "gonka1pair")
 	require.True(t, late.creditAvailable("m"))
 
@@ -520,7 +520,7 @@ func TestSharedCreditOfADeadReplicaReturnsWhenTheHoldLapses(t *testing.T) {
 	dead, ok, err := store.ReserveValidationCredit(context.Background(), "gonka1pair", "m", 20*time.Millisecond)
 	require.NoError(t, err)
 	require.True(t, ok)
-	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false)
+	survivor := NewEngine(nil, nil, nil, nil, nil, nil, false, nil)
 	survivor.UseSharedValidationCredits(store, "gonka1pair")
 	_, err = survivor.reserveValidationCredit(context.Background(), observability.PathValidate, "m")
 	require.ErrorIs(t, err, devshard.ErrValidationDeferred)
@@ -556,4 +556,50 @@ func TestValidationBudgetSpendsOldestFirst(t *testing.T) {
 	now = now.Add(30 * time.Minute)
 	require.True(t, spendCredit(b, "m"), "the newer credit must survive the first credit's expiry")
 	require.False(t, spendCredit(b, "m"))
+}
+
+type countingVocabularyResolver struct{ calls atomic.Int32 }
+
+func (c *countingVocabularyResolver) Resolve(context.Context, uint64, string) int {
+	c.calls.Add(1)
+	return 1000
+}
+
+// Test flow:
+// 1. Execute requests with stop_token_ids absent, null and an empty array on an engine with a counting vocabulary resolver.
+// 2. Each reaches the ML node without resolving the vocabulary.
+// 3. A request with stop ids resolves it once and reaches the node.
+func TestEngineExecuteResolvesVocabularyOnlyForStopTokenIDs(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"x","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}`)
+	}))
+	defer srv.Close()
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock", NodeId: "node", Endpoint: srv.URL}, nil
+		},
+	})
+	phase := new(chain.Phase)
+	phase.SetEpoch(5)
+	resolver := &countingVocabularyResolver{}
+	e := NewEngine(ml, nil, nil, &memoryPayloads{}, fixedChainParams{}, phase, true, resolver)
+	execute := func(extra string) error {
+		req := devshard.ExecuteRequest{InferenceID: 1, EscrowID: "e", Model: "m",
+			Prompt: []byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}]` + extra + `}`)}
+		_, err := e.Execute(context.Background(), req)
+		return err
+	}
+
+	for _, extra := range []string{``, `,"stop_token_ids":null`, `,"stop_token_ids":[]`} {
+		require.NoError(t, execute(extra), extra)
+	}
+	require.Zero(t, resolver.calls.Load())
+	require.Equal(t, int32(3), hits.Load())
+
+	require.NoError(t, execute(`,"stop_token_ids":[7]`))
+	require.Equal(t, int32(1), resolver.calls.Load())
+	require.Equal(t, int32(4), hits.Load())
 }

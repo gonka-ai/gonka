@@ -1,9 +1,13 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then starts HAProxy. SIGUSR1 soft-stops HAProxy and closes
-# Watch streams. An in-flight Chat keeps its own stream until the response
-# finishes, so a rollout does not wait out an idle Watch or reset a body
-# that is still streaming.
+# environment, then runs HAProxy and passes it every stop signal at once.
+# SIGUSR1 is HAProxy's soft stop: the listeners close, every HTTP/2
+# connection gets GOAWAY, streams in flight finish on their own, and the
+# process exits after the last stream ends or at hard-stop-after
+# (VERSIOND_ROUTER_HARD_STOP_SECONDS). A peer reopens Watch on its next token
+# refresh, on a new connection through the parent proxy, so an idle Watch
+# moves to another slot by itself. When HAProxy has exited, the catalog
+# reconciler loop is stopped and its exit status is returned.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -40,11 +44,66 @@
 #   GONKA_HA                  set by the HA compose overlay; keeps the
 #                             Devshard-Ha request header on the HA backend even
 #                             while all but one pool member are unavailable
+#   VERSIOND_ROUTER_HARD_STOP_SECONDS
+#                             hard-stop-after: a stream still open this long
+#                             after SIGUSR1 is reset and the process exits.
+#                             Default 1800, the fleet drain budget.
 #   VERSIOND_ROUTER_*         proxy policy, see README
 #
 # Pool membership is discovered from DNS, protocol names from governance, and
 # health from active /readyz checks. Host and version additions need no reload.
 set -eu
+
+# Stop signals are trapped from the first line: a signal with no handler
+# ends this shell before HAProxy runs, and HAProxy itself drops a soft stop
+# that reaches it while it is still loading. USR1 (soft stop) that comes
+# before HAProxy answers on its Runtime socket is kept and passed on then.
+# TERM and INT mean "stop now" to HAProxy and are passed on as soon as the
+# process exists; before that they end this shell. See the end of this file.
+haproxy_ready=0
+haproxy_pid=
+pending_signal=
+reconciler_pid=
+# The catalog reconciler loop ends with the stop, not after it. A soft stop
+# closes the Runtime socket with the other listeners, so from the moment
+# USR1 reaches HAProxy the reconciler can neither read nor change anything;
+# left alone, its program would fail and be restarted every second for the
+# whole drain. The loop forwards the signal to its program (see
+# run_catalog_reconciler), so this takes both down.
+stop_reconciler() {
+    if [ -n "$reconciler_pid" ]; then
+        kill "$reconciler_pid" 2>/dev/null || true
+        wait "$reconciler_pid" 2>/dev/null || true
+        reconciler_pid=
+    fi
+}
+forward_signal() {
+    case $1 in
+        USR1)
+            if [ "$haproxy_ready" -eq 1 ]; then
+                # HAProxy first: the socket closes with its listeners, so
+                # nothing the reconciler could still send gets through.
+                # Collecting the reconciler may take one of its polls.
+                kill -s USR1 "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
+            else
+                pending_signal=USR1
+            fi
+            ;;
+        *)
+            if [ -n "$haproxy_pid" ]; then
+                kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
+            else
+                echo "versiond-router: $1 before HAProxy started; exiting" >&2
+                exit 1
+            fi
+            ;;
+    esac
+}
+trap 'forward_signal USR1' USR1
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
 
 entrypoint_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 runtime_contract=${ROUTER_RUNTIME_VERSION_CONTRACT:-}
@@ -81,6 +140,10 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
 # an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
+# Soft stop waits for streams in flight; this caps that wait. Keep it below
+# the stop budget the caller gives Docker (the fleet passes
+# VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS plus a headroom to `docker stop --time`).
+HARD_STOP="${VERSIOND_ROUTER_HARD_STOP_SECONDS:-1800}"
 VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
 CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
@@ -338,7 +401,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -346,6 +409,10 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$HARD_STOP" -eq 0 ]; then
+    echo "versiond-router: VERSIOND_ROUTER_HARD_STOP_SECONDS must be at least 1" >&2
+    exit 1
+fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || \
@@ -819,6 +886,7 @@ sed \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "s|\${HARD_STOP_SECONDS}|$HARD_STOP|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
     -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
@@ -835,7 +903,33 @@ if [ -n "$RENDER_ONLY" ]; then
 fi
 
 run_catalog_reconciler() {
+    # The program runs as a child that this loop waits for, so a TERM to the
+    # loop ends the program as well and the loop only exits once the program
+    # has been collected; a child reparented to the entrypoint would
+    # otherwise outlive the loop until the container is torn down. A TERM
+    # that lands between the launch and the pid being recorded is kept as a
+    # flag and acted on right after. The program handles TERM only between
+    # polls, so the collection is bounded well inside the 10 s the fleet
+    # adds to Docker's stop budget: after 5 s the program is killed.
+    reconciler_child=
+    reconciler_stopping=0
+    end_reconciler_child() {
+        reconciler_stopping=1
+        if [ -n "$reconciler_child" ]; then
+            kill "$reconciler_child" 2>/dev/null || true
+            waited=0
+            while kill -0 "$reconciler_child" 2>/dev/null && [ "$waited" -lt 50 ]; do
+                sleep 0.1
+                waited=$((waited + 1))
+            done
+            kill -s KILL "$reconciler_child" 2>/dev/null || true
+            wait "$reconciler_child" 2>/dev/null || true
+            exit 0
+        fi
+    }
+    trap end_reconciler_child TERM INT
     while :; do
+        [ "$reconciler_stopping" -eq 0 ] || exit 0
         status=0
         ROUTING_CATALOG_COMPONENT=versiond-router \
         ROUTING_CATALOG_URL="$CATALOG_URL" \
@@ -861,7 +955,11 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_STATUS_SERVER=catalog \
         ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
         ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
-            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
+            /usr/local/lib/router-runtime/catalog-reconciler &
+        reconciler_child=$!
+        [ "$reconciler_stopping" -eq 0 ] || end_reconciler_child
+        wait "$reconciler_child" || status=$?
+        reconciler_child=
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1
     done
@@ -869,6 +967,74 @@ run_catalog_reconciler() {
 
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
+    reconciler_pid=$!
 fi
 
-exec /usr/local/lib/versiond-router/h2-watch-drain.sh --supervise "$HAPROXY_BIN" "$OUT"
+# HAProxy runs as a child of this shell, not through exec: the master-worker
+# process waits for every child before it exits, and the reconciler loop above
+# restarts its program for as long as it lives, so an exec would leave the
+# master waiting after the worker has drained, until Docker's SIGKILL. Stop
+# signals are passed to HAProxy at once; nothing is held or decided here.
+"$HAPROXY_BIN" -W -db -f "$OUT" &
+haproxy_pid=$!
+# Ready means the worker answers on the Runtime socket. A soft stop
+# forwarded before that is dropped by HAProxy; one that arrived earlier waits
+# here. Each probe is bounded on its own, and the wait as a whole by wall
+# clock: a worker that does not answer within it is a failed start, not a
+# ready one.
+ready_deadline=$(( $(date +%s) + 60 ))
+ready_timeout=0
+while kill -0 "$haproxy_pid" 2>/dev/null; do
+    if printf 'show info\n' | timeout 2 socat -t 1 - UNIX-CONNECT:/var/run/haproxy/reconciler.sock 2>/dev/null | grep -q '^Name:'; then
+        haproxy_ready=1
+        break
+    fi
+    if [ "$(date +%s)" -ge "$ready_deadline" ]; then
+        echo "versiond-router: HAProxy did not answer on its Runtime socket within 60s; stopping it" >&2
+        ready_timeout=1
+        kill -s TERM "$haproxy_pid" 2>/dev/null || true
+        break
+    fi
+    sleep 0.1
+done
+if [ "$haproxy_ready" -eq 1 ] && [ -n "$pending_signal" ]; then
+    forward_signal "$pending_signal"
+fi
+status=0
+while :; do
+    # A trapped signal interrupts wait with a status above 128. The if
+    # keeps set -e from ending the script on that interruption.
+    if wait "$haproxy_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -gt 128 ]; then
+        # Still running: the signal was only forwarded; wait again.
+        if kill -0 "$haproxy_pid" 2>/dev/null; then
+            continue
+        fi
+        # Gone. Either that signal ended HAProxy, or a trapped signal
+        # interrupted the wait just as HAProxy exited and the shell reported
+        # the interruption, not the exit. A second wait returns the real
+        # status in the second case; in the first the job is already
+        # collected and the shell answers 127, so the status stands.
+        if wait "$haproxy_pid"; then
+            again=0
+        else
+            again=$?
+        fi
+        [ "$again" -eq 127 ] || status=$again
+    fi
+    break
+done
+# HAProxy exited on its own (or on a stop that came before it was ready):
+# the loop may still be running; without it the master would wait on it.
+stop_reconciler
+if [ "$ready_timeout" -eq 1 ] && [ "$status" -eq 0 ]; then
+    # Stopped by the readiness deadline above: a failed start must not look
+    # like a clean exit to the restart policy. (A HAPROXY_BIN that exits on
+    # its own, as the render-only tests use, keeps its status.)
+    status=1
+fi
+exit "$status"

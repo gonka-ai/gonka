@@ -456,7 +456,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
 			newParameter("stop_token_ids").
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
+				withRule(RequestFilterStagePreValidation, stopTokenIDsHandler{}),
 			newParameter("reasoning").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},

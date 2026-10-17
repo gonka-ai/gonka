@@ -62,7 +62,7 @@ func TestProxyHAProxy_H2IdleConnection(t *testing.T) {
 				f.Flush()
 			}
 		}
-	}))
+	}), "")
 	chat := rpcProxySession + "/devshard.transport.v1.SessionService/Chat"
 
 	t.Run("ping only", func(t *testing.T) {

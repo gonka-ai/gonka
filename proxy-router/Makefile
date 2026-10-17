@@ -218,8 +218,30 @@ test-render: test-route-status test-rpc-h2-cert
 	' "$$tmpdir/proxy.cfg"; then \
 		fail "non-HA peer RPC references the router fleet"; \
 	fi; \
-	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+	grep -q 'tcp-request session reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen has no conn_rate on src"; \
+	grep -q 'store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC stick-table does not store conn_cur"; \
+	grep -q 'tcp-request session reject if { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen has no default per-source connection cap"; \
+	grep -q 'stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC stick-table does not store native IPv6"; \
+	if grep -q 'trusted_external_proxy' "$$tmpdir/proxy.cfg"; then \
+		fail "direct mode rendered a trusted-proxy ACL"; \
+	fi; \
+	grep -q '^ *tcp-request session track-sc0 src,ipmask(32,64)$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC clients are not keyed per address after the hand-off preamble"; \
+	if grep -q 'tcp-request connection track-sc0\|tcp-request connection reject' "$$tmpdir/proxy.cfg"; then \
+		fail "peer RPC listen keys the abstract socket at connection time"; \
+	fi; \
+	grep -q 'tcp-request session reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+		|| fail "PROXY clients have no conn_rate cap"; \
+	grep -q 'timeout client-hs 5s' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen does not bound a stalled handshake"; \
+	grep -q 'track-sc1 src,ipmask(32,64) table st_rpc_watch' "$$tmpdir/proxy.cfg" \
+		|| fail "path zones are not keyed per address or IPv6 /64"; \
+	grep -q 'stick-table type ipv6 size 1m expire 10s store http_req_rate' "$$tmpdir/proxy.cfg" \
+		|| fail "path-zone tables do not store native IPv6"; \
 	awk ' \
 		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
@@ -262,17 +284,20 @@ test-render: test-route-status test-rpc-h2-cert
 		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /^ *bind abns@rpc_h2c accept-proxy proto h2$$/ { bind = 1 } \
-		inside && /expect-proxy/ { expect = 1 } \
-		inside && /track-sc0 src/ && bind { after = 1 } \
-		END { exit !(bind && !expect && after) } \
+		inside && /expect-proxy|trusted_external_proxy|tcp-request connection track-sc0/ { bad = 1 } \
+		inside && /tcp-request session track-sc0 src,ipmask\(32,64\)$$/ && bind { sesstrack = 1 } \
+		inside && /tcp-request session reject if \{ sc_conn_cur\(0\) gt / { sesscur = 1 } \
+		inside && /tcp-request session reject if \{ sc_conn_rate\(0\) gt / { sessrate = 1 } \
+		END { exit !(bind && !bad && sesstrack && sesscur && sessrate) } \
 	' "$$tmpdir/proxy-lb.cfg" \
-		|| fail "peer RPC listen must accept the internal PROXY v2 hand-off, not the external preamble, before tracking src"; \
+		|| fail "peer RPC listen must key the client from the internal PROXY v2 hand-off at session time, not the external preamble"; \
 	awk ' \
 		$$0 ~ "^frontend public_http$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /acl trusted_external_proxy src 10\.0\.0\.0\/8/ { acl = 1 } \
 		inside && /expect-proxy layer4 if trusted_external_proxy/ { expect = 1 } \
 		inside && /use_backend rpc_h2c_in if peer_rpc_h2c/ && expect { after = 1 } \
-		END { exit !(expect && after) } \
+		END { exit !(acl && expect && after) } \
 	' "$$tmpdir/proxy-lb.cfg" \
 		|| fail "public :80 does not consume the external PROXY preamble before the peer RPC hand-off"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
@@ -403,6 +428,28 @@ test-render: test-route-status test-rpc-h2-cert
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/https.cfg" >/dev/null \
 		|| fail "rendered HTTPS proxy config is invalid"; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/conn-cap.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/conn-cap.map" \
+	PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC=64 \
+	./entrypoint.sh; \
+	grep -q 'tcp-request session reject if { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
+		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered"; \
+	if grep -q 'tcp-request connection track-sc0\|tcp-request connection reject' "$$tmpdir/conn-cap.cfg"; then \
+		fail "peer RPC listen tracks the abstract socket before the PROXY v2 hand-off is parsed"; \
+	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/conn-cap-zero.cfg" \
+		PROXY_ROUTER_VERSION_MAP="$$tmpdir/conn-cap-zero.map" \
+		PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC=0 \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a zero per-source connection cap was accepted"; \
+	fi; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \

@@ -46,6 +46,9 @@ RPC_H2_VERSIOND_HOST="${DEVSHARD_RPC_H2_VERSIOND_HOST:-versiond}"
 RPC_H2_VERSIOND_PORT="${DEVSHARD_RPC_H2_VERSIOND_PORT:-8080}"
 RPC_H2_CERT_DIR="${DEVSHARD_RPC_H2_CERT_DIR:-/etc/haproxy/ssl}"
 RPC_H2_PEM="${DEVSHARD_RPC_H2_PEM:-/var/lib/gonka-router/rpc-h2.pem}"
+# Concurrent peer RPC connections one client address may hold. Keyed on src,
+# so a load balancer that does not send PROXY protocol counts as one address.
+RPC_H2_MAX_CONNS_PER_SRC="${PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC:-32}"
 ROUTER_HEALTH_CONTRACT="${VERSIOND_ROUTER_HEALTH_CONTRACT:-readyz}"
 VERSIOND_FRONTEND_PORT="${PROXY_VERSIOND_PORT:-18081}"
 ADMIN_PORT=8404
@@ -167,7 +170,7 @@ if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
 fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
-    "$RPC_H2_VERSIOND_PORT" "$PUBLIC_INSPECT" \
+    "$RPC_H2_VERSIOND_PORT" "$PUBLIC_INSPECT" "$RPC_H2_MAX_CONNS_PER_SRC" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
@@ -187,6 +190,10 @@ if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_ACTIVATION_MIN_READY" -gt "$ROUTER_POOL_SLOTS" ] || \
     [ "$CATALOG_PROXY_PORT" -eq 0 ] || [ "$CATALOG_UPSTREAM_PORT" -eq 0 ]; then
     echo "proxy-router: catalog capacity and timing values must be positive" >&2
+    exit 1
+fi
+if [ "$RPC_H2_MAX_CONNS_PER_SRC" -eq 0 ]; then
+    echo "proxy-router: PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC must be positive" >&2
     exit 1
 fi
 if [ -n "$CATALOG_URL" ] && [ "$ROUTER_POOL_SLOTS" -gt "$ROUTER_RUNTIME_BATCH_SERVER_LIMIT" ]; then
@@ -609,6 +616,7 @@ sed \
     -e "s|\${RPC_ALPN}|$RPC_ALPN|g" \
     -e "s|\${PUBLIC_HTTPS_RPC_ROUTE}|$PUBLIC_HTTPS_RPC_ROUTE|g" \
     -e "s|\${RPC_TLS_BIND}|$RPC_TLS_BIND|g" \
+    -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
     -e "s|\${RPC_H1_FALLBACK}|$RPC_H1_FALLBACK|g" \
     -e "/\${RPC_H2_CHECKS}/{

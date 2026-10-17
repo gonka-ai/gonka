@@ -571,7 +571,7 @@ client → nginx (InferenceUrl) → …   # unchanged
 | Hop | Change |
 |---|---|
 | nginx / proxy-policy | **Not on the h2 path.** Keeps InferenceUrl for JSON, the public API, and Connect over HTTP/1.1 from a peer that fell back. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row. |
-| **proxy (proxy-router)** | `:80`/`:443` stay TCP frontends. `tcp-request inspect-delay` (`PROXY_ROUTER_PUBLIC_INSPECT_SECONDS`, 5 s) reads the first bytes; the preface or the ALPN token selects `rpc_h2` over `abns@rpc_h2c` / `abns@rpc_tls`, everything else goes to `proxy-policy`. A connection that starts with `PRI * HTTP/2.0` waits for the whole 24-byte preface rather than being accepted as HTTP on its first line. `rpc_h2`: `proto h2` to versiond-router `:8081` (HA) or `versiond:8080` (non-HA). Stick-table `conn_rate` / `sess_rate` and path zones on `src`. **Overwrite `X-Real-IP` from `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`); `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. Keep the same version + escrow hash as `versiond_router_in`. |
+| **proxy (proxy-router)** | `:80`/`:443` stay TCP frontends. `tcp-request inspect-delay` (`PROXY_ROUTER_PUBLIC_INSPECT_SECONDS`, 5 s) reads the first bytes; the preface or the ALPN token selects `rpc_h2` over `abns@rpc_h2c` / `abns@rpc_tls`, everything else goes to `proxy-policy`. A connection that starts with `PRI * HTTP/2.0` waits for the whole 24-byte preface rather than being accepted as HTTP on its first line. `rpc_h2`: `proto h2` to versiond-router `:8081` (HA) or `versiond:8080` (non-HA). Stick-table `conn_cur` / `conn_rate` / `sess_rate` and path zones on `src,ipmask(32,64)` (one IPv4 address, or one IPv6 /64; table type `ipv6`), keyed at session time from the PROXY v2 preamble of the hand-off, so a trusted external balancer's client address carries through. **Overwrite `X-Real-IP` from the full `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`); `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. Keep the same version + escrow hash as `versiond_router_in`. |
 | versiond-router (HA) | `:8080` JSON and fallback, `:8081` the proxy's HTTP/2 dial, one frontend. `proto h2` on every backend to versiond (h2c) in the `_rpc` twins, with `check-proto h1`. Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
 | versiond (both) | HTTP/1.1 and prior-knowledge HTTP/2 on the public listen (`ConfigureCleartextHTTP2`); reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON and for the fallback |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
@@ -604,10 +604,19 @@ want one wire protocol.
 
 The nginx per-IP ceiling disappears for this path. Replace it on the published listen:
 
-- **TCP / HTTP/2 connection rate per IP** (phase 6, stick-table on `src` at **`proxy`**)
-  — nginx `limit_conn` analogue. Handshake and Attach do not bound socket opens.
+- **Concurrent connections per address** (stick-table `conn_cur` on
+  `src,ipmask(32,64)` at **`proxy`**, default 32,
+  `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) — the nginx `limit_conn` analogue.
+  One IPv4 address, or one IPv6 /64, keyed at session time from the PROXY v2
+  preamble of the hand-off (a trusted external balancer's preamble is
+  consumed on `:80`/`:443`, so `src` is the client it named). An idle socket
+  that is already tracked holds a `maxconn` slot until `timeout client`. A
+  TLS handshake that stalls is closed by `timeout client-hs` (5s) and is not
+  in the cap yet.
+- **TCP / HTTP/2 connection rate per address** (phase 6, stick-table `conn_rate` /
+  `sess_rate` on the same key at **`proxy`**). Handshake and Attach do not bound socket opens.
 - **Path zones** (phase 6) on **`proxy`**: Attach / Chat / diffs / gossip as separate
-  `src` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
+  `src,ipmask(32,64)` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
   and inner versiond on HA must not re-key on `RemoteAddr` (`proxy`). The child must not
   apply Echo IP zones on `/rpc/` (loopback).
 - **Process-wide Attach floor before ECDSA** (phase 4) in the child. Per-IP
