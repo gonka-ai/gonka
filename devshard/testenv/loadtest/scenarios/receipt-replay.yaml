@@ -1,0 +1,50 @@
+schema_version: v1
+scenario: receipt-replay
+seed: 42
+
+# Exercise real Gateway -> versiond -> DevShard HTTP/SSE traffic on one escrow.
+# While one model response is open, another request can carry its ConfirmStart
+# in a diff. The final response or gossip then repeats the accepted receipt.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 2000000000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: realistic
+      - name: mock-openai-1
+        profile: realistic
+
+workload:
+  max_in_flight: 16
+  duration: 30s
+  traffic:
+    type: closed_loop
+  request:
+    model: test-model
+    # Client requests are aggregated; the host still sends receipts over SSE.
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "receipt replay reproduction"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0
+  mock_ml:
+    require_each_node_used: true
+  devshard:
+    # This is a receipt replay reproduction, not a lifecycle acceptance test.
+    # The v4.2 baseline has unfinished tail records after traffic stops; inspect
+    # gateway-inferences.json separately instead of declaring those safe.
+    no_orphaned_work: false
+
+drain_timeout: 30s

@@ -126,6 +126,7 @@ type MockMLNode struct {
 }
 
 type Workload struct {
+	RequestTimeout string         `yaml:"request_timeout,omitempty"`
 	HostFaults     []HostFault    `yaml:"host_faults"`
 	ReportInterval string         `yaml:"report_interval"`
 	MaxInFlight    int            `yaml:"max_in_flight"`
@@ -292,6 +293,12 @@ func (s Scenario) Validate() error {
 	if err != nil {
 		return fmt.Errorf("workload duration: %w", err)
 	}
+	if s.Workload.RequestTimeout != "" {
+		timeout, err := time.ParseDuration(s.Workload.RequestTimeout)
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("workload.request_timeout must be a positive duration")
+		}
+	}
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
 		return err
 	}
@@ -360,9 +367,6 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("CPU profile windows must be ordered and not overlap")
 		}
 		previousEnd = start + length
-	}
-	if s.Workload.Request.Stream {
-		return fmt.Errorf("streaming requests are not supported by the initial runner")
 	}
 	if s.Workload.Request.Model == "" || len(s.Workload.Request.Messages) == 0 {
 		return fmt.Errorf("request model and messages are required")
@@ -438,6 +442,15 @@ func (s Scenario) Validate() error {
 
 func (s Scenario) Duration() time.Duration {
 	d, _ := time.ParseDuration(s.Workload.Duration)
+	return d
+}
+
+// RequestTimeout limits the entire HTTP exchange, including reading a stream.
+func (s Scenario) RequestTimeout() time.Duration {
+	if s.Workload.RequestTimeout == "" {
+		return 30 * time.Second
+	}
+	d, _ := time.ParseDuration(s.Workload.RequestTimeout)
 	return d
 }
 

@@ -41,6 +41,16 @@ type Dataset struct {
 }
 
 func LoadFile(path string) (*Dataset, error) {
+	return loadFile(path, true)
+}
+
+// LoadRequestsFile loads requests for an external gateway; captured responses
+// are optional and are never used to validate the remote model's output.
+func LoadRequestsFile(path string) (*Dataset, error) {
+	return loadFile(path, false)
+}
+
+func loadFile(path string, requireResponse bool) (*Dataset, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open replay file: %w", err)
@@ -64,7 +74,7 @@ func LoadFile(path string) (*Dataset, error) {
 		if err := json.Unmarshal([]byte(body), &sample); err != nil {
 			return nil, fmt.Errorf("decode replay file line %d: %w", line, err)
 		}
-		if err := validateSample(sample); err != nil {
+		if err := validateSample(sample, requireResponse); err != nil {
 			return nil, fmt.Errorf("replay file line %d: %w", line, err)
 		}
 		fingerprint := Fingerprint(sample.Model, sample.Messages)
@@ -175,7 +185,7 @@ func MessagesFingerprint(messages []Message) string {
 	return hex.EncodeToString(digest[:])
 }
 
-func validateSample(sample Sample) error {
+func validateSample(sample Sample, requireResponse bool) error {
 	if strings.TrimSpace(sample.Model) == "" {
 		return fmt.Errorf("model is required")
 	}
@@ -187,7 +197,7 @@ func validateSample(sample Sample) error {
 			return fmt.Errorf("messages[%d].role is required", i)
 		}
 	}
-	if strings.TrimSpace(sample.Response.Role) == "" {
+	if requireResponse && strings.TrimSpace(sample.Response.Role) == "" {
 		return fmt.Errorf("response.role is required")
 	}
 	if sample.MaxTokens < 0 {

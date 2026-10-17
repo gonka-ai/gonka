@@ -1,0 +1,42 @@
+schema_version: v1
+scenario: remote-long-load
+seed: 42
+
+# Required scenario topology; loadtest-remote does not provision it.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 2000000000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+
+workload:
+  duration: 10m
+  request_timeout: 3m
+  report_interval: 30s
+  max_in_flight: 2
+  traffic:
+    type: closed_loop
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 4096
+    messages:
+      - role: user
+        content: "Explain how an HTTP streaming response works."
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0
+
+drain_timeout: 3m
