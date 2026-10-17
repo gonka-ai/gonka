@@ -34,7 +34,8 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
 	require.NoError(t, err)
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", defaultRPCProxyTestLimits())
-	require.Contains(t, got, "bind *:8443 proto h2")
+	require.Contains(t, got, "bind *:8080\n")
+	require.Contains(t, got, "bind abns@rpc_h2c accept-proxy proto h2")
 	require.Contains(t, got, "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, got, "http-request del-header X-Real-IP")
 	require.Contains(t, got, "X-Real-IP %[src]")
@@ -49,8 +50,7 @@ func TestRewriteRPCProxyForTestKeepsIndependentZones(t *testing.T) {
 	require.Contains(t, got, "if is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 2 }")
 	require.Contains(t, got, "http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 2 }")
-	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 32 }")
-	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 32 }")
+	require.Contains(t, got, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 32 }")
 	require.Contains(t, got, "server router versiond-router:19081\n")
 	require.NotContains(t, got, "server router versiond-router:19081 proto h2")
 	require.NotContains(t, got, "server router versiond-router:19081 resolvers docker")
@@ -198,8 +198,9 @@ func TestRewriteRPCProxyForTestLowersConnCur(t *testing.T) {
 	lim := defaultRPCProxyTestLimits()
 	lim.ConnCur = 3
 	got := rewriteRPCProxyForTest(string(src), "versiond-router:19081", lim)
-	require.Contains(t, got, "tcp-request connection reject if { sc_conn_cur(0) gt 3 }")
-	require.Contains(t, got, "tcp-request session reject if { sc_conn_cur(0) gt 3 }")
+	require.Contains(t, got, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 3 }")
+	require.NotContains(t, got, "tcp-request connection track-sc0")
+	require.NotContains(t, got, "tcp-request session track-sc0")
 	require.NotContains(t, got, "sc_conn_cur(0) gt 32")
 }
 
@@ -210,9 +211,11 @@ func TestEnableRPCProxyProtocolExpectsPreamble(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, got, "acl trusted_external_proxy src 0.0.0.0/0 ::/0")
 	require.Contains(t, got, "tcp-request connection expect-proxy layer4 if trusted_external_proxy")
-	require.Contains(t, got, "tcp-request connection track-sc0 src,ipmask(32,64) unless trusted_external_proxy")
-	require.Contains(t, got, "tcp-request session track-sc0 src,ipmask(32,64) if { fc_rcvd_proxy }")
+	require.Contains(t, got, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
 	require.NotContains(t, got, "src 0.0.0.0/32")
+	// The preamble is consumed at accept on the public port, so the content
+	// rule that keys the connection sees the client it named.
+	require.True(t, strings.Index(got, "expect-proxy") < strings.Index(got, "track-sc0 src,ipmask(32,64) table rpc_h2"))
 }
 
 func TestProxyHAProxy_ProxyProtocolCapIsPerClient(t *testing.T) {
@@ -258,7 +261,7 @@ func TestProxyHAProxy_IdleConnsCappedPerSrc(t *testing.T) {
 		held = append(held, conn)
 	}
 	_, closed := dialIdle(t, fx.hostAddr)
-	require.True(t, closed, "idle conn past the cap must be closed at accept")
+	require.True(t, closed, "idle conn past the cap must be closed at the hand-off")
 
 	require.NoError(t, held[0].Close())
 	reopened := false
@@ -286,13 +289,22 @@ func TestProxyHAProxy_ConnCapIsPerSrc(t *testing.T) {
 	require.Contains(t, codeB, "200", "second src must not share the first src's conn cap, got %q", codeB)
 }
 
-// dialIdle opens a TCP conn that never sends the h2 preface, keeps it open
-// until the test ends, and reports whether the proxy closed it within 1s.
+// h2Preface is what the public port keys the hand-off to rpc_h2 on. A
+// socket that never sends it stays in the inspect delay and then goes to
+// the JSON passthrough; it is never in rpc_h2's conn_cur.
+const h2Preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+// dialIdle opens a TCP conn, sends only the h2 preface (no SETTINGS), keeps
+// it open until the test ends, and reports whether the proxy closed it
+// within 1s.
 func dialIdle(t *testing.T, addr string) (net.Conn, bool) {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
+	require.NoError(t, conn.SetWriteDeadline(time.Now().Add(2*time.Second)))
+	_, err = conn.Write([]byte(h2Preface))
+	require.NoError(t, err)
 	closed, err := connClosedWithin(conn, time.Second)
 	require.NoError(t, err)
 	return conn, closed
@@ -300,9 +312,10 @@ func dialIdle(t *testing.T, addr string) (net.Conn, bool) {
 
 var proxyHeaderPort atomic.Int32
 
-// enableRPCProxyProtocol turns the no-op trusted-proxy ACL into a real one
-// and requires a PROXY preamble from those sources. Connection rules then
-// skip the balancer; session rules key the address in the preamble.
+// enableRPCProxyProtocol turns the public port's no-op trusted-proxy ACL
+// into a real one and requires a PROXY preamble from those sources. The
+// hand-off to rpc_h2 then carries the address in that preamble, and the
+// session rules there key it.
 func enableRPCProxyProtocol(cfg, trusted string) (string, error) {
 	const noop = "\n    acl trusted_external_proxy src 0.0.0.0/32\n"
 	if !strings.Contains(cfg, noop) {
@@ -313,8 +326,9 @@ func enableRPCProxyProtocol(cfg, trusted string) (string, error) {
 	return strings.Replace(cfg, noop, repl, 1), nil
 }
 
-// dialProxyIdle writes a PROXY v1 header advertising clientIP, then holds the
-// socket. closed is true when the proxy resets the connection.
+// dialProxyIdle writes a PROXY v1 header advertising clientIP and the h2
+// preface, then holds the socket. closed is true when the proxy resets the
+// connection.
 func dialProxyIdle(t *testing.T, addr, clientIP string) (net.Conn, bool) {
 	t.Helper()
 	conn, closed, err := openProxyIdle(addr, clientIP, 400*time.Millisecond)
@@ -339,7 +353,7 @@ func openProxyIdle(addr, clientIP string, wait time.Duration) (net.Conn, bool, e
 		_ = conn.Close()
 		return nil, false, err
 	}
-	if _, err := conn.Write([]byte(header)); err != nil {
+	if _, err := conn.Write([]byte(header + h2Preface)); err != nil {
 		_ = conn.Close()
 		return nil, false, err
 	}
@@ -367,7 +381,7 @@ func proxyV1Header(clientIP string) (string, error) {
 		dst = "2001:db8:ffff::1"
 	}
 	sport := 40000 + proxyHeaderPort.Add(1)
-	return fmt.Sprintf("PROXY %s %s %s %d 8443\r\n", family, clientIP, dst, sport), nil
+	return fmt.Sprintf("PROXY %s %s %s %d 8080\r\n", family, clientIP, dst, sport), nil
 }
 
 func connClosedWithin(conn net.Conn, wait time.Duration) (bool, error) {
@@ -551,19 +565,19 @@ func startRPCProxyHAProxyHandler(t *testing.T, lim rpcProxyTestLimits, userNet b
 		fx.alias = "proxy"
 		args = append(args, "--network", netName, "--network-alias", "proxy")
 	}
-	args = append(args, "-p", "127.0.0.1::8443", "haproxy:3.2-alpine")
+	args = append(args, "-p", "127.0.0.1::8080", "haproxy:3.2-alpine")
 	out, err := exec.Command("docker", args...).CombinedOutput()
 	require.NoError(t, err, "%s", out)
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 
-	portOut, err := exec.Command("docker", "port", name, "8443/tcp").Output()
+	portOut, err := exec.Command("docker", "port", name, "8080/tcp").Output()
 	require.NoError(t, err, "%s", portOut)
 	mapped, err := publishedLocalPort(string(portOut))
 	require.NoError(t, err)
 	fx.hostAddr = "127.0.0.1:" + mapped
 
 	if userNet {
-		fx.url = "http://proxy:8443"
+		fx.url = "http://proxy:8080"
 		peer := startCurlPeer(t, fx.network)
 		waitHAProxyReady(t, name, func() (int, error) {
 			got := peer.flood(t, fx.alias, rpcProxySession+"/devshard.transport.v1.SessionService/Chat", 1)
@@ -703,7 +717,7 @@ func startCurlPeer(t *testing.T, network string) *curlPeer {
 
 func (p *curlPeer) flood(t *testing.T, alias, path string, n int) string {
 	t.Helper()
-	target := "http://" + alias + ":8443" + path
+	target := "http://" + alias + ":8080" + path
 	var b strings.Builder
 	for i := 0; i < n; i++ {
 		cmd := exec.Command("docker", "exec", p.name,

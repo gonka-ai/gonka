@@ -1,8 +1,7 @@
 FROM haproxy:3.2-alpine
 
 LABEL ai.gonka.component="proxy-router" \
-      ai.gonka.proxy-policy-contract="1" \
-      ai.gonka.peer-rpc-h2="1"
+      ai.gonka.proxy-policy-contract="1"
 
 USER root
 RUN apk add --no-cache curl jq socat \
@@ -27,6 +26,6 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 
 USER haproxy
 
-EXPOSE 80 443 18081 8404 9443
+EXPOSE 80 443 18081 8404
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

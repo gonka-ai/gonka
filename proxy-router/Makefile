@@ -158,30 +158,104 @@ test-render: test-route-status test-rpc-h2-cert
 	fi; \
 	grep -q '^frontend rpc_h2$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC frontend was not rendered"; \
-	grep -q '^ *bind :9443 proto h2$$' "$$tmpdir/proxy.cfg" \
-		|| fail "peer RPC listen is not cleartext HTTP/2 on DEVSHARD_RPC_H2_PORT"; \
+	grep -q '^ *bind abns@rpc_h2c accept-proxy proto h2$$' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC frontend does not take cleartext HTTP/2 from the public :80 hand-off"; \
+	if grep -q '^ *bind :9443' "$$tmpdir/proxy.cfg" || grep -q '^ *bind abns@rpc_tls' "$$tmpdir/proxy.cfg"; then \
+		fail "HTTP mode rendered a separate or TLS peer RPC listen"; \
+	fi; \
+	awk ' \
+		$$0 ~ "^frontend public_http$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /tcp-request inspect-delay 5s/ { delay = 1 } \
+		inside && /acl peer_rpc_h2c req.payload\(0,24\) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a/ { acl = 1 } \
+		inside && /acl peer_rpc_h2c_prefix req.payload\(0,14\) -m bin 505249202a20485454502f322e30/ { prefix = 1 } \
+		inside && /tcp-request content accept if peer_rpc_h2c$$/ { accept = 1 } \
+		inside && /tcp-request content accept if HTTP !peer_rpc_h2c_prefix/ { accepth1 = 1 } \
+		inside && /use_backend rpc_h2c_in if peer_rpc_h2c/ { route = 1 } \
+		inside && /default_backend policy_http/ { json = 1 } \
+		END { exit !(delay && acl && prefix && accept && accepth1 && route && json) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "public :80 does not hand the HTTP/2 preface to peer RPC and the rest to nginx"; \
+	awk ' \
+		$$0 ~ "^frontend public_https$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /acl peer_rpc_tls req.ssl_alpn -i gonka-rpc\/1/ { acl = 1 } \
+		inside && /tcp-request content accept if \{ req.ssl_hello_type 1 \}/ { accept = 1 } \
+		inside && /use_backend rpc_tls_in if peer_rpc_tls/ { route = 1 } \
+		inside && /default_backend policy_https/ { json = 1 } \
+		END { exit !(acl && accept && !route && json) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "public :443 in HTTP mode must not route ALPN to a TLS peer RPC listen"; \
+	grep -q '^ *server local abns@rpc_h2c send-proxy-v2$$' "$$tmpdir/proxy.cfg" \
+		|| fail "the :80 hand-off does not carry the client address with PROXY v2"; \
 	grep -q '^ *default_backend rpc_h2_upstream$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen is forwarded to proxy-policy"; \
-	grep -q '^ *server versiond versiond:8080 proto h2 ' "$$tmpdir/proxy.cfg" \
-		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2"; \
-	grep -q 'tcp-request connection reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
-		|| fail "peer RPC listen has no conn_rate on src"; \
-	grep -q 'store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
+	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none$$' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2 with a check"; \
+	awk ' \
+		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /http-check connect port 8080 proto h2/ { connect = 1 } \
+		inside && /http-check send meth GET uri \/readyz hdr Host versiond/ { send = 1 } \
+		inside && /http-check expect status 200/ { expect = 1 } \
+		END { exit !(connect && send && expect) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC check does not open versiond over HTTP/2"; \
+	grep -q '^ *use_backend rpc_versiond_h1 if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not fall back to versiond over HTTP/1.1 when its pool is empty"; \
+	awk ' \
+		$$0 ~ "^backend rpc_versiond_h1$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /^ *server versiond versiond:8080 resolvers docker init-addr none$$/ { h1 = 1 } \
+		END { exit !h1 } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA HTTP/1.1 fallback backend does not dial versiond"; \
+	if awk ' \
+		$$0 ~ "^backend (rpc_h2_upstream|rpc_versiond_h1)$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { inside = 0 } \
+		inside && /versiond-router-fleet/ { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/proxy.cfg"; then \
+		fail "non-HA peer RPC references the router fleet"; \
+	fi; \
+	grep -q 'tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC hand-off has no conn_rate on src"; \
+	awk ' \
+		$$0 ~ "^backend rpc_h2c_in$$|^backend rpc_tls_in$$" { inside = 1; n++; next } \
+		inside && $$0 ~ "^frontend |^backend " { inside = 0 } \
+		inside && /^ *retries 0$$/ { ok++ } \
+		END { exit !(n == 2 && ok == 2) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC hand-off backends must not retry a rejected session"; \
+	grep -q 'store conn_cur,conn_rate(1s)$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC stick-table does not store conn_cur"; \
-	grep -q 'tcp-request connection reject if { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
-		|| fail "peer RPC listen has no default per-source connection cap"; \
-	grep -q 'stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
+	grep -q 'tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC hand-off has no default per-source connection cap"; \
+	grep -q 'stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC stick-table does not store native IPv6"; \
-	grep -q 'acl trusted_external_proxy src 0.0.0.0/32' "$$tmpdir/proxy.cfg" \
-		|| fail "peer RPC listen has no no-op trusted-proxy ACL"; \
-	grep -q 'tcp-request connection track-sc0 src,ipmask(32,64) unless trusted_external_proxy' "$$tmpdir/proxy.cfg" \
-		|| fail "direct clients are not keyed per address at accept"; \
-	grep -q 'tcp-request session track-sc0 src,ipmask(32,64) if { fc_rcvd_proxy }' "$$tmpdir/proxy.cfg" \
-		|| fail "PROXY clients are not keyed after the preamble"; \
-	grep -q 'tcp-request session reject if { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
-		|| fail "PROXY clients have no per-source connection cap"; \
-	grep -q 'tcp-request session reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
-		|| fail "PROXY clients have no conn_rate cap"; \
+	if grep -q 'trusted_external_proxy' "$$tmpdir/proxy.cfg"; then \
+		fail "direct mode rendered a trusted-proxy ACL"; \
+	fi; \
+	for fe in public_http public_https; do \
+		awk -v fe="$$fe" ' \
+			$$0 == "frontend " fe { inside = 1; next } \
+			inside && $$0 ~ "^frontend |^backend " { exit } \
+			inside && /tcp-request content track-sc0 src,ipmask\(32,64\) table rpc_h2 if peer_rpc_/ { track = 1 } \
+			inside && /tcp-request content reject if peer_rpc_[a-z0-9]+ \{ sc_conn_cur\(0\) gt / && track { cap = 1 } \
+			inside && /tcp-request content accept/ && !cap { early = 1 } \
+			END { exit !(track && cap && !early) } \
+		' "$$tmpdir/proxy.cfg" \
+			|| fail "$$fe does not cap peer RPC connections per address before the hand-off"; \
+	done; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /tcp-request (connection|session|content) track-sc0/ { bad = 1 } \
+		END { exit bad } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC listen tracks a connection the public frontend already counted"; \
+	grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+		|| fail "public :443 has no conn_rate cap for peer RPC"; \
 	grep -q 'timeout client-hs 5s' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen does not bound a stalled handshake"; \
 	grep -q 'track-sc1 src,ipmask(32,64) table st_rpc_watch' "$$tmpdir/proxy.cfg" \
@@ -229,15 +303,21 @@ test-render: test-route-status test-rpc-h2-cert
 	awk ' \
 		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /^ *bind abns@rpc_h2c accept-proxy proto h2$$/ { bind = 1 } \
+		inside && /expect-proxy|trusted_external_proxy|tcp-request (connection|session|content) track-sc0/ { bad = 1 } \
+		END { exit !(bind && !bad) } \
+	' "$$tmpdir/proxy-lb.cfg" \
+		|| fail "peer RPC listen must accept the internal PROXY v2 hand-off only, with no tracking or external preamble of its own"; \
+	awk ' \
+		$$0 ~ "^frontend public_http$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /acl trusted_external_proxy src 10\.0\.0\.0\/8/ { acl = 1 } \
 		inside && /expect-proxy layer4 if trusted_external_proxy/ { expect = 1 } \
-		inside && /tcp-request connection track-sc0 src,ipmask\(32,64\) unless trusted_external_proxy/ { conntrack = 1 } \
-		inside && /tcp-request session track-sc0 src,ipmask\(32,64\) if \{ fc_rcvd_proxy \}/ { sesstrack = 1 } \
-		inside && /tcp-request session reject if \{ sc_conn_cur\(0\) gt / { sesscur = 1 } \
-		inside && /tcp-request session reject if \{ sc_conn_rate\(0\) gt / { sessrate = 1 } \
-		END { exit !(acl && expect && conntrack && sesstrack && sesscur && sessrate) } \
+		inside && /tcp-request content track-sc0 src,ipmask\(32,64\) table rpc_h2 if peer_rpc_h2c/ && expect { track = 1 } \
+		inside && /use_backend rpc_h2c_in if peer_rpc_h2c/ && track { after = 1 } \
+		END { exit !(acl && expect && track && after) } \
 	' "$$tmpdir/proxy-lb.cfg" \
-		|| fail "peer RPC listen keys the balancer instead of the PROXY client"; \
+		|| fail "public :80 does not consume the external PROXY preamble before keying and handing off peer RPC"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
@@ -258,18 +338,33 @@ test-render: test-route-status test-rpc-h2-cert
 	VERSIOND_ROUTER_FLEET_CAPACITY=16 \
 	./entrypoint.sh; \
 	grep -q 'server-template router 16 versiond-router-fleet:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' "$$tmpdir/ha.cfg" \
-		|| fail "HA peer RPC does not check the router over HTTP/1.1 while dialing proto h2"; \
+		|| fail "HA peer RPC does not dial the router peer-RPC listen :8081 proto h2 with an HTTP/1.1 check"; \
+	if grep -q 'versiond-router-fleet:8080 proto h2' "$$tmpdir/ha.cfg"; then \
+		fail "HA peer RPC dials the JSON listen; the previous router generation refuses /rpc/ there"; \
+	fi; \
 	awk ' \
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /http-check connect port 8404 proto h1/ { connect = 1 } \
 		inside && /http-check send meth GET uri \/readyz hdr Host versiond-router-fleet/ { send = 1 } \
 		inside && /http-check expect status 200/ { expect = 1 } \
-		END { exit !(connect && send && expect) } \
+		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
+		inside && /http-check send meth GET uri \/healthz hdr Host versiond-router-fleet/ { dsend = 1 } \
+		inside && /http-check expect rstatus \^\[2-5\]\[0-9\]\[0-9\]/ { dexpect = 1 } \
+		END { exit !(connect && send && expect && data && dsend && dexpect) } \
 	' "$$tmpdir/ha.cfg" \
-		|| fail "HA peer RPC check is not HTTP/1.1 GET /readyz on the router admin port"; \
-	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\]' "$$tmpdir/ha.cfg" \
-		|| fail "peer RPC does not select the per-version _rpc backend"; \
+		|| fail "HA coarse peer RPC check is not admin /readyz over HTTP/1.1 followed by any HTTP answer on :8081 over HTTP/2"; \
+	grep -q '^ *use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/ha.cfg" \
+		|| fail "HA peer RPC does not fall back to the coarse JSON pool when its pool is empty"; \
+	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found } { var(txn.ver),map_str(.*/ha.map),concat(_rpc),nbsrv gt 0 }' "$$tmpdir/ha.cfg" \
+		|| fail "peer RPC does not select the per-version _rpc backend only while it has a usable server"; \
+	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found }' "$$tmpdir/ha.cfg" \
+		|| fail "peer RPC does not fall back to the version's JSON backend"; \
+	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
+		inside && /uri-lf \/%\[be_name,regsub\(_rpc\$$,\),map\(.*\)\]\/healthz/ { dsend = 1 } \
+		END { exit !(data && dsend) }' "$$tmpdir/ha.cfg" \
+		|| fail "dynamic peer RPC twins do not check their version's /healthz on :8081"; \
 	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
 		inside && /server-template router 16 versiond-router-fleet:8081 proto h2/ { dial = 1 } \
 		inside && /regsub\(_rpc/ { check = 1 } \
@@ -306,6 +401,11 @@ test-render: test-route-status test-rpc-h2-cert
 	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
 		fail "HA peer RPC still dials the non-HA versiond"; \
 	fi; \
+	awk '/^backend versiond_routers_v5_rpc$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
+		inside && /http-check send meth GET uri \/v5\/healthz hdr Host versiond-router-fleet/ { dsend = 1 } \
+		END { exit !(data && dsend) }' "$$tmpdir/ha-v5.cfg" \
+		|| fail "the static v5 peer RPC twin does not check /v5/healthz on :8081 over HTTP/2"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
@@ -332,11 +432,28 @@ test-render: test-route-status test-rpc-h2-cert
 	DEVSHARD_RPC_H2_CERT_DIR="$$tmpdir/ssl" \
 	DEVSHARD_RPC_H2_PEM="$$tmpdir/rpc-h2.pem" \
 	./entrypoint.sh; \
-	grep -q "^ *bind :9443 ssl crt $$tmpdir/rpc-h2.pem alpn h2$$" "$$tmpdir/https.cfg" \
-		|| fail "HTTPS peer RPC listen is not TLS with ALPN h2"; \
-	if grep -q '^ *bind :9443 proto h2$$' "$$tmpdir/https.cfg"; then \
-		fail "HTTPS peer RPC listen fell back to cleartext h2c"; \
+	grep -q "^ *bind abns@rpc_tls accept-proxy ssl crt $$tmpdir/rpc-h2.pem alpn gonka-rpc/1 proto h2$$" "$$tmpdir/https.cfg" \
+		|| fail "HTTPS peer RPC listen is not TLS with the peer RPC ALPN and HTTP/2"; \
+	grep -q '^ *bind abns@rpc_h2c accept-proxy proto h2$$' "$$tmpdir/https.cfg" \
+		|| fail "HTTPS mode dropped the cleartext peer RPC hand-off from :80"; \
+	grep -q '^ *use_backend rpc_tls_in if peer_rpc_tls$$' "$$tmpdir/https.cfg" \
+		|| fail "public :443 does not route the peer RPC ALPN to the TLS peer RPC listen"; \
+	awk ' \
+		$$0 ~ "^frontend public_https$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /tcp-request content track-sc0 src,ipmask\(32,64\) table rpc_h2 if peer_rpc_tls/ { track = 1 } \
+		inside && /use_backend rpc_tls_in if peer_rpc_tls/ && track { after = 1 } \
+		END { exit !(track && after) } \
+	' "$$tmpdir/https.cfg" \
+		|| fail "public :443 hands off peer RPC before counting it"; \
+	if grep -q 'alpn h2' "$$tmpdir/https.cfg"; then \
+		fail "a peer RPC listen offers plain h2: a browser ClientHello could land there"; \
 	fi; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" \
+		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/https.cfg" >/dev/null \
+		|| fail "rendered HTTPS proxy config is invalid"; \
 	HAPROXY_BIN=true \
 	PROXY_ROUTER_RENDER_ONLY=1 \
 	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -345,10 +462,13 @@ test-render: test-route-status test-rpc-h2-cert
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/conn-cap.map" \
 	PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC=64 \
 	./entrypoint.sh; \
-	grep -q 'tcp-request connection reject if { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
-		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered"; \
-	grep -q 'tcp-request session reject if { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
-		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not applied after the PROXY preamble"; \
+	grep -q 'tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
+		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered on :80"; \
+	grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
+		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered on :443"; \
+	if grep -q 'sc_conn_cur(0) gt 32' "$$tmpdir/conn-cap.cfg"; then \
+		fail "a default per-source connection cap survived the override"; \
+	fi; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
@@ -465,10 +585,10 @@ test-render: test-route-status test-rpc-h2-cert
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/trusted-lb.map" \
 	PROXY_ROUTER_PROXY_PROTOCOL_FROM='192.0.2.10/32 2001:db8::/48' \
 	./entrypoint.sh; \
-	[ "$$(grep -c '^ *acl trusted_external_proxy src 192.0.2.10/32 2001:db8::/48$$' "$$tmpdir/trusted-lb.cfg")" -eq 3 ] \
-		|| fail "trusted external LB CIDRs were not rendered on the public listeners and rpc_h2"; \
-	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 3 ] \
-		|| fail "public listeners and rpc_h2 do not consume trusted PROXY preambles"; \
+	[ "$$(grep -c '^ *acl trusted_external_proxy src 192.0.2.10/32 2001:db8::/48$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
+		|| fail "trusted external LB CIDRs were not rendered on the two public listeners"; \
+	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
+		|| fail "public listeners do not consume trusted PROXY preambles"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
 		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \

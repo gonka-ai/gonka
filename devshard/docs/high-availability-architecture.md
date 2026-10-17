@@ -10,7 +10,7 @@ Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
 [storage-design.md](./storage-design.md) (storage-mode selection),
 [gateway.md](./gateway.md) (gateway + epoch-accounting HA merge framework).
-Authenticated peer RPC hops (Connect over HTTP/1.1 today, HTTP/2 in phase 6):
+Authenticated peer RPC hops (HTTP/2 on the public port from v6, Connect over HTTP/1.1 as the fallback):
 [grpc-transport-connection.md](./grpc-transport-connection.md). The shared
 peer-RPC token is [below](#peer-rpc-sessions-under-ha).
 
@@ -22,9 +22,10 @@ The public listener is `proxy-router/`, a host-local HAProxy. Today it
 distributes TCP connections on `:80/:443` across private nginx policy workers,
 which retain TLS, HTTP/2, CORS, rate limits, rewrites, and the existing on-chain
 route policy. The policy workers send only the two horizontally scaled API paths
-back to private HAProxy frontends. Phase 6 adds a second public bind on the same
-process (`{DEVSHARD_RPC_H2_PORT}`) for authenticated `/rpc/`; that listen skips
-nginx. It is not shipped yet.
+back to private HAProxy frontends. Phase 6 keeps authenticated `/rpc/` on the
+same `:80/:443`: the public frontends recognise a peer by its first bytes (the
+HTTP/2 preface, or ALPN `gonka-rpc/1` on TLS) and hand it to the `rpc_h2`
+frontend in the same process, which skips nginx.
 
 ```text
  clients
@@ -48,9 +49,9 @@ nginx. It is not shipped yet.
     |                                               |
     |                                        shared PostgreSQL for HA versions
     |
-    +-- {DEVSHARD_RPC_H2_PORT} proto h2  (Phase 6; skips nginx)
+    +-- :80 HTTP/2 preface / :443 ALPN gonka-rpc/1 --> rpc_h2 (same process; skips nginx)
             |
-            +--> same versiond-router fleet (proto h2) --> versiond (h2c) --> child (h2c)
+            +--> same versiond-router fleet :8081 (proto h2) --> versiond (h2c) --> child (h2c)
 ```
 
 `proxy-router` selects a ready router replica with the same escrow-derived
@@ -73,8 +74,8 @@ domain**. This deployment protects against failure or replacement of an inner
 router or policy worker, not against loss of the host, Docker daemon, public
 listener, or its network. A future multi-host ingress (provider LB, VIP, or
 Kubernetes Service) belongs above this layer and is outside this change. Phase 6
-adds `{DEVSHARD_RPC_H2_PORT}` on this same process (below); it does not add a
-second public failure domain.
+carries peer RPC on this same process and the same ports (below); it does not
+add a second public failure domain or a second public port.
 
 The stock Compose `devshard-postgres` is likewise one process and one
 host-local storage failure domain. It makes several `versiond` processes share
@@ -89,7 +90,7 @@ failover.
 | 22 Tier A `/v1/*` query routes | `proxy-router :18082` → ready `edge-api` | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
 | `/devshard/<version>/sessions/...` (JSON protocol) | `proxy-router :18081` → `versiond-router` fleet → `versiond` → `devshardd` | Chat, gossip, payloads — version binds on owner chat. HTTP/1.1. nginx is on this hop. |
-| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **Today:** same as JSON (InferenceUrl, nginx). **Phase 6:** `{DEVSHARD_RPC_H2_PORT}` on `proxy-router` → versiond-router (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
+| `/devshard/<version>/sessions/.../rpc/...` (Connect) | **HTTP/2:** `:80`/`:443` on `proxy-router` (preface / ALPN hand-off) → versiond-router `:8081` (`proto h2`) → versiond (h2c) → child (h2c). nginx is **not** on this hop. **HTTP/1.1 fallback:** same as JSON (nginx), reaching the same `_rpc` twin by path. Same version + escrow hash. | Authenticated peer RPC (Attach / Watch / Chat / …) |
 | `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
 | `/devshard/<version>/sessions/.../diffs\|mempool\|signatures` (legacy) | join proxy **internal rewrite** → versionless | Backward-compat for scrapers |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
@@ -100,9 +101,9 @@ HTTP policy is rendered by `proxy/entrypoint.sh` into
 generic `/v1/ → dapi` location. `proxy-router/entrypoint.sh` separately renders
 the public and private HAProxy pools. The two processes have different owners:
 nginx decides *which service* a path belongs to on InferenceUrl; HAProxy decides
-*which healthy replica* of that service receives it. Authenticated `/rpc/` after
-phase 6 never enters nginx — `proxy-router` is both the public bind and the
-replica picker for that listen.
+*which healthy replica* of that service receives it. Authenticated `/rpc/` over
+HTTP/2 never enters nginx — `proxy-router` recognises it on the public bind and
+is the replica picker for it.
 
 ### HAProxy service pools
 
@@ -288,21 +289,24 @@ client
   → devshardd :500x
 ```
 
-Phase 6 publishes a second public listen on the **same** `proxy-router` process
-(`{DEVSHARD_RPC_H2_PORT}`). Authenticated `/rpc/` skips nginx. HTTP/2 on every hop
-through the child. Version + escrow hash is unchanged, so sticky placement and
-host evacuation stay the same operation:
+Phase 6 carries authenticated `/rpc/` over HTTP/2 on the **same** `proxy-router`
+process and the same public ports; the TCP frontends hand a peer connection to
+the `rpc_h2` frontend and nginx is skipped. HTTP/2 on every hop through the
+child. Version + escrow hash is unchanged, so sticky placement and host
+evacuation stay the same operation:
 
 ```text
 client
-  → public proxy-router {DEVSHARD_RPC_H2_PORT}  (TLS+h2 if InferenceUrl is HTTPS, else h2c)
-  → one ready versiond-router replica (proto h2)
+  → public proxy-router :80 (HTTP/2 preface) or :443 (TLS, ALPN gonka-rpc/1, nginx's cert)
+  → one ready versiond-router replica :8081 (proto h2)
   → versiond-N:8080 (h2c)
   → devshardd :500x (h2c)
 ```
 
-Do not put HAProxy in the versiond image. `:80/:443` stay TCP-to-nginx for JSON
-and `/v1`. See [grpc-transport-connection.md](./grpc-transport-connection.md).
+A peer whose probe finds no HTTP/2 on that port (an older wrapping) uses the
+JSON path above with Connect over HTTP/1.1; the router selects the `_rpc` twin
+by path, so it reaches the same child. Do not put HAProxy in the versiond
+image. See [grpc-transport-connection.md](./grpc-transport-connection.md).
 
 The fleet defaults to three fixed slots and requires two ready peers before one
 slot may stop. Each slot is a separate Compose project built from the same
@@ -320,24 +324,20 @@ if the required live routes do not return.
 Known limitations of this hop, recorded in
 [grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations):
 
-- The placement contract does not include `VERSIOND_ROUTER_H2_PORT` or
-  `VERSIOND_ROUTER_BACKEND_H2`. A direct `fleet apply` may mix a pre-h2
-  router image with a current one. While a current slot remains, redispatch
-  covers the refused connect. When the last current slot leaves and the
-  proxy still publishes `{DEVSHARD_RPC_H2_PORT}`, every slot refuses peer
-  RPC and clients fail closed. `update-devshard.sh` avoids that order: a
-  rollback off images labeled `ai.gonka.peer-rpc-h2=1` replaces the proxy
-  before the fleet. A direct fleet apply does not.
+- The transport is agreed per host, in band. A peer remembers a missed
+  HTTP/2 probe for 30 minutes and returns to HTTP/2 on its next Attach or
+  refresh after that, so a wrapping update is picked up with a delay, not a
+  restart. Between `fleet apply` and the versiond replacement the `_rpc`
+  twins are empty and peer RPC to this host answers 503 on either transport;
+  `update-devshard.sh` keeps that window to the versiond step.
 - `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
-  not prove the HTTP/2 data ports agree. The `_rpc` health check is
-  HTTP/1.1 `GET /readyz` on router admin `:8404`. The slot compose does not
-  pass `VERSIOND_ROUTER_H2_PORT`, so it stays `8081` unless the image
-  default changes, while `DEVSHARD_RPC_H2_ROUTER_PORT` can move the proxy
-  dial alone. Stock defaults match (`9443` once in `config.env`, `8081` on
-  both sides of the router hop). A remote endpoint `{id, host, port}` is
-  the versiond listen (`8080`); that process has to speak h2c, and a remote
-  `config.env` with a different `DEVSHARD_RPC_H2_PORT` is not visible to
-  the updater on the network node.
+  not send a peer RPC. The `_rpc` health check is HTTP/1.1 `GET /readyz` on
+  router admin `:8404` followed by `GET /readyz` on the router's `:8081` over
+  HTTP/2 (the data dial); a router without that listen leaves the twin and
+  the proxy sends that version's peer RPC to the JSON backend over HTTP/1.1.
+  A remote endpoint `{id, host, port}` is
+  the versiond listen (`8080`); that process has to speak h2c, and the
+  updater on the network node cannot see which image a remote host runs.
 - Each `_rpc` twin repeats its sibling's health check at `inter 1s`. Only
   enabled servers that DNS has resolved are probed. On a stock join that is
   on the order of 20 extra `/readyz` plus `/healthz` requests per second
@@ -688,7 +688,7 @@ highly-available edge-api.
 - **Binary rollout (same version, new sha; multi-instance drain):**
   [rolling-update.md](./rolling-update.md). Host leave the pool:
   [versiond-host-evacuation.md](./versiond-host-evacuation.md).
-- **Peer RPC hops (Connect HTTP/1.1 now, HTTP/2 skip-nginx later):**
+- **Peer RPC hops (HTTP/2 on the public port, Connect HTTP/1.1 fallback):**
   [grpc-transport-connection.md](./grpc-transport-connection.md).
 - **Full HA target architecture (HA edge-api event hub, dapi service split,
   signer/NATS, Redis):** [proposals/high-availability.md](./proposals/high-availability.md).

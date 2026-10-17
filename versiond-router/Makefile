@@ -342,8 +342,6 @@ test-version-routing:
 		for i in $$(seq 80); do \
 			if docker exec gonka-vp-bind-$$name grep -q \
 				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
-				&& docker exec gonka-vp-bind-$$name grep -q \
-				"^[[:space:]]*bind $$address:8081 proto h2" /etc/haproxy/haproxy.cfg \
 				2>/dev/null; then return 0; fi; \
 			sleep 0.1; \
 		done; \
@@ -1507,9 +1505,24 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 	grep -Fq 'reg ^/[^/]+/sessions/[^/]+' "$$tmpdir/mixed.cfg" \
 		|| fail "session stickiness regex is gone; /rpc/ would no longer hash by escrow"; \
 	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/mixed.cfg" \
-		|| fail "HTTP/1.1 JSON/healthz/catalog listener is not on :8080"; \
-	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/mixed.cfg" \
-		|| fail "published-hop frontend is not proto h2"; \
+		|| fail "JSON and peer RPC data listener is not on :8080"; \
+	grep -q '^[[:space:]]*bind :8081$$' "$$tmpdir/mixed.cfg" \
+		|| fail "the proxy's peer-RPC dial :8081 has no listener"; \
+	if grep '^[[:space:]]*bind ' "$$tmpdir/mixed.cfg" | grep -q 'proto h2'; then \
+		fail "a bind forces proto h2: JSON HTTP/1.1 and peer RPC HTTP/2 share :8080 by preface detection"; \
+	fi; \
+	if grep -q 'use_backend.*dst_port' "$$tmpdir/mixed.cfg"; then \
+		fail "peer RPC twins must be selected by path, not by port"; \
+	fi; \
+	grep -Fq 'acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC path ACL is gone"; \
+	grep -Fq 'use_backend versiond_ha_pool_rpc if peer_rpc' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC on an undeclared version does not reach the host-level _rpc twin"; \
+	grep -Fq 'concat(_rpc)] if peer_rpc { var(txn.ver),map_str(' "$$tmpdir/mixed.cfg" \
+		|| fail "versioned peer RPC does not select the _rpc twin by path"; \
+	if grep -q 'deny deny_status 404' "$$tmpdir/mixed.cfg"; then \
+		fail "Connect over HTTP/1.1 must reach the _rpc twin, not a 404"; \
+	fi; \
 	if awk '/^frontend versiond_in$$/{inside=1; next} /^frontend /{inside=0} \
 		inside && /stick-table/ {found=1} END{exit !found}' "$$tmpdir/mixed.cfg"; then \
 		fail "per-IP zones must not be keyed on versiond-router RemoteAddr"; \
@@ -1711,14 +1724,6 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "catalog mode does not fail closed for names absent from governance"; \
 	grep -q '^    server catalog 127\.0\.0\.1:1 disabled$$' "$$tmpdir/catalog-only.cfg" \
 		|| fail "catalog mode starts with a false-green status metric"; \
-	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-		VERSIOND_ROUTER_H2_PORT=8080 \
-		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
-		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-		VERSIOND_ROUTER_OUT="$$tmpdir/bad-h2-port.cfg" \
-		./entrypoint.sh >/dev/null 2>&1; then \
-		fail "an h2 listen colliding with :8080 was accepted"; \
-	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_BACKEND_H2=false \
 		VERSIOND_VERSIONS=v4 \
@@ -1731,8 +1736,8 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 	if grep -q '^[[:space:]]*server-template versiond .* proto h2' "$$tmpdir/h1-backend.cfg"; then \
 		fail "VERSIOND_ROUTER_BACKEND_H2=false still rendered proto h2 backends"; \
 	fi; \
-	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/h1-backend.cfg" \
-		|| fail "HTTP/1.1 backend mode must still accept h2 on the published-hop frontend"; \
+	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/h1-backend.cfg" \
+		|| fail "HTTP/1.1 backend mode must keep the :8080 data listen"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTING_CATALOG_URL=ftp://catalog/versions \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -1947,7 +1952,6 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/custom-bind.versions.map" \
 		./entrypoint.sh; \
 	grep -q '^[[:space:]]*bind 192.0.2.10:8080' "$$tmpdir/custom-bind.cfg" \
-		&& grep -q '^[[:space:]]*bind 192.0.2.10:8081 proto h2' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 127.0.0.1:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.10:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.11:8405' "$$tmpdir/custom-bind.cfg" \

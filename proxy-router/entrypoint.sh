@@ -29,11 +29,19 @@ POLICY_POOL_SLOTS="${PROXY_POLICY_POOL_SLOTS:-4}"
 ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
+# The router's peer-RPC listen. Every v6 router generation binds :8081
+# (the previous one as a proto h2 frontend, the current one as a second
+# bind of its data frontend), so the proxy's HTTP/2 dial works across a
+# fleet or proxy replacement in either order. JSON and the HTTP/1.1
+# fallback use ROUTER_PORT.
+ROUTER_RPC_PORT=8081
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
-# Peer RPC listen. 9443, not 8443: join publishes API_SSL_PORT (default 8443)
-# onto container :443. Clients dial {InferenceUrl.host}:DEVSHARD_RPC_H2_PORT.
-RPC_H2_PORT="${DEVSHARD_RPC_H2_PORT:-9443}"
-RPC_H2_ROUTER_PORT="${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}"
+# Peer RPC shares :80/:443 with the JSON API. The public frontends hand a
+# connection that opens with the HTTP/2 preface (:80) or offers ALPN
+# RPC_ALPN (:443) to the rpc_h2 frontend over an abstract socket. The
+# ALPN token is the devshard client's transport.PeerRPCALPN.
+RPC_ALPN="gonka-rpc/1"
+PUBLIC_INSPECT="${PROXY_ROUTER_PUBLIC_INSPECT_SECONDS:-5}"
 RPC_H2_VERSIOND_HOST="${DEVSHARD_RPC_H2_VERSIOND_HOST:-versiond}"
 RPC_H2_VERSIOND_PORT="${DEVSHARD_RPC_H2_VERSIOND_PORT:-8080}"
 RPC_H2_CERT_DIR="${DEVSHARD_RPC_H2_CERT_DIR:-/etc/haproxy/ssl}"
@@ -162,8 +170,8 @@ if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
 fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
-    "$RPC_H2_PORT" "$RPC_H2_ROUTER_PORT" "$RPC_H2_VERSIOND_PORT" \
-    "$RPC_H2_MAX_CONNS_PER_SRC" "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
+    "$RPC_H2_VERSIOND_PORT" "$PUBLIC_INSPECT" "$RPC_H2_MAX_CONNS_PER_SRC" \
+    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
     "$CATALOG_ACTIVATION_MIN_READY" \
@@ -215,15 +223,9 @@ if [ -n "$TRUSTED_PROXY_CIDRS" ]; then
     done
     PUBLIC_PROXY_ACL="acl trusted_external_proxy src $TRUSTED_PROXY_CIDRS"
     PUBLIC_PROXY_EXPECT='tcp-request connection expect-proxy layer4 if trusted_external_proxy'
-    # rpc_h2 skips connection-time tracking for this ACL, then keys the
-    # PROXY client at session time. The name has to exist in both modes.
-    RPC_PROXY_ACL="$PUBLIC_PROXY_ACL"
 else
     PUBLIC_PROXY_ACL='# No trusted external PROXY-protocol sources configured.'
     PUBLIC_PROXY_EXPECT='# Direct client connection; no incoming PROXY preamble.'
-    # 0.0.0.0/32 matches no real client, so `unless trusted_external_proxy`
-    # still tracks every direct connection. An empty ACL would not load.
-    RPC_PROXY_ACL='acl trusted_external_proxy src 0.0.0.0/32'
 fi
 
 case "$NGINX_MODE" in
@@ -234,10 +236,8 @@ case "$NGINX_MODE" in
         ;;
 esac
 
-if [ "$RPC_H2_PORT" -eq 80 ] || [ "$RPC_H2_PORT" -eq 443 ] || \
-    [ "$RPC_H2_PORT" -eq "$VERSIOND_FRONTEND_PORT" ] || \
-    [ "$RPC_H2_PORT" -eq "$ADMIN_PORT" ]; then
-    echo "proxy-router: DEVSHARD_RPC_H2_PORT=$RPC_H2_PORT collides with an existing listen" >&2
+if [ "$PUBLIC_INSPECT" -eq 0 ]; then
+    echo "proxy-router: PROXY_ROUTER_PUBLIC_INSPECT_SECONDS must be a positive integer" >&2
     exit 1
 fi
 case "$RPC_H2_VERSIOND_HOST" in
@@ -248,24 +248,56 @@ case "$RPC_H2_VERSIOND_HOST" in
 esac
 
 # HA sets VERSIOND_ROUTER_POOL_HOST (the fleet). Non-HA leaves it unset and
-# the h2 hop goes straight to versiond:8080. JSON :8080 on the router is not
-# this hop: peer RPC is the router's proto h2 listen (8081).
+# the h2 hop goes straight to versiond:8080. The router hop is the router's
+# :8081 (ROUTER_RPC_PORT, see above); the router routes by path, so the
+# same twins also serve the HTTP/1.1 fallback that arrives on :8080.
 # The data connection stays proto h2. The check is HTTP/1.1 GET /readyz on
 # the router admin port, the same question the JSON backends ask. Without
 # check-proto h1 the probe would follow proto h2, and without a check at all
 # HAProxy reports the server "no check", which the fleet drain does not match.
+# The checks also prove the data dial itself. HA: after the admin readiness,
+# the coarse pool opens the router's :8081 over HTTP/2 and only needs an
+# HTTP answer there (a v5 router has no such listen; the previous v6
+# router answers from a pool the per-version twins do not depend on), and
+# each version twin asks /<version>/healthz over that dial. Non-HA opens
+# versiond's own listen over HTTP/2: a v5 versiond has no h2c and fails. A
+# generation that fails leaves the pool, and the frontend sends peer RPC to
+# the HTTP/1.1 path (the router's :8080, or versiond itself) instead of
+# answering 503 on HTTP/2.
+RPC_H2_CHECKS_FILE=$(mktemp)
+RPC_H1_FALLBACK_FILE=$(mktemp)
 if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
-    RPC_H2_HTTPCHK='option httpchk'
-    RPC_H2_CHECK_CONNECT="http-check connect port ${ROUTER_ADMIN_PORT} proto h1"
-    RPC_H2_CHECK_SEND="http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}"
-    RPC_H2_CHECK_EXPECT='http-check expect status 200'
-    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${RPC_H2_ROUTER_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
+    cat > "$RPC_H2_CHECKS_FILE" <<EOF
+    option httpchk
+    http-check connect port ${ROUTER_ADMIN_PORT} proto h1
+    http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect status 200
+    http-check connect port ${ROUTER_RPC_PORT} proto h2
+    http-check send meth GET uri /healthz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect rstatus ^[2-5][0-9][0-9]
+EOF
+    RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
+    RPC_H1_FALLBACK=versiond_router_coarse
+    printf '%s\n' '# HA peer RPC falls back to the JSON pools of the same router fleet.' > "$RPC_H1_FALLBACK_FILE"
 else
-    RPC_H2_HTTPCHK=
-    RPC_H2_CHECK_CONNECT=
-    RPC_H2_CHECK_SEND=
-    RPC_H2_CHECK_EXPECT=
-    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 resolvers docker init-addr none"
+    cat > "$RPC_H2_CHECKS_FILE" <<EOF
+    option httpchk
+    http-check connect port ${RPC_H2_VERSIOND_PORT} proto h2
+    http-check send meth GET uri /readyz hdr Host ${RPC_H2_VERSIOND_HOST}
+    http-check expect status 200
+EOF
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none"
+    RPC_H1_FALLBACK=rpc_versiond_h1
+    cat > "$RPC_H1_FALLBACK_FILE" <<EOF
+# Non-HA peer RPC when versiond does not take HTTP/2: Connect over HTTP/1.1
+# to the same versiond, which forwards /rpc/ to the child as nginx would.
+backend rpc_versiond_h1
+    http-reuse safe
+    option redispatch 1
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+    server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} resolvers docker init-addr none
+EOF
 fi
 
 case "$NGINX_MODE" in
@@ -273,17 +305,21 @@ case "$NGINX_MODE" in
         cert="$RPC_H2_CERT_DIR/cert.pem"
         key="$RPC_H2_CERT_DIR/private.key"
         if [ ! -f "$cert" ] || [ ! -f "$key" ]; then
-            echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for DEVSHARD_RPC_H2_PORT (looked in $RPC_H2_CERT_DIR)" >&2
+            echo "proxy-router: HTTPS InferenceUrl requires SSL_CERT_SOURCE cert.pem and private.key for peer RPC on :443 (looked in $RPC_H2_CERT_DIR)" >&2
             exit 1
         fi
         # nginx renewal later replaces cert.pem and private.key. watch_rpc_h2_cert
         # rebuilds this PEM and commits it on the admin socket.
         write_rpc_h2_pem "$cert" "$key" "$RPC_H2_PEM"
-        # ssl+alpn is HTTP/2 over TLS. proto h2 would be cleartext h2c.
-        RPC_H2_BIND=":${RPC_H2_PORT} ssl crt ${RPC_H2_PEM} alpn h2"
+        # TLS terminates here with nginx's cert. The listener negotiates only
+        # the peer-RPC ALPN token, and proto h2 runs HTTP/2 on it; h2 itself
+        # is never offered, so a browser's ClientHello cannot land here.
+        RPC_TLS_BIND="bind abns@rpc_tls accept-proxy ssl crt ${RPC_H2_PEM} alpn ${RPC_ALPN} proto h2"
+        PUBLIC_HTTPS_RPC_ROUTE="use_backend rpc_tls_in if peer_rpc_tls"
         ;;
     *)
-        RPC_H2_BIND=":${RPC_H2_PORT} proto h2"
+        RPC_TLS_BIND='# HTTP InferenceUrl: peer RPC is h2c on :80; :443 carries no peer RPC.'
+        PUBLIC_HTTPS_RPC_ROUTE='# No TLS peer-RPC listener in NGINX_MODE=http.'
         ;;
 esac
 
@@ -338,7 +374,7 @@ STATIC_VERSIONS_FILE=$(mktemp)
 CACHED_VERSIONS_FILE=$(mktemp)
 CACHED_DYNAMIC_VERSIONS_FILE=$(mktemp)
 CATALOG_PROXY_FILE=$(mktemp)
-trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$RPC_H2_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
+trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$RPC_H2_RULES_FILE" "$RPC_H2_CHECKS_FILE" "$RPC_H1_FALLBACK_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
 if [ -n "$CATALOG_BIND_HOST" ]; then
     cat > "$CATALOG_PROXY_FILE" <<EOF
 frontend routing_catalog
@@ -420,13 +456,15 @@ render_rpc_backend() {
     backend=$1
     ready_check=$2
     server_state=$3
+    data_check=$4
     sed \
         -e "s|\${BACKEND_NAME}|${backend}_rpc|g" \
         -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
+        -e "s|\${DATA_CHECK_SEND}|$data_check|g" \
         -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
-        -e "s|\${RPC_H2_ROUTER_PORT}|$RPC_H2_ROUTER_PORT|g" \
+        -e "s|\${ROUTER_RPC_PORT}|$ROUTER_RPC_PORT|g" \
         -e "s|\${SERVER_STATE}|$server_state|g" \
         "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
@@ -450,7 +488,8 @@ declare_version() {
             "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST" \
             "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
         render_rpc_backend "$backend" \
-            "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
+            "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" '' \
+            "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST"
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
             "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
@@ -498,7 +537,8 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "$server_state"
     render_rpc_backend "$backend" \
         "http-check send meth GET uri-lf /readyz?version=%[be_name,regsub(_rpc\$,),map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
-        "$server_state"
+        "$server_state" \
+        "http-check send meth GET uri-lf /%[be_name,regsub(_rpc\$,),map($SLOT_MAP)]/healthz hdr Host $ROUTER_POOL_HOST"
     printf '%s\n' \
         "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
         "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
@@ -522,7 +562,8 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)\$|^/stats(/|\$)|^/sessions/[^/]+/(diffs|mempool|signatures)\$
     $UNDECLARED_VERSION_GUARD
-    use_backend %[var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc)] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }
+    use_backend %[var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc)] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found } { var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc),nbsrv gt 0 }
+    use_backend %[var(txn.ver),map_str(${VERSION_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }
 EOF
 else
     printf '%s\n' '    # Non-HA peer RPC dials one versiond. Version pools belong to the router fleet.' > "$RPC_H2_RULES_FILE"
@@ -571,14 +612,21 @@ sed \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
-    -e "s|\${RPC_PROXY_ACL}|$RPC_PROXY_ACL|g" \
-    -e "s|\${RPC_H2_BIND}|$RPC_H2_BIND|g" \
+    -e "s|\${PUBLIC_INSPECT_SECONDS}|$PUBLIC_INSPECT|g" \
+    -e "s|\${RPC_ALPN}|$RPC_ALPN|g" \
+    -e "s|\${PUBLIC_HTTPS_RPC_ROUTE}|$PUBLIC_HTTPS_RPC_ROUTE|g" \
+    -e "s|\${RPC_TLS_BIND}|$RPC_TLS_BIND|g" \
     -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
-    -e "s|\${RPC_H2_HTTPCHK}|$RPC_H2_HTTPCHK|g" \
-    -e "s|\${RPC_H2_CHECK_CONNECT}|$RPC_H2_CHECK_CONNECT|g" \
-    -e "s|\${RPC_H2_CHECK_SEND}|$RPC_H2_CHECK_SEND|g" \
-    -e "s|\${RPC_H2_CHECK_EXPECT}|$RPC_H2_CHECK_EXPECT|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
+    -e "s|\${RPC_H1_FALLBACK}|$RPC_H1_FALLBACK|g" \
+    -e "/\${RPC_H2_CHECKS}/{
+        r $RPC_H2_CHECKS_FILE
+        d
+    }" \
+    -e "/\${RPC_H1_FALLBACK_BACKEND}/{
+        r $RPC_H1_FALLBACK_FILE
+        d
+    }" \
     -e "/\${RPC_H2_VERSION_RULES}/{
         r $RPC_H2_RULES_FILE
         d

@@ -36,13 +36,14 @@ global
     # streams in flight finish. A stream still open after this long is reset
     # and the process exits, so a held Watch cannot outlive the stop budget.
     hard-stop-after ${HARD_STOP_SECONDS}s
-    # SETTINGS_MAX_CONCURRENT_STREAMS on proto-h2 frontends and backend
-    # proto h2 to versiond. HAProxy default is 100; overlay muxes every
-    # peer Watch onto one TCP. Must match DefaultH2MaxConcurrentStreams
-    # (16384) on versiond and the child. Per-peer non-Watch streams stay 2561.
+    # SETTINGS_MAX_CONCURRENT_STREAMS on the HTTP/2 connections the public
+    # proxy opens to :8081 and on backend proto h2 to versiond. HAProxy
+    # default is 100; the proxy muxes every peer Watch onto one TCP. Must
+    # match DefaultH2MaxConcurrentStreams (16384) on versiond and the
+    # child. Per-peer non-Watch streams stay 2561.
     tune.h2.max-concurrent-streams 16384
     # normalize-uri is experimental on HAProxy 3.2. The frontend uses it
-    # before canonpath and the :8080 peer-RPC deny.
+    # before canonpath and the peer-RPC path match.
     expose-experimental-directives
 
 defaults
@@ -90,17 +91,28 @@ resolvers docker
     hold nx 5s
     hold timeout 5s
 
+# One frontend, two binds. JSON from the policy workers is HTTP/1.1 on
+# :8080; peer RPC from the public proxy is prior-knowledge HTTP/2 on :8081
+# (HAProxy detects the client preface on a cleartext bind, so neither bind
+# forces a protocol). What selects the peer-RPC twin of a backend is the
+# path, not the port or the protocol, so Connect over HTTP/1.1 from a peer
+# whose own side has no HTTP/2 reaches the same twin through :8080.
+# :8081 is the proxy's peer-RPC dial (proto h2), the same frontend and the
+# same path-based routing as :8080. Every v6 router generation binds it, so a
+# proxy and a fleet of different generations keep a peer-RPC path in either
+# replacement order. JSON and the HTTP/1.1 fallback arrive on :8080. Neither
+# port is published.
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080
-    bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2
+    bind ${FRONT_BIND_ADDRESS}:8081
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
     # below either stamp the deployment value or deliberately leave it absent.
     http-request del-header Devshard-Ha
 
-    # Decode before canonpath and the :8080 deny. HAProxy otherwise matches
-    # the raw path, and versiond routes the decoded one.
+    # Decode before canonpath and the peer-RPC match. HAProxy otherwise
+    # matches the raw path, and versiond routes the decoded one.
     http-request normalize-uri percent-decode-unreserved strict
     http-request normalize-uri percent-to-uppercase
     http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
@@ -142,11 +154,10 @@ frontend versiond_in
     # requests and direct deployments without the public nginx proxy.
     http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
 
-    # Peer RPC is the proto-h2 bind only. :8080 stays JSON, healthz, and
-    # catalog. Connect on this listen would be the HTTP/1.1 fallback a
-    # current hop must not answer. /stats/rpc is not a session procedure.
-    # Anchored on the decoded canonpath: /{version}/sessions/{id}/rpc/.
-    http-request deny deny_status 404 if { dst_port 8080 } { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/ }
+    # Peer RPC is a session procedure path, on HTTP/2 or HTTP/1.1 alike.
+    # /stats/rpc is not one. Anchored on the decoded canonpath:
+    # /{version}/sessions/{id}/rpc/.
+    acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/
 
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would
@@ -159,23 +170,22 @@ frontend versiond_in
     # Versionless endpoints are part of versiond's own API namespace. Resolve
     # them before consulting any version map so a governance name can never
     # shadow health, metrics, stats, or session-observability routes.
-    # Peer RPC is the h2 bind. Its backends are the JSON pools with _rpc
-    # appended, and their check is /readyz?peer-rpc=1. A child that did not
-    # advertise h2c stays in the JSON pool and out of this one.
-    use_backend versiond_ha_pool_rpc if versionless_request { dst_port ${H2_PORT} }
     use_backend versiond_ha_pool if versionless_request
 
+    # Peer RPC goes to the JSON pool's _rpc twin, whose check is
+    # /readyz?peer-rpc=1. A child that did not advertise h2c stays in the
+    # JSON pool and out of the twin.
     # Legacy pinning wins: the map yields that version's backend on the one host
     # that owns its SQLite data.
-    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if peer_rpc { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     # Then the version's own pool. The map yields a backend name; with no entry
     # there is no match and the request falls through to the host-level pool,
     # which the guard above has already restricted to non-version paths whenever
     # any version is declared.
-    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if { dst_port ${H2_PORT} } { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if peer_rpc { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
-    use_backend versiond_ha_pool_rpc if { dst_port ${H2_PORT} }
+    use_backend versiond_ha_pool_rpc if peer_rpc
     default_backend versiond_ha_pool
 
 ${POOL_BACKENDS}

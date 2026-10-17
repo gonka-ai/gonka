@@ -102,8 +102,9 @@ type PeerConnConfig struct {
 	// below that floor (unix-second TTL refresh) set this explicitly.
 	MinTTL time.Duration
 	// DialSet is the optional h2 origin. Empty H2URL means HTTP/1.1 on
-	// BaseURL only. Production fills this from DEVSHARD_RPC_H2_*.
-	// H2URL is the TCP target; TLS SNI/verify use InferenceURL's hostname.
+	// BaseURL only. Production fills H2URL with InferenceUrl's own origin
+	// (PeerRPCDialSetFromEnv); tests may point it elsewhere. TLS SNI and
+	// verify use InferenceURL's hostname.
 	DialSet PeerRPCDialSet
 	// H2ProbeTimeout bounds dial and TLS for the h2 origin. The Attach
 	// RPC uses DefaultAttachTimeout. Zero uses DefaultRPCH2ProbeTimeout (3s).
@@ -113,8 +114,8 @@ type PeerConnConfig struct {
 	H2ReadIdleTimeout time.Duration
 	// H2PingTimeout bounds that PING. Zero uses DefaultRPCH2PingTimeout (5s).
 	H2PingTimeout time.Duration
-	// GRPC uses connect.WithGRPC on the h2 origin only. HTTP/1.1 fallback
-	// stays Connect. Ignored when H2URL is empty.
+	// GRPC uses connect.WithGRPC while the live origin is HTTP/2. The
+	// HTTP/1.1 fallback stays Connect. Ignored when H2URL is empty.
 	GRPC bool
 }
 
@@ -210,6 +211,11 @@ type PeerConn struct {
 	authDoor rpcpbconnect.PeerAuthServiceClient
 	// authHost is Watch and live renewals: /sessions/_/rpc, no door.
 	authHost rpcpbconnect.PeerAuthServiceClient
+	// authHostProbe Attaches on the h2 origin only (refreshLive). Nil when
+	// H2URL is empty.
+	authHostProbe rpcpbconnect.PeerAuthServiceClient
+	// httpH2 is pinned to the h2 origin; native gRPC clients use it.
+	httpH2 *http.Client
 	// authDoorGRPC / authHostGRPC are native gRPC (connect.WithGRPC). Used
 	// only while usingH2(); HTTP/1.1 fallback keeps authDoor / authHost.
 	authDoorGRPC rpcpbconnect.PeerAuthServiceClient
@@ -307,21 +313,37 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	if hostBase != doorBase {
 		authHost = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, opts...)
 	}
+	// Native gRPC needs HTTP/2 framing end to end, so its clients are pinned
+	// to the h2 origin and never follow the switch onto HTTP/1.1. A gRPC
+	// request selected just before the switch flips off still fails on the
+	// dead mux rather than reaching nginx with gRPC framing.
+	var httpH2 *http.Client
+	if h2 := origin.h2Only(); h2 != nil {
+		httpH2 = &http.Client{Transport: h2, CheckRedirect: noFollowRedirects}
+	}
+	// The live-session HTTP/2 probe Attaches on a client pinned to the h2
+	// origin, so the shared switch flips only after that probe succeeded.
+	var authHostProbe rpcpbconnect.PeerAuthServiceClient
+	if httpH2 != nil {
+		authHostProbe = rpcpbconnect.NewPeerAuthServiceClient(httpH2, hostBase, opts...)
+	}
 	var authDoorGRPC, authHostGRPC rpcpbconnect.PeerAuthServiceClient
-	if cfg.GRPC {
-		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, doorBase, grpcOpts...)
+	if cfg.GRPC && httpH2 != nil {
+		authDoorGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpH2, doorBase, grpcOpts...)
 		authHostGRPC = authDoorGRPC
 		if hostBase != doorBase {
-			authHostGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpClient, hostBase, grpcOpts...)
+			authHostGRPC = rpcpbconnect.NewPeerAuthServiceClient(httpH2, hostBase, grpcOpts...)
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &PeerConn{
 		cfg:            cfg,
 		http:           httpClient,
+		httpH2:         httpH2,
 		origin:         origin,
 		authDoor:       authDoor,
 		authHost:       authHost,
+		authHostProbe:  authHostProbe,
 		authDoorGRPC:   authDoorGRPC,
 		authHostGRPC:   authHostGRPC,
 		key:            cfg.registryKey(),
@@ -814,9 +836,10 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 				err = io.EOF
 			}
 			// A dead HTTP/2 origin leaves this loop. The next Attach probes
-			// h2 again and does not use InferenceUrl. Shutting down, a
-			// clean EOF, and a local stream-cap refusal stay here and
-			// reopen Watch with the same token.
+			// h2 again and drops to HTTP/1.1 if the origin still does not
+			// answer it. Shutting down, a clean EOF, and a local
+			// stream-cap refusal stay here and reopen Watch with the same
+			// token.
 			if errors.Is(err, errWatchStreamCap) || (!isRPCH2TransportMiss(err) && watchReopen(err)) {
 				reopenBackoff.Store(int64(p.attachBackoff(time.Duration(reopenBackoff.Load()))))
 				continue
@@ -831,12 +854,13 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			newTok, newExp, err := p.attach()
 			p.incAttach(err)
 			if err != nil {
-				if isRPCH2TransportMiss(err) {
-					// Origin is gone (listen/RST/ALPN/half-open). End
-					// Watch; do not flip setH2(false). The outer loop
-					// probes h2 again and does not Attach on InferenceUrl.
-					// A slow Attach (DeadlineExceeded) is not this:
-					// keep Watch and retry refresh.
+				if isRPCH2Miss(err) {
+					// Origin is gone (listen/RST/ALPN/half-open, or a
+					// close with no answer). End Watch. The outer loop
+					// probes h2 again and falls back to HTTP/1.1 if the
+					// origin still misses. A slow Attach
+					// (DeadlineExceeded) is not this: keep Watch and
+					// retry refresh.
 					stopWatch()
 					p.incReattach(reattachReasonWatch)
 					return sawBeat.Load(), err
@@ -953,11 +977,7 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 	overall, cancel := context.WithTimeout(p.ctx, DefaultAttachTimeout)
 	defer cancel()
 	if p.liveSession() {
-		msg, err := p.newAttachRequest()
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		return p.attachOnce(overall, p.peerAuthClient(true), msg)
+		return p.refreshLive(overall)
 	}
 	h2Tried := false
 	var lastErr error
@@ -998,11 +1018,16 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 			if !isRPCH2Miss(err) {
 				return nil, time.Time{}, err
 			}
-			// Stay on the h2 origin so a concurrent RPC cannot slide onto
-			// InferenceUrl. The next loop iteration probes again.
-			// Warn once per InferenceUrl host per miss TTL; retries are Debug.
-			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
-			return nil, time.Time{}, err
+			// The origin did not speak HTTP/2 (older wrapping, closed or
+			// held listen, no ALPN). Pin this host to HTTP/1.1 for the
+			// miss TTL and Attach on the same door over Connect/HTTP/1.1.
+			// Concurrent RPCs follow the switch; none of them was on a
+			// mux that never came up. Warn once per host per TTL.
+			p.noteH2Miss(err)
+			msg, err = p.newAttachRequest()
+			if err != nil {
+				return nil, time.Time{}, err
+			}
 		}
 		tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
 		if err == nil {
@@ -1015,6 +1040,75 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		}
 		return nil, time.Time{}, err
 	}
+}
+
+// refreshLive renews a live session token on the host client. A PeerConn
+// that fell back to HTTP/1.1 probes HTTP/2 again here once the miss TTL
+// has passed, on a client pinned to the h2 origin: concurrent RPCs stay on
+// HTTP/1.1 until the probe has succeeded, and only then does the shared
+// switch flip. The token is the peer's identity on either transport, so
+// the successful HTTP/2 refresh moves Watch and later RPCs onto the mux. A
+// miss pins HTTP/1.1 for another TTL and the refresh completes there.
+func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
+	msg, err := p.newAttachRequest()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	if p.authHostProbe != nil && !p.origin.usingH2() && p.shouldProbeH2() {
+		// The probe gets half of the refresh budget. An origin that takes
+		// the whole deadline to answer the probe must still leave time for
+		// the HTTP/1.1 renewal below; a probe timeout is not a miss.
+		probeCtx, cancelProbe := context.WithTimeout(ctx, halfRemaining(ctx))
+		tok, exp, err := p.attachOnce(probeCtx, p.authHostProbe, msg)
+		cancelProbe()
+		if err == nil {
+			p.origin.setH2(true)
+			return tok, exp, nil
+		}
+		if p.ctx.Err() != nil || ctx.Err() != nil {
+			return nil, time.Time{}, err
+		}
+		if isRPCH2Miss(err) {
+			rememberRPCH2Miss(p.cfg.BaseURL)
+			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
+		} else {
+			// The origin speaks HTTP/2 but refused this Attach (a Connect
+			// error). Stay on HTTP/1.1 for now and let the refresh below
+			// decide the session's fate; the next refresh probes again.
+			logging.Debug("peer rpc h2 probe refused on refresh; staying on HTTP/1.1",
+				"subsystem", "transport",
+				"host", p.cfg.HostAddress,
+				"error", err,
+			)
+		}
+		msg, err = p.newAttachRequest()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	return p.attachOnce(ctx, p.peerAuthClient(true), msg)
+}
+
+// halfRemaining is half of ctx's remaining time, or DefaultAttachTimeout/2
+// when ctx has no deadline.
+func halfRemaining(ctx context.Context) time.Duration {
+	d, ok := ctx.Deadline()
+	if !ok {
+		return DefaultAttachTimeout / 2
+	}
+	rem := time.Until(d) / 2
+	if rem <= 0 {
+		return time.Millisecond
+	}
+	return rem
+}
+
+// noteH2Miss records that this InferenceUrl host does not speak HTTP/2
+// and switches this PeerConn to Connect over HTTP/1.1 on InferenceUrl.
+func (p *PeerConn) noteH2Miss(err error) {
+	noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
+	rememberRPCH2Miss(p.cfg.BaseURL)
+	p.origin.setH2(false)
 }
 
 func (p *PeerConn) newAttachRequest() (*rpcpb.AttachRequest, error) {
@@ -1063,8 +1157,20 @@ func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthS
 	return resp.Msg.GetSessionToken(), expires, nil
 }
 
+// shouldProbeH2 is whether the next Attach tries prior-knowledge HTTP/2
+// first: an h2 origin is configured and this InferenceUrl host has not
+// missed HTTP/2 inside the miss TTL.
 func (p *PeerConn) shouldProbeH2() bool {
-	return p != nil && p.cfg.DialSet.H2URL != ""
+	return p != nil && p.cfg.DialSet.H2URL != "" && !skipRPCH2(p.cfg.BaseURL)
+}
+
+// httpFor is the HTTP client for a Connect client: the h2-pinned one for
+// native gRPC, the switching one otherwise.
+func (p *PeerConn) httpFor(grpc bool) *http.Client {
+	if grpc && p.httpH2 != nil {
+		return p.httpH2
+	}
+	return p.http
 }
 
 func (p *PeerConn) useGRPC() bool {
@@ -1094,8 +1200,8 @@ func h2ProbeTimeout(cfg PeerConnConfig) time.Duration {
 	return DefaultRPCH2ProbeTimeout
 }
 
-// UsingH2 is whether the live origin is the published hop (prior-knowledge
-// HTTP/2), not InferenceUrl HTTP/1.1.
+// UsingH2 is whether this PeerConn speaks prior-knowledge HTTP/2 on the
+// public origin, not Connect over HTTP/1.1.
 func (p *PeerConn) UsingH2() bool {
 	return p != nil && p.origin.usingH2()
 }

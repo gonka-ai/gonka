@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -52,9 +53,7 @@ func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	t.Setenv(harness.EnvVersiondImage, baselineVersion)
 	t.Setenv(harness.EnvVersiondRouterImage, baselineRouter)
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "")
-	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "")
+	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
 	t.Setenv("TESTENV_PROXY_OVERLAY", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_PER_MIN", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_BURST", "")
@@ -100,9 +99,7 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 		t.Fatal("overlay limits use current versiond and versiond-router; unset TESTENV_VERSIOND_IMAGE and TESTENV_VERSIOND_ROUTER_IMAGE")
 	}
 	t.Setenv("DEVSHARD_RPC_ENDPOINTS", peerRPCEndpoints)
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
-	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "true")
+	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_PER_MIN", "")
 	t.Setenv("DEVSHARD_RPC_MSGS_BURST", "")
 	t.Setenv("DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL", "")
@@ -313,10 +310,16 @@ func proveConnRate(t *testing.T, stack *harness.Stack, proxy string) {
 	wg.Wait()
 	require.Greater(t, int(refused.Load()), 0, "conn_rate must refuse the flooding src before HTTP")
 
+	// A bare TCP connect never reaches rpc_h2 (no preface, no hand-off) and
+	// would pass even if the limiter refused every source. The second
+	// source must get an HTTP answer over HTTP/2 through the hand-off.
 	netName := containerNetwork(t, stack.ComposeProject+"-proxy-1")
-	cmd := exec.Command("docker", "run", "--rm", "--network", netName, "alpine:3.21", "nc", "-z", "-w", "2", "proxy", "8443")
+	cmd := exec.Command("docker", "run", "--rm", "--network", netName, "curlimages/curl:8.11.1",
+		"-s", "-o", "/dev/null", "-m", "5", "--http2-prior-knowledge", "-w", "%{http_code}",
+		fmt.Sprintf("http://proxy:%d/sessions/_/rpc/devshard.transport.v1.PeerAuthService/Watch", config.DefaultProxyPort))
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "second src must still connect: %s", out)
+	require.Regexp(t, `^[1-5][0-9][0-9]$`, strings.TrimSpace(string(out)), "second src must be served over HTTP/2, not refused")
 }
 
 func proveSpoofedIPSharesSrc(t *testing.T, proxy, version, escrow string) {

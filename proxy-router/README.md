@@ -11,9 +11,12 @@ It has three data-plane responsibilities:
    router network.
 
 The nginx workers still own TLS and HTTP/2 on `:80` and `:443`, plus CORS,
-rate limits, path rewrites, and the on-chain route table. Peer RPC is a
-separate HAProxy listen (`DEVSHARD_RPC_H2_PORT`, default 9443) and does not
-enter those workers. This keeps one policy implementation for JSON while
+rate limits, path rewrites, and the on-chain route table. Peer RPC shares
+those two ports: the public frontends recognise a peer by the first bytes
+of its connection (the HTTP/2 client preface on `:80`, ALPN `gonka-rpc/1`
+on `:443`) and hand it to an HAProxy frontend in the same process, so it
+does not enter those workers. Every other connection is JSON and goes to
+nginx exactly as before. This keeps one policy implementation for JSON while
 allowing the service-pool distributors to scale and restart independently.
 
 ## Request path
@@ -25,11 +28,20 @@ client
        -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
 
-peer RPC (skips nginx)
-  -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
+peer RPC (same :80/:443, skips nginx)
+  -> proxy-router :80  (HTTP/2 preface)  -> rpc_h2 frontend (h2c)
+  -> proxy-router :443 (ALPN gonka-rpc/1) -> rpc_h2 frontend (TLS with nginx's cert, HTTP/2)
        HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
        non-HA: versiond:8080 proto h2
 ```
+
+A client whose first bytes are neither (an older devshard, a browser, curl)
+never sees the peer-RPC frontend. A peer whose host still runs an older
+wrapping gets nginx on these ports, fails its HTTP/2 probe there, and
+continues over Connect on HTTP/1.1 through the JSON path; there is no port
+to open or close when the wrapping changes. The hand-off waits for the
+first bytes at most `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` (default 5); an
+idle connection then goes to nginx.
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between
 the client and nginx. `send-proxy-v2` carries the original source address to the
@@ -152,7 +164,7 @@ services and containers owned by other active overlays remain unchanged.
 
 | Listener | Purpose |
 | --- | --- |
-| `:80`, `:443` | public TCP ingress to policy workers |
+| `:80`, `:443` | public TCP ingress to policy workers; peer RPC connections are recognised here and kept in this process |
 | policy network `:18081` | private versiond-router distributor |
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
@@ -202,7 +214,7 @@ availability.
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
-| `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC` | `32` | concurrent connections one client address may hold on the peer RPC listen (`DEVSHARD_RPC_H2_PORT`); the next one is closed before Attach. Direct clients are keyed at accept. With `PROXY_ROUTER_PROXY_PROTOCOL_FROM`, the cap uses the address in the PROXY preamble (one IPv4 address, or one IPv6 /64) once that preamble is accepted. A preamble that stalls before the TLS handshake is closed by `timeout client-hs` (5s). Without PROXY protocol, clients behind one L4 balancer share that balancer's address |
+| `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC` | `32` | concurrent peer RPC connections one client address may hold; `:80`/`:443` count a connection as soon as its HTTP/2 preface or peer RPC ALPN is seen, and close the next one before the hand-off. The key is one IPv4 address, or one IPv6 /64; with `PROXY_ROUTER_PROXY_PROTOCOL_FROM` it is the address in the balancer's preamble. A TLS handshake that stalls holds its slot until `timeout client-hs` (5s) closes it. A socket that never sends the preface or the ALPN token is passed to nginx after `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` and never counts. Without PROXY protocol, clients behind one L4 balancer share that balancer's address |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 | `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |
