@@ -38,6 +38,22 @@ var TimeoutBuffer = 5 * time.Second
 // success would hide a caller bug on the streaming path.
 var ErrNilHostResponse = errors.New("nil host response")
 
+var ErrHostResponseRejected = errors.New("host response rejected")
+
+type HostResponseRejectedError struct {
+	HostIdx int
+	Nonce   uint64
+	Err     error
+}
+
+func (e *HostResponseRejectedError) Error() string {
+	return fmt.Sprintf("%v: host %d at nonce %d: %v", ErrHostResponseRejected, e.HostIdx, e.Nonce, e.Err)
+}
+
+func (e *HostResponseRejectedError) Unwrap() error { return e.Err }
+
+func (e *HostResponseRejectedError) Is(target error) bool { return target == ErrHostResponseRejected }
+
 // ErrHostNonceAhead is returned when a host reports a nonce the session has
 // not composed. The gateway is the only sequencer, so such a claim is false.
 var ErrHostNonceAhead = errors.New("host nonce ahead of session")
@@ -2069,7 +2085,62 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	}
 	s.mu.Unlock()
 	s.publishHeightSyncView()
-	return err
+	if err != nil {
+		return &HostResponseRejectedError{HostIdx: hostIdx, Nonce: diff.Nonce, Err: err}
+	}
+	return nil
+}
+
+func (s *Session) finalizeDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
+	err := s.sendDiffRound(ctx, extraTxs, true)
+	if err == nil {
+		return nil
+	}
+	var rejected *HostResponseRejectedError
+	if !errors.As(err, &rejected) || errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
+		return err
+	}
+	logging.Error("finalize: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+		"host", rejected.HostIdx, "validator", s.group[rejected.HostIdx].ValidatorAddress,
+		"request_nonce", rejected.Nonce, "error", rejected.Err)
+	return nil
+}
+
+func (s *Session) refreshPendingTxsFromHosts(ctx context.Context) error {
+	hosts := s.uniquePhysicalHosts()
+	finClients := s.getFinalizeClients()
+	perHost := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Go(func() {
+			perHost[i] = s.refreshPendingTxsFromHost(ctx, h, finClients[h.idx])
+		})
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(slices.DeleteFunc(perHost, func(err error) bool { return err == nil })...)
+}
+
+func (s *Session) refreshPendingTxsFromHost(ctx context.Context, h physicalHost, client HostClient) error {
+	nonce := s.Nonce()
+	resp, err := client.Send(ctx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		logging.Warn("finalize resume: host unreachable, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+			"host", h.idx, "validator", h.addr, "request_nonce", nonce, "error", err)
+		return nil
+	}
+	err = s.ProcessResponse(h.idx, resp, nonce)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
+		return err
+	}
+	logging.Warn("finalize resume: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+		"host", h.idx, "validator", h.addr, "request_nonce", nonce, "error", err)
+	return nil
 }
 
 // catchUpChunkSize is the maximum number of diffs sent in a single catch-up
@@ -2322,37 +2393,50 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 		return nil
 	}
-	if phase == types.PhaseFinalizing {
-		return fmt.Errorf("finalize already in progress (phase=finalizing, nonce=%d)", s.nonce)
-	}
-
 	n := len(s.group)
 
-	logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,
-		"group_size", n, "current_nonce", s.nonce,
-		"total_slots", s.sm.TotalSlots(), "threshold", threshold)
-
-	finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
-		FinalizeRound: &types.MsgFinalizeRound{},
-	}}
-
-	// Phase A: N diffs collecting remaining txs. First carries MsgFinalizeRound.
-	logging.Info("finalize phase A: collecting reveals", "subsystem", "finalize", "escrow", s.escrowID,
-		"rounds", n)
-	for i := 0; i < n; i++ {
-		var extra []*types.DevshardTx
-		if i == 0 {
-			extra = []*types.DevshardTx{finalizeTx}
+	if phase == types.PhaseFinalizing {
+		finalizeNonce := s.sm.FinalizeNonce()
+		if finalizeNonce == 0 {
+			return fmt.Errorf("%w: phase finalizing without finalize nonce (nonce=%d)", ErrLocalStateUnrecoverable, s.Nonce())
 		}
-		if err := s.sendDiffRound(ctx, extra, true); err != nil {
+		logging.Info("finalize resumed", "subsystem", "finalize", "escrow", s.escrowID,
+			"group_size", n, "current_nonce", s.Nonce(), "finalize_nonce", finalizeNonce,
+			"total_slots", s.sm.TotalSlots(), "threshold", threshold)
+		if err := s.refreshPendingTxsFromHosts(ctx); err != nil {
+			return fmt.Errorf("finalize resume: refresh pending txs: %w", err)
+		}
+	} else {
+		logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,
+			"group_size", n, "current_nonce", s.nonce,
+			"total_slots", s.sm.TotalSlots(), "threshold", threshold)
+
+		finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
+			FinalizeRound: &types.MsgFinalizeRound{},
+		}}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("finalize: %w (nonce=%d)", err, s.Nonce())
+		}
+		if err := s.finalizeDiffRound(ctx, []*types.DevshardTx{finalizeTx}); err != nil {
 			return err
 		}
 	}
 
-	// Phase A+1: drain the last host's reveal.
-	logging.Info("finalize phase A+1: draining last reveal", "subsystem", "finalize", "escrow", s.escrowID)
-	if err := s.sendDiffRound(ctx, nil, true); err != nil {
-		return err
+	logging.Info("finalize phase A: advancing to settlement", "subsystem", "finalize", "escrow", s.escrowID,
+		"finalize_nonce", s.sm.FinalizeNonce(), "current_nonce", s.Nonce())
+	rounds := 0
+	for rounds <= n && s.sm.Phase() == types.PhaseFinalizing {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("finalize: %w (nonce=%d, finalize_nonce=%d)", err, s.Nonce(), s.sm.FinalizeNonce())
+		}
+		if err := s.finalizeDiffRound(ctx, nil); err != nil {
+			return err
+		}
+		rounds++
+	}
+	if s.sm.Phase() != types.PhaseSettlement {
+		return fmt.Errorf("finalize: phase %d after %d rounds, want settlement (nonce=%d, finalize_nonce=%d)",
+			s.sm.Phase(), rounds, s.Nonce(), s.sm.FinalizeNonce())
 	}
 
 	// Phase B: collect signatures with retries.
