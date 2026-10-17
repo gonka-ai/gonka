@@ -400,10 +400,12 @@ func AssembleSSEContent(chunks []map[string]any) string {
 	return assembled.String()
 }
 
-// RequireMockOpenAIContent asserts assistant text came from mock-openai echo.
+// RequireMockOpenAIContent asserts assistant text came from mock-openai echo; a small max_tokens cuts
+// the echo inside its "mock-openai:" prefix.
 func RequireMockOpenAIContent(t *testing.T, content string) {
 	t.Helper()
-	require.True(t, strings.HasPrefix(content, "mock-openai:"), "expected mock-openai echo, got %q", content)
+	require.True(t, content != "" && (strings.HasPrefix(content, "mock-openai:") || strings.HasPrefix("mock-openai:", content)),
+		"expected mock-openai echo, got %q", content)
 }
 
 // PostGatewayJSON posts an authenticated JSON request to a gateway endpoint and decodes the response.

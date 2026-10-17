@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestExecuteValidation_ReplayRequestCarriesMinTokensFloor proves the validator's replay request
-// still carries the min_tokens floor via ModifyRequestBodyWithLogprobsMode, so the standalone
-// EnforceTokenBudgetFloor call is redundant.
-func TestExecuteValidation_ReplayRequestCarriesMinTokensFloor(t *testing.T) {
+// Test flow:
+// 1. Validate an output for a request with max_tokens 1 and capture the replay.
+// 2. The replay keeps max_tokens 1 and carries no min_tokens.
+func TestExecuteValidation_ReplayRequestKeepsShortMaxTokens(t *testing.T) {
 	promptPayload := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 	responsePayload := responsePayloadJSON("42", -0.1)
 
@@ -33,8 +33,38 @@ func TestExecuteValidation_ReplayRequestCarriesMinTokensFloor(t *testing.T) {
 
 	_, err := ExecuteValidation(context.Background(), "inf-1", promptPayload, responsePayload, execute, 0, 0, "", 0)
 	require.NoError(t, err)
-	require.EqualValues(t, completionapi.MinTokensFloor, captured["min_tokens"])
-	require.EqualValues(t, completionapi.MinTokensFloor, captured["max_tokens"])
+	require.NotContains(t, captured, "min_tokens")
+	require.EqualValues(t, 1, captured["max_tokens"])
+}
+
+// Test flow:
+// 1. Build the executor body for a json_schema request with a caller min_tokens of 16.
+// 2. Replay a stored 10-token output through ExecuteValidation and capture the replay body.
+// 3. Neither body carries min_tokens, both carry the same max_tokens, and the output is compared, not rejected as short.
+func TestExecuteValidation_GrammarConstrainedReplayMatchesExecution(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"min_tokens":16,"max_tokens":32,"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"type":"object"}}}}`)
+	stored := responsePayloadTokens(10, "stop", "")
+
+	executed, err := completionapi.ModifyRequestBodyWithLogprobsMode(prompt, 1, "")
+	require.NoError(t, err)
+	var executedMap map[string]interface{}
+	require.NoError(t, json.Unmarshal(executed.NewBody, &executedMap))
+
+	var replayed map[string]interface{}
+	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
+		require.NoError(t, json.Unmarshal(body, &replayed))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
+	}
+	res, err := ExecuteValidation(context.Background(), "inf-grammar", prompt, stored, execute, 0, 0, "", 0)
+	require.NoError(t, err)
+
+	require.NotContains(t, executedMap, "min_tokens")
+	require.NotContains(t, replayed, "min_tokens")
+	require.EqualValues(t, 32, executedMap["max_tokens"])
+	require.Equal(t, executedMap["max_tokens"], replayed["max_tokens"])
+	similarity, ok := res.(*SimilarityValidationResult)
+	require.True(t, ok, "got %T %+v", res, res)
+	require.Equal(t, 1.0, similarity.Value)
 }
 
 // responsePayloadTokens builds a completion response with `count` output tokens and the given
@@ -97,10 +127,11 @@ func responsePayloadTokensWithUsage(count int, promptTokens, completionTokens ui
 	return b
 }
 
-// An executor that ignored min_tokens and emitted an early natural EOS (short output,
-// finish_reason=stop, empty stop_reason) must be rejected.
+// Test flow:
+// 1. Store a 10-token natural-EOS output for a request with min_tokens 64.
+// 2. The validation is invalid.
 func TestExecuteValidation_RejectsShortOutputThatIgnoredMinTokens(t *testing.T) {
-	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128,"min_tokens":64}`)
 	stored := responsePayloadTokens(10, "stop", "")
 
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
@@ -112,11 +143,12 @@ func TestExecuteValidation_RejectsShortOutputThatIgnoredMinTokens(t *testing.T) 
 	require.True(t, invalid, "short natural-EOS output below min_tokens must be invalid")
 }
 
-// A natural EOS at/above the floor is the normal case: the stop token can only fire after
-// min_tokens, so a full-length response ending on a natural stop must NOT be flagged.
+// Test flow:
+// 1. Store a natural-EOS output of exactly min_tokens (64) tokens.
+// 2. The validation is not invalid.
 func TestExecuteValidation_AllowsFullLengthNaturalStop(t *testing.T) {
-	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
-	stored := responsePayloadTokens(int(completionapi.MinTokensFloor), "stop", "") // exactly the floor
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128,"min_tokens":64}`)
+	stored := responsePayloadTokens(64, "stop", "")
 
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
@@ -127,11 +159,12 @@ func TestExecuteValidation_AllowsFullLengthNaturalStop(t *testing.T) {
 	require.False(t, invalid, "a response of exactly min_tokens ending on natural EOS is valid")
 }
 
-// min_tokens masks stop-strings too, so an honest node cannot produce a short response even with a
-// stop-string. A short output with stop_reason set is therefore still a floor violation.
+// Test flow:
+// 1. Store a 10-token output that ends on a stop-string for a request with min_tokens 64.
+// 2. The validation is invalid, since min_tokens also masks stop-strings.
 func TestExecuteValidation_RejectsShortOutputEvenWithStopReason(t *testing.T) {
-	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128}`)
-	stored := responsePayloadTokens(10, "stop", "\n\n") // stop-string set, but 10 < MinTokensFloor
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":128,"min_tokens":64}`)
+	stored := responsePayloadTokens(10, "stop", "\n\n")
 
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(stored))}, nil
@@ -139,7 +172,7 @@ func TestExecuteValidation_RejectsShortOutputEvenWithStopReason(t *testing.T) {
 	res, err := ExecuteValidation(context.Background(), "inf-stopstr", prompt, stored, execute, 0, 0, "", 0)
 	require.NoError(t, err)
 	_, invalid := res.(*InvalidInferenceResult)
-	require.True(t, invalid, "short output is a floor violation even with a stop_reason")
+	require.True(t, invalid, "short output is a min_tokens violation even with a stop_reason")
 }
 
 // responsePayloadJSON builds a minimal completion response JSON suitable for use as
@@ -456,9 +489,9 @@ func responsePayloadWithPositions(positionCount int) []byte {
 }
 
 // Test flow:
-// 1. The executor stores more logprobs positions than the prompt's max_tokens raised to the 64-token floor.
+// 1. The executor stores more logprobs positions than the prompt's max_tokens.
 // 2. The validation is invalid and the replay never reaches the validator node.
-// 3. Up to that limit the output is replayed, including a 64-token output for max_tokens 10 or 0.
+// 3. Up to that limit the output is replayed, including a short max_tokens.
 func TestExecuteValidation_PositionsBoundedByMaxTokens(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -470,9 +503,9 @@ func TestExecuteValidation_PositionsBoundedByMaxTokens(t *testing.T) {
 		{"one past max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4097, false},
 		{"exactly max_tokens", []byte(`{"messages":[],"max_tokens":4096}`), 4096, true},
 		{"max_completion_tokens bounds too", []byte(`{"messages":[],"max_completion_tokens":100}`), 101, false},
-		{"floor output for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 64, true},
-		{"past the floor for small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 65, false},
-		{"floor output for zero max_tokens", []byte(`{"messages":[],"max_tokens":0}`), 64, true},
+		{"exactly a small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 10, true},
+		{"one past a small max_tokens", []byte(`{"messages":[],"max_tokens":10}`), 11, false},
+		{"any output for zero max_tokens", []byte(`{"messages":[],"max_tokens":0}`), 1, false},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
