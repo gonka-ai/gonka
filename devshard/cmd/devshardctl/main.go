@@ -20,6 +20,7 @@ import (
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
+	"devshard/internal/e2econfig"
 	"devshard/observability"
 	"devshard/profiling"
 	"devshard/runtimeparams"
@@ -38,6 +39,10 @@ const (
 	defaultMaxConcurrentRequests        = 512
 	startupSkipReasonLocalRecovery      = "local_recovery_failed"
 	startupSkipReasonParticipantMissing = "participant_missing"
+	// startupSkipReasonRuntimeBuildFailed is a build error with no final meaning: a
+	// transient chain call, a busy SQLite file, a recovery step that did not finish.
+	// The escrow stays active and the gateway retries the build in the background.
+	startupSkipReasonRuntimeBuildFailed = "runtime_build_failed"
 )
 
 type startupSkippedEscrow struct {
@@ -495,25 +500,16 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if accountingTracker != nil {
 		accountingTracker.SetDispositionSink(dispositionSink{})
 	}
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider))
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder, runtimeparams.MaxNonceFromSnapshot(runtimeParams.Provider), runtimeParams, startupSkipped)
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
 			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
 		}
 	}
-	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
-	gateway.awaitParticipants(startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
-	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
 	return gateway
-}
-
-func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
-	for _, escrow := range skipped {
-		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
-	}
 }
 
 func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, []startupSkippedEscrow, error) {
@@ -564,6 +560,12 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 		perf:         perf,
 	}
 	if err := deps.validate(); err != nil {
+		return nil, nil, err
+	}
+	// Configuration read from the environment is the same for every escrow. An
+	// invalid value is the process's problem, not one escrow's: it must stop the
+	// start here instead of being retried for every escrow forever.
+	if err := validateRuntimeEnvironment(); err != nil {
 		return nil, nil, err
 	}
 	// Cap concurrent builders (see resolveMaxConcurrentRuntimeBuilds); results are
@@ -633,9 +635,17 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 				}
 				continue
 			}
-			if firstFatal == nil {
-				firstFatal = res.err
-			}
+			// Anything else is one escrow's problem for this run, not the gateway's:
+			// a transient chain call, a busy SQLite file, a recovery step that did not
+			// finish. It must not stop the escrows that have nothing to do with it.
+			// Keep the escrow active, report it, and let the background retry start it.
+			log.Printf("devshard %s runtime build failed, skipping runtime and keeping it active for a background retry: %v", cfg.ID, res.err)
+			skipped = append(skipped, res.idx)
+			startupSkipped = append(startupSkipped, startupSkippedEscrow{
+				EscrowID: cfg.ID,
+				Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+				Reason:   startupSkipReasonRuntimeBuildFailed,
+			})
 			continue
 		}
 		runtimes[res.idx] = res.rt
@@ -646,9 +656,7 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 	}
 	if firstFatal != nil {
 		for _, rt := range runtimes {
-			if rt != nil {
-				rt.close()
-			}
+			rt.discard()
 		}
 		return nil, nil, firstFatal
 	}
@@ -690,7 +698,30 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
 			len(deactivatedIDs), startupSkipReasonLocalRecovery, strings.Join(deactivatedIDs, ","))
 	}
+	var retryIDs []string
+	for _, skippedEscrow := range startupSkipped {
+		if skippedEscrow.Reason == startupSkipReasonRuntimeBuildFailed {
+			retryIDs = append(retryIDs, skippedEscrow.EscrowID)
+		}
+	}
+	if len(retryIDs) > 0 {
+		log.Printf("devshard_gateway_startup_degraded retried_escrows=%d reason=%s escrow_ids=%q",
+			len(retryIDs), startupSkipReasonRuntimeBuildFailed, strings.Join(retryIDs, ","))
+	}
 	return out, startupSkipped, nil
+}
+
+// validateRuntimeEnvironment parses the environment settings that every runtime
+// build reads (buildRuntime), so a value that would fail each build fails the
+// start once, with the process-wide reason.
+func validateRuntimeEnvironment() error {
+	if _, err := e2econfig.SessionTimeoutOverridesFromEnv(); err != nil {
+		return fmt.Errorf("session timeout overrides: %w", err)
+	}
+	if _, err := extraClientConfigFromEnv(); err != nil {
+		return fmt.Errorf("height sync: %w", err)
+	}
+	return nil
 }
 
 func markDevshardInactive(gatewayState *GatewayState, id string) {

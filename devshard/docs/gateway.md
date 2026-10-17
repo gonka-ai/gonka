@@ -275,6 +275,28 @@ export DEVSHARD_CHAIN_GRPC="localhost:9090"
 devshardctl
 ```
 
+## Escrows skipped at startup
+
+If one escrow's runtime cannot be built, the gateway starts with its healthy
+escrows and reports the skipped escrow through
+`devshard_gateway_startup_skipped_escrow{reason="runtime_build_failed"}`.
+It remains active in the registry and is retried every 30 seconds. A missing
+participant uses `reason="participant_missing"`. Missing or settled escrows,
+unrecoverable local state and missing signing keys deactivate the escrow instead.
+Invalid process-wide environment settings still fail startup.
+
+Each gRPC escrow lookup has a 10-second deadline; this is not a deadline for the
+whole runtime build. A successful retry restores any persisted hold before the
+escrow can serve. Admin add and activation also preserve such a hold.
+
+Admin add or activation returns HTTP 409 while a retry build or non-resident
+settlement owns that escrow. Retry the request after the operation finishes.
+Concurrent non-resident settlements likewise report the escrow as busy.
+`POST /v1/admin/devshards/{id}/deactivate` can stop retries even when no runtime
+was loaded. An in-flight build is discarded when it finishes; cleanup returns
+409 until that build or settlement has finished. The startup-skipped metric is
+removed when the escrow starts or stops waiting.
+
 ## Finalize Escrow
 
 ```bash

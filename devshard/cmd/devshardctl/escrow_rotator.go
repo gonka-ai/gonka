@@ -734,7 +734,27 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	if ok && !busy {
 		rt.active.Store(false)
 	}
+	var releaseClaim func()
+	if !ok {
+		if g.startIsBusy(id) {
+			g.mu.Unlock()
+			return nil, errDevshardBusy
+		}
+		// Settlement owns a non-resident escrow from here on. An escrow that
+		// was skipped at startup must not be registered by the background
+		// retry while this settlement runs on a transient runtime: the retry
+		// registers only an escrow that is still waiting, under g.mu. The
+		// claim lasts until settlement returns, including finalization and
+		// broadcast after deactivation. A failure before deactivation leaves
+		// the escrow waiting for its next retry.
+		releaseClaim = g.claimEscrowForSettlement(id)
+	}
 	g.mu.Unlock()
+	defer func() {
+		if releaseClaim != nil {
+			releaseClaim()
+		}
+	}()
 	if busy {
 		g.deactivateDevshardByIDWithReason(id, settleDrainingReason)
 		g.markSettlementPending(id, settleDrainingReason)
@@ -785,6 +805,9 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		log.Printf("devshard_settle_failed escrow=%s stage=persist_deactivate error=%q", id, err.Error())
 		return nil, err
 	}
+	// The escrow is inactive in the store now: nothing waits for its start any
+	// more, whatever happens to the broadcast below.
+	g.stopAwaitingStart(id)
 
 	privateKey, privateKeyEnv, err := g.resolveDevshardSettlementKey(ctx, id, req)
 	if err != nil {

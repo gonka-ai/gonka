@@ -52,7 +52,7 @@ func (g *Gateway) activeRotationEscrowCount(ctx context.Context, role string, ep
 	}
 	serving := make([]GatewayDevshardState, 0, len(state.Devshards))
 	for _, devshard := range state.Devshards {
-		if !g.isAwaitingParticipant(devshard.ID) {
+		if !g.isAwaitingStart(devshard.ID) {
 			serving = append(serving, devshard)
 		}
 	}
