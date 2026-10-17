@@ -243,12 +243,12 @@ lists it in the check's expected value and in the `no-skipped-validation-leases`
 | `misses-only-in-fault-windows` | No protocol miss on honest participants; every miss lies in a fault window; waived windows charge none |
 | `escrow-accounting-reconciles` | One settle per deactivated escrow; balance, settled nonce and cost reconcile; `final_nonce_le_max`: final session nonce <= chain `max_nonce` |
 | `honest-hosts-agree-on-state` | Honest hosts agree on state roots; settles match; no fork detected |
-| `no-nonce-left-pending` | Pending work stays younger than the sweep bound, burned nonces apart; clean end state |
+| `no-nonce-left-pending` | Pending work stays younger than the sweep bound, burned nonces apart; clean end state, burned nonces and warm-up-only escrows apart |
 | `no-runtime-for-deactivated-escrow` | No resident runtime for a deactivated escrow |
-| `quarantines-match-faults` | Quarantines only on faulty participants, with the expected reason family and duration |
+| `quarantines-match-faults` | Quarantines only on faulty participants, with the expected reason family; each single quarantine within its duration, and none outliving the fault it started in |
 | `error-rate-and-latency` | Quiet-window latency and error rate; per-event error-rate bounds over the requests only that event touched |
 | `recovery-after-fault` | Error rate recovers within 60 s (90 s after a gateway restart), judged before the next fault starts |
-| `no-restarts-or-resource-growth` | No unplanned restarts; goroutine and heap trends, the gateway chat cache left out of the heap |
+| `no-restarts-or-resource-growth` | No unplanned restarts; goroutine and live-heap trends, the gateway chat cache and each escrow's host runtime left out |
 | `faults-fired-and-ml-nodes-bound` | Every event fired; ML nodes stay bound to their hosts |
 | `no-skipped-validation-leases` | No skipped validation lease for honest hosts (Postgres hosts; sqlite hosts excluded) |
 | `no-admission-during-poc` | No admission during PoC-blocking phases |
@@ -793,7 +793,7 @@ finalization and settlement. This keeps the test aligned with the same
 
 When `assertions.devshard.no_orphaned_work` is enabled, the runner polls `/v1/debug/inferences` until every non-ghost record of an active escrow has a terminal status (`finished`, `validated`, `invalidated`, or `timed_out`). With escrow rotation it reads every runtime the gateway lists: an unfinished record of a deactivated escrow counts as `sealed`, because settlement closes it as it stands and `escrow-accounting-reconciles` judges that settlement, including escrows whose model has settlement off. With invariants enabled, an unfinished record of an active escrow younger than the pending-age bound of `no-nonce-left-pending` counts as `in_flight`: the timeout sweep has not reached it yet. The check fails only on `orphaned` records, those past that bound or, without invariants, any unfinished one at the drain deadline. The DevShard record count does not have to equal the number of client requests: cache hits, speculative attempts, and ghost probes can make those counts different. An empty successful debug snapshot is also considered clean.
 
-A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records. A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host. Burns outside fault windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
+A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records. A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host. A burn with reason `participant_throttled_no_send` or `participant_catching_up_no_send` is left out while its host is inside a window of a fault that observes `host_rate_limited`, background windows included: a host over its peer Chat budget refuses Chats, so the gateway throttles it and it falls behind (in `prod-like-steady` that is P4 for the whole run). Burns outside those windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
 
 ## Assertions
 
@@ -834,13 +834,21 @@ assertions:
 Two bounds in detail:
 
 - `no-nonce-left-pending.max_pending_age` leaves out the nonces the gateway burned. A burned nonce is never sent, so no timeout is voted on it and it stays pending until its escrow closes. The check reports burned nonces apart, as `burned_max` and `burned_samples_over` in its actual value and `burned_max_age_seconds` and `burned_samples_over_limit` in its table. A `pending.jsonl` written before samples kept `open_started` keeps its old ages, with a note in the table.
-- `no-restarts-or-resource-growth.heap_slope` subtracts `devshard_gateway_cache_bytes` from `go_memstats_heap_inuse_bytes` in each sample before taking the slope. The gateway's chat cache fills to its 256 MiB cap in about 7 minutes and then stays flat, so counting it would read a bounded cache as growth. When any steady sample lacks the cache series, as on devshardctl, which does not export it, the slope is taken without subtracting it and the gateway's row notes it. `heap_minus_cache` in the row says the cache was subtracted.
+- `no-nonce-left-pending.clean_end_state` leaves out the same burned nonces, and an escrow whose session nonce is still 1 at the final poll: the gateway created it during the drain and sent only its warm-up probe, whose finish waits for the next request's diff. Both are listed apart in the details (`burned_open=N`, `warm-up only`) and counted in `apart=N`.
+- `quarantines-match-faults.durations` judges each single quarantine: its `quarantine_until` less the poll that first showed it. A quarantine the gateway renews as it ends starts a new one, so a fault that keeps failing a host is not read as one long quarantine. An episode still fails when it outlives the latest fault it can have started in by more than the duration and one tick; an earlier fault whose grace it also falls in is not blamed.
+- `no-restarts-or-resource-growth.heap_slope` fits the slope to the live heap: the lowest `go_memstats_heap_alloc_bytes` of each 30 s, since heap in use also holds garbage up to the GC goal. It subtracts `devshard_gateway_cache_bytes` in each sample. The gateway's chat cache keeps every response for an hour up to 256 MiB, so in a 10 to 18 minute run it fills all run; when any steady sample lacks the cache series, as on devshardctl, which does not export it, the gateway's row is not judged and the check is `NOT_JUDGED` unless a host fails. `heap_minus_cache` in the row says the cache was subtracted. On a host it also subtracts 3.36 MiB, the 20 000-slot validation queue, for every escrow created since the first steady sample.
+- `no-restarts-or-resource-growth.goroutines` allows a host 20 more goroutines for every escrow created between the early and the late window. A host keeps a runtime with 20 validation workers per escrow until the epoch is evicted, and the scenarios rotate an escrow every few minutes, so this is growth by design; the row reports `escrows_created_between_windows`.
+- Both trends start a host's steady samples 2 minutes after its first finished request (`devshard_request_terminal_total` above 0), and move its early window as far, when that is later than the run's own warm-up: the second replica of P0's HA pair can get no traffic for the first minutes. The row reports `steady_from` then.
 
 Event params can state what a fault should cause: `expect_quarantine` (`none`
 or a comma list of `http`, `transport`, `empty_stream`, `stalled_winner`,
 `sender_rate`),
 `waive_misses: true`, and `max_error_rate`. A `dapi_challenge` event waives
-misses and forbids an `empty_stream` quarantine by default. `faults-fired-and-ml-nodes-bound` checks that
+misses and forbids an `empty_stream` quarantine by default. An `ml_fault` that
+hangs or holds the stream (`hang`, `pause_stream`) allows `stalled_winner`,
+`transport` and `empty_stream`: the host has sent its receipt but no content
+when the gateway gives up on the attempt, and the gateway reports that as an
+empty stream. `faults-fired-and-ml-nodes-bound` checks that
 each event fired; it never becomes XFAIL, because a fault that did not fire
 makes the run invalid.
 

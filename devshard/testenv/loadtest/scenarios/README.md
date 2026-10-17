@@ -59,7 +59,7 @@ Purpose: does the gateway ride out a misbehaving model server? Three faults on t
 Good:
 - racing hides each fault, so each fault's error share stays at or below 2 % and the run at or below 2 %;
 - the error rate is back under 0.5 % within 60 s after each fault;
-- P2 is quarantined for empty_stream after `receipt-then-empty-stream` and for stalled_winner or transport after `host-hangs-after-first-token`, and P3 for http after `ml-server-returns-429`;
+- P2 is quarantined for empty_stream after `receipt-then-empty-stream` and for stalled_winner, transport or empty_stream after `host-hangs-after-first-token` (the gateway sees a receipt and no content), and P3 for http after `ml-server-returns-429`;
 - no honest host is quarantined.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/faults-ml-node.yaml -output loadtest/results/faults-ml-node`
@@ -120,9 +120,11 @@ Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios
 
 ## vote-fanout
 
-Purpose: a heavy event, judged on its own; the legacy gateway's machine-wide stall began right after it in prod-like-15m. Peer RPC budget at 32 rps with a timeout-vote fan-out (`timeout-vote-fanout`). Traffic rises to 32 requests a second for 4m00s–8m00s. P3's ML node hangs from 4m30s to 6m15s, so its nonces time out and every host votes on them. A hung nonce times out 90–95 s after it starts (the 90 s execution timeout, plus up to the 5 s refusal timeout), so the first timeouts fire 10–15 s before the hang lifts, as the 30 s timeout's did inside the earlier 45 s hang, and the last fire by 7m50s, still inside the 32 rps stage.
+Purpose: a heavy event, judged on its own; the gateway's machine-wide stall began right after it in an earlier prod-like-15m run. Peer RPC budget at 32 rps with a timeout-vote fan-out (`timeout-vote-fanout`). Traffic rises to 32 requests a second for 4m00s–8m00s. P3's ML node hangs from 4m30s to 6m15s, so its nonces time out and every host votes on them. A hung nonce times out 90–95 s after it starts (the 90 s execution timeout, plus up to the 5 s refusal timeout), so the first timeouts fire 10–15 s before the hang lifts, as the 30 s timeout's did inside the earlier 45 s hang, and the last fire by 7m50s, still inside the 32 rps stage.
 
 The hosts keep the real default peer budget: 6000 weight a minute with a Chat weighing 1 since #1988, which is about 100 Chats a second per sender, so 32 requests a second no longer reaches it with Chats alone; the fan-out is now the timeout votes, which #1988 caps at 64 concurrent. The run continues 5m45s after the hang, to 12m, covering the 4m10s in which the sweep votes on the hung nonces.
+
+Before mock-openai read the body of a hung request, it never saw P3's host give up on one: Go's HTTP/1.1 server notices a caller that hung up only after the body is read. So the 600 calls the hang held, its whole 100-worker, 500-queue capacity, stayed held after the hang lifted, every later call got 503 "capacity exhausted", and P3 finished almost nothing for the rest of the run. Runs made before that fix show P3 quarantined after the hang and ml-stats `requests_received` above the sum of successes, failures and timeouts on mock-openai-4.
 
 The generator allows 1024 requests in flight, because about 260 are in flight at 32 requests a second with a healthy gateway. If the load ladder shows that this machine cannot hold 32 requests a second, lower `peak_rps`.
 
@@ -137,14 +139,14 @@ Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios
 
 ## load-ladder
 
-Purpose: find the step where degradation starts. No faults, 10 minutes: 2 minutes each at 8, 16, 24 and 32 requests a second, then 2 minutes back at 16. The last step shows whether the gateway comes back after the peak, and lets the trend check compare two windows at the same rate. The peak is 32 because the legacy ladder (up to 64) degraded from 32 on: 86 % errors at 48-64 and 34 % on the step back at 16, so the steps above 32 measured only the wreck.
+Purpose: find the step where degradation starts. No faults, 10 minutes: 2 minutes each at 8, 16, 24 and 32 requests a second, then 2 minutes back at 16. The last step shows whether the gateway comes back after the peak, and lets the trend check compare two windows at the same rate. The peak is 32 because the earlier ladder (up to 64 rps) degraded from 32 on: 86 % errors at 48-64 and 34 % on the step back at 16, so the steps above 32 measured only the wreck.
 
 Three settings make the ladder measure the gateway rather than the harness or a host:
 - The generator allows 1024 requests in flight, about 4x the 260 in flight at 32 requests a second with a healthy gateway. With prod-like's 256, it would start dropping requests at about 31 requests a second.
 - The max_tokens weights are 40/35/22/3 instead of 40/35/20/5. With 20/5, the overall p95 sits on the edge between the 512-token class (about 16 s) and the 2048-token class (about 60 s). The mark now compares p95 within a class, so this only keeps the table's overall p95 column readable.
 - P4 has no tight budget.
 
-The hosts keep the real default peer budget, which is production: 6000 weight a minute with a Chat weighing 1 since #1988, about 100 Chats a second per sender. The legacy ladder ran with a Chat weighing 10 (about 10 a second) and its hosts sat near 8 a second at 32 requests a second. A host Chat rate that flattens near the ceiling means the ladder hit a host's limit. A high gateway CPU means the gateway's limit. Harness stalls (invalid_fraction in invariants.json) or out-of-memory kills mean the machine's limit. Escrows rotate faster as the rate rises: model-a about every 70 s at 32 requests a second.
+The hosts keep the real default peer budget, which is production: 6000 weight a minute with a Chat weighing 1 since #1988, about 100 Chats a second per sender. The earlier ladder ran with a Chat weighing 10 (about 10 a second) and its hosts sat near 8 a second at 32 requests a second. A host Chat rate that flattens near the ceiling means the ladder hit a host's limit. A high gateway CPU means the gateway's limit. Harness stalls (invalid_fraction in invariants.json) or out-of-memory kills mean the machine's limit. Escrows rotate faster as the rate rises: model-a about every 70 s at 32 requests a second.
 
 Good: every step offers close to its planned requests and stays at or below 2 % errors and drops, with each max_tokens class's p95 within twice the first step's; if a step crosses a bound, the table marks it, and its gateway CPU and host Chat rates say whose limit it is.
 

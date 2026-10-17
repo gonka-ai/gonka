@@ -15,6 +15,11 @@ const ghostStage = "ghost_probe_skipped"
 // faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host.
 var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true}
 
+// budgetBurnReasons are the burns of a host that refuses Chats over its peer budget: the gateway
+// throttles it, and it falls behind on state it never got. Such a fault is often a background marker
+// that lasts the whole run, so its burns are left out in background windows too.
+var budgetBurnReasons = map[string]bool{"participant_throttled_no_send": true, "participant_catching_up_no_send": true}
+
 // gatewayBurn is one nonce the gateway committed and never sent (a ghost), from its log.
 type gatewayBurn struct {
 	At       time.Time `json:"at"`
@@ -108,16 +113,25 @@ func (g ghostSet) escrow(id string) map[string]bool {
 }
 
 // burnExcuse reports whether the ghost rate leaves a burn out: the gateway ejected or cut off the
-// slot's host while that host was inside one of its graced fault windows, so the fault caused it.
+// slot's host inside one of its graced fault windows, or throttled it inside a peer-budget fault
+// window, so the fault caused it.
 func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 	c := newInvariantContext(in)
 	return func(burn gatewayBurn) bool {
-		if !faultBurnReasons[burn.Reason] || burn.Host == "" {
+		if burn.Host == "" {
 			return false
 		}
 		for _, participant := range c.participants {
-			if strings.HasSuffix(participant, burn.Host) && c.inForegroundWindow(participant, burn.At, burn.At) {
+			if !strings.HasSuffix(participant, burn.Host) {
+				continue
+			}
+			if faultBurnReasons[burn.Reason] && c.inForegroundWindow(participant, burn.At, burn.At) {
 				return true
+			}
+			for _, w := range c.faultyDuring(participant, burn.At, burn.At) {
+				if budgetBurnReasons[burn.Reason] && w.Event.Params["observe"] == "host_rate_limited" {
+					return true
+				}
 			}
 		}
 		return false

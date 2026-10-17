@@ -33,7 +33,7 @@ func accountingAt(offset time.Duration, label string, misses map[string]uint64) 
 func processSample(target string, offset time.Duration, pid, goroutines, heap float64) MetricsSample {
 	return MetricsSample{At: at(offset), Phase: "workload", Target: target, Values: map[string]float64{
 		"loadtest_process_pid": pid, "loadtest_process_start_ticks": pid, "go_goroutines": goroutines,
-		"go_memstats_heap_inuse_bytes": heap, "process_resident_memory_bytes": heap * 2,
+		"go_memstats_heap_inuse_bytes": heap, "go_memstats_heap_alloc_bytes": heap, "process_resident_memory_bytes": heap * 2,
 	}}
 }
 
@@ -308,7 +308,7 @@ func TestInvariantPendingAge(t *testing.T) {
 	in.Pending = append(in.Pending, last)
 	checks, _ := evaluateInvariants(in)
 	dirty := checksNamed(t, checks, "no-nonce-left-pending.clean_end_state")[0]
-	require.Equal(t, "dirty=1", dirty.Actual)
+	require.Equal(t, "dirty=1 apart=0", dirty.Actual)
 	require.Equal(t, "escrow 11 open=3 pending_txs=0", dirty.Details)
 }
 
@@ -620,11 +620,11 @@ func TestInvariantTrends(t *testing.T) {
 		})},
 		{name: "pass heap", check: "no-restarts-or-resource-growth.heap_slope", passed: true},
 		{name: "heap grows 5 MiB per minute", check: "no-restarts-or-resource-growth.heap_slope", passed: false, mutate: hostSeries(func(offset time.Duration, s *MetricsSample) {
-			s.Values["go_memstats_heap_inuse_bytes"] = float64(80<<20) + offset.Minutes()*float64(5<<20)
+			s.Values["go_memstats_heap_alloc_bytes"] = float64(80<<20) + offset.Minutes()*float64(5<<20)
 		})},
 		{name: "heap step stays flat", check: "no-restarts-or-resource-growth.heap_slope", passed: true, mutate: hostSeries(func(offset time.Duration, s *MetricsSample) {
 			if offset > 9*time.Minute+30*time.Second {
-				s.Values["go_memstats_heap_inuse_bytes"] = float64(400 << 20)
+				s.Values["go_memstats_heap_alloc_bytes"] = float64(400 << 20)
 			}
 		})},
 		{name: "pass restarts", check: "no-restarts-or-resource-growth.restarts", passed: true},
@@ -640,7 +640,7 @@ func TestInvariantTrends(t *testing.T) {
 // 1. Fill the gateway chat cache at 30 MiB a minute up to its 256 MiB cap, with heap in use rising by the same bytes.
 // 2. Require heap_slope to pass and the gateway row to report the heap slope with the cache subtracted.
 // 3. Drop the cache series from every gateway sample.
-// 4. Require heap_slope to fail and the gateway row to note that the cache was not subtracted.
+// 4. Require heap_slope to be NOT_JUDGED, not FIX, and the gateway row to note that the cache could not be told from growth.
 func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 	const cacheKey = "devshard_gateway_cache_bytes{}"
 	filling := func() InvariantInputs {
@@ -651,7 +651,7 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 				continue
 			}
 			cache := min(s.At.Sub(fixtureT0).Minutes()*float64(30<<20), float64(256<<20))
-			s.Values["go_memstats_heap_inuse_bytes"] += cache
+			s.Values["go_memstats_heap_alloc_bytes"] += cache
 			if s.Domain == nil {
 				s.Domain = map[string]float64{}
 			}
@@ -679,7 +679,7 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
 	row := gatewayRow(t, report)
 	require.Equal(t, true, row["heap_minus_cache"])
-	require.InDelta(t, 0, row["heap_inuse_slope_bytes_per_min"], 1)
+	require.InDelta(t, 0, row["heap_live_slope_bytes_per_min"], 1)
 
 	in := filling()
 	for i := range in.Metrics {
@@ -687,8 +687,9 @@ func TestInvariantHeapSlopeLeavesOutTheGatewayCache(t *testing.T) {
 	}
 	checks, report = evaluateInvariants(in)
 	check = checksNamed(t, checks, "no-restarts-or-resource-growth.heap_slope")[0]
-	require.False(t, check.Passed)
-	require.Contains(t, check.Details, "gateway heap in-use")
+	require.True(t, check.Passed)
+	require.Equal(t, statusNotJudged, check.Status)
+	require.Contains(t, check.Details, "gateway heap +")
 	row = gatewayRow(t, report)
 	require.Nil(t, row["heap_minus_cache"])
 	require.Contains(t, row["note"], "devshard_gateway_cache_bytes missing")

@@ -25,17 +25,27 @@ const (
 	// until its next poll sees the blocking phase.
 	gatewayPhasePoll = 5 * time.Second
 
-	quietErrorRate      = 0.005
-	quietP50Factor      = 1.5
-	quietP99Factor      = 3.0
-	faultErrorRate      = 0.02
-	recoveryBucket      = 30 * time.Second
-	recoveryLimit       = 60 * time.Second
-	restartRecoveryLim  = 90 * time.Second
-	goroutineGrowthMul  = 1.2
-	goroutineGrowthAdd  = 50
-	heapSlopeLimit      = float64(1 << 20)
-	gatewayCacheFamily  = "devshard_gateway_cache_bytes"
+	quietErrorRate     = 0.005
+	quietP50Factor     = 1.5
+	quietP99Factor     = 3.0
+	faultErrorRate     = 0.02
+	recoveryBucket     = 30 * time.Second
+	recoveryLimit      = 60 * time.Second
+	restartRecoveryLim = 90 * time.Second
+	goroutineGrowthMul = 1.2
+	goroutineGrowthAdd = 50
+	heapSlopeLimit     = float64(1 << 20)
+	// heapFloorBucket: the heap slope is fitted over the lowest heap_alloc of each bucket, the live
+	// heap after a GC; heap in use also holds garbage up to the GC goal, about twice the live heap.
+	heapFloorBucket    = 30 * time.Second
+	gatewayCacheFamily = "devshard_gateway_cache_bytes"
+	// A host keeps one runtime per escrow until the epoch is evicted (devshardd EvictBefore), each
+	// with host.defaultValidationWorkers goroutines and a defaultValidationQueueSize-slot queue of
+	// 176-byte validateJob values, so it grows by these for every escrow the run creates.
+	hostValidationWorkers    = 20
+	hostValidationQueueBytes = 20_000 * 176
+	// hostServingFamily counts the requests a host finished; a host is serving once it rises above 0.
+	hostServingFamily   = "devshard_request_terminal_total"
 	throttlePollEvery   = 5 * time.Second
 	pendingPollEvery    = 10 * time.Second
 	hostStatsPollEvery  = 30 * time.Second
@@ -886,16 +896,32 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 			final[s.EscrowID] = s
 		}
 	}
-	var dirty []string
+	// A burned nonce stays open until its escrow closes, and an escrow created during the drain holds
+	// only its warm-up probe, whose finish waits for the next request's diff; both are reported apart.
+	var dirty, apart []string
 	for _, s := range final {
-		if s.Open > 0 || s.PendingTxs > 0 {
-			dirty = append(dirty, fmt.Sprintf("escrow %s open=%d pending_txs=%d", s.EscrowID, s.Open, s.PendingTxs))
+		open := s.Open
+		for id := range s.OpenStarted {
+			if burned[s.EscrowID][id] {
+				open--
+			}
+		}
+		switch {
+		case open == 0 && s.PendingTxs == 0:
+			if s.Open > 0 {
+				apart = append(apart, fmt.Sprintf("escrow %s burned_open=%d", s.EscrowID, s.Open))
+			}
+		case s.Nonce <= 1:
+			apart = append(apart, fmt.Sprintf("escrow %s warm-up only, nonce=%d open=%d pending_txs=%d", s.EscrowID, s.Nonce, open, s.PendingTxs))
+		default:
+			dirty = append(dirty, fmt.Sprintf("escrow %s open=%d pending_txs=%d", s.EscrowID, open, s.PendingTxs))
 		}
 	}
 	sort.Strings(dirty)
+	sort.Strings(apart)
 	return []AssertionResult{
 		withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), burnedMax, burnedOver), strings.Join(firstN(over, 10), "; ")), overSpans...),
-		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx", fmt.Sprintf("dirty=%d", len(dirty)), strings.Join(dirty, "; ")),
+		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx, burned nonces and warm-up-only escrows apart", fmt.Sprintf("dirty=%d apart=%d", len(dirty), len(apart)), strings.Join(append(dirty, apart...), "; ")),
 	}, pendingTable(worst, limit, len(over), burnedMax, burnedOver, legacy)
 }
 
@@ -976,7 +1002,10 @@ type quarantineEpisode struct {
 	From        time.Time `json:"from"`
 	To          time.Time `json:"to"`
 	Until       time.Time `json:"until,omitempty"`
-	Event       string    `json:"event,omitempty"`
+	// Longest is the longest single quarantine in the episode: a quarantine_until less the poll
+	// that first showed it. A quarantine renewed as it ends starts a new one in the same episode.
+	Longest time.Duration `json:"longest,omitempty"`
+	Event   string        `json:"event,omitempty"`
 }
 
 const quarantineFamily = "devshard_gateway_participant_quarantine_transitions_total"
@@ -1061,6 +1090,7 @@ func quarantineEpisodes(samples []ThrottleSample) []quarantineEpisode {
 	for participant, points := range series {
 		sort.SliceStable(points, func(i, j int) bool { return points[i].at.Before(points[j].at) })
 		var current *quarantineEpisode
+		firstShown := map[time.Time]time.Time{}
 		for _, p := range points {
 			switch {
 			case p.in && current != nil && p.at.Sub(current.To) <= 3*throttlePollEvery:
@@ -1076,6 +1106,12 @@ func quarantineEpisodes(samples []ThrottleSample) []quarantineEpisode {
 			case current != nil && !p.at.Equal(current.To):
 				episodes = append(episodes, *current)
 				current = nil
+			}
+			if p.in && !p.until.IsZero() {
+				if _, seen := firstShown[p.until]; !seen {
+					firstShown[p.until] = p.at
+				}
+				current.Longest = max(current.Longest, p.until.Sub(firstShown[p.until]))
 			}
 		}
 		if current != nil {
@@ -1126,7 +1162,9 @@ func expectedQuarantine(record EventRecord) (allowed map[string]bool, forbidden 
 		case patch["http_status"] != nil:
 			return map[string]bool{"http": true}, nil, true
 		case patch["pause_stream"] == true, patch["hang"] == true:
-			return map[string]bool{"stalled_winner": true, "transport": true}, nil, true
+			// The host has sent its receipt but no content when the gateway gives up on the
+			// attempt, which it reports as an empty stream.
+			return map[string]bool{"stalled_winner": true, "transport": true, "empty_stream": true}, nil, true
 		}
 	case "dapi_challenge":
 		return nil, map[string]bool{"empty_stream": true}, true
@@ -1228,13 +1266,19 @@ func (c *invariantContext) quarantineDurations(episodes []quarantineEpisode, tra
 			skipped++
 			continue
 		}
-		if !e.Until.IsZero() && e.Until.Sub(e.From) > duration+quarantineDurationT {
-			bad = append(bad, fmt.Sprintf("%s until-start=%s > %s", e.Participant, e.Until.Sub(e.From).Round(time.Second), duration))
+		if e.Longest > duration+quarantineDurationT {
+			bad = append(bad, fmt.Sprintf("%s single quarantine %s > %s", e.Participant, e.Longest.Round(time.Second), duration))
 		}
+		// The episode is charged to the latest fault that can have caused it, so a quarantine
+		// that starts in one fault is not blamed on an earlier fault whose grace it also falls in.
+		var cause *faultWindow
 		for _, w := range c.faultyDuring(e.Participant, e.From.Add(-c.in.Settings.Grace), e.From) {
-			if limit := w.Graced.To.Add(duration + quarantineDurationT); e.To.After(limit) {
-				bad = append(bad, fmt.Sprintf("%s quarantined until %s, cause %s ended %s", e.Participant, e.To.Format(time.RFC3339), w.Event.ID, w.Span.To.Format(time.RFC3339)))
+			if cause == nil || w.Graced.To.After(cause.Graced.To) {
+				cause = &w
 			}
+		}
+		if cause != nil && e.To.After(cause.Graced.To.Add(duration+quarantineDurationT)) {
+			bad = append(bad, fmt.Sprintf("%s quarantined until %s, cause %s ended %s", e.Participant, e.To.Format(time.RFC3339), cause.Event.ID, cause.Span.To.Format(time.RFC3339)))
 		}
 	}
 	if skipped > 0 {
@@ -1513,14 +1557,17 @@ func evalRecoveryAfterFault(c *invariantContext) ([]AssertionResult, any) {
 // ---- no-restarts-or-resource-growth: no goroutine or memory growth trend (Runtime metrics.jsonl) ----
 
 type trendRow struct {
-	Target            string  `json:"target"`
-	Samples           int     `json:"steady_samples"`
-	Restarts          int     `json:"restarts"`
-	AllowedRestarts   int     `json:"allowed_restarts"`
+	Target          string `json:"target"`
+	Samples         int    `json:"steady_samples"`
+	Restarts        int    `json:"restarts"`
+	AllowedRestarts int    `json:"allowed_restarts"`
+	// SteadyFrom is set when a host started serving late, so its steady samples start later.
+	SteadyFrom        string  `json:"steady_from,omitempty"`
+	EscrowsCreated    int     `json:"escrows_created_between_windows,omitempty"`
 	EarlyGoroutines   float64 `json:"early_goroutines_median"`
 	LateGoroutines    float64 `json:"late_goroutines_median"`
-	HeapSlopeBytesMin float64 `json:"heap_inuse_slope_bytes_per_min"`
-	// HeapMinusCache is set when the heap slope was taken over heap in use minus devshard_gateway_cache_bytes.
+	HeapSlopeBytesMin float64 `json:"heap_live_slope_bytes_per_min"`
+	// HeapMinusCache is set when the heap slope was taken with devshard_gateway_cache_bytes subtracted.
 	HeapMinusCache   bool    `json:"heap_minus_cache,omitempty"`
 	RSSSlopeBytesMin float64 `json:"rss_slope_bytes_per_min"`
 	Note             string  `json:"note,omitempty"`
@@ -1566,7 +1613,13 @@ func (c *invariantContext) allowedRestarts(target string) int {
 func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any) {
 	caseID := c.runCase("no-restarts-or-resource-growth")
 	byTarget := map[string][]MetricsSample{}
+	var escrowsCreated []time.Time
+	firstSeen := map[string]bool{}
 	for _, s := range sortedMetrics(c.in.Metrics) {
+		if s.EscrowID != "" && !firstSeen[s.EscrowID] {
+			firstSeen[s.EscrowID] = true
+			escrowsCreated = append(escrowsCreated, s.At)
+		}
 		if s.EscrowID == "" && s.Target != "escrows" && len(s.Values) > 0 {
 			byTarget[s.Target] = append(byTarget[s.Target], s)
 		}
@@ -1577,10 +1630,10 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 	}
 	sort.Strings(targets)
 	var rows []trendRow
-	var restartBad, goroutineBad, heapBad []string
-	steadyFrom := c.in.Started.Add(c.in.Settings.SteadyAfter)
+	var restartBad, goroutineBad, heapBad, heapNotJudged []string
 	for _, target := range targets {
 		samples := byTarget[target]
+		host := target != "gateway"
 		row := trendRow{Target: target, AllowedRestarts: c.allowedRestarts(target)}
 		segments := [][]MetricsSample{{samples[0]}}
 		for i := 1; i < len(samples); i++ {
@@ -1592,6 +1645,13 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 		}
 		if row.Restarts > row.AllowedRestarts {
 			restartBad = append(restartBad, fmt.Sprintf("%s restarted %d times, %d injected", target, row.Restarts, row.AllowedRestarts))
+		}
+		// A host that serves nothing yet, such as the idle replica of an HA pair, is not warm:
+		// its steady samples start SteadyAfter after its first finished request.
+		steadyFrom := c.in.Started.Add(c.in.Settings.SteadyAfter)
+		if serving, ok := firstServing(samples); host && ok && serving.Add(c.in.Settings.SteadyAfter).After(steadyFrom) {
+			steadyFrom = serving.Add(c.in.Settings.SteadyAfter)
+			row.SteadyFrom = steadyFrom.Sub(c.in.Started).Round(time.Second).String()
 		}
 		var steady []MetricsSample
 		for _, segment := range segments {
@@ -1606,25 +1666,47 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 			}
 		}
 		row.Samples = len(steady)
-		early := c.metricWindow(steady, c.in.Settings.TrendEarly, "go_goroutines")
-		late := c.metricWindow(steady, c.in.Settings.TrendLate, "go_goroutines")
-		if len(early) == 0 || len(late) == 0 {
+		earlyWindow, lateWindow := c.in.Settings.TrendEarly, c.in.Settings.TrendLate
+		if shift := steadyFrom.Sub(c.in.Started) - earlyWindow[0]; shift > 0 {
+			earlyWindow = [2]time.Duration{earlyWindow[0] + shift, earlyWindow[1] + shift}
+		}
+		early := c.metricWindow(steady, earlyWindow, "go_goroutines")
+		late := c.metricWindow(steady, lateWindow, "go_goroutines")
+		switch {
+		case earlyWindow[1] > lateWindow[0]:
+			row.Note = "serving started too late for an early window before the late one"
+		case len(early) == 0 || len(late) == 0:
 			row.Note = "early or late window has no samples in one process lifetime"
-		} else {
+		default:
 			row.EarlyGoroutines, row.LateGoroutines = median(early), median(late)
-			if row.LateGoroutines > goroutineGrowthMul*row.EarlyGoroutines+goroutineGrowthAdd {
-				goroutineBad = append(goroutineBad, fmt.Sprintf("%s goroutines %.0f -> %.0f", target, row.EarlyGoroutines, row.LateGoroutines))
+			if host {
+				row.EscrowsCreated = countBetween(escrowsCreated, c.in.Started.Add(earlyWindow[0]), c.in.Started.Add(lateWindow[1]))
+			}
+			allowance := float64(hostValidationWorkers * row.EscrowsCreated)
+			if row.LateGoroutines > goroutineGrowthMul*row.EarlyGoroutines+goroutineGrowthAdd+allowance {
+				bad := fmt.Sprintf("%s goroutines %.0f -> %.0f", target, row.EarlyGoroutines, row.LateGoroutines)
+				if host {
+					bad += fmt.Sprintf(" (%d escrows created, +%.0f allowed for them)", row.EscrowsCreated, allowance)
+				}
+				goroutineBad = append(goroutineBad, bad)
 			}
 		}
-		heap, minusCache, note := heapLessCache(target, steady)
+		var queues []time.Time
+		if host {
+			queues = escrowsCreated
+		}
+		heap, minusCache, note := heapFloor(target, steady, queues, c.in.Started)
 		row.HeapMinusCache = minusCache
 		if note != "" {
 			row.Note = strings.TrimPrefix(row.Note+"; "+note, "; ")
 		}
 		if slope, ok := c.seriesSlope(heap); ok {
 			row.HeapSlopeBytesMin = slope
-			if slope >= heapSlopeLimit {
-				heapBad = append(heapBad, fmt.Sprintf("%s heap in-use +%.0f B/min", target, slope))
+			switch {
+			case !host && !minusCache:
+				heapNotJudged = append(heapNotJudged, fmt.Sprintf("%s heap +%.0f B/min not judged: %s", target, slope, note))
+			case slope >= heapSlopeLimit:
+				heapBad = append(heapBad, fmt.Sprintf("%s live heap +%.0f B/min", target, slope))
 			}
 		}
 		row.RSSSlopeBytesMin, _ = c.metricSlope(steady, "process_resident_memory_bytes")
@@ -1633,11 +1715,36 @@ func evalNoRestartsOrResourceGrowth(c *invariantContext) ([]AssertionResult, any
 	if len(rows) == 0 {
 		return []AssertionResult{invariantCheck("no-restarts-or-resource-growth.goroutines", caseID, false, "process samples in metrics.jsonl", "none", "")}, nil
 	}
+	heapCheck := invariantCheck("no-restarts-or-resource-growth.heap_slope", caseID, len(heapBad) == 0, "Theil-Sen slope < 1 MiB/min of the live heap (lowest heap_alloc per 30 s) over steady samples, less the gateway chat cache and each new escrow's host validation queue", fmt.Sprintf("violations=%d", len(heapBad)), strings.Join(append(heapBad, heapNotJudged...), "; "))
+	if heapCheck.Passed && len(heapNotJudged) > 0 {
+		heapCheck.Status = statusNotJudged
+	}
 	return []AssertionResult{
 		invariantCheck("no-restarts-or-resource-growth.restarts", caseID, len(restartBad) == 0, "no process restarts except injected ones", fmt.Sprintf("violations=%d", len(restartBad)), strings.Join(restartBad, "; ")),
-		invariantCheck("no-restarts-or-resource-growth.goroutines", caseID, len(goroutineBad) == 0, fmt.Sprintf("late median <= %.1fx early median + %d", goroutineGrowthMul, goroutineGrowthAdd), fmt.Sprintf("violations=%d", len(goroutineBad)), strings.Join(goroutineBad, "; ")),
-		invariantCheck("no-restarts-or-resource-growth.heap_slope", caseID, len(heapBad) == 0, "Theil-Sen heap in-use slope < 1 MiB/min over steady samples, gateway chat cache bytes subtracted", fmt.Sprintf("violations=%d", len(heapBad)), strings.Join(heapBad, "; ")),
+		invariantCheck("no-restarts-or-resource-growth.goroutines", caseID, len(goroutineBad) == 0, fmt.Sprintf("late median <= %.1fx early median + %d, + %d per escrow created between the windows on a host", goroutineGrowthMul, goroutineGrowthAdd, hostValidationWorkers), fmt.Sprintf("violations=%d", len(goroutineBad)), strings.Join(goroutineBad, "; ")),
+		heapCheck,
 	}, rows
+}
+
+// firstServing is the first sample at which a host has finished a request.
+func firstServing(samples []MetricsSample) (time.Time, bool) {
+	for _, s := range samples {
+		if served, ok := domainSum(s, hostServingFamily); ok && served > 0 {
+			return s.At, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// countBetween counts the times in (from, to].
+func countBetween(times []time.Time, from, to time.Time) int {
+	n := 0
+	for _, t := range times {
+		if t.After(from) && !t.After(to) {
+			n++
+		}
+	}
+	return n
 }
 
 func (c *invariantContext) metricWindow(samples []MetricsSample, window [2]time.Duration, name string) []float64 {
@@ -1671,32 +1778,39 @@ func (c *invariantContext) seriesSlope(points []metricPoint) (float64, bool) {
 	return slope, ok
 }
 
-// heapLessCache returns heap in use per sample minus devshard_gateway_cache_bytes. The gateway chat
-// cache fills to its cap and then stays flat, so counting it reads a bounded cache as growth. A
-// sample set where any sample lacks the cache series is left whole, with a note on the gateway.
-func heapLessCache(target string, samples []MetricsSample) ([]metricPoint, bool, string) {
+// heapFloor returns the live heap of each heapFloorBucket: the lowest heap_alloc in it, less
+// devshard_gateway_cache_bytes and less the validation queue of every escrow in queues created
+// after the first sample. The gateway chat cache fills to its cap and then stays flat, and a host
+// keeps each escrow's queue for the epoch, so counting either reads bounded memory as growth. A
+// gateway sample set where any sample lacks the cache series is left whole, with a note.
+func heapFloor(target string, samples []MetricsSample, queues []time.Time, started time.Time) ([]metricPoint, bool, string) {
 	var heap []metricPoint
-	var cached []float64
+	missing := 0
 	for _, s := range samples {
-		value, ok := s.Values["go_memstats_heap_inuse_bytes"]
+		value, ok := s.Values["go_memstats_heap_alloc_bytes"]
 		if !ok {
 			continue
 		}
-		heap = append(heap, metricPoint{at: s.At, value: value})
 		if cache, ok := domainSum(s, gatewayCacheFamily); ok {
-			cached = append(cached, cache)
+			value -= cache
+		} else {
+			missing++
+		}
+		value -= float64(hostValidationQueueBytes * countBetween(queues, samples[0].At, s.At))
+		bucket := started.Add(s.At.Sub(started).Truncate(heapFloorBucket))
+		if n := len(heap); n > 0 && heap[n-1].at.Equal(bucket) {
+			heap[n-1].value = min(heap[n-1].value, value)
+		} else {
+			heap = append(heap, metricPoint{at: bucket, value: value})
 		}
 	}
-	if len(heap) > 0 && len(cached) == len(heap) {
-		for i := range heap {
-			heap[i].value -= cached[i]
-		}
+	if len(heap) > 0 && missing == 0 {
 		return heap, true, ""
 	}
 	if target != "gateway" || len(heap) == 0 {
 		return heap, false, ""
 	}
-	return heap, false, fmt.Sprintf("%s missing in %d of %d steady samples, heap slope taken without subtracting the cache", gatewayCacheFamily, len(heap)-len(cached), len(heap))
+	return heap, false, fmt.Sprintf("%s missing in %d steady samples, so the chat cache (1 h TTL, 256 MiB cap) cannot be told from growth", gatewayCacheFamily, missing)
 }
 
 // ---- faults-fired-and-ml-nodes-bound: every fault actually fired (all sources) ----

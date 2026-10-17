@@ -157,6 +157,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 	f, streamGate := s.streamFaults()
 	if f.Hang {
+		// net/http notices a caller that hung up only once the body is read; unread, a held
+		// request outlives the caller's deadline and keeps its capacity slot after the hang lifts.
+		_, _ = io.Copy(io.Discard, c.Request().Body)
 		<-c.Request().Context().Done()
 		s.stats.timeouts.Add(1)
 		return c.Request().Context().Err()

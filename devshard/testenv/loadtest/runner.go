@@ -120,7 +120,7 @@ func formatAssertionFailure(check AssertionResult) string {
 type TerminalSummary struct {
 	Finished int `json:"finished"`
 	Ghost    int `json:"ghost"`
-	// GhostExcluded counts burns left out of Ghost and Total: ejected or cut-off hosts inside their fault windows.
+	// GhostExcluded counts burns left out of Ghost and Total: burns a fault caused on a host inside its fault window.
 	GhostExcluded int            `json:"ghost_excluded"`
 	Total         int            `json:"total"`
 	Orphaned      int            `json:"orphaned"`
@@ -820,7 +820,7 @@ func dockerServerArch(ctx context.Context) (string, error) {
 }
 
 // loadTestComposeEnv selects the v6 peer-RPC transport for this isolated stack.
-// The normal testenv Compose defaults remain unchanged for legacy and citest runs.
+// The normal testenv Compose defaults remain unchanged for non-loadtest testenv and citest runs.
 func loadTestComposeEnv() []string {
 	env := os.Environ()
 	env = setEnvValue(env, "DEVSHARD_RPC_H2_PORT", "8081")
@@ -1036,7 +1036,7 @@ func assertRun(scenario Scenario, summary Summary, inputs RunInputs, events []Ev
 	if scenario.Assertions.Devshard.NoOrphanedWork {
 		check := AssertionResult{
 			Name:     "devshard.no_orphaned_work",
-			Expected: fmt.Sprintf("orphaned=0; ghost rate <= %.2f%%, ejected or cut-off burns inside fault windows left out", scenario.Assertions.Devshard.MaxGhostRate*100),
+			Expected: fmt.Sprintf("orphaned=0; ghost rate <= %.2f%%, fault-caused burns inside the host's fault windows left out", scenario.Assertions.Devshard.MaxGhostRate*100),
 			Actual:   "unavailable",
 			Details:  "the drain check's last read " + notSaved,
 		}

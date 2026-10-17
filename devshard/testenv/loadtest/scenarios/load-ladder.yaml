@@ -4,7 +4,7 @@ seed: 1515
 
 # Where does degradation start? No faults; 2 minutes each at 8, 16, 24 and
 # 32 client rps, then 2 minutes back at 16, so no-restarts-or-resource-growth compares two windows at the
-# same rate and the report shows whether the gateway comes back. The legacy
+# same rate and the report shows whether the gateway comes back. The earlier
 # ladder (32-64 rps, Chat weight 10) degraded from 32 rps on with hosts at
 # about 8 of their 10 Chats a second; 48 and 64 rps only measured the wreck.
 # The report's load-step table marks the first step whose p95 is above 2x
@@ -83,7 +83,7 @@ workload:
       logprobs_ratio: 0.5
       top_logprobs: 5
       # 22/3 instead of 20/5 keeps p95 inside the 512-token class at every step;
-      # with 20/5 the legacy ladder's seeded draws put it in the 2048 class at 32 and 64 rps.
+      # with 20/5 the earlier ladder's seeded draws put it in the 2048 class at 32 and 64 rps.
       max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 22}, {value: 2048, weight: 3}]
       temperature: [{value: 0, weight: 50}, {value: 0.7, weight: 50}]
       prompts:

@@ -12,7 +12,7 @@ seed: 1515
 # the hang lifts, as the 30 s timeout's did inside the old 45 s hang. The
 # 32 rps stage runs to 8m, past the last of those timeouts (6m15s + 95 s).
 # The run goes on 5m45s after the hang: the sweep votes on hung nonces for up
-# to 4m10s after the fault, and the legacy run's machine-wide stall began there.
+# to 4m10s after the fault, and the earlier run's machine-wide stall began there.
 # P3 = versiond-4; P0/P1 are never faulted.
 
 cases:
