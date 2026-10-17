@@ -598,6 +598,42 @@ func OnChainIdentityHosts(c *File) []HostCfg {
 	return identities
 }
 
+// PostgresServiceFor is the Postgres service (and PGHOST) h stores in. With
+// PerParticipant every on-chain identity has its own service, shared by its
+// replicas; otherwise all hosts use Postgres.Host.
+func PostgresServiceFor(c *File, h HostCfg) string {
+	if c == nil {
+		return ""
+	}
+	if !c.Postgres.PerParticipant {
+		return c.Postgres.Host
+	}
+	name := VersiondKeyName(c, h)
+	for _, p := range OnChainIdentityHosts(c) {
+		if VersiondKeyName(c, p) == name {
+			return DefaultPostgresHost + "-" + p.ID
+		}
+	}
+	return DefaultPostgresHost + "-" + h.ID
+}
+
+// PostgresServices lists every Postgres service of the stack, in roster order.
+// It is empty when Postgres is disabled.
+func PostgresServices(c *File) []string {
+	if c == nil || !c.Postgres.Enabled {
+		return nil
+	}
+	if !c.Postgres.PerParticipant {
+		return []string{c.Postgres.Host}
+	}
+	identities := OnChainIdentityHosts(c)
+	out := make([]string, 0, len(identities))
+	for _, h := range identities {
+		out = append(out, PostgresServiceFor(c, h))
+	}
+	return out
+}
+
 // KeyNameReplicaCount is how many containers load h's KEY_NAME. More than one
 // means h is part of a replicated (HA) identity.
 func KeyNameReplicaCount(c *File, h HostCfg) int {
