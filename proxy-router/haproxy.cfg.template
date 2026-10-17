@@ -97,12 +97,18 @@ frontend public_https
 # Hand a peer connection to rpc_h2 inside this process. send-proxy-v2
 # carries the client address (already the one a trusted external PROXY
 # hop restored) so rpc_h2's stick tables and X-Real-IP see the peer.
+# retries 0: rpc_h2 rejects a connection over its per-source cap by closing
+# the hand-off socket at session time. The default retries would reopen it
+# (one more rpc_h2 session per retry, counted in conn_rate / sess_rate) and
+# hold the client for a second each time before it sees the close.
 backend rpc_h2c_in
     mode tcp
+    retries 0
     server local abns@rpc_h2c send-proxy-v2
 
 backend rpc_tls_in
     mode tcp
+    retries 0
     server local abns@rpc_tls send-proxy-v2
 
 backend policy_http

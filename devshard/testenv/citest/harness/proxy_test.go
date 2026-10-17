@@ -68,6 +68,9 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, text, "tcp-request session track-sc0 src,ipmask(32,64)\n")
 	require.Contains(t, text, "tcp-request session reject if { sc_conn_cur(0) gt 32 }")
 	require.NotContains(t, text, "tcp-request connection track-sc0")
+	// A rejected hand-off must not be retried: every retry is another
+	// rpc_h2 session and a second of delay before the client sees the close.
+	require.Contains(t, text, "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
 	require.Contains(t, text, "tcp-request session reject if { sc_conn_rate(0) gt 200 }")
 	require.NotContains(t, text, "tcp-request connection expect-proxy")
 	require.Contains(t, text, "expose-experimental-directives")
@@ -102,6 +105,8 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, string(prod), "tcp-request session track-sc0 src,ipmask(32,64)\n")
 	require.NotContains(t, string(prod), "tcp-request connection track-sc0")
 	require.Contains(t, string(prod), "tcp-request session reject if { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }")
+	require.Contains(t, string(prod), "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
+	require.Contains(t, string(prod), "backend rpc_tls_in\n    mode tcp\n    retries 0\n")
 	require.Contains(t, string(prod), "tcp-request session reject if { sc_conn_rate(0) gt 200 }")
 	require.Contains(t, string(prod), "path-strip-dotdot")
 	require.Contains(t, string(prod), "deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }")

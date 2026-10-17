@@ -220,6 +220,13 @@ test-render: test-route-status test-rpc-h2-cert
 	fi; \
 	grep -q 'tcp-request session reject if { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen has no conn_rate on src"; \
+	awk ' \
+		$$0 ~ "^backend rpc_h2c_in$$|^backend rpc_tls_in$$" { inside = 1; n++; next } \
+		inside && $$0 ~ "^frontend |^backend " { inside = 0 } \
+		inside && /^ *retries 0$$/ { ok++ } \
+		END { exit !(n == 2 && ok == 2) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "peer RPC hand-off backends must not retry a rejected session"; \
 	grep -q 'store conn_cur,conn_rate(1s),sess_rate(1s)$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC stick-table does not store conn_cur"; \
 	grep -q 'tcp-request session reject if { sc_conn_cur(0) gt 32 }' "$$tmpdir/proxy.cfg" \
