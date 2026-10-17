@@ -208,14 +208,14 @@ citest-versiond-warm-cutover: citest-images ## v5 warm-cutover boot + overlap sw
 	$(CITEST_RPC_RUN) -run 'TestVersiondWarmCutover' -count=1 -v -timeout 30m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
-	$(CITEST_RPC_RUN) -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_' -count=1 -v -timeout 30m
+	$(CITEST_RPC_RUN) -run '^(TestLostFirstChunk|TestMLUpstream5xx|TestStaleEscrow|TestBadWarmKey|TestErrorFinishMiss)$$' -count=1 -v -timeout 30m
 
 citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest.
 	$(CITEST_RPC_RUN) -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
 
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
-	$(CITEST_RPC_RUN) -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
-	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
+	$(CITEST_RPC_RUN) -run '^(TestGatewayEscrowCreateGRPC|TestGatewayEscrowReadGRPC|TestGatewayChatGRPCOnly)$$' -count=1 -v -timeout 30m
+	cd .. && go test ./cmd/devshardctl/ -run '^TestNoRESTChainClientsInGatewayProduction$$' -count=1 -v
 
 citest-observability: citest-images ## O1 smoke plus trace, disposition, payload, and shadow-host correlation.
 	$(MAKE) build-devshardd
@@ -311,7 +311,7 @@ citest-peerrpc-cross-version-compat: ## Cross-version native gRPC compatibility 
 # (mock-chain is not CometBFT). Excluded from list-citest-targets.
 citest-height-sync-dapi-compat: citest-images ## Height-sync backward compat: new dapi /block/* vs old dapi 404.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run '^TestHeightSync_(MockDapiBlockLatest|CadenceEmitsAnchor|LegacyDapiChatCompletes)$$' -count=1 -v -timeout 45m
+	$(CITEST_RPC_RUN) -run '^TestHeightSync_(MockDapiBlockAt|CadenceEmitsAnchor|LegacyDapiChatCompletes)$$' -count=1 -v -timeout 45m
 
 citest-host-ping: citest-images ## Gateway host-ping e2e (E1–E6, F3–F4); rebuilds devshardd for /clock.
 	$(MAKE) build-devshardd
