@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,5 +67,22 @@ func TestSafeCreateSECP256K1AccountKey(t *testing.T) {
 		pubKey, err := SafeCreateSECP256K1AccountKey("")
 		require.Error(t, err, "Empty key should fail")
 		require.Nil(t, pubKey, "Should not return key")
+	})
+
+	t.Run("valid_key", func(t *testing.T) {
+		validPubKey := secp256k1.GenPrivKey().PubKey()
+		pubKey, err := SafeCreateSECP256K1AccountKey(base64.StdEncoding.EncodeToString(validPubKey.Bytes()))
+		require.NoError(t, err)
+		require.Equal(t, validPubKey.Bytes(), pubKey.Bytes())
+	})
+
+	t.Run("off_curve_key", func(t *testing.T) {
+		// 0x02 prefix, x = 5: right length and prefix, but x^3+7 has no square root mod p.
+		offCurve := make([]byte, 33)
+		offCurve[0] = 0x02
+		offCurve[32] = 5
+		pubKey, err := SafeCreateSECP256K1AccountKey(base64.StdEncoding.EncodeToString(offCurve))
+		require.ErrorContains(t, err, "not a valid curve point")
+		require.Nil(t, pubKey)
 	})
 }

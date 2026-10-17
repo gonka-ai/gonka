@@ -649,3 +649,58 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 	// Max allowed should be 3
 	require.Len(t, epochBLSData.Participants[0].AllowedSecp256K1PublicKeys, 3)
 }
+
+func TestBLSKeyGenerationSkipsOffCurveWarmKey(t *testing.T) {
+	setupSDKConfig()
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	alicePrivKey := secp256k1.GenPrivKey()
+	aliceAccAddrStr := sdk.AccAddress(alicePrivKey.PubKey().Address()).String()
+	_ = setupMockAccountExpectations(t, mocks.AccountKeeper, map[string]string{
+		aliceAccAddrStr: hex.EncodeToString(alicePrivKey.PubKey().Bytes()),
+	})
+
+	// An account registered before key validation checked the curve can hold an off-curve key.
+	offCurve := make([]byte, 33)
+	offCurve[0] = 0x02
+	offCurve[32] = 5 // x = 5 is not on secp256k1
+	goodWarm := secp256k1.GenPrivKey().PubKey()
+	warmKeys := []cryptotypes.PubKey{&secp256k1.PubKey{Key: offCurve}, goodWarm}
+
+	grants := make([]*authztypes.GrantAuthorization, 0, len(warmKeys))
+	for _, pk := range warmKeys {
+		granteeAddr := sdk.AccAddress(pk.Address())
+		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
+		require.NoError(t, err)
+		grants = append(grants, &authztypes.GrantAuthorization{
+			Granter:       aliceAccAddrStr,
+			Grantee:       granteeAddr.String(),
+			Authorization: authAny,
+		})
+		mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), granteeAddr).Return(authtypes.NewBaseAccount(granteeAddr, pk, 0, 0)).AnyTimes()
+	}
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		Return(&authztypes.QueryGranterGrantsResponse{Grants: grants}, nil).
+		AnyTimes()
+
+	k.SetParticipant(ctx, types.Participant{
+		Index:   aliceAccAddrStr,
+		Address: aliceAccAddrStr,
+		Weight:  100,
+		Status:  types.ParticipantStatus_ACTIVE,
+	})
+
+	cdc := codec.NewProtoCodec(codectypes.NewInterfaceRegistry())
+	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)
+	epochID := uint64(50)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 100, CapWeight: 100},
+	})
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, 1)
+	// The off-curve key is dropped; the valid warm key is kept as before.
+	require.Equal(t, [][]byte{goodWarm.Bytes()}, epochBLSData.Participants[0].AllowedSecp256K1PublicKeys)
+}

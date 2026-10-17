@@ -30,6 +30,7 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	dcrsecp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/testenv"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -1946,6 +1947,14 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 				"participant", participantAddress,
 				"grantee", grantee.Address,
 				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+			continue
+		}
+		// Same check the dApi dealer runs before ECIES: one off-curve key fails every dealer's part.
+		if _, err := dcrsecp256k1.ParsePubKey(pubKeyBytes); err != nil {
+			am.LogWarn("Skipping off-curve grantee secp256k1 public key for BLS snapshot", types.EpochGroup,
+				"participant", participantAddress,
+				"grantee", grantee.Address,
+				"error", err)
 			continue
 		}
 		if bytes.Equal(pubKeyBytes, primaryPubKey) {

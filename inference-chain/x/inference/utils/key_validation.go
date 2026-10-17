@@ -8,6 +8,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/types/errors"
+	dcrsecp256k1 "github.com/decred/dcrd/dcrec/secp256k1/v4"
 )
 
 // SafeCreateED25519ValidatorKey creates an ED25519 key and catches the panic that causes consensus failure
@@ -63,6 +64,12 @@ func SafeCreateSECP256K1AccountKey(accountKeyBase64 string) (pubKey cryptotypes.
 	if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
 		return nil, sdkerrors.Wrapf(errors.ErrInvalidPubKey,
 			"SECP256K1 key must be in compressed format (first byte should be 0x02 or 0x03)")
+	}
+
+	// Length and prefix do not make a point: the x coordinate must also be on the curve.
+	// An off-curve key can never sign, and dApi dealers fail to encrypt BLS shares to it.
+	if _, parseErr := dcrsecp256k1.ParsePubKey(pubKeyBytes); parseErr != nil {
+		return nil, sdkerrors.Wrapf(errors.ErrInvalidPubKey, "SECP256K1 key is not a valid curve point: %v", parseErr)
 	}
 
 	pubKey = &secp256k1.PubKey{Key: pubKeyBytes}
