@@ -299,6 +299,7 @@ type Session struct {
 	signatures       map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	signatureSigners map[uint64]map[uint32]cachedSignatureSigner
 	store            storage.Storage          // optional persistent storage
+	sigWriter        *sigWriter               // persists signatures off s.mu; nil without store
 	nonceStates      map[uint64]*nonceOutcome // nonce -> protocol outcome
 	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
@@ -935,13 +936,20 @@ func (s *Session) rememberSignatureSignerLocked(nonce uint64, slot uint32, cache
 func (s *Session) signaturesAtLocked(nonce uint64) map[uint32][]byte {
 	held := s.signatures[nonce]
 	if s.store != nil && nonce != 0 && nonce <= s.sigsTrimmedThrough {
+		// Queue before store: a write landing between the two reads stays visible.
+		var queued map[uint32][]byte
+		if s.sigWriter != nil {
+			queued = s.sigWriter.pendingAt(nonce)
+		}
 		stored, err := s.store.GetSignatures(s.escrowID, nonce)
 		if err != nil {
 			logging.Warn("read trimmed signatures from store", "subsystem", "session",
 				"escrow", s.escrowID, "nonce", nonce, "error", err)
-		} else if len(stored) > 0 {
-			merged := make(map[uint32][]byte, len(stored)+len(held))
+		}
+		if len(stored) > 0 || len(queued) > 0 {
+			merged := make(map[uint32][]byte, len(stored)+len(queued)+len(held))
 			maps.Copy(merged, stored)
+			maps.Copy(merged, queued)
 			maps.Copy(merged, held)
 			held = merged
 		}
@@ -980,6 +988,28 @@ func (s *Session) verifiedSignatures(nonce uint64) (map[uint32][]byte, error) {
 		}
 	}
 	return valid, nil
+}
+
+// persistSignatureLocked queues sig for the store; the write runs after
+// s.mu is released. Caller must hold s.mu.
+func (s *Session) persistSignatureLocked(nonce uint64, slot uint32, sig []byte) {
+	if s.store == nil {
+		return
+	}
+	if s.sigWriter == nil {
+		s.sigWriter = newSigWriter(s.store, s.escrowID)
+	}
+	s.sigWriter.enqueue(nonce, slot, sig)
+}
+
+// flushSignatures waits for queued signature writes. Must not hold s.mu.
+func (s *Session) flushSignatures() {
+	s.mu.Lock()
+	w := s.sigWriter
+	s.mu.Unlock()
+	if w != nil {
+		w.flush()
+	}
 }
 
 // validateCatchUp warns if the catch-up diffs for a host are non-contiguous
@@ -1158,12 +1188,7 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[resp.Nonce][slot] = resp.StateSig
 			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
-					logging.Warn("failed to persist signature",
-						"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
-				}
-			}
+			s.persistSignatureLocked(resp.Nonce, slot, resp.StateSig)
 		}
 	}
 
@@ -1653,6 +1678,7 @@ func (s *Session) FlushSnapshot() error {
 	if s.store == nil {
 		return nil
 	}
+	s.flushSignatures()
 	// Acquire the snapshot slot, waiting briefly for any in-flight async
 	// save to finish. Bounded so retire never blocks indefinitely; if the
 	// async writer is still busy after the wait we proceed anyway (SQLite
@@ -3134,12 +3160,7 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[nonce][slot] = sigs[slotID]
 			s.rememberSignatureSignerLocked(nonce, slot, cached)
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, nonce, slot, sigs[slotID]); sigErr != nil {
-					logging.Warn("failed to persist fetched signature",
-						"escrow_id", s.escrowID, "nonce", nonce, "slot", slot, "error", sigErr)
-				}
-			}
+			s.persistSignatureLocked(nonce, slot, sigs[slotID])
 		}
 		logging.Info("fetched existing signature", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", nonce, "host", hostIdx, "address", expectedAddr)
@@ -4275,6 +4296,7 @@ func (s *Session) Close() error {
 	s.stopSendCatchUps()
 	closeHostClients(s.clients)
 	if s.store != nil {
+		s.flushSignatures()
 		return s.store.Close()
 	}
 	return nil
