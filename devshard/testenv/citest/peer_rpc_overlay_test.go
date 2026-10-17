@@ -294,30 +294,27 @@ func requireChildMux(t *testing.T, stack *harness.Stack, hostID string) {
 	require.GreaterOrEqual(t, connected, 1, "%s must keep an HTTP/2 mux to the child", hostID)
 }
 
+// settledPersistentTCP counts the connections to remIPHex:remPort that
+// stay established for longer than HAProxy's http-keep-alive (10s). Idle
+// JSON hops from the gateway share the public port and live up to that
+// long; Watch and the per-backend check connection outlive the window. A
+// count that merely stops changing for a few seconds would include such a
+// hop while it idles.
 func settledPersistentTCP(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
 	t.Helper()
-	// Idle JSON hops share versiond:8080 and drop after HAProxy's
-	// http-keep-alive (10s). Watch and the per-backend check connection
-	// stay. A one-shot health check does not survive the four-sample window.
-	deadline := time.Now().Add(15 * time.Second)
-	prev, stable := -1, 0
-	n := 0
-	for {
-		n = persistentEstablished(t, stack, service, remIPHex, remPort)
-		if n == prev {
-			stable++
-			if stable >= 2 {
-				return n
+	const window = 12 * time.Second
+	deadline := time.Now().Add(window)
+	keep := establishedKeys(procNetTCP(t, stack, service), remIPHex, remPort)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		sample := establishedKeys(procNetTCP(t, stack, service), remIPHex, remPort)
+		for key := range keep {
+			if _, ok := sample[key]; !ok {
+				delete(keep, key)
 			}
-		} else {
-			stable = 0
 		}
-		prev = n
-		if time.Now().After(deadline) {
-			return n
-		}
-		time.Sleep(time.Second)
 	}
+	return len(keep)
 }
 
 func persistentEstablished(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
