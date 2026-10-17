@@ -249,6 +249,7 @@ func requireHTTP11PeerRPCServed(t *testing.T, client *http.Client, router, versi
 		strings.NewReader("{}"))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/connect+json")
+	req.Header.Set("Connect-Protocol-Version", "1")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
