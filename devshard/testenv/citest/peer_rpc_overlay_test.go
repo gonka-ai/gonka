@@ -76,11 +76,10 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	requireRouterSawPeerRPC(t, stack, "HTTP/2.0", 0)
 
 	proxyIP := procIPv4(overlayProxyIP(cfg))
-	// The gateway keeps one mux to the proxy for peer RPC. Short JSON
-	// probes to the same port do not survive the settle window.
-	gatewayConns := settledPersistentTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort)
-	require.GreaterOrEqual(t, gatewayConns, 1, "gateway holds no persistent connection to the proxy")
-	require.LessOrEqual(t, gatewayConns, 2, "gateway opened more than a peer mux and one JSON keep-alive to the proxy")
+	// The gateway keeps one mux to the proxy for peer RPC. JSON hops to
+	// the same port do not outlive the keep-alive window.
+	gatewayConns := outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort)
+	require.Equal(t, 1, gatewayConns, "gateway must hold exactly one peer mux to the proxy")
 	// The proxy muxes that peer onto one HTTP/2 connection to the router's
 	// :8081. A host peer dial through the same proxy can hold a second one.
 	proxyBackend := settledPersistentTCP(t, stack, "proxy", "", 8081)
@@ -94,17 +93,19 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	// The version pool and the host-level pool each keep a mux and a
 	// check connection on this listen. Concurrent RPCs must ride those,
 	// not open another.
-	routerConns := settledPersistentTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080)
+	routerConns := outlivingKeepAliveTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080)
 	require.GreaterOrEqual(t, routerConns, 1)
 	require.LessOrEqual(t, routerConns, 4, "versiond-router opened more than a mux and a check per pool to %s", hostID)
 	requireChildMux(t, stack, hostID)
 
 	launchParallelChats(t, client, eps, cfg, 4)
-	require.Equal(t, gatewayConns, settledPersistentTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort),
-		"parallel RPCs opened new gateway connections to the proxy")
+	// The h2-only hop first: an extra proxy mux would close on the h2
+	// idle timeout before a keep-alive-length reading elsewhere ends.
 	require.Equal(t, proxyBackend, settledPersistentTCP(t, stack, "proxy", "", 8081),
 		"parallel RPCs opened new proxy connections to versiond-router:8081")
-	require.Equal(t, routerConns, settledPersistentTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
+	require.Equal(t, gatewayConns, outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort),
+		"parallel RPCs opened new gateway connections to the proxy")
+	require.Equal(t, routerConns, outlivingKeepAliveTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
 		"parallel RPCs opened new versiond-router connections to %s", hostID)
 	requireChildMux(t, stack, hostID)
 
@@ -294,13 +295,43 @@ func requireChildMux(t *testing.T, stack *harness.Stack, hostID string) {
 	require.GreaterOrEqual(t, connected, 1, "%s must keep an HTTP/2 mux to the child", hostID)
 }
 
-// settledPersistentTCP counts the connections to remIPHex:remPort that
-// stay established for longer than HAProxy's http-keep-alive (10s). Idle
-// JSON hops from the gateway share the public port and live up to that
-// long; Watch and the per-backend check connection outlive the window. A
-// count that merely stops changing for a few seconds would include such a
-// hop while it idles.
+// settledPersistentTCP returns the persistent connection count to
+// remIPHex:remPort once it has stopped changing. Use it on a hop that
+// carries only peer RPC muxes (proxy to versiond-router:8081): an extra
+// mux opened for parallel RPCs is seen even if the h2 idle timeout would
+// close it later. A one-shot health check does not survive the
+// four-sample window of one reading.
 func settledPersistentTCP(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	prev, stable := -1, 0
+	n := 0
+	for {
+		n = persistentEstablished(t, stack, service, remIPHex, remPort)
+		if n == prev {
+			stable++
+			if stable >= 2 {
+				return n
+			}
+		} else {
+			stable = 0
+		}
+		prev = n
+		if time.Now().After(deadline) {
+			return n
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// outlivingKeepAliveTCP counts the connections to remIPHex:remPort that
+// stay established for longer than HAProxy's http-keep-alive (10s). Use it
+// on a hop that also carries JSON: idle JSON hops from the gateway share
+// the public port and live up to that long, and versiond-router passes
+// them on to the host. Watch and the check connections outlive the window.
+// A count that merely stopped changing for a few seconds would include
+// such a hop while it idles.
+func outlivingKeepAliveTCP(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
 	t.Helper()
 	const window = 12 * time.Second
 	deadline := time.Now().Add(window)
