@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"common/completionapi"
@@ -592,8 +593,8 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 	var requestMap map[string]interface{}
 	require.NoError(t, json.Unmarshal(capturedBody, &requestMap))
 	assert.Contains(t, requestMap, "enforced_tokens")
-	assert.Equal(t, false, requestMap["stream"])
-	assert.NotContains(t, requestMap, "stream_options")
+	assert.Equal(t, true, requestMap["stream"])
+	assert.Equal(t, map[string]interface{}{"include_usage": true}, requestMap["stream_options"])
 	assert.Equal(t, true, requestMap["logprobs"])
 	assert.Equal(t, float64(5), requestMap["top_logprobs"])
 	assert.Equal(t, "processed_logprobs", requestMap["logprobs_mode"])
@@ -768,4 +769,215 @@ func TestExecuteValidation_DeepSeekInputUsageException(t *testing.T) {
 			}
 		})
 	}
+}
+
+type replayPosition struct {
+	token   string
+	logprob *float64
+}
+
+func floatPtr(v float64) *float64 { return &v }
+
+func replayPositions(prefix []float64, nanTail int) []replayPosition {
+	positions := make([]replayPosition, 0, len(prefix)+nanTail)
+	for _, lp := range prefix {
+		positions = append(positions, replayPosition{token: "42", logprob: floatPtr(lp)})
+	}
+	for i := 0; i < nanTail; i++ {
+		positions = append(positions, replayPosition{token: "0"})
+	}
+	return positions
+}
+
+func replayChunk(position replayPosition) map[string]interface{} {
+	return map[string]interface{}{
+		"token":   position.token,
+		"logprob": position.logprob,
+		"top_logprobs": []map[string]interface{}{
+			{"token": position.token, "logprob": position.logprob},
+			{"token": "99", "logprob": position.logprob},
+		},
+	}
+}
+
+func streamedResponsePayload(positions []replayPosition) []byte {
+	events := make([]string, 0, len(positions)+1)
+	for _, position := range positions {
+		chunk, _ := json.Marshal(map[string]interface{}{
+			"id":      "test",
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]interface{}{{"index": 0, "delta": map[string]interface{}{"content": "x"}, "logprobs": map[string]interface{}{"content": []interface{}{replayChunk(position)}}}},
+		})
+		events = append(events, "data: "+string(chunk))
+	}
+	events = append(events, "data: [DONE]")
+	b, _ := json.Marshal(map[string]interface{}{"events": events})
+	return b
+}
+
+func replaySSE(positions []replayPosition, withUsage, withDone bool, errorEvent string) []byte {
+	var sb strings.Builder
+	for _, position := range positions {
+		chunk, _ := json.Marshal(map[string]interface{}{
+			"id":      "replay",
+			"object":  "chat.completion.chunk",
+			"choices": []map[string]interface{}{{"index": 0, "delta": map[string]interface{}{"content": "x"}, "logprobs": map[string]interface{}{"content": []interface{}{replayChunk(position)}}}},
+			"usage":   nil,
+		})
+		sb.WriteString("data: " + string(chunk) + "\n\n")
+	}
+	if errorEvent != "" {
+		sb.WriteString("data: " + errorEvent + "\n\n")
+	}
+	if withUsage {
+		sb.WriteString(`data: {"id":"replay","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":` + strconv.Itoa(len(positions)) + `,"total_tokens":` + strconv.Itoa(10+len(positions)) + "}}\n\n")
+	}
+	if withDone {
+		sb.WriteString("data: [DONE]\n\n")
+	}
+	return []byte(sb.String())
+}
+
+func grammarPrefix(n int, logprob float64) []float64 {
+	prefix := make([]float64, n)
+	for i := range prefix {
+		prefix[i] = logprob
+	}
+	return prefix
+}
+
+func TestExecuteValidation_StreamedReplayWithNaNTailMatchesHonestExecutor(t *testing.T) {
+	positions := replayPositions(grammarPrefix(20, -0.1), int(completionapi.MinTokensFloor)-20)
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		streamedResponsePayload(positions),
+		staticExecutor(http.StatusOK, replaySSE(positions, true, true, "")),
+		10, uint64(len(positions)), "processed_logprobs", 0,
+	)
+	require.NoError(t, err)
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.InDelta(t, 1.0, result.(*SimilarityValidationResult).Value, 1e-9)
+	assert.True(t, result.IsSuccessful())
+}
+
+func TestExecuteValidation_StreamedReplayWithNaNTailScoresForgedPrefix(t *testing.T) {
+	tail := int(completionapi.MinTokensFloor) - 40
+	executor := replayPositions(grammarPrefix(40, -0.1), tail)
+	validator := replayPositions(grammarPrefix(40, -6.0), tail)
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		streamedResponsePayload(executor),
+		staticExecutor(http.StatusOK, replaySSE(validator, true, true, "")),
+		10, uint64(len(executor)), "processed_logprobs", 0,
+	)
+	require.NoError(t, err)
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.Less(t, result.(*SimilarityValidationResult).Value, 0.85)
+	assert.False(t, result.IsSuccessful())
+}
+
+func TestExecuteValidation_StreamedReplayFailuresAreErrors(t *testing.T) {
+	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 0)
+	cases := map[string][]byte{
+		"error event": replaySSE(positions[:3], true, true, `{"error":{"message":"engine dead","type":"InternalServerError","code":500}}`),
+		"no done":     replaySSE(positions, true, false, ""),
+		"no usage":    replaySSE(positions, false, true, ""),
+		"malformed":   append([]byte("data: {\"choices\":[{\"index\":0,\n\n"), replaySSE(positions, true, true, "")...),
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			result, err := ExecuteValidation(
+				context.Background(), "inf-1",
+				minimalPrompt,
+				streamedResponsePayload(positions),
+				staticExecutor(http.StatusOK, body),
+				10, uint64(len(positions)), "processed_logprobs", 0,
+			)
+			require.Error(t, err)
+			assert.Nil(t, result)
+		})
+	}
+}
+
+func TestExecuteValidation_StreamedReplayErrorEventIsNotAnEmptySentinelVerdict(t *testing.T) {
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		responsePayloadJSON("<EMPTY>", -0.5),
+		staticExecutor(http.StatusOK, replaySSE(nil, false, true, `{"error":{"message":"engine dead","type":"InternalServerError","code":500}}`)),
+		0, 0, "processed_logprobs", 0,
+	)
+	require.Error(t, err)
+	assert.Nil(t, result)
+}
+
+func TestExecuteValidation_StreamedReplayErrorEventKeepsNonStreamVerdicts(t *testing.T) {
+	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 0)
+	cases := []struct {
+		name    string
+		event   string
+		invalid bool
+	}{
+		{"enforced tokens rejected", `{"error":{"message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens","code":400}}`, true},
+		{"nested 400 autopass", `{"error":{"message":"bad","type":"BadRequestError","param":null,"code":400}}`, false},
+		{"flat 422 autopass", `{"object":"error","message":"bad","type":"BadRequestError","param":null,"code":"422"}`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := ExecuteValidation(
+				context.Background(), "inf-1",
+				minimalPrompt,
+				streamedResponsePayload(positions),
+				staticExecutor(http.StatusOK, replaySSE(positions[:2], false, true, tc.event)),
+				10, uint64(len(positions)), "processed_logprobs", 0,
+			)
+			require.NoError(t, err)
+			if tc.invalid {
+				require.IsType(t, &InvalidInferenceResult{}, result)
+				return
+			}
+			require.IsType(t, &SimilarityValidationResult{}, result)
+			assert.True(t, result.IsSuccessful())
+		})
+	}
+}
+
+func TestExecuteValidation_StreamedReplayIgnoresSSECommentsAndFields(t *testing.T) {
+	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 4)
+	events := strings.Split(strings.TrimSpace(string(replaySSE(positions, true, true, ""))), "\n\n")
+	var sb strings.Builder
+	sb.WriteString(": keepalive\r\n\r\n")
+	for i, event := range events {
+		if i == 3 {
+			sb.WriteString(": ping\n\nevent: message\nid: 3\n")
+		}
+		sb.WriteString(event + "\r\n\r\n")
+	}
+	sb.WriteString(": trailing\n\n")
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		streamedResponsePayload(positions),
+		staticExecutor(http.StatusOK, []byte(sb.String())),
+		10, uint64(len(positions)), "processed_logprobs", 0,
+	)
+	require.NoError(t, err)
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.InDelta(t, 1.0, result.(*SimilarityValidationResult).Value, 1e-9)
+}
+
+func TestNormalizeReplayStream_NonStreamBodiesPassThrough(t *testing.T) {
+	jsonBody := responsePayloadJSON("42", -0.5)
+	status, body, err := NormalizeReplayStream(http.StatusOK, jsonBody)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, status)
+	assert.Equal(t, jsonBody, body)
+
+	errorBody := []byte(`data: {"error":{"code":500}}`)
+	status, body, err = NormalizeReplayStream(http.StatusBadRequest, errorBody)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Equal(t, errorBody, body)
 }

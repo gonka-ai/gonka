@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"common/completionapi"
 	"common/logging"
@@ -163,6 +164,120 @@ func rejectsEnforcedTokens(body []byte) bool {
 		} `json:"error"`
 	}
 	return json.Unmarshal(body, &errorBody) == nil && errorBody.Error.Param == "enforced_tokens"
+}
+
+var (
+	errReplayStreamIncomplete = errors.New("validator replay stream ended without [DONE]")
+	errReplayStreamNoUsage    = errors.New("validator replay stream carried no usage")
+	errReplayStreamFailed     = errors.New("validator replay stream failed")
+)
+
+func replayDataLines(body []byte) ([]string, bool) {
+	var lines []string
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case line == "", strings.HasPrefix(line, ":"):
+			continue
+		case strings.HasPrefix(line, "data:"):
+			lines = append(lines, line)
+		case strings.HasPrefix(line, "event:"), strings.HasPrefix(line, "id:"), strings.HasPrefix(line, "retry:"):
+			continue
+		case len(lines) == 0:
+			return nil, false
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return lines, len(lines) > 0
+}
+
+func replayDataPayload(line string) string {
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+}
+
+func replayStreamErrorStatus(code json.RawMessage) int {
+	var number float64
+	if json.Unmarshal(code, &number) == nil {
+		return int(number)
+	}
+	var text string
+	if json.Unmarshal(code, &text) == nil {
+		if parsed, err := strconv.Atoi(text); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func NormalizeReplayStream(statusCode int, body []byte) (int, []byte, error) {
+	if statusCode != http.StatusOK {
+		return statusCode, body, nil
+	}
+	lines, isStream := replayDataLines(body)
+	if !isStream {
+		return statusCode, body, nil
+	}
+	for _, line := range lines {
+		var event struct {
+			Error  json.RawMessage `json:"error"`
+			Object string          `json:"object"`
+			Code   json.RawMessage `json:"code"`
+		}
+		payload := replayDataPayload(line)
+		if json.Unmarshal([]byte(payload), &event) != nil {
+			continue
+		}
+		var errorObject json.RawMessage
+		var code json.RawMessage
+		switch {
+		case len(event.Error) > 0 && string(event.Error) != "null":
+			errorObject = event.Error
+			var nested struct {
+				Code json.RawMessage `json:"code"`
+			}
+			_ = json.Unmarshal(event.Error, &nested)
+			code = nested.Code
+		case event.Object == "error":
+			errorObject = json.RawMessage(payload)
+			code = event.Code
+		default:
+			continue
+		}
+		status := replayStreamErrorStatus(code)
+		if status >= 400 && status < 500 {
+			errorBody, err := json.Marshal(map[string]json.RawMessage{"error": errorObject})
+			if err != nil {
+				return 0, nil, err
+			}
+			return status, errorBody, nil
+		}
+		return 0, nil, fmt.Errorf("%w: %s", errReplayStreamFailed, payload)
+	}
+	if replayDataPayload(lines[len(lines)-1]) != "[DONE]" {
+		return 0, nil, errReplayStreamIncomplete
+	}
+	if _, err := parseReplayResponse(body); err != nil {
+		return 0, nil, err
+	}
+	return statusCode, body, nil
+}
+
+func parseReplayResponse(body []byte) (completionapi.CompletionResponse, error) {
+	lines, isStream := replayDataLines(body)
+	if !isStream {
+		return completionapi.NewCompletionResponseFromBytes(body)
+	}
+	response, err := completionapi.NewCompletionResponseFromLines(lines)
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range response.(*completionapi.StreamedCompletionResponse).Resp.Data {
+		if !chunk.Usage.IsEmpty() {
+			return response, nil
+		}
+	}
+	return nil, errReplayStreamNoUsage
 }
 
 func validationReplaySeed(inferenceID string) int32 {
@@ -384,9 +499,9 @@ func ExecuteValidationWithPolicy(
 	} else {
 		requestMap["enforced_tokens"] = enforcedTokens
 	}
-	requestMap["stream"] = false
+	requestMap["stream"] = true
+	requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
 	requestMap["skip_special_tokens"] = false
-	delete(requestMap, "stream_options")
 
 	requestBody, err := json.Marshal(requestMap)
 	if err != nil {
@@ -399,14 +514,18 @@ func ExecuteValidationWithPolicy(
 	}
 	defer resp.Body.Close()
 
-	respBodyBytes, err := io.ReadAll(resp.Body)
+	respBodyBytes, err := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+	if err != nil {
+		return nil, err
+	}
+	statusCode, respBodyBytes, err := NormalizeReplayStream(resp.StatusCode, respBodyBytes)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
+	if statusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
 		logging.Warn("validation failed: validator node rejected the executor's enforced tokens", types.Validation,
-			"inferenceId", inferenceID, "status", resp.StatusCode)
+			"inferenceId", inferenceID, "status", statusCode)
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens rejected by validator node."}, nil
 	}
 
@@ -417,26 +536,26 @@ func ExecuteValidationWithPolicy(
 	// invalid: absent proof the executor cheated, it is not punished. Keep mainnet
 	// semantics and rely on the warn logs to surface any cases worth marking
 	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+	if statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity {
 		logging.Warn("validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
-			types.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
+			types.Validation, "inferenceId", inferenceID, "status", statusCode)
 		return &SimilarityValidationResult{
 			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
 			Value:                1.0,
 		}, nil
 	}
 
-	if isEmptySentinel && resp.StatusCode == http.StatusOK {
-		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
-			"inferenceId", inferenceID)
-		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
-	}
-
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
-	responseValidation, err := completionapi.NewCompletionResponseFromBytes(respBodyBytes)
+	responseValidation, err := parseReplayResponse(respBodyBytes)
 	if err != nil {
 		logging.Error("Failed to unmarshal responseValidation", types.Validation, "id", inferenceID, "error", err)
 		return nil, err
+	}
+
+	if isEmptySentinel && statusCode == http.StatusOK {
+		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
+			"inferenceId", inferenceID)
+		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
