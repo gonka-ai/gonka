@@ -25,6 +25,7 @@ import (
 	"devshard/testenv/mockchain/fetcher"
 
 	"github.com/labstack/echo/v4"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -36,6 +37,8 @@ const grpcTracerName = "mock-dapi.nodemanager"
 type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
+	chainClient    *chain.Client
+	phaseSchedule  *gatewayphase.Schedule
 	paramsSrv      *params.Server
 	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
@@ -114,10 +117,13 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	hostEvents := newHostEventRing()
 	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockMock, cfg.OmitBlockRoutes, cfg.MLNodes)
+	nodeManager.hosts = newHostPools(cfg.MLNodes, cfg.MLNodeHosts, cfg.HostAddrs)
 
 	s := &Service{
 		cfg:            cfg,
 		paramsSrc:      src,
+		chainClient:    chainClient,
+		phaseSchedule:  gatewayphase.NewSchedule(cfg.PhaseSchedule),
 		paramsSrv:      paramsSrv,
 		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
@@ -247,11 +253,17 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	if s.cfg.BinaryDir != "" {
 		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
 	}
-	gatewayphase.Mount(e.Group(""), gatewayphase.Config{
+	phaseCfg := gatewayphase.Config{
 		BlockHeight: s.cfg.GatewayBlockHeight,
 		EpochIndex:  s.cfg.GatewayEpochIndex,
-	})
+		Schedule:    s.phaseSchedule,
+	}
+	if s.cfg.GatewayBlockHeight == 0 && s.cfg.GatewayEpochIndex == 0 {
+		phaseCfg.Source = s.gatewayPhaseState
+	}
+	gatewayphase.Mount(e.Group(""), phaseCfg)
 	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents)
+	mountHostPools(e.Group(""), s.nodeManager.hosts)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {
@@ -323,6 +335,31 @@ func mountBinaryFiles(g *echo.Group, dir string) {
 		}
 		return c.File(filepath.Join(dir, name))
 	})
+}
+
+// gatewayPhaseState reads the live epoch from mock-chain gRPC and the
+// participant list from its admin API, which is optional.
+func (s *Service) gatewayPhaseState(ctx context.Context) (gatewayphase.State, error) {
+	info, err := s.chainClient.InferenceQueryClient().EpochInfo(ctx, &inferencetypes.QueryEpochInfoRequest{})
+	if err != nil {
+		return gatewayphase.State{}, fmt.Errorf("mock-chain epoch info: %w", err)
+	}
+	st := gatewayphase.State{
+		BlockHeight:         info.BlockHeight,
+		EpochIndex:          info.LatestEpoch.Index,
+		PoCStartBlockHeight: info.LatestEpoch.PocStartBlockHeight,
+	}
+	if s.admin == nil || s.admin.BaseURL() == "" {
+		return st, nil
+	}
+	participants, err := s.admin.ListParticipants(ctx)
+	if err != nil {
+		return gatewayphase.State{}, fmt.Errorf("mock-chain participants: %w", err)
+	}
+	for _, p := range participants {
+		st.Participants = append(st.Participants, gatewayphase.Participant{Address: p.Address, InferenceURL: p.InferenceURL})
+	}
+	return st, nil
 }
 
 // ParamsSource exposes the cached params source for tests.

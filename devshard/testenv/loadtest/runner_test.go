@@ -139,22 +139,26 @@ func TestFormatStatusCounts(t *testing.T) {
 func TestAssertRunReportsExpectedAndActualValues(t *testing.T) {
 	scenario := testScenario()
 	summary := Summary{
-		Requests:  4,
-		Completed: 2,
-		Failed:    2,
-		Dropped:   1,
-		ErrorRate: 0.5,
+		Requests:    4,
+		Completed:   2,
+		Failed:      2,
+		Dropped:     1,
+		ErrorRate:   1.0 / 3,
+		DroppedRate: 0.25,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	checks := assertRun(scenario, summary, RunInputs{}, nil)
+	err := &assertionFailures{Checks: failedChecks(checks)}
 
-	require.Error(t, err)
-	require.Len(t, checks, 1)
+	require.Len(t, checks, 2)
 	require.Equal(t, "requests.error_rate", checks[0].Name)
 	require.False(t, checks[0].Passed)
 	require.Equal(t, "<= 0.0000 (0.00%)", checks[0].Expected)
-	require.Equal(t, "0.5000 (50.00%)", checks[0].Actual)
+	require.Equal(t, "0.3333 (33.33%)", checks[0].Actual)
 	require.Contains(t, checks[0].Details, "http_failures=1")
+	require.Equal(t, "requests.dropped_rate", checks[1].Name)
+	require.False(t, checks[1].Passed)
+	require.Equal(t, "0.2500 (25.00%)", checks[1].Actual)
 	require.Contains(t, err.Error(), "expected")
 	require.Contains(t, err.Error(), "actual")
 }
@@ -169,16 +173,46 @@ func TestAssertRunEvaluatesAllEnabledAssertions(t *testing.T) {
 		ErrorRate: 0.5,
 	}
 
-	_, checks, err := assertRun(context.Background(), scenario, summary, nil, "", "", nil, nil)
+	checks := assertRun(scenario, summary, RunInputs{}, nil)
+	err := &assertionFailures{Checks: failedChecks(checks)}
 
-	require.Error(t, err)
-	require.Len(t, checks, 3)
+	require.Len(t, checks, 4)
 	require.Equal(t, []string{
 		"requests.error_rate",
+		"requests.dropped_rate",
 		"mock_ml.node_used.mock-openai-0",
 		"mock_ml.node_used.mock-openai-1",
-	}, []string{checks[0].Name, checks[1].Name, checks[2].Name})
+	}, []string{checks[0].Name, checks[1].Name, checks[2].Name, checks[3].Name})
 	require.Contains(t, err.Error(), "3 assertions failed")
+}
+
+// Test flow:
+// 1. Allow 12% gateway errors and leave the drop bound unset, then set it to 30%.
+// 2. Require an unset drop bound to fall back to the error bound, and a set one to win.
+func TestAssertRunJudgesGeneratorDropsOnTheirOwnBound(t *testing.T) {
+	summary := Summary{Requests: 100, Completed: 80, Failed: 20, Dropped: 20, DroppedRate: 0.2}
+	cases := []struct {
+		name        string
+		droppedRate *float64
+		passed      bool
+		expected    string
+	}{
+		{name: "unset bound falls back to the error bound", passed: false, expected: "<= 0.1200 (12.00%)"},
+		{name: "own bound", droppedRate: func() *float64 { bound := 0.3; return &bound }(), passed: true, expected: "<= 0.3000 (30.00%)"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Assertions.Requests.ErrorRate = 0.12
+			scenario.Assertions.Requests.DroppedRate = testCase.droppedRate
+
+			checks := assertRun(scenario, summary, RunInputs{}, nil)
+
+			require.Equal(t, "requests.dropped_rate", checks[1].Name)
+			require.Equal(t, testCase.passed, checks[1].Passed)
+			require.Equal(t, testCase.expected, checks[1].Expected)
+		})
+	}
 }
 
 func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testing.T) {
@@ -187,7 +221,7 @@ func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testin
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.5, map[string]struct{}{"2": {}}, time.Second)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.5, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Finished)
 	require.Zero(t, summary.Orphaned)
@@ -199,7 +233,7 @@ func TestWaitForNoOrphanedWork_RejectsGhostRateAboveThreshold(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.25, map[string]struct{}{"2": {}}, time.Second)
+	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.25, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
 	require.ErrorContains(t, err, "ghost inference rate 0.5000")
 }
 
@@ -209,7 +243,7 @@ func TestWaitForNoOrphanedWorkDoesNotRequireOneInferencePerRequest(t *testing.T)
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, time.Second)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Total)
 	require.Equal(t, 1, summary.Finished)
@@ -221,7 +255,7 @@ func TestWaitForNoOrphanedWorkRejectsPendingInference(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, 10*time.Millisecond)
+	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond})
 	require.ErrorContains(t, err, "orphaned=1")
 	require.ErrorContains(t, err, "pending=1")
 }
@@ -232,30 +266,77 @@ func TestWaitForNoOrphanedWorkAcceptsTerminalStatuses(t *testing.T) {
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0, nil, time.Second)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
 	require.Equal(t, 3, summary.Total)
 }
 
-func TestReadGhostInferenceIDs(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "compose.log")
-	require.NoError(t, os.WriteFile(path, []byte("devshardctl | request=r1 stage=ghost_probe_skipped escrow=1 nonce=9 reason=no_compatible_request_after_stale\n"), 0o644))
+// Test flow:
+// 1. Serve a deactivated escrow with a pending record and an active escrow whose work finished.
+// 2. Require the deactivated escrow's record to count as sealed, not orphaned.
+func TestWaitForNoOrphanedWorkLeavesDeactivatedEscrowsToTheSettleCheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/admin/devshards":
+			_, _ = fmt.Fprint(w, `{"devshards":[{"id":"1","active":false},{"id":"2","active":true}]}`)
+		case "/devshard/1/v1/debug/inferences":
+			_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"pending"}}}`)
+		case "/devshard/2/v1/debug/inferences":
+			_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"finished"}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
 
-	ghosts, err := readGhostInferenceIDs(path)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond}, true)
+
 	require.NoError(t, err)
-	require.Equal(t, map[string]struct{}{"9": {}}, ghosts)
+	require.Zero(t, summary.Orphaned)
+	require.Equal(t, 1, summary.Sealed)
 }
 
-func TestReadGhostInferenceIDsJSONLogs(t *testing.T) {
+// Test flow:
+// 1. Serve an active escrow with a pending record younger than the pending-age bound, then one older.
+// 2. Require the young record to count as in flight and the old one as orphaned.
+func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
+	cases := []struct {
+		name     string
+		age      time.Duration
+		orphaned int
+		inFlight int
+	}{
+		{name: "younger than the bound is in flight", age: 10 * time.Second, inFlight: 1},
+		{name: "older than the bound is orphaned", age: 2 * time.Minute, orphaned: 1},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			startedAt := time.Now().Add(-testCase.age).Unix()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"pending","started_at":%d}}}`, startedAt)
+			}))
+			defer server.Close()
+
+			_, summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: time.Minute})
+
+			require.Equal(t, testCase.orphaned, summary.Orphaned)
+			require.Equal(t, testCase.inFlight, summary.InFlight)
+		})
+	}
+}
+
+func TestReadGatewayBurnsJSONLogs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compose.log")
 	log := `devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"1","nonce":271,"reason":"participant_catching_up_no_send"}` + "\n" +
 		`devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
 
-	ghosts, err := readGhostInferenceIDs(path)
+	burns, err := readGatewayBurns(path)
 	require.NoError(t, err)
-	require.Equal(t, map[string]struct{}{"271": {}}, ghosts)
+	require.Equal(t, []gatewayBurn{
+		{At: time.Date(2026, 10, 14, 12, 28, 14, 0, time.UTC), EscrowID: "1", Nonce: "271", Reason: "participant_catching_up_no_send"},
+	}, burns)
 }
 
 func TestFetchGatewayStateSizes(t *testing.T) {
@@ -354,4 +435,161 @@ func TestApplyGatewayParticipantQuarantine(t *testing.T) {
 			require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
 		})
 	}
+}
+
+// Test flow:
+// 1. Build checks for a known_bug case (one failing, one passing), a plain case and no case.
+// 2. Mark them without and with strict mode.
+// 3. Check failures become passing XFAIL, passes become XPASS (failing only when strict), and other checks are untouched.
+func TestMarkKnownBugs(t *testing.T) {
+	cases := []Case{{ID: "host-over-peer-chat-budget", KnownBug: "#1988"}, {ID: "receipt-then-empty-stream"}}
+	checks := []AssertionResult{
+		{Name: "i6.no_quarantine", Case: "host-over-peer-chat-budget", Passed: false, Details: "P4 quarantined"},
+		{Name: "i1.no_misses", Case: "host-over-peer-chat-budget", Passed: true},
+		{Name: "i6.reason", Case: "receipt-then-empty-stream", Passed: false},
+		{Name: "requests.error_rate", Passed: true},
+		{Name: "i8.recovery", Case: "host-over-peer-chat-budget", Passed: true, Status: statusNotJudged},
+	}
+	marked := markKnownBugs(checks, cases, false)
+	require.Equal(t, checks[4], marked[4])
+	require.Equal(t, "XFAIL", marked[0].Status)
+	require.True(t, marked[0].Passed)
+	require.Equal(t, "known_bug #1988; P4 quarantined", marked[0].Details)
+	require.Equal(t, "XPASS", marked[1].Status)
+	require.True(t, marked[1].Passed)
+	require.Equal(t, checks[2], marked[2])
+	require.Equal(t, checks[3], marked[3])
+	require.Equal(t, []AssertionResult{marked[2]}, failedChecks(marked))
+	strict := markKnownBugs(checks, cases, true)
+	require.False(t, strict[1].Passed)
+	require.Len(t, failedChecks(strict), 2)
+	require.False(t, checks[0].Passed)
+}
+
+// Test flow:
+// 1. Decode a recorded docker compose ls payload.
+// 2. Check a running loadtest-* project blocks the start, other projects do not, and a listing error is reported.
+func TestRefuseConcurrentStacks(t *testing.T) {
+	names, err := parseComposeProjects([]byte(`[{"Name":"loadtest-dm37aoxwypts","Status":"running(12)","ConfigFiles":"/tmp/a.yml"},{"Name":"testenv","Status":"running(3)"}]`))
+	require.NoError(t, err)
+	require.Equal(t, []string{"loadtest-dm37aoxwypts", "testenv"}, names)
+	list := func(projects []string, err error) func(context.Context) ([]string, error) {
+		return func(context.Context) ([]string, error) { return projects, err }
+	}
+	require.ErrorContains(t, refuseConcurrentStacks(context.Background(), list(names, nil)), "loadtest-dm37aoxwypts")
+	require.NoError(t, refuseConcurrentStacks(context.Background(), list([]string{"testenv", "citest-1"}, nil)))
+	require.NoError(t, refuseConcurrentStacks(context.Background(), list(nil, nil)))
+	require.ErrorContains(t, refuseConcurrentStacks(context.Background(), list(nil, errors.New("docker down"))), "docker down")
+	_, err = parseComposeProjects([]byte("not json"))
+	require.Error(t, err)
+}
+
+// Test flow:
+// 1. Apply gateway settings with the two new quarantines and per-model settlement overrides to a fake admin endpoint.
+// 2. Check the throttle keys in milliseconds, and that settlement_enabled is set only on overridden models.
+// 3. Check an override for a model that is not rotated is rejected.
+func TestApplyGatewayChunkASettings(t *testing.T) {
+	scenario := mixScenario()
+	scenario.Gateway.ParticipantThrottle = GatewayParticipantThrottle{EmptyStreamQuarantine: "45s", StalledWinnerQuarantine: "1m"}
+	disabled := false
+	scenario.Gateway.EscrowRotation = GatewayEscrowRotation{Enabled: true, SettlementEnabled: true, PrePoCBlocks: 10, TempCount: 1, TargetCount: 2, Amount: 5, PrivateKeyEnv: "KEY",
+		Models: []GatewayRotationModel{{Model: "model-b", SettlementEnabled: &disabled}, {Model: "model-a"}}}
+	var body struct {
+		Throttle map[string]int64 `json:"participant_throttle"`
+		Rotation struct {
+			SettlementEnabled bool             `json:"settlement_enabled"`
+			Models            []map[string]any `json:"models"`
+		} `json:"escrow_rotation"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	models := rotationModelIDs(nil, nil, scenario)
+	require.Equal(t, []string{"model-a", "model-b"}, models)
+	require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, models))
+	require.Equal(t, map[string]int64{"empty_stream_quarantine_ms": 45000, "stalled_winner_quarantine_ms": 60000}, body.Throttle)
+	require.True(t, body.Rotation.SettlementEnabled)
+	require.Len(t, body.Rotation.Models, 2)
+	require.NotContains(t, body.Rotation.Models[0], "settlement_enabled")
+	require.Equal(t, false, body.Rotation.Models[1]["settlement_enabled"])
+	require.ErrorContains(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, []string{"model-a"}), "model-b is not a rotated model")
+}
+
+// Test flow:
+// 1. Write the runner config from a minimal base config for a 3-participant scenario with per-host env, ML node bindings and a two-model mix.
+// 2. Load the written config.
+// 3. Check host env and node bindings are threaded through, and each mix model has its own escrow and epoch group.
+func TestWriteRunnerConfigThreadsChunkAFields(t *testing.T) {
+	scenario := mixScenario()
+	scenario.Topology.Participants = 3
+	scenario.Topology.Hosts = []TopologyHost{{ID: "versiond-3", Env: map[string]string{"DEVSHARD_RPC_MSGS_PER_MIN": "3000"}}}
+	scenario.Topology.MockML.Nodes[1].Host = "versiond-3"
+	require.NoError(t, scenario.Validate())
+	profiles := map[string]Profile{"fast": {TTFT: "1ms", TokenInterval: "1ms", Workers: 1}}
+	testenvDir := t.TempDir()
+	base := &config.File{Hosts: []config.HostCfg{{ID: "versiond-0"}, {ID: "versiond-1"}, {ID: "versiond-2"}}, Escrows: []config.Escrow{{ID: 1, ModelID: "test-model"}}}
+	base.ApplyDefaults()
+	require.NoError(t, os.MkdirAll(filepath.Join(testenvDir, "config"), 0o755))
+	require.NoError(t, base.Save(filepath.Join(testenvDir, "config", "config.yaml")))
+	workDir := t.TempDir()
+	require.NoError(t, writeRunnerConfig(testenvDir, workDir, scenario, profiles, false, nil))
+	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
+	require.NoError(t, err)
+	require.Len(t, cfg.Hosts, 4)
+	require.Equal(t, map[string]string{"DEVSHARD_RPC_MSGS_PER_MIN": "3000"}, cfg.Hosts[3].Env)
+	require.Empty(t, cfg.Hosts[2].Env)
+	require.Equal(t, "", cfg.MockOpenAI.Nodes[0].Host)
+	require.Equal(t, "versiond-3", cfg.MockOpenAI.Nodes[1].Host)
+	var escrowModels, groupModels []string
+	for _, escrow := range cfg.Escrows {
+		escrowModels = append(escrowModels, escrow.ModelID)
+	}
+	for _, group := range cfg.EpochGroups {
+		groupModels = append(groupModels, group.ModelID)
+	}
+	require.Equal(t, []string{"model-a", "model-b"}, escrowModels)
+	require.Equal(t, []string{"model-a", "model-b"}, groupModels)
+}
+
+// Test flow:
+// 1. Turn one complete, one failed and one never-reverted event record into assertions.
+// 2. Check only the complete record passes and the error is carried in details.
+func TestEventAssertions(t *testing.T) {
+	now := time.Now().UTC()
+	checks := eventAssertions([]EventRecord{
+		{ID: "c1", Action: "ml_fault", Target: "mock-openai-3", StartedAt: &now, EndedAt: &now},
+		{ID: "c6", Action: "gateway_restart", Target: "devshardctl", Error: "kill failed"},
+		{ID: "c3", Action: "pause", Target: "versiond-3", StartedAt: &now},
+	})
+	require.Equal(t, "events.c1.ml_fault.mock-openai-3.applied", checks[0].Name)
+	require.True(t, checks[0].Passed)
+	require.False(t, checks[1].Passed)
+	require.Equal(t, "kill failed", checks[1].Details)
+	require.False(t, checks[2].Passed)
+	require.Contains(t, checks[2].Actual, "ended=<none>")
+}
+
+// Test flow:
+// 1. Write the runner config from a testenv dir with no config/config.yaml, as in a clean worktree.
+// 2. Load the written config.
+// 3. Check the participant hosts, escrow amount and ML nodes come from the scenario.
+func TestWriteRunnerConfigWithoutBaseConfig(t *testing.T) {
+	scenario := mixScenario()
+	scenario.Topology.Participants = 5
+	scenario.Topology.Chain.EscrowAmount = 123456
+	scenario.Topology.MockML.Nodes[1].Host = "versiond-3"
+	require.NoError(t, scenario.Validate())
+	profiles := map[string]Profile{"fast": {TTFT: "1ms", TokenInterval: "1ms", Workers: 1}}
+	workDir := t.TempDir()
+	require.NoError(t, writeRunnerConfig(t.TempDir(), workDir, scenario, profiles, false, nil))
+	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
+	require.NoError(t, err)
+	require.Len(t, cfg.Hosts, 6)
+	require.NotEmpty(t, cfg.Escrows)
+	for _, escrow := range cfg.Escrows {
+		require.Equal(t, uint64(123456), escrow.Amount)
+	}
+	require.Len(t, cfg.MockOpenAI.Nodes, len(scenario.Topology.MockML.Nodes))
 }

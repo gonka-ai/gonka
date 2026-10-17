@@ -1,0 +1,6 @@
+data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null,"index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop","index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: [DONE]
+
