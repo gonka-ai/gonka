@@ -91,12 +91,13 @@ func localSendError(err error) error {
 // VerifyRefusedProgress is the verifier's refused-timeout check.
 // Deadline, mempool, and payload checks do not contact the executor; a rejection is final.
 // SessionHead nonce T selects diffs from T+1, for any root and for a tip past LatestNonce.
-// session not found starts at nonce 1. Any other answered SessionHead error sends the
-// payload and no diffs. No HTTP response accepts the timeout. An answer with no verified
+// session not found, or any other answered SessionHead error, starts a cold catch-up
+// from nonce 1. No HTTP response accepts the timeout. An answer with no verified
 // receipt rechecks the tip only when the previous root matched, and challenges from the
 // new tip, at most RefusalProgressRetries times.
 // WithColdWalk, on this verifier only, keeps one gated walk in flight per executor: a
-// cold head (session not found or tip 0), or any suffix past coldWalkLongNonces. Other
+// cold head (session not found, an answered tip error, or tip 0), or any suffix past
+// coldWalkLongNonces. Other
 // gated checks wait and do not read the journal. The next gated walk resumes at the
 // nonce already sent. Once that nonce is past LatestNonce, or coldCatchUpAttempts walks
 // ended without progress, a gated check sends the payload alone and is judged as usual.
@@ -229,8 +230,13 @@ func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr err
 			logRefusalCursor("cold", 1, nonce, st.LatestNonce)
 			return 1, false, false, nil
 		}
-		logRefusalCursor("ahead", st.LatestNonce+1, nonce, st.LatestNonce)
-		return st.LatestNonce + 1, false, false, nil
+		// An answered error that is neither "not found" nor unreachable leaves the
+		// executor's applied nonce unknown: it may be mid-restart or mid-rotation and
+		// behind our journal. Catch it up from nonce 1, the same as a cold start,
+		// instead of challenging with the payload alone, which would miss a lagging
+		// but honest executor and vote to accept the timeout against it.
+		logRefusalCursor("tip-error", 1, nonce, st.LatestNonce)
+		return 1, false, false, nil
 	}
 	if nonce > 0 && nonce <= st.LatestNonce && len(root) == 32 {
 		matched, err = journal.Anchor(nonce, root)
@@ -247,10 +253,12 @@ func refusalCursor(st types.EscrowState, nonce uint64, root []byte, queryErr err
 	return cursor, matched, false, nil
 }
 
-// refusalWalkHead describes the walk the first SessionHead asks for. A tip
-// past LatestNonce and an unanswered head walk nothing, so they are not long.
+// refusalWalkHead describes the walk the first SessionHead asks for. A reported
+// tip past LatestNonce walks nothing, so it is not long; an answered error leaves
+// the tip unknown and, like a zero tip or a not-found session, is cold and takes
+// the gate so one executor's catch-up walk does not run once per pending inference.
 func refusalWalkHead(st types.EscrowState, cursor, nonce uint64, matched bool, queryErr error) walkHead {
-	h := walkHead{cold: sessionNotFound(queryErr) || (queryErr == nil && nonce == 0)}
+	h := walkHead{cold: queryErr != nil || nonce == 0}
 	if queryErr != nil || h.cold {
 		return h
 	}

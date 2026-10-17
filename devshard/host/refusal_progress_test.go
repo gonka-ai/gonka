@@ -543,6 +543,9 @@ func TestRefusalCursorChoosesTheSuffix(t *testing.T) {
 	})
 
 	t.Run("storage busy", func(t *testing.T) {
+		// An answered error that is neither not-found nor unreachable leaves the tip
+		// unknown, so the walk catches the executor up from nonce 1, the same as a
+		// cold start, rather than challenging with the payload alone.
 		busy := errors.New("storage busy")
 		peer := &progressPeer{
 			heads: []struct {
@@ -560,8 +563,8 @@ func TestRefusalCursorChoosesTheSuffix(t *testing.T) {
 		)
 		require.NoError(t, err)
 		require.True(t, accept)
-		require.Equal(t, []int{0}, pageLens(peer.pages))
-		require.Empty(t, sentNonces(peer.pages))
+		require.Equal(t, []int{4}, pageLens(peer.pages))
+		require.Equal(t, []uint64{1, 2, 3, 4}, sentNonces(peer.pages))
 	})
 
 	t.Run("session not found", func(t *testing.T) {
@@ -799,6 +802,13 @@ func TestSessionNotFoundMatch(t *testing.T) {
 	require.False(t, sessionNotFound(fmt.Errorf("get state: %w", connect.NewError(connect.CodeInternal, errors.New("session not found")))))
 }
 
+// TestRefusalCursorRejectsABuriedSessionPhrase pins that an error whose text only
+// buries "session not found" is not mistaken for a cold session-not-found restart
+// (that exact classification is pinned by TestSessionNotFoundMatch). It is an
+// answered, non-NotFound tip error, so the verifier catches the executor up from
+// nonce 1 like any answered tip error: the diffs are sent so a lagging executor
+// gets its chance to answer. This peer never returns a receipt, so the timeout is
+// accepted, but only after the catch-up was offered.
 func TestRefusalCursorRejectsABuriedSessionPhrase(t *testing.T) {
 	root := bytes.Repeat([]byte{1}, 32)
 	journal := &progressJournal{diffs: progressDiffs(4, root)}
@@ -820,7 +830,7 @@ func TestRefusalCursorRejectsABuriedSessionPhrase(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.True(t, accept)
-	require.Empty(t, sentNonces(peer.pages))
+	require.Equal(t, []uint64{1, 2, 3, 4}, sentNonces(peer.pages))
 	require.Equal(t, []bool{true}, peer.sawPayload)
 }
 
