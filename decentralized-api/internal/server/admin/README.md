@@ -19,6 +19,11 @@ count. Failed spendable queries are not replaced by total bank balances.
 - A positive balance with an unknown budget does not fail for insufficient funds.
   The check's message explains that one-epoch coverage could not be determined.
 - Query or decoding errors produce `UNAVAILABLE`, rather than an invented zero.
+- For a warm signer, a failure names the short side: the cold balance, the
+  remaining fee allowance, or both. A partly spent allowance is not refreshed by
+  running `grant-ml-ops-permissions` again, which skips an existing allowance; it
+  has to be revoked first.
+- A failure keeps the allowance check's "expiring soon" warning in the message.
 
 The StoreCommit count is resolved from the latest epoch's top participant,
 summing that participant's counts across models, just as for
@@ -32,7 +37,9 @@ to this node's own count. Smaller nodes can therefore fail this readiness check
 even if their balance would cover their own observed workload.
 
 When available, `details` includes `denom`, `spendable_balance`, `budget_balance`,
-`budget_known`, `count`, `count_source`, and `spendable_covers_budget`.
+`budget_known`, `count`, `count_source`, `spendable_covers_budget`, and
+`limited_by` (`cold_balance` or `fee_allowance`). For a warm signer it also
+includes `cold_spendable_balance`, the cold balance before the allowance cap.
 `spendable_covers_budget: false` alone is not a failure when `budget_known` is
 false. These fields describe a diagnostic estimate, not a guarantee of future
 transaction costs or funding.

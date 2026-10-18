@@ -217,6 +217,50 @@ func TestCheckFeegrant_DenominationsAndWrappedCap(t *testing.T) {
 	}
 }
 
+func TestCheckFeegrant_NamesTheShortSide(t *testing.T) {
+	params := setupFeeParams()
+	budget := epochFeeBudgetNgonka(params.FeeParams, params.EpochParams, params.ConfirmationPocParams, 10)
+	require.True(t, budget.GT(math.NewInt(2)), "the cases below need a budget above 2")
+	coins := func(n math.Int) sdk.Coins { return sdk.NewCoins(sdk.NewCoin(types.BaseCoin, n)) }
+	amount := func(n math.Int) string { return n.String() + " " + types.BaseCoin }
+	regrant := "revoke the cold-to-warm allowance, then run grant-ml-ops-permissions again (it skips an existing allowance)"
+	soon := time.Now().Add(time.Hour)
+	for _, tc := range []struct {
+		name      string
+		cold      math.Int
+		allowance feegrant.FeeAllowanceI
+		limitedBy string
+		message   string
+	}{
+		{"allowance short, cold funded", budget.MulRaw(100), &feegrant.BasicAllowance{SpendLimit: coins(budget.SubRaw(1))}, "fee_allowance",
+			"Remaining fee allowance from cold to warm key (" + amount(budget.SubRaw(1)) + ") is below the one-epoch fee budget (" + amount(budget) +
+				"), while the cold account holds " + amount(budget.MulRaw(100)) + "; " + regrant},
+		{"allowance only in another denom", budget.MulRaw(2), &feegrant.BasicAllowance{SpendLimit: sdk.NewCoins(sdk.NewCoin("other", budget))}, "fee_allowance",
+			"Remaining fee allowance from cold to warm key (" + amount(math.ZeroInt()) + ") is below the one-epoch fee budget (" + amount(budget) +
+				"), while the cold account holds " + amount(budget.MulRaw(2)) + "; " + regrant},
+		{"allowance and cold both short", budget.SubRaw(1), &feegrant.BasicAllowance{SpendLimit: coins(budget.SubRaw(2))}, "fee_allowance",
+			"Cold balance (" + amount(budget.SubRaw(1)) + ") and remaining fee allowance from cold to warm key (" + amount(budget.SubRaw(2)) +
+				") are both below the one-epoch fee budget (" + amount(budget) + "); fund the cold account, then " + regrant},
+		{"cold short, unlimited allowance", budget.SubRaw(1), &feegrant.BasicAllowance{}, "cold_balance",
+			"Usable cold balance (" + amount(budget.SubRaw(1)) + ") is below the one-epoch fee budget (" + amount(budget) + ")"},
+		{"failure keeps the expiry warning", budget.SubRaw(1), &feegrant.BasicAllowance{Expiration: &soon}, "cold_balance",
+			"Usable cold balance (" + amount(budget.SubRaw(1)) + ") is below the one-epoch fee budget (" + amount(budget) +
+				"). Fee allowance present, expiring soon at " + soon.UTC().Format(time.RFC3339)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, qc := setupFeegrantServer(t, &setupBankQuery{spendable: coins(tc.cold)}, &setupAllowanceQuery{grant: setupTestGrant(t, tc.allowance)}, false)
+			qc.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{Params: params, LatestEpoch: types.Epoch{PocStartBlockHeight: 123}}, nil)
+			qc.On("AllPoCV2StoreCommitsForStage", mock.Anything, mock.Anything).Return(&types.QueryAllPoCV2StoreCommitsForStageResponse{Commits: []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "a", Count: 10}}}, nil)
+			check := s.checkFeegrant(context.Background())
+			require.Equal(t, FAIL, check.Status, check.Message)
+			require.Equal(t, tc.message, check.Message)
+			details := check.Details.(map[string]interface{})
+			require.Equal(t, tc.limitedBy, details["limited_by"])
+			require.Equal(t, tc.cold.String(), details["cold_spendable_balance"])
+		})
+	}
+}
+
 func TestCheckFeegrant_UnavailableAndInvalidGrant(t *testing.T) {
 	expired := time.Now().Add(-time.Hour)
 	expiredInner := setupTestGrant(t, &feegrant.BasicAllowance{Expiration: &expired}).Allowance

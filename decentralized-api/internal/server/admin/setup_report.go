@@ -322,6 +322,8 @@ func (s *Server) checkPermissions(ctx context.Context) Check {
 	}
 }
 
+const feeAllowanceExpiringSoon = "Fee allowance present, expiring soon"
+
 func (s *Server) checkFeegrant(ctx context.Context) Check {
 	coldKeyAddr := s.recorder.GetAccountAddress()
 	warmKeyAddr := s.recorder.GetSignerAddress()
@@ -373,30 +375,66 @@ func (s *Server) checkFeegrant(ctx context.Context) Check {
 	details["denom"] = types.BaseCoin
 
 	clientCtx := s.recorder.GetClientContext()
-	spendable, err := tx_manager.FeePayerSpendable(ctx, clientCtx, coldKeyAddr, warmKeyAddr, time.Now(),
-		func(ctx context.Context, address string) ([]sdk.Coin, error) {
-			// Also support RPC-only client contexts. Never fall back to total
-			// BankBalances: vesting funds cannot pay this epoch's fees.
-			resp, err := banktypes.NewQueryClient(clientCtx).SpendableBalances(ctx, &banktypes.QuerySpendableBalancesRequest{Address: address})
-			if err != nil {
-				return nil, err
-			}
-			if resp == nil {
-				return nil, fmt.Errorf("empty spendable balances response")
-			}
-			return resp.Balances, nil
-		})
+	bankSpendable := func(ctx context.Context, address string) ([]sdk.Coin, error) {
+		// Also support RPC-only client contexts. Never fall back to total
+		// BankBalances: vesting funds cannot pay this epoch's fees.
+		resp, err := banktypes.NewQueryClient(clientCtx).SpendableBalances(ctx, &banktypes.QuerySpendableBalancesRequest{Address: address})
+		if err != nil {
+			return nil, err
+		}
+		if resp == nil {
+			return nil, fmt.Errorf("empty spendable balances response")
+		}
+		return resp.Balances, nil
+	}
+	now := time.Now()
+	spendable, err := tx_manager.FeePayerSpendable(ctx, clientCtx, coldKeyAddr, warmKeyAddr, now, bankSpendable)
 	if err != nil {
 		return unavailable(fmt.Sprintf("Unable to query usable cold balance: %s", err))
 	}
+	// For a warm signer, spendable is capped by the remaining fee allowance. Read
+	// the uncapped cold balance too, so a failure names the side that is short.
+	coldSpendable := spendable
+	if coldKeyAddr != warmKeyAddr {
+		coldSpendable, err = tx_manager.FeePayerSpendable(ctx, clientCtx, coldKeyAddr, coldKeyAddr, now, bankSpendable)
+		if err != nil {
+			return unavailable(fmt.Sprintf("Unable to query cold balance: %s", err))
+		}
+		details["cold_spendable_balance"] = coldSpendable.String()
+	}
+	allowanceIsLimit := spendable.LT(coldSpendable)
+	if allowanceIsLimit {
+		details["limited_by"] = "fee_allowance"
+	} else {
+		details["limited_by"] = "cold_balance"
+	}
 	details["spendable_balance"] = spendable.String()
 	details["spendable_covers_budget"] = known && spendable.GTE(budget)
-	if spendable.IsZero() {
+	// Keep an expiry warning from the allowance check when this check fails.
+	expiryWarning := ""
+	if strings.HasPrefix(check.Message, feeAllowanceExpiringSoon) {
+		expiryWarning = check.Message
+	}
+	fail := func(message string) {
 		check.Status = FAIL
-		check.Message = "No usable cold balance for epoch fees; fund the cold account and, when using a warm key, check its remaining fee allowance"
+		check.Message = message
+		if expiryWarning != "" {
+			check.Message += ". " + expiryWarning
+		}
+	}
+	regrant := "revoke the cold-to-warm allowance, then run grant-ml-ops-permissions again (it skips an existing allowance)"
+	allowanceShort := allowanceIsLimit && (spendable.IsZero() || (known && spendable.LT(budget)))
+	coldShort := known && coldSpendable.LT(budget)
+	if allowanceShort && coldShort {
+		fail(fmt.Sprintf("Cold balance (%s %s) and remaining fee allowance from cold to warm key (%s %s) are both below the one-epoch fee budget (%s %s); fund the cold account, then %s", coldSpendable, types.BaseCoin, spendable, types.BaseCoin, budget, types.BaseCoin, regrant))
+	} else if allowanceShort && known {
+		fail(fmt.Sprintf("Remaining fee allowance from cold to warm key (%s %s) is below the one-epoch fee budget (%s %s), while the cold account holds %s %s; %s", spendable, types.BaseCoin, budget, types.BaseCoin, coldSpendable, types.BaseCoin, regrant))
+	} else if allowanceShort {
+		fail(fmt.Sprintf("The fee allowance from cold to warm key has no %s left for epoch fees, while the cold account holds %s %s; %s", types.BaseCoin, coldSpendable, types.BaseCoin, regrant))
+	} else if spendable.IsZero() {
+		fail("No usable cold balance for epoch fees; fund the cold account and, when using a warm key, check its remaining fee allowance")
 	} else if known && spendable.LT(budget) {
-		check.Status = FAIL
-		check.Message = fmt.Sprintf("Usable cold balance (%s %s) is below the one-epoch fee budget (%s %s)", spendable, types.BaseCoin, budget, types.BaseCoin)
+		fail(fmt.Sprintf("Usable cold balance (%s %s) is below the one-epoch fee budget (%s %s)", spendable, types.BaseCoin, budget, types.BaseCoin))
 	} else if !known {
 		check.Message += ". Usable cold balance is positive, but the one-epoch budget is unknown without a StoreCommit count."
 	}
@@ -512,7 +550,7 @@ func (s *Server) checkFeegrantAllowance(ctx context.Context) Check {
 		return Check{
 			ID:      "feegrant_allowance",
 			Status:  PASS,
-			Message: fmt.Sprintf("Fee allowance present, expiring soon at %s", expiration.Format(time.RFC3339)),
+			Message: fmt.Sprintf("%s at %s", feeAllowanceExpiringSoon, expiration.Format(time.RFC3339)),
 			Details: details,
 		}
 	}
