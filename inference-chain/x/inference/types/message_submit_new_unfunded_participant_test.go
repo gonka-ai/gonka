@@ -40,6 +40,17 @@ func TestMsgSubmitNewUnfundedParticipant_ValidateBasic(t *testing.T) {
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
+			name: "whitespace-only worker key",
+			msg: MsgSubmitNewUnfundedParticipant{
+				Creator:      validCreator,
+				Address:      validAddress,
+				Url:          "https://example.com",
+				PubKey:       sample.ValidSECP256K1AccountKey(),
+				ValidatorKey: sample.ValidED25519ValidatorKey(),
+				WorkerKey:    "   ",
+			},
+			err: sdkerrors.ErrInvalidPubKey,
+		}, {
 			name: "valid all required fields",
 			msg: MsgSubmitNewUnfundedParticipant{
 				Creator:      validCreator,
