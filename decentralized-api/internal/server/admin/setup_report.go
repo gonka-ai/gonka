@@ -1014,7 +1014,7 @@ func buildRecommendationMap() map[string]string {
 		"warm_key_in_keyring":       "Ensure warm key exists in keyring at configured location",
 		"warm_key_address_match":    "Check KEY_NAME environment variable matches keyring key name",
 		"permissions_granted":       "Run authz grant commands. See inference-chain/x/inference/permissions.go",
-		"feegrant_allowance":        "Ensure the cold account has spendable funds for one epoch; when using a warm key, check its remaining fee allowance and run `inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address>` to (re)grant it if needed",
+		"feegrant_allowance":        "Ensure the cold account has spendable funds for one epoch. With a warm key, `inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address>` creates a missing fee allowance but skips an existing one; to refresh a short or expiring allowance, first run `inferenced tx feegrant revoke <cold-address> <warm-address>`",
 		"consensus_key_match":       "Verify validator node is running and consensus key matches participant registration",
 		"active_in_epoch":           "Check PoC participation and ensure node is properly registered",
 		"validator_not_jailed":      "Unjail validator or investigate validator status issues",

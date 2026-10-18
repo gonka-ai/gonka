@@ -19,10 +19,13 @@ count. Failed spendable queries are not replaced by total bank balances.
 - A positive balance with an unknown budget does not fail for insufficient funds.
   The check's message explains that one-epoch coverage could not be determined.
 - Query or decoding errors produce `UNAVAILABLE`, rather than an invented zero.
-- For a warm signer, a failure names the short side: the cold balance, the
-  remaining fee allowance, or both. A partly spent allowance is not refreshed by
-  running `grant-ml-ops-permissions` again, which skips an existing allowance; it
-  has to be revoked first.
+- For a warm signer, a failure names the side that limits usable funds. When the
+  remaining fee allowance is below the cold balance, the message names the
+  allowance, and the cold balance as well if it is also short. Otherwise it names
+  the cold balance, and the allowance is only known to cover at least that much.
+  A partly spent allowance is not refreshed by running `grant-ml-ops-permissions`
+  again, which skips an existing allowance; revoke it first with
+  `inferenced tx feegrant revoke <cold-address> <warm-address>`.
 - A failure keeps the allowance check's "expiring soon" warning in the message.
 
 The StoreCommit count is resolved from the latest epoch's top participant,

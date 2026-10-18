@@ -397,6 +397,7 @@ func TestSetupReport_CachedFeeFailureKeepsHTTP200(t *testing.T) {
 	s.generateSummary(report)
 	require.Equal(t, FAIL, report.OverallStatus)
 	require.Contains(t, report.Summary.Recommendations[0], "cold account")
+	require.Contains(t, report.Summary.Recommendations[0], "inferenced tx feegrant revoke <cold-address> <warm-address>")
 	cachedReportMutex.Lock()
 	previous := cachedReport
 	cachedReport = report
