@@ -25,8 +25,9 @@ The binary and the wrapping do not move together.
 
 1. Governance auto-adds the v6 `devshardd` and gateway onto the wrapping that
    is already running (v4 or v5 `versiond`, `versiond-router`, `proxy`,
-   `proxy-router`). Peer RPC is Connect over HTTP/1.1 on InferenceUrl. There
-   is no multiplexing: in-flight requests do not share one connection.
+   `proxy-router`). Peer RPC normally uses Connect over HTTP/1.1 on InferenceUrl. Old nginx
+   in `NGINX_MODE=both` can accept h2c on the client hop, but still forwards
+   over H1: there is no end-to-end multiplexing.
 2. Operators then switch the wrapping to the v6 images. Peer RPC moves to
    HTTP/2 on the same InferenceUrl port. Each peer keeps one connection, end
    to end. That path is what turns on the new per-connection limits.
@@ -48,7 +49,9 @@ port speaks HTTP/2, and uses HTTP/1.1 through nginx when it does not.
   across the escrows that child serves; version is part of the key, so a v5
   token is not a v6 token.
 - **On the old wrapping, gRPC is simulated.** Connect rides InferenceUrl as
-  ordinary HTTP/1.1. nginx (or the v5 policy worker) still sees `/rpc/`.
+  normally HTTP/1.1. Old nginx in `NGINX_MODE=both` can accept h2c
+  from the client while still forwarding over H1. nginx (or the v5 policy
+  worker) still sees `/rpc/`.
   Native gRPC is not selected. Each in-flight RPC is its own connection.
 - **On the v6 wrapping, the same RPC is HTTP/2 on the same port.** A peer
   opens its connection to InferenceUrl with the HTTP/2 preface (HTTP) or
@@ -58,12 +61,14 @@ port speaks HTTP/2, and uses HTTP/1.1 through nginx when it does not.
   or `versiond` (non-HA) → `versiond` → the loopback child. One TCP
   connection per peer carries that peer's chats, Watch, and the other RPCs.
   Nothing new is opened in a firewall and nothing is set in `config.env`.
-- **A peer whose host is still on the old wrapping is not cut off.** nginx
-  answers the preface with HTTP/1.1 and negotiates no ALPN for the token;
+- **A peer whose host is still on the old wrapping is not cut off.** HTTP-only nginx
+  answers the preface with HTTP/1.1; HTTPS nginx does not negotiate the peer ALPN token;
   the client treats an explicit protocol mismatch as "no HTTP/2 here", remembers it for 30 minutes ± 10%,
   and continues over Connect on HTTP/1.1 through nginx. It probes HTTP/2
   again after that, so a host that updates later is picked up without a
-  restart. Ambiguous connection closure instead starts a 30-second exponential
+  restart. Old nginx in `NGINX_MODE=both` can instead accept h2c on the
+  client hop while forwarding over H1, without triggering a protocol miss.
+  Ambiguous connection closure instead starts a 30-second exponential
   backoff. `DEVSHARD_RPC_H2_UPGRADE=false` in the versiond process environment
   turns outbound probing off; changing a host file alone does not update a
   running process.
@@ -78,7 +83,8 @@ port speaks HTTP/2, and uses HTTP/1.1 through nginx when it does not.
 nginx. From v5 on, the join service named `proxy` runs the `proxy-router`
 image (HAProxy); nginx is the `proxy-policy` worker behind it. Confirm the
 image before deciding which transport a host is on. Only the HAProxy image
-recognises peer RPC; behind the nginx image every peer stays on HTTP/1.1.
+recognises the dedicated peer-RPC route; nginx can accept ordinary H2 from
+the client but still forwards over H1.
 
 ## What's in this release
 
@@ -335,18 +341,20 @@ state on the day v6 is auto-added.
 
 Also run the crossed ingress if the host can be composed that way (v4
 `versiond` behind v5 `proxy-router`, v5 `versiond` behind nginx `proxy`).
-The expected transport does not change: neither old ingress recognises the
-HTTP/2 preface or the peer-RPC ALPN, so the probe misses and Connect rides
-HTTP/1.1.
+Check HTTP-only and both-mode nginx separately. HTTP-only nginx rejects the
+H2 preface, and HTTPS nginx does not negotiate the peer ALPN token, so Connect
+falls back to H1. For an HTTP URL, both-mode nginx can accept h2c: Connect
+then uses H2 to nginx and H1 downstream. Client socket counts alone cannot
+prove end-to-end multiplexing.
 
 On every cell:
 
 | Check | Pass |
 | --- | --- |
 | Chat, a second concurrent chat, gossip, `/healthz` | All succeed. HA: the same escrow stays on the same `versiond` |
-| Transport | Connect over HTTP/1.1 on InferenceUrl. N in-flight RPCs are N connections. They do not share one |
-| HTTP/2 probe | One probe per origin at a time: explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure backs off from 30 seconds to 30 minutes. Application/stream errors do not mark the origin H1-only. Connect stays on InferenceUrl |
-| Native gRPC | Not used. No `application/grpc` content type on the wire |
+| Transport | HTTP-only or HTTPS nginx: Connect/H1, one client connection per in-flight RPC. HTTP URL with both-mode nginx: Connect may share an H2 client connection, but downstream RPCs still use separate H1 connections |
+| HTTP/2 probe | A successful h2c probe to both-mode nginx need not miss. Otherwise, one probe per origin at a time: explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure backs off from 30 seconds to 30 minutes. Application/stream errors do not mark the origin H1-only. Connect stays on InferenceUrl |
+| Native gRPC | Leave `DEVSHARD_RPC_GRPC` unset (default Connect). H2 to nginx does not establish end-to-end gRPC support |
 | `/rpc/` | Visible on the nginx / policy-worker access log |
 | Child rate limit | Still enforced. See scenario A below. The public connection limits must not fire, because nothing reached the peer-RPC frontend |
 | Mixed version on one escrow | A v6 peer and a v5 peer on the same escrow both complete a chat |
@@ -370,8 +378,8 @@ image is `proxy-router`:
 | Fallback | With `DEVSHARD_RPC_H2_UPGRADE=false` the same peer returns to HTTP/1.1 on InferenceUrl and the connection count fans out again. The same happens, without any setting, when this host's `proxy` image is swapped back for one that does not recognise the preface: the peer's next Attach misses, logs once, and continues over HTTP/1.1 |
 
 nginx `proxy` cells on the v6 branch (S, H, image is nginx rather than
-HAProxy): HTTP/2 is not this ingress. Pass is the same as section 1
-(HTTP/1.1, no shared connection, JSON still served). A nginx-only host that
+HAProxy): use the mode-dependent criteria in section 1. The client hop may
+use h2c with both-mode nginx, but forwarding remains H1 and JSON stays served. A nginx-only host that
 cannot be reached over HTTP/1.1 is a failure.
 
 ### 3. Rate-limit scenarios
@@ -475,7 +483,7 @@ least; S and H if that ingress is still in the estate.
 
 ### Done when
 
-- Section 1 is green for v4 (S, H) and v5 (SR, HR): HTTP/1.1, no shared connection, child limits on, public connection limits absent.
+- Section 1 is green for v4 (S, H) and v5 (SR, HR): mode-dependent client transport, H1 downstream, child limits on, dedicated public RPC connection limits absent.
 - Section 2 is green for v6 `proxy-router` (SR, HR): one connection per peer, nginx blind to `/rpc/`, JSON intact. nginx `proxy` cells still look like section 1.
 - Scenarios A–H match the table, including the second peer staying healthy and a long catch-up staying inside one page and one 200-diff chunk.
 - Section 4 is green for v4 and for v4.2.

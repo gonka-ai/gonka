@@ -37,9 +37,13 @@ peer RPC (same :80/:443, skips nginx)
 
 A client whose first bytes are neither (an older devshard, a browser, curl)
 never sees the peer-RPC frontend. A peer whose host still runs an older
-wrapping gets nginx on these ports, fails its HTTP/2 probe there, and
-continues over Connect on HTTP/1.1 through the JSON path; there is no port
-to open or close when the wrapping changes. The hand-off waits for the
+wrapping normally falls back to Connect on HTTP/1.1 through nginx. With an
+HTTP URL and old nginx in `NGINX_MODE=both`, nginx can accept h2c instead:
+the client-to-nginx hop stays H2, but nginx still forwards over H1. This
+is not end-to-end multiplexing or the new public RPC connection policy.
+Intermediate separate-port v6 testnet clients/routers are not a supported
+mixed-generation combination; see the compatibility table in the
+[canonical host guide](https://gonka.ai/docs/host/devshard-high-availability/). The hand-off waits for the
 first bytes at most `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` (default 5); an
 idle connection then goes to nginx.
 

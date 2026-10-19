@@ -8,14 +8,14 @@
 Feature: v6 peer RPC follows the wrapping, not the binary
 
   The v6 devshard binary is auto-added onto the wrapping that is already
-  running. Peer RPC is then Connect over HTTP/1.1, and in-flight requests
-  do not share a connection. After versiond, versiond-router, proxy, and
+  running. Peer RPC normally uses Connect over HTTP/1.1. With an HTTP URL
+  and both-mode nginx, the client hop may use h2c but forwarding stays H1. After versiond, versiond-router, proxy, and
   proxy-router move to the v6 images, proxy-router serves the same RPC over
   HTTP/2 on the same InferenceUrl port, one connection per peer: it
   recognises a peer by the HTTP/2 preface on port 80 or ALPN gonka-rpc/1 on
   port 443 and keeps nginx out of that connection. A peer whose host still
-  runs the old wrapping finds that out on its first Attach and continues
-  over HTTP/1.1. JSON on ports 80 and 443 stays in place for v4 and v4.2.
+  runs the old wrapping uses Connect; a successful h2c probe to nginx does
+  not establish end-to-end multiplexing. JSON on ports 80 and 443 stays in place for v4 and v4.2.
 
   A chat that works on one cell and fails on the next is a release failure.
 
@@ -23,6 +23,7 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     Given two peers with different keys and different source addresses
     And one approved host version
     And a long chat can be held open while short RPCs run
+    And DEVSHARD_RPC_GRPC is unset unless native gRPC is explicitly under test
 
   # Cells:
   #   S   versiond + proxy           single
@@ -31,16 +32,18 @@ Feature: v6 peer RPC follows the wrapping, not the binary
   #   HR  versiond-router + proxy-router  HA, two versiond replicas
 
   @old-wrapping @http11
-  Scenario Outline: v6 on the old wrapping uses HTTP/1.1 and does not multiplex
+  Scenario Outline: old nginx without h2c uses HTTP/1.1 and does not multiplex
     Given the devshardd and the gateway are v6
     And the wrapping images are <wrapping>
     And the cell is <cell>
+    And InferenceUrl uses HTTP with HTTP-only nginx or uses HTTPS
     When both peers open N concurrent chats
     And one peer gossips and reads /healthz
     Then every call succeeds
     And peer RPC is Connect over HTTP/1.1 on InferenceUrl
-    And the established connection count to port 443 tracks N, not 1
-    And the HTTP/2 probe on that port misses once per host and is logged once
+    And the established connection count to the InferenceUrl port tracks N, not 1
+    And an explicit protocol miss is cached per scheme, host, and port for 30 minutes with jitter
+    And an ambiguous connection close instead uses short exponential backoff
     And the wire has no application/grpc content type
     And the nginx or policy-worker access log shows /rpc/
     And the public connection-rate limits do not fire
@@ -146,10 +149,11 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     And no process was restarted for either change
 
   @v6-wrapping @http11
-  Scenario Outline: a v6 nginx proxy does not become the HTTP/2 listen
+  Scenario Outline: a v6 nginx proxy without h2c retains HTTP/1.1
     Given the devshardd, the gateway, and versiond are v6
     And the cell is <cell>
     And the ingress image is nginx, not proxy-router
+    And InferenceUrl uses HTTP with HTTP-only nginx or uses HTTPS
     When both peers open N concurrent chats
     Then peer RPC is Connect over HTTP/1.1 on InferenceUrl
     And the established connection count tracks N, not 1
@@ -160,6 +164,30 @@ Feature: v6 peer RPC follows the wrapping, not the binary
       | cell |
       | S    |
       | H    |
+
+  @compat @nginx @h2c
+  Scenario Outline: both-mode nginx multiplexes only the client hop
+    Given the devshardd and gateway are v6
+    And the wrapping images are <wrapping>
+    And the cell is <cell>
+    And nginx has NGINX_MODE=both
+    And InferenceUrl uses HTTP
+    When one peer opens N concurrent RPCs
+    Then every call succeeds using Connect
+    And the client may keep a successful h2c connection to nginx without a protocol miss
+    And concurrent RPCs use separate HTTP/1.1 connections downstream of nginx
+    And nginx logs /rpc/ requests
+    And the dedicated public peer-RPC connection policy is not exercised
+    And the child still enforces peer limits
+
+    Examples:
+      | wrapping | cell |
+      | v4       | S    |
+      | v4       | H    |
+      | v5       | SR   |
+      | v5       | HR   |
+      | v6 with nginx ingress | S |
+      | v6 with nginx ingress | H |
 
   @rate-limit @both-wrappings
   Scenario: peer budget isolates peers

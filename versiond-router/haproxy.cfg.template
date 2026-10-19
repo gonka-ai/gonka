@@ -98,10 +98,10 @@ resolvers docker
 # path, not the port or the protocol, so Connect over HTTP/1.1 from a peer
 # whose own side has no HTTP/2 reaches the same twin through :8080.
 # :8081 is the proxy's peer-RPC dial (proto h2), the same frontend and the
-# same path-based routing as :8080. Every v6 router generation binds it, so a
-# proxy and a fleet of different generations keep a peer-RPC path in either
-# replacement order. JSON and the HTTP/1.1 fallback arrive on :8080. Neither
-# port is published.
+# same path-based routing as :8080. Intermediate separate-port v6 routers
+# rejected H1 RPC on :8080, so a common :8081 port does not guarantee mixed
+# generation compatibility. Follow the documented fleet -> proxy -> versiond
+# order. JSON and H1 compatibility arrive on :8080. Neither port is published.
 frontend versiond_in
     bind ${FRONT_BIND_ADDRESS}:8080 id 1
     bind ${FRONT_BIND_ADDRESS}:8081 id 2

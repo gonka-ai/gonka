@@ -553,10 +553,12 @@ versiond-router has one data frontend with two unpublished binds: `:8080` for ng
 HTTP/1.1 JSON and the HTTP/1.1 fallback, `:8081` for the proxy's `proto h2` dial.
 HAProxy detects the HTTP/2 preface on either cleartext bind, and the `_rpc` twin of a
 backend is selected by the `/sessions/{id}/rpc/` path, not by port or protocol, so the
-fallback reaches the same twin and the same child. The inner port stays `8081` because
-every v6 router generation binds it (the earlier one as a `proto h2` frontend that
-refused `/rpc/` on `:8080`), so a proxy and a fleet of different generations keep a
-peer-RPC path in either replacement order.
+fallback reaches the same twin and the same child. The private H2 port remains
+`8081`, but intermediate separate-port v6 routers rejected `/rpc/` on `8080`.
+They therefore cannot provide this fallback and are not a supported mixed
+combination. Follow the fleet → proxy/policy → versiond order in the
+[canonical host guide](https://gonka.ai/docs/host/devshard-high-availability/),
+including its old-nginx and testnet compatibility exceptions.
 
 A default `httputil.ReverseProxy` (HTTP/1.1) or a child `http.ListenAndServe` without
 `golang.org/x/net/http2/h2c` fans N RPCs back into N TCP connections and **fails** this

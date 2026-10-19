@@ -33,11 +33,10 @@ POLICY_POOL_SLOTS="${PROXY_POLICY_POOL_SLOTS:-4}"
 ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
-# The router's peer-RPC listen. Every v6 router generation binds :8081
-# (the previous one as a proto h2 frontend, the current one as a second
-# bind of its data frontend), so the proxy's HTTP/2 dial works across a
-# fleet or proxy replacement in either order. JSON and the HTTP/1.1
-# fallback use ROUTER_PORT.
+# The current router's private peer-RPC listen. A shared port number does
+# not imply compatibility with intermediate separate-port v6 testnet routers:
+# those reject H1 RPC on :8080. Use the supported fleet -> proxy -> versiond
+# update order. JSON and bounded H1 compatibility use ROUTER_PORT.
 ROUTER_RPC_PORT=8081
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 # Peer RPC shares :80/:443 with the JSON API. The public frontends hand a
@@ -264,9 +263,8 @@ esac
 # check-proto h1 the probe would follow proto h2, and without a check at all
 # HAProxy reports the server "no check", which the fleet drain does not match.
 # The checks also prove the data dial itself. HA: after the admin readiness,
-# the coarse pool opens the router's :8081 over HTTP/2 and only needs an
-# HTTP answer there (a v5 router has no such listen; the previous v6
-# router answers from a pool the per-version twins do not depend on), and
+# the coarse pool requires HTTP 200 from /healthz on the router's :8081
+# over HTTP/2 (a v5 router has no such listen), and
 # each version twin asks /<version>/healthz over that dial. Non-HA opens
 # versiond's own listen over HTTP/2: a v5 versiond has no h2c and fails. A
 # generation that fails leaves the pool, and the frontend sends peer RPC to
