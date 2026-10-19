@@ -486,7 +486,8 @@ jobs:
 
       - name: Install ripgrep
         # Pin the package version for reproducible CI; keep in sync with runner image.
-        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2
+        # nginx is the old wrapping in TestAttachOriginThroughNginxAndVersiond.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2 nginx
 
       - name: Build
         run: go build ./...

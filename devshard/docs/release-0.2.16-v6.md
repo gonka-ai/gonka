@@ -211,6 +211,7 @@ loopback). Defaults:
 | Deadline per chat frame write | 30s | `PeerAuthConfig.ChatSendTimeout` |
 | Watch streams per peer | 8 | fixed |
 | `Attach` renewal, before the signature check | burst 4, 4/min | fixed |
+| Anonymous `Attach`, per origin, before the signature check | 10 tokens, refilled at 10/s, 4 in flight. One IPv4 address or one IPv6 /64 from `X-Real-IP`. Spent before the process floor. A missing header is not a key | fixed |
 | Anonymous `Attach` floor | 50 tokens, refilled at 50/s | `DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` |
 
 Watch streams per peer is 8: two replicas, two generations during a rolling
@@ -384,8 +385,8 @@ cannot be reached over HTTP/1.1 is a failure.
 
 ### 3. Rate-limit scenarios
 
-Run A and B on both wrappings. Run C–G only after section 2, on a v6
-`proxy-router` cell (SR and HR). Two source addresses, two keys.
+Run A and B on both wrappings. Run C–F only after section 2, on a v6
+`proxy-router` cell (SR and HR). Run G on both wrappings. Two source addresses, two keys.
 
 The production chat cap (2560 per peer) and the 6000/min budget are the wrong size
 to hit by hand. For A and B, on a non-production child only:
@@ -396,8 +397,9 @@ DEVSHARD_RPC_MSGS_BURST=60
 DEVSHARD_RPC_MAX_STREAMS_PER_PEER=3
 ```
 
-Put the variables back when the scenario is done. Scenarios C–G use the
-shipped proxy thresholds and need no child override.
+Put the variables back when the scenario is done. Scenarios C–F use the
+shipped proxy thresholds and need no child override. G uses the child
+origin bucket and needs no child override.
 
 **A. Peer budget isolates peers (both wrappings).** Peer A sends `GetDiffs`
 until the child refuses (weight 60; with the lab burst of 60 the second call
@@ -442,11 +444,15 @@ over its zone. Clearing the header does not create a second bucket.
 Client B's `Chat` and `GetDiffs` succeed. If both clients 429 together, the
 router or `versiond` is keying `RemoteAddr` (the proxy) and the cell fails.
 
-**G. Renewal survives an Attach flood (v6 only).** Hold a live session for
-peer A (`Watch` stays up). Flood anonymous `Attach` from elsewhere until the
-Attach zone or the child floor refuses. A's renewal (well under 4/min) still
-succeeds and the old token keeps admitting in-flight calls for its overlap
-window. A's `Watch` does not drop.
+**G. An Attach flood stays on one address (both wrappings).** Hold a live
+session for peer A (`Watch` stays up). From a second address, flood
+anonymous `Attach` until that address is refused. On v6 the Attach zone
+may refuse first. On the old wrapping the child origin bucket refuses, at
+10 per second, before the process floor, and the refused calls do no
+signature work. A's renewal (well under 4/min) still succeeds, the old
+token keeps admitting in-flight calls for its overlap window, and A's
+`Watch` does not drop. A third address, with no session header, completes
+a first Attach and a later Attach while the flood address is still refused.
 
 **H. Diff catch-up stays inside one page (both wrappings).** On a v6 child,
 request diffs for 65 nonces (`from=1&to=65`, or the `GetDiffs` RPC with the
