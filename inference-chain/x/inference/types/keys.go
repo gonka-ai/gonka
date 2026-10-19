@@ -133,6 +133,8 @@ var (
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
 	ParamsKey                      = []byte("p_inference")
+
+	ConfirmationPoCProposerTriggersPrefix = collections.NewPrefix(114)
 )
 
 func KeyPrefix(p string) []byte {

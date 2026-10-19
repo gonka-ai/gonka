@@ -80,6 +80,10 @@ type (
 		ActiveConfirmationPoCEventItem collections.Item[types.ConfirmationPoCEvent]
 		LastUpgradeHeightItem          collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
+
+		// (epoch, proposer consensus address) -> confirmation PoC events that proposer triggered
+		ConfirmationPoCProposerTriggers collections.Map[collections.Pair[uint64, []byte], uint32]
+
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap   collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
@@ -434,6 +438,13 @@ func NewKeeper(
 			types.ActiveConfirmationPoCEventPrefix,
 			"active_confirmation_poc_event",
 			codec.CollValue[types.ConfirmationPoCEvent](cdc),
+		),
+		ConfirmationPoCProposerTriggers: collections.NewMap(
+			sb,
+			types.ConfirmationPoCProposerTriggersPrefix,
+			"confirmation_poc_proposer_triggers",
+			collections.PairKeyCodec(collections.Uint64Key, collections.BytesKey),
+			collections.Uint32Value,
 		),
 		LastUpgradeHeightItem: collections.NewItem(
 			sb,
