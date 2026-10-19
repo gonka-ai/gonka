@@ -497,7 +497,10 @@ func classifyRPCH2Miss(err error) h2MissKind {
 		return h2Closed
 	}
 	// These transport-generated errors do not prove protocol incompatibility.
-	if strings.HasSuffix(msg, "http2: client conn could not be established") || strings.HasSuffix(msg, "http2: client connection lost") || strings.HasSuffix(msg, "http2: server sent GOAWAY and closed the connection") {
+	// "client conn is closed" is the one an H1-only server produces when the
+	// shared mux dies while a request body is still waiting for flow control.
+	// Leaving it unclassified skipped the HTTP/1.1 retry.
+	if strings.HasSuffix(msg, "http2: client conn could not be established") || strings.HasSuffix(msg, "http2: client conn is closed") || strings.HasSuffix(msg, "http2: client connection lost") || strings.HasSuffix(msg, "http2: server sent GOAWAY and closed the connection") {
 		return h2Closed
 	}
 	return h2NotMiss

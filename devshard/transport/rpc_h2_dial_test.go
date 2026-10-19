@@ -182,6 +182,8 @@ func TestIsRPCH2Miss(t *testing.T) {
 		"connect wraps Do() failures as Unavailable; Unwrap must still see OpError")
 	require.False(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
 	require.True(t, isRPCH2Miss(errors.New("http2: client conn could not be established")))
+	require.True(t, isRPCH2Miss(errors.New("http2: client conn is closed")))
+	require.True(t, isRPCH2Miss(fmt.Errorf("unavailable: %w", errors.New("http2: client conn is closed"))))
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "http/1.1", "h2")))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "", "h2")))

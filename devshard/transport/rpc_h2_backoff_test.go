@@ -29,6 +29,7 @@ func TestH2DiscoveryErrorClasses(t *testing.T) {
 		{"broken pipe", syscall.EPIPE, h2Closed},
 		{"connection error", http2.ConnectionError(http2.ErrCodeProtocol), h2Closed},
 		{"establishment closed", errors.New("http2: client conn could not be established"), h2Closed},
+		{"conn closed during body", errors.New("http2: client conn is closed"), h2Closed},
 		{"GOAWAY", http2.GoAwayError{LastStreamID: 3, ErrCode: http2.ErrCodeNo, DebugData: "shutdown"}, h2Closed},
 		{"stream error", http2.StreamError{StreamID: 1, Code: http2.ErrCodeRefusedStream}, h2NotMiss},
 		{"cancel", context.Canceled, h2NotMiss},
