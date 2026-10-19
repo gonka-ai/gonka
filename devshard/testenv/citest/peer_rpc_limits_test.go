@@ -317,7 +317,7 @@ func proveConnRate(t *testing.T, stack *harness.Stack, proxy string) {
 	cmd := exec.Command("docker", "run", "--rm", "--network", netName, "curlimages/curl:8.11.1",
 		"-s", "-o", "/dev/null", "-m", "5", "--http2-prior-knowledge", "-w", "%{http_code}",
 		fmt.Sprintf("http://proxy:%d/sessions/_/rpc/devshard.transport.v1.PeerAuthService/Watch", config.DefaultProxyPort))
-	out, err := cmd.CombinedOutput()
+	out, err := cmd.Output()
 	require.NoError(t, err, "second src must still connect: %s", out)
 	require.Regexp(t, `^[1-5][0-9][0-9]$`, strings.TrimSpace(string(out)), "second src must be served over HTTP/2, not refused")
 }
