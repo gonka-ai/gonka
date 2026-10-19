@@ -296,7 +296,7 @@ else
     http-check expect status 200
     http-check expect string peer-rpc-ok
 EOF
-    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none"
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down"
     RPC_LEGACY_DEFAULT=rpc_versiond_h1
     cat > "$RPC_H1_FALLBACK_FILE" <<EOF
 # Non-HA peer RPC when versiond does not take HTTP/2: Connect over HTTP/1.1

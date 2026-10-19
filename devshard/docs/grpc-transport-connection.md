@@ -684,6 +684,9 @@ uses the original JSON placement maps. The public and inner routers each enforce
 a global active fallback budget; queue admission has a threshold and a short
 waiting deadline. These limits are independent of ordinary JSON capacity.
 Native gRPC cannot fall back through this hop and receives an unavailable error.
+Versiond also checks the selected child on each H2 RPC: a route replaced by an
+H1 child returns 503 until ingress health checks select bounded H1 admission.
+This closes the gap between asynchronous capability checks and request routing.
 A public proxy restart still interrupts existing connections.
 
 ### The updater does not probe the HTTP/2 path end to end

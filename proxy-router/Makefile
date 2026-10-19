@@ -190,7 +190,7 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "the :80 hand-off does not carry the client address with PROXY v2"; \
 	grep -q '^ *default_backend rpc_h1_fallback$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen is forwarded to proxy-policy"; \
-	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none$$' "$$tmpdir/proxy.cfg" \
+	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down$$' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2 with a check"; \
 	awk ' \
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \

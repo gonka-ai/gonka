@@ -117,15 +117,27 @@ type origin struct {
 	peak             atomic.Int32
 	hold             chan struct{}
 	streamRelease    chan struct{}
+	peerCheckStarted chan struct{}
 }
 
-func newOrigin(t *testing.T, current bool) *origin {
+func newOrigin(t *testing.T, current bool, peerHealthGate ...<-chan struct{}) *origin {
 	t.Helper()
-	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{})}
+	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{}), peerCheckStarted: make(chan struct{}, 1)}
 	o.current.Store(current)
 	o.childH2.Store(current)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "healthz") || strings.HasSuffix(r.URL.Path, "readyz") {
+			if r.URL.Query().Get("peer-rpc") == "1" && len(peerHealthGate) > 0 {
+				select {
+				case o.peerCheckStarted <- struct{}{}:
+				default:
+				}
+				select {
+				case <-peerHealthGate[0]:
+				case <-r.Context().Done():
+					return
+				}
+			}
 			if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() && o.childH2.Load() {
 				io.WriteString(w, "peer-rpc-ok\n")
 			} else {
@@ -214,6 +226,9 @@ func startProxy(t *testing.T, mode string, o *origin, extraEnv ...string) *fixtu
 	require.NoError(t, err)
 	s := strings.NewReplacer("bind :80\n", "bind 127.0.0.1:"+public+"\n", "bind :443\n", "bind 127.0.0.1:"+tlsPort+"\n", "bind 0.0.0.0:18081", "bind 127.0.0.1:"+private, "127.0.0.1:8404", "127.0.0.1:"+admin, "127.0.0.1:8405", "127.0.0.1:"+metrics, "127.0.0.1:80 ", "127.0.0.1:"+nginx+" ", "127.0.0.1:443 ", "127.0.0.1:"+nginxTLS+" ", "tcp-check connect port 80 ", "tcp-check connect port "+nginx+" ", "tcp-check connect port 443 ", "tcp-check connect port "+nginxTLS+" ", "/var/run/haproxy/haproxy.sock", f.socket, "/var/run/haproxy/reconciler.sock", filepath.Join(dir, "admin.sock"), "abns@", "abns@"+filepath.Base(dir)+"-", "mode 660", "mode 666").Replace(string(raw))
 	for _, value := range extraEnv {
+		if seconds, ok := strings.CutPrefix(value, "FIXTURE_CHECK_TIMEOUT_SECONDS="); ok {
+			s = strings.ReplaceAll(s, "timeout check 3s", "timeout check "+seconds+"s")
+		}
 		if rpc, ok := strings.CutPrefix(value, "FIXTURE_ROUTER_RPC_PORT="); ok {
 			s = strings.ReplaceAll(s, "127.0.0.1:8081 ", "127.0.0.1:"+rpc+" ")
 			s = strings.ReplaceAll(s, "http-check connect port 8081 ", "http-check connect port "+rpc+" ")
@@ -666,4 +681,41 @@ func TestRejectInvalidFallbackConfiguration(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestNonHACapabilityCheckPending(t *testing.T) {
+	gate := make(chan struct{})
+	var release sync.Once
+	defer release.Do(func() { close(gate) })
+	o := newOrigin(t, true, gate)
+	o.childH2.Store(false)
+	// Hold the first check until requests have been observed. A longer check
+	// timeout prevents a slow CI startup from accidentally testing a completed
+	// failed check instead of the initial, unverified state.
+	f := startProxy(t, "http", o, "FIXTURE_CHECK_TIMEOUT_SECONDS=60")
+	select {
+	case <-o.peerCheckStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("capability check did not start")
+	}
+	c := f.client(t, "h2c")
+	r := request(t, c, f.httpURL+chat, nil)
+	require.Equal(t, 200, r.StatusCode)
+	require.Equal(t, "1", r.Header.Get("X-Seen-Proto"), "unverified backend must use bounded H1 admission")
+	drain(r)
+	grpc := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
+	_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "unverified H2 backend cannot carry native gRPC")
+	// Once children advertise capability, the successful checks admit H2.
+	o.childH2.Store(true)
+	release.Do(func() { close(gate) })
+	require.Eventually(t, func() bool {
+		req, _ := http.NewRequest("POST", f.httpURL+chat, strings.NewReader("{}"))
+		r, err := c.Do(req)
+		if err != nil {
+			return false
+		}
+		defer drain(r)
+		return r.StatusCode == 200 && r.Header.Get("X-Seen-Proto") == "2"
+	}, 8*time.Second, 50*time.Millisecond)
 }

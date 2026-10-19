@@ -300,7 +300,11 @@ pool is not ready. JSON capacity is independent of fallback admission. Non-HA
 also requires `/readyz?peer-rpc=1` with the `peer-rpc-ok` capability body. This
 coarse check conservatively keeps all Connect RPC on bounded H1 while any serving
 child is H1-only. HTTPS-only mode rejects plaintext connections on the HTTP port,
-including prior-knowledge H2; a successful TLS connection is required.
+including prior-knowledge H2; a successful TLS connection is required. H2 backends
+start unavailable until their capability checks pass. If a child changes before
+checks notice it, versiond rejects H2 RPC to an H1 child with 503 rather than
+expanding the mux into unbounded H1 connections; the bounded H1 path remains
+available after ingress observes the capability change.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
