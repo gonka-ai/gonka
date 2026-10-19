@@ -19,6 +19,7 @@ fi
 TEMPLATE="${PROXY_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 BACKEND_TEMPLATE="${PROXY_ROUTER_BACKEND_TEMPLATE:-/etc/haproxy/versiond-backend.cfg.template}"
 RPC_BACKEND_TEMPLATE="${PROXY_ROUTER_RPC_BACKEND_TEMPLATE:-$(CDPATH='' cd -- "$(dirname -- "$BACKEND_TEMPLATE")" && pwd)/rpc-h2-backend.cfg.template}"
+RPC_VERSIOND_TEMPLATE="${PROXY_ROUTER_RPC_VERSIOND_TEMPLATE:-$(CDPATH='' cd -- "$(dirname -- "$BACKEND_TEMPLATE")" && pwd)/rpc-h2-versiond.cfg.template}"
 RPC_POLICY_TEMPLATE="${PROXY_ROUTER_RPC_POLICY_TEMPLATE:-$(dirname "$TEMPLATE")/rpc-policy.cfg.template}"
 RPC_FALLBACK_MAXCONN="${PROXY_ROUTER_RPC_FALLBACK_MAXCONN:-512}"
 RPC_FALLBACK_MAXQUEUE="${PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE:-64}"
@@ -266,10 +267,12 @@ esac
 # the coarse pool requires HTTP 200 from /healthz on the router's :8081
 # over HTTP/2 (a v5 router has no such listen), and
 # each version twin asks /<version>/healthz over that dial. Non-HA opens
-# versiond's own listen over HTTP/2: a v5 versiond has no h2c and fails. A
-# generation that fails leaves the pool, and the frontend sends peer RPC to
-# the HTTP/1.1 path (the router's :8080, or versiond itself) instead of
-# answering 503 on HTTP/2.
+# versiond's own listen over HTTP/2. The coarse pool still asks
+# /readyz?peer-rpc=1 with no version, which stays down while any running
+# child is HTTP/1.1. Versioned peer RPC does not use that bit: each version
+# twin asks /readyz?peer-rpc=1&version=<name> and requires peer-rpc-ok, so a
+# v4 child leaves only its own twin down. A twin that fails sends that
+# version to the HTTP/1.1 path instead of answering 503 on HTTP/2.
 RPC_TLS_LIMITS_FILE=$(mktemp)
 RPC_H2_CHECKS_FILE=$(mktemp)
 RPC_H1_FALLBACK_FILE=$(mktemp)
@@ -285,6 +288,7 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
 EOF
     RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
     RPC_LEGACY_DEFAULT=versiond_router_coarse
+    RPC_H1_VERSION_ROUTE="use_backend %[var(txn.ver),map_str(${VERSION_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }"
     printf '%s\n' '# HA peer RPC falls back to the JSON pools of the same router fleet.' > "$RPC_H1_FALLBACK_FILE"
 else
     cat > "$RPC_H2_CHECKS_FILE" <<EOF
@@ -296,6 +300,9 @@ else
 EOF
     RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down"
     RPC_LEGACY_DEFAULT=rpc_versiond_h1
+    # The version map's JSON backends address the router fleet. This host does
+    # not run one. versiond selects the child from the path.
+    RPC_H1_VERSION_ROUTE="# Non-HA HTTP/1.1 peer RPC is Connect to versiond."
     cat > "$RPC_H1_FALLBACK_FILE" <<EOF
 # Non-HA peer RPC when versiond does not take HTTP/2: Connect over HTTP/1.1
 # to the same versiond, which forwards /rpc/ to the child as nginx would.
@@ -465,30 +472,88 @@ render_router_backend() {
         "$BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
 
+# '&', '\', and '|' are sed replacement metacharacters. A version query that
+# contains one of them must not rewrite the check line into a different URI.
+sed_replacement() {
+    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
+# Dynamic twins look the version up under the JSON backend name. regsub strips
+# the _rpc suffix before the slot map, which is keyed by that JSON name.
+slot_version_query() {
+    printf '%s' '%[be_name,regsub(_rpc$,),map('"$SLOT_MAP"')]'
+}
+
 # The catalog reconciler enables ${backend}_rpc beside the JSON backend. The
-# twin is the peer-RPC pool for that same version: proto h2 to the router,
-# readiness still /readyz?version= over HTTP/1.1.
+# twin is the peer-RPC pool for that same version. HA dials the router fleet.
+# Non-HA dials versiond and admits the twin only when that child answers
+# peer-rpc-ok, so an HTTP/1.1 sibling does not take this version off HTTP/2.
 render_rpc_backend() {
-    [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ] || return 0
     backend=$1
-    ready_check=$2
-    server_state=$3
-    data_check=$4
+    server_state=$2
+    encoded=$3
+    if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+        if [ -n "$encoded" ]; then
+            ready_check="http-check send meth GET uri /readyz?version=${encoded} hdr Host ${ROUTER_POOL_HOST}"
+            data_check="http-check send meth GET uri /${encoded}/healthz hdr Host ${ROUTER_POOL_HOST}"
+        else
+            query=$(slot_version_query)
+            ready_check="http-check send meth GET uri-lf /readyz?version=${query} hdr Host ${ROUTER_POOL_HOST}"
+            data_check="http-check send meth GET uri-lf /${query}/healthz hdr Host ${ROUTER_POOL_HOST}"
+        fi
+        sed \
+            -e "s|\${BACKEND_NAME}|${backend}_rpc|g" \
+            -e "s|\${READY_CHECK_SEND}|$(sed_replacement "$ready_check")|g" \
+            -e "s|\${DATA_CHECK_SEND}|$(sed_replacement "$data_check")|g" \
+            -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
+            -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
+            -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
+            -e "s|\${ROUTER_RPC_PORT}|$ROUTER_RPC_PORT|g" \
+            -e "s|\${SERVER_STATE}|$server_state|g" \
+            "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
+        return
+    fi
+    if [ -n "$encoded" ]; then
+        uri_lf=
+        version_query=$encoded
+    else
+        uri_lf='-lf'
+        version_query=$(slot_version_query)
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|${backend}_rpc|g" \
-        -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
-        -e "s|\${DATA_CHECK_SEND}|$data_check|g" \
-        -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
-        -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
-        -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
-        -e "s|\${ROUTER_RPC_PORT}|$ROUTER_RPC_PORT|g" \
+        -e "s|\${URI_LF}|$uri_lf|g" \
+        -e "s|\${VERSION_QUERY}|$(sed_replacement "$version_query")|g" \
+        -e "s|\${RPC_H2_VERSIOND_HOST}|$RPC_H2_VERSIOND_HOST|g" \
+        -e "s|\${RPC_H2_VERSIOND_PORT}|$RPC_H2_VERSIOND_PORT|g" \
         -e "s|\${SERVER_STATE}|$server_state|g" \
-        "$RPC_BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
+        "$RPC_VERSIOND_TEMPLATE" >> "$BACKENDS_FILE"
 }
 
 render_router_backend versiond_router_coarse \
     "http-check send meth GET uri /healthz hdr Host $ROUTER_POOL_HOST" \
     "http-check send meth GET uri /readyz hdr Host $ROUTER_POOL_HOST" ''
+
+# HA answers /readyz?version= from the JSON backend, which is the fleet
+# capacity for that version. Non-HA JSON backends address a fleet this host
+# does not run and stay disabled; the hop that serves the version is the
+# HTTP/2 twin.
+version_ready_target() {
+    if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+        printf '%s' "$1"
+    else
+        printf '%s' "${1}_rpc"
+    fi
+}
+
+append_version_ready() {
+    backend=$1
+    target=$(version_ready_target "$backend")
+    printf '%s\n' \
+        "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($target) gt 0 }" \
+        "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
+        >> "$VERSION_READY_RULES_FILE"
+}
 
 declare_version() {
         version=$1
@@ -504,13 +569,8 @@ declare_version() {
         render_router_backend "$backend" \
             "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST" \
             "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
-        render_rpc_backend "$backend" \
-            "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" '' \
-            "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST"
-        printf '%s\n' \
-            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
-            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
-            >> "$VERSION_READY_RULES_FILE"
+        render_rpc_backend "$backend" '' "$encoded"
+        append_version_ready "$backend"
 }
 
 while IFS= read -r version; do
@@ -552,14 +612,8 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz hdr Host $ROUTER_POOL_HOST" \
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
         "$server_state"
-    render_rpc_backend "$backend" \
-        "http-check send meth GET uri-lf /readyz?version=%[be_name,regsub(_rpc\$,),map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
-        "$server_state" \
-        "http-check send meth GET uri-lf /%[be_name,regsub(_rpc\$,),map($SLOT_MAP)]/healthz hdr Host $ROUTER_POOL_HOST"
-    printf '%s\n' \
-        "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
-        "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
-        >> "$VERSION_READY_RULES_FILE"
+    render_rpc_backend "$backend" "$server_state" ''
+    append_version_ready "$backend"
     index=$((index + 1))
 done
 
@@ -576,15 +630,11 @@ fi
 
 cat > "$RPC_H2_RULES_FILE" <<EOF
     http-request set-var(txn.rpc_backend) str(rpc_h2_upstream) if peer_rpc
-EOF
-if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
-    cat >> "$RPC_H2_RULES_FILE" <<EOF
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)\$|^/stats(/|\$)|^/sessions/[^/]+/(diffs|mempool|signatures)\$
     $UNDECLARED_VERSION_GUARD
     http-request set-var(txn.rpc_backend) var(txn.ver),map_str(${VERSION_MAP}),concat(_rpc) if peer_rpc { var(txn.ver),map_str(${VERSION_MAP}) -m found }
 EOF
-fi
 cat >> "$RPC_H2_RULES_FILE" <<'EOF'
     # Native gRPC cannot be translated into Connect by an HTTP/1 backend.
     http-request return status 200 errorfile /etc/haproxy/grpc-unavailable.http if peer_rpc is_native_grpc !{ var(txn.rpc_backend),nbsrv gt 0 }
@@ -644,6 +694,7 @@ sed \
     -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
     -e "s|\${RPC_LEGACY_DEFAULT}|$RPC_LEGACY_DEFAULT|g" \
+    -e "s|\${RPC_H1_VERSION_ROUTE}|$RPC_H1_VERSION_ROUTE|g" \
     -e "s|\${RPC_FALLBACK_MAXCONN}|$RPC_FALLBACK_MAXCONN|g" \
     -e "s|\${RPC_FALLBACK_MAXQUEUE}|$RPC_FALLBACK_MAXQUEUE|g" \
     -e "s|\${RPC_FALLBACK_QUEUE_MS}|$RPC_FALLBACK_QUEUE_MS|g" \
@@ -718,6 +769,19 @@ run_catalog_reconciler() {
 
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
+elif [ -z "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+    # No version list and no fleet. Project versiond's running children onto
+    # the dynamic _rpc twins so a v6 child stays on HTTP/2 while a v4 child
+    # is still serving.
+    NONHA_PEER_RPC_VERSIOND_URL="http://${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT}/healthz" \
+    NONHA_PEER_RPC_VERSION_MAP="$VERSION_MAP" \
+    NONHA_PEER_RPC_SLOT_MAP="$SLOT_MAP" \
+    NONHA_PEER_RPC_STATIC_MAP="$VERSION_MAP" \
+    NONHA_PEER_RPC_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
+    NONHA_PEER_RPC_BACKEND_PREFIX=versiond_routers_dynamic_ \
+    NONHA_PEER_RPC_SERVER=versiond \
+    NONHA_PEER_RPC_POLL_SECONDS="${PROXY_ROUTER_NONHA_PEER_RPC_POLL_SECONDS:-1}" \
+        "$entrypoint_dir/nonha-peer-rpc.sh" watch &
 fi
 
 case "$NGINX_MODE" in

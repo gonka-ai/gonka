@@ -1,0 +1,23 @@
+# Non-HA peer-RPC twin of a versiond_routers_* backend. One server, proto h2
+# to versiond's own listen. The check is this version only:
+# GET /readyz?peer-rpc=1&version=<name> must answer peer-rpc-ok. An HTTP/1.1
+# child fails its own twin and the frontend sends that version to the bounded
+# HTTP/1.1 fallback. A sibling that advertised h2c stays on this hop.
+# JSON traffic keeps the twin's sibling backend.
+backend ${BACKEND_NAME}
+    balance hash var(txn.hashkey)
+    hash-type consistent
+
+    option httpchk
+    http-check connect port ${RPC_H2_VERSIOND_PORT} proto h2
+    http-check send meth GET uri${URI_LF} /readyz?peer-rpc=1&version=${VERSION_QUERY} hdr Host ${RPC_H2_VERSIOND_HOST}
+    http-check expect status 200
+    http-check expect string peer-rpc-ok
+
+    http-reuse safe
+    option redispatch 1
+    retry-on conn-failure empty-response 502
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+
+    server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down ${SERVER_STATE}

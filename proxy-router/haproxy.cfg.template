@@ -284,7 +284,7 @@ frontend rpc_h1_legacy
 
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
     ${UNDECLARED_VERSION_GUARD}
-    use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
+    ${RPC_H1_VERSION_ROUTE}
     default_backend ${RPC_LEGACY_DEFAULT}
 
 ${VERSIOND_ROUTER_BACKENDS}

@@ -32,7 +32,8 @@ peer RPC (same :80/:443, skips nginx)
   -> proxy-router :80  (HTTP/2 preface)  -> rpc_h2 frontend (h2c)
   -> proxy-router :443 (ALPN gonka-rpc/1) -> rpc_h2 frontend (TLS with nginx's cert, HTTP/2)
        HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
-       non-HA: versiond:8080 proto h2
+       non-HA: versiond_routers_<version>_rpc -> versiond:8080 proto h2
+               (an HTTP/1.1 child uses the bounded fallback for that version only)
 ```
 
 A client whose first bytes are neither (an older devshard, a browser, curl)
@@ -173,7 +174,7 @@ services and containers owned by other active overlays remain unchanged.
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
 | `127.0.0.1:8404/readyz?component=versiond` | coarse router-fleet availability |
-| `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
+| `127.0.0.1:8404/readyz?version=<v>` | HA: router capacity for that version. Non-HA: that version's HTTP/2 twin |
 | `127.0.0.1:8405/metrics`, `proxy-router-metrics:8405/metrics` | HAProxy Prometheus exporter; internal only, no host port |
 | router-back `:9100/versions` | read-only bridge to DAPI's governance catalog; other methods and paths are rejected |
 | `/var/run/haproxy/haproxy.sock` | local Runtime API |
@@ -297,13 +298,26 @@ configuration. `DEVSHARD_RPC_POLICY_HOST` is wired by join Compose; standalone
 nginx deployments with it unset retain their existing routing.
 
 When an RPC HTTP/2 backend has no healthy server, Connect uses a bounded HTTP/1.1
-hop and the original JSON routing maps (including version and legacy placement).
-No POST replay is added. Native gRPC receives `Unavailable` because HTTP/1.1 cannot
-carry it. RPC data checks require HTTP 200; a listening router with an empty RPC
-pool is not ready. JSON capacity is independent of fallback admission. Non-HA
-also requires `/readyz?peer-rpc=1` with the `peer-rpc-ok` capability body. This
-coarse check conservatively keeps all Connect RPC on bounded H1 while any serving
-child is H1-only. HTTPS-only mode rejects plaintext connections on the HTTP port,
+hop. HA keeps the original JSON routing maps, including version and legacy
+placement. On a non-HA host the hop is versiond itself: versiond selects the
+child from the path, and the version map's JSON pools are not used because they
+address the router fleet. No POST replay is added. Native gRPC receives `Unavailable`
+because HTTP/1.1 cannot carry it. RPC data checks require HTTP 200; a listening
+router with an empty RPC pool is not ready. JSON capacity is independent of
+fallback admission. Non-HA keeps a coarse `/readyz?peer-rpc=1` check, with the
+`peer-rpc-ok` body, on the single host-wide pool. That check stays down while
+any running child is HTTP/1.1, and versioned peer RPC does not consult it.
+Each version has its own twin, dialing versiond over HTTP/2, whose check is
+`/readyz?peer-rpc=1&version=<name>` and requires `peer-rpc-ok`. A v4 child
+fails only that twin. A v6 child stays on HTTP/2, including Connect that
+arrived as HTTP/1.1 through nginx `:18081`. When the proxy was not given a
+version list or a routing catalog, it projects versiond's running children
+from `/healthz` onto the pre-rendered dynamic twins. On that host,
+`GET /readyz?version=<v>` follows the twin, so a child that answered
+`peer-rpc-ok` is ready while its JSON backend stays disabled. A failed
+projection is logged when it starts and when it recovers; the last assignment
+stays in place in between. HTTPS-only mode rejects
+plaintext connections on the HTTP port,
 including prior-knowledge H2; a successful TLS connection is required. H2 backends
 start unavailable until their capability checks pass. If a child changes before
 checks notice it, versiond rejects H2 RPC to an H1 child with 503 rather than
@@ -315,11 +329,13 @@ available after ingress observes the capability change.
 | `PROXY_ROUTER_RPC_FALLBACK_MAXCONN` | `512` | Global active H1 fallback requests across versions, including long streams |
 | `PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE` | `64` | Queue rejection threshold; simultaneous arrivals may overshoot this threshold |
 | `PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS` | `200` | Maximum wait for a fallback connection, in milliseconds |
+| `PROXY_ROUTER_NONHA_PEER_RPC_POLL_SECONDS` | `1` | How often a non-HA proxy with no routing catalog re-reads versiond `/healthz` |
 
-All three values must be positive integers. Overload returns 503; ordinary
+The fallback budgets must be positive integers. Overload returns 503; ordinary
 procedure limits return Connect `ResourceExhausted` (HTTP 429 with Retry-After) or
 native gRPC status 8. Do not size the active budget solely for short unary calls:
-Watch and Chat occupy fallback connections for their lifetime.
+Watch and Chat on the HTTP/1.1 fallback occupy a connection for their lifetime.
+HTTP/2 twins do not take those slots.
 
 For the upgrade and rollback procedure, use the canonical
 [host guide in gonka-docs](https://github.com/snevolin/gonka-docs/blob/sn/devshard-ha-v6/docs/host/devshard-high-availability.md)

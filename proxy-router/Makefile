@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-rpc-h2-cert test-compose test-routing
+.PHONY: all build-docker release test-render test-route-status test-h2-upstream-check test-rpc-h2-cert test-nonha-peer-rpc test-compose test-routing
 
 include ../scripts/blst-portable.mk
 
@@ -13,7 +13,10 @@ test-h2-upstream-check:
 test-rpc-h2-cert:
 	@./rpc-h2-cert_test.sh
 
-test-render: test-route-status test-rpc-h2-cert
+test-nonha-peer-rpc:
+	@./nonha-peer-rpc_test.sh
+
+test-render: test-route-status test-rpc-h2-cert test-nonha-peer-rpc
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -94,10 +97,10 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "router lifecycle health does not use the admin listener"; \
 	grep -q 'http-check send meth GET uri /readyz?version=v5 hdr Host versiond-router-fleet' "$$tmpdir/proxy.cfg" \
 		|| fail "router health is not version-aware"; \
-	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
-		|| fail "top-level version readiness is not route-aware"; \
-	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_dynamic_1.*nbsrv(versiond_routers_dynamic_1)' "$$tmpdir/proxy.cfg" \
-		|| fail "dynamic version readiness does not follow the live slot assignment"; \
+	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_v5.*nbsrv(versiond_routers_v5_rpc) gt 0' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA version readiness does not follow the HTTP/2 twin"; \
+	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_dynamic_1.*nbsrv(versiond_routers_dynamic_1_rpc) gt 0' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA dynamic version readiness does not follow the HTTP/2 twin"; \
 	grep -q 'server-template router 16 versiond-router-fleet:8080 check inter' "$$tmpdir/proxy.cfg" \
 		|| fail "router server template does not use the data endpoint"; \
 	grep -q '^ *balance hash var(txn.hashkey)$$' "$$tmpdir/proxy.cfg" \
@@ -219,6 +222,42 @@ test-render: test-route-status test-rpc-h2-cert
 	' "$$tmpdir/proxy.cfg"; then \
 		fail "non-HA peer RPC references the router fleet"; \
 	fi; \
+	awk ' \
+		$$0 ~ "^backend versiond_routers_v5_rpc$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /http-check connect port 8080 proto h2/ { connect = 1 } \
+		inside && /http-check send meth GET uri \/readyz\?peer-rpc=1&version=v5 hdr Host versiond/ { send = 1 } \
+		inside && /http-check expect string peer-rpc-ok/ { body = 1 } \
+		inside && /server versiond versiond:8080 proto h2/ && !/disabled/ { dial = 1 } \
+		END { exit !(connect && send && body && dial) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA v5 peer RPC is not its own HTTP/2 twin checked with peer-rpc-ok"; \
+	awk ' \
+		$$0 ~ "^backend versiond_routers_v4_rpc$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /uri \/readyz\?peer-rpc=1&version=v4 hdr Host versiond/ { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA v4 peer RPC twin does not check that version"; \
+	awk ' \
+		$$0 ~ "^backend versiond_routers_dynamic_1_rpc$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /uri-lf \/readyz\?peer-rpc=1&version=%\[be_name,regsub\(_rpc\$$,\),map\(.*\)\] hdr Host versiond/ { send = 1 } \
+		inside && /server versiond versiond:8080 proto h2/ && /disabled$$/ { down = 1 } \
+		END { exit !(send && down) } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA dynamic peer RPC twins are not disabled version-scoped HTTP/2 checks"; \
+	[ "$$(grep -c '^backend versiond_routers_dynamic_[0-9]*_rpc$$' "$$tmpdir/proxy.cfg")" -eq 32 ] \
+		|| fail "non-HA did not render a peer RPC twin for every dynamic slot"; \
+	grep -q 'set-var(txn.rpc_backend) var(txn.ver),map_str(.*/versions.map),concat(_rpc) if peer_rpc' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA peer RPC does not select the version twin"; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h1_legacy$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /use_backend %\[var\(txn.ver\),map_str/ { found = 1 } \
+		END { exit found } \
+	' "$$tmpdir/proxy.cfg" \
+		|| fail "non-HA HTTP/1.1 peer RPC is sent to the router-fleet JSON pools"; \
 	grep -q 'tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC hand-off has no conn_rate on src"; \
 	awk ' \
@@ -359,8 +398,20 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "HA peer RPC does not fall back to the coarse JSON pool when its pool is empty"; \
 	grep -q 'use_backend %\[var(txn.rpc_backend)\] if peer_rpc { var(txn.rpc_backend),nbsrv gt 0 }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not select the per-version _rpc backend only while it has a usable server"; \
+	grep -q 'nbsrv(versiond_routers_dynamic_1) gt 0' "$$tmpdir/ha.cfg" \
+		|| fail "HA version readiness no longer follows the JSON backend"; \
+	if grep -q 'nbsrv(versiond_routers_dynamic_1_rpc)' "$$tmpdir/ha.cfg"; then \
+		fail "HA version readiness follows the peer-RPC twin"; \
+	fi; \
 	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not fall back to the version's JSON backend"; \
+	awk ' \
+		$$0 ~ "^frontend rpc_h1_legacy$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && index($$0, "use_backend %[var(txn.ver),map_str(") && index($$0, "ha.map") && index($$0, "if !versionless_request") { found = 1 } \
+		END { exit !found } \
+	' "$$tmpdir/ha.cfg" \
+		|| fail "HA HTTP/1.1 peer RPC no longer uses the version JSON pool"; \
 	awk '/^backend versiond_routers_dynamic_1_rpc$$/{inside=1; next} /^backend /{inside=0} \
 		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
 		inside && /uri-lf \/%\[be_name,regsub\(_rpc\$$,\),map\(.*\)\]\/healthz/ { dsend = 1 } \
@@ -391,8 +442,8 @@ test-render: test-route-status test-rpc-h2-cert
 		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/ha-v5.cfg" >/dev/null \
 		|| fail "rendered versioned HA proxy config is invalid"; \
-	if grep -q 'use_backend %\[var(txn.ver),map_str(.*),concat(_rpc)\]' "$$tmpdir/proxy.cfg"; then \
-		fail "non-HA peer RPC selects a version pool"; \
+	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
+		fail "HA peer RPC rendered a non-HA versiond twin"; \
 	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \

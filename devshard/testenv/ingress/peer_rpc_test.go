@@ -7,6 +7,7 @@ package ingress_test
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
@@ -28,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -193,8 +195,9 @@ func newOrigin(t *testing.T, current bool, peerHealthGate ...<-chan struct{}) *o
 }
 
 type fixture struct {
-	httpURL, httpsURL, privateURL, socket string
-	roots                                 *x509.CertPool
+	httpURL, httpsURL, privateURL, adminURL, socket string
+	adminSocket, versionMap, slotMap, versiondURL   string
+	roots                                           *x509.CertPool
 }
 
 func certificate(t *testing.T, dir string) *x509.CertPool {
@@ -217,14 +220,20 @@ func startProxy(t *testing.T, mode string, o *origin, extraEnv ...string) *fixtu
 	dir := t.TempDir()
 	require.NoError(t, os.Chmod(dir, 0755))
 	public, tlsPort, private, nginx, nginxTLS, admin, metrics := freePort(t), freePort(t), freePort(t), freePort(t), freePort(t), freePort(t), freePort(t)
-	f := &fixture{httpURL: "http://127.0.0.1:" + public, httpsURL: "https://127.0.0.1:" + tlsPort, privateURL: "http://127.0.0.1:" + private, socket: filepath.Join(dir, "stats.sock"), roots: certificate(t, dir)}
 	_, port, _ := net.SplitHostPort(o.server.Listener.Addr().String())
 	cfg := filepath.Join(dir, "haproxy.cfg")
+	f := &fixture{
+		httpURL: "http://127.0.0.1:" + public, httpsURL: "https://127.0.0.1:" + tlsPort,
+		privateURL: "http://127.0.0.1:" + private, adminURL: "http://127.0.0.1:" + admin,
+		socket: filepath.Join(dir, "stats.sock"), adminSocket: filepath.Join(dir, "admin.sock"),
+		versionMap: filepath.Join(dir, "versions.map"), slotMap: cfg + ".version-slots.map",
+		versiondURL: "http://127.0.0.1:" + port + "/healthz", roots: certificate(t, dir),
+	}
 	env := []string{"HAPROXY_BIN=true", "PROXY_ROUTER_RENDER_ONLY=1", "NGINX_MODE=" + mode, "PROXY_ROUTER_TEMPLATE=" + filepath.Join(repo, "proxy-router/haproxy.cfg.template"), "PROXY_ROUTER_BACKEND_TEMPLATE=" + filepath.Join(repo, "proxy-router/versiond-backend.cfg.template"), "PROXY_ROUTER_OUT=" + cfg, "PROXY_ROUTER_VERSION_MAP=" + filepath.Join(dir, "versions.map"), "PROXY_POLICY_POOL_HOST=127.0.0.1", "PROXY_POLICY_POOL_SLOTS=1", "DEVSHARD_RPC_H2_VERSIOND_HOST=127.0.0.1", "DEVSHARD_RPC_H2_VERSIOND_PORT=" + port, "DEVSHARD_RPC_H2_CERT_DIR=" + dir, "DEVSHARD_RPC_H2_PEM=" + filepath.Join(dir, "rpc.pem"), "PROXY_ROUTER_RPC_FALLBACK_MAXCONN=8", "PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE=8", "PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS=200", "VERSIOND_ROUTING_CATALOG_URL=", "VERSIOND_VERSIONS=", "VERSIOND_NON_HA_VERSIONS=", "VERSIOND_ROUTER_POOL_HOST="}
 	run(t, append(env, extraEnv...), filepath.Join(repo, "proxy-router/entrypoint.sh"))
 	raw, err := os.ReadFile(cfg)
 	require.NoError(t, err)
-	s := strings.NewReplacer("bind :80\n", "bind 127.0.0.1:"+public+"\n", "bind :443\n", "bind 127.0.0.1:"+tlsPort+"\n", "bind 0.0.0.0:18081", "bind 127.0.0.1:"+private, "127.0.0.1:8404", "127.0.0.1:"+admin, "127.0.0.1:8405", "127.0.0.1:"+metrics, "127.0.0.1:80 ", "127.0.0.1:"+nginx+" ", "127.0.0.1:443 ", "127.0.0.1:"+nginxTLS+" ", "tcp-check connect port 80 ", "tcp-check connect port "+nginx+" ", "tcp-check connect port 443 ", "tcp-check connect port "+nginxTLS+" ", "/var/run/haproxy/haproxy.sock", f.socket, "/var/run/haproxy/reconciler.sock", filepath.Join(dir, "admin.sock"), "abns@", "abns@"+filepath.Base(dir)+"-", "mode 660", "mode 666").Replace(string(raw))
+	s := strings.NewReplacer("bind :80\n", "bind 127.0.0.1:"+public+"\n", "bind :443\n", "bind 127.0.0.1:"+tlsPort+"\n", "bind 0.0.0.0:18081", "bind 127.0.0.1:"+private, "127.0.0.1:8404", "127.0.0.1:"+admin, "127.0.0.1:8405", "127.0.0.1:"+metrics, "127.0.0.1:80 ", "127.0.0.1:"+nginx+" ", "127.0.0.1:443 ", "127.0.0.1:"+nginxTLS+" ", "tcp-check connect port 80 ", "tcp-check connect port "+nginx+" ", "tcp-check connect port 443 ", "tcp-check connect port "+nginxTLS+" ", "/var/run/haproxy/haproxy.sock", f.socket, "/var/run/haproxy/reconciler.sock", f.adminSocket, "abns@", "abns@"+filepath.Base(dir)+"-", "mode 660", "mode 666", "mode 600 level admin", "mode 666 level admin").Replace(string(raw))
 	for _, value := range extraEnv {
 		if seconds, ok := strings.CutPrefix(value, "FIXTURE_CHECK_TIMEOUT_SECONDS="); ok {
 			s = strings.ReplaceAll(s, "timeout check 3s", "timeout check "+seconds+"s")
@@ -718,4 +727,268 @@ func TestNonHACapabilityCheckPending(t *testing.T) {
 		defer drain(r)
 		return r.StatusCode == 200 && r.Header.Get("X-Seen-Proto") == "2"
 	}, 8*time.Second, 50*time.Millisecond)
+}
+
+// mixedOrigin is one versiond with a v4.2 child and a v6 child. The host-wide
+// peer-RPC check stays down because of v4.2. Only v6 answers peer-rpc-ok.
+type mixedOrigin struct {
+	server          *httptest.Server
+	hold            chan struct{}
+	releaseOnce     sync.Once
+	activeV6, v6Max atomic.Int32
+	activeV4, v4Max atomic.Int32
+}
+
+func (o *mixedOrigin) release() { o.releaseOnce.Do(func() { close(o.hold) }) }
+
+func (o *mixedOrigin) enter(version string) {
+	counter, peak := &o.activeV6, &o.v6Max
+	if version == "v4.2" {
+		counter, peak = &o.activeV4, &o.v4Max
+	}
+	n := counter.Add(1)
+	for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+	}
+}
+
+func newMixedOrigin(t *testing.T) *mixedOrigin {
+	t.Helper()
+	o := &mixedOrigin{hold: make(chan struct{})}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/healthz":
+			w.Header().Set("Content-Type", "application/json")
+			io.WriteString(w, `[{"name":"v4.2","port":1,"status":"running"},{"name":"v6","port":2,"status":"running"}]`)
+			return
+		case "/readyz":
+			if r.URL.Query().Get("peer-rpc") != "1" {
+				io.WriteString(w, "ready\n")
+				return
+			}
+			switch r.URL.Query().Get("version") {
+			case "v6":
+				io.WriteString(w, "peer-rpc-ok\n")
+			case "v4.2", "":
+				http.Error(w, "child does not speak peer rpc", http.StatusServiceUnavailable)
+			default:
+				http.Error(w, "no route for version", http.StatusServiceUnavailable)
+			}
+			return
+		}
+		version := "v6"
+		if strings.Contains(r.URL.Path, "/v4.2/") {
+			version = "v4.2"
+		}
+		w.Header().Set("X-Seen-Proto", strconv.Itoa(r.ProtoMajor))
+		if r.Header.Get("X-Hold") == "1" {
+			o.enter(version)
+			defer func() {
+				if version == "v4.2" {
+					o.activeV4.Add(-1)
+				} else {
+					o.activeV6.Add(-1)
+				}
+			}()
+			select {
+			case <-o.hold:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		io.WriteString(w, "ok\n")
+	})
+	o.server = httptest.NewServer(h2c.NewHandler(handler, &http2.Server{}))
+	t.Cleanup(o.server.Close)
+	t.Cleanup(o.release)
+	return o
+}
+
+func startNonHAProjector(t *testing.T, f *fixture) {
+	t.Helper()
+	for _, tool := range []string{"curl", "jq", "python3"} {
+		_, err := exec.LookPath(tool)
+		require.NoError(t, err, "%s is required to project non-HA peer RPC", tool)
+	}
+	// The proxy image provides socat. This host may not, so the test supplies
+	// the one dial the projector uses: stdin to a Unix socket, then back.
+	bin := t.TempDir()
+	write(t, filepath.Join(bin, "socat"), `#!/usr/bin/env python3
+import sys, socket
+path, timeout = None, 2.0
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    a = args[i]
+    if a in ("-t", "-T") and i + 1 < len(args):
+        try:
+            timeout = float(args[i + 1])
+        except ValueError:
+            pass
+        i += 2
+        continue
+    if a.startswith("UNIX-CONNECT:"):
+        path = a[len("UNIX-CONNECT:"):]
+    i += 1
+if not path:
+    sys.stderr.write("missing UNIX-CONNECT\n")
+    sys.exit(1)
+data = sys.stdin.buffer.read()
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+s.settimeout(timeout)
+try:
+    s.connect(path)
+    s.sendall(data)
+    buf = b""
+    while b"Name: HAProxy" not in buf:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        buf += chunk
+except OSError as exc:
+    sys.stderr.write(str(exc) + "\n")
+    sys.exit(1)
+sys.stdout.buffer.write(buf)
+`)
+	require.NoError(t, os.Chmod(filepath.Join(bin, "socat"), 0755))
+	cmd := exec.Command(filepath.Join(repo, "proxy-router/nonha-peer-rpc.sh"), "watch")
+	cmd.Env = append(os.Environ(),
+		"PATH="+bin+":"+os.Getenv("PATH"),
+		"NONHA_PEER_RPC_VERSIOND_URL="+f.versiondURL,
+		"NONHA_PEER_RPC_VERSION_MAP="+f.versionMap,
+		"NONHA_PEER_RPC_SLOT_MAP="+f.slotMap,
+		"NONHA_PEER_RPC_STATIC_MAP="+f.versionMap,
+		"NONHA_PEER_RPC_RUNTIME_SOCKET="+f.adminSocket,
+		"NONHA_PEER_RPC_POLL_SECONDS=1",
+	)
+	var logs bytes.Buffer
+	cmd.Stdout = &logs
+	cmd.Stderr = &logs
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		if t.Failed() {
+			t.Logf("non-HA peer RPC projector:\n%s", logs.String())
+		}
+	})
+}
+
+func statValue(stats, px, sv string, idx int) (string, bool) {
+	for _, line := range strings.Split(stats, "\n") {
+		fields := strings.Split(line, ",")
+		if len(fields) > idx && fields[0] == px && fields[1] == sv {
+			return fields[idx], true
+		}
+	}
+	return "", false
+}
+
+// TestNonHAMixedVersionStaysOnH2 is the single-replica case: a v4.2 child and
+// a v6 child run together, and the version map starts empty. The fixture cuts
+// the shared HTTP/1.1 budget from its production 512 to 8. v6, including
+// streams that arrive through nginx, stays on its HTTP/2 twin. v4.2 is the
+// traffic that fills the budget.
+func TestNonHAMixedVersionStaysOnH2(t *testing.T) {
+	const v6N, v4N, budget = 16, 20, 8
+	mixed := newMixedOrigin(t)
+	f := startProxy(t, "http", &origin{server: mixed.server})
+	startNonHAProjector(t, f)
+	probe := &http.Client{Timeout: time.Second}
+	require.Eventually(t, func() bool {
+		resp, err := probe.Get(f.adminURL + "/readyz?version=v6")
+		if err != nil {
+			return false
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp.StatusCode == 200 && strings.TrimSpace(string(body)) == "ready"
+	}, 15*time.Second, 100*time.Millisecond, "v6 HTTP/2 twin did not become ready")
+	resp, err := probe.Get(f.adminURL + "/readyz?version=v4.2")
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	require.Equal(t, 503, resp.StatusCode, "v4.2 must not look ready: %s", body)
+	require.Contains(t, string(body), "not ready")
+
+	h2 := f.client(t, "h2c")
+	h1 := f.client(t, "h1")
+	h2.Timeout = 20 * time.Second
+	h1.Timeout = 20 * time.Second
+	v4Chat := strings.Replace(chat, "/v6/", "/v4.2/", 1)
+	var wg sync.WaitGroup
+	var v6OK, v6Bad, v4OK, v4Bad atomic.Int32
+	send := func(c *http.Client, url, version string, ok, bad *atomic.Int32) {
+		defer wg.Done()
+		req, err := http.NewRequest("POST", url, strings.NewReader("{}"))
+		if err != nil {
+			bad.Add(1)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Hold", "1")
+		resp, err := c.Do(req)
+		if err != nil {
+			bad.Add(1)
+			return
+		}
+		defer drain(resp)
+		proto := resp.Header.Get("X-Seen-Proto")
+		switch {
+		case version == "v6" && resp.StatusCode == 200 && proto == "2":
+			ok.Add(1)
+		case version == "v4.2" && resp.StatusCode == 200 && proto == "1":
+			ok.Add(1)
+		case version == "v4.2" && resp.StatusCode == 503:
+			bad.Add(1)
+		default:
+			bad.Add(1)
+			t.Errorf("%s status %d proto %q", version, resp.StatusCode, proto)
+		}
+	}
+	for i := 0; i < v6N; i++ {
+		wg.Add(1)
+		c := h2
+		if i < 4 {
+			c = h1
+		}
+		go send(c, f.httpURL+chat, "v6", &v6OK, &v6Bad)
+	}
+	for i := 0; i < v4N; i++ {
+		wg.Add(1)
+		go send(h2, f.httpURL+v4Chat, "v4.2", &v4OK, &v4Bad)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	var stats string
+	for {
+		stats = f.stats(t, "show stat")
+		fallback, _ := statValue(stats, "rpc_h1_fallback", "BACKEND", 4)
+		up, upSess := 0, ""
+		for _, line := range strings.Split(stats, "\n") {
+			fields := strings.Split(line, ",")
+			if len(fields) > 17 && strings.HasSuffix(fields[0], "_rpc") && fields[1] == "versiond" && strings.HasPrefix(fields[17], "UP") {
+				up++
+				upSess = fields[4]
+			}
+		}
+		coarse, coarseFound := statValue(stats, "rpc_h2_upstream", "versiond", 17)
+		if mixed.activeV6.Load() == v6N && mixed.activeV4.Load() == int32(budget) &&
+			v6Bad.Load() == 0 && up == 1 && upSess == strconv.Itoa(v6N) &&
+			fallback == strconv.Itoa(budget) && coarseFound && !strings.HasPrefix(coarse, "UP") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("v6 did not stay on HTTP/2 beside a full v4.2 fallback: v6active=%d v4active=%d v6bad=%d up=%d upSess=%s fallback=%s coarse=%s\n%s",
+				mixed.activeV6.Load(), mixed.activeV4.Load(), v6Bad.Load(), up, upSess, fallback, coarse, stats)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.Equal(t, int32(v6N), mixed.v6Max.Load(), "v6 must not be clipped to the fallback budget")
+	require.Equal(t, int32(budget), mixed.v4Max.Load(), "v4.2 keeps the single fallback budget")
+	mixed.release()
+	wg.Wait()
+	require.Equal(t, int32(v6N), v6OK.Load())
+	require.Equal(t, int32(0), v6Bad.Load())
+	require.Equal(t, int32(budget), v4OK.Load())
+	require.Equal(t, int32(v4N-budget), v4Bad.Load())
 }
