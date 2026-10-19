@@ -28,8 +28,7 @@ Nothing has to be told about the change beyond the membership list itself.
 
 JSON on InferenceUrl and phase 6 `/rpc/` over HTTP/2 on the same port share
 that placement. `proxy`'s `rpc_h2` frontend uses the same version + escrow hash
-as `versiond_router_in`, and the router picks the `_rpc` twin by path on its
-one `:8080`. Failing `/readyz` withdraws the host from both. There is no
+as `versiond_router_in`, and the router picks the `_rpc` twin by path on private `:8080` and `:8081`. Failing `/readyz` withdraws the host from both. There is no
 second evacuation procedure for Connect. See
 [grpc-transport-connection.md](./grpc-transport-connection.md).
 

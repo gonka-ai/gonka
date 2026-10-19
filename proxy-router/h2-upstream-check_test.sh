@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The HA peer-RPC backend is proto h2 on the router peer-RPC listen (8081).
 # Its health check is HTTP/1.1 GET /readyz on the router admin port followed
-# by GET /readyz on :8081 over HTTP/2. A live show stat must say DOWN until
+# by GET /healthz on :8081 over HTTP/2. A live show stat must say DOWN until
 # both pass, then UP/L7OK, and a 503 must take it off UP. The pre-fix line,
 # with no check, stays "no check" beside it. A router generation without the
 # :8081 listen (a v5 router after a rollback) fails the second step: the twin
@@ -108,9 +108,9 @@ grep -q 'http-check expect status 200' "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC check does not expect 200"
 grep -q 'http-check connect port 8081 proto h2' "$tmpdir/backend.cfg" \
     || fail "rendered peer RPC check does not open the :8081 data dial over HTTP/2"
-grep -q 'http-check expect rstatus' "$tmpdir/backend.cfg" \
-    || fail "rendered coarse data step must accept any HTTP answer on :8081"
-grep -q 'use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }' "$tmpdir/ha.cfg" \
+grep -q 'http-check expect status 200' "$tmpdir/backend.cfg" \
+    || fail "rendered coarse data step must require RPC readiness on :8081"
+grep -q 'use_backend rpc_h1_fallback if peer_rpc' "$tmpdir/ha.cfg" \
     || fail "rendered peer RPC frontend does not fall back to the JSON path"
 grep -q 'server-template router 1 router:8081 proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr' \
     "$tmpdir/backend.cfg" \
@@ -188,9 +188,8 @@ EOF
 
 frontend rpc
     bind :8081
-    # The previous router generation answers the coarse probe from a strict
-    # pool: a 503 there must still count as "speaks HTTP/2 on :8081".
-    http-request return status 503 content-type text/plain string "not ready" if { path /healthz }
+    # Only an RPC-ready data pool may pass the data check.
+    http-request return status 200 content-type text/plain string "not ready" if { path /healthz }
     http-request return status 200 content-type text/plain lf-string "rpc-h2 ver=%[req.ver]"
 EOF
     fi
@@ -296,9 +295,8 @@ for _ in $(seq 1 40); do
     checked_code=$(stat_field rpc_h2_upstream router1 check_code || true)
     unchecked_status=$(stat_field rpc_h2_unchecked router status || true)
     # check_code is the last step's status: the :8081 data probe, which the
-    # mock answers 503 the way the previous router generation's strict
-    # coarse pool would, and which the coarse check accepts.
-    if [[ $checked_status == UP* && $checked_check == L7OK && $checked_code == 503 && $unchecked_status == "no check" ]]; then
+    # mock must answer 200; a reachable but unready RPC pool is not admitted.
+    if [[ $checked_status == UP* && $checked_check == L7OK && $checked_code == 200 && $unchecked_status == "no check" ]]; then
         up_ready=1
         break
     fi

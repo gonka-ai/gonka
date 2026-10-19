@@ -528,16 +528,14 @@ transport in band:
   `rpc_h2` TLS bind, which terminates with nginx's certificate, negotiates that token,
   and runs HTTP/2 on it. Browsers and JSON clients offer `h2` / `http/1.1` and keep
   landing on nginx.
-- **An origin that does not speak it.** nginx behind an older wrapping answers the
-  preface with an HTTP/1.1 error and negotiates no ALPN for the unknown token; a
-  TLS-terminating load balancer does the same, or just closes. All are an h2 miss: the client
-  remembers the InferenceUrl host for `DefaultRPCH2MissTTL` (30 min ± 10 %) and
-  Attaches on the same door over Connect/HTTP/1.1 through nginx. The next Attach or
-  session refresh after the TTL probes HTTP/2 again, on a client pinned to the h2
-  origin so that in-flight RPCs stay on HTTP/1.1 until it succeeds; a host whose
-  wrapping was updated in the meantime is thus picked up without a restart. A Connect
-  error from a working HTTP/2 origin, and an Attach that merely runs out of time, are
-  not misses.
+- **An origin that does not speak it.** Cache entries are scoped to scheme,
+  hostname and effective port. Explicit protocol/ALPN mismatch pins Connect to
+  HTTP/1.1 for 30 minutes ± 10%. Ambiguous connection closure starts at 30 seconds,
+  doubles on subsequent failures, and is capped at 30 minutes. One Attach probes
+  an origin at a time; successful H2 Attach clears its failure history. Context
+  deadlines, DNS/refusal, HTTP/2 stream errors and application errors (including
+  429/503) do not declare the origin H1-only. A failed renewal preserves the live
+  Watch/token until the normal session lifecycle ends it.
 
 HTTP/2 is required on **every** hop of the h2 path — not only the public listen.
 Connect does not turn a Go `http.Server` into h2c; each process must opt in.
@@ -676,23 +674,17 @@ RPC path.
 
 ## Known limitations
 
-Two accepted gaps remain, plus the extra health check below. Neither gap is an
-outage for a correctly rolled host: a peer whose HTTP/2 probe fails continues
-over Connect on HTTP/1.1 through the same port.
+### Transport discovery and mixed versions
 
-### The transport is decided per host, in band, with a memory
-
-There is no network-wide switch. Each peer learns per InferenceUrl host whether
-that origin speaks HTTP/2, and remembers a miss for `DefaultRPCH2MissTTL`
-(30 minutes ± 10 %). After a wrapping update, peers already on HTTP/1.1 to
-that host move back to HTTP/2 on their next Attach or session refresh after
-the TTL, not immediately. A proxy whose `_rpc` twin has no UP server yet (the
-window between `fleet apply` and the versiond replacement, when no child
-answers `peer-rpc-ok`) answers the HTTP/2 Attach with an HTTP/2 503, which is a
-Connect error, not a miss: that peer keeps probing HTTP/2 on the attach backoff
-rather than pinning HTTP/1.1. It would gain nothing from the JSON path, whose
-`/rpc/` lands on the router's equally empty twin. `update-devshard.sh` orders
-fleet, proxy, versiond so that window is the versiond replacement only.
+Discovery is per origin and in band. Explicit protocol mismatch can delay H2
+adoption by the cache TTL; connection closure uses the shorter exponential
+backoff described above. H1 and H2 Connect ingress share procedure limits on the
+updated proxy/policy pair. When the selected RPC twin is empty, a bounded H1 hop
+uses the original JSON placement maps. The public and inner routers each enforce
+a global active fallback budget; queue admission has a threshold and a short
+waiting deadline. These limits are independent of ordinary JSON capacity.
+Native gRPC cannot fall back through this hop and receives an unavailable error.
+A public proxy restart still interrupts existing connections.
 
 ### The updater does not probe the HTTP/2 path end to end
 
@@ -703,7 +695,8 @@ router's `:8081` over HTTP/2, the data dial itself. A router generation
 without that listen (a v5 router after a rollback) fails the second step, the
 twin empties, and the proxy's `rpc_h2` frontend sends that version's peer RPC
 to the JSON sibling backend over HTTP/1.1, where the router routes `/rpc/` by
-path; the coarse pool only needs an HTTP answer on `:8081`. Non-HA opens
+path; both versioned and coarse checks require HTTP 200 on `:8081`,
+and the router verifies its selected RPC pool has an UP server. Non-HA opens
 versiond's own listen over HTTP/2 the same way and falls back to versiond
 over HTTP/1.1. What the checks do not prove is the child behind the router.
 After a

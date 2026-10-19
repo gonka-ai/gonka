@@ -422,8 +422,9 @@ func TestRPCH2ProbeBoundsDialAndTLS(t *testing.T) {
 	_, err := tr.DialTLSContext(parent, "tcp", "192.0.2.1:443", nil)
 	elapsed := time.Since(start)
 	require.Error(t, err)
-	require.False(t, errors.Is(err, context.DeadlineExceeded))
-	require.True(t, isRPCH2Miss(err), "a dial that hits the probe timeout is a transport miss")
+	require.True(t, errors.Is(err, context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(err), "a dial timeout does not imply protocol incompatibility")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, parent.Err())
 	require.Less(t, elapsed, time.Second, "dial must stop at the probe timeout, not DefaultAttachTimeout")
 
@@ -454,8 +455,9 @@ func TestRPCH2ProbeBoundsDialAndTLS(t *testing.T) {
 	_, err = tlsTr.DialTLSContext(parent, "tcp", tlsLn.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	elapsed = time.Since(start)
 	require.Error(t, err)
-	require.False(t, errors.Is(err, context.DeadlineExceeded))
-	require.True(t, isRPCH2Miss(err), "a TLS handshake that hits the probe timeout is a transport miss")
+	require.True(t, errors.Is(err, context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(err), "a TLS timeout does not imply protocol incompatibility")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, parent.Err())
 	require.Less(t, elapsed, time.Second, "TLS must stop at the probe timeout, not DefaultAttachTimeout")
 }

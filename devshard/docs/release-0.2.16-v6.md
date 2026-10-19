@@ -60,14 +60,17 @@ port speaks HTTP/2, and uses HTTP/1.1 through nginx when it does not.
   Nothing new is opened in a firewall and nothing is set in `config.env`.
 - **A peer whose host is still on the old wrapping is not cut off.** nginx
   answers the preface with HTTP/1.1 and negotiates no ALPN for the token;
-  the client treats that as "no HTTP/2 here", remembers it for 30 minutes,
+  the client treats an explicit protocol mismatch as "no HTTP/2 here", remembers it for 30 minutes ± 10%,
   and continues over Connect on HTTP/1.1 through nginx. It probes HTTP/2
   again after that, so a host that updates later is picked up without a
-  restart. `DEVSHARD_RPC_H2_UPGRADE=false` turns the probe off.
+  restart. Ambiguous connection closure instead starts a 30-second exponential
+  backoff. `DEVSHARD_RPC_H2_UPGRADE=false` in the versiond process environment
+  turns outbound probing off; changing a host file alone does not update a
+  running process.
 - **Rate limiting grows a second layer when that connection exists.** The
   child limits the authenticated peer on both wrappings. The public
-  per-connection limits (connection rate and path zones) apply only to
-  connections `proxy-router` recognised as peer RPC.
+  connection limits apply to direct H2 RPC. Procedure/IP limits are shared
+  between direct H2 and Connect through the updated nginx policy workers.
 - **JSON does not move.** Chat-compat, `/v1`, health, and the public API stay
   on `:80`/`:443`. v4 and v4.2 children keep using that path.
 
@@ -342,7 +345,7 @@ On every cell:
 | --- | --- |
 | Chat, a second concurrent chat, gossip, `/healthz` | All succeed. HA: the same escrow stays on the same `versiond` |
 | Transport | Connect over HTTP/1.1 on InferenceUrl. N in-flight RPCs are N connections. They do not share one |
-| HTTP/2 probe | One preface (HTTP) or one ClientHello with ALPN `gonka-rpc/1` (HTTPS) per host per 30 minutes, answered by nginx with an HTTP/1.1 error or no ALPN. The client logs `peer rpc origin does not speak HTTP/2; using HTTP/1.1` once per host and stays on InferenceUrl |
+| HTTP/2 probe | One probe per origin at a time: explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure backs off from 30 seconds to 30 minutes. Application/stream errors do not mark the origin H1-only. Connect stays on InferenceUrl |
 | Native gRPC | Not used. No `application/grpc` content type on the wire |
 | `/rpc/` | Visible on the nginx / policy-worker access log |
 | Child rate limit | Still enforced. See scenario A below. The public connection limits must not fire, because nothing reached the peer-RPC frontend |
@@ -480,6 +483,6 @@ least; S and H if that ingress is still in the estate.
 ## Known limits
 
 - `update-devshard.sh --check` does not send an HTTP/2 request. A router can look admitted (its admin `/readyz` is HTTP/1.1) while the HTTP/2 data path is not serving. After the wrapping switch, confirm it with a real RPC through the public port, not only `/readyz`.
-- The transport is agreed per host, in band. A peer that missed HTTP/2 on this host stays on HTTP/1.1 for 30 minutes before probing again, so a wrapping update shows up on peers with that delay. Between `fleet apply` and the versiond replacement the peer-RPC twins are empty and `/rpc/` to this host answers 503 on either transport.
-- Rollback needs no ordering between proxy and routers: every v6 router generation takes the proxy's HTTP/2 dial on its `:8081`; a v5 router fails the proxy's `:8081` check and the proxy sends peer RPC to that router's JSON listen over HTTP/1.1 instead; a proxy generation without HTTP/2 still carries Connect over HTTP/1.1 on the same public ports.
+- Discovery is per scheme/host/port. Explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure uses backoff from 30 seconds to 30 minutes. Empty RPC twins during upgrade use bounded Connect/H1 forwarding through the original JSON placement. Overload may return 503; native gRPC cannot use H1. Follow the upgrade procedure in the [canonical host guide](https://github.com/gonka-ai/gonka-docs/pull/1515).
+- Transport compatibility supports mixed generations: a router without an available `:8081` RPC pool uses bounded Connect/H1 fallback through the JSON placement. This does not authorize arbitrary component replacement order; follow the canonical host guide and updater rollback result.
 - The public `proxy-router` is still one process on one host. The bundled PostgreSQL is still not database HA.

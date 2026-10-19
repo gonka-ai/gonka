@@ -97,16 +97,17 @@ func TestH2MissCacheRemembersInferenceHost(t *testing.T) {
 	require.False(t, skipRPCH2(base))
 	rememberRPCH2Miss(base)
 	require.True(t, skipRPCH2(base))
-	require.True(t, skipRPCH2("https://join.example.com:443/other"), "the miss is per InferenceUrl host")
+	require.False(t, skipRPCH2("https://join.example.com:443/other"), "different scheme and port must not share the miss")
+	require.True(t, skipRPCH2("http://join.example.com:8443/other"))
 	require.False(t, skipRPCH2("http://other.example.com:8443"))
 	now = now.Add(time.Minute)
 	require.False(t, skipRPCH2(base), "the next Attach after the TTL probes HTTP/2 again")
 }
 
 func TestInferenceHostKey(t *testing.T) {
-	require.Equal(t, "versiond-router", inferenceHostKey("http://versiond-router:8080/v5"))
-	require.Equal(t, "versiond-router", inferenceHostKey("https://Versiond-Router:443"))
-	require.Equal(t, "127.0.0.1", inferenceHostKey("http://127.0.0.1:18080"))
+	require.Equal(t, "http://versiond-router:8080", inferenceHostKey("http://versiond-router:8080/v5"))
+	require.Equal(t, "https://versiond-router:443", inferenceHostKey("https://Versiond-Router:443"))
+	require.Equal(t, "http://127.0.0.1:18080", inferenceHostKey("http://127.0.0.1:18080"))
 }
 
 func TestH2MissCacheSkipAndTTL(t *testing.T) {
@@ -176,15 +177,15 @@ func TestIsRPCH2Miss(t *testing.T) {
 	require.False(t, isRPCH2Miss(context.Canceled))
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
 	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
-	require.True(t, isRPCH2Miss(op))
-	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
+	require.False(t, isRPCH2Miss(op))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
 		"connect wraps Do() failures as Unavailable; Unwrap must still see OpError")
-	require.True(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
+	require.False(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
 	require.True(t, isRPCH2Miss(errors.New("http2: client conn could not be established")))
-	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "http/1.1", "h2")))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "", "h2")))
-	require.True(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
+	require.False(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
 	require.True(t, isRPCH2Miss(http2.ConnectionError(http2.ErrCodeProtocol)))
 }
 

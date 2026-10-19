@@ -98,7 +98,7 @@ func TestPeerConn_SlowAttachUsesFullHandshakeTimeout(t *testing.T) {
 	require.Zero(t, infHits.Load(), "a slow Attach must stay on h2")
 }
 
-func TestPeerConn_H2PortClosedFallsBackToHTTP11(t *testing.T) {
+func TestPeerConn_H2ConnectionRefusedDoesNotPinOrRetryH1(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	var infHits atomic.Int32
@@ -108,10 +108,9 @@ func TestPeerConn_H2PortClosedFallsBackToHTTP11(t *testing.T) {
 
 	pc := h2PeerConn(t, inf, hostAddr, peer, dead.URL)
 	pc.Start()
-	waitPeerReady(t, pc)
-	require.False(t, pc.UsingH2(), "a closed h2 origin must Attach over Connect/HTTP/1.1 on InferenceUrl")
-	require.Greater(t, infHits.Load(), int32(0))
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL), "the miss pins this host to HTTP/1.1 for the miss TTL")
+	require.Never(t, pc.Ready, 200*time.Millisecond, 10*time.Millisecond)
+	require.Zero(t, infHits.Load(), "a dial refusal on the shared origin cannot be fixed by H1")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 // A listen that accepts and never answers the preface is not a miss: it is
@@ -472,7 +471,7 @@ func TestPeerConn_HTTPS11ALPNFallsBackToHTTP11(t *testing.T) {
 	require.False(t, sawH1.Load(), "must not speak HTTP/1.1 on the h2 origin")
 }
 
-func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
+func TestPeerConn_H2RefreshStreamResetPreservesWatch(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{
@@ -483,7 +482,7 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	var attachN atomic.Int32
 	h2 := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "PeerAuthService/Attach") {
-			if attachN.Add(1) > 1 {
+			if attachN.Add(1) == 2 {
 				panic(http.ErrAbortHandler)
 			}
 		}
@@ -506,16 +505,10 @@ func TestPeerConn_H2RefreshTransportMissCancelsWatch(t *testing.T) {
 	pc.Start()
 	waitPeerReady(t, pc)
 	require.True(t, pc.UsingH2())
-	start := time.Now()
-	require.Eventually(t, func() bool { return !pc.Ready() }, 8*time.Second, 20*time.Millisecond,
-		"transport miss on TTL refresh must cancel Watch")
-	require.Less(t, time.Since(start), 90*time.Second)
-	// The outer loop probes h2 again (the origin aborts every later
-	// Attach), records the miss, and Attaches on InferenceUrl over HTTP/1.1.
-	require.Eventually(t, func() bool { return pc.Ready() && !pc.UsingH2() }, 8*time.Second, 20*time.Millisecond,
-		"after the refresh miss the peer must come back on HTTP/1.1")
-	require.Greater(t, infHits.Load(), int32(0))
-	require.True(t, transport.RPCH2MissCachedForTest(inf.URL))
+	require.Eventually(t, func() bool { return attachN.Load() >= 3 && pc.Ready() }, 8*time.Second, 20*time.Millisecond)
+	require.True(t, pc.UsingH2(), "a reset of one stream does not invalidate H2")
+	require.Zero(t, infHits.Load(), "renewal must not retry over H1")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL))
 }
 
 func TestPeerConn_RefreshAttachTimeoutDoesNotPinHTTP11(t *testing.T) {
@@ -727,4 +720,72 @@ func startPeerRPCServerH2CLive(t *testing.T, hostAddr string, authCfg rpcserver.
 		}
 	}()
 	return "http://" + ln.Addr().String(), live
+}
+
+func TestPeerConn_CloseBackoffExpiresOnLiveRefresh(t *testing.T) {
+	httpguard.SetAllowPrivate(true)
+	now := time.Now()
+	var nowMu sync.Mutex
+	clock := func() time.Time { nowMu.Lock(); defer nowMu.Unlock(); return now }
+	transport.InstallRPCH2MissCacheForTest(30*time.Minute, clock)
+	transport.ResetRPCH2ClientPoolForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond, SessionTTL: 2 * time.Second})
+	t.Cleanup(auth.Close)
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	var h1Attach, h2Attach, rejected atomic.Int32
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "PeerAuthService/Attach") {
+			if r.ProtoMajor >= 2 {
+				h2Attach.Add(1)
+			} else {
+				h1Attach.Add(1)
+			}
+		}
+		mux.ServeHTTP(w, r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1")))
+	})
+	var admitH2 atomic.Bool
+	h2handler := h2c.NewHandler(handler, &http2.Server{})
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if admitH2.Load() {
+			h2handler.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == "PRI" {
+			rejected.Add(1)
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(origin.Close)
+	pc := newTestPeerConn(t, origin, hostAddr, peer, transport.PeerConnConfig{
+		DialSet:        transport.PeerRPCDialSet{InferenceURL: origin.URL, H2URL: origin.URL},
+		H2ProbeTimeout: 200 * time.Millisecond, BackoffMin: 50 * time.Millisecond, MinTTL: time.Second, WatchStale: time.Minute,
+	})
+	pc.Start()
+	waitPeerReady(t, pc)
+	require.False(t, pc.UsingH2())
+	require.Equal(t, int32(1), rejected.Load())
+	require.GreaterOrEqual(t, h1Attach.Load(), int32(1))
+	require.True(t, transport.RPCH2MissCachedForTest(origin.URL))
+	t.Log("real first H2 preface closed => successful HTTP/1.1 Attach; short discovery backoff")
+	// A real live refresh occurs while fake cache time is held inside backoff.
+	require.Eventually(t, func() bool { return h1Attach.Load() >= 2 }, 8*time.Second, 20*time.Millisecond)
+	require.Equal(t, int32(1), rejected.Load())
+	require.Zero(t, h2Attach.Load())
+	admitH2.Store(true)
+	nowMu.Lock()
+	now = now.Add(30 * time.Second)
+	nowMu.Unlock()
+	require.Eventually(t, func() bool { return pc.Ready() && pc.UsingH2() }, 8*time.Second, 20*time.Millisecond)
+	require.GreaterOrEqual(t, h2Attach.Load(), int32(1))
+	require.False(t, transport.RPCH2MissCachedForTest(origin.URL))
+	t.Logf("cache expired => actual live H2 refresh succeeds; cache removed; h1 Attach=%d h2 Attach=%d rejected prefaces=%d", h1Attach.Load(), h2Attach.Load(), rejected.Load())
 }

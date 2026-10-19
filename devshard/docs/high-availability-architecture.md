@@ -324,15 +324,15 @@ if the required live routes do not return.
 Known limitations of this hop, recorded in
 [grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations):
 
-- The transport is agreed per host, in band. A peer remembers a missed
-  HTTP/2 probe for 30 minutes and returns to HTTP/2 on its next Attach or
-  refresh after that, so a wrapping update is picked up with a delay, not a
-  restart. Between `fleet apply` and the versiond replacement the `_rpc`
-  twins are empty and peer RPC to this host answers 503 on either transport;
-  `update-devshard.sh` keeps that window to the versiond step.
+- Transport discovery is scoped to scheme/host/port. Explicit protocol mismatch
+  is cached for 30 minutes ± 10%; connection closure uses exponential backoff
+  starting at 30 seconds. Empty RPC twins use bounded Connect/H1 fallback via
+  the original version and legacy placement maps. JSON capacity stays separate.
+  Native gRPC cannot use this H1 path. Public proxy restarts still interrupt
+  connections.
 - `update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do
   not send a peer RPC. The `_rpc` health check is HTTP/1.1 `GET /readyz` on
-  router admin `:8404` followed by `GET /readyz` on the router's `:8081` over
+  router admin `:8404` followed by `GET /healthz` on the router's `:8081` over
   HTTP/2 (the data dial); a router without that listen leaves the twin and
   the proxy sends that version's peer RPC to the JSON backend over HTTP/1.1.
   A remote endpoint `{id, host, port}` is

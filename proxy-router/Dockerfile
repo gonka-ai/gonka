@@ -11,6 +11,8 @@ RUN apk add --no-cache curl jq socat \
        /var/lib/gonka-router
 
 COPY proxy-router/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
+COPY proxy-router/rpc-policy.cfg.template /etc/haproxy/rpc-policy.cfg.template
+COPY proxy-router/grpc-unavailable.http /etc/haproxy/grpc-unavailable.http
 COPY proxy-router/grpc-exhausted.http /etc/haproxy/grpc-exhausted.http
 COPY proxy-router/versiond-backend.cfg.template /etc/haproxy/versiond-backend.cfg.template
 COPY proxy-router/rpc-h2-backend.cfg.template /etc/haproxy/rpc-h2-backend.cfg.template

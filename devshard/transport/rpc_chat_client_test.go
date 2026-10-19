@@ -227,7 +227,7 @@ func TestRPCClient_SendRoundTripGRPCOnH2(t *testing.T) {
 func TestRPCClient_SendGRPCMissFallsBackToConnect(t *testing.T) {
 	obs := newWireObserver()
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	dead.Close()
+	t.Cleanup(dead.Close)
 	rpc, user, pc := startLiveChatRPCPartsObservedCfg(t, transport.DefaultClientConfig(), obs, transport.PeerConnConfig{
 		DialSet:        transport.PeerRPCDialSet{H2URL: dead.URL},
 		GRPC:           true,

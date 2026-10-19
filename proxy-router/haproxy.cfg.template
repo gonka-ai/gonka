@@ -75,6 +75,7 @@ frontend public_http
     # waits for the whole 24-byte preface instead.
     acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
     acl peer_rpc_h2c_prefix req.payload(0,14) -m bin 505249202a20485454502f322e30
+    tcp-request content accept if HTTP !peer_rpc_h2c_prefix
     # A peer connection is counted and capped per client address here,
     # before the hand-off. src is already the client: a trusted balancer's
     # PROXY preamble was consumed above. Inside rpc_h2 the address would be
@@ -84,7 +85,6 @@ frontend public_http
     tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
     tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }
     tcp-request content accept if peer_rpc_h2c
-    tcp-request content accept if HTTP !peer_rpc_h2c_prefix
     use_backend rpc_h2c_in if peer_rpc_h2c
     default_backend policy_http
 
@@ -98,11 +98,7 @@ frontend public_https
     timeout client ${PUBLIC_IDLE_SECONDS}s
     tcp-request inspect-delay ${PUBLIC_INSPECT_SECONDS}s
     acl peer_rpc_tls req.ssl_alpn -i ${RPC_ALPN}
-    # Same cap as :80, keyed from the ClientHello before any handshake. A
-    # peer that offers the token on an HTTP InferenceUrl is counted too.
-    tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_tls
-    tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
-    tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }
+${PUBLIC_HTTPS_RPC_LIMITS}
     tcp-request content accept if { req.ssl_hello_type 1 }
     ${PUBLIC_HTTPS_RPC_ROUTE}
     default_backend policy_https
@@ -186,63 +182,9 @@ frontend rpc_h2
     http-request del-header X-Real-IP
     http-request set-header X-Real-IP %[src]
 
-    # Match zones on the path the child will route. Unreserved escapes
-    # (%41ttach) decode to Attach; a leftover % under a session RPC path is
-    # never a procedure name.
-    http-request normalize-uri percent-decode-unreserved strict
-    http-request normalize-uri percent-to-uppercase
-    http-request normalize-uri path-strip-dot
-    http-request normalize-uri path-strip-dotdot
-    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
-    # Session RPC only, including Watch on /sessions/_/rpc/. A dot-dot
-    # segment is removed above, so /sessions/{id}/rpc/../metrics becomes
-    # /sessions/{id}/metrics and misses this pattern. Obs, healthz, and
-    # versionless diffs stay on :80/:443.
-    http-request deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }
-
-    acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach
-    acl is_watch path_end /devshard.transport.v1.PeerAuthService/Watch
-    acl is_chat path_end /devshard.transport.v1.SessionService/Chat
-    acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs
-    acl is_mempool path_end /devshard.transport.v1.SessionService/GetMempool
-    acl is_signatures path_end /devshard.transport.v1.SessionService/GetSignatures
-    acl is_gossip path_end /devshard.transport.v1.GossipService/Nonce /devshard.transport.v1.GossipService/Txs
-    acl is_payload path_end /devshard.transport.v1.PayloadService/GetPayload
-    acl is_heavy path_end /devshard.transport.v1.SessionService/SeedHeightSync /devshard.transport.v1.SessionService/RepairHeightSync /devshard.transport.v1.SessionService/VerifyTimeout /devshard.transport.v1.SessionService/VerifyErrorMiss /devshard.transport.v1.SessionService/ChallengeReceipt
-    # This frontend is HTTP/2 only. Connect keeps HTTP 429. Native gRPC
-    # (content-type application/grpc) needs HTTP 200, content-type
-    # application/grpc, and grpc-status 8. A bare return drops Content-Type
-    # unless the body comes from an errorfile, so that file carries both
-    # headers. The return is first so it wins over deny_status 429.
-    acl is_native_grpc req.hdr(content-type) -m reg ^application/grpc($|\+|;)
-
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_attach if is_attach
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_attach { sc_http_req_rate(1) gt 100 }
-    http-request deny deny_status 429 if is_attach { sc_http_req_rate(1) gt 100 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_watch if is_watch
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_watch { sc_http_req_rate(1) gt 100 }
-    http-request deny deny_status 429 if is_watch { sc_http_req_rate(1) gt 100 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_chat if is_chat
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_chat { sc_http_req_rate(1) gt 2000 }
-    http-request deny deny_status 429 if is_chat { sc_http_req_rate(1) gt 2000 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_diffs if is_diffs
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_diffs { sc_http_req_rate(1) gt 400 }
-    http-request deny deny_status 429 if is_diffs { sc_http_req_rate(1) gt 400 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_mempool if is_mempool
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_mempool { sc_http_req_rate(1) gt 400 }
-    http-request deny deny_status 429 if is_mempool { sc_http_req_rate(1) gt 400 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_signatures if is_signatures
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_signatures { sc_http_req_rate(1) gt 600 }
-    http-request deny deny_status 429 if is_signatures { sc_http_req_rate(1) gt 600 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_gossip if is_gossip
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_gossip { sc_http_req_rate(1) gt 200 }
-    http-request deny deny_status 429 if is_gossip { sc_http_req_rate(1) gt 200 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_payload if is_payload
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_payload { sc_http_req_rate(1) gt 200 }
-    http-request deny deny_status 429 if is_payload { sc_http_req_rate(1) gt 200 }
-    http-request track-sc1 src,ipmask(32,64) table st_rpc_heavy if is_heavy
-    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if is_native_grpc is_heavy { sc_http_req_rate(1) gt 200 }
-    http-request deny deny_status 429 if is_heavy { sc_http_req_rate(1) gt 200 }
+    http-request set-var(txn.rpc_src) src,ipmask(32,64)
+${RPC_POLICY_RULES}
+    http-request deny deny_status 404 unless peer_rpc
 
     # Same placement key as versiond_router_in and the inner versiond-router.
     http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
@@ -251,15 +193,8 @@ frontend rpc_h2
     http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
 
-    # Versioned Attach/Chat uses the same map as versiond_router_in, with _rpc
-    # appended. A twin with no usable server (a router generation without
-    # the :8081 peer-RPC listen, after a rollback) hands the request to its
-    # JSON sibling: the same router over HTTP/1.1, which routes /rpc/ by
-    # path. Versionless paths stay on the coarse pool, with the same
-    # fallback; non-HA falls back to versiond itself over HTTP/1.1.
 ${RPC_H2_VERSION_RULES}
-    use_backend ${RPC_H1_FALLBACK} if !{ nbsrv(rpc_h2_upstream) gt 0 }
-    default_backend rpc_h2_upstream
+    default_backend rpc_h1_fallback
 
 backend st_rpc_attach
     stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
@@ -305,6 +240,38 @@ frontend versiond_router_in
     bind ${POLICY_BIND_ADDRESS}:${VERSIOND_FRONTEND_PORT}
     maxconn ${MAX_CONNECTIONS}
 
+    # Only nginx reaches this isolated listener; it overwrites X-Real-IP.
+    http-request set-var(txn.rpc_src) req.hdr_ip(X-Real-IP),ipmask(32,64)
+${RPC_POLICY_RULES}
+    http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
+    http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
+    # The policy worker has already derived these from its trusted PROXY peer.
+    # Preserve them; src here is only the policy container.
+
+    acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
+    ${UNDECLARED_VERSION_GUARD}
+${RPC_H2_VERSION_RULES}
+    use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
+    default_backend versiond_router_coarse
+
+# One H1 request per internal connection, held until the streaming body ends.
+# This admission budget is shared across versions; JSON does not traverse it.
+backend rpc_h1_fallback
+    retries 0
+    option http-server-close
+    timeout queue ${RPC_FALLBACK_QUEUE_MS}ms
+    http-request deny deny_status 503 if { queue(rpc_h1_fallback) ge ${RPC_FALLBACK_MAXQUEUE} }
+    server local abns@proxy_rpc_legacy maxconn ${RPC_FALLBACK_MAXCONN}
+
+frontend rpc_h1_legacy
+    option httplog
+    bind abns@proxy_rpc_legacy proto h1
+    maxconn ${RPC_FALLBACK_MAXCONN}
+
     http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
@@ -317,7 +284,7 @@ frontend versiond_router_in
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
     ${UNDECLARED_VERSION_GUARD}
     use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
-    default_backend versiond_router_coarse
+    default_backend ${RPC_LEGACY_DEFAULT}
 
 ${VERSIOND_ROUTER_BACKENDS}
 

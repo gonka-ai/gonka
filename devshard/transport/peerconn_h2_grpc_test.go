@@ -59,7 +59,7 @@ func TestRPCClient_GetSignaturesGRPCMissFallsBackToConnect(t *testing.T) {
 	inf, _ := startPeerRPCServerObserved(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond},
 		sigLookup{sigs: want}, obs)
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	dead.Close()
+	t.Cleanup(dead.Close)
 
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()

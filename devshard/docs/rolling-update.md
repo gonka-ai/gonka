@@ -407,8 +407,7 @@ historical; do not treat it as current join behavior.
 
 JSON on InferenceUrl and phase 6 `/rpc/` over HTTP/2 on the same port **share
 placement**. `proxy`'s `rpc_h2` frontend uses the same version + escrow hash as
-`versiond_router_in`, and the router selects the `_rpc` twin by path on its one
-`:8080`. Failing `/readyz` withdraws the host from both. Do not add a second
+`versiond_router_in`, and the router selects the `_rpc` twin by path on private `:8080` and `:8081`. Failing `/readyz` withdraws the host from both. Do not add a second
 evacuation procedure for `/rpc/`. That check is HTTP/1.1 on the versiond listen;
 it does not send an HTTP/2 request, a known limitation in
 [grpc-transport-connection.md](./grpc-transport-connection.md#known-limitations).

@@ -624,3 +624,18 @@ ownership-bounded teardown of expected and orphan resources.
 | --- | --- |
 | [rolling-update.md](../devshard/docs/rolling-update.md) | Same-name SHA blue/green inside one versiond |
 | [high-availability-architecture.md](../devshard/docs/high-availability-architecture.md) | Where the router sits in the stack |
+
+## RPC fallback during mixed-version updates
+
+Port 8081 `/healthz` (or `/<version>/healthz`) reports readiness of the selected
+RPC pool, not its JSON sibling. An empty RPC pool returns 503. Connect requests
+fall back through a private HTTP/1.1 admission hop to the existing JSON maps,
+preserving version/escrow placement. The hop does not retry POSTs. Native gRPC
+cannot use this compatibility path.
+
+`VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN` (default 512) bounds active fallback requests
+across all versions. `VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE` (64) rejects arrivals
+when the queue already reaches the threshold; concurrent arrivals may overshoot.
+`VERSIOND_ROUTER_RPC_FALLBACK_QUEUE_MS` (200) bounds queue waiting time. All values
+must be positive integers. JSON requests do not consume this fallback budget.
+The admin port must differ from both data ports, 8080 and 8081.

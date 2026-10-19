@@ -341,6 +341,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Set up Go for ingress regression tests
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: devshard/go.mod
+          cache-dependency-path: devshard/go.sum
       - name: Render public proxy configuration
         run: make -C proxy-router test-render
       - name: Check peer RPC health in a live show stat
@@ -351,6 +356,8 @@ jobs:
         run: make -C proxy-router test-routing
       - name: Render private policy configuration
         run: make -C proxy test-render
+      - name: Exercise mixed protocol ingress and rolling compatibility
+        run: make -C proxy-router test-rpc-upgrade
 
   test-proxy-ssl-install:
     runs-on: ubuntu-latest

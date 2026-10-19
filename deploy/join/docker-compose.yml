@@ -3,6 +3,7 @@ x-proxy-policy: &proxy-policy
     ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.16}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
+    - DEVSHARD_RPC_POLICY_HOST=proxy-policy-ingress
     - PROXY_PROTOCOL=true
     - PROXY_PROTOCOL_PEER=proxy-policy-ingress
     - PROXY_POLICY_READINESS_HOST=proxy-policy-app-network

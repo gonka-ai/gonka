@@ -11,7 +11,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"connectrpc.com/connect"
 
 	"devshard/logging"
 
@@ -35,7 +38,7 @@ const (
 	// browsers and the JSON clients offer h2 and must keep landing on nginx.
 	PeerRPCALPN = "gonka-rpc/1"
 
-	// DefaultRPCH2MissTTL is how long an InferenceUrl host stays on
+	// DefaultRPCH2MissTTL is how long an InferenceUrl origin stays on
 	// HTTP/1.1 after its origin did not speak HTTP/2. The next Attach or
 	// session refresh after that probes HTTP/2 again, so a host whose
 	// wrapping was updated in the meantime is picked up without a restart.
@@ -155,16 +158,30 @@ func inferenceOrigin(base string) (string, error) {
 	return u.String(), nil
 }
 
+// inferenceHostKey identifies a transport origin, not a hostname or RPC path.
+// Explicit default ports, host case and IPv6 spellings share the same key.
 func inferenceHostKey(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u == nil {
-		return strings.ToLower(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	scheme := strings.ToLower(u.Scheme)
+	port := u.Port()
+	if port == "" {
+		switch scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return ""
+		}
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "" {
-		return strings.ToLower(strings.TrimSpace(raw))
+	if ip := net.ParseIP(host); ip != nil {
+		host = ip.String()
 	}
-	return host
+	return scheme + "://" + net.JoinHostPort(host, port)
 }
 
 // rpcH2ServerName is TLS SNI and certificate verify: InferenceUrl's hostname.
@@ -176,12 +193,26 @@ func rpcH2ServerName(inferenceURL string) string {
 	return u.Hostname()
 }
 
+// DefaultRPCH2CloseBackoff is the initial delay after ambiguous connection loss.
+const DefaultRPCH2CloseBackoff = 30 * time.Second
+
+// A probe lease serializes discovery per origin. Retain failure history across
+// expiry, but discard it on a successful Attach. Generation checks prevent a
+// late result from overwriting a newer decision.
+type h2MissEntry struct {
+	until      time.Time
+	backoff    time.Duration
+	generation uint64
+	probing    bool
+	done       chan struct{}
+}
 type h2MissCache struct {
-	mu     sync.Mutex
-	until  map[string]time.Time
-	now    func() time.Time
-	ttl    time.Duration
-	jitter func(time.Duration) time.Duration
+	mu      sync.Mutex
+	entries map[string]h2MissEntry
+	serial  uint64
+	now     func() time.Time
+	ttl     time.Duration
+	jitter  func(time.Duration) time.Duration
 }
 
 func newH2MissCache(ttl time.Duration, now func() time.Time) *h2MissCache {
@@ -191,7 +222,7 @@ func newH2MissCache(ttl time.Duration, now func() time.Time) *h2MissCache {
 	if now == nil {
 		now = time.Now
 	}
-	return &h2MissCache{until: make(map[string]time.Time), now: now, ttl: ttl, jitter: jitterRPCH2MissTTL}
+	return &h2MissCache{entries: make(map[string]h2MissEntry), now: now, ttl: ttl, jitter: jitterRPCH2MissTTL}
 }
 
 // jitterRPCH2MissTTL returns ttl ± 10% so unique hosts do not retry together.
@@ -207,45 +238,118 @@ func jitterRPCH2MissTTL(ttl time.Duration) time.Duration {
 	return ttl + off
 }
 
-func (c *h2MissCache) skip(host string) bool {
-	if c == nil || host == "" {
+func (c *h2MissCache) skip(key string) bool {
+	if c == nil || key == "" {
 		return false
 	}
-	now := c.now()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	until, ok := c.until[host]
-	if !ok {
-		return false
-	}
-	if !now.Before(until) {
-		delete(c.until, host)
-		return false
-	}
-	return true
+	e := c.entries[key]
+	return e.probing || c.now().Before(e.until)
 }
 
-func (c *h2MissCache) remember(host string) {
-	if c == nil || host == "" {
-		return
-	}
-	now := c.now()
-	ttl := c.ttl
-	if c.jitter != nil {
-		ttl = c.jitter(ttl)
+func (c *h2MissCache) begin(key string) (uint64, bool) {
+	if c == nil || key == "" {
+		return 0, false
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.until[host] = now.Add(ttl)
+	e := c.entries[key]
+	if e.probing || c.now().Before(e.until) {
+		return 0, false
+	}
+	// Bound retained history even when governance retires origins. Never evict
+	// an active lease. An origin may be rediscovered after idle history eviction.
+	if _, found := c.entries[key]; !found && len(c.entries) >= 4096 {
+		oldestKey := ""
+		var oldest time.Time
+		for k, v := range c.entries {
+			if !v.probing && (oldestKey == "" || v.until.Before(oldest)) {
+				oldestKey, oldest = k, v.until
+			}
+		}
+		if oldestKey == "" {
+			return 0, false
+		}
+		delete(c.entries, oldestKey)
+	}
+	c.serial++
+	e.generation, e.probing = c.serial, true
+	e.done = make(chan struct{})
+	c.entries[key] = e
+	return e.generation, true
+}
+
+// Wait for an in-flight discovery rather than moving healthy siblings to H1.
+func (c *h2MissCache) acquire(ctx context.Context, key string) (uint64, bool) {
+	for {
+		if generation, ok := c.begin(key); ok {
+			return generation, true
+		}
+		c.mu.Lock()
+		e := c.entries[key]
+		c.mu.Unlock()
+		if !e.probing {
+			return 0, false
+		}
+		select {
+		case <-e.done:
+		case <-ctx.Done():
+			return 0, false
+		}
+	}
+}
+
+func (c *h2MissCache) finish(key string, generation uint64, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[key]
+	if !ok || !e.probing || e.generation != generation {
+		return
+	}
+	close(e.done)
+	if err == nil {
+		delete(c.entries, key)
+		return
+	}
+	e.probing = false
+	var wait time.Duration
+	switch classifyRPCH2Miss(err) {
+	case h2ProtocolMiss:
+		wait = c.ttl
+	case h2Closed:
+		if e.backoff == 0 {
+			e.backoff = min(DefaultRPCH2CloseBackoff, c.ttl)
+		} else {
+			e.backoff = min(e.backoff*2, c.ttl)
+		}
+		wait = e.backoff
+	}
+	if wait == 0 && e.backoff == 0 {
+		delete(c.entries, key)
+		return
+	}
+	if c.jitter != nil {
+		wait = c.jitter(wait)
+		if e.backoff > 0 {
+			wait = min(wait, c.ttl)
+		}
+	}
+	e.until = c.now().Add(wait)
+	c.entries[key] = e
+}
+
+// remember is used by tests to model a sibling's confirmed protocol miss.
+func (c *h2MissCache) remember(key string) {
+	if gen, ok := c.begin(key); ok {
+		c.finish(key, gen, errors.New("http2: unexpected ALPN protocol"))
+	}
 }
 
 func (c *h2MissCache) reset() {
-	if c == nil {
-		return
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.until = make(map[string]time.Time)
+	c.entries = make(map[string]h2MissEntry)
 }
 
 var rpch2Miss = newH2MissCache(DefaultRPCH2MissTTL, nil)
@@ -279,7 +383,9 @@ func InstallRPCH2MissCacheForTest(ttl time.Duration, now func() time.Time) {
 
 // RPCH2MissCachedForTest is whether this InferenceUrl host is skipping h2.
 func RPCH2MissCachedForTest(inferenceURL string) bool {
-	return skipRPCH2(inferenceURL)
+	rpch2Miss.mu.Lock()
+	defer rpch2Miss.mu.Unlock()
+	return rpch2Miss.now().Before(rpch2Miss.entries[inferenceHostKey(inferenceURL)].until)
 }
 
 // h2MissLog is one Warn per InferenceUrl host per miss TTL. Later misses in
@@ -328,36 +434,60 @@ func noteRPCH2Miss(host, h2URL string, err error) {
 		"h2_url", h2URL,
 		"error", err,
 	}
-	kv = append(kv, "http11_for", DefaultRPCH2MissTTL.String())
+	kv = append(kv, "miss_kind", classifyRPCH2Miss(err))
 	if rpch2MissLog.first(host) {
-		logging.Warn("peer rpc origin does not speak HTTP/2; using HTTP/1.1", kv...)
+		logging.Warn("peer rpc HTTP/2 discovery deferred; using HTTP/1.1", kv...)
 		return
 	}
-	logging.Debug("peer rpc origin does not speak HTTP/2; using HTTP/1.1", kv...)
+	logging.Debug("peer rpc HTTP/2 discovery deferred; using HTTP/1.1", kv...)
 }
 
-// isRPCH2Miss is a failed h2 origin on Attach (closed, not h2c, refuse,
-// preface, ALPN, dial or TLS that hit the probe timeout, or a close with no
-// answer). Connect status from a working HTTP/2 server — including
-// Unavailable / Unknown after an RPC — is not a miss. A context deadline on
-// the Attach call is not a miss either: that RPC has the full
-// DefaultAttachTimeout.
-//
-// A bare EOF on Attach is a miss: a TLS terminator that drops an
-// unsupported ClientHello without an alert, or a cleartext server that
-// swallows the preface and closes, both end the handshake with io.EOF or
-// io.ErrUnexpectedEOF and never say anything the client could act on. It
-// is an Attach-only rule: Watch turns a clean stream end into io.EOF, and
-// that one reopens Watch (watchReopen), it does not change transport.
-func isRPCH2Miss(err error) bool {
-	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
-		return false
+type h2MissKind uint8
+
+const (
+	h2NotMiss h2MissKind = iota
+	h2ProtocolMiss
+	h2Closed
+)
+
+// Application refusals, cancellation and failures common to both transports
+// never change protocol capability. Only specific wire evidence gets a long
+// pin; an ambiguous close gets a short, increasing discovery backoff.
+func classifyRPCH2Miss(err error) h2MissKind {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || connect.IsWireError(err) {
+		return h2NotMiss
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
+	var dns *net.DNSError
+	var ne net.Error
+	if errors.As(err, &dns) || errors.Is(err, syscall.ECONNREFUSED) || (errors.As(err, &ne) && ne.Timeout()) {
+		return h2NotMiss
 	}
-	return isRPCH2TransportMiss(err)
+	var stream http2.StreamError
+	if errors.As(err, &stream) {
+		return h2NotMiss
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "http2: unexpected ALPN protocol") ||
+		strings.Contains(msg, "remote error: tls: no application protocol") ||
+		strings.Contains(msg, "frame header looked like an HTTP/1.1 header") ||
+		strings.Contains(msg, "malformed HTTP response") {
+		return h2ProtocolMiss
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return h2Closed
+	}
+	var conn http2.ConnectionError
+	if errors.As(err, &conn) {
+		return h2Closed
+	}
+	// These transport-generated errors do not prove protocol incompatibility.
+	if msg == "http2: client conn could not be established" || strings.HasSuffix(msg, "http2: client connection lost") || strings.HasSuffix(msg, "http2: server sent GOAWAY and closed the connection") {
+		return h2Closed
+	}
+	return h2NotMiss
 }
+
+func isRPCH2Miss(err error) bool { return classifyRPCH2Miss(err) != h2NotMiss }
 
 func isContextDone(err error) bool {
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
@@ -367,7 +497,7 @@ func isContextDone(err error) bool {
 // DeadlineExceeded / Canceled are not transport misses, and neither is a
 // bare EOF: on a live session that is a clean Watch end.
 func isRPCH2TransportMiss(err error) bool {
-	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || connect.IsWireError(err) {
 		return false
 	}
 	var op *net.OpError

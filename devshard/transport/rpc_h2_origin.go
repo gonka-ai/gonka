@@ -23,10 +23,11 @@ import (
 // uses http.Transport against the h2 origin (that would silently speak
 // HTTP/1.1 on a mux).
 type originSwitchTransport struct {
-	h1    http.RoundTripper
-	h2    http.RoundTripper
-	h2URL *url.URL
-	h2On  atomic.Bool
+	h1       http.RoundTripper
+	h2       http.RoundTripper
+	h2URL    *url.URL
+	h2On     atomic.Bool
+	inflight atomic.Int32
 }
 
 func newOriginSwitchTransport(h1, h2 http.RoundTripper, h2URL *url.URL) *originSwitchTransport {
@@ -199,14 +200,14 @@ func newRPCH2Transport(dial func(context.Context, string, string) (net.Conn, err
 	}
 }
 
-// rpch2ProbeTimeoutError turns a probe-context deadline into a dial error.
+// rpch2ProbeTimeoutError preserves the probe deadline for errors.Is.
 // The Attach RPC's own context deadline must stay a deadline so it is not
 // an h2 miss. Parent cancel is left unchanged.
 func rpch2ProbeTimeoutError(err error) error {
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}
-	return &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("h2 probe timeout")}
+	return fmt.Errorf("h2 probe: %w", err)
 }
 
 // rpch2TLSConfig clones cfg, sets ServerName to InferenceUrl's hostname,

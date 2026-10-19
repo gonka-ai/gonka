@@ -103,8 +103,10 @@ resolvers docker
 # replacement order. JSON and the HTTP/1.1 fallback arrive on :8080. Neither
 # port is published.
 frontend versiond_in
-    bind ${FRONT_BIND_ADDRESS}:8080
-    bind ${FRONT_BIND_ADDRESS}:8081
+    bind ${FRONT_BIND_ADDRESS}:8080 id 1
+    bind ${FRONT_BIND_ADDRESS}:8081 id 2
+    bind abns@versiond_rpc_legacy proto h1 id 3
+    acl rpc_legacy_hop so_id 3
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
@@ -115,7 +117,8 @@ frontend versiond_in
     # matches the raw path, and versiond routes the decoded one.
     http-request normalize-uri percent-decode-unreserved strict
     http-request normalize-uri percent-to-uppercase
-    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%] }
+    http-request normalize-uri path-merge-slashes
+    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/.*[%] }
 
     # Normalised path: the optional /devshard/ prefix is present only when
     # genesis-proxy is not in front, and must not change routing. Field 2 is
@@ -170,23 +173,39 @@ frontend versiond_in
     # Versionless endpoints are part of versiond's own API namespace. Resolve
     # them before consulting any version map so a governance name can never
     # shadow health, metrics, stats, or session-observability routes.
-    use_backend versiond_ha_pool if versionless_request
 
-    # Peer RPC goes to the JSON pool's _rpc twin, whose check is
-    # /readyz?peer-rpc=1. A child that did not advertise h2c stays in the
-    # JSON pool and out of the twin.
-    # Legacy pinning wins: the map yields that version's backend on the one host
-    # that owns its SQLite data.
-    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if peer_rpc { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    # Probe the actual RPC pool on :8081, never the JSON sibling. The
+    # ordinary health URL on :8080 retains its existing meaning.
+    acl rpc_health dst_port 8081
+    acl health_path var(txn.canonpath) -m reg ^(/[^/]+)?/healthz$
+    http-request set-var(txn.router_admin_ready) str(1) if rpc_health health_path
+    http-request set-var(txn.rpc_backend) str(versiond_ha_pool_rpc)
+    http-request set-var(txn.rpc_backend) var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc) if { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
+    http-request set-var(txn.rpc_backend) var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc) if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    http-request deny deny_status 503 if peer_rpc { req.hdr(content-type) -m beg application/grpc } !{ var(txn.rpc_backend),nbsrv gt 0 }
+    use_backend %[var(txn.rpc_backend)] if rpc_health health_path
+    use_backend versiond_ha_pool if versionless_request
+    # Old versiond can forward Connect/H1 without advertising h2 capability.
+    # Admission is shared across all versions. The private H1 hop reuses the
+    # JSON maps and readiness, preserving the exact legacy owner/hash policy.
+    use_backend rpc_legacy_admission if peer_rpc !rpc_legacy_hop !{ var(txn.rpc_backend),nbsrv gt 0 }
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc)] if peer_rpc !rpc_legacy_hop { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     # Then the version's own pool. The map yields a backend name; with no entry
     # there is no match and the request falls through to the host-level pool,
     # which the guard above has already restricted to non-version paths whenever
     # any version is declared.
-    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if peer_rpc { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc)] if peer_rpc !rpc_legacy_hop { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
     use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
-    use_backend versiond_ha_pool_rpc if peer_rpc
+    use_backend versiond_ha_pool_rpc if peer_rpc !rpc_legacy_hop
     default_backend versiond_ha_pool
+
+backend rpc_legacy_admission
+    retries 0
+    option http-server-close
+    timeout queue ${RPC_FALLBACK_QUEUE_MS}ms
+    http-request deny deny_status 503 if { queue(rpc_legacy_admission) ge ${RPC_FALLBACK_MAXQUEUE} }
+    server local abns@versiond_rpc_legacy maxconn ${RPC_FALLBACK_MAXCONN}
 
 ${POOL_BACKENDS}
 

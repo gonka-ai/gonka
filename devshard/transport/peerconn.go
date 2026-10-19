@@ -319,7 +319,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 	// dead mux rather than reaching nginx with gRPC framing.
 	var httpH2 *http.Client
 	if h2 := origin.h2Only(); h2 != nil {
-		httpH2 = &http.Client{Transport: h2, CheckRedirect: noFollowRedirects}
+		httpH2 = &http.Client{Transport: peerRPCInstrumentation(h2, cfg, maxConns, &origin.inflight), CheckRedirect: noFollowRedirects}
 	}
 	// The live-session HTTP/2 probe Attaches on a client pinned to the h2
 	// origin, so the shared switch flips only after that probe succeeded.
@@ -392,12 +392,12 @@ func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTrans
 		h2 = rpch2Clients.get(h2URL, serverName, h2Dial, cfg.H2ReadIdleTimeout, cfg.H2PingTimeout, h2ProbeTimeout(cfg))
 	}
 	origin := newOriginSwitchTransport(h1, h2, h2URL)
-	rt := DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{
-		base: origin,
-		peer: cfg.childID(),
-		max:  maxConns,
-	})
+	rt := peerRPCInstrumentation(origin, cfg, maxConns, &origin.inflight)
 	return origin, rt
+}
+
+func peerRPCInstrumentation(base http.RoundTripper, cfg PeerConnConfig, maxConns int, inflight *atomic.Int32) http.RoundTripper {
+	return DefaultHostConnectionTracker().WrapRoundTripper(&poolWatchRoundTripper{base: base, peer: cfg.childID(), max: maxConns, shared: inflight})
 }
 
 // outboundPeerReleased is process-wide. The retiring child sets it so a
@@ -854,17 +854,7 @@ func (p *PeerConn) serveWatch(tok []byte, exp time.Time) (bool, error) {
 			newTok, newExp, err := p.attach()
 			p.incAttach(err)
 			if err != nil {
-				if isRPCH2Miss(err) {
-					// Origin is gone (listen/RST/ALPN/half-open, or a
-					// close with no answer). End Watch. The outer loop
-					// probes h2 again and falls back to HTTP/1.1 if the
-					// origin still misses. A slow Attach
-					// (DeadlineExceeded) is not this: keep Watch and
-					// retry refresh.
-					stopWatch()
-					p.incReattach(reattachReasonWatch)
-					return sawBeat.Load(), err
-				}
+				// Renewal failure alone does not invalidate a working Watch/token.
 				if hostRenewalLost(err) {
 					// The host no longer admits this token, and `_` cannot
 					// open a session. Retrying refresh never succeeds, so
@@ -999,9 +989,14 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		if !h2Tried && p.shouldProbeH2() {
+		generation, probe := uint64(0), false
+		if !h2Tried && p.cfg.DialSet.H2URL != "" {
+			generation, probe = rpch2Miss.acquire(overall, inferenceHostKey(p.cfg.BaseURL))
+		}
+		if probe {
 			p.origin.setH2(true)
 			tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
+			rpch2Miss.finish(inferenceHostKey(p.cfg.BaseURL), generation, err)
 			h2Tried = true
 			if err == nil {
 				return tok, exp, nil
@@ -1028,6 +1023,8 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 			if err != nil {
 				return nil, time.Time{}, err
 			}
+		} else if !h2Tried {
+			p.origin.setH2(false)
 		}
 		tok, exp, err := p.attachOnce(overall, p.doorAuthClient(door), msg)
 		if err == nil {
@@ -1054,13 +1051,18 @@ func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	if p.authHostProbe != nil && !p.origin.usingH2() && p.shouldProbeH2() {
+	generation, probe := uint64(0), false
+	if p.authHostProbe != nil && !p.origin.usingH2() {
+		generation, probe = rpch2Miss.acquire(ctx, inferenceHostKey(p.cfg.BaseURL))
+	}
+	if probe {
 		// The probe gets half of the refresh budget. An origin that takes
 		// the whole deadline to answer the probe must still leave time for
 		// the HTTP/1.1 renewal below; a probe timeout is not a miss.
 		probeCtx, cancelProbe := context.WithTimeout(ctx, halfRemaining(ctx))
 		tok, exp, err := p.attachOnce(probeCtx, p.authHostProbe, msg)
 		cancelProbe()
+		rpch2Miss.finish(inferenceHostKey(p.cfg.BaseURL), generation, err)
 		if err == nil {
 			p.origin.setH2(true)
 			return tok, exp, nil
@@ -1069,18 +1071,14 @@ func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 			return nil, time.Time{}, err
 		}
 		if isRPCH2Miss(err) {
-			rememberRPCH2Miss(p.cfg.BaseURL)
 			noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
-		} else {
-			// The origin speaks HTTP/2 but refused this Attach (a Connect
-			// error). Stay on HTTP/1.1 for now and let the refresh below
-			// decide the session's fate; the next refresh probes again.
-			logging.Debug("peer rpc h2 probe refused on refresh; staying on HTTP/1.1",
-				"subsystem", "transport",
-				"host", p.cfg.HostAddress,
-				"error", err,
-			)
+		} else if !isContextDone(err) {
+			// A response from H2 (including 429/503) is authoritative. Retrying on
+			// H1 could bypass admission or repeat work. A probe deadline may still
+			// use the remaining budget to preserve the existing H1 session.
+			return nil, time.Time{}, err
 		}
+
 		msg, err = p.newAttachRequest()
 		if err != nil {
 			return nil, time.Time{}, err
@@ -1107,7 +1105,6 @@ func halfRemaining(ctx context.Context) time.Duration {
 // and switches this PeerConn to Connect over HTTP/1.1 on InferenceUrl.
 func (p *PeerConn) noteH2Miss(err error) {
 	noteRPCH2Miss(inferenceHostKey(p.cfg.BaseURL), p.cfg.DialSet.H2URL, err)
-	rememberRPCH2Miss(p.cfg.BaseURL)
 	p.origin.setH2(false)
 }
 
@@ -1155,13 +1152,6 @@ func (p *PeerConn) attachOnce(ctx context.Context, client rpcpbconnect.PeerAuthS
 	p.budget.apply(resp.Msg.GetLimits(), p.cfg.now())
 	p.streams.applyPool(resp.Msg.GetLimits(), p.cfg.MaxConns)
 	return resp.Msg.GetSessionToken(), expires, nil
-}
-
-// shouldProbeH2 is whether the next Attach tries prior-knowledge HTTP/2
-// first: an h2 origin is configured and this InferenceUrl host has not
-// missed HTTP/2 inside the miss TTL.
-func (p *PeerConn) shouldProbeH2() bool {
-	return p != nil && p.cfg.DialSet.H2URL != "" && !skipRPCH2(p.cfg.BaseURL)
 }
 
 // httpFor is the HTTP client for a Connect client: the h2-pinned one for
@@ -1672,6 +1662,7 @@ type poolWatchRoundTripper struct {
 	peer     string
 	max      int
 	inflight atomic.Int32
+	shared   *atomic.Int32
 }
 
 func (t *poolWatchRoundTripper) CloseIdleConnections() {
@@ -1682,22 +1673,26 @@ func (t *poolWatchRoundTripper) CloseIdleConnections() {
 }
 
 func (t *poolWatchRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	n := t.inflight.Add(1)
+	inflight := &t.inflight
+	if t.shared != nil {
+		inflight = t.shared
+	}
+	n := inflight.Add(1)
 	if t.max > 0 && int(n) > t.max {
 		observability.IncPeerPoolExhausted(t.peer)
 	}
 	resp, err := t.base.RoundTrip(req)
 	if err != nil || resp == nil {
-		t.inflight.Add(-1)
+		inflight.Add(-1)
 		return resp, err
 	}
 	// Connect server-streams typically return after headers. Count Watch
 	// (and any other body) until Close, not RoundTrip return.
 	if resp.Body == nil || resp.Body == http.NoBody {
-		t.inflight.Add(-1)
+		inflight.Add(-1)
 		return resp, nil
 	}
-	resp.Body = &countedBody{ReadCloser: resp.Body, inflight: &t.inflight}
+	resp.Body = &countedBody{ReadCloser: resp.Body, inflight: inflight}
 	return resp, nil
 }
 

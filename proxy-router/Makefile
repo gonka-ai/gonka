@@ -188,7 +188,7 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "public :443 in HTTP mode must not route ALPN to a TLS peer RPC listen"; \
 	grep -q '^ *server local abns@rpc_h2c send-proxy-v2$$' "$$tmpdir/proxy.cfg" \
 		|| fail "the :80 hand-off does not carry the client address with PROXY v2"; \
-	grep -q '^ *default_backend rpc_h2_upstream$$' "$$tmpdir/proxy.cfg" \
+	grep -q '^ *default_backend rpc_h1_fallback$$' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen is forwarded to proxy-policy"; \
 	grep -q '^ *server versiond versiond:8080 proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none$$' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA peer RPC does not dial versiond:8080 proto h2 with a check"; \
@@ -201,7 +201,7 @@ test-render: test-route-status test-rpc-h2-cert
 		END { exit !(connect && send && expect) } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA peer RPC check does not open versiond over HTTP/2"; \
-	grep -q '^ *use_backend rpc_versiond_h1 if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/proxy.cfg" \
+	grep -q '^ *default_backend rpc_versiond_h1$$' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA peer RPC does not fall back to versiond over HTTP/1.1 when its pool is empty"; \
 	awk ' \
 		$$0 ~ "^backend rpc_versiond_h1$$" { inside = 1; next } \
@@ -236,13 +236,13 @@ test-render: test-route-status test-rpc-h2-cert
 	if grep -q 'trusted_external_proxy' "$$tmpdir/proxy.cfg"; then \
 		fail "direct mode rendered a trusted-proxy ACL"; \
 	fi; \
-	for fe in public_http public_https; do \
+	for fe in public_http; do \
 		awk -v fe="$$fe" ' \
 			$$0 == "frontend " fe { inside = 1; next } \
 			inside && $$0 ~ "^frontend |^backend " { exit } \
 			inside && /tcp-request content track-sc0 src,ipmask\(32,64\) table rpc_h2 if peer_rpc_/ { track = 1 } \
 			inside && /tcp-request content reject if peer_rpc_[a-z0-9]+ \{ sc_conn_cur\(0\) gt / && track { cap = 1 } \
-			inside && /tcp-request content accept/ && !cap { early = 1 } \
+			inside && /tcp-request content accept if peer_rpc/ && !cap { early = 1 } \
 			END { exit !(track && cap && !early) } \
 		' "$$tmpdir/proxy.cfg" \
 			|| fail "$$fe does not cap peer RPC connections per address before the hand-off"; \
@@ -254,11 +254,11 @@ test-render: test-route-status test-rpc-h2-cert
 		END { exit bad } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen tracks a connection the public frontend already counted"; \
-	grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
-		|| fail "public :443 has no conn_rate cap for peer RPC"; \
+	! grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }' "$$tmpdir/proxy.cfg" \
+		|| fail "HTTP-only :443 must not consume peer RPC budget"; \
 	grep -q 'timeout client-hs 5s' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen does not bound a stalled handshake"; \
-	grep -q 'track-sc1 src,ipmask(32,64) table st_rpc_watch' "$$tmpdir/proxy.cfg" \
+	grep -q 'track-sc1 var(txn.rpc_src) table st_rpc_watch' "$$tmpdir/proxy.cfg" \
 		|| fail "path zones are not keyed per address or IPv6 /64"; \
 	grep -q 'stick-table type ipv6 size 1m expire 10s store http_req_rate' "$$tmpdir/proxy.cfg" \
 		|| fail "path-zone tables do not store native IPv6"; \
@@ -273,11 +273,11 @@ test-render: test-route-status test-rpc-h2-cert
 		$$0 ~ "^frontend rpc_h2$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /path-strip-dotdot/ { dotdot = 1 } \
-		inside && /table st_rpc_watch if is_watch/ { watch = 1 } \
+		inside && /table st_rpc_watch if peer_rpc is_watch/ { watch = 1 } \
 		END { exit !(dotdot && watch) } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen does not strip dot-dot or Watch has no zone"; \
-	grep -F -q 'deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$$ }' "$$tmpdir/proxy.cfg" \
+	grep -F -q 'deny deny_status 404 unless peer_rpc' "$$tmpdir/proxy.cfg" \
 		|| fail "peer RPC listen forwards paths other than session RPC"; \
 	grep -q '^backend st_rpc_watch$$' "$$tmpdir/proxy.cfg" \
 		|| fail "Watch request zone was not rendered"; \
@@ -320,12 +320,12 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "public :80 does not consume the external PROXY preamble before keying and handing off peer RPC"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy-lb.cfg" >/dev/null \
 		|| fail "rendered PROXY-protocol proxy config is invalid"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy.cfg" >/dev/null \
 		|| fail "rendered proxy config is invalid"; \
 	HAPROXY_BIN=true \
@@ -350,13 +350,13 @@ test-render: test-route-status test-rpc-h2-cert
 		inside && /http-check expect status 200/ { expect = 1 } \
 		inside && /http-check connect port 8081 proto h2/ { data = 1 } \
 		inside && /http-check send meth GET uri \/healthz hdr Host versiond-router-fleet/ { dsend = 1 } \
-		inside && /http-check expect rstatus \^\[2-5\]\[0-9\]\[0-9\]/ { dexpect = 1 } \
+		inside && /http-check expect status 200/ { dexpect = 1 } \
 		END { exit !(connect && send && expect && data && dsend && dexpect) } \
 	' "$$tmpdir/ha.cfg" \
-		|| fail "HA coarse peer RPC check is not admin /readyz over HTTP/1.1 followed by any HTTP answer on :8081 over HTTP/2"; \
-	grep -q '^ *use_backend versiond_router_coarse if !{ nbsrv(rpc_h2_upstream) gt 0 }$$' "$$tmpdir/ha.cfg" \
+		|| fail "HA coarse peer RPC check is not admin /readyz over HTTP/1.1 followed by RPC readiness on :8081 over HTTP/2"; \
+	grep -q '^ *default_backend versiond_router_coarse$$' "$$tmpdir/ha.cfg" \
 		|| fail "HA peer RPC does not fall back to the coarse JSON pool when its pool is empty"; \
-	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map),concat(_rpc)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found } { var(txn.ver),map_str(.*/ha.map),concat(_rpc),nbsrv gt 0 }' "$$tmpdir/ha.cfg" \
+	grep -q 'use_backend %\[var(txn.rpc_backend)\] if peer_rpc { var(txn.rpc_backend),nbsrv gt 0 }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not select the per-version _rpc backend only while it has a usable server"; \
 	grep -q 'use_backend %\[var(txn.ver),map_str(.*/ha.map)\] if !versionless_request { var(txn.ver),map_str(.*/ha.map) -m found }' "$$tmpdir/ha.cfg" \
 		|| fail "peer RPC does not fall back to the version's JSON backend"; \
@@ -387,7 +387,7 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "static peer RPC backend does not check /readyz?version=v5"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/ha-v5.cfg" >/dev/null \
 		|| fail "rendered versioned HA proxy config is invalid"; \
 	if grep -q 'use_backend %\[var(txn.ver),map_str(.*),concat(_rpc)\]' "$$tmpdir/proxy.cfg"; then \
@@ -395,7 +395,7 @@ test-render: test-route-status test-rpc-h2-cert
 	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/ha.cfg" >/dev/null \
 		|| fail "rendered HA proxy config is invalid"; \
 	if grep -q 'server versiond versiond:8080 proto h2' "$$tmpdir/ha.cfg"; then \
@@ -451,7 +451,7 @@ test-render: test-route-status test-rpc-h2-cert
 	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/https.cfg" >/dev/null \
 		|| fail "rendered HTTPS proxy config is invalid"; \
 	HAPROXY_BIN=true \
@@ -464,8 +464,8 @@ test-render: test-route-status test-rpc-h2-cert
 	./entrypoint.sh; \
 	grep -q 'tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
 		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered on :80"; \
-	grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
-		|| fail "PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC is not rendered on :443"; \
+	! grep -q 'tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt 64 }' "$$tmpdir/conn-cap.cfg" \
+		|| fail "HTTP-only :443 must not account RPC connections"; \
 	if grep -q 'sc_conn_cur(0) gt 32' "$$tmpdir/conn-cap.cfg"; then \
 		fail "a default per-source connection cap survived the override"; \
 	fi; \
@@ -501,7 +501,7 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "path-safe static version health URI was not encoded"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/path-safe.cfg" >/dev/null \
 		|| fail "path-safe static version produced invalid HAProxy config"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
@@ -591,7 +591,7 @@ test-render: test-route-status test-rpc-h2-cert
 		|| fail "public listeners do not consume trusted PROXY preambles"; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" \
-		-v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
+		-v "$$(pwd)/grpc-unavailable.http:/etc/haproxy/grpc-unavailable.http:ro" -v "$$exhausted:/etc/haproxy/grpc-exhausted.http:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/trusted-lb.cfg" >/dev/null \
 		|| fail "trusted external LB config is invalid"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
@@ -684,3 +684,7 @@ release:
 		-f Dockerfile \
 		-t ghcr.io/product-science/proxy-router:$(VERSION) \
 		--push ..
+
+.PHONY: test-rpc-upgrade
+test-rpc-upgrade:
+	cd ../devshard && go test -tags=ingressintegration ./testenv/ingress -count=1 -timeout=10m

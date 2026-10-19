@@ -129,6 +129,9 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
+RPC_FALLBACK_MAXCONN="${VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN:-512}"
+RPC_FALLBACK_MAXQUEUE="${VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE:-64}"
+RPC_FALLBACK_QUEUE_MS="${VERSIOND_ROUTER_RPC_FALLBACK_QUEUE_MS:-200}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
@@ -383,8 +386,8 @@ if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
     FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
     REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
 else
-    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
-    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)] unless rpc_legacy_hop'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src] unless rpc_legacy_hop'
 fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
@@ -401,7 +404,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$RPC_FALLBACK_MAXCONN" "$RPC_FALLBACK_MAXQUEUE" "$RPC_FALLBACK_QUEUE_MS" "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -409,6 +412,14 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$ADMIN_PORT" -eq 8080 ] || [ "$ADMIN_PORT" -eq 8081 ]; then
+ echo "versiond-router: admin port conflicts with data port 8080/8081" >&2
+ exit 1
+fi
+if [ "$RPC_FALLBACK_MAXCONN" -eq 0 ] || [ "$RPC_FALLBACK_MAXQUEUE" -eq 0 ] || [ "$RPC_FALLBACK_QUEUE_MS" -eq 0 ]; then
+ echo "versiond-router: RPC fallback budgets must be positive" >&2
+ exit 1
+fi
 if [ "$HARD_STOP" -eq 0 ]; then
     echo "versiond-router: VERSIOND_ROUTER_HARD_STOP_SECONDS must be at least 1" >&2
     exit 1
@@ -877,6 +888,9 @@ sed \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
+    -e "s|\${RPC_FALLBACK_MAXCONN}|$RPC_FALLBACK_MAXCONN|g" \
+    -e "s|\${RPC_FALLBACK_MAXQUEUE}|$RPC_FALLBACK_MAXQUEUE|g" \
+    -e "s|\${RPC_FALLBACK_QUEUE_MS}|$RPC_FALLBACK_QUEUE_MS|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \

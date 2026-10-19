@@ -283,3 +283,45 @@ router health, an unavailable router data port, and a legacy edge-api-router
 fixture. It verifies failover, a policy replacement that receives a new Docker
 IP, withdrawal before replacement admission, exactly-once POST execution in the
 tested connection-failure path, and the unchanged edge-api routing path.
+
+## Peer RPC compatibility and admission
+
+Connect RPC arriving through nginx returns to the private `:18081` frontend,
+including in non-HA deployments. It shares procedure/IP stick tables with direct
+HTTP/2 RPC. nginx retains TLS for ordinary clients, JSON policy, CORS, and streaming
+configuration. `DEVSHARD_RPC_POLICY_HOST` is wired by join Compose; standalone
+nginx deployments with it unset retain their existing routing.
+
+When an RPC HTTP/2 backend has no healthy server, Connect uses a bounded HTTP/1.1
+hop and the original JSON routing maps (including version and legacy placement).
+No POST replay is added. Native gRPC receives `Unavailable` because HTTP/1.1 cannot
+carry it. RPC data checks require HTTP 200; a listening router with an empty RPC
+pool is not ready. JSON capacity is independent of fallback admission.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `PROXY_ROUTER_RPC_FALLBACK_MAXCONN` | `512` | Global active H1 fallback requests across versions, including long streams |
+| `PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE` | `64` | Queue rejection threshold; simultaneous arrivals may overshoot this threshold |
+| `PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS` | `200` | Maximum wait for a fallback connection, in milliseconds |
+
+All three values must be positive integers. Overload returns 503; ordinary
+procedure limits return Connect `ResourceExhausted` (HTTP 429 with Retry-After) or
+native gRPC status 8. Do not size the active budget solely for short unary calls:
+Watch and Chat occupy fallback connections for their lifetime.
+
+For the upgrade and rollback procedure, use the canonical
+[host guide in gonka-docs](https://github.com/snevolin/gonka-docs/blob/sn/devshard-ha-v6/docs/host/devshard-high-availability.md)
+([documentation PR #1515](https://github.com/gonka-ai/gonka-docs/pull/1515)).
+The proxy/policy pair must both be updated to enforce the shared budgets. A public
+proxy restart closes its connections; this is not a zero-downtime guarantee.
+
+Run `make -C proxy-router test-rpc-upgrade` from the repository root with Go and a
+Linux Docker daemon. The suite builds the production nginx image and runs HAProxy
+3.2 with configurations rendered by the production entrypoints. It covers H1,
+h2c, TLS H1, custom ALPN H2, ordinary nginx H2, streaming, shared limits, encoded
+paths, fragmented prefaces, bounded fallback, and versiond upgrade/rollback.
+Its versiond endpoint is simulated; it does not prove signed session continuity
+through actual binary replacement or the updater's transaction/rollback logic.
+Client transport tests separately cover Attach, renewal, Watch, backoff, and H2
+connection accounting. After rollout, verify an authenticated RPC on the public
+port as well as readiness.
