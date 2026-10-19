@@ -183,6 +183,9 @@ frontend versiond_in
     http-request set-var(txn.rpc_backend) var(txn.ver),map_str(${VERSIONS_MAP}),concat(_rpc) if { var(txn.ver),map_str(${VERSIONS_MAP}) -m found }
     http-request set-var(txn.rpc_backend) var(txn.ver),map_str(${NON_HA_MAP}),concat(_rpc) if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     http-request deny deny_status 503 if peer_rpc { req.hdr(content-type) -m beg application/grpc } !{ var(txn.rpc_backend),nbsrv gt 0 }
+    # HTTP/1.1 carries peer RPC only to a versiond without h2c. With none in
+    # the pool, a request whose twin has no server is unavailable.
+    http-request return status 503 content-type application/json string '{"code":"unavailable","message":"peer RPC has no HTTP/2 upstream"}' hdr Retry-After 1 if peer_rpc !rpc_legacy_hop !{ var(txn.rpc_backend),nbsrv gt 0 } !{ nbsrv(versiond_h1_only) gt 0 }
     use_backend %[var(txn.rpc_backend)] if rpc_health health_path
     use_backend versiond_ha_pool if versionless_request
     # Old versiond can forward Connect/H1 without advertising h2 capability.

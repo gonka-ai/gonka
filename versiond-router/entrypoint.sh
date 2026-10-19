@@ -578,6 +578,38 @@ peer_route_check() {
     printf '%s\n' "$1" | sed 's|be_name,map|be_name,regsub(_rpc$,),map|'
 }
 
+# Every versiond this router dials, asked the HTTP/2 client preface. A process
+# without h2c answers with an HTTP/1.x status line and is UP here; an h2c
+# listen answers with a SETTINGS frame and fails. rpc_legacy_admission is
+# open only while some server here is UP.
+render_h1_only_backend() {
+    cat <<'EOF'
+backend versiond_h1_only
+    timeout check 1s
+    option tcp-check
+    tcp-check connect
+    tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]
+EOF
+    h1_options='check inter 1s fall 1 rise 1 init-state fully-down'
+    if [ "$POOL_MODE" = endpoints ]; then
+        h1_index=0
+        while IFS="$US" read -r _ h1_host h1_port; do
+            h1_index=$((h1_index + 1))
+            case "$h1_host" in
+                *[!0-9.]*) h1_resolve=' resolvers docker init-addr none' ;;
+                *) h1_resolve= ;;
+            esac
+            printf '    server h1probe%s %s:%s %s%s\n' "$h1_index" "$h1_host" "$h1_port" "$h1_options" "$h1_resolve"
+        done < "$POOL_ENDPOINTS"
+    else
+        printf '    server-template h1probe %s %s:%s %s resolvers docker init-addr none\n' "$SLOTS" "$POOL_HOST" "$PORT" "$h1_options"
+    fi
+    if [ -s "$MAP" ] && ! endpoint_by_id "$LEGACY_HOST" >/dev/null 2>&1; then
+        printf '    server h1probe_legacy %s:%s %s resolvers docker init-addr none\n' "$LEGACY_HOST" "$PORT" "$h1_options"
+    fi
+}
+
 render_peer_backend() {
     saved_expect=${READY_EXPECT-}
     saved_proto=$BACKEND_PROTO
@@ -772,6 +804,7 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     echo "  is one specific host and must be named explicitly." >&2
     exit 1
 fi
+render_h1_only_backend >> "$POOL_BACKENDS_FILE"
 
 # Render one static readiness rule per immutable startup route. HAProxy's
 # nbsrv() argument is a configuration-time backend name, so bootstrap and
