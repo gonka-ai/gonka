@@ -442,8 +442,7 @@ lock.
 | `VERSIOND_POOL_ENDPOINTS_FILE` | *(empty)* | JSON array of `{id, host, port}` members; replaces DNS discovery when set (see [Membership: explicit endpoint list](#membership-explicit-endpoint-list)) |
 | `VERSIOND_HOSTS` | *(empty)* | legacy whitespace/comma host list, entries optionally `host:port`; used only when no endpoint file is set |
 | `VERSIOND_PORT` | `8080` | upstream port and the default endpoint port |
-| `VERSIOND_ROUTER_H2_PORT` | `8081` | second data bind, `proto h2` (h2c). JSON/healthz/catalog stay on `:8080`. Overlay `proxy` speaks HTTP/2 here. Global `tune.h2.max-concurrent-streams 16384` (HAProxy default is 100) covers this frontend and backend `proto h2` to versiond. |
-| `VERSIOND_ROUTER_BACKEND_H2` | `true` | `proto h2` on the peer-RPC twin of each backend, with `check-proto h1` so that health check stays HTTP/1.1. JSON backends stay HTTP/1.1 either way, so a v4 or v5 child stays up through cutover. Set `false` only for HTTP/1.1 mock upstreams that never answer `peer-rpc-ok` |
+| `VERSIOND_ROUTER_BACKEND_H2` | `true` | `proto h2` on the peer-RPC twin of each backend, with `check-proto h1` so that health check stays HTTP/1.1. JSON backends stay HTTP/1.1 either way, so a v4 or v5 child stays up through cutover. Set `false` only for HTTP/1.1 mock upstreams that never answer `peer-rpc-ok`. The data frontend binds `:8080` (JSON, health, catalog, and the HTTP/1.1 peer-RPC fallback) and `:8081` (the public proxy's prior-knowledge HTTP/2 dial); HAProxy detects the preface on either cleartext bind, and the `_rpc` twin is selected by the `/sessions/<id>/rpc/` path, not by port. Every v6 router generation binds `:8081`, so a proxy and a fleet of different generations keep a peer-RPC path in either replacement order. Global `tune.h2.max-concurrent-streams 16384` (HAProxy default is 100) covers that listen and the backend `proto h2` to versiond. |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
@@ -625,3 +624,18 @@ ownership-bounded teardown of expected and orphan resources.
 | --- | --- |
 | [rolling-update.md](../devshard/docs/rolling-update.md) | Same-name SHA blue/green inside one versiond |
 | [high-availability-architecture.md](../devshard/docs/high-availability-architecture.md) | Where the router sits in the stack |
+
+## RPC fallback during mixed-version updates
+
+Port 8081 `/healthz` (or `/<version>/healthz`) reports readiness of the selected
+RPC pool, not its JSON sibling. An empty RPC pool returns 503. Connect requests
+fall back through a private HTTP/1.1 admission hop to the existing JSON maps,
+preserving version/escrow placement. The hop does not retry POSTs. Native gRPC
+cannot use this compatibility path.
+
+`VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN` (default 512) bounds active fallback requests
+across all versions. `VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE` (64) rejects arrivals
+when the queue already reaches the threshold; concurrent arrivals may overshoot.
+`VERSIOND_ROUTER_RPC_FALLBACK_QUEUE_MS` (200) bounds queue waiting time. All values
+must be positive integers. JSON requests do not consume this fallback budget.
+The admin port must differ from both data ports, 8080 and 8081.

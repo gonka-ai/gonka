@@ -764,3 +764,48 @@ func TestProxy_SSEStreaming(t *testing.T) {
 		t.Errorf("got %d events, want 3", len(events))
 	}
 }
+
+func TestProxy_H2RPCDoesNotDowngradeAfterChildReplacement(t *testing.T) {
+	var legacyHits atomic.Int32
+	h2Child := newH2CChild(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	defer h2Child.Close()
+	legacyChild := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		legacyHits.Add(1)
+		w.WriteHeader(204)
+	}))
+	defer legacyChild.Close()
+	routes := newRoutes(map[string]string{"v6": strings.TrimPrefix(h2Child.URL, "http://")})
+	front := newH2CChild(Handler(routes))
+	defer front.Close()
+	h2Client := newH2CClient(t, nil)
+	rpc := front.URL + "/v6/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach"
+	check := func(client *http.Client, path, contentType string, want int) {
+		t.Helper()
+		req, _ := http.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", contentType)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode != want {
+			t.Fatalf("%s: got %d, want %d", path, resp.StatusCode, want)
+		}
+	}
+	check(h2Client, rpc, "application/json", 204)
+	// The ingress may still have the previous successful capability check.
+	// Replacing the route must not turn its existing H2 mux into H1 fanout.
+	routes.Store(RouteTable{"v6": NewChildTarget(strings.TrimPrefix(legacyChild.URL, "http://"), false)})
+	check(h2Client, rpc, "application/json", 503)
+	check(h2Client, rpc, "application/grpc", 503)
+	if legacyHits.Load() != 0 {
+		t.Fatal("H2 RPC reached legacy child before ingress noticed the route change")
+	}
+	// Explicit H1 compatibility still works, as does ordinary JSON over H2.
+	check(http.DefaultClient, rpc, "application/json", 204)
+	check(h2Client, front.URL+"/v6/chat/completions", "application/json", 204)
+	if legacyHits.Load() != 2 {
+		t.Fatal("H1 compatibility or JSON forwarding was lost")
+	}
+}

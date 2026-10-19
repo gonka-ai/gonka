@@ -95,12 +95,6 @@ case "$1 ${2:-} ${3:-}" in
         case " ${FAKE_MISSING_IMAGES:-} " in
             *" $image "*) [[ -f $FAKE_STATE/pulled ]] || exit 1 ;;
         esac
-        if [[ "$*" == *peer-rpc-h2* ]]; then
-            case " ${FAKE_H2_IMAGES:-} " in
-                *" $image "*) printf '1\n' ;;
-            esac
-            exit 0
-        fi
         printf 'id-%s\n' "$image"
         exit 0
         ;;
@@ -320,79 +314,27 @@ run_update env \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
     FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:v6" \
     FAKE_ROUTER_SLOTS="router-1" \
-    FAKE_H2_IMAGES="ghcr.io/example/versiond-router:v6 ghcr.io/example/proxy-router:new" \
     || fail "v6 switch failed: $(cat "$tmpdir/err")"
 [[ $(mutations) == "$expected" ]] || fail "v6 switch sequence:
 $(mutations)"
-! grep -q 'peer RPC rollback' "$tmpdir/out" || fail "a v6 switch took the peer RPC rollback path"
+! grep -q '^start cid-' "$tmpdir/log" || fail "a successful v6 switch restored old containers"
+[[ ! -d $tmpdir/state/updater/pending ]] || fail "successful v6 switch left a pending recovery"
 
-# A host already on v6 keeps that same order. The h2 label on the running
-# proxy and router is not a rollback.
+# A rerun with the backend network already attached keeps the replacement
+# order and must neither reconnect the existing members nor restore them.
 UPDATE_ARGS=()
 run_update env \
     FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
     FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:v6" \
     FAKE_ROUTER_SLOTS="router-1" \
-    FAKE_H2_IMAGES="ghcr.io/example/versiond-router:v6 ghcr.io/example/proxy-router:new old-proxy old-router-1" \
+    FAKE_ON_BACK_NETWORK="versiond versiond2" \
     || fail "v6 rerun failed: $(cat "$tmpdir/err")"
-[[ $(mutations) == "$expected" ]] || fail "v6 rerun sequence:
+expected_rerun=$(printf '%s\n' "$expected" | sed '/^network connect /d')
+[[ $(mutations) == "$expected_rerun" ]] || fail "v6 rerun sequence:
 $(mutations)"
-! grep -q 'peer RPC rollback' "$tmpdir/out" || fail "a v6 rerun took the peer RPC rollback path"
-
-# Peer RPC rollback: the running proxy and a router slot still serve h2, and
-# both candidate images do not. The proxy must leave :9443 before fleet apply.
-UPDATE_ARGS=()
-run_update env \
-    FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
-    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
-    FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:old" \
-    FAKE_ROUTER_SLOTS="router-1" \
-    FAKE_H2_IMAGES="old-proxy old-router-1" \
-    || fail "peer RPC rollback failed: $(cat "$tmpdir/err")"
-expected='compose pull versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres
-compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
-compose up -d --no-deps proxy
-compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
-compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
-compose up -d --no-deps --wait --wait-timeout 2100 proxy
-fleet verify-admission
-fleet prepare-networks
-network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
-network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
-fleet apply
-compose up -d --no-deps --wait --wait-timeout 2100 versiond2
-compose up -d --no-deps --wait --wait-timeout 2100 versiond
-rm -f versiond-router'
-[[ $(mutations) == "$expected" ]] || fail "peer RPC rollback sequence:
-$(mutations)"
-grep -q 'peer RPC rollback' "$tmpdir/out" || fail "peer RPC rollback was not announced"
-
-# The proxy was already rolled back; a remaining h2 router slot still requires
-# the proxy step before fleet apply.
-UPDATE_ARGS=()
-run_update env \
-    FAKE_CONTAINERS="versiond versiond2 devshard-postgres proxy" \
-    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
-    FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:old" \
-    FAKE_ROUTER_SLOTS="router-1" \
-    FAKE_H2_IMAGES="old-router-1" \
-    || fail "router-only peer RPC rollback failed: $(cat "$tmpdir/err")"
-[[ $(mutations | grep -n 'compose up -d --no-deps proxy$' | head -1 | cut -d: -f1) -lt \
-    $(mutations | grep -n 'fleet apply' | head -1 | cut -d: -f1) ]] || \
-    fail "router-only rollback applied the fleet before the proxy:
-$(mutations)"
-
-# A pre-h2 router image under a proxy image that still serves :9443 is refused.
-UPDATE_ARGS=()
-if run_update env \
-    FAKE_CONTAINERS="versiond versiond2 devshard-postgres proxy" \
-    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
-    FAKE_ROUTER_IMAGE="ghcr.io/example/versiond-router:old" \
-    FAKE_H2_IMAGES="old-proxy ghcr.io/example/proxy-router:new"; then
-    fail "router rollback under an h2 proxy was allowed"
-fi
-grep -q 'still serves :9443' "$tmpdir/err" || fail "router rollback refusal missing: $(cat "$tmpdir/err")"
+! grep -q '^start cid-' "$tmpdir/log" || fail "a successful v6 rerun restored old containers"
+[[ ! -d $tmpdir/state/updater/pending ]] || fail "successful v6 rerun left a pending recovery"
 
 # Any number of local replicas: a decommissioned versiond2 (0 replicas) is
 # skipped, versiond3 is updated before the legacy owner.

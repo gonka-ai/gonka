@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -15,102 +16,98 @@ import (
 	"golang.org/x/net/http2"
 )
 
-func TestPeerRPCDialSetDefaultOff(t *testing.T) {
-	const inference = "http://versiond-router:8080"
-	got, err := PeerRPCDialSetFrom(inference, "proxy", "8443", "")
+func TestPeerRPCDialSetDefaultOn(t *testing.T) {
+	const inference = "http://versiond-router:8080/devshard/v6"
+	got, err := PeerRPCDialSetFrom(inference, "")
 	require.NoError(t, err)
 	require.Equal(t, inference, got.InferenceURL)
-	require.Empty(t, got.H2URL)
-	require.Equal(t, []string{inference}, got.Origins())
+	require.Equal(t, "http://versiond-router:8080", got.H2URL, "unset upgrade probes HTTP/2 on InferenceUrl's own origin")
+	require.Equal(t, []string{inference, "http://versiond-router:8080"}, got.Origins())
 }
 
-func TestPeerRPCDialSetUpgradeFalseWithPort(t *testing.T) {
-	got, err := PeerRPCDialSetFrom("http://versiond-router:8080", "proxy", "8443", "0")
-	require.NoError(t, err)
-	require.Empty(t, got.H2URL)
+func TestPeerRPCDialSetUpgradeOff(t *testing.T) {
+	for _, raw := range []string{"0", "false", "no", "off", " OFF "} {
+		got, err := PeerRPCDialSetFrom("http://versiond-router:8080", raw)
+		require.NoError(t, err, raw)
+		require.Empty(t, got.H2URL, raw)
+		require.Equal(t, []string{"http://versiond-router:8080"}, got.Origins(), raw)
+	}
+	for _, raw := range []string{"", "1", "true", "yes", "on"} {
+		require.True(t, RPCH2UpgradeEnabled(raw), raw)
+	}
 }
 
-func TestPeerRPCDialSetUpgradeSameHost(t *testing.T) {
-	got, err := PeerRPCDialSetFrom("http://versiond-router:8080", "", "8443", "1")
+func TestPeerRPCDialSetHTTPSKeepsPortAndHost(t *testing.T) {
+	got, err := PeerRPCDialSetFrom("https://join.example.com:8443/v6?x=1#f", "true")
 	require.NoError(t, err)
-	require.Equal(t, "http://versiond-router:8080", got.InferenceURL)
-	require.Equal(t, "http://versiond-router:8443", got.H2URL)
-	require.Equal(t, []string{
-		"http://versiond-router:8080",
-		"http://versiond-router:8443",
-	}, got.Origins())
-}
-
-func TestPeerRPCDialSetOverlayProxyHost(t *testing.T) {
-	got, err := PeerRPCDialSetFrom("http://versiond-router:8080", "proxy", "8443", "true")
-	require.NoError(t, err)
-	require.Equal(t, "http://proxy:8443", got.H2URL)
-	require.Equal(t, []string{
-		"http://versiond-router:8080",
-		"http://proxy:8443",
-	}, got.Origins())
-}
-
-func TestRPCH2ServerNameIgnoresDialHost(t *testing.T) {
-	got, err := PeerRPCDialSetFrom("https://join.example.com:443", "127.0.0.1", "8443", "1")
-	require.NoError(t, err)
-	require.Equal(t, "https://join.example.com:443", got.InferenceURL)
-	require.Equal(t, "https://127.0.0.1:8443", got.H2URL)
+	require.Equal(t, "https://join.example.com:8443", got.H2URL)
 	require.Equal(t, "join.example.com", rpcH2ServerName(got.InferenceURL))
+	require.Equal(t, "join.example.com", rpcH2ServerName(got.H2URL), "same listen, same SNI")
 
-	overlay, err := PeerRPCDialSetFrom("https://join.example.com:443/v5", "proxy", "8443", "1")
-	require.NoError(t, err)
-	require.Equal(t, "https://proxy:8443", overlay.H2URL)
-	require.Equal(t, "join.example.com", rpcH2ServerName(overlay.InferenceURL))
-	require.NotEqual(t, "proxy", rpcH2ServerName(overlay.InferenceURL))
-}
-
-func TestRPCH2ServerName(t *testing.T) {
-	require.Equal(t, "join.example.com", rpcH2ServerName("https://join.example.com:443"))
-	require.Equal(t, "join.example.com", rpcH2ServerName("https://join.example.com:443/v5"))
-	require.Equal(t, "versiond-router", rpcH2ServerName("http://versiond-router:8080"))
-	require.Empty(t, rpcH2ServerName(""))
-}
-
-func TestPeerRPCDialSetUpgradeWithoutPort(t *testing.T) {
-	got, err := PeerRPCDialSetFrom("http://versiond-router:8080", "proxy", "", "1")
-	require.NoError(t, err)
-	require.Empty(t, got.H2URL, "unset DEVSHARD_RPC_H2_PORT must not prefer h2")
-}
-
-func TestRPCH2GRPCEnabled(t *testing.T) {
-	require.False(t, RPCH2GRPCEnabled(""))
-	require.False(t, RPCH2GRPCEnabled("0"))
-	require.False(t, RPCH2GRPCEnabled("false"))
 	require.True(t, RPCH2GRPCEnabled("1"))
 	require.True(t, RPCH2GRPCEnabled("true"))
 	require.True(t, RPCH2GRPCEnabled("yes"))
 	require.True(t, RPCH2GRPCEnabled("on"))
+	require.False(t, RPCH2GRPCEnabled(""), "native gRPC stays opt-in")
 }
 
-func TestPeerRPCDialSetFromEnvDefaultOff(t *testing.T) {
+func TestPeerRPCDialSetFromEnv(t *testing.T) {
 	t.Setenv(envRPCH2Upgrade, "")
-	t.Setenv(envRPCH2Host, "proxy")
-	t.Setenv(envRPCH2Port, "8443")
 	got, err := PeerRPCDialSetFromEnv("http://versiond-router:8080")
+	require.NoError(t, err)
+	require.Equal(t, "http://versiond-router:8080", got.H2URL)
+
+	t.Setenv(envRPCH2Upgrade, "false")
+	got, err = PeerRPCDialSetFromEnv("http://versiond-router:8080")
 	require.NoError(t, err)
 	require.Empty(t, got.H2URL)
 }
 
-func TestPeerRPCDialSetInvalidPort(t *testing.T) {
-	_, err := PeerRPCDialSetFrom("http://versiond-router:8080", "proxy", "nope", "1")
+func TestPeerRPCDialSetRejectsBadInference(t *testing.T) {
+	_, err := PeerRPCDialSetFrom("", "")
 	require.Error(t, err)
+	_, err = PeerRPCDialSetFrom("versiond-router:8080", "")
+	require.Error(t, err, "no scheme")
+	_, err = PeerRPCDialSetFrom("ftp://versiond-router:8080", "")
+	require.Error(t, err, "not http(s)")
 }
 
-func TestPeerRPCDialSetEmptyInference(t *testing.T) {
-	_, err := PeerRPCDialSetFrom("", "", "", "")
-	require.Error(t, err)
+func TestRPCH2MissClassifiesSilentClose(t *testing.T) {
+	// A TLS terminator that drops an unsupported ClientHello without an
+	// alert, or a cleartext server that swallows the preface and closes,
+	// ends the handshake with a bare EOF. That is a miss: the peer must
+	// fall back instead of retrying HTTP/2 against a silent origin.
+	require.True(t, isRPCH2Miss(io.EOF))
+	require.True(t, isRPCH2Miss(io.ErrUnexpectedEOF))
+	require.True(t, isRPCH2Miss(fmt.Errorf("attach: %w", io.ErrUnexpectedEOF)))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(errAttachTTL))
+	// Watch reports a clean stream end as io.EOF; that reopens Watch on the
+	// same transport and must not read as a dead origin.
+	require.False(t, isRPCH2TransportMiss(io.EOF))
+	require.False(t, isRPCH2TransportMiss(io.ErrUnexpectedEOF))
+	require.True(t, watchReopen(io.EOF))
+}
+
+func TestH2MissCacheRemembersInferenceHost(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	InstallRPCH2MissCacheForTest(time.Minute, func() time.Time { return now })
+	t.Cleanup(ResetRPCH2MissCacheForTest)
+	const base = "http://Join.Example.com:8443/devshard/v6"
+	require.False(t, skipRPCH2(base))
+	rememberRPCH2Miss(base)
+	require.True(t, skipRPCH2(base))
+	require.False(t, skipRPCH2("https://join.example.com:443/other"), "different scheme and port must not share the miss")
+	require.True(t, skipRPCH2("http://join.example.com:8443/other"))
+	require.False(t, skipRPCH2("http://other.example.com:8443"))
+	now = now.Add(time.Minute)
+	require.False(t, skipRPCH2(base), "the next Attach after the TTL probes HTTP/2 again")
 }
 
 func TestInferenceHostKey(t *testing.T) {
-	require.Equal(t, "versiond-router", inferenceHostKey("http://versiond-router:8080/v5"))
-	require.Equal(t, "versiond-router", inferenceHostKey("https://Versiond-Router:443"))
-	require.Equal(t, "127.0.0.1", inferenceHostKey("http://127.0.0.1:18080"))
+	require.Equal(t, "http://versiond-router:8080", inferenceHostKey("http://versiond-router:8080/v5"))
+	require.Equal(t, "https://versiond-router:443", inferenceHostKey("https://Versiond-Router:443"))
+	require.Equal(t, "http://127.0.0.1:18080", inferenceHostKey("http://127.0.0.1:18080"))
 }
 
 func TestH2MissCacheSkipAndTTL(t *testing.T) {
@@ -180,15 +177,15 @@ func TestIsRPCH2Miss(t *testing.T) {
 	require.False(t, isRPCH2Miss(context.Canceled))
 	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
 	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
-	require.True(t, isRPCH2Miss(op))
-	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
+	require.False(t, isRPCH2Miss(op))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
 		"connect wraps Do() failures as Unavailable; Unwrap must still see OpError")
-	require.True(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
+	require.False(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
 	require.True(t, isRPCH2Miss(errors.New("http2: client conn could not be established")))
-	require.True(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "http/1.1", "h2")))
 	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "", "h2")))
-	require.True(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
+	require.False(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
 	require.True(t, isRPCH2Miss(http2.ConnectionError(http2.ErrCodeProtocol)))
 }
 

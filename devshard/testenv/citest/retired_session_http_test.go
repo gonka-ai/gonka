@@ -17,7 +17,7 @@ import (
 )
 
 // TestRetiredSessionHTTP checks the decommissioned Echo session routes.
-// Ops and catalog stay. Gateway chat is native gRPC on versiond-router:8081.
+// Ops and catalog stay. Gateway chat is native gRPC on versiond-router:8080.
 // There is no proxy container. POST chat/completions is 410.
 func TestRetiredSessionHTTP(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")

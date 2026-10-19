@@ -12,7 +12,8 @@ import (
 )
 
 // TestPeerRPCChat is citest-peerrpc-chat: gateway chat (non-stream and SSE)
-// over native gRPC on versiond-router:8081. No proxy container.
+// over native gRPC on versiond-router:8080 (prior-knowledge HTTP/2 on the
+// JSON listen). No proxy container.
 // The child must count Attach and Chat; a JSON Send would not.
 func TestPeerRPCChat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")

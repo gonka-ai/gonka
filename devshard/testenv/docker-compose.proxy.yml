@@ -1,13 +1,15 @@
-# Optional RPC/HTTP/2 overlay for Phase 6 (topology B).
-# Usage (from devshard/testenv/, after gen-compose):
+# Optional public-proxy overlay: a one-port stand-in for join's proxy-router.
+# Usage (from devshard/testenv/, after gen-compose with TESTENV_PROXY_OVERLAY=1):
 #   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
 #
 # Do not merge this file into COMPOSE_BASE. citest-images / citest-stack stay
-# no-proxy: JSON/catalog and Connect/HTTP/1.1 stay on versiond-router:8080.
+# no-proxy: peers dial versiond-router:8080 directly.
 #
-# In-network hop:
-#   proxy:{DEVSHARD_RPC_H2_PORT=8443} proto h2 → versiond-router:8081 proto h2
-# Against 0.2.15-v5 that backend hop cannot complete HTTP/2 (fail closed).
+# In-network hop, one port for everything, as join's :80:
+#   proxy:8080  HTTP/2 preface  → rpc_h2 (path zones, X-Real-IP) → versiond-router:8081 proto h2
+#   proxy:8080  anything else   → versiond-router:8080 (TCP passthrough, JSON)
+# gencompose points pooled hosts' InferenceUrl at http://proxy:8080 when
+# TESTENV_PROXY_OVERLAY is set, so the gateway and the hosts dial this hop.
 
 services:
   proxy:
@@ -16,7 +18,7 @@ services:
       - ./proxy/haproxy-rpc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - ../../proxy-router/grpc-exhausted.http:/etc/haproxy/grpc-exhausted.http:ro
     ports:
-      - "127.0.0.1:8443:8443"
+      - "127.0.0.1:18443:8080"
     depends_on:
       - versiond-router
     networks:

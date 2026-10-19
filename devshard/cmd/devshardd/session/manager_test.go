@@ -446,7 +446,9 @@ func TestHostManager_BindDoesNotWaitForPeerLookups(t *testing.T) {
 	require.NoError(t, err, "bind must not wait for the hung lookup")
 	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 2 }, 5*time.Second, time.Millisecond)
 	require.NotContains(t, srv.PeerClients(), 2)
-	require.EqualValues(t, 1, br.calls.Load())
+	// The healthy slots can finish before the hung lookup goroutine starts.
+	// Wait for that lookup before checking that the repair joins it.
+	require.Eventually(t, func() bool { return br.calls.Load() == 1 }, 5*time.Second, time.Millisecond)
 
 	probed := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

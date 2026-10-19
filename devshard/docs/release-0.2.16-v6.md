@@ -25,17 +25,19 @@ The binary and the wrapping do not move together.
 
 1. Governance auto-adds the v6 `devshardd` and gateway onto the wrapping that
    is already running (v4 or v5 `versiond`, `versiond-router`, `proxy`,
-   `proxy-router`). Peer RPC is Connect over HTTP/1.1 on InferenceUrl. There
-   is no multiplexing: in-flight requests do not share one connection.
+   `proxy-router`). Peer RPC normally uses Connect over HTTP/1.1 on InferenceUrl. Old nginx
+   in `NGINX_MODE=both` can accept h2c on the client hop, but still forwards
+   over H1: there is no end-to-end multiplexing.
 2. Operators then switch the wrapping to the v6 images. Peer RPC moves to
-   HTTP/2. Each peer keeps one connection, end to end. That listen is what
-   turns on the new per-connection limits.
+   HTTP/2 on the same InferenceUrl port. Each peer keeps one connection, end
+   to end. That path is what turns on the new per-connection limits.
 3. The v6 wrapping must still serve v4 and v4.2 children over the JSON path
    on InferenceUrl.
 
-Until step 2, do not expect port `9443`, one connection per peer, or the
-public connection-rate limits. Those exist only on the v6 `proxy-router`
-listen.
+Until step 2, do not expect one connection per peer or the public
+connection-rate limits. Those exist only behind the v6 `proxy-router`. There
+is no new port in either step: a peer finds out in band whether this host's
+port speaks HTTP/2, and uses HTTP/1.1 through nginx when it does not.
 
 ## What changes for an operator
 
@@ -47,25 +49,42 @@ listen.
   across the escrows that child serves; version is part of the key, so a v5
   token is not a v6 token.
 - **On the old wrapping, gRPC is simulated.** Connect rides InferenceUrl as
-  ordinary HTTP/1.1. nginx (or the v5 policy worker) still sees `/rpc/`.
+  normally HTTP/1.1. Old nginx in `NGINX_MODE=both` can accept h2c
+  from the client while still forwarding over H1. nginx (or the v5 policy
+  worker) still sees `/rpc/`.
   Native gRPC is not selected. Each in-flight RPC is its own connection.
-- **On the v6 wrapping, the same RPC is HTTP/2.** `proxy-router` publishes
-  `{DEVSHARD_RPC_H2_PORT}` (default `9443`) and skips nginx. HTTP/2 runs on
-  every hop: client → `proxy-router` → `versiond-router` (HA) or `versiond`
-  (non-HA) → `versiond` → the loopback child. One TCP connection per peer
-  carries that peer's chats, Watch, and the other RPCs.
+- **On the v6 wrapping, the same RPC is HTTP/2 on the same port.** A peer
+  opens its connection to InferenceUrl with the HTTP/2 preface (HTTP) or
+  offers ALPN `gonka-rpc/1` (HTTPS). `proxy-router` recognises that on
+  `:80`/`:443` and keeps the connection in its own process, past nginx.
+  HTTP/2 runs on every hop: client → `proxy-router` → `versiond-router` (HA)
+  or `versiond` (non-HA) → `versiond` → the loopback child. One TCP
+  connection per peer carries that peer's chats, Watch, and the other RPCs.
+  Nothing new is opened in a firewall and nothing is set in `config.env`.
+- **A peer whose host is still on the old wrapping is not cut off.** HTTP-only nginx
+  answers the preface with HTTP/1.1; HTTPS nginx does not negotiate the peer ALPN token;
+  the client treats an explicit protocol mismatch as "no HTTP/2 here", remembers it for 30 minutes ± 10%,
+  and continues over Connect on HTTP/1.1 through nginx. It probes HTTP/2
+  again after that, so a host that updates later is picked up without a
+  restart. Old nginx in `NGINX_MODE=both` can instead accept h2c on the
+  client hop while forwarding over H1, without triggering a protocol miss.
+  Ambiguous connection closure instead starts a 30-second exponential
+  backoff. `DEVSHARD_RPC_H2_UPGRADE=false` in the versiond process environment
+  turns outbound probing off; changing a host file alone does not update a
+  running process.
 - **Rate limiting grows a second layer when that connection exists.** The
   child limits the authenticated peer on both wrappings. The public
-  per-connection limits (connection rate and path zones) apply only on
-  `:9443`.
+  connection limits apply to direct H2 RPC. Procedure/IP limits are shared
+  between direct H2 and Connect through the updated nginx policy workers.
 - **JSON does not move.** Chat-compat, `/v1`, health, and the public API stay
   on `:80`/`:443`. v4 and v4.2 children keep using that path.
 
 `proxy` and `proxy-router` are different ingresses. On a v4 host, `proxy` is
 nginx. From v5 on, the join service named `proxy` runs the `proxy-router`
 image (HAProxy); nginx is the `proxy-policy` worker behind it. Confirm the
-image before deciding which transport a host is on. `:9443` is the HAProxy
-listen. The nginx image does not publish it.
+image before deciding which transport a host is on. Only the HAProxy image
+recognises the dedicated peer-RPC route; nginx can accept ordinary H2 from
+the client but still forwards over H1.
 
 ## What's in this release
 
@@ -74,7 +93,7 @@ listen. The nginx image does not publish it.
 | **Peer RPC and authentication** | Connect on `/devshard/{version}/sessions/{id}/rpc/...`. `Attach` opens a session; `Watch` keeps it. Admission after that is the session token. The signed envelope still covers dispute-bearing bodies |
 | **gzip** | Chat responses are one gzip stream for the whole completion (compression window kept across events, not one gzip per frame). Request gzip is inflated only up to a decoded cap, and a body past that cap is rejected before the handler. `GET /devshard/stats/rpc` is gzip when the caller sends `Accept-Encoding: gzip` |
 | **Per-peer rate limits** | After `Attach`, the child charges the authenticated peer: 6000 weight/min, burst 600. Concurrent chats per peer default to 2560, a quarter of the 10240 process cap. Only the escrow owner takes a chat slot. `GetDiffs` is expensive (weight 60) so it cannot spend the chat budget. Anonymous `Attach` is capped before the signature check |
-| **Per-connection rate limits** | v6 `proxy-router` only. One HTTP/2 connection per peer. That connection is limited per client address: 32 concurrent connections, 200 new connections/s, 400 new sessions/s, plus a separate request budget per RPC path |
+| **Per-connection rate limits** | v6 `proxy-router` only, on connections it recognised as peer RPC. One HTTP/2 connection per peer. That connection is limited per client address: 32 concurrent connections, 200 new connections/s, plus a separate request budget per RPC path |
 | **Gateway Postgres** | `DEVSHARD_STORAGE_MODE=hybrid` or `postgres` keeps gateway management state in Postgres. `sqlite` stays on local `gateway.db` and ignores `PGHOST`. The same mode applies to `perf.db` |
 | **Load testing** | YAML scenarios drive the gateway through an isolated Docker testenv: concurrent traffic, mock ML-node faults, host pause, catch-up, escrow rotation, and miss-rate checks. In-process `loadsim` remains for gateway and `perf.db` profiles |
 | **Refusal vote** | Already on `devshard/v4.2` and included here. A receipt that arrives during the refusal wait ends that wait. The gateway does not ask verifiers for a refusal once the inference is confirmed. An unsigned or forged receipt cannot cancel the vote |
@@ -231,15 +250,16 @@ when one frame write passes 30s, and its slot is freed.
 
 ### Per-connection limits (v6 `proxy-router` only)
 
-These do not exist on HTTP/1.1. They key the client address on `:9443`.
-With one HTTP/2 connection per peer, that address is that peer's connection.
+These do not exist on HTTP/1.1. They key the client address on the
+connections `proxy-router` handed to its peer-RPC frontend (HTTP/2 preface on
+`:80`, ALPN `gonka-rpc/1` on `:443`). With one HTTP/2 connection per peer,
+that address is that peer's connection.
 A second peer (a second address) has its own connection and its own counters.
 
 | Check | Threshold | Over-limit response |
 | --- | --- | --- |
-| Concurrent connections per address | 32 (`PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) | connection rejected, before `Attach` |
-| New TCP connections | 200/s | connection rejected, before `Attach` |
-| New HTTP/2 sessions | 400/s | session rejected |
+| Concurrent connections per address | 32 (`PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) | connection closed on the preface / ALPN, before the hand-off |
+| New TCP connections | 200/s | connection closed on the preface / ALPN, before the hand-off |
 | `Attach`, `Watch` | 100 / 10s | Connect: HTTP 429. Native gRPC: HTTP 200, `grpc-status` 8 |
 | Gossip, `GetPayload`, seed / repair / verify / challenge | 200 / 10s | same |
 | `GetDiffs`, `GetMempool` | 400 / 10s | same |
@@ -260,12 +280,15 @@ The concurrent cap is what bounds idle sockets: the open rate only slows how
 fast one address fills `maxconn 4096`, and an idle socket that is already
 tracked holds its slot until `timeout client`. 32 leaves room for reconnect
 overlap, HA replicas, and several peers behind one NAT address. The key is one
-IPv4 address, or one IPv6 /64. Direct clients are keyed at accept. With
-`PROXY_ROUTER_PROXY_PROTOCOL_FROM`, the balancer address is skipped and the
-cap uses the address in the PROXY preamble, after that preamble is accepted.
-A preamble that stalls before the TLS handshake is closed by `timeout
-client-hs` (5s) and is not counted yet. Without PROXY protocol, clients
-behind one L4 balancer share that balancer's address and its 32 slots.
+IPv4 address, or one IPv6 /64. The public port counts the connection as soon
+as it sees the HTTP/2 preface or the peer RPC ALPN, before the hand-off, so a
+TLS handshake that then stalls holds its slot until `timeout client-hs` (5s)
+closes it instead of sitting uncounted. With `PROXY_ROUTER_PROXY_PROTOCOL_FROM`
+the public port consumes the balancer's preamble first, so the cap uses the
+client address it named. A socket that never sends the preface or the ALPN
+token goes to nginx after the inspect delay and never counts. Without PROXY
+protocol, clients behind one L4 balancer share that balancer's address and
+its 32 slots.
 
 ## Manual test plan
 
@@ -284,13 +307,15 @@ How to count connections, from the client, during N concurrent calls to one
 peer:
 
 ```bash
-ss -tn dst :443          # InferenceUrl, HTTP/1.1 cells
-ss -tn dst :9443         # v6 proxy-router cells
+ss -tn dst :443          # InferenceUrl; the same port on every cell
 ```
 
 Pass on an HTTP/1.1 cell: the established count tracks in-flight RPCs, not 1.
-Pass on an HTTP/2 cell: one established connection to `:9443` for that peer,
-while N calls are in flight on it. A second peer is a second connection.
+Pass on an HTTP/2 cell: one established connection to InferenceUrl for that
+peer's RPC, while N calls are in flight on it (plus whatever short JSON
+connections the gateway keeps). A second peer is a second connection. On the
+HAProxy host, `docker exec proxy sh -c 'echo "show sess" | socat - /var/run/haproxy/haproxy.sock'`
+lists peer sessions under `rpc_h2`.
 
 ### Cells
 
@@ -316,18 +341,22 @@ state on the day v6 is auto-added.
 
 Also run the crossed ingress if the host can be composed that way (v4
 `versiond` behind v5 `proxy-router`, v5 `versiond` behind nginx `proxy`).
-The expected transport does not change: neither old ingress publishes `:9443`.
+Check HTTP-only and both-mode nginx separately. HTTP-only nginx rejects the
+H2 preface, and HTTPS nginx does not negotiate the peer ALPN token, so Connect
+falls back to H1. For an HTTP URL, both-mode nginx can accept h2c: Connect
+then uses H2 to nginx and H1 downstream. Client socket counts alone cannot
+prove end-to-end multiplexing.
 
 On every cell:
 
 | Check | Pass |
 | --- | --- |
 | Chat, a second concurrent chat, gossip, `/healthz` | All succeed. HA: the same escrow stays on the same `versiond` |
-| Transport | Connect over HTTP/1.1 on InferenceUrl. N in-flight RPCs are N connections. They do not share one |
-| Port `9443` | Nothing dials it. If something does, the dial fails and the client stays on InferenceUrl |
-| Native gRPC | Not used. No `application/grpc` content type on the wire |
+| Transport | HTTP-only or HTTPS nginx: Connect/H1, one client connection per in-flight RPC. HTTP URL with both-mode nginx: Connect may share an H2 client connection, but downstream RPCs still use separate H1 connections |
+| HTTP/2 probe | A successful h2c probe to both-mode nginx need not miss. Otherwise, one probe per origin at a time: explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure backs off from 30 seconds to 30 minutes. Application/stream errors do not mark the origin H1-only. Connect stays on InferenceUrl |
+| Native gRPC | Leave `DEVSHARD_RPC_GRPC` unset (default Connect). H2 to nginx does not establish end-to-end gRPC support |
 | `/rpc/` | Visible on the nginx / policy-worker access log |
-| Child rate limit | Still enforced. See scenario A below. The public connection limits must not fire, because this path has no `:9443` |
+| Child rate limit | Still enforced. See scenario A below. The public connection limits must not fire, because nothing reached the peer-RPC frontend |
 | Mixed version on one escrow | A v6 peer and a v5 peer on the same escrow both complete a chat |
 
 ### 2. Switch the wrapping to the v6 branch
@@ -341,17 +370,17 @@ image is `proxy-router`:
 
 | Check | Pass |
 | --- | --- |
-| Listen | Client uses `{InferenceUrl host}:9443`. HTTPS InferenceUrl: TLS, ALPN `h2`, same certificate as nginx. HTTP InferenceUrl: cleartext HTTP/2 |
+| Listen | Client uses InferenceUrl's own port. HTTPS InferenceUrl: TLS, ALPN `gonka-rpc/1`, same certificate as nginx. HTTP InferenceUrl: cleartext HTTP/2 opened with the client preface. No other port is dialed |
 | One connection | N concurrent RPCs, including a long `Chat` and `Watch`, share one TCP connection on every hop (client → `proxy-router`, `proxy-router` → `versiond-router` or `versiond`, `versiond` → child). A second peer is a second connection |
 | nginx | Access log has no `/rpc/`. `:80`/`:443` still serve JSON, `/v1`, and `/healthz` |
 | Stickiness | HA: escrow placement matches the HTTP/1.1 path. A version in the URL still selects that child |
 | New limits | Scenarios C–F below fire on this listen and do not fire on `:443` |
-| Fallback | With `DEVSHARD_RPC_H2_PORT` unset, or `DEVSHARD_RPC_H2_UPGRADE` off, the same peer returns to HTTP/1.1 on InferenceUrl and the connection count fans out again |
+| Fallback | With `DEVSHARD_RPC_H2_UPGRADE=false` the same peer returns to HTTP/1.1 on InferenceUrl and the connection count fans out again. The same happens, without any setting, when this host's `proxy` image is swapped back for one that does not recognise the preface: the peer's next Attach misses, logs once, and continues over HTTP/1.1 |
 
 nginx `proxy` cells on the v6 branch (S, H, image is nginx rather than
-HAProxy): HTTP/2 is not this ingress. Pass is the same as section 1
-(HTTP/1.1, no shared connection, JSON still served). A nginx-only host that
-suddenly requires `:9443` is a failure.
+HAProxy): use the mode-dependent criteria in section 1. The client hop may
+use h2c with both-mode nginx, but forwarding remains H1 and JSON stays served. A nginx-only host that
+cannot be reached over HTTP/1.1 is a failure.
 
 ### 3. Rate-limit scenarios
 
@@ -382,23 +411,27 @@ next `Chat` from A is `resource_exhausted` and does not spend chat weight.
 `Watch` for A still opens. Peer B opens a chat at the same time.
 
 **C. One connection, separate path zones (v6 only).** From one address, on
-the one `:9443` connection, send `GetDiffs` past 400 requests in 10 seconds.
+the one HTTP/2 connection, send `GetDiffs` past 400 requests in 10 seconds.
 Further `GetDiffs` return 429. A `Chat` on that same connection still
 completes, until its own zone (2000/10s) or the child budget. `Attach` from
 that address has its own 100/10s zone and is not emptied by the `GetDiffs`
 flood. Confirm the connection count stays 1 for the whole run.
 
-**D. Connection rate (v6 only).** From one address, open connections to
-`:9443` faster than 200 per second. Further handshakes die before `Attach`
+**D. Connection rate (v6 only).** From one address, open connections that
+start with the HTTP/2 preface (or the peer-RPC ALPN) faster than 200 per
+second. Further handshakes die before `Attach`
 (no signature work in the child logs for the refused ones). A second address,
 opening a single connection in the same second, attaches and chats. Repeat
 against InferenceUrl on the old wrapping: this reject must not appear.
 
 **D2. Concurrent connections (v6 only).** From one address, open 33 TCP
-connections to `:9443` at under 200/s and send nothing on them. The first 32
-stay open; the 33rd is closed at accept. A second address opens a connection
-in the same window, attaches, and chats. Close one of the 32 and the next open
-from the first address is accepted again.
+connections to InferenceUrl's port at under 200/s; on each send only the
+HTTP/2 preface (HTTPS: a ClientHello offering ALPN `gonka-rpc/1`) and nothing
+more. The first 32 stay open; the 33rd is closed before the hand-off. A
+second address opens a connection in the same window, attaches, and chats.
+Close one of the 32 and the next open from the first address is accepted
+again. 33 connections that send nothing at all are not capped: they go to
+nginx after the inspect delay.
 
 **E. Forged `X-Real-IP` (v6 only).** Peer A sets `X-Real-IP` to peer B's
 address. A's flood still counts against A's real address. B is not pushed
@@ -420,7 +453,7 @@ request diffs for 65 nonces (`from=1&to=65`, or the `GetDiffs` RPC with the
 same range). The call is rejected and names the cap: at most 64 nonces and
 8388608 bytes. The same call for 64 small diffs succeeds. One diff larger
 than 8 MiB is returned alone, not rejected for its size. Repeat on HTTP/1.1
-and, after section 2, on `:9443`. A range that fits one page must not fan out
+and, after section 2, on HTTP/2. A range that fits one page must not fan out
 into a second connection on the HTTP/2 cell.
 
 Then put one host more than 200 diffs behind and let it catch up. Gateway
@@ -442,7 +475,7 @@ least; S and H if that ingress is still in the estate.
 | Check | Pass |
 | --- | --- |
 | JSON | Chat, gossip, diffs, and `/healthz` on InferenceUrl succeed for both v4 and v4.2. HTTP/1.1. No `/rpc/` required of that binary |
-| `:9443` | Publishing it does not break `:443`. A v4 or v4.2 child is not required to answer HTTP/2. A failed `/rpc/` against that child must not take down its JSON routes |
+| Preface on `:80`/`:443` | Recognising it does not break JSON on the same ports. A v4 or v4.2 child is not required to answer HTTP/2. A failed `/rpc/` against that child must not take down its JSON routes |
 | Routing | The version in the URL still selects that child. HA stickiness still holds |
 | v6 client → old host | A v6 gateway completes a chat against a v4 host and against a v4.2 host. Record whether the call stayed on JSON. A hang, or a chat that only succeeds if the old child speaks `/rpc/`, fails the cell |
 | Mixed escrow | One v6 child and one v4.2 child, v6 wrapping, same escrow. The v6 peer uses its one HTTP/2 connection to the v6 host. The v4.2 peer completes the same chat on InferenceUrl. Neither path poisons the other |
@@ -450,14 +483,14 @@ least; S and H if that ingress is still in the estate.
 
 ### Done when
 
-- Section 1 is green for v4 (S, H) and v5 (SR, HR): HTTP/1.1, no shared connection, child limits on, public connection limits absent.
+- Section 1 is green for v4 (S, H) and v5 (SR, HR): mode-dependent client transport, H1 downstream, child limits on, dedicated public RPC connection limits absent.
 - Section 2 is green for v6 `proxy-router` (SR, HR): one connection per peer, nginx blind to `/rpc/`, JSON intact. nginx `proxy` cells still look like section 1.
 - Scenarios A–H match the table, including the second peer staying healthy and a long catch-up staying inside one page and one 200-diff chunk.
 - Section 4 is green for v4 and for v4.2.
 
 ## Known limits
 
-- `update-devshard.sh --check` does not read `DEVSHARD_RPC_H2_*`. A router can look admitted while the data port it would send HTTP/2 to is closed. After the wrapping switch, confirm `:9443` and the router hop (`8081` by default) with a real RPC, not only `/readyz`.
-- Roll the public proxy back off `:9443` before rolling `versiond-router` back. A proxy that still publishes `:9443` against a pre-v6 router has nowhere to send peer RPC.
-- The three HTTP/2 ports are paired, not one number: client to proxy `9443`, proxy to router `8081`, router to `versiond` `8080`. Moving only one of them black-holes the RPC and leaves JSON on `:443` up.
+- `update-devshard.sh --check` does not send an HTTP/2 request. A router can look admitted (its admin `/readyz` is HTTP/1.1) while the HTTP/2 data path is not serving. After the wrapping switch, confirm it with a real RPC through the public port, not only `/readyz`.
+- Discovery is per scheme/host/port. Explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure uses backoff from 30 seconds to 30 minutes. Empty RPC twins during upgrade use bounded Connect/H1 forwarding through the original JSON placement. Overload may return 503; native gRPC cannot use H1. Follow the upgrade procedure in the [canonical host guide](https://github.com/gonka-ai/gonka-docs/pull/1515).
+- Transport compatibility supports mixed generations: a router without an available `:8081` RPC pool uses bounded Connect/H1 fallback through the JSON placement. This does not authorize arbitrary component replacement order; follow the canonical host guide and updater rollback result.
 - The public `proxy-router` is still one process on one host. The bundled PostgreSQL is still not database HA.

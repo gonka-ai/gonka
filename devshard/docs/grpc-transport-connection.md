@@ -4,7 +4,8 @@ Companion to [`grpc-transport-plan.md`](./grpc-transport-plan.md) (design) and
 [`grpc-transport-phases.md`](./grpc-transport-phases.md) (execution order). This page is the
 **mechanical** picture: how a peer opens an RPC session on InferenceUrl, why phases 1–5
 stay HTTP/1.1 (children are loopback-only), and how phase 6 carries HTTP/2 **end to end**
-on a published gRPC listen that **skips nginx**.
+on InferenceUrl's own port, recognised in band by the public proxy so that it **skips
+nginx**, with Connect over HTTP/1.1 as the fallback when a peer's origin does not speak it.
 
 Join hop inventory (JSON today, `/rpc/` after phase 6):
 [`high-availability-architecture.md`](./high-availability-architecture.md).
@@ -16,10 +17,11 @@ pool: [`versiond-host-evacuation.md`](./versiond-host-evacuation.md). Path versi
 
 **Status.** Phase 1 ships the server handshake, the fail-closed session interceptor, and the
 `/rpc/` mount (always on). The client attach loop (`PeerConn`) is phase 2. HTTP/2
-is phase 6: deploy publishes `{DEVSHARD_RPC_H2_PORT}` on **`proxy` (proxy-router)** for
-authenticated `/rpc/`, with HTTP/2 through versiond-router (HA) or versiond (non-HA) to
-the child. When InferenceUrl is HTTPS, `proxy` terminates the same nginx cert; nginx
-keeps JSON and the public API. The URL shape does not change between those
+is phase 6: **`proxy` (proxy-router)** recognises a peer on the public `:80`/`:443` by
+the HTTP/2 preface or the ALPN token `gonka-rpc/1` and carries authenticated `/rpc/`
+over HTTP/2 through versiond-router (HA) or versiond (non-HA) to the child, past nginx.
+When InferenceUrl is HTTPS, `proxy` terminates the same nginx cert; nginx keeps JSON,
+the public API, and Connect over HTTP/1.1 from a peer whose probe missed. The URL shape does not change between those
 phases. First Attach uses a live door id; Watch and TTL refresh use `_`
 ([Handshake](#handshake-on-that-path)).
 
@@ -74,7 +76,7 @@ client → proxy :80/:443 (TCP) → nginx → proxy :18081 → versiond-router �
 ```
 
 Non-HA genesis skips versiond-router (`nginx → versiond`). local-test-net names its
-nginx container `proxy`; that is still this HTTP/1.1 path, not the phase 6 h2 bind.
+nginx container `proxy`; that is still this HTTP/1.1 path, with no phase 6 hand-off.
 
 Connect's native path is `/{package.Service}/{Method}` (no version, no escrow). Echo is the
 translator:
@@ -276,7 +278,7 @@ jittered backoff (50 ms → 5 s), same idea as the CometBFT WS listener, except
 HTTP/1.1 keepalive is a **pool**, not one multiplexed connection. N concurrent RPCs need N
 TCP connections; a 30-minute `Chat` holds one for its whole life. `MaxIdleConnsPerHost`
 must rise to cover concurrent chats plus gossip, queries, and `Watch`. That is the cost of
-phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on a listen that skips nginx.
+phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on the same port past nginx.
 
 ### HA: one token, several children
 
@@ -429,7 +431,7 @@ The child **must not** key this on origin IP. Mixed fleets and hop-stamped
 The IP cap lives in **versiond**, on the hop that already sees the client.
 `SetXForwarded` rewrites `X-Forwarded-*`; versiond **keeps inbound `X-Real-IP`**
 from nginx / versiond-router and forwards it to the child. The child still
-does not key unknown-escrow misses on it. Phase 6’s h2 listen: **`proxy`**
+does not key unknown-escrow misses on it. Phase 6’s `rpc_h2` frontend on **`proxy`**
 overwrites `X-Real-IP` from `src` (nginx’s `$remote_addr` job); versiond still
 copies, it does not re-derive from `RemoteAddr`.
 
@@ -494,12 +496,12 @@ limiter only stops **unknown escrow-id** fan-out on the three bind paths.
 
 ---
 
-## HTTP/2, nginx skipped (phase 6)
+## HTTP/2 on the same port, nginx skipped (phase 6)
 
 Same Connect handlers. Same protos. Same `/devshard/{version}/sessions/{id}/rpc/…` path
 shape. Children stay on `127.0.0.1`. Authenticated peer RPC does **not** enter nginx.
 
-Join today (JSON and, until phase 6, RPC):
+Join, JSON (and, for a peer whose HTTP/2 probe missed, RPC):
 
 ```
 client → proxy (proxy-router) :8000/:443 (TCP) → nginx (proxy-policy) → proxy :18081 → versiond-router → versiond :8080 → 127.0.0.1:child
@@ -508,18 +510,55 @@ client → proxy (proxy-router) :8000/:443 (TCP) → nginx (proxy-policy) → pr
 
 `devshardd` is not a public port. versiond talks to it as loopback. A second `h2_endpoint`
 on the child is either unreachable or a new public hole that skips version routing and
-escrow stickiness. That design is rejected.
+escrow stickiness. That design is rejected. So is a second public port for peer RPC:
+two hosts whose wrappings publish different ports cannot talk, the port is one more
+thing every operator opens and forwards, and a client has to be told out of band
+whether its peer has it.
 
-Phase 6 publishes `{DEVSHARD_RPC_H2_PORT}` on the existing **`proxy`** container and takes
-nginx off `/rpc/`. HTTP/2 is required on **every** hop of that path — not only the public
-listen. Connect does not turn a Go `http.Server` into h2c; each process must opt in.
+Phase 6 keeps peer RPC on InferenceUrl's own port and lets the two sides agree on the
+transport in band:
+
+- **HTTP InferenceUrl.** The client opens the connection with the HTTP/2 client
+  preface (prior-knowledge h2c). `proxy-router`'s `:80` is a TCP frontend: it reads
+  the first 24 bytes, recognises the preface, and hands the connection to its `rpc_h2`
+  frontend over an abstract socket (`send-proxy-v2`, so `src` is still the client).
+  An HTTP/1.x request line goes to nginx as before.
+- **HTTPS InferenceUrl.** The client offers one ALPN token, `gonka-rpc/1`
+  (`transport.PeerRPCALPN`), not `h2`. `:443` routes a ClientHello carrying it to the
+  `rpc_h2` TLS bind, which terminates with nginx's certificate, negotiates that token,
+  and runs HTTP/2 on it. Browsers and JSON clients offer `h2` / `http/1.1` and keep
+  landing on nginx.
+- **An origin that does not speak it.** Cache entries are scoped to scheme,
+  hostname and effective port. Explicit protocol/ALPN mismatch pins Connect to
+  HTTP/1.1 for 30 minutes ± 10%. Ambiguous connection closure starts at 30 seconds,
+  doubles on subsequent failures, and is capped at 30 minutes. One Attach probes
+  an origin at a time; successful H2 Attach clears its failure history. Context
+  deadlines, DNS/refusal, HTTP/2 stream errors and application errors (including
+  429/503) do not declare the origin H1-only. A failed renewal preserves the live
+  Watch/token until the normal session lifecycle ends it.
+
+HTTP/2 is required on **every** hop of the h2 path — not only the public listen.
+Connect does not turn a Go `http.Server` into h2c; each process must opt in.
 
 ```
-HA:     client → proxy (TLS+h2 if InferenceUrl is HTTPS, else h2c)
-                 → versiond-router (h2c, proto h2) → versiond (h2c) → 127.0.0.1:child (h2c)
-Non-HA: client → proxy (TLS+h2 if InferenceUrl is HTTPS, else h2c)
-                 → versiond (h2c) → 127.0.0.1:child (h2c)
+HA:       client → proxy :80 (h2c preface) / :443 (ALPN gonka-rpc/1)
+                   → versiond-router :8081 (proto h2) → versiond :8080 (h2c) → 127.0.0.1:child (h2c)
+Non-HA:   client → proxy :80 / :443
+                   → versiond :8080 (h2c) → 127.0.0.1:child (h2c)
+Fallback: client → proxy :80 / :443 (HTTP/1.1, or TLS with h2 / http/1.1) → nginx → proxy :18081
+                   → versiond-router :8080 → versiond → child, Connect over HTTP/1.1
 ```
+
+versiond-router has one data frontend with two unpublished binds: `:8080` for nginx's
+HTTP/1.1 JSON and the HTTP/1.1 fallback, `:8081` for the proxy's `proto h2` dial.
+HAProxy detects the HTTP/2 preface on either cleartext bind, and the `_rpc` twin of a
+backend is selected by the `/sessions/{id}/rpc/` path, not by port or protocol, so the
+fallback reaches the same twin and the same child. The private H2 port remains
+`8081`, but intermediate separate-port v6 routers rejected `/rpc/` on `8080`.
+They therefore cannot provide this fallback and are not a supported mixed
+combination. Follow the fleet → proxy/policy → versiond order in the
+[canonical host guide](https://gonka.ai/docs/host/devshard-high-availability/),
+including its old-nginx and testnet compatibility exceptions.
 
 A default `httputil.ReverseProxy` (HTTP/1.1) or a child `http.ListenAndServe` without
 `golang.org/x/net/http2/h2c` fans N RPCs back into N TCP connections and **fails** this
@@ -531,26 +570,22 @@ client → nginx (InferenceUrl) → …   # unchanged
 
 | Hop | Change |
 |---|---|
-| nginx / proxy-policy | **Not on `/rpc/`.** Keep InferenceUrl for JSON and the public API. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row, not the h2 bind. |
-| **proxy (proxy-router)** | Public `{DEVSHARD_RPC_H2_PORT}` bind. Skip `proxy-policy`. `proto h2` to versiond-router (HA) or `versiond:8080` (non-HA). Stick-table `conn_cur` / `conn_rate` / `sess_rate` and path zones on `src,ipmask(32,64)` (one IPv4 address, or one IPv6 /64; table type `ipv6`). Direct clients are keyed at accept. A trusted PROXY balancer is keyed at session time, after the preamble. **Overwrite `X-Real-IP` from the full `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`) and `bind ssl crt … proto h2`. Keep the same version + escrow hash as `versiond_router_in`. `:80/:443` stay TCP-to-nginx. |
-| versiond-router (HA) | Inner hop. `proto h2` on the frontend from `proxy` **and** on every backend to versiond (h2c). Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
-| versiond (both) | `h2c.NewHandler` on the listen that serves `/rpc/`; reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON |
+| nginx / proxy-policy | **Not on the h2 path.** Keeps InferenceUrl for JSON, the public API, and Connect over HTTP/1.1 from a peer that fell back. No `grpc_pass`. local-test-net's nginx container is also named `proxy` (`proxy/` image) — that is this row. |
+| **proxy (proxy-router)** | `:80`/`:443` stay TCP frontends. `tcp-request inspect-delay` (`PROXY_ROUTER_PUBLIC_INSPECT_SECONDS`, 5 s) reads the first bytes; the preface or the ALPN token selects `rpc_h2` over `abns@rpc_h2c` / `abns@rpc_tls`, everything else goes to `proxy-policy`. A connection that starts with `PRI * HTTP/2.0` waits for the whole 24-byte preface rather than being accepted as HTTP on its first line. `rpc_h2`: `proto h2` to versiond-router `:8081` (HA) or `versiond:8080` (non-HA). Stick-table `conn_cur` / `conn_rate` (tracked by `:80`/`:443` on the preface or ALPN, before the hand-off) and path zones on `src,ipmask(32,64)` (one IPv4 address, or one IPv6 /64; table type `ipv6`); a trusted external balancer's client address carries through the PROXY v2 preamble of the hand-off. **Overwrite `X-Real-IP` from the full `src`** (do not forward the caller’s header). HTTPS: mount `SSL_CERT_SOURCE` (`./secrets/nginx-ssl`); `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. Keep the same version + escrow hash as `versiond_router_in`. |
+| versiond-router (HA) | `:8080` JSON and fallback, `:8081` the proxy's HTTP/2 dial, one frontend. `proto h2` on every backend to versiond (h2c) in the `_rpc` twins, with `check-proto h1`. Keep version + escrow hash on `:path`. Do not re-key per-IP zones (`RemoteAddr` is `proxy`). |
+| versiond (both) | HTTP/1.1 and prior-knowledge HTTP/2 on the public listen (`ConfigureCleartextHTTP2`); reverse-proxy with an **HTTP/2** transport to the child (not the default HTTP/1.1 `ReverseProxy`); still accept HTTP/1.1 from nginx for JSON and for the fallback |
 | `devshardd` | Wrap the existing loopback `http.Server` with `h2c.NewHandler`. Same Connect mux, no extra bind |
 
-The client dials `{InferenceUrl.host}:{DEVSHARD_RPC_H2_PORT}` with InferenceUrl's
-scheme (HTTPS → TLS + ALPN `h2`, same hostname for SNI/verify; HTTP → h2c). That env is
-the network-wide gRPC port — same number on every participant, not a per-peer address and
-not an on-chain field. Unset (or `DEVSHARD_RPC_H2_UPGRADE` off): stay on Connect over
-HTTP/1.1 at InferenceUrl. Do not probe any other port. There is no `h2_endpoint` field
-(proto field 4 is reserved). `DEVSHARD_RPC_H2_HOST` (testenv overlay `proxy`) is the TCP
-dial name only; SNI and certificate verify still use InferenceUrl’s hostname (the nginx
-SAN). Do not put `proxy` in SNI.
+The client dials InferenceUrl's own origin (scheme, host, port; no path). There is no
+network-wide port, no per-peer address, and no on-chain field (proto field 4 stays
+reserved). `DEVSHARD_RPC_H2_UPGRADE=false` turns the probe off and stays on Connect
+over HTTP/1.1; it never changes InferenceUrl. SNI and certificate verify are
+InferenceUrl's hostname either way.
 
-Join's public `:80/:443` stay TCP-to-nginx; they do not carry `/rpc/`. Do not put
-HAProxy inside the versiond image. The cert lives on `proxy`, not on versiond-router.
-nginx renewal replaces `cert.pem` and reloads nginx. proxy-router rebuilds the
-HAProxy PEM from that file and commits it on the admin socket, so `:9443` serves
-the renewed certificate.
+Join's `:80/:443` carry both. Do not put HAProxy inside the versiond image. The cert
+lives on `proxy`, not on versiond-router. nginx renewal replaces `cert.pem` and reloads
+nginx. proxy-router rebuilds the HAProxy PEM from that file and commits it on the admin
+socket, so the `rpc_h2` TLS bind serves the renewed certificate.
 
 **Why not `grpc_pass`.** That was the previous phase 6 shape. nginx `limit_req` still
 counts each stream, and `proxy_pass` cannot multiplex. Skipping nginx removes both the 503
@@ -572,13 +607,14 @@ The nginx per-IP ceiling disappears for this path. Replace it on the published l
 - **Concurrent connections per address** (stick-table `conn_cur` on
   `src,ipmask(32,64)` at **`proxy`**, default 32,
   `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC`) — the nginx `limit_conn` analogue.
-  One IPv4 address, or one IPv6 /64. Direct clients are keyed at accept. A
-  trusted PROXY balancer is keyed after the preamble, when `src` is the client.
-  An idle socket that is already tracked holds a `maxconn` slot until
-  `timeout client`. A preamble that stalls before the TLS handshake is closed
-  by `timeout client-hs` (5s) and is not in the cap yet.
-- **TCP / HTTP/2 connection rate per address** (phase 6, stick-table `conn_rate` /
-  `sess_rate` on the same key at **`proxy`**). Handshake and Attach do not bound socket opens.
+  One IPv4 address, or one IPv6 /64, tracked by `:80`/`:443` as soon as the
+  HTTP/2 preface or the peer RPC ALPN is seen, before the hand-off (a trusted
+  external balancer's preamble is consumed first, so `src` is the client it
+  named). An idle socket that is already tracked holds a `maxconn` slot until
+  `timeout client`. A TLS handshake that stalls holds its slot until `timeout
+  client-hs` (5s) closes it.
+- **TCP / HTTP/2 connection rate per address** (phase 6, stick-table `conn_rate`
+  on the same key at **`proxy`**). Handshake and Attach do not bound socket opens.
 - **Path zones** (phase 6) on **`proxy`**: Attach / Chat / diffs / gossip as separate
   `src,ipmask(32,64)` budgets. The Connect method is in the URL; no protobuf parse. versiond-router
   and inner versiond on HA must not re-key on `RemoteAddr` (`proxy`). The child must not
@@ -604,22 +640,23 @@ check roster for **that** escrow. Attach is the one unauthenticated RPC on this
 listen — throttle it with the process floor before ECDSA (phase 4) before the
 port is public. Per-IP TCP / path rate is phase 6.
 
-Phase 6 **reuses nginx's TLS cert** on the published listen: mount `SSL_CERT_SOURCE` on
-`proxy` and `bind ssl crt … proto h2`. That is the same host TLS nginx already
-did, not a new identity. `channel_binding` stays empty. Inner hops stay h2c. Phase 6 is
-multiplexing off nginx, not peer mTLS.
+Phase 6 **reuses nginx's TLS cert** on the `rpc_h2` TLS bind: mount `SSL_CERT_SOURCE`
+on `proxy` and `bind abns@rpc_tls … ssl crt … alpn gonka-rpc/1 proto h2`. That is the
+same host TLS nginx already did, not a new identity. `channel_binding` stays empty.
+Inner hops stay h2c. Phase 6 is multiplexing off nginx, not peer mTLS.
 
-Client: dial `{InferenceUrl.host}:{DEVSHARD_RPC_H2_PORT}` with InferenceUrl's scheme
-when that env is set; `DEVSHARD_RPC_H2_UPGRADE=false` never changes InferenceUrl, it
-only stops preferring the h2 listen. Unset port means HTTP/1.1 on InferenceUrl.
+Client: dial InferenceUrl's origin with the HTTP/2 preface (HTTP) or ALPN
+`gonka-rpc/1` (HTTPS); a miss falls back to Connect over HTTP/1.1 on the same origin
+for the miss TTL. `DEVSHARD_RPC_H2_UPGRADE=false` never changes InferenceUrl, it only
+turns the HTTP/2 probe off.
 
 ---
 
 ## What a later RPC looks like
 
 After Attach, a `GetSignatures` (the phase 1 proof handler) is still one POST with
-the same path shape. Phases 1–5 send it on InferenceUrl (nginx). Phase 6 sends it on
-`{InferenceUrl.host}:{DEVSHARD_RPC_H2_PORT}` (`proxy`, skip nginx). Phase 1 **requires**
+the same path shape. Phases 1–5 send it on InferenceUrl (nginx). Phase 6 sends it on the
+same InferenceUrl origin over HTTP/2 (`proxy` hands it past nginx). Phase 1 **requires**
 `x-devshard-session`; the mux interceptor drops the request otherwise.
 
 ```
@@ -639,69 +676,39 @@ RPC path.
 
 ## Known limitations
 
-Three HA deploy gaps are accepted. The first two are fail-closed peer-RPC
-outages when an operator crosses them. Neither fires on an unmodified join:
-the public port is one `config.env` value, and both sides of the router hop
-default to `8081`. Clients do not fall back to JSON. An HA router refuses
-`/sessions/.../rpc/` on `:8080`. The third is the extra health check on each
-`_rpc` twin. It does not need a fix.
+### Transport discovery and mixed versions
 
-### Placement contract does not include the HTTP/2 listen
+Discovery is per origin and in band. Explicit protocol mismatch can delay H2
+adoption by the cache TTL; connection closure uses the shorter exponential
+backoff described above. H1 and H2 Connect ingress share procedure limits on the
+updated proxy/policy pair. When the selected RPC twin is empty, a bounded H1 hop
+uses the original JSON placement maps. The public and inner routers each enforce
+a global active fallback budget; queue admission has a threshold and a short
+waiting deadline. These limits are independent of ordinary JSON capacity.
+Native gRPC cannot fall back through this hop and receives an unavailable error.
+Versiond also checks the selected child on each H2 RPC: a route replaced by an
+H1 child returns 503 until ingress health checks select bounded H1 admission.
+This closes the gap between asynchronous capability checks and request routing.
+A public proxy restart still interrupts existing connections.
 
-`PLACEMENT_PROTOCOL_VERSION` stays `1`. `placement_contract` in
-`deploy/join/versiond-router-fleet.sh` covers pool, network, legacy host,
-versions, catalog, DNS, and membership. It does not cover
-`VERSIOND_ROUTER_H2_PORT` or `VERSIOND_ROUTER_BACKEND_H2`. An old router
-image and a current one satisfy the same contract, so a direct
-`versiond-router-fleet.sh apply` may mix them.
+### The updater does not probe the HTTP/2 path end to end
 
-The proxy sends HTTP/2 to `:8081` on every slot. A pre-h2 slot refuses that
-connect. Redispatch tries another slot and succeeds while any current slot
-remains. When the last current slot leaves and the proxy is still
-publishing `{DEVSHARD_RPC_H2_PORT}`, every slot refuses the only peer path.
-
-`update-devshard.sh` does not take that path. Images labeled
-`ai.gonka.peer-rpc-h2=1` are the HTTP/2 builds. A rollback to images
-without the label replaces the public proxy before `fleet apply`, so
-`:9443` is gone before any router loses `:8081`. A candidate proxy that
-still has the label is refused. A direct fleet apply is unchanged.
-
-The safe direction is a proxy rollback to a build that does not publish
-`:9443`, then the routers. A router rollback under a proxy that still
-publishes `:9443` is not safe. Putting the listen port and
-`VERSIOND_ROUTER_BACKEND_H2` on the placement contract would force that
-boundary through `maintenance-rollout`. That bump is not in this tree.
-
-### The updater does not prove the HTTP/2 ports agree
-
-`update-devshard.sh --check` does not read `DEVSHARD_RPC_H2_*`. Proxy
-`/readyz` counts policy workers and the coarse JSON pool. `verify-admission`
-requires the per-version `_rpc` server to be UP. That server's check is
-HTTP/1.1 `GET /readyz` on the router admin port `:8404`, then traffic is
-sent to `DEVSHARD_RPC_H2_ROUTER_PORT`. A server can be UP, and the proxy
-healthy, while the data port is closed.
-
-The three hops are different ports. They are paired, not one number:
-
-| Hop | Setting | Stock |
-| --- | --- | --- |
-| Client to proxy | `DEVSHARD_RPC_H2_PORT`, one value in `config.env`, published on the proxy and inherited by local versiond and the gateway | `9443` |
-| Proxy to router | Proxy `DEVSHARD_RPC_H2_ROUTER_PORT`. Router `VERSIOND_ROUTER_H2_PORT` | both default `8081` |
-| Router to versiond | Endpoint `{id, host, port}` or DNS, `proto h2` on the same listen as JSON | `8080` |
-
-The slot compose does not pass `VERSIOND_ROUTER_H2_PORT`. The router
-entrypoint defaults it to `8081`. The proxy side is
-`${DEVSHARD_RPC_H2_ROUTER_PORT:-8081}`. Setting that variable moves only
-the dial target. Every slot still listens on `8081`, redispatch cannot
-find a listener, and JSON on `:443` still works.
-
-A remote endpoint has no separate HTTP/2 port. The versiond listen on
-that `port` has to speak cleartext HTTP/2; `/readyz` on it is HTTP/1.1.
-Current `docker-compose.versiond-remote.yml` sets `DEVSHARD_RPC_H2_UPGRADE`
-and `DEVSHARD_RPC_H2_PORT`. A remote `config.env` with a different public
-port, or a versiond image that does not speak h2c, is invisible to the
-updater on the network node. Requiring `rpc_h2_upstream` to be UP would
-not catch either case: that state is decided by the admin check.
+`update-devshard.sh --check`, proxy `/readyz`, and `verify-admission` do not
+send a peer RPC. The `_rpc` twin's check is HTTP/1.1 `GET /readyz?version=`
+on the router admin port `:8404`, then `GET /<version>/healthz` on the
+router's `:8081` over HTTP/2, the data dial itself. A router generation
+without that listen (a v5 router after a rollback) fails the second step, the
+twin empties, and the proxy's `rpc_h2` frontend sends that version's peer RPC
+to the JSON sibling backend over HTTP/1.1, where the router routes `/rpc/` by
+path; both versioned and coarse checks require HTTP 200 on `:8081`,
+and the router verifies its selected RPC pool has an UP server. Non-HA opens
+versiond's own listen over HTTP/2 the same way and falls back to versiond
+over HTTP/1.1. What the checks do not prove is the child behind the router.
+After a
+wrapping switch, send one peer RPC through the public port (see the release
+guide) rather than trusting `/readyz`. A remote endpoint `{id, host, port}` is
+the versiond listen (`8080`); that process has to speak h2c, and the updater
+on the network node cannot see which image a remote host runs.
 
 ### The `_rpc` twin repeats the health check
 
