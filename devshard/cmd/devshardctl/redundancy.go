@@ -915,11 +915,11 @@ type inflight struct {
 	firstContentNano atomic.Int64
 	// stallAnchorAt is the unix nano the inter-chunk stall deadlines are measured
 	// from: the attempt's first forwarded event of any kind, then each
-	// content-bearing event, the first non-retriable error and the terminator.
-	// Unlike lastChunkAt it does not move on later role-only or otherwise empty
-	// deltas, or on a repeated error, so a host repeating them faster than
-	// InterChunkStallTimeout cannot keep an attempt alive without ever
-	// answering. A healthy stream sends its role delta once, ahead of the
+	// content-bearing event, the first non-retriable error and, after an answer,
+	// the terminator. Unlike lastChunkAt it does not move on later role-only or
+	// otherwise empty deltas, or on a repeated error, so a host repeating them
+	// faster than InterChunkStallTimeout cannot keep an attempt alive without
+	// ever answering. A healthy stream sends its role delta once, ahead of the
 	// content.
 	stallAnchorAt atomic.Int64
 	// streamTerminated is set once a `data: [DONE]` line has been forwarded to
@@ -927,8 +927,14 @@ type inflight struct {
 	// devshard_receipt, which are consumed by the transport and never reach the
 	// race writer, so stallAnchorAt freezes at the terminator. Without this flag a
 	// 60s inter-chunk deadline would fire during a healthy meta tail and cancel
-	// an answer the client has already fully received.
+	// an answer the client has already fully received. Only an attempt that
+	// forwarded content latches it: a [DONE] after nothing but role or error
+	// events protects no answer, and latching there would let a host send role,
+	// [DONE] and then hold the connection past every stall deadline.
 	streamTerminated atomic.Bool
+	// answerSeen is set once a content-bearing event (not an error) has been
+	// forwarded on this attempt.
+	answerSeen atomic.Bool
 	// clientVisible is set once this attempt has written bytes to the client's
 	// response writer. It is the only correct gate for "can this attempt still
 	// be retried": content that this attempt classified but never forwarded (a
@@ -1971,8 +1977,11 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// Latch the terminator: everything after this is the upstream's meta tail,
 		// which the transport consumes without reaching this writer. Without the
 		// latch the inter-chunk cancel would fire mid-tail and abort a fully
-		// delivered answer.
-		rw.inf.streamTerminated.Store(true)
+		// delivered answer. With no answer forwarded there is nothing to protect,
+		// so the terminator neither latches nor moves the stall anchor.
+		if rw.inf.answerSeen.Load() {
+			rw.inf.streamTerminated.Store(true)
+		}
 	} else if previousChunkNano > 0 {
 		rw.inf.recordChunkGap(nowNano - previousChunkNano)
 	}
@@ -1998,6 +2007,9 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 			rw.inf.usageComplTokens.Store(tokens)
 		}
 	}
+	if chunkHasContent {
+		rw.inf.answerSeen.Store(true)
+	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
 		rw.inf.firstContentNano.CompareAndSwap(0, nowNano)
@@ -2012,10 +2024,12 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	// error counts: an error-only attempt is never crowned, so
 	// winnerHardTimeoutDeadline does not bound it, and repeating the error would
 	// otherwise hold it open like a role-only drip. The terminator counts as
-	// meaningful only so it closes an open stall episode where the stream ended;
-	// streamTerminated already disarms every deadline after it.
+	// meaningful only after an answer, so it closes an open stall episode where
+	// the stream ended; streamTerminated already disarms every deadline after
+	// it. Without an answer it is one more empty event.
 	firstError := chunkHasError && !hadErrorBefore
-	if rw.inf.advanceStallAnchor(now, chunkHasContent || firstError || terminator) {
+	answeredTerminator := terminator && rw.inf.answerSeen.Load()
+	if rw.inf.advanceStallAnchor(now, chunkHasContent || firstError || answeredTerminator) {
 		rw.group.signalChunkForwarded()
 	}
 	if chunkHasContent && !rw.inf.suspicious {

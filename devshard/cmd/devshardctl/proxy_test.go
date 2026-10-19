@@ -1368,6 +1368,13 @@ func TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas(t *testing.T) {
 	// Content ends the episode for real.
 	_, err = writer.Write(contentDelta)
 	require.NoError(t, err)
+	// And a terminator after that content still latches: the meta tail that
+	// follows a delivered answer stays outside the stall deadlines.
+	_, err = writer.Write([]byte("data: [DONE]\n\n"))
+	require.NoError(t, err)
+	require.True(t, inf.streamTerminated.Load(), "a terminator after an answer must still latch")
+	_, _, ok = interChunkStallDeadline(inf)
+	require.False(t, ok, "the meta tail after a delivered answer must not be cancelled as a stall")
 	inf.stallMu.Lock()
 	active := inf.stallActive
 	endTime := inf.stalls[0].EndTime
@@ -1645,6 +1652,11 @@ func TestRunInference_PendingDripCancelledAtDeadline(t *testing.T) {
 }
 
 func runPendingDripCancelledAtDeadline(t *testing.T, event string) {
+	// A drip well inside the 100ms cancel threshold, as in the review repro.
+	runPendingHostsCancelledAtDeadline(t, eventDripClient{event: event, interval: 20 * time.Millisecond})
+}
+
+func runPendingHostsCancelledAtDeadline(t *testing.T, pending user.HostClient) {
 	applyRedundancySettingsForTest(t, RedundancySettings{
 		ReceiptTimeoutMS:              5000,
 		FirstTokenTimeoutFloorMS:      4000,
@@ -1666,9 +1678,8 @@ func runPendingDripCancelledAtDeadline(t *testing.T, event string) {
 	t.Cleanup(func() { RedundancySpeedPolicy = previousPolicy })
 
 	env := setupTestProxy(t, 3, nil, true)
-	// A drip well inside the 100ms cancel threshold, as in the review repro.
-	env.killables[0].inner = eventDripClient{event: event, interval: 20 * time.Millisecond}
-	env.killables[1].inner = eventDripClient{event: event, interval: 20 * time.Millisecond}
+	env.killables[0].inner = pending
+	env.killables[1].inner = pending
 	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1688,6 +1699,44 @@ func runPendingDripCancelledAtDeadline(t *testing.T, event string) {
 	// a loaded CI box.
 	require.Less(t, elapsed, 2*time.Second,
 		"a repeated empty event must not re-arm the inter-chunk cancel deadline")
+}
+
+// eventsThenHoldClient writes its events once and then holds the connection
+// open without another byte until the context ends.
+type eventsThenHoldClient struct{ events []string }
+
+func (c eventsThenHoldClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	if stream != nil {
+		for _, event := range c.events {
+			_, _ = io.WriteString(stream, event)
+		}
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunInference_PendingTerminatorWithoutAnswerCancelledAtDeadline covers a
+// [DONE] from an attempt that never forwarded content. The terminator latch
+// exists to protect a delivered answer's meta tail; latched here it disarms the
+// stall cancel, so role + [DONE] + silence, or a repeated [DONE], holds the
+// attempt like the drips above until the transport's 30-minute InferenceTimeout.
+func TestRunInference_PendingTerminatorWithoutAnswerCancelledAtDeadline(t *testing.T) {
+	const sseDoneEvent = "data: [DONE]\n\n"
+	for _, testCase := range []struct {
+		name   string
+		client user.HostClient
+	}{
+		{"role and [DONE] then silence", eventsThenHoldClient{events: []string{sseRoleDeltaEvent, sseDoneEvent}}},
+		{"an error and [DONE] then silence", eventsThenHoldClient{events: []string{sseServerErrorEvent, sseDoneEvent}}},
+		{"a repeated [DONE]", eventDripClient{event: sseDoneEvent, interval: 20 * time.Millisecond}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runPendingHostsCancelledAtDeadline(t, testCase.client)
+		})
+	}
 }
 
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
