@@ -914,11 +914,12 @@ type inflight struct {
 	maxChunkGapAt    atomic.Int64
 	firstContentNano atomic.Int64
 	// stallAnchorAt is the unix nano the inter-chunk stall deadlines are measured
-	// from: the attempt's first forwarded event of any kind, then each content- or
-	// error-bearing event and the terminator. Unlike lastChunkAt it does not move
-	// on later role-only or otherwise empty deltas, so a host repeating them
-	// faster than InterChunkStallTimeout cannot keep an attempt alive without
-	// ever answering. A healthy stream sends its role delta once, ahead of the
+	// from: the attempt's first forwarded event of any kind, then each
+	// content-bearing event, the first non-retriable error and the terminator.
+	// Unlike lastChunkAt it does not move on later role-only or otherwise empty
+	// deltas, or on a repeated error, so a host repeating them faster than
+	// InterChunkStallTimeout cannot keep an attempt alive without ever
+	// answering. A healthy stream sends its role delta once, ahead of the
 	// content.
 	stallAnchorAt atomic.Int64
 	// streamTerminated is set once a `data: [DONE]` line has been forwarded to
@@ -1221,11 +1222,12 @@ func (inf *inflight) finishActiveStall(now time.Time) {
 // advanceStallAnchor moves stallAnchorAt for an event the race writer just
 // forwarded and reports whether it moved. The first event of any kind starts the
 // clock, so a role chunk followed by silence is still cancelled; after that only
-// a meaningful event (content- or error-bearing, or the terminator) pushes the
-// deadline out and ends an open stall episode. Ending the episode on an empty
-// delta would be wrong twice over: the silence it records has not ended, and
-// clearing stallLogged against an anchor that did not move would put the log
-// deadline in the past, re-recording the same stall on every wakeup.
+// a meaningful event (content-bearing, the first non-retriable error, or the
+// terminator) pushes the deadline out and ends an open stall episode. Ending the
+// episode on an empty delta would be wrong twice over: the silence it records
+// has not ended, and clearing stallLogged against an anchor that did not move
+// would put the log deadline in the past, re-recording the same stall on every
+// wakeup.
 func (inf *inflight) advanceStallAnchor(now time.Time, meaningful bool) bool {
 	nowNano := now.UnixNano()
 	if !meaningful {
@@ -1980,6 +1982,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	// this attempt. Only content events promote a nonce to winner; role-only
 	// chunks and [DONE] markers do not. Probes never produce winner content.
 	hadContentBefore := rw.inf.contentChunks.Load() > 0
+	hadErrorBefore := rw.inf.errorTerminal
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
@@ -2005,10 +2008,14 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	// gap would still see the previous anchor -- and for an attempt's first chunk
 	// that is 0, which yields no deadline at all and silently drops the wake
 	// this fix exists to deliver. An event that leaves the anchor where it was
-	// changes no deadline, so it posts no wake either. The terminator counts as
+	// changes no deadline, so it posts no wake either. Only the first terminal
+	// error counts: an error-only attempt is never crowned, so
+	// winnerHardTimeoutDeadline does not bound it, and repeating the error would
+	// otherwise hold it open like a role-only drip. The terminator counts as
 	// meaningful only so it closes an open stall episode where the stream ended;
 	// streamTerminated already disarms every deadline after it.
-	if rw.inf.advanceStallAnchor(now, chunkHasContent || chunkHasError || terminator) {
+	firstError := chunkHasError && !hadErrorBefore
+	if rw.inf.advanceStallAnchor(now, chunkHasContent || firstError || terminator) {
 		rw.group.signalChunkForwarded()
 	}
 	if chunkHasContent && !rw.inf.suspicious {

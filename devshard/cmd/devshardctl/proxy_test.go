@@ -1316,7 +1316,7 @@ func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
 // same stall on every wakeup.
 func TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas(t *testing.T) {
 	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
-	roleDelta := []byte(`data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n")
+	roleDelta := []byte(sseRoleDeltaEvent)
 	contentDelta := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
 
 	ctx := context.Background()
@@ -1374,6 +1374,49 @@ func TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas(t *testing.T) {
 	inf.stallMu.Unlock()
 	require.False(t, active)
 	require.False(t, endTime.IsZero())
+}
+
+// TestRaceWriterStallAnchorMovesOnlyOnTheFirstError pins the error half of the
+// anchor rule. The first non-retriable error event moves the anchor, so an error
+// followed by silence is still cancelled a full InterChunkStallTimeout later;
+// repeating it does not, or an error-only attempt -- never crowned, so outside
+// winnerHardTimeoutDeadline -- could be held open indefinitely.
+func TestRaceWriterStallAnchorMovesOnlyOnTheFirstError(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+	errorEvent := []byte(sseServerErrorEvent)
+
+	ctx := context.Background()
+	group := newRaceGroup(ctx, ctx, "escrow-stall-anchor-error", io.Discard)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-stall-anchor-error",
+		nonce:        1,
+		sendTime:     time.Now(),
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	t.Cleanup(inf.releasePendingBuf)
+	t.Cleanup(inf.releaseErrorStreamRetention)
+	writer := &raceWriter{group: group, nonce: 1, inf: inf}
+
+	_, err := writer.Write([]byte(sseRoleDeltaEvent))
+	require.NoError(t, err)
+	beforeError := time.Now().Add(-time.Minute).UnixNano()
+	inf.stallAnchorAt.Store(beforeError)
+
+	_, err = writer.Write(errorEvent)
+	require.NoError(t, err)
+	require.True(t, inf.errorTerminal)
+	firstError := inf.stallAnchorAt.Load()
+	require.Greater(t, firstError, beforeError, "the first terminal error must move the stall anchor")
+
+	silentSince := time.Now().Add(-time.Minute).UnixNano()
+	inf.stallAnchorAt.Store(silentSince)
+	_, err = writer.Write(errorEvent)
+	require.NoError(t, err)
+	require.Equal(t, silentSince, inf.stallAnchorAt.Load(), "a repeated error must not move the stall anchor")
+	require.True(t, inf.stallCancelExpired(time.Now()))
 }
 
 // TestInterChunkStallCanceledAfterDoneMetaTail is the regression guard for the
@@ -1541,15 +1584,24 @@ func TestRunInference_PendingRoleChunkStallCancelledAtDeadline(t *testing.T) {
 		"a pending role-only stall must be cancelled at the inter-chunk deadline, not at the escalation wake")
 }
 
-// roleChunkDripClient forwards a role-only SSE event every interval until its
-// attempt context is cancelled, and never any content. Each event is a forwarded
-// chunk, so it sets the first-token clock and would keep re-arming a stall
-// deadline anchored on the latest event of any kind -- the drip shape from the
-// #1917 review that held an attempt open until the transport's 30-minute
-// InferenceTimeout.
-type roleChunkDripClient struct{ interval time.Duration }
+const (
+	sseRoleDeltaEvent   = `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n"
+	sseServerErrorEvent = `data: {"error":{"type":"server_error","code":500,"message":"internal"}}` + "\n\n"
+)
 
-func (c roleChunkDripClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+// eventDripClient forwards the same SSE event every interval until its attempt
+// context is cancelled, and never an answer. Each event is a forwarded chunk, so
+// it sets the first-token clock and would keep re-arming a stall deadline
+// anchored on the latest event of any kind -- the drip shape from the #1917
+// review that held an attempt open until the transport's 30-minute
+// InferenceTimeout, first with role-only deltas and then with a repeated
+// non-retriable error.
+type eventDripClient struct {
+	event    string
+	interval time.Duration
+}
+
+func (c eventDripClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	if receiptHandler != nil {
 		receiptHandler(&host.HostResponse{})
 	}
@@ -1557,7 +1609,7 @@ func (c roleChunkDripClient) Send(ctx context.Context, req host.HostRequest, str
 	defer ticker.Stop()
 	for {
 		if stream != nil {
-			_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"role":"assistant"}}]}`+"\n\n")
+			_, _ = io.WriteString(stream, c.event)
 		}
 		select {
 		case <-ticker.C:
@@ -1567,16 +1619,32 @@ func (c roleChunkDripClient) Send(ctx context.Context, req host.HostRequest, str
 	}
 }
 
-// TestRunInference_PendingRoleDripCancelledAtDeadline is the regression for a
-// host that repeats role-only deltas faster than InterChunkStallTimeout. Only
-// the first of them may start the inter-chunk clock; the rest carry no answer
-// and must not push the cancel deadline out. The escalation timers sit far
+// TestRunInference_PendingDripCancelledAtDeadline is the regression for a host
+// that repeats an event faster than InterChunkStallTimeout without ever
+// answering: role-only deltas, or the same non-retriable error. Only the first
+// of them may start or move the inter-chunk clock; the rest carry no answer and
+// must not push the cancel deadline out. An error-only attempt is never crowned,
+// so winnerHardTimeoutDeadline does not bound it either. The escalation timers sit far
 // beyond the cancel threshold (5s vs 100ms) so nothing but the stall cancel can
 // move the request on: pre-fix every drip re-armed the deadline, so no timer
 // ever cancelled either dripping host and the request hung with zero content
 // until the client gave up. The client deadline bounds that hang so the
 // pre-fix behaviour fails here instead of stalling the test binary.
-func TestRunInference_PendingRoleDripCancelledAtDeadline(t *testing.T) {
+func TestRunInference_PendingDripCancelledAtDeadline(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		event string
+	}{
+		{"role-only deltas", sseRoleDeltaEvent},
+		{"a repeated non-retriable error", sseServerErrorEvent},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runPendingDripCancelledAtDeadline(t, testCase.event)
+		})
+	}
+}
+
+func runPendingDripCancelledAtDeadline(t *testing.T, event string) {
 	applyRedundancySettingsForTest(t, RedundancySettings{
 		ReceiptTimeoutMS:              5000,
 		FirstTokenTimeoutFloorMS:      4000,
@@ -1599,8 +1667,8 @@ func TestRunInference_PendingRoleDripCancelledAtDeadline(t *testing.T) {
 
 	env := setupTestProxy(t, 3, nil, true)
 	// A drip well inside the 100ms cancel threshold, as in the review repro.
-	env.killables[0].inner = roleChunkDripClient{interval: 20 * time.Millisecond}
-	env.killables[1].inner = roleChunkDripClient{interval: 20 * time.Millisecond}
+	env.killables[0].inner = eventDripClient{event: event, interval: 20 * time.Millisecond}
+	env.killables[1].inner = eventDripClient{event: event, interval: 20 * time.Millisecond}
 	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -1619,7 +1687,7 @@ func TestRunInference_PendingRoleDripCancelledAtDeadline(t *testing.T) {
 	// 5s escalation: the bound only has to separate the two paths, with room for
 	// a loaded CI box.
 	require.Less(t, elapsed, 2*time.Second,
-		"role-only deltas must not re-arm the inter-chunk cancel deadline")
+		"a repeated empty event must not re-arm the inter-chunk cancel deadline")
 }
 
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
