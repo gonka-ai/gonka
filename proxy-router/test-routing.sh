@@ -1055,14 +1055,23 @@ docker run -d --name gonka-pr-router-a --network "$network" \
 h2_front a
 router_a_ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
     gonka-pr-router-a)
-# The docker resolver keeps the previous answer for hold valid (5s). The new
-# address then starts fully-down and needs rise 2 at a 1s interval, after the
-# replacement process is listening. Ten seconds closes inside that window.
+# A new address stays fully-down through the resolver hold (5s), then needs
+# rise 2. A reused address does not: it stays UP until the next check
+# (inter 1s, fall 1) sees the old process is gone. That UP is not admission.
+# Accept the address only when it is still UP after one check interval.
+admitted=0
 for _ in $(seq 120); do
-    proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" && break
-    sleep 0.25
+    if ! proxy_backend_addr_up versiond_routers_v4 "$router_a_ip"; then
+        sleep 0.25
+        continue
+    fi
+    sleep 1.5
+    if proxy_backend_addr_up versiond_routers_v4 "$router_a_ip"; then
+        admitted=1
+        break
+    fi
 done
-proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" \
+[[ $admitted -eq 1 ]] \
     || fail "parent router did not admit replacement router-a for v4"
 [[ $(probe http://proxy-router:18081/v9/sessions/dynamic/healthz) == b ]] \
     || fail "dynamically learned v9 did not reach its route-ready router"
