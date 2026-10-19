@@ -388,7 +388,7 @@ func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
 				auth := rpcpbconnect.NewPeerAuthServiceClient(c, urls[i]+rpcPath[:len(rpcPath)-1])
 				_, err := auth.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
 				require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err), "Connect must receive a typed refusal")
-				for _, path := range []string{strings.Replace(attach, "/Attach", "/%41ttach", 1), strings.Replace(attach, "escrow-1/rpc", "escrow-1%2Frpc", 1), strings.Replace(attach, "/rpc/", "/rpc/sessions/escrow-1/rpc/", 1)} {
+				for _, path := range []string{strings.Replace(attach, "/Attach", "/%41ttach", 1), strings.Replace(attach, "escrow-1/rpc", "escrow-1%2Frpc", 1), strings.Replace(attach, "/rpc/", "/rpc/sessions/escrow-1/rpc/", 1), strings.Replace(attach, "/devshard/", "/devshard/devshard/", 1)} {
 					r := request(t, c, urls[i]+path, nil)
 					require.Contains(t, []int{400, 429}, r.StatusCode, "encoded path must not bypass RPC policy")
 					drain(r)

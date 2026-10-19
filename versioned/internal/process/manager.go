@@ -340,17 +340,19 @@ func (m *Manager) ServesPeerRPC(name string) bool {
 func (m *Manager) PeerRPCHostReady() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	anyRunning := false
+	anyReady := false
 	for _, c := range m.processes {
-		if c == nil || c.status != statusRunning || !c.servingFresh() {
+		if c == nil || c.status != statusRunning {
 			continue
 		}
-		anyRunning = true
+		// rebuildRoutes retains every running child even when readiness is stale.
+		// Capability must cover every routable target, not just fresh children.
 		if !c.childH2C {
 			return false
 		}
+		anyReady = anyReady || c.servingFresh()
 	}
-	return anyRunning
+	return anyReady
 }
 
 // watchChildReadiness keeps one generation's serving flag current. It is bound to

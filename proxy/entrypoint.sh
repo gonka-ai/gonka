@@ -841,8 +841,10 @@ upstream rpc_policy_backend {
     zone rpc_policy_backend 64k;
     server ${RPC_POLICY_HOST}:18081 resolve;
 }"
+        # Catch every RPC-shaped path, including duplicate prefixes accepted
+        # by versiond, so non-HA cannot bypass the shared HAProxy policy.
         rpc_location=$(printf '%s\n' "$DEVSHARD_VERSIOND_LOCATION" | sed -n '/        location \/devshard\/ {/,$p' | sed \
-            -e 's|location /devshard/ {|location ~ ^/devshard/[^/]+/sessions/[^/]+/rpc/ {|' \
+            -e 's#location /devshard/ {#location ~ ^/devshard/(.*/)?sessions/[^/]+/rpc(/|$) {#' \
             -e 's|proxy_pass http://versiond_backend/;|proxy_pass http://rpc_policy_backend;|')
         DEVSHARD_VERSIOND_LOCATION="$DEVSHARD_VERSIOND_LOCATION
 $rpc_location"
