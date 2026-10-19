@@ -913,10 +913,18 @@ type inflight struct {
 	maxChunkGap      atomic.Int64
 	maxChunkGapAt    atomic.Int64
 	firstContentNano atomic.Int64
+	// stallAnchorAt is the unix nano the inter-chunk stall deadlines are measured
+	// from: the attempt's first forwarded event of any kind, then each content- or
+	// error-bearing event and the terminator. Unlike lastChunkAt it does not move
+	// on later role-only or otherwise empty deltas, so a host repeating them
+	// faster than InterChunkStallTimeout cannot keep an attempt alive without
+	// ever answering. A healthy stream sends its role delta once, ahead of the
+	// content.
+	stallAnchorAt atomic.Int64
 	// streamTerminated is set once a `data: [DONE]` line has been forwarded to
 	// the client. Upstream then tails the body with devshard_meta /
 	// devshard_receipt, which are consumed by the transport and never reach the
-	// race writer, so lastChunkAt freezes at the terminator. Without this flag a
+	// race writer, so stallAnchorAt freezes at the terminator. Without this flag a
 	// 60s inter-chunk deadline would fire during a healthy meta tail and cancel
 	// an answer the client has already fully received.
 	streamTerminated atomic.Bool
@@ -1186,10 +1194,10 @@ type attemptStallLog struct {
 }
 
 // signalChunkForwarded pokes the awaitRace loop so it re-derives its deadlines
-// against the lastChunkAt the writer has just set. See the chunkCh field for
+// against the stallAnchorAt the writer has just set. See the chunkCh field for
 // why no existing select case covers this. The send is non-blocking and the
 // channel is buffered: a wake already sitting in the slot is equivalent to the
-// one being posted, since the loop re-derives the plan from lastChunkAt rather
+// one being posted, since the loop re-derives the plan from stallAnchorAt rather
 // than counting wakes.
 func (rg *raceGroup) signalChunkForwarded() {
 	if rg == nil || rg.chunkCh == nil {
@@ -1208,6 +1216,24 @@ func (inf *inflight) finishActiveStall(now time.Time) {
 	inf.stallMu.Lock()
 	defer inf.stallMu.Unlock()
 	inf.finishActiveStallLocked(now)
+}
+
+// advanceStallAnchor moves stallAnchorAt for an event the race writer just
+// forwarded and reports whether it moved. The first event of any kind starts the
+// clock, so a role chunk followed by silence is still cancelled; after that only
+// a meaningful event (content- or error-bearing, or the terminator) pushes the
+// deadline out and ends an open stall episode. Ending the episode on an empty
+// delta would be wrong twice over: the silence it records has not ended, and
+// clearing stallLogged against an anchor that did not move would put the log
+// deadline in the past, re-recording the same stall on every wakeup.
+func (inf *inflight) advanceStallAnchor(now time.Time, meaningful bool) bool {
+	nowNano := now.UnixNano()
+	if !meaningful {
+		return inf.stallAnchorAt.CompareAndSwap(0, nowNano)
+	}
+	inf.finishActiveStall(now)
+	inf.stallAnchorAt.Store(nowNano)
+	return true
 }
 
 func (inf *inflight) finishActiveStallLocked(now time.Time) {
@@ -1240,11 +1266,11 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 	if inf.streamTerminated.Load() {
 		return attemptStall{}, false
 	}
-	lastChunkAt := inf.lastChunkAt.Load()
-	if lastChunkAt <= 0 {
+	anchorNano := inf.stallAnchorAt.Load()
+	if anchorNano <= 0 {
 		return attemptStall{}, false
 	}
-	start := time.Unix(0, lastChunkAt)
+	start := time.Unix(0, anchorNano)
 	if now.Sub(start) < InterChunkStallLogThreshold {
 		return attemptStall{}, false
 	}
@@ -1284,8 +1310,8 @@ func (inf *inflight) stallCancelExpired(now time.Time) bool {
 	// Mirrors interChunkStallDeadline: any forwarded event starts the clock, not
 	// just content. An attempt that emitted a role chunk and then hung is a real
 	// stall with no other failure path.
-	lastChunkAt := inf.lastChunkAt.Load()
-	if lastChunkAt <= 0 {
+	anchorNano := inf.stallAnchorAt.Load()
+	if anchorNano <= 0 {
 		return false
 	}
 	inf.stallMu.Lock()
@@ -1294,7 +1320,7 @@ func (inf *inflight) stallCancelExpired(now time.Time) bool {
 	if issued {
 		return false
 	}
-	return now.Sub(time.Unix(0, lastChunkAt)) >= InterChunkStallTimeout
+	return now.Sub(time.Unix(0, anchorNano)) >= InterChunkStallTimeout
 }
 
 // markStallCancelIssued latches the one-shot cancel guard and reports whether
@@ -1419,23 +1445,23 @@ type raceGroup struct {
 	escrow         string
 
 	// chunkCh is the awaitRace loop's "some attempt forwarded an event" edge,
-	// carrying the wake that lastChunkAt has no other representation in the
-	// select. The inter-chunk stall deadline is anchored on lastChunkAt, which
+	// carrying the wake that stallAnchorAt has no other representation in the
+	// select. The inter-chunk stall deadline is anchored on stallAnchorAt, which
 	// raceWriter.Write sets, but nothing else in the awaitRace select observes a
 	// chunk: winnerCh closes only on a *content* chunk, and both firstTokenCh
 	// and receiptCh are deliberately not select cases. Without this signal a
 	// pending attempt whose first forwarded event is a role-only delta leaves
 	// the loop parked on unrelated timers, so the inter-chunk cancel fires at
 	// whatever deadline wakes it next (an escalation, or the attempt hard
-	// timeout) instead of at lastChunkAt + InterChunkStallTimeout.
+	// timeout) instead of at stallAnchorAt + InterChunkStallTimeout.
 	//
 	// It lives on the group rather than on each inflight so it exists before the
 	// first attempt's send goroutine starts -- a per-attempt field could not be
 	// armed by awaitRace in time, which would both race the writer and drop the
 	// very first chunk's wake. buffered/1 with a non-blocking send keeps the
 	// writer unblocked, and one shared channel is safe because every attempt is
-	// under the same loop, which re-derives its plan from lastChunkAt instead of
-	// counting wakes.
+	// under the same loop, which re-derives its plan from stallAnchorAt instead
+	// of counting wakes.
 	chunkCh chan struct{}
 
 	deterministicallyRejected atomic.Bool
@@ -1924,7 +1950,6 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	}
 	now := time.Now()
 	rw.inf.capturePayloadResponseChunk(p)
-	rw.inf.finishActiveStall(now)
 	firstOutputChunk := false
 	rw.inf.tokenOnce.Do(func() {
 		firstOutputChunk = true
@@ -1938,14 +1963,9 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	rw.inf.outputBytes.Add(int64(len(p)))
 	nowNano := now.UnixNano()
 	previousChunkNano := rw.inf.lastChunkAt.Swap(nowNano)
-	// Signal after the anchor moves, never before: the wake exists so the loop
-	// re-derives its deadlines from lastChunkAt, so a loop that wakes in the gap
-	// would still see the previous anchor -- and for an attempt's first chunk
-	// that is 0, which yields no deadline at all and silently drops the wake
-	// this fix exists to deliver.
-	rw.group.signalChunkForwarded()
+	terminator := bytes.HasPrefix(p, sseDoneMarker)
 	// The silence before [DONE] is the end of the stream, not a host that went quiet.
-	if bytes.HasPrefix(p, sseDoneMarker) {
+	if terminator {
 		// Latch the terminator: everything after this is the upstream's meta tail,
 		// which the transport consumes without reaching this writer. Without the
 		// latch the inter-chunk cancel would fire mid-tail and abort a fully
@@ -1979,6 +1999,17 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		rw.inf.contentChunks.Add(1)
 		rw.inf.firstContentNano.CompareAndSwap(0, nowNano)
 		rw.group.maybeHoldWinnerCandidate(rw.inf)
+	}
+	// Signal after the anchor moves, never before: the wake exists so the loop
+	// re-derives its deadlines from stallAnchorAt, so a loop that wakes in the
+	// gap would still see the previous anchor -- and for an attempt's first chunk
+	// that is 0, which yields no deadline at all and silently drops the wake
+	// this fix exists to deliver. An event that leaves the anchor where it was
+	// changes no deadline, so it posts no wake either. The terminator counts as
+	// meaningful only so it closes an open stall episode where the stream ended;
+	// streamTerminated already disarms every deadline after it.
+	if rw.inf.advanceStallAnchor(now, chunkHasContent || chunkHasError || terminator) {
+		rw.group.signalChunkForwarded()
 	}
 	if chunkHasContent && !rw.inf.suspicious {
 		rw.group.setWinner(rw.nonce)
@@ -2858,12 +2889,12 @@ func receiptTimeoutForInput(inputTokens uint64) time.Duration {
 // interChunkStallDeadline returns the next moment at which this attempt must be
 // inspected for inter-chunk silence, and what should happen then.
 //
-// The two thresholds are one sliding deadline pair anchored on lastChunkAt, the
+// The two thresholds are one sliding deadline pair anchored on stallAnchorAt, the
 // most recent meaningful SSE event:
 //
-//   - logDeadline  = lastChunkAt + InterChunkStallLogThreshold  (30s): record and
-//     log the silent episode. Observational only.
-//   - cancelDeadline = lastChunkAt + InterChunkStallTimeout (60s): abort the
+//   - logDeadline  = stallAnchorAt + InterChunkStallLogThreshold  (30s): record
+//     and log the silent episode. Observational only.
+//   - cancelDeadline = stallAnchorAt + InterChunkStallTimeout (60s): abort the
 //     upstream request. This is what InterChunkStallTimeout was always
 //     documented to do and never did -- the deadline computation read the log
 //     threshold, so cancelling was unreachable.
@@ -2878,15 +2909,18 @@ func interChunkStallDeadline(inf *inflight) (logDeadline, cancelDeadline time.Ti
 	if inf == nil || inf.probe || inflightDone(inf) {
 		return time.Time{}, time.Time{}, false
 	}
-	// The anchor is the last event this attempt forwarded, content-bearing or
-	// not. Gating on contentChunks here would leave an attempt that emitted only
-	// a role chunk and then went silent with no deadline at all: the
-	// first-token escalation timer disarms once hasFirstToken() is true, so a
-	// role-only chunk followed by silence had no failure path short of the
-	// 30-minute hard timeout. lastChunkAt > 0 is the honest "this attempt has
+	// The anchor is set by the first event this attempt forwarded, content-
+	// bearing or not. Gating on contentChunks here would leave an attempt that
+	// emitted only a role chunk and then went silent with no deadline at all:
+	// the first-token escalation timer disarms once hasFirstToken() is true, so
+	// a role-only chunk followed by silence had no failure path short of the
+	// 30-minute hard timeout. stallAnchorAt > 0 is the honest "this attempt has
 	// started streaming" test, and startInterChunkStall already declines to
-	// record a stall log before content so the two stay consistent.
-	if inf.lastChunkAt.Load() <= 0 {
+	// record a stall log before content so the two stay consistent. Later empty
+	// deltas leave the anchor alone (advanceStallAnchor), or repeating them would
+	// re-arm this deadline indefinitely.
+	anchorNano := inf.stallAnchorAt.Load()
+	if anchorNano <= 0 {
 		return time.Time{}, time.Time{}, false
 	}
 	// A terminated stream ends the generation. The meta tail that follows is
@@ -2894,7 +2928,7 @@ func interChunkStallDeadline(inf *inflight) (logDeadline, cancelDeadline time.Ti
 	if inf.streamTerminated.Load() {
 		return time.Time{}, time.Time{}, false
 	}
-	anchor := time.Unix(0, inf.lastChunkAt.Load())
+	anchor := time.Unix(0, anchorNano)
 
 	inf.stallMu.Lock()
 	logged := inf.stallLogged
@@ -3358,6 +3392,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					"stall_threshold_ms", InterChunkStallLogThreshold.Milliseconds(),
 					"cancel_timeout_ms", InterChunkStallTimeout.Milliseconds(),
 					"since_last_chunk_ms", now.Sub(time.Unix(0, stallInf.lastChunkAt.Load())).Milliseconds(),
+					"since_stall_anchor_ms", now.Sub(time.Unix(0, stallInf.stallAnchorAt.Load())).Milliseconds(),
 					"output_chunks", stallInf.outputChunks.Load(),
 					"content_chunks", stallInf.contentChunks.Load(),
 					"output_bytes", stallInf.outputBytes.Load(),
@@ -3402,6 +3437,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"winner_nonce", stalledWinner,
 				"cancel_timeout_ms", InterChunkStallTimeout.Milliseconds(),
 				"since_last_chunk_ms", now.Sub(time.Unix(0, stallInf.lastChunkAt.Load())).Milliseconds(),
+				"since_stall_anchor_ms", now.Sub(time.Unix(0, stallInf.stallAnchorAt.Load())).Milliseconds(),
 				"output_chunks", stallInf.outputChunks.Load(),
 				"content_chunks", stallInf.contentChunks.Load(),
 				"output_bytes", stallInf.outputBytes.Load(),
@@ -3448,15 +3484,15 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				winning.cancel()
 			}
 		case <-holderC:
-		// A chunk just landed on some attempt, so lastChunkAt moved and the
+		// A chunk just landed on some attempt, so stallAnchorAt moved and the
 		// inter-chunk deadline must be re-derived from it. This is the only case
 		// that observes a non-content forwarded event: the winner signal closes
 		// on content only, and firstTokenCh / receiptCh are deliberately not
 		// watched. Without it a pending attempt whose first event is a role-only
 		// delta never gets its stall timer armed, and the cancel fires whenever
 		// some unrelated timer happens to wake the loop.
-		// No body: the next iteration re-derives every deadline from lastChunkAt
-		// via nextInterChunkStallPlan.
+		// No body: the next iteration re-derives every deadline from
+		// stallAnchorAt via nextInterChunkStallPlan.
 		case <-chunkC:
 		case <-winnerC:
 		case <-streamCtx.Done():
