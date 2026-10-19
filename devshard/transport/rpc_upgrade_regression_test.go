@@ -233,3 +233,81 @@ func TestRPCUpgradeH1RefreshEOFPreservesLiveWatch(t *testing.T) {
 		t.Fatal("no third attach")
 	}
 }
+
+func TestRPCUpgradeConnectClosureFallsBack(t *testing.T) {
+	for _, transportErr := range []error{
+		errors.New("http2: client conn could not be established"),
+		http2.GoAwayError{LastStreamID: 3, ErrCode: http2.ErrCodeNo, DebugData: "shutdown"},
+	} {
+		t.Run(transportErr.Error(), func(t *testing.T) {
+			ResetRPCH2MissCacheForTest()
+			t.Cleanup(ResetRPCH2MissCacheForTest)
+			httpguard.SetAllowPrivate(true)
+			var h1hits atomic.Int32
+			_, handler := rpcpbconnect.NewPeerAuthServiceHandler(upgradeAuthHandler{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				h1hits.Add(1)
+				handler.ServeHTTP(w, r)
+			}))
+			defer server.Close()
+			signer, err := signing.GenerateKey()
+			if err != nil {
+				t.Fatal(err)
+			}
+			pc := NewPeerConn(PeerConnConfig{BaseURL: server.URL, HostAddress: signer.Address(), Signer: signer, DirectMux: true, DoorEscrowID: "escrow-1", DialSet: PeerRPCDialSet{H2URL: server.URL}})
+			defer pc.Close()
+			pc.origin.h2 = upgradeRoundTripFunc(func(*http.Request) (*http.Response, error) { return nil, transportErr })
+			_, _, err = pc.attach()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h1hits.Load() != 1 || pc.origin.usingH2() {
+				t.Fatal("Connect-wrapped closure did not fall back")
+			}
+			rpch2Miss.mu.Lock()
+			entry := rpch2Miss.entries[inferenceHostKey(server.URL)]
+			rpch2Miss.mu.Unlock()
+			if entry.backoff != DefaultRPCH2CloseBackoff {
+				t.Fatalf("wanted short backoff, got %v", entry.backoff)
+			}
+		})
+	}
+}
+
+func TestRPCUpgradeSiblingProbeLeavesH1RenewalBudget(t *testing.T) {
+	ResetRPCH2MissCacheForTest()
+	t.Cleanup(ResetRPCH2MissCacheForTest)
+	httpguard.SetAllowPrivate(true)
+	var h1hits atomic.Int32
+	_, handler := rpcpbconnect.NewPeerAuthServiceHandler(upgradeAuthHandler{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h1hits.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	signer, err := signing.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := NewPeerConn(PeerConnConfig{BaseURL: server.URL, HostAddress: signer.Address(), Signer: signer, DirectMux: true, DialSet: PeerRPCDialSet{H2URL: server.URL}})
+	defer pc.Close()
+	pc.publishToken([]byte("existing-token"), time.Now().Add(2*time.Minute))
+	pc.state.Store(stateReady)
+	// Hold a sibling's lease throughout renewal. Success must not depend on
+	// that sibling completing; H1 has a reserved half of the deadline.
+	key := inferenceHostKey(server.URL)
+	generation, acquired := rpch2Miss.begin(key)
+	if !acquired {
+		t.Fatal("failed to start sibling probe")
+	}
+	defer rpch2Miss.finish(key, generation, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, err = pc.refreshLive(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h1hits.Load() != 1 || pc.origin.usingH2() {
+		t.Fatal("healthy H1 session was not renewed while sibling was probing")
+	}
+}

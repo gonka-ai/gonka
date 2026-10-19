@@ -109,23 +109,29 @@ func waitHTTP(t *testing.T, url string, code int) {
 }
 
 type origin struct {
-	server        *httptest.Server
-	current       atomic.Bool
-	active        atomic.Int32
-	peak          atomic.Int32
-	hold          chan struct{}
-	streamRelease chan struct{}
+	server           *httptest.Server
+	current          atomic.Bool
+	childH2          atomic.Bool
+	peerHealthStatus atomic.Int32
+	active           atomic.Int32
+	peak             atomic.Int32
+	hold             chan struct{}
+	streamRelease    chan struct{}
 }
 
 func newOrigin(t *testing.T, current bool) *origin {
 	t.Helper()
 	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{})}
 	o.current.Store(current)
+	o.childH2.Store(current)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "healthz") || strings.HasSuffix(r.URL.Path, "readyz") {
-			if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() {
+			if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() && o.childH2.Load() {
 				io.WriteString(w, "peer-rpc-ok\n")
 			} else {
+				if r.URL.Query().Get("peer-rpc") == "1" && o.peerHealthStatus.Load() != 0 {
+					w.WriteHeader(int(o.peerHealthStatus.Load()))
+				}
 				io.WriteString(w, "ready\n")
 			}
 			return
@@ -322,6 +328,14 @@ func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
 			kinds := []string{"h1", "h2c"}
 			if mode == "https" {
 				kinds = nil
+				for _, kind := range []string{"h1", "h2c"} {
+					req, _ := http.NewRequest("POST", f.httpURL+attach, strings.NewReader("{}"))
+					r, err := f.client(t, kind).Do(req)
+					if r != nil {
+						drain(r)
+					}
+					require.Error(t, err, "HTTPS-only must reject plaintext %s RPC", kind)
+				}
 			}
 			if mode != "http" {
 				kinds = append(kinds, "tls-h1", "tls-h2", "tls-nginx-h2")
@@ -374,7 +388,7 @@ func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
 				auth := rpcpbconnect.NewPeerAuthServiceClient(c, urls[i]+rpcPath[:len(rpcPath)-1])
 				_, err := auth.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
 				require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err), "Connect must receive a typed refusal")
-				for _, path := range []string{strings.Replace(attach, "/Attach", "/%41ttach", 1), strings.Replace(attach, "escrow-1/rpc", "escrow-1%2Frpc", 1)} {
+				for _, path := range []string{strings.Replace(attach, "/Attach", "/%41ttach", 1), strings.Replace(attach, "escrow-1/rpc", "escrow-1%2Frpc", 1), strings.Replace(attach, "/rpc/", "/rpc/sessions/escrow-1/rpc/", 1)} {
 					r := request(t, c, urls[i]+path, nil)
 					require.Contains(t, []int{400, 429}, r.StatusCode, "encoded path must not bypass RPC policy")
 					drain(r)
@@ -402,52 +416,69 @@ func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
 }
 
 func TestH2ToLegacyH1BoundedAcrossVersions(t *testing.T) {
-	o := newOrigin(t, false)
-	f := startProxy(t, "http", o)
-	c := f.client(t, "h2c")
-	var wg sync.WaitGroup
-	var ok, refused atomic.Int32
-	for i := 0; i < 60; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			path := strings.Replace(chat, "/v6/", fmt.Sprintf("/v%d/", i%3), 1)
-			req, _ := http.NewRequest("POST", f.httpURL+path, strings.NewReader("{}"))
-			req.Header.Set("X-Hold", "1")
-			r, e := c.Do(req)
-			if e != nil {
-				t.Errorf("request: %v", e)
-				return
+	for _, tc := range []struct {
+		name    string
+		current bool
+		status  int32
+	}{
+		{"old-versiond", false, 0},
+		{"h2-versiond-legacy-health-body", true, 200},
+		{"h2-versiond-h1-child", true, 503},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := newOrigin(t, tc.current)
+			o.childH2.Store(false)
+			o.peerHealthStatus.Store(tc.status)
+			f := startProxy(t, "http", o)
+			c := f.client(t, "h2c")
+			grpc := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
+			_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
+			require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "H1 child must not receive native gRPC")
+			var wg sync.WaitGroup
+			var ok, refused atomic.Int32
+			for i := 0; i < 60; i++ {
+				wg.Add(1)
+				go func(i int) {
+					defer wg.Done()
+					path := strings.Replace(chat, "/v6/", fmt.Sprintf("/v%d/", i%3), 1)
+					req, _ := http.NewRequest("POST", f.httpURL+path, strings.NewReader("{}"))
+					req.Header.Set("X-Hold", "1")
+					r, e := c.Do(req)
+					if e != nil {
+						t.Errorf("request: %v", e)
+						return
+					}
+					if r.StatusCode == 200 {
+						ok.Add(1)
+					} else if r.StatusCode == 503 {
+						refused.Add(1)
+					} else {
+						t.Errorf("status %d", r.StatusCode)
+					}
+					drain(r)
+				}(i)
 			}
-			if r.StatusCode == 200 {
-				ok.Add(1)
-			} else if r.StatusCode == 503 {
-				refused.Add(1)
-			} else {
-				t.Errorf("status %d", r.StatusCode)
-			}
+			require.Eventually(t, func() bool { return o.active.Load() == 8 && refused.Load() >= 52 }, 3*time.Second, 10*time.Millisecond)
+			require.Equal(t, int32(8), o.peak.Load(), "one global fallback budget, not eight per version")
+			// JSON uses a separate capacity path while all RPC fallback slots are busy.
+			r := request(t, f.client(t, "h1"), f.httpURL+"/devshard/v6/healthz", nil)
+			require.Equal(t, 200, r.StatusCode)
 			drain(r)
-		}(i)
+			// Runtime queue is empty after its short deadline, even while Watch-like work stays open.
+			stats := f.stats(t, "show stat")
+			for _, line := range strings.Split(stats, "\n") {
+				if strings.HasPrefix(line, "rpc_h1_fallback,BACKEND,") {
+					require.Equal(t, "0", strings.Split(line, ",")[2])
+				}
+			}
+			for range 8 {
+				o.hold <- struct{}{}
+			}
+			wg.Wait()
+			require.Equal(t, int32(8), ok.Load())
+			require.Equal(t, int32(52), refused.Load())
+		})
 	}
-	require.Eventually(t, func() bool { return o.active.Load() == 8 && refused.Load() >= 52 }, 3*time.Second, 10*time.Millisecond)
-	require.Equal(t, int32(8), o.peak.Load(), "one global fallback budget, not eight per version")
-	// JSON uses a separate capacity path while all RPC fallback slots are busy.
-	r := request(t, f.client(t, "h1"), f.httpURL+"/devshard/v6/healthz", nil)
-	require.Equal(t, 200, r.StatusCode)
-	drain(r)
-	// Runtime queue is empty after its short deadline, even while Watch-like work stays open.
-	stats := f.stats(t, "show stat")
-	for _, line := range strings.Split(stats, "\n") {
-		if strings.HasPrefix(line, "rpc_h1_fallback,BACKEND,") {
-			require.Equal(t, "0", strings.Split(line, ",")[2])
-		}
-	}
-	for range 8 {
-		o.hold <- struct{}{}
-	}
-	wg.Wait()
-	require.Equal(t, int32(8), ok.Load())
-	require.Equal(t, int32(52), refused.Load())
 }
 
 func TestShortHTTP10AndFragmentedH2(t *testing.T) {
@@ -534,10 +565,17 @@ func TestMixedVersionUpgradeAndRollback(t *testing.T) {
 		}
 	}
 	check("1")
+	nested := strings.Replace(attach, "/rpc/", "/rpc/sessions/escrow-1/rpc/", 1)
+	for _, c := range []*http.Client{h1, h2} {
+		r := request(t, c, f.httpURL+nested, nil)
+		require.Equal(t, 400, r.StatusCode, "nested RPC must not bypass policy through HA JSON routing")
+		drain(r)
+	}
 	grpc := rpcpbconnect.NewPeerAuthServiceClient(h2, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
 	_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "native gRPC must not be translated to H1")
 	o.current.Store(true)
+	o.childH2.Store(true)
 	waitHTTP(t, "http://127.0.0.1:"+router.rpc+"/v6/healthz", 200)
 	require.Eventually(t, func() bool {
 		req, _ := http.NewRequest("POST", f.httpURL+chat, strings.NewReader("{}"))

@@ -283,6 +283,9 @@ func (c *h2MissCache) begin(key string) (uint64, bool) {
 // Wait for an in-flight discovery rather than moving healthy siblings to H1.
 func (c *h2MissCache) acquire(ctx context.Context, key string) (uint64, bool) {
 	for {
+		if ctx.Err() != nil {
+			return 0, false
+		}
 		if generation, ok := c.begin(key); ok {
 			return generation, true
 		}
@@ -450,11 +453,23 @@ const (
 	h2Closed
 )
 
+// A local Connect error can wrap another Connect error. IsWireError only
+// checks the first one, so preserve wire provenance throughout the chain.
+func hasRPCWireError(err error) bool {
+	for err != nil {
+		if connect.IsWireError(err) {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
+}
+
 // Application refusals, cancellation and failures common to both transports
 // never change protocol capability. Only specific wire evidence gets a long
 // pin; an ambiguous close gets a short, increasing discovery backoff.
 func classifyRPCH2Miss(err error) h2MissKind {
-	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || connect.IsWireError(err) {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || hasRPCWireError(err) {
 		return h2NotMiss
 	}
 	var dns *net.DNSError
@@ -477,11 +492,12 @@ func classifyRPCH2Miss(err error) h2MissKind {
 		return h2Closed
 	}
 	var conn http2.ConnectionError
-	if errors.As(err, &conn) {
+	var goAway http2.GoAwayError
+	if errors.As(err, &conn) || errors.As(err, &goAway) {
 		return h2Closed
 	}
 	// These transport-generated errors do not prove protocol incompatibility.
-	if msg == "http2: client conn could not be established" || strings.HasSuffix(msg, "http2: client connection lost") || strings.HasSuffix(msg, "http2: server sent GOAWAY and closed the connection") {
+	if strings.HasSuffix(msg, "http2: client conn could not be established") || strings.HasSuffix(msg, "http2: client connection lost") || strings.HasSuffix(msg, "http2: server sent GOAWAY and closed the connection") {
 		return h2Closed
 	}
 	return h2NotMiss
@@ -497,7 +513,7 @@ func isContextDone(err error) bool {
 // DeadlineExceeded / Canceled are not transport misses, and neither is a
 // bare EOF: on a live session that is a clean Watch end.
 func isRPCH2TransportMiss(err error) bool {
-	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || connect.IsWireError(err) {
+	if err == nil || errors.Is(err, errAttachTTL) || isContextDone(err) || hasRPCWireError(err) {
 		return false
 	}
 	var op *net.OpError

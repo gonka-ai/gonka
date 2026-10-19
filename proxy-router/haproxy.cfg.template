@@ -65,6 +65,7 @@ frontend public_http
     option tcplog
     bind :80
     maxconn ${MAX_CONNECTIONS}
+    ${PUBLIC_HTTP_RPC_GUARD}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s

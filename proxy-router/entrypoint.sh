@@ -292,8 +292,9 @@ else
     cat > "$RPC_H2_CHECKS_FILE" <<EOF
     option httpchk
     http-check connect port ${RPC_H2_VERSIOND_PORT} proto h2
-    http-check send meth GET uri /readyz hdr Host ${RPC_H2_VERSIOND_HOST}
+    http-check send meth GET uri /readyz?peer-rpc=1 hdr Host ${RPC_H2_VERSIOND_HOST}
     http-check expect status 200
+    http-check expect string peer-rpc-ok
 EOF
     RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none"
     RPC_LEGACY_DEFAULT=rpc_versiond_h1
@@ -307,6 +308,11 @@ backend rpc_versiond_h1
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
     server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} resolvers docker init-addr none
 EOF
+fi
+
+PUBLIC_HTTP_RPC_GUARD='# Plain HTTP is enabled.'
+if [ "$NGINX_MODE" = https ]; then
+    PUBLIC_HTTP_RPC_GUARD='tcp-request connection reject'
 fi
 
 case "$NGINX_MODE" in
@@ -634,6 +640,7 @@ sed \
     -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
     -e "s|\${PUBLIC_INSPECT_SECONDS}|$PUBLIC_INSPECT|g" \
     -e "s|\${RPC_ALPN}|$RPC_ALPN|g" \
+    -e "s|\${PUBLIC_HTTP_RPC_GUARD}|$PUBLIC_HTTP_RPC_GUARD|g" \
     -e "s|\${PUBLIC_HTTPS_RPC_ROUTE}|$PUBLIC_HTTPS_RPC_ROUTE|g" \
     -e "s|\${RPC_TLS_BIND}|$RPC_TLS_BIND|g" \
     -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \

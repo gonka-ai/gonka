@@ -296,7 +296,11 @@ When an RPC HTTP/2 backend has no healthy server, Connect uses a bounded HTTP/1.
 hop and the original JSON routing maps (including version and legacy placement).
 No POST replay is added. Native gRPC receives `Unavailable` because HTTP/1.1 cannot
 carry it. RPC data checks require HTTP 200; a listening router with an empty RPC
-pool is not ready. JSON capacity is independent of fallback admission.
+pool is not ready. JSON capacity is independent of fallback admission. Non-HA
+also requires `/readyz?peer-rpc=1` with the `peer-rpc-ok` capability body. This
+coarse check conservatively keeps all Connect RPC on bounded H1 while any serving
+child is H1-only. HTTPS-only mode rejects plaintext connections on the HTTP port,
+including prior-knowledge H2; a successful TLS connection is required.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |

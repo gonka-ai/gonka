@@ -13,6 +13,10 @@
     # /sessions/{id}/metrics and misses this pattern. Obs, healthz, and
     # versionless diffs stay on :80/:443.
     acl peer_rpc path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$
+    # The child accepts the last matching mount in a nested URL. Reject
+    # non-canonical RPC-shaped paths before they can take the JSON route.
+    acl rpc_mount path_reg /sessions/[^/]+/rpc(/|$)
+    http-request deny deny_status 400 if rpc_mount !peer_rpc
     http-request deny deny_status 400 if peer_rpc !{ var(txn.rpc_src) -m found }
 
     acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach

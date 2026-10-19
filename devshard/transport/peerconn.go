@@ -1051,15 +1051,17 @@ func (p *PeerConn) refreshLive(ctx context.Context) ([]byte, time.Time, error) {
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	// Lease waiting and the probe together use at most half the renewal budget.
+	probeCtx, cancelProbe := context.WithTimeout(ctx, halfRemaining(ctx))
+	defer cancelProbe()
 	generation, probe := uint64(0), false
 	if p.authHostProbe != nil && !p.origin.usingH2() {
-		generation, probe = rpch2Miss.acquire(ctx, inferenceHostKey(p.cfg.BaseURL))
+		generation, probe = rpch2Miss.acquire(probeCtx, inferenceHostKey(p.cfg.BaseURL))
 	}
 	if probe {
 		// The probe gets half of the refresh budget. An origin that takes
 		// the whole deadline to answer the probe must still leave time for
 		// the HTTP/1.1 renewal below; a probe timeout is not a miss.
-		probeCtx, cancelProbe := context.WithTimeout(ctx, halfRemaining(ctx))
 		tok, exp, err := p.attachOnce(probeCtx, p.authHostProbe, msg)
 		cancelProbe()
 		rpch2Miss.finish(inferenceHostKey(p.cfg.BaseURL), generation, err)

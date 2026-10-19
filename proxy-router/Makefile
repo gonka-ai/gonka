@@ -196,9 +196,10 @@ test-render: test-route-status test-rpc-h2-cert
 		$$0 ~ "^backend rpc_h2_upstream$$" { inside = 1; next } \
 		inside && $$0 ~ "^frontend |^backend " { exit } \
 		inside && /http-check connect port 8080 proto h2/ { connect = 1 } \
-		inside && /http-check send meth GET uri \/readyz hdr Host versiond/ { send = 1 } \
+		inside && /http-check send meth GET uri \/readyz\?peer-rpc=1 hdr Host versiond/ { send = 1 } \
+		inside && /http-check expect string peer-rpc-ok/ { capability = 1 } \
 		inside && /http-check expect status 200/ { expect = 1 } \
-		END { exit !(connect && send && expect) } \
+		END { exit !(connect && send && expect && capability) } \
 	' "$$tmpdir/proxy.cfg" \
 		|| fail "non-HA peer RPC check does not open versiond over HTTP/2"; \
 	grep -q '^ *default_backend rpc_versiond_h1$$' "$$tmpdir/proxy.cfg" \

@@ -28,6 +28,8 @@ func TestH2DiscoveryErrorClasses(t *testing.T) {
 		{"reset", &net.OpError{Op: "read", Err: syscall.ECONNRESET}, h2Closed},
 		{"broken pipe", syscall.EPIPE, h2Closed},
 		{"connection error", http2.ConnectionError(http2.ErrCodeProtocol), h2Closed},
+		{"establishment closed", errors.New("http2: client conn could not be established"), h2Closed},
+		{"GOAWAY", http2.GoAwayError{LastStreamID: 3, ErrCode: http2.ErrCodeNo, DebugData: "shutdown"}, h2Closed},
 		{"stream error", http2.StreamError{StreamID: 1, Code: http2.ErrCodeRefusedStream}, h2NotMiss},
 		{"cancel", context.Canceled, h2NotMiss},
 		{"probe deadline", rpch2ProbeTimeoutError(context.DeadlineExceeded), h2NotMiss},
@@ -43,6 +45,7 @@ func TestH2DiscoveryErrorClasses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, classifyRPCH2Miss(tc.err))
 			require.Equal(t, tc.want, classifyRPCH2Miss(fmt.Errorf("attach: %w", tc.err)))
+			require.Equal(t, tc.want, classifyRPCH2Miss(connect.NewError(connect.CodeUnavailable, tc.err)))
 		})
 	}
 }
