@@ -40,6 +40,7 @@ const (
 	rpcStatsMaxBodyBytes  = 8 << 20
 	rpcStatsProcessEscrow = "_"
 	rpcStatsAttachFloor   = "floor"
+	rpcStatsAttachOrigin  = "origin"
 	rpcStatsAttachOther   = "other"
 
 	// One host snapshot is an untrusted JSON body (capped at

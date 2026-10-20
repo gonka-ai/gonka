@@ -145,7 +145,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
-	result, err := commonvalidation.ExecuteValidation(
+	result, err := commonvalidation.ExecuteValidationWithPolicy(
 		ctx,
 		inferenceID,
 		promptPayload,
@@ -156,6 +156,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
 		v.vocabularySizes.Resolve(ctx, epochID, req.Model),
+		commonvalidation.DefaultShortOutputScoringPolicy.ForModel(req.Model),
 	)
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)

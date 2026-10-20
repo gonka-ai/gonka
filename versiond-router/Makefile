@@ -156,7 +156,7 @@ test-hash-ring:
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/rendered.map" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/rendered.versions.map" \
 	./entrypoint.sh; \
-	hashvars=$$(grep 'set-var(txn\.' "$$tmpdir/rendered.cfg"); \
+	hashvars=$$(grep -E 'set-var\(txn\.(canonpath|hashkey)\)' "$$tmpdir/rendered.cfg"); \
 	balance=$$(grep -m1 '^ *balance ' "$$tmpdir/rendered.cfg"); \
 	hashtype=$$(grep -m1 '^ *hash-type ' "$$tmpdir/rendered.cfg"); \
 	hashkey=$$(grep '^ *server-template ' "$$tmpdir/rendered.cfg" \
@@ -342,8 +342,6 @@ test-version-routing:
 		for i in $$(seq 80); do \
 			if docker exec gonka-vp-bind-$$name grep -q \
 				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
-				&& docker exec gonka-vp-bind-$$name grep -q \
-				"^[[:space:]]*bind $$address:8081 proto h2" /etc/haproxy/haproxy.cfg \
 				2>/dev/null; then return 0; fi; \
 			sleep 0.1; \
 		done; \
@@ -1216,6 +1214,9 @@ test-version-routing:
 		/etc/haproxy/versions.map | grep -q '^version='; then \
 		fail "runtime catalog diagnostics exposed readiness projection keys as versions"; \
 	fi; \
+	# Both a and b now serve v10. Capture the hash owner instead of assuming b. \
+	held_v10=$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat); \
+	case "$$held_v10" in a|b) ;; *) fail "v10 has no healthy owner before replacement" ;; esac; \
 	# A maintenance replacement must not reclaim v10 to make room for v11. \
 	# Capacity and activation are checked while the serving route is still held. \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
@@ -1243,7 +1244,7 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v10 \
 		|| fail "capacity-blocked maintenance replacement removed v10"; \
-	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat)" = b ] \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat)" = "$$held_v10" ] \
 		|| fail "capacity-blocked maintenance replacement stopped the old route"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
 		/var/lib/gonka-router/catalog.json 86400 | grep -Fqx v10 \
@@ -1506,10 +1507,40 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "versionless session routes do not reuse the escrow routing key"; \
 	grep -Fq 'reg ^/[^/]+/sessions/[^/]+' "$$tmpdir/mixed.cfg" \
 		|| fail "session stickiness regex is gone; /rpc/ would no longer hash by escrow"; \
-	grep -q '^[[:space:]]*bind :8080$$' "$$tmpdir/mixed.cfg" \
-		|| fail "HTTP/1.1 JSON/healthz/catalog listener is not on :8080"; \
-	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/mixed.cfg" \
-		|| fail "published-hop frontend is not proto h2"; \
+	grep -q '^[[:space:]]*bind :8080 id 1$$' "$$tmpdir/mixed.cfg" \
+		|| fail "JSON and peer RPC data listener is not on :8080"; \
+	grep -q '^[[:space:]]*bind :8081 id 2$$' "$$tmpdir/mixed.cfg" \
+		|| fail "the proxy's peer-RPC dial :8081 has no listener"; \
+	if grep '^[[:space:]]*bind ' "$$tmpdir/mixed.cfg" | grep -q 'proto h2'; then \
+		fail "a bind forces proto h2: JSON HTTP/1.1 and peer RPC HTTP/2 share :8080 by preface detection"; \
+	fi; \
+	if grep -q 'use_backend.*dst_port' "$$tmpdir/mixed.cfg"; then \
+		fail "peer RPC twins must be selected by path, not by port"; \
+	fi; \
+	grep -Fq 'acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC path ACL is gone"; \
+	grep -Fq 'use_backend versiond_ha_pool_rpc if peer_rpc' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC on an undeclared version does not reach the host-level _rpc twin"; \
+	grep -Fq 'concat(_rpc)] if peer_rpc !rpc_legacy_hop { var(txn.ver),map_str(' "$$tmpdir/mixed.cfg" \
+		|| fail "versioned peer RPC does not select the _rpc twin by path"; \
+	awk ' \
+		$$0 ~ "^backend versiond_h1_only$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a$$/ { preface = 1 } \
+		inside && /tcp-check expect rstring \^HTTP\/1/ { h1 = 1 } \
+		inside && /^ *server-template h1probe 64 versiond-pool:8080 / { pool = 1 } \
+		inside && /^ *server h1probe_legacy versiond:8080 / { legacy = 1 } \
+		inside && /proto h2/ { h2 = 1 } \
+		END { exit !(preface && h1 && pool && legacy && !h2) } \
+	' "$$tmpdir/mixed.cfg" \
+		|| fail "the HTTP/1.1 gate does not ask every versiond, legacy owner included, for an HTTP/1.x answer to the HTTP/2 preface"; \
+	grep -Fq "http-request return status 503 content-type application/json string '{\"code\":\"unavailable\"" "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC with no HTTP/2 server is not refused as Connect unavailable"; \
+	grep -Fq 'hdr Retry-After 1 if peer_rpc !rpc_legacy_hop !{ var(txn.rpc_backend),nbsrv gt 0 } !{ nbsrv(versiond_h1_only) gt 0 }' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC may take the HTTP/1.1 hop while every versiond has h2c"; \
+	if grep -q 'deny deny_status 404' "$$tmpdir/mixed.cfg"; then \
+		fail "Connect over HTTP/1.1 must reach the _rpc twin, not a 404"; \
+	fi; \
 	if awk '/^frontend versiond_in$$/{inside=1; next} /^frontend /{inside=0} \
 		inside && /stick-table/ {found=1} END{exit !found}' "$$tmpdir/mixed.cfg"; then \
 		fail "per-IP zones must not be keyed on versiond-router RemoteAddr"; \
@@ -1562,10 +1593,10 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "metrics are not bound to loopback"; \
 	grep -q '^[[:space:]]*option[[:space:]]*forwardfor' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Forwarded-For is no longer appended; the client audit trail dies at this hop"; \
-	grep -Eq '^[[:space:]]*http-request set-header X-Real-IP %\[src\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
-		|| fail "X-Real-IP is not unconditionally replaced"; \
-	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
-		|| fail "X-Forwarded-Proto is not unconditionally replaced"; \
+	grep -Eq '^[[:space:]]*http-request set-header X-Real-IP %\[src\] unless rpc_legacy_hop[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Real-IP is not replaced on external ingress"; \
+	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\] unless rpc_legacy_hop[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Forwarded-Proto is not replaced on external ingress"; \
 	HAPROXY_BIN=true \
 	VERSIOND_ROUTER_RENDER_ONLY=1 \
 	VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true \
@@ -1711,14 +1742,6 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "catalog mode does not fail closed for names absent from governance"; \
 	grep -q '^    server catalog 127\.0\.0\.1:1 disabled$$' "$$tmpdir/catalog-only.cfg" \
 		|| fail "catalog mode starts with a false-green status metric"; \
-	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-		VERSIOND_ROUTER_H2_PORT=8080 \
-		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
-		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-		VERSIOND_ROUTER_OUT="$$tmpdir/bad-h2-port.cfg" \
-		./entrypoint.sh >/dev/null 2>&1; then \
-		fail "an h2 listen colliding with :8080 was accepted"; \
-	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_BACKEND_H2=false \
 		VERSIOND_VERSIONS=v4 \
@@ -1731,8 +1754,8 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 	if grep -q '^[[:space:]]*server-template versiond .* proto h2' "$$tmpdir/h1-backend.cfg"; then \
 		fail "VERSIOND_ROUTER_BACKEND_H2=false still rendered proto h2 backends"; \
 	fi; \
-	grep -q '^[[:space:]]*bind :8081 proto h2$$' "$$tmpdir/h1-backend.cfg" \
-		|| fail "HTTP/1.1 backend mode must still accept h2 on the published-hop frontend"; \
+	grep -q '^[[:space:]]*bind :8080 id 1$$' "$$tmpdir/h1-backend.cfg" \
+		|| fail "HTTP/1.1 backend mode must keep the :8080 data listen"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTING_CATALOG_URL=ftp://catalog/versions \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -1925,6 +1948,13 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "an unsafe DNS resolver token was accepted"; \
 	fi; \
+	for port in 8080 8081; do \
+		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+			VERSIOND_ROUTER_ADMIN_PORT=$$port ./entrypoint.sh >"$$tmpdir/bad-port.log" 2>&1; then \
+			fail "admin port $$port collided with a data port"; \
+		fi; \
+		grep -q 'admin port conflicts' "$$tmpdir/bad-port.log" || fail "unexpected admin-port rejection"; \
+	done; \
 	mkdir "$$tmpdir/bin"; \
 	printf '%s\n' '#!/bin/sh' \
 		'case "$$2" in' \
@@ -1947,7 +1977,6 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/custom-bind.versions.map" \
 		./entrypoint.sh; \
 	grep -q '^[[:space:]]*bind 192.0.2.10:8080' "$$tmpdir/custom-bind.cfg" \
-		&& grep -q '^[[:space:]]*bind 192.0.2.10:8081 proto h2' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 127.0.0.1:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.10:18404' "$$tmpdir/custom-bind.cfg" \
 		&& grep -q '^[[:space:]]*bind 192.0.2.11:8405' "$$tmpdir/custom-bind.cfg" \
@@ -1957,7 +1986,7 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 			haproxy -c -f "$$tmpdir/$$cfg.cfg" >/dev/null \
 			|| fail "$$cfg.cfg is not valid HAProxy configuration"; \
 	done; \
-	./h2-watch-drain_test.sh || fail "http/2 watch drain"; \
+	ROUTER_IMAGE=gonka-versiond-router-probe ./soft-stop_test.sh || fail "soft stop"; \
 	echo "test-render: ok"
 
 include ../scripts/blst-portable.mk

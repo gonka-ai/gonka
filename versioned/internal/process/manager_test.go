@@ -863,6 +863,32 @@ func TestServesPeerRPCRequiresChildH2C(t *testing.T) {
 		t.Fatal("a host with one HTTP/1.1 child is peer-RPC ready")
 	}
 
+	for _, tc := range []struct {
+		name    string
+		serving bool
+		at      time.Time
+	}{
+		{"failed readiness", false, time.Now()},
+		{"stale readiness", true, time.Now().Add(-2 * childReadyStale)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plain.serving.Store(tc.serving)
+			plain.servingAt.Store(tc.at.UnixNano())
+			m.mu.Lock()
+			m.rebuildRoutes()
+			m.mu.Unlock()
+			if _, routable := m.RouteTable().Load().(proxy.RouteTable)["v-h1"]; !routable {
+				t.Fatal("test must retain the running H1 data route")
+			}
+			if m.ServesVersion("v-h1") {
+				t.Fatal("H1 child must fail readiness")
+			}
+			if m.PeerRPCHostReady() {
+				t.Fatal("routable unready H1 child must exclude the host from H2 admission")
+			}
+		})
+	}
+
 	m.mu.Lock()
 	delete(m.processes, "v-h1")
 	m.rebuildRoutes()
@@ -870,6 +896,11 @@ func TestServesPeerRPCRequiresChildH2C(t *testing.T) {
 	if !m.PeerRPCHostReady() {
 		t.Fatal("a host whose only child advertised h2c is not peer-RPC ready")
 	}
+	h2c.serving.Store(false)
+	if m.PeerRPCHostReady() {
+		t.Fatal("host with no ready child must remain unready")
+	}
+
 }
 
 func TestRebuildRoutes_ExcludesNonRunning(t *testing.T) {

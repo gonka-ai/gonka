@@ -154,7 +154,7 @@ func (l doorLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, err
 	return l.SessionServerExisting(id)
 }
 
-func (l doorLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (l doorLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return l.SessionForParticipant(id, addr)
 }
 

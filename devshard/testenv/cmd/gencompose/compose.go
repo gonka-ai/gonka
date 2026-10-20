@@ -175,12 +175,11 @@ services:
       DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
       DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
       DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
-      # Client dial. Empty keeps InferenceUrl. Citest sets 8081 + grpc so
-      # peer RPC uses versiond-router's proto h2 bind, not the proxy overlay.
-      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
-      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      # Peer RPC dials each peer's InferenceUrl: HTTP/2 first, HTTP/1.1
+      # when that origin does not speak it. Empty is on; "false" forces
+      # Connect over HTTP/1.1 (the §8.2 cells). Citest sets grpc so the
+      # HTTP/2 leg is native gRPC.
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
-      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
@@ -323,10 +322,7 @@ services:
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
-      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
-      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
-      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}

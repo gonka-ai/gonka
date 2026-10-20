@@ -269,17 +269,17 @@ converges.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees, A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
-### Phase 6 RPC/h2 proxy overlay (optional)
+### Public-proxy overlay (optional)
 
-Adds a `proxy` service on in-network **`DEVSHARD_RPC_H2_PORT=8443`** that speaks HTTP/2 to `versiond-router:8081` (`proto h2`). JSON and catalog stay on **`http://versiond-router:8080`**. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
+Adds a `proxy` service on in-network **`proxy:8080`**, a one-port stand-in for join's `proxy-router`. Peer RPC (HTTP/2 preface) and JSON share that port, as they share join's `:80`/`:443`: the preface is handed to an HAProxy frontend with the production path zones, which dials `versiond-router:8081` with `proto h2` as join's proxy-router does; everything else passes through to `versiond-router:8080`. With `TESTENV_PROXY_OVERLAY=1`, gencompose makes `http://proxy:8080` the pooled InferenceUrl, so the gateway and the hosts dial the proxy. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
 
 ```bash
 cd devshard/testenv
-make gen-compose
+TESTENV_PROXY_OVERLAY=1 make gen-compose
 docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
 ```
 
-Clients that opt in (`DEVSHARD_RPC_H2_UPGRADE=1`, `DEVSHARD_RPC_H2_HOST=proxy`, `DEVSHARD_RPC_H2_PORT=8443`) dial TCP `http://proxy:8443`. `DEVSHARD_RPC_H2_HOST` is a dial name only; HTTPS SNI/verify still use InferenceUrl’s hostname. Against 0.2.15-v5 that hop **fails closed** (versiond is `&http.Server{}` without h2c).
+There is no dial override: a peer tries prior-knowledge HTTP/2 on its peer's InferenceUrl and drops to Connect over HTTP/1.1 on the same port when that origin does not answer it (`DEVSHARD_RPC_H2_UPGRADE=false` forces HTTP/1.1). `TestPeerRPCOverlayHop` covers both: the HTTP/2 hop, then the same stack with the proxy resetting the preface (`harness.RejectProxyH2`).
 
 ### Phase 10 / T2 observability overlay (optional)
 

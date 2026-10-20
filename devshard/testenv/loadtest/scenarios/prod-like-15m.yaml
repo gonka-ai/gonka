@@ -1,0 +1,191 @@
+schema_version: v1
+scenario: prod-like-15m
+seed: 1515
+
+# Production-like 15-minute run on v6: five participants, two models, a
+# seeded request mix and one adversarial case after another on P2-P4.
+# P0 (versiond-0/1, HA pair) and P1 (versiond-2) are never faulted; they are
+# the honest controls every invariant compares against.
+# P2 = versiond-3, P3 = versiond-4, P4 = versiond-5.
+
+cases:
+  - {id: receipt-then-empty-stream, title: receipt then empty stream}
+  - {id: ml-server-returns-429, title: ML 429 on the host (genuine overload)}
+  - {id: host-over-peer-chat-budget, title: Chat refused because P4's peer budget is spent, known_bug: "#1988"}
+  - {id: host-hangs-after-first-token, title: host hangs after the first token}
+  - {id: host-under-poc-challenge, title: host under PoC challenge, known_bug: "#1823"}
+  - {id: host-paused-then-catches-up, title: host paused then catch-up from store}
+  - {id: gateway-killed-mid-race, title: gateway SIGKILL mid-race}
+  - {id: escrow-rotation-per-model-settlement, title: escrow rotation with per-model settlement}
+  - {id: deactivated-escrow-runtime-retired, title: no resident runtime for a deactivated escrow, known_bug: "#1988"}
+  - {id: epoch-change-with-poc, title: epoch change with PoC-blocking phases}
+  - {id: host-public-port-down, title: devshardd public port down while admin ready}
+  - {id: participant-unavailable-then-absent-on-chain, title: participant unavailable then absent on chain}
+  - {id: timeout-vote-fanout, title: peer RPC budget at 32 rps with a timeout-vote fan-out, known_bug: "#1988"}
+  - {id: logprobs-responses-compress, title: responses with logprobs compress}
+  - {id: host-withholds-payload, title: payload withholding}
+  - {id: sqlite-payloads-in-zstd-files, title: payload files are zstd on the sqlite host}
+  # session-nonce-within-max-nonce: run 3 escrow 15 reached session nonce 1766 against max_nonce 1700 and
+  # never settled. No issue is filed yet; "nonce-overrun" stands in for it.
+  - {id: session-nonce-within-max-nonce, title: session nonce never passes chain max_nonce, known_bug: "nonce-overrun"}
+  # gateway-restart-while-participant-absent: since #1988 a participant NotFound at startup skips the runtime and
+  # keeps the escrow active (bridge.ErrParticipantNotFound), so no-escrow-falsely-marked-missing is a
+  # normal check.
+  - {id: gateway-restart-while-participant-absent, title: gateway restart while a participant is absent on chain}
+  - {id: honest-hosts-get-no-http-5xx, title: honest hosts get no http_5xx attempt failures}
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 5
+  chain:
+    # The gateway keeps a 200-nonce margin, so escrows deactivate at about
+    # 1500 nonces: model-a rotates about every 2.3 min, model-b about every 5.
+    # max_nonce is one global mock-chain param (POST /testenv/params), so session-nonce-within-max-nonce
+    # cannot get a lower cap on one escrow; it is judged on this run's rotations.
+    escrow_amount: 5000000000
+    max_nonce: 1700
+  hosts:
+    # host-over-peer-chat-budget: 5 Chats a second per sender; the runner multiplies by
+    # transport.RPCWeightChat, so the budget still bites if the weight changes.
+    # At Chat weight 1 (#1988) this is 300 weight a minute, below the 6000
+    # network default, so the gateway does not skip P4 on its budget: P4
+    # refuses, and the gateway pauses it 1 s (quarantines-match-faults sender_rate).
+    - id: versiond-5
+      rpc_chats_per_min: 300
+    # P3 keeps payloads in zstd files only (sqlite-payloads-in-zstd-files, payload-files-are-zstd). sqlite keeps no
+    # validation leases, so no-skipped-validation-leases excludes it by name.
+    - id: versiond-4
+      env: {DEVSHARD_STORAGE_MODE: sqlite}
+  mock_ml:
+    allocator: round_robin
+    # One node per versiond container, bound to it, so an ML fault lands on
+    # one participant only.
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+      - {name: mock-openai-5, profile: prod-like, host: versiond-5}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  max_in_flight: 256
+  duration: 15m
+  report_interval: 30s
+  traffic:
+    type: stages
+    # Stage-4 peak (timeout-vote-fanout). Lower it here, not in the stage, if the Docker VM
+    # cannot sustain the peak.
+    # 16, not 32: on a 5 GB Docker VM, 32 stalled and 24 OOM-killed the gateway.
+    peak_rps: 16
+    stages:
+      - {duration: 1m, rps: 8}
+      - {duration: 1m, rps: 16}
+      - {duration: 8m, rps: 16}
+      - {duration: 2m, peak: true}
+      - {duration: 3m, rps: 16}
+  request:
+    model: model-a
+    stream: false
+    max_tokens: 128
+    timeout: 2m
+    messages:
+      - {role: user, content: "Summarise the main idea of this sentence briefly."}
+    mix:
+      stream_ratio: 0.5
+      logprobs_ratio: 0.5
+      top_logprobs: 5
+      max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 20}, {value: 2048, weight: 5}]
+      temperature: [{value: 0, weight: 50}, {value: 0.7, weight: 50}]
+      prompts:
+        - {value: [{role: user, content: "Summarise the main idea of this sentence briefly."}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across ho Why?"}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a gr Explain it."}], weight: 1}
+      models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
+  events:
+    - {id: receipt-then-empty-stream, case: receipt-then-empty-stream, action: ml_fault, target: mock-openai-3, at: 2m, until: 3m,
+       params: {patch: {empty_stream: true}}}
+    - {id: ml-server-returns-429, case: ml-server-returns-429, action: ml_fault, target: mock-openai-4, at: 3m15s, until: 4m15s,
+       params: {patch: {http_status: 429}}}
+    - {id: host-paused-then-catches-up, case: host-paused-then-catches-up, action: pause, target: versiond-5, at: 4m, until: 5m}
+    - {id: host-hangs-after-first-token, case: host-hangs-after-first-token, action: ml_fault, target: mock-openai-3, at: 5m, until: 6m30s,
+       params: {patch: {pause_stream: true}}}
+    - {id: gateway-killed-mid-race, case: gateway-killed-mid-race, action: gateway_restart, at: 5m40s, params: {signal: KILL}}
+    - {id: epoch-change-with-poc, case: epoch-change-with-poc, action: epoch_advance, at: 7m30s, until: 8m30s,
+       params: {phases: "0s=PoCGenerate,40s=PoCValidate"}}
+    - {id: host-withholds-payload, case: host-withholds-payload, action: tripfile, target: versiond-3, at: 8m45s, until: 9m30s,
+       params: {file: devshard-fault-drop-payload}}
+    - {id: host-under-poc-challenge, case: host-under-poc-challenge, action: dapi_challenge, target: versiond-4, at: 9m, until: 10m}
+    # P4's budget is set at boot, so it bites all run: a background marker
+    # yields misses and quarantines inside P4's other windows to those cases.
+    - {id: host-over-peer-chat-budget, case: host-over-peer-chat-budget, action: marker, target: versiond-5, at: 0s, until: 15m,
+       params: {background: true, observe: host_rate_limited, waive_misses: true, expect_quarantine: sender_rate}}
+    - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 10m30s, until: 11m15s,
+       params: {patch: {hang: true}}}
+    - {id: host-public-port-down, case: host-public-port-down, action: tripfile, target: versiond-3, at: 12m30s, until: 13m15s,
+       params: {file: devshard-fault-public-down, expect_quarantine: "http,transport"}}
+    - {id: participant-unavailable-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 13m, until: 13m30s,
+       params: {mode: unavailable, expect_quarantine: none}}
+    - {id: participant-absent-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 13m30s, until: 14m,
+       params: {mode: absent}}
+    - {id: gateway-restart-while-participant-absent, case: gateway-restart-while-participant-absent, action: gateway_restart, at: 13m40s}
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+  participant_throttle:
+    transport_failure_quarantine: 45s
+    http_quarantine: 45s
+    empty_stream_quarantine: 45s
+    stalled_winner_quarantine: 45s
+  escrow_rotation:
+    enabled: true
+    settlement_enabled: true
+    pre_poc_blocks: 1
+    temp_count: 1
+    target_count: 1
+    amount: 5000000000
+    private_key_env: DEVSHARD_PRIVATE_KEY
+    models:
+      - {model: model-b, settlement_enabled: false}
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # Racing should hide most faults; the gateway restart (gateway-killed-mid-race) and the PoC
+    # window (epoch-change-with-poc) are allowed to fail requests for a short time. epoch-change-with-poc alone
+    # answers 503 for 1 of 15 minutes (about 7%), and gateway-killed-mid-race adds about 2%.
+    error_rate: 0.12
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  escrow_rotation:
+    require_new_escrow: true
+  invariants:
+    enabled: true
+    baseline: {from: 1m, to: 2m}
+    trend_early: {from: 3m, to: 5m}
+    trend_late: {from: 13m30s, to: 15m}
+    cases: {escrow-accounting-reconciles.final_nonce_le_max: session-nonce-within-max-nonce, no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired, responses-compress: logprobs-responses-compress, payload-files-are-zstd: sqlite-payloads-in-zstd-files, no-http-5xx-on-honest-hosts: honest-hosts-get-no-http-5xx, no-escrow-falsely-marked-missing: gateway-restart-while-participant-absent}
+
+drain_timeout: 3m
+
+diagnostics:
+  logs:
+    tail: all
+  heap_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m20s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 14m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+  goroutine_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m20s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 14m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
