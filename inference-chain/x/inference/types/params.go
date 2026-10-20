@@ -92,6 +92,7 @@ const (
 	DefaultLogprobsMode   = LogprobsModeProcessed
 
 	DefaultPocValidationVoteThresholdBps uint32 = 5000
+	DefaultPocValidationSampleSize              = 200
 )
 
 const (
@@ -278,7 +279,7 @@ func DefaultValidationParams() *ValidationParams {
 func DefaultPocParams() *PocParams {
 	return &PocParams{
 		DefaultDifficulty:            5,
-		ValidationSampleSize:         200,
+		ValidationSampleSize:         DefaultPocValidationSampleSize,
 		PocDataPruningEpochThreshold: 1,
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
@@ -1654,6 +1655,21 @@ func (p *PocParams) GetPrimaryModelConfig() *PoCModelConfig {
 		return DefaultPoCModelConfig()
 	}
 	return configs[0]
+}
+
+func (p *PocParams) EffectiveValidationSampleSize() int64 {
+	if p == nil || p.ValidationSampleSize == 0 {
+		return DefaultPocValidationSampleSize
+	}
+	return int64(p.ValidationSampleSize)
+}
+
+func (p *PocParams) MinCommitCount(modelID string) uint32 {
+	config, ok := p.GetModelConfig(modelID)
+	if !ok {
+		return 0
+	}
+	return config.GetStatTest().GetMinCount()
 }
 
 func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {

@@ -177,6 +177,7 @@ message PoCStatTestParams {
   Decimal dist_threshold = 1;      // L2 distance above which vectors are mismatched (default: 0.4)
   Decimal p_mismatch = 2;          // Null hypothesis probability - expected honest mismatch rate (default: 0.1)
   Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
+  uint32 min_count = 4;
 }
 
 message PoCModelConfig {
