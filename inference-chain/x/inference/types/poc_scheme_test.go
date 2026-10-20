@@ -52,20 +52,20 @@ func TestPocParamsValidateSchemeBlocks(t *testing.T) {
 	_, err := SnapshotPocStageRecipe(p, 100)
 	require.Error(t, err)
 	p.PocScheme = PocScheme_POC_SCHEME_DECODE
-	p.Models[0].Schemes = []*PocSchemeParams{DefaultDecodeScheme("")}
+	p.Models[0].Schemes = []*PocSchemeParams{DefaultDecodeScheme()}
 	require.NoError(t, p.Validate(), "DECODE mode does not require PREFILL")
 	p.Models[0].Schemes[0].MaxTokens = 0
 	require.Error(t, p.Validate())
 	p.Models[0].Schemes[0].MaxTokens = 256
-	p.Models[0].Schemes = append(p.Models[0].Schemes, DefaultDecodeScheme(""))
+	p.Models[0].Schemes = append(p.Models[0].Schemes, DefaultDecodeScheme())
 	require.ErrorContains(t, p.Validate(), "duplicate")
 	p.PocScheme = PocScheme(9)
 	require.Error(t, p.Validate())
 }
 
 func TestDecodeDefaultsIndependent(t *testing.T) {
-	first := DefaultDecodeScheme("MiniMaxAI/MiniMax-M2.7")
-	second := DefaultDecodeScheme("MiniMaxAI/MiniMax-M2.7")
+	first := DefaultDecodeScheme()
+	second := DefaultDecodeScheme()
 	require.Equal(t, int64(256), first.SeqLen)
 	require.Equal(t, int64(256), first.MaxTokens)
 	first.StatTest.PMismatch.Value = 999

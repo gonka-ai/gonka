@@ -64,7 +64,7 @@ func PrepareGenesisPocModels(params *Params, modelIDs []string) {
 	}
 	for _, model := range kept {
 		if _, ok := model.SchemeParams(PocScheme_POC_SCHEME_DECODE); !ok {
-			model.Schemes = append(model.Schemes, DefaultDecodeScheme(model.ModelId))
+			model.Schemes = append(model.Schemes, DefaultDecodeScheme())
 		}
 	}
 	// Genesis can run any subset of the production models. Allocate both schemes
@@ -74,7 +74,7 @@ func PrepareGenesisPocModels(params *Params, modelIDs []string) {
 		for i, model := range kept {
 			block, _ := model.SchemeParams(PocScheme_POC_SCHEME_DECODE)
 			if block.DynamicCoefficient == nil {
-				block.DynamicCoefficient = DefaultDecodeScheme(model.ModelId).DynamicCoefficient
+				block.DynamicCoefficient = DefaultDecodeScheme().DynamicCoefficient
 			}
 			block.DynamicCoefficient.TargetShareBps = shares[i]
 		}

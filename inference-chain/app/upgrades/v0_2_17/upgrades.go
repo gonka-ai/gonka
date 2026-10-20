@@ -120,7 +120,7 @@ func migrateModelScheme(model *types.PoCModelConfig) (bool, error) {
 		changed = true
 	}
 	if _, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_DECODE); !ok {
-		model.Schemes = append(model.Schemes, types.DefaultDecodeScheme(model.ModelId))
+		model.Schemes = append(model.Schemes, decodeScheme(model.ModelId))
 		changed = true
 	}
 	return changed, nil

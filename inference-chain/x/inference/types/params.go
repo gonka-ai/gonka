@@ -312,7 +312,7 @@ func DefaultPoCModelConfig() *PoCModelConfig {
 				RelativeDifficulty: DecimalFromFloat(1.0),
 				TargetShareBps:     10000,
 			},
-		}, DefaultDecodeScheme("")},
+		}, DefaultDecodeScheme()},
 	}
 }
 

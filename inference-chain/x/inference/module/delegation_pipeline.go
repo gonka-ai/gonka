@@ -107,10 +107,10 @@ func (am AppModule) resolveEpochCoefficients(
 
 	previousRawTotals := make(map[string]int64)
 	var previousScales []*types.ConfirmationWeightScale
-	hasPriorTotals := upcomingEpochIndex > 1
-	if hasPriorTotals {
-		// A regular PREFILL→DECODE switch must not reuse the PREFILL controller.
-		// Tracking confirmation PoC does not reach this path.
+	hasPreviousEpoch := upcomingEpochIndex > 1
+	hasPriorTotals := hasPreviousEpoch
+	if hasPreviousEpoch {
+		// Skip historical adjustment when prior totals come from another scheme.
 		changed, err := am.regularSchemeChanged(ctx, upcomingEpochIndex, measurementHeight)
 		if err != nil {
 			return nil, err
@@ -119,7 +119,7 @@ func (am AppModule) resolveEpochCoefficients(
 			hasPriorTotals = false
 		}
 	}
-	if hasPriorTotals {
+	if hasPreviousEpoch {
 		previousEpochIndex := upcomingEpochIndex - 1
 		root, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, "")
 		if err != nil {
@@ -129,28 +129,40 @@ func (am AppModule) resolveEpochCoefficients(
 			return nil, fmt.Errorf("dynamic coefficients: root epoch group data not found for epoch %d", previousEpochIndex)
 		}
 		previousScales = root.ConfirmationWeightScales
-		for _, scale := range upcomingRoot.ConfirmationWeightScales {
-			if scale == nil || scale.ModelId == "" {
-				continue
-			}
-			subgroup, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, scale.ModelId)
-			if err != nil {
-				return nil, fmt.Errorf("dynamic coefficients: read model %q for epoch %d: %w", scale.ModelId, previousEpochIndex, err)
-			}
-			if !found {
-				previousRawTotals[scale.ModelId] = 0
-				continue
-			}
-			total := int64(0)
-			for _, weight := range subgroup.ValidationWeights {
-				if weight != nil && weight.Weight > 0 {
-					total, err = checkedRawWeightAdd(total, weight.Weight)
-					if err != nil {
-						return nil, fmt.Errorf("dynamic coefficients: prior raw total for model %q: %w", scale.ModelId, err)
-					}
+		if !hasPriorTotals {
+			// Omit adjustment history when the scheme changes.
+			previousScales = make([]*types.ConfirmationWeightScale, 0, len(root.ConfirmationWeightScales))
+			for _, scale := range root.ConfirmationWeightScales {
+				if scale != nil {
+					previousScales = append(previousScales, &types.ConfirmationWeightScale{
+						ModelId: scale.ModelId, BaseCoefficient: scale.BaseCoefficient,
+					})
 				}
 			}
-			previousRawTotals[scale.ModelId] = total
+		} else {
+			for _, scale := range upcomingRoot.ConfirmationWeightScales {
+				if scale == nil || scale.ModelId == "" {
+					continue
+				}
+				subgroup, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, scale.ModelId)
+				if err != nil {
+					return nil, fmt.Errorf("dynamic coefficients: read model %q for epoch %d: %w", scale.ModelId, previousEpochIndex, err)
+				}
+				if !found {
+					previousRawTotals[scale.ModelId] = 0
+					continue
+				}
+				total := int64(0)
+				for _, weight := range subgroup.ValidationWeights {
+					if weight != nil && weight.Weight > 0 {
+						total, err = checkedRawWeightAdd(total, weight.Weight)
+						if err != nil {
+							return nil, fmt.Errorf("dynamic coefficients: prior raw total for model %q: %w", scale.ModelId, err)
+						}
+					}
+				}
+				previousRawTotals[scale.ModelId] = total
+			}
 		}
 	}
 
