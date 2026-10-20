@@ -148,17 +148,17 @@ func TestPostV016ParamsRoundTripModelCoefficient(t *testing.T) {
 	require.NotNil(t, decoded.DynamicCoefficientParams)
 }
 
-func TestMigratePocSchemeBlocksInstallsDecodeCoefficients(t *testing.T) {
+func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	cases := []struct {
-		id, minimum, maximum, difficulty string
-		share                            uint32
+		id, minimum, maximum, difficulty, tau string
+		share                                 uint32
 	}{
-		{"MiniMaxAI/MiniMax-M2.7", "0.302400000000000000", "0.302400000000000000", "1.000000000000000000", 3334},
-		{"deepseek-ai/DeepSeek-V4-Flash-0731", "0.201246191645400000", "0.672672000000000000", "1.925925925925000000", 3333},
-		{"zai-org/GLM-5.3-Flash", "0.810962376237000000", "1.911804631578600000", "5.473684210526000000", 3333},
+		{"MiniMaxAI/MiniMax-M2.7", "0.302400000000000000", "0.302400000000000000", "1.000000000000000000", "0.039500000000000000", 3334},
+		{"deepseek-ai/DeepSeek-V4-Flash-0731", "0.201246191645400000", "0.672672000000000000", "1.925925925925000000", "0.027000000000000000", 3333},
+		{"zai-org/GLM-5.3-Flash", "0.810962376237000000", "1.911804631578600000", "5.473684210526000000", "0.017000000000000000", 3333},
 	}
 	params.PocParams.Models = nil
 	params.PocParams.PocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
@@ -182,6 +182,7 @@ func TestMigratePocSchemeBlocksInstallsDecodeCoefficients(t *testing.T) {
 		prefill, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_PREFILL)
 		require.True(t, ok)
 		require.Equal(t, params.PocParams.Models[i].DynamicCoefficient, prefill.DynamicCoefficient)
+		require.Equal(t, params.PocParams.Models[i].StatTest, prefill.StatTest)
 		decode, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_DECODE)
 		require.True(t, ok)
 		require.Equal(t, int64(256), decode.SeqLen)
@@ -190,6 +191,9 @@ func TestMigratePocSchemeBlocksInstallsDecodeCoefficients(t *testing.T) {
 			got  *inferencetypes.Decimal
 			want string
 		}{
+			{decode.StatTest.DistThreshold, tc.tau},
+			{decode.StatTest.PMismatch, "0.100000000000000000"},
+			{decode.StatTest.PValueThreshold, "0.050000000000000000"},
 			{decode.DynamicCoefficient.CoeffMin, tc.minimum},
 			{decode.DynamicCoefficient.CoeffMax, tc.maximum},
 			{decode.DynamicCoefficient.RelativeDifficulty, tc.difficulty},
