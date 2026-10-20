@@ -83,8 +83,9 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 	mockClient := mlnodeclient.NewMockClient()
 
 	v := &OffChainValidator{
-		nodeBroker:  &stubNodeBroker{client: mockClient},
-		callbackUrl: "http://callback",
+		nodeBroker:     &stubNodeBroker{client: mockClient},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 	}
 
 	testNode := broker.NodeResponse{
@@ -333,8 +334,9 @@ func runAbstainWorker(
 // verify against the commit but this validator has no ML node for the model.
 func TestValidateParticipantAbstainsWithoutModelExecutor(t *testing.T) {
 	v := &OffChainValidator{
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 	}
 
 	work := testWork()
@@ -356,9 +358,10 @@ func TestWorkerAbstainsWithoutModelExecutor(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
 
 	v := &OffChainValidator{
-		recorder:    recorder,
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
+		recorder:       recorder,
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   3,
 			RetryBackoff: time.Millisecond,
@@ -392,9 +395,10 @@ func TestWorkerReportsInvalidWhenProofsFailWithoutModelExecutor(t *testing.T) {
 	})).Return(nil).Once()
 
 	v := &OffChainValidator{
-		recorder:    recorder,
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
+		recorder:       recorder,
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   3,
 			RetryBackoff: time.Millisecond,
@@ -423,7 +427,8 @@ func TestWorkerAbstainsWhenMLNodeRequestFails(t *testing.T) {
 			MockClient: mlnodeclient.NewMockClient(),
 			err:        errors.New("ml node unreachable"),
 		}},
-		callbackUrl: "http://callback",
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   1,
 			RetryBackoff: time.Millisecond,
@@ -450,7 +455,8 @@ func TestValidateParticipantSkipsValidateeChecksOncePassed(t *testing.T) {
 			MockClient: mlnodeclient.NewMockClient(),
 			err:        errors.New("ml node unreachable"),
 		}},
-		callbackUrl: "http://callback",
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 	}
 
 	work := testWork()
@@ -476,9 +482,10 @@ func TestWorkerAbstainsOnLocalRequestFailure(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
 
 	v := &OffChainValidator{
-		recorder:    recorder,
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
+		recorder:       recorder,
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   1,
 			RetryBackoff: time.Millisecond,
@@ -506,9 +513,10 @@ func TestWorkerAbstainsWhenWindowCloses(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
 
 	v := &OffChainValidator{
-		recorder:    recorder,
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
+		recorder:       recorder,
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   1, // no retries left, so the result settles immediately
 			RetryBackoff: time.Millisecond,
@@ -553,7 +561,8 @@ func TestValidateeChecksRunOnceAcrossDispatchRetries(t *testing.T) {
 			MockClient: mlnodeclient.NewMockClient(),
 			err:        errors.New("ml node unreachable"),
 		}},
-		callbackUrl: "http://callback",
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
 		config: ValidationConfig{
 			MaxRetries:   4,
 			RetryBackoff: time.Millisecond,
@@ -625,10 +634,11 @@ func TestWorkerAbstainsOnEarlyGuardLocalFailure(t *testing.T) {
 	}
 
 	v := &OffChainValidator{
-		recorder:    recorder,
-		nodeBroker:  &stubNodeBroker{client: mlnodeclient.NewMockClient()},
-		callbackUrl: "http://callback",
-		pubKey:      "pub",
+		recorder:       recorder,
+		nodeBroker:     &stubNodeBroker{client: mlnodeclient.NewMockClient()},
+		callbackUrl:    "http://callback",
+		callbackSigner: testCallbackSigner,
+		pubKey:         "pub",
 		config: ValidationConfig{
 			MaxRetries:   1,
 			RetryBackoff: time.Millisecond,

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"common/logging"
 	"common/utils"
@@ -27,10 +28,34 @@ func decodeCallbackModelID(encoded string) (string, error) {
 	return modelID, nil
 }
 
-// postGeneratedArtifactsV2 handles PoC v2 artifact batch callbacks from MLNode.
+func parseCallbackSampleSize(raw string) (int64, error) {
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid sample size")
+	}
+	return n, nil
+}
+
+func parseCallbackMinCount(raw string) (uint32, error) {
+	n, err := strconv.ParseUint(raw, 10, 32)
+	if err != nil {
+		return 0, echo.NewHTTPError(http.StatusBadRequest, "invalid min count")
+	}
+	return uint32(n), nil
+}
+
+func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
+	return s.handleGeneratedArtifactsV2(ctx, false)
+}
+
+func (s *Server) postGeneratedArtifactsV2PerModel(ctx echo.Context) error {
+	return s.handleGeneratedArtifactsV2(ctx, true)
+}
+
+// handleGeneratedArtifactsV2 handles PoC v2 artifact batch callbacks from MLNode.
 // Stores artifacts locally for off-chain proofs. Store commits and weight distributions
 // are submitted to chain separately by CommitWorker and the block dispatcher.
-func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
+func (s *Server) handleGeneratedArtifactsV2(ctx echo.Context, perModel bool) error {
 	if s.artifactStore == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
 	}
@@ -66,10 +91,15 @@ func (s *Server) postGeneratedArtifactsV2(ctx echo.Context) error {
 			"blockHeight", body.BlockHeight, "activeStage", stageHeight)
 		return echo.NewHTTPError(http.StatusBadRequest, "block_height is not the active PoC stage")
 	}
+	if !s.callbackSigner.VerifyGeneration(ctx.Param("token"), stageHeight, modelID, perModel, body.NodeId) {
+		logging.Warn("ArtifactBatchV2-callback. Rejected - invalid callback token", types.PoC,
+			"blockHeight", body.BlockHeight, "modelId", modelID, "nodeId", body.NodeId, "perModel", perModel)
+		return echo.NewHTTPError(http.StatusForbidden, "invalid callback token")
+	}
 	s.artifactStore.ActivateStage(stageHeight)
 
 	var nodeId string
-	if ctx.Path() == "/v2/poc-batches/:model_id/m/generated" {
+	if perModel {
 		nodeId, err = s.broker.PoCNodeID(ctx.Request().Context(), stageHeight, modelID, body.NodeId)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -136,15 +166,44 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
+	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
+	if err != nil {
+		return err
+	}
+	sampled, err := parseCallbackSampleSize(ctx.Param("n"))
+	if err != nil {
+		return err
+	}
+	minCount, err := parseCallbackMinCount(ctx.Param("min"))
+	if err != nil {
+		return err
+	}
+	if !s.callbackSigner.VerifyValidation(ctx.Param("token"), body.BlockHeight, modelID, body.PublicKey, sampled, minCount) {
+		logging.Warn("ValidatedArtifactsV2-callback. Rejected - invalid callback token", types.PoC,
+			"blockHeight", body.BlockHeight, "modelId", modelID, "publicKey", body.PublicKey)
+		return echo.NewHTTPError(http.StatusForbidden, "invalid callback token")
+	}
+
 	logging.Debug("ValidatedArtifactsV2-callback. Received", types.PoC,
 		"blockHeight", body.BlockHeight,
 		"publicKey", body.PublicKey,
 		"nTotal", body.NTotal,
 		"fraudDetected", body.FraudDetected)
 
-	modelID, err := decodeCallbackModelID(ctx.Param("model_id"))
-	if err != nil {
-		return err
+	if body.NTotal <= 0 || body.NTotal > sampled {
+		logging.Error("ValidatedArtifactsV2-callback. Abstaining - n_total inconsistent with dispatched sample", types.PoC,
+			"publicKey", body.PublicKey, "modelId", modelID, "nTotal", body.NTotal, "sampled", sampled)
+		return echo.NewHTTPError(http.StatusUnprocessableEntity, "n_total inconsistent with dispatched sample")
+	}
+	if body.InsufficientSample {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining - ML node reported insufficient sample", types.PoC,
+			"publicKey", body.PublicKey, "modelId", modelID, "nTotal", body.NTotal)
+		return ctx.NoContent(http.StatusOK)
+	}
+	if minCount > 0 && body.NTotal < int64(minCount) {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining - n_total below min_count", types.PoC,
+			"publicKey", body.PublicKey, "modelId", modelID, "nTotal", body.NTotal, "minCount", minCount)
+		return ctx.NoContent(http.StatusOK)
 	}
 
 	epochState := s.broker.GetPhaseTracker().GetCurrentEpochState()

@@ -299,6 +299,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	}
 	mockConfigManager := &apiconfig.ConfigManager{}
 	nodeBroker := broker.NewBroker(mockChainBridge, phaseTracker, &participantInfo, "http://localhost:8080/poc", mockClientFactory, mockConfigManager)
+	nodeBroker.SetCallbackSigner(testCallbackSigner)
 
 	// Mock status function
 	mockStatusFunc := func() (*coretypes.ResultStatus, error) {

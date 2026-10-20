@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"encoding/hex"
@@ -135,6 +136,7 @@ type Broker struct {
 	phaseTracker         *chainphase.ChainPhaseTracker
 	participantInfo      participant.CurrenParticipantInfo
 	callbackUrl          string
+	callbackSigner       atomic.Pointer[callbackauth.Signer]
 	mlNodeClientFactory  mlnodeclient.ClientFactory
 	reconcileTrigger     chan struct{}
 	lastEpochIndex       uint64
@@ -394,6 +396,10 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	go nodeStatusQueryWorker(broker)
 	go broker.reconcilerLoop()
 	return broker
+}
+
+func (b *Broker) SetCallbackSigner(signer *callbackauth.Signer) {
+	b.callbackSigner.Store(signer)
 }
 
 type statusQuerySignal struct {
@@ -1405,6 +1411,7 @@ func (b *Broker) getCommandForState(
 					BlockHash:            pocGenParams.startPoCBlockHash,
 					PubKey:               b.participantInfo.GetPubKey(),
 					CallbackUrl:          GetPoCCallbackBaseURLV2(b.callbackUrl),
+					CallbackSigner:       b.callbackSigner.Load(),
 					TotalNodes:           totalNodes,
 					Model:                modelConfig.ModelId,
 					SeqLen:               modelConfig.SeqLen,

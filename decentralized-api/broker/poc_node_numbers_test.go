@@ -32,7 +32,7 @@ func TestPoCNodeNumbers_PerModelAndRestart(t *testing.T) {
 	params := &pocParams{startPoCBlockHeight: 100, models: map[string]apiconfig.PoCModelConfigCache{
 		"model-a": {ModelId: "model-a"}, "model-b": {ModelId: "model-b"},
 	}}
-	cmd := StartPoCNodeCommandV2{Model: "model-b", BlockHeight: 100, CallbackUrl: "http://api/v2/poc-batches"}
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, Model: "model-b", BlockHeight: 100, CallbackUrl: "http://api/v2/poc-batches"}
 	params.startPoCBlockHeight = 99
 	require.NoError(t, b.assignPoCNodeNumber(ctx, "node-150", params, &cmd))
 	require.Nil(t, cmd.ModelNodeID, "do not mix nonce strides during hotfix rollout")
@@ -44,7 +44,7 @@ func TestPoCNodeNumbers_PerModelAndRestart(t *testing.T) {
 	require.Equal(t, 0, *cmd.ModelNodeID)
 	require.Equal(t, 1, cmd.TotalNodes)
 	for i := 0; i < 150; i++ {
-		a := StartPoCNodeCommandV2{Model: "model-a"}
+		a := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, Model: "model-a"}
 		id := fmt.Sprintf("node-%03d", i)
 		require.NoError(t, b.assignPoCNodeNumber(ctx, id, params, &a))
 		require.Equal(t, i, *a.ModelNodeID)
@@ -59,7 +59,8 @@ func TestPoCNodeNumbers_PerModelAndRestart(t *testing.T) {
 	require.True(t, cmd.Execute(ctx, worker).Succeeded)
 	require.Equal(t, 0, client.LastInitGenerateV2Req.NodeId)
 	require.Equal(t, 1, client.LastInitGenerateV2Req.NodeCount)
-	require.Equal(t, "http://api/v2/poc-batches/model-b/m", client.LastInitGenerateV2Req.URL)
+	token := testCallbackSigner.GenerationToken(100, "model-b", true, 0)
+	require.Equal(t, "http://api/v2/poc-batches/model-b/g/"+token+"/m", client.LastInitGenerateV2Req.URL)
 
 	// A restarted API loads the same IDs even if its node list changed.
 	restarted := &Broker{configManager: config, nodes: b.nodes}
@@ -67,7 +68,7 @@ func TestPoCNodeNumbers_PerModelAndRestart(t *testing.T) {
 	original, err := restarted.PoCNodeID(ctx, 100, "model-b", 0)
 	require.NoError(t, err)
 	require.Equal(t, "node-150", original)
-	a := StartPoCNodeCommandV2{Model: "model-a"}
+	a := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, Model: "model-a"}
 	require.NoError(t, restarted.assignPoCNodeNumber(ctx, "node-001", params, &a))
 	require.Equal(t, 1, *a.ModelNodeID)
 	require.Equal(t, 150, a.TotalNodes)

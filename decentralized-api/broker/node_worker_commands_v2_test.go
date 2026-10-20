@@ -93,13 +93,14 @@ func TestStartPoCNodeCommandV2_Success(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
-		BlockHeight: 1000,
-		BlockHash:   "test-block-hash",
-		PubKey:      "test-pub-key",
-		CallbackUrl: "http://localhost:8080/callback",
-		TotalNodes:  5,
-		Model:       "test-model",
-		SeqLen:      256,
+		CallbackSigner: testCallbackSigner,
+		BlockHeight:    1000,
+		BlockHash:      "test-block-hash",
+		PubKey:         "test-pub-key",
+		CallbackUrl:    "http://localhost:8080/callback",
+		TotalNodes:     5,
+		Model:          "test-model",
+		SeqLen:         256,
 	}
 
 	result := cmd.Execute(context.Background(), worker)
@@ -115,7 +116,8 @@ func TestStartPoCNodeCommandV2_Success(t *testing.T) {
 	assert.Equal(t, 0, mockClient.StopPowV2Called, "StopPowV2() should NOT be called (status is IDLE)")
 	assert.Equal(t, 1, mockClient.InitGenerateV2Called, "InitGenerateV2() should be called once")
 	require.NotNil(t, mockClient.LastInitGenerateV2Req)
-	assert.Equal(t, "http://localhost:8080/callback/test-model", mockClient.LastInitGenerateV2Req.URL)
+	token := testCallbackSigner.GenerationToken(1000, "test-model", false, int(node.Node.NodeNum))
+	assert.Equal(t, "http://localhost:8080/callback/test-model/g/"+token, mockClient.LastInitGenerateV2Req.URL)
 }
 
 // TestStartPoCNodeCommandV2_AlreadyGenerating verifies idempotency - if already generating, return success without restart.
@@ -130,6 +132,7 @@ func TestStartPoCNodeCommandV2_AlreadyGenerating(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
+		CallbackSigner:       testCallbackSigner,
 		BlockHeight:          1000,
 		BlockHash:            "test-block-hash",
 		PubKey:               "test-pub-key",
@@ -183,6 +186,7 @@ func TestStartPoCNodeCommandV2_ChallengeWindDownStopsPow(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
+		CallbackSigner:       testCallbackSigner,
 		BlockHeight:          500,
 		BlockHash:            "challenge-hash",
 		PubKey:               "test-pub-key",
@@ -213,7 +217,7 @@ func TestStartPoCNodeCommandV2_WindDownDoesNotInitOnStatusError(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-v2-gen", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{WindDown: true, BlockHeight: 500, BlockHash: "h"}
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, WindDown: true, BlockHeight: 500, BlockHash: "h"}
 	result := cmd.Execute(context.Background(), worker)
 	assert.False(t, result.Succeeded)
 	mockClient.Mu.Lock()
@@ -232,6 +236,7 @@ func TestStartPoCNodeCommandV2_ReinitWhenHeightHashChange(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
+		CallbackSigner:       testCallbackSigner,
 		BlockHeight:          2000,
 		BlockHash:            "new-hash",
 		PubKey:               "test-pub-key",
@@ -266,13 +271,14 @@ func TestStartPoCNodeCommandV2_UnknownLastTrustsGenerating(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
-		BlockHeight: 2000,
-		BlockHash:   "new-hash",
-		PubKey:      "test-pub-key",
-		CallbackUrl: "http://localhost:8080/callback",
-		TotalNodes:  5,
-		Model:       "test-model",
-		SeqLen:      256,
+		CallbackSigner: testCallbackSigner,
+		BlockHeight:    2000,
+		BlockHash:      "new-hash",
+		PubKey:         "test-pub-key",
+		CallbackUrl:    "http://localhost:8080/callback",
+		TotalNodes:     5,
+		Model:          "test-model",
+		SeqLen:         256,
 	}
 	result := cmd.Execute(context.Background(), worker)
 	assert.True(t, result.Succeeded)
@@ -293,6 +299,7 @@ func TestStartPoCNodeCommandV2_ValidatingSameParamsStopsThenInit(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
+		CallbackSigner:       testCallbackSigner,
 		BlockHeight:          500,
 		BlockHash:            "challenge-hash",
 		PubKey:               "test-pub-key",
@@ -319,20 +326,22 @@ func TestStartPoCNodeCommandV2_EncodesCallbackModelID(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
-		BlockHeight: 1000,
-		BlockHash:   "test-block-hash",
-		PubKey:      "test-pub-key",
-		CallbackUrl: "http://localhost:8080/callback",
-		TotalNodes:  5,
-		Model:       "org/model-b",
-		SeqLen:      256,
+		CallbackSigner: testCallbackSigner,
+		BlockHeight:    1000,
+		BlockHash:      "test-block-hash",
+		PubKey:         "test-pub-key",
+		CallbackUrl:    "http://localhost:8080/callback",
+		TotalNodes:     5,
+		Model:          "org/model-b",
+		SeqLen:         256,
 	}
 
 	result := cmd.Execute(context.Background(), worker)
 
 	assert.True(t, result.Succeeded)
 	require.NotNil(t, mockClient.LastInitGenerateV2Req)
-	assert.Equal(t, "http://localhost:8080/callback/org%252Fmodel-b", mockClient.LastInitGenerateV2Req.URL)
+	token := testCallbackSigner.GenerationToken(1000, "org/model-b", false, int(node.Node.NodeNum))
+	assert.Equal(t, "http://localhost:8080/callback/org%252Fmodel-b/g/"+token, mockClient.LastInitGenerateV2Req.URL)
 }
 
 // TestStopPowV2_MockBehavior verifies the mock StopPowV2 works correctly.
@@ -357,6 +366,7 @@ func TestStartPoCNodeCommandV2_StrongerRngPropagated(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
+		CallbackSigner: testCallbackSigner,
 		BlockHeight:    1000,
 		BlockHash:      "test-hash",
 		PubKey:         "test-pub",
@@ -392,13 +402,14 @@ func TestStartPoCNodeCommandV2_PartialInitErrorKeepsNodeInPoC(t *testing.T) {
 	defer worker.Shutdown()
 
 	cmd := StartPoCNodeCommandV2{
-		BlockHeight: 2000,
-		BlockHash:   "hash",
-		PubKey:      "test-pub-key",
-		CallbackUrl: "http://localhost:8080/callback",
-		TotalNodes:  5,
-		Model:       "test-model",
-		SeqLen:      256,
+		CallbackSigner: testCallbackSigner,
+		BlockHeight:    2000,
+		BlockHash:      "hash",
+		PubKey:         "test-pub-key",
+		CallbackUrl:    "http://localhost:8080/callback",
+		TotalNodes:     5,
+		Model:          "test-model",
+		SeqLen:         256,
 	}
 	result := cmd.Execute(context.Background(), worker)
 	assert.True(t, result.Succeeded, result.Error)
@@ -419,7 +430,7 @@ func TestStartPoCNodeCommandV2_AllBackendsFailInitIsFailure(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256}
 	result := cmd.Execute(context.Background(), worker)
 	assert.False(t, result.Succeeded)
 	assert.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
@@ -438,7 +449,7 @@ func TestStartPoCNodeCommandV2_MixedPartialStopErrorStillInits(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
 		LastPocV2BlockHeight: 1000, LastPocV2BlockHash: "old-hash"}
 	result := cmd.Execute(context.Background(), worker)
 	assert.True(t, result.Succeeded, result.Error)
@@ -461,7 +472,7 @@ func TestStartPoCNodeCommandV2_WindDownPartialStopErrorFails(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-v2-partial", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", WindDown: true}
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, BlockHeight: 2000, BlockHash: "hash", WindDown: true}
 	result := cmd.Execute(context.Background(), worker)
 	assert.False(t, result.Succeeded)
 }
@@ -488,7 +499,7 @@ func TestStartPoCNodeCommandV2_MixedSameStageInitsWithoutStop(t *testing.T) {
 			worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
 			defer worker.Shutdown()
 
-			cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+			cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
 				LastPocV2BlockHeight: tc.lastHeight, LastPocV2BlockHash: tc.lastHash}
 			result := cmd.Execute(context.Background(), worker)
 			assert.True(t, result.Succeeded, result.Error)
@@ -514,7 +525,7 @@ func TestStartPoCNodeCommandV2_MixedSameStageInitFailureDoesNotStop(t *testing.T
 	worker := NewNodeWorkerWithClient("test-node-v2-mixed", node, mockClient, b)
 	defer worker.Shutdown()
 
-	cmd := StartPoCNodeCommandV2{BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
+	cmd := StartPoCNodeCommandV2{CallbackSigner: testCallbackSigner, BlockHeight: 2000, BlockHash: "hash", Model: "test-model", SeqLen: 256,
 		LastPocV2BlockHeight: 2000, LastPocV2BlockHash: "hash"}
 	result := cmd.Execute(context.Background(), worker)
 	assert.False(t, result.Succeeded)

@@ -58,9 +58,10 @@ type ValidationV2 struct {
 
 // StatTestParamsV2 contains optional statistical test parameters for validation.
 type StatTestParamsV2 struct {
-	DistThreshold   float64 `json:"dist_threshold,omitempty"`
-	PMismatch       float64 `json:"p_mismatch,omitempty"`
-	PValueThreshold float64 `json:"p_value_threshold,omitempty"`
+	DistThreshold   float64 `json:"dist_threshold"`
+	PMismatch       float64 `json:"p_mismatch"`
+	PValueThreshold float64 `json:"fraud_threshold"`
+	MinCount        uint32  `json:"min_count,omitempty"`
 }
 
 // Default stat test parameter values.
@@ -95,6 +96,7 @@ func StatTestParamsFromChain(chainParams *types.PoCStatTestParams) *StatTestPara
 	if chainParams.PValueThreshold != nil {
 		result.PValueThreshold = chainParams.PValueThreshold.ToFloat()
 	}
+	result.MinCount = chainParams.MinCount
 	return result
 }
 

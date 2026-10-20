@@ -7,6 +7,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/bls"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/internal/event_listener"
 	"decentralized-api/internal/mlnodeping"
 	"decentralized-api/internal/modelmanager"
@@ -48,6 +49,8 @@ import (
 // where participants register docker-internal hostnames that resolve to private
 // IPs. Production leaves it unset (default false = private targets blocked).
 const envAllowPrivateAddresses = "DAPI_ALLOW_PRIVATE_ADDRESSES"
+
+const pocCallbackSecretPath = "/root/.dapi/data/poc-callback.key"
 
 // envBool parses a boolean env var. Unset or unparseable values return fallback.
 func envBool(key string, fallback bool) bool {
@@ -161,8 +164,15 @@ func main() {
 		logging.Error("Failed to get participant info", types.Participants, "error", err)
 		return
 	}
+	callbackSigner, err := callbackauth.LoadOrCreate(pocCallbackSecretPath)
+	if err != nil {
+		logging.Error("Failed to load PoC callback secret", types.System, "error", err)
+		return
+	}
+
 	chainBridge := broker.NewBrokerChainBridgeImpl(recorder, configManager.GetChainNodeConfig().Url)
 	nodeBroker := broker.NewBroker(chainBridge, chainPhaseTracker, participantInfo, configManager.GetApiConfig().PoCCallbackUrl, &mlnodeclient.HttpClientFactory{}, configManager)
+	nodeBroker.SetCallbackSigner(callbackSigner)
 
 	nodes := configManager.GetNodes()
 	for _, node := range nodes {
@@ -213,6 +223,7 @@ func main() {
 		nodeBroker,
 		chainPhaseTracker,
 		configManager.GetApiConfig().PoCCallbackUrl,
+		callbackSigner,
 		participantInfo.GetPubKey(),
 		participantInfo.GetAddress(),
 		configManager.GetChainNodeConfig().Url,
@@ -333,7 +344,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
-	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore), mlserver.WithConfigManager(configManager))
+	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore), mlserver.WithConfigManager(configManager), mlserver.WithCallbackSigner(callbackSigner))
 	mlServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)

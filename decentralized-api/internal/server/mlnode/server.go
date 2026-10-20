@@ -4,6 +4,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/internal/server/middleware"
 	"decentralized-api/observability"
 	"decentralized-api/poc/artifacts"
@@ -14,11 +15,12 @@ import (
 )
 
 type Server struct {
-	e             *echo.Echo
-	recorder      cosmos_client.CosmosMessageClient
-	broker        *broker.Broker
-	artifactStore *artifacts.ManagedArtifactStore
-	configManager *apiconfig.ConfigManager
+	e              *echo.Echo
+	recorder       cosmos_client.CosmosMessageClient
+	broker         *broker.Broker
+	artifactStore  *artifacts.ManagedArtifactStore
+	configManager  *apiconfig.ConfigManager
+	callbackSigner *callbackauth.Signer
 }
 
 // ServerOption configures optional Server dependencies.
@@ -38,12 +40,18 @@ func WithConfigManager(cm *apiconfig.ConfigManager) ServerOption {
 	}
 }
 
+func WithCallbackSigner(signer *callbackauth.Signer) ServerOption {
+	return func(s *Server) {
+		s.callbackSigner = signer
+	}
+}
+
 func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker, opts ...ServerOption) *Server {
 	e := echo.New()
 
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 
-	e.Use(middleware.LoggingMiddleware)
+	e.Use(middleware.RedactingLoggingMiddleware)
 
 	s := &Server{
 		e:        e,
@@ -56,9 +64,9 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 	}
 
 	// V2 callback routes (per-model).
-	e.POST("/v2/poc-batches/:model_id/generated", s.postGeneratedArtifactsV2)
-	e.POST("/v2/poc-batches/:model_id/m/generated", s.postGeneratedArtifactsV2)
-	e.POST("/v2/poc-batches/:model_id/validated", s.postValidatedArtifactsV2)
+	e.POST("/v2/poc-batches/:model_id/g/:token/generated", s.postGeneratedArtifactsV2)
+	e.POST("/v2/poc-batches/:model_id/g/:token/m/generated", s.postGeneratedArtifactsV2PerModel)
+	e.POST("/v2/poc-batches/:model_id/v/:n/:min/:token/validated", s.postValidatedArtifactsV2)
 
 	// Devshard version list from chain params
 	e.GET("/versions", s.getVersions)

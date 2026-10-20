@@ -31,10 +31,10 @@ func TestModelNodeCallbackPreservesWeightAttribution(t *testing.T) {
 	b := broker.NewBroker(stubBrokerChainBridge{}, tracker, nil, "", mlnodeclient.NewMockClientFactory(), config)
 	store := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer store.Close()
-	server := NewServer(nil, b, WithArtifactStore(store))
+	server := NewServer(nil, b, WithArtifactStore(store), WithCallbackSigner(testCallbackSigner))
 	for _, model := range []string{"model-a", "model-b"} {
 		body := []byte(`{"block_height":100,"node_id":0,"artifacts":[{"nonce":0,"vector_b64":"AQID"}]}`)
-		req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/"+model+"/m/generated", bytes.NewReader(body))
+		req := httptest.NewRequest(http.MethodPost, generatedCallbackPath(model, 100, true, 0), bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
 		server.e.ServeHTTP(rec, req)

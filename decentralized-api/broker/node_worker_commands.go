@@ -3,17 +3,36 @@ package broker
 import (
 	"common/logging"
 	"context"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func encodeCallbackModelID(modelID string) string {
-	return url.PathEscape(url.PathEscape(modelID))
+	return callbackauth.EncodeModelID(modelID)
+}
+
+var errCallbackSignerMissing = errors.New("PoC callback signer not configured")
+
+func (c StartPoCNodeCommandV2) generationCallback(nodeNum int) (string, int, error) {
+	if c.CallbackSigner == nil {
+		return "", 0, errCallbackSignerMissing
+	}
+	nodeID := nodeNum
+	perModel := c.ModelNodeID != nil
+	if perModel {
+		nodeID = *c.ModelNodeID
+	}
+	token := c.CallbackSigner.GenerationToken(c.BlockHeight, c.Model, perModel, nodeID)
+	callbackURL := c.CallbackUrl + "/" + encodeCallbackModelID(c.Model) + callbackauth.GenerationPath(token)
+	if perModel {
+		callbackURL += "/m"
+	}
+	return callbackURL, nodeID, nil
 }
 
 // NodeWorkerCommand defines the interface for commands executed by NodeWorker
@@ -258,6 +277,7 @@ type StartPoCNodeCommandV2 struct {
 	BlockHash            string
 	PubKey               string
 	CallbackUrl          string
+	CallbackSigner       *callbackauth.Signer
 	TotalNodes           int
 	ModelNodeID          *int
 	Model                string
@@ -327,23 +347,28 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		}
 	}
 
+	callbackURL, nodeID, err := c.generationCallback(int(worker.node.Node.NodeNum))
+	if err != nil {
+		logging.Error("[StartPoCNodeCommandV2] Failed to build callback URL", types.PoC, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
+		return result
+	}
+
 	req := mlnodeclient.PoCInitGenerateRequestV2{
 		BlockHash:   c.BlockHash,
 		BlockHeight: c.BlockHeight,
 		PublicKey:   c.PubKey,
-		NodeId:      int(worker.node.Node.NodeNum),
+		NodeId:      nodeID,
 		NodeCount:   c.TotalNodes,
 		Params: mlnodeclient.PoCParamsV2{
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
 		},
-		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
+		URL:            callbackURL,
 		PocStrongerRng: c.PocStrongerRng,
-	}
-
-	if c.ModelNodeID != nil {
-		req.NodeId = *c.ModelNodeID
-		req.URL += "/m"
 	}
 
 	if err := initGenerateV2Checked(ctx, worker, req); err != nil {

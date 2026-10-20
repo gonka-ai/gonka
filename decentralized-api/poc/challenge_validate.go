@@ -58,7 +58,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 				"target", ch.Target(), "start_height", ch.StartHeight())
 			continue
 		}
-		workItems := v.challengeWorkItems(queryClient, ch)
+		workItems := v.challengeWorkItems(queryClient, ch, pocParams)
 		if len(workItems) == 0 {
 			logging.Info("OffChainValidator: no challenge work items", types.PoC,
 				"target", ch.Target(), "start_height", ch.StartHeight())
@@ -70,10 +70,15 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 	}
 }
 
-func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch *types.OpenPoCChallenge) []participantWork {
+func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch *types.OpenPoCChallenge, pocParams *types.PocParams) []participantWork {
 	workItems := make([]participantWork, 0, len(ch.Commits))
 	for _, commit := range ch.Commits {
 		if commit == nil {
+			continue
+		}
+		if belowMinCommitCount(pocParams, commit.ModelId, commit.Count) {
+			logging.Info("OffChainValidator: skipping challenge commit below min_count", types.PoC,
+				"address", commit.ParticipantAddress, "modelId", commit.ModelId, "count", commit.Count)
 			continue
 		}
 		participantResp, err := queryClient.Participant(context.Background(),
