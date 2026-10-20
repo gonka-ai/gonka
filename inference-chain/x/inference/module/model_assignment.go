@@ -514,9 +514,9 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		var declaredModelsByNode map[string][]string
 		if found {
 			declaredModelsByNode = supportedModelsByNode(hardwareNodes, governanceModels)
-			for _, nodeId := range sortedKeys(declaredModelsByNode) {
-				ma.LogInfo("Supported models by node", types.Allocation, "flow_context", FlowContext, "step", "supported_models_by_node", "node_id", nodeId, "supported_models", declaredModelsByNode[nodeId])
-			}
+			ma.LogInfo("Supported models by node", types.Allocation,
+				"flow_context", FlowContext, "step", "supported_models_by_node",
+				"participant_index", p.Index, "nodeCount", len(declaredModelsByNode))
 		} else {
 			// Hardware not registered yet (e.g. genesis bootstrap race). The
 			// compatibility filter is skipped, but single assignment below still
@@ -530,12 +530,12 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		if len(ambiguous) > 0 {
 			ma.LogWarn("Dropping ML nodes with conflicting validated model claims (one ML node serves one model)", types.Allocation,
 				"flow_context", FlowContext, "step", "ambiguous_nodes_drop",
-				"participant_index", p.Index, "node_ids", ambiguous)
+				"participant_index", p.Index, "nodeCount", len(ambiguous))
 		}
 		if len(incompatible) > 0 {
 			ma.LogWarn("Dropping validated claims not declared by the hardware inventory", types.Allocation,
 				"flow_context", FlowContext, "step", "hardware_filter_drop",
-				"participant_index", p.Index, "dropped_claims", incompatible)
+				"participant_index", p.Index, "droppedClaimCount", len(incompatible))
 		}
 
 		keptByModel := make(map[string][]*types.MLNodeInfo, len(validated))
@@ -573,19 +573,27 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 			}
 			supportedModels = append(supportedModels, modelId)
 			newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: modelMLNodes})
-			ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", modelId, "assigned_nodes", modelMLNodes)
+			ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", modelId, "assignedNodeCount", len(modelMLNodes))
 		}
 
 		if len(incompatible) > 0 || len(ambiguous) > 0 {
 			ma.LogWarn("Participant lost validated ML nodes during seating", types.Allocation,
 				"flow_context", FlowContext, "step", "seating_drop_summary",
-				"participant_index", p.Index, "incompatible", incompatible,
-				"ambiguous", ambiguous, "remaining_models", supportedModels)
+				"participant_index", p.Index, "incompatibleCount", len(incompatible),
+				"ambiguousCount", len(ambiguous), "remainingModelCount", len(supportedModels))
 		}
 
 		p.MlNodes = newMLNodeArrays
 		p.Models = supportedModels
-		ma.LogInfo("Participant models and ML nodes updated", types.Allocation, "flow_context", FlowContext, "step", "participant_updated", "participant_index", p.Index, "supported_models", p.Models, "ml_nodes", p.MlNodes)
+		seatedNodeCount := 0
+		for _, bucket := range p.MlNodes {
+			if bucket != nil {
+				seatedNodeCount += len(bucket.MlNodes)
+			}
+		}
+		ma.LogInfo("Participant models and ML nodes updated", types.Allocation,
+			"flow_context", FlowContext, "step", "participant_updated",
+			"participant_index", p.Index, "supportedModelCount", len(p.Models), "mlNodeCount", seatedNodeCount)
 	}
 	ma.LogInfo("Finished model assignment for all participants", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete")
 }

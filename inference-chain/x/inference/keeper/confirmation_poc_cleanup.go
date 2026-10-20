@@ -112,7 +112,10 @@ func (k Keeper) PruneConfirmationPoC(ctx context.Context, currentEpochIndex int6
 		return err
 	}
 
-	iter, err := k.ConfirmationPoCEvents.Iterate(ctx, nil)
+	// Start at the stored event. Earlier records stay behind the cursor and are
+	// not decoded again on later blocks.
+	iter, err := k.ConfirmationPoCEvents.Iterate(ctx, new(collections.Range[collections.Pair[uint64, uint64]]).
+		StartInclusive(collections.Join(cursor.EpochIndex, cursor.EventSequence)))
 	if err != nil {
 		return err
 	}

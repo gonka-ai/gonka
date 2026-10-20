@@ -591,7 +591,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
-		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight, "validatorCount", len(computeResult))
 
 		// Cap governance/validator power at each participant's previous-epoch
 		// confirmed weight before applying temporary guardian enhancement.

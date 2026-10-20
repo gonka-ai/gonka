@@ -134,7 +134,8 @@ func (wc *PoCWeightCalculator) Calculate() []*types.ActiveParticipant {
 		existing, found := activeParticipantsMap[activeParticipant.Index]
 		if !found {
 			activeParticipantsMap[activeParticipant.Index] = activeParticipant
-			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC, "activeParticipant", activeParticipant, "modelId", key.ModelID)
+			wc.Logger.LogInfo("Calculate: Setting compute validator.", types.PoC,
+				"participant", activeParticipant.Index, "modelId", key.ModelID, "weight", activeParticipant.Weight)
 			continue
 		}
 		existing.Weight += activeParticipant.Weight
@@ -210,7 +211,8 @@ func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantMode
 		})
 	}
 
-	wc.Logger.LogInfo("Calculate: mlNodes", types.PoC, "mlNodes", mlNodes)
+	wc.Logger.LogInfo("Calculate: mlNodes", types.PoC,
+		"participant", key.ParticipantAddress, "modelId", key.ModelID, "nodeCount", len(mlNodes))
 
 	firstMLNodeArray := &types.ModelMLNodes{
 		MlNodes: mlNodes,
@@ -232,12 +234,8 @@ func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantMode
 func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipantModelKey) []types.PoCValidationV2 {
 	vals := wc.Validations[key]
 
-	validators := make([]string, len(vals))
-	for i, v := range vals {
-		validators[i] = v.ValidatorParticipantAddress
-	}
 	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
-		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals), "validators", validators)
+		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals))
 
 	// Filter to validations from participants with voting power for this model.
 	// The filtered list feeds the majority math only; the guardian tiebreaker
@@ -257,12 +255,8 @@ func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipan
 		}
 	}
 
-	filteredValidators := make([]string, len(filteredVals))
-	for i, v := range filteredVals {
-		filteredValidators[i] = v.ValidatorParticipantAddress
-	}
 	wc.Logger.LogInfo("Calculate: filtered validations to model validators with voting power", types.PoC,
-		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(filteredVals), "validators", filteredValidators)
+		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(filteredVals))
 
 	return filteredVals
 }
@@ -941,8 +935,13 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 
 	// Build inference-serving node IDs for filtering
 	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
+	servingNodeCount := 0
+	for _, nodes := range inferenceServingNodeIds {
+		servingNodeCount += len(nodes)
+	}
 	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
-		"inferenceServingNodeIds", inferenceServingNodeIds)
+		"participantCount", len(inferenceServingNodeIds),
+		"nodeCount", servingNodeCount)
 
 	// Filter out store commits with distributions that only have inference-serving nodes
 	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(allStoreCommits, allWeightDistributions, inferenceServingNodeIds)
