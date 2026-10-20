@@ -1,26 +1,19 @@
-# Proposal: signed stream checkpoints and empty-stream evidence
+# Proposal: empty-stream evidence, signed checkpoints and frame coalescing
 
-**Status:** Draft for discussion
+**Status:** Draft for discussion. Updated after #2000's design was rewritten to a gateway-started challenge protocol (vitaly-andr, 2026-10-20).
 **Issues:** #1808 (per-chunk stream signatures), #1841 (stream chunk signatures and empty stream detection) — milestone Devshard v7
-**Consumer:** #2000 path 2 (gateway-started count vote, vitaly-andr)
+**Consumer:** #2000, whose PR 1 now contains the empty-stream verdict
 **Base:** `devshard-0.2.x-v6` @ `3c924cbf6` (line numbers below are at this commit)
 
 ## Summary
 
-The executor signs two things on an inference: the receipt (`MsgConfirmStart.ExecutorSig`) and the Finish (`MsgFinishInference.ProposerSig`, which covers `ResponseHash` and `ServedHash`, the whole served body). **The stream between them carries no signature** (`cmd/devshardctl/redundancy.go:4223` says so outright). That leaves two gaps:
+Item 3 was "sign stream chunks and detect empty streams". The design below reached three conclusions, in the order they were learned.
 
-- **A cut stream leaves the gateway with nothing.** It holds a prefix that no signature covers, and `ReceivedResponseHasher.Sums()` returns nil without `[DONE]` or `devshard_meta` (`common/completionapi/served_projection.go:86`). This is what #2000 path 2 needs when the executor withholds the stored body.
-- **No one counts what was served.** The Finish's `InputTokens`/`OutputTokens` set the payment (`state/machine.go:1372`, capped at the reservation), and nothing compares them with the body. An empty stream is the extreme case: the host is paid for a body that carries no answer at all.
+1. **An empty body proves nothing on its own.** #1972 (`00578912e`, in this base) removed the always-on `min_tokens = 64` floor, so an honest engine returns a complete empty stream whenever EOS comes first, and a client can force one through `stop`, `logit_bias`, `stop_token_ids`, a grammar or the thinking knobs. Turning an empty body into a `MsgErrorMiss` — an earlier revision of this proposal — doesn't survive that. **Withdrawn.**
+2. **Empty-stream detection moves to #2000's PR 1, as the `EMPTY_STREAM` reason.** The voters there fetch the stored body from the executor and hold it against the signed Finish, so the gateway contributes nothing but the challenge. What is left for this branch is the trigger, one correction to the evidence rule, and a separate gateway-local fix.
+3. **Signed chunks are not needed by that design.** #2000's voters take nothing from the gateway but the inference id. Signed checkpoints are held in this document for an A K decision on #1808; they close one case the challenge can't settle without a GPU (see "Held: signed checkpoints").
 
-**An empty stream is not by itself a fault.** #1972 (`00578912e`, in this base) removed the always-on `min_tokens = 64` floor, so an honest engine returns a complete empty stream whenever EOS comes first. A client can also force that, with `stop`, `logit_bias`, `stop_token_ids`, a grammar, or the thinking knobs. An earlier version of this proposal turned a complete empty stream into a `MsgErrorMiss`, with a request-bound carve-out. It doesn't survive #1972: no request field separates an honest empty stream from a host that returned nothing. This revision withdraws that design.
-
-**What replaces it.** The fault is not an empty body. It is a host claiming output tokens it did not generate, which is exactly #2000's dispute. Item 3's job is to give that dispute the token-level evidence it lacks:
-
-1. **Signed checkpoint evidence (PR B).** A running hash over the served lines, with a signed `(seq, output_tokens, head)` every 64 lines and at the end. An executor that cut the stream can no longer deny what it sent, or what the MLNode had generated up to the last checkpoint. The token count comes from the MLNode, so the gateway only hashes lines and recovers signatures.
-2. **An empty body that claims tokens is a signal for #2000.** A served body with no content and a Finish claiming `output_tokens > 0` is the shape #2000's recount exists for. The gateway can hand it over with the lines it holds, without a body fetch.
-3. **Frame coalescing (PR C, A K's question).** Batch the gzip flushes, not the JSON events. 52 bytes per token today → 15. Signing every chunk would take the answer to about 4x. A checkpoint every 64 lines adds about 5%.
-
-The detailed tables and measurements are below.
+Frame coalescing (A K's gzip question) is independent of both and still stands: **52 bytes per token today → 15** when the gzip flush is batched, while a signature on every event would take it to 4x.
 
 ## Background: what is signed today
 
@@ -52,7 +45,7 @@ The argument is gone:
 - **A caller's `min_tokens` doesn't close it either.** A host that forces a lone-byte token (e.g. id 159 on DeepSeek-V4-Flash, byte 0xE0) leaves the decoded text ending in U+FFFD, which the incremental detokenizer does not emit (`vllm/v1/engine/detokenizer.py:211-247` in gonka-ai/vllm `befecf605`). Nothing is streamed, and the Finish says `completion_tokens = max_tokens`.
 - **Thinking knobs do the same.** An honest `</think>` followed by EOS streams nothing, because the parser engine treats the delimiter as closing reasoning only. The `min_tokens` that rules this out is model-dependent.
 
-A carve-out keyed on `stop` (the previous revision) covers one route and not the others, and the other candidate keys don't hold either:
+A carve-out keyed on `stop` covers one route and not the others, and the other candidate keys don't hold either:
 
 | Key | Why it fails |
 |---|---|
@@ -62,6 +55,28 @@ A carve-out keyed on `stop` (the previous revision) covers one route and not the
 | Exempt only long `stop` entries | Needs a per-tokenizer lower bound on characters per token, which the split-UTF-8 case puts at about 16. |
 
 So: **an empty body proves nothing.** What a host can still be wrong about is the number of tokens it claims, and that is what #2000 disputes.
+
+## Where this goes now: #2000's challenge protocol
+
+#2000 was rewritten (2026-10-20) to a gateway-started challenge: the gateway sends `VerifyChallenge(inference_id, reason)` with no evidence, every host fetches the request and the stored body from the executor, checks them against the signed Finish, and votes. Above `VoteThreshold` the record is Invalidated and the payment is refunded. Its PR 1 is the protocol, PR 2 adds CPU token counting, PR 3 raises the replay probability for challenged inferences.
+
+Empty-stream detection is **item 8 of PR 1**, under the `EMPTY_STREAM` reason: a signed receipt, then a stream that ended with no content. The voters' evidence is the stored body, not what the gateway received.
+
+### What this branch still owns
+
+**1. The trigger.** The gateway knows when to send `EMPTY_STREAM`: the attempt has a receipt, ended with no content, and holds a signed Finish. That is `isEmptyStreamAttempt` (`redundancy.go:4445`) combined with the Finish artifacts the ErrorMiss path already collects. The state machine rejects the challenge for a non-Finished record, so a stream with no Finish stays on the timeout path as today.
+
+**2. One correction to the evidence rule.** #2000's wording is "the stored body is missing or has no content either". Read as *text*, that flags honest hosts. In all three client-forceable cases above the stored body has no text:
+
+| Case | Served and stored text | Stored per-token positions |
+|---|---|---|
+| `stop` match at offset 0 | empty | one per generated token |
+| lone-byte token (U+FFFD) | empty | one per generated token |
+| `</think>` then EOS | empty | one per generated token |
+
+The rule has to read *content* as **generated token positions**, not as text: `EMPTY_STREAM` only when the stored body has no positions either, or is missing. That is the same quantity #2000's PR 2 counts, so it is a clarification rather than a new mechanism. The executor already forces the data: `logprobs = true` and `return_token_ids = true` (`common/completionapi/request.go:46,57`). The stored body keeps one `logprobs.content` entry per generated token; `responseprocessor.go:112` drops `token_ids`, and the logprob compression drops `logprob` and `bytes` per entry (`logprobs_compress.go:13`) but never the entry itself.
+
+**3. The gateway-local strike, separately.** `recordSample` charges every empty stream to the host (`redundancy.go:5206-5218`) unless it is Kimi reasoning burn, and `isModelBurnEmpty` is scoped to a model that is retired (`:4463`). After #1972 that penalises honest empty streams with a 30-minute shadow quarantine. The gateway holds the request and doesn't need a vote, so this can be fixed on its own, in this branch, ahead of anything else. **This is the one change here that ships regardless of #2000.**
 
 ## Production data
 
@@ -74,19 +89,20 @@ From one production gateway's `empty_stream` log stage, over one day. Only share
 
 Empty streams were somewhat under a tenth of all attempts.
 
-- **Receipt only.** In a traced example, no token arrived for 300 s. An execution timeout vote then accepted, ending `TIMEOUT_REASON_EXECUTION`. This shape is already a miss today: no Finish, so `isEmptyStreamAttempt` runs and the timeout path accounts for it. Nothing here changes.
-- **A body followed.** In a traced example, the nonce was finished and the timeout was skipped with `empty_stream_without_non_empty_winner` (`skipEmptyStreamTimeout`, `redundancy.go:4241`). The host was paid. This is the shape that needs the evidence below.
+- **Receipt only.** In a traced example, no token arrived for 300 s. An execution timeout vote then accepted, ending `TIMEOUT_REASON_EXECUTION`. This shape is already accounted for: no Finish, so the timeout path decides, and #2000 can't challenge it. Nothing here changes.
+- **A body followed.** In a traced example, the nonce was finished and the timeout was skipped with `empty_stream_without_non_empty_winner` (`skipEmptyStreamTimeout`, `redundancy.go:4241`). The host was paid. This is the shape `EMPTY_STREAM` targets.
 - **Two sub-shapes in that 1.5% that the logs can't explain.**
   - Almost all of it is 1-3 chunks of up to about 1 MB, with no content the gateway recognises and `usage_tokens = 0`.
   - A handful are GLM-5.3-Flash streams of thousands of chunks, with `usage_tokens` in the thousands, and no content the gateway recognises either.
 
-  Both are worth classifying before the count vote is scoped: the second could be an honest answer in a field the content predicate doesn't know, which a recount would call a mismatch.
-- The gateway logs no request parameters beyond `request_flags` (`redundancy.go:306`), so the share of traffic carrying `stop`, `logit_bias` or `stop_token_ids` is unknown. Adding `stop_count`, `stop_max_len` and `logit_bias_count` to `request_flags` would measure it, and that is now only useful for sizing the recount, not for a rule.
-- The local strike has the same problem as the old rule. `recordSample` charges every empty stream to the host (`redundancy.go:5206-5218`) unless it is Kimi reasoning burn, and `isModelBurnEmpty` is scoped to a model that is retired (`:4463`). After #1972 this penalises honest empty streams. It should be fixed separately in the gateway, which holds the request and needs no vote.
+  The second is the reason the positions-based reading matters: it may be a body with thousands of positions and no text the current predicate knows, which the gateway calls empty and the voters would call honest.
+- The gateway logs no request parameters beyond `request_flags` (`redundancy.go:306`). Adding `stop_count` and `stop_token_ids_count` there would size the challenge volume, since a client-forced empty body is a challenge that ends `NONE`.
 
-## PR B: signed stream checkpoints
+## Held: signed checkpoints
 
-Unchanged in direction by the #1972 finding. It is now the evidence layer for #2000 rather than for a miss rule.
+**Status:** held, pending an A K decision on whether #1808 stays in v7. #2000's voters take nothing from the gateway, so the count vote doesn't need these.
+
+There is one case they would settle that the challenge cannot, from #2000's own table: *streams a short text, cuts, stores a self-consistent long body and signs it*. The voters see matching hashes and a count that matches the stored body, so it stands, with only the raised replay probability of PR 3 against it. A signed chain over the served lines would let the voters prove the served prefix was shorter than the stored body, **without a GPU**.
 
 ### Chain
 
@@ -125,19 +141,11 @@ Signed with the same key as the Finish (`h.signer`, the warm key on joins) and v
 
 ### Cadence
 
-- one checkpoint as soon as the first token has been written, content-bearing or not, which proves generation started and pins the count so far;
+- one checkpoint as soon as the first token has been written, content-bearing or not;
 - every `N = 64` lines;
 - one `final` right before `[DONE]`.
 
-An optional `T = 2 s` heartbeat while lines flow slower than that. **Open question 2.**
-
-The first checkpoint is what an empty-with-tokens stream needs. A stream that generates tokens whose text never appears still emits chunks — cyber's reproduce has one chunk per step, `delta.content == ""`, carrying logprobs. If the first checkpoint is taken on the first token rather than the first visible content, such a stream carries a signed `output_tokens` before it ends. What it does not carry is proof that those tokens are honest: see "The case this does not settle".
-
-### Where the token count comes from
-
-From the MLNode, which is what A K asked for. The request rewrite forces `logprobs = true` with `top_logprobs` (`common/completionapi/request.go:46`) and `return_token_ids = true` (`:57`), so every content chunk carries one `logprobs.content` entry per generated token. The executor's `ExecutorResponseProcessor` parses those chunks anyway; summing `len(logprobs.content)` is the fallback `StreamedCompletionResponse.GetUsage` already uses (`completionresponse.go:207-212`). On the final checkpoint the count must equal the Finish's `OutputTokens`; a mismatch is a gateway-local strike and a signal #2000 can use.
-
-The gateway does no tokenizing and no counting: it hashes lines (0.12 µs each) and recovers a signature per checkpoint.
+An optional `T = 2 s` heartbeat while lines flow slower than that.
 
 ### Negotiation (required, not optional)
 
@@ -146,32 +154,13 @@ A gateway on today's code forwards an unknown `devshard_*` line as inference dat
 - `InferenceRequest.stream_checkpoints = 6` (bool) in `proto/devshard/transport/v1/session.proto:25-31`, and the matching field in the HTTP JSON request.
 - An old host ignores the field; an old gateway never sets it.
 
-### Gateway side
+### Gateway side, and what a voter gains
 
 - `handleSSELine` handles `devshard_checkpoint` like `devshard_meta`: not forwarded, not added to `ReceivedResponseHasher`.
-- The gateway keeps its own chain over forwarded lines and at each checkpoint checks the head, the signature, `seq` against the lines received, and that `output_tokens` is non-decreasing. A failure is a strike; the attempt cannot win.
-- The last valid checkpoint is kept on `inflight` and on the session for the nonce, for `servedBindingRetention` (`user/served_binding.go:115`).
+- The gateway keeps its own chain over forwarded lines, checks head, signature, `seq` and a non-decreasing `output_tokens` at each checkpoint, and keeps the last valid one for `servedBindingRetention` (`user/served_binding.go:115`).
+- A challenge carries the prefix: `{lines[0..seq), checkpoint}`. The voter recomputes the head and compares the checkpoint's count with the stored body's. A stored body shorter than the prefix is a direct fault; a stored body longer than the prefix where the served text stopped is the case from #2000's table.
 
-## What #2000 gets
-
-Artifact: `{request, finish, lines[0..seq), checkpoint}`. The receipt is not in it: its fields repeat `MsgStartInference`, and `h_0` already binds `escrow_id`, `inference_id` and `prompt_hash` from the Start (vitaly-andr). The Finish is needed: payment comes from it, and #2000 also disputes `input_tokens`, which only the Finish carries.
-
-A voter:
-
-1. Checks the request against `prompt_hash`, and the Finish signature against the executor slot.
-2. Recomputes `head` from the lines and recovers the checkpoint signer.
-3. Recounts the text with the model's renderer. If the signed `output_tokens` exceeds that count beyond tolerance, the executor signed an inflated claim. No body fetch is needed.
-4. On a complete stream, checks that the final checkpoint's count equals the Finish's `OutputTokens`.
-5. On a cut stream, knows the honest count of the prefix. Only the tail after `seq` needs the stored body. The executor can't substitute a different prefix, because the chain would no longer extend the signed head.
-6. On a stream whose body carries no content, compares the checkpoint's `output_tokens` with the Finish's. A checkpoint and a Finish that both say zero is honest. A Finish above the checkpoint is a claim the host signed after its own last checkpoint, and the count vote is what judges it. A checkpoint that is itself above zero over an empty body is the shape in "The case this does not settle": the host says it generated tokens that the client never saw, and only a replay can say whether that is true.
-
-This narrows #2000's fetch path but doesn't remove it: a tail the gateway never received can't be counted from the gateway's side.
-
-### The case this does not settle
-
-A stream that carries tokens which decode to nothing (the lone-byte and `</think>` cases above) looks like an honest empty body to the gateway, and to a text recount it looks like an answer with no content against a nonzero claim. So the recount will flag it, correctly by its own rule and wrongly for an honest host. Text alone can't separate it from a host that generated nothing and claimed tokens. That case needs the full replay #2000 already sketches, on a sample, not on every empty stream. This proposal supplies the prioritisation signal; the budget and the sampling stay with #2000.
-
-## PR C: frame coalescing (A K's question)
+## Frame coalescing (A K's question)
 
 ### Setup
 
@@ -199,24 +188,23 @@ Synthetic corpus: mixed English and Chinese split into BPE-like pieces of up to 
 - Signing every event is not viable — about 4x the bytes, and ~22 ms of signing per 2,000-token answer. Periodic checkpoints are the design that survives contact with the wire.
 - Merging tokens into one event saves another 20-30%, but it changes the stored body (`{"events":[...]}`) that validators replay token by token, and it changes what streaming clients see. Not worth 3-4 bytes per token.
 - The knob already exists: `SetChatGzipCoalesce(ChatGzipCoalesceBytes)`, 1024 bytes ≈ 5 tokens (`transport/chat_gzip.go:18-31`). Only tests call it, so production flushes per token. The first token leaves alone (`firstTokenReady`, `chat_gzip.go:197`), so TTFT is unchanged.
-- **What's missing is a time bound.** A byte cut alone holds tokens until 1,024 bytes accumulate — at 20 tokens/s, about 250 ms. PR C adds a hold limit (proposal: 50 ms) and turns the knob on.
-- This applies to the peer RPC (gzip) path. The HTTP inference path appears to be uncompressed SSE; `ResponseCompressionMiddleware` (`transport/compression.go:27`) has no production caller I could find. Worth confirming before PR C.
+- **What's missing is a time bound.** A byte cut alone holds tokens until 1,024 bytes accumulate — at 20 tokens/s, about 250 ms. The change adds a hold limit (proposal: 50 ms) and turns the knob on.
+- This applies to the peer RPC (gzip) path. The HTTP inference path appears to be uncompressed SSE; `ResponseCompressionMiddleware` (`transport/compression.go:27`) has no production caller I could find. Worth confirming first.
 
 ### Caveats
 
-The corpus is synthetic. Real traffic with tool calls and reasoning compresses differently, and real inter-token timing is what the hold limit is for. Before PR C merges, confirm with #1989's prod-like loadtest: bytes per token and TTFT, knob off vs on.
+The corpus is synthetic. Real traffic with tool calls and reasoning compresses differently, and real inter-token timing is what the hold limit is for. Before this merges, confirm with #1989's prod-like loadtest: bytes per token and TTFT, knob off vs on.
 
 ## Out of scope
 
-- **Receipt then silence (#1823).** No body exists, so there is nothing to sign. The stall timeout (#1798) and the timeout vote cover it, and the issue itself is about a host taking the receipt under PoC load. A `T`-second heartbeat checkpoint would let the gateway tell "alive, producing nothing" from "dead"; that is open question 2.
-- **Changing `MsgFinishInference`.** The final `head` could go into the Finish as field 11 to bind the chain on-chain. Nothing here needs it, and it would be a state-root change. Leave it until #2000 shows a need.
-- **Gateway-side tokenization.** Per A K, the count stays on the MLNode; the recount belongs to #2000's voters.
+- **Receipt then silence (#1823).** No Finish, so no challenge reaches it; the stall timeout (#1798) and the timeout vote cover it.
+- **Changing `MsgFinishInference`.** Binding the final chain head in the Finish would be a state-root change. Nothing here needs it.
+- **Gateway-side tokenization.** Per A K, the count stays on the MLNode and the recount belongs to #2000's CPU voters.
 - **A protocol miss for empty streams.** Withdrawn, see "Why an empty stream is not a miss".
 
 ## Open questions
 
-1. **Empty-with-tokens priority.** Should the gateway mark a served body with no content and `output_tokens > 0` as a priority replay target for #2000? If so, the signal has to survive the session, not just the attempt.
-2. **Cadence.** Is `N = 64` lines right? Do we want the `T`-second heartbeat checkpoint? It would also give #1823 a signed "alive, silent" signal.
-3. **The two production shapes.** What are they? This decides whether the recount scoped by #2000 will see honest answers as mismatches.
-4. **Artifact ownership.** Does PR B's checkpoint land in this repo for #2000, or does #2000 define it and this proposal implement the executor side?
-5. **Order.** PR B needs a negotiated field, so every gateway must be upgraded before hosts emit checkpoints. PR C is independent and can go first. Is that the order?
+1. **`EMPTY_STREAM` on positions, not text.** Confirm the change with vitaly (:2000 item 8). Without it the reason invalidates honest hosts on a client-forced empty body.
+2. **Does #1808 stay in v7?** Signed checkpoints now buy exactly one row of #2000's table without a GPU (self-consistent stored body after a cut). That is an A K decision on scope.
+3. **The two production shapes.** What are they? The positions-based reading depends on knowing whether the GLM bodies carry positions without text.
+4. **Order.** The gateway-local strike fix is independent and can go now. The `EMPTY_STREAM` trigger waits on #2000 PR 1's protocol. Coalescing is independent of both. Is that the order?
