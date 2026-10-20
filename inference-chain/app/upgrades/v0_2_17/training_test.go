@@ -168,13 +168,18 @@ func TestRepairTrainshardReservations(t *testing.T) {
 		Status:       inferencetypes.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
 		Nodes:        []*inferencetypes.TrainshardReservedNode{node("returning", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, 300)},
 	}))
-	for nodeId, shardId := range map[string]uint64{"leased": 1, "kicked": 1, "returning": 2, "foreign": 2, "orphan": 3} {
+	for nodeId, shardId := range map[string]uint64{"leased": 1, "kicked": 1, "returning": 2, "deferred": 2, "foreign": 2, "orphan": 3} {
 		require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join("host", nodeId), shardId))
 	}
+	shard2, err := k.Trainshards.Get(ctx, 2)
+	require.NoError(t, err)
+	shard2.Nodes = append(shard2.Nodes, node("deferred", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, 300))
+	require.NoError(t, k.Trainshards.Set(ctx, 2, shard2))
+	require.NoError(t, k.TrainshardReleaseIndex.Set(ctx, collections.Join3(int64(301), "host", "deferred")))
 
 	require.NoError(t, repairTrainshardReservations(ctx, k))
 
-	for nodeId, kept := range map[string]bool{"leased": true, "kicked": true, "returning": true, "foreign": false, "orphan": false} {
+	for nodeId, kept := range map[string]bool{"leased": true, "kicked": true, "returning": true, "deferred": true, "foreign": false, "orphan": false} {
 		has, err := k.TrainshardReservations.Has(ctx, collections.Join("host", nodeId))
 		require.NoError(t, err)
 		require.Equal(t, kept, has, nodeId)
@@ -187,6 +192,7 @@ func TestRepairTrainshardReservations(t *testing.T) {
 	require.Equal(t, []collections.Triple[int64, string, string]{
 		collections.Join3(int64(120), "host", "kicked"),
 		collections.Join3(int64(300), "host", "returning"),
+		collections.Join3(int64(301), "host", "deferred"),
 	}, indexed)
 
 	require.NoError(t, repairTrainshardReservations(ctx, k))

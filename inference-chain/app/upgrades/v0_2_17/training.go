@@ -179,6 +179,15 @@ func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
 		return fmt.Errorf("walk trainshard reservations: %w", err)
 	}
 
+	type nodeRef struct{ participant, nodeId string }
+	returning := make(map[nodeRef]bool)
+	if err := k.TrainshardReleaseIndex.Walk(ctx, nil, func(key collections.Triple[int64, string, string]) (bool, error) {
+		returning[nodeRef{key.K2(), key.K3()}] = true
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk trainshard release index: %w", err)
+	}
+
 	shards := make(map[uint64]*types.Trainshard)
 	dropped, indexed := 0, 0
 	for _, reservation := range reservations {
@@ -214,7 +223,7 @@ func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
 			dropped++
 			continue
 		}
-		if active && shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
+		if returning[nodeRef{key.K1(), key.K2()}] || (active && shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE) {
 			continue
 		}
 		if err := k.TrainshardReleaseIndex.Set(ctx, collections.Join3(until, key.K1(), key.K2())); err != nil {
