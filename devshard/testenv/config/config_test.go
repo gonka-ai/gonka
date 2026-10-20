@@ -69,3 +69,26 @@ func TestValidate_SlotsCountOnChainIdentitiesNotContainers(t *testing.T) {
 	cfg.Escrow.Slots = 2
 	require.ErrorContains(t, cfg.Validate(), "on-chain host identities")
 }
+
+func TestPostgresServices(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+		Postgres: config.PostgresCfg{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+	require.Equal(t, []string{"devshard-postgres"}, config.PostgresServices(cfg))
+	require.Equal(t, "devshard-postgres", config.PostgresServiceFor(cfg, cfg.Hosts[2]))
+
+	cfg.Postgres.PerParticipant = true
+	require.Equal(t, []string{"devshard-postgres-versiond-0", "devshard-postgres-versiond-2"}, config.PostgresServices(cfg))
+	require.Equal(t, "devshard-postgres-versiond-0", config.PostgresServiceFor(cfg, cfg.Hosts[1]))
+	require.Equal(t, "devshard-postgres-versiond-2", config.PostgresServiceFor(cfg, cfg.Hosts[2]))
+
+	cfg.Postgres.Enabled = false
+	require.Empty(t, config.PostgresServices(cfg))
+}
