@@ -117,6 +117,56 @@ func backfillTrainshardNodeStatuses(ctx context.Context, k keeper.Keeper) error 
 	return nil
 }
 
+func backfillTrainshardWeightEpochs(ctx context.Context, k keeper.Keeper) error {
+	var missing []types.Trainshard
+	if err := k.Trainshards.Walk(ctx, nil, func(id uint64, shard types.Trainshard) (bool, error) {
+		has, err := k.TrainshardWeightEpoch.Has(ctx, id)
+		if err != nil {
+			return true, err
+		}
+		if !has {
+			missing = append(missing, shard)
+		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk trainshards for weight epoch backfill: %w", err)
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+
+	effective, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return fmt.Errorf("backfill trainshard weight epochs: %w", types.ErrEffectiveEpochNotFound)
+	}
+	updated := 0
+	for _, shard := range missing {
+		epochIndex, found := effectiveEpochAt(ctx, k, effective, shard.CreatedAtHeight)
+		if !found {
+			k.LogError("trainshard weight epoch unresolved, the shard carries nothing", types.Upgrades,
+				"trainshard_id", shard.TrainshardId, "created_at_height", shard.CreatedAtHeight)
+			continue
+		}
+		if err := k.TrainshardWeightEpoch.Set(ctx, shard.TrainshardId, epochIndex); err != nil {
+			return fmt.Errorf("set weight epoch of trainshard %d: %w", shard.TrainshardId, err)
+		}
+		updated++
+	}
+	k.LogInfo("backfilled trainshard weight epochs", types.Upgrades, "updated", updated, "unresolved", len(missing)-updated)
+	return nil
+}
+
+func effectiveEpochAt(ctx context.Context, k keeper.Keeper, effective uint64, height int64) (uint64, bool) {
+	for epochIndex := effective; ; epochIndex-- {
+		if data, found := k.GetEpochGroupData(ctx, epochIndex, ""); found && data.EffectiveBlockHeight < height {
+			return epochIndex, true
+		}
+		if epochIndex == 0 {
+			return 0, false
+		}
+	}
+}
+
 func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 	iter, err := k.TrainingNodeOptIns.Iterate(ctx, nil)
 	if err != nil {

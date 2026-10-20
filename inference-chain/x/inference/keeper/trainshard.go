@@ -134,6 +134,7 @@ type trainingEpochNode struct {
 }
 
 type trainingEpochView struct {
+	epochIndex      uint64
 	nodes           map[string]*trainingEpochNode
 	modelCapacity   map[string]int
 	profileCapacity map[string]int
@@ -224,6 +225,7 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 	}
 
 	view := &trainingEpochView{
+		epochIndex:      epochIndex,
 		nodes:           make(map[string]*trainingEpochNode),
 		modelCapacity:   make(map[string]int),
 		profileCapacity: make(map[string]int),
@@ -370,14 +372,14 @@ func (k Keeper) selectTrainshardNodes(
 	gpuProfileId string,
 	nodeCount uint32,
 	params *types.TrainingParams,
-) ([]*types.TrainshardReservedNode, error) {
+) ([]*types.TrainshardReservedNode, uint64, error) {
 	view, err := k.buildTrainingEpochView(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	reserved, err := k.buildTrainingReservedCounts(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	guardians := k.trainingGuardianSet(ctx)
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
@@ -402,7 +404,7 @@ func (k Keeper) selectTrainshardNodes(
 		}
 		opted, err := k.hasLiveTrainingOptIn(ctx, node.participant, node.nodeId, height)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if !opted {
 			skipped.optIn++
@@ -412,7 +414,7 @@ func (k Keeper) selectTrainshardNodes(
 		// the only place a coordinator takes an address from
 		node.endpoint, err = k.trainingEndpoint(ctx, node.participant, node.nodeId)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if node.endpoint == "" {
 			skipped.endpoint++
@@ -498,7 +500,7 @@ func (k Keeper) selectTrainshardNodes(
 	}
 
 	if uint32(takenTotal) < nodeCount {
-		return nil, types.ErrTrainshardCapacity.Wrapf(
+		return nil, 0, types.ErrTrainshardCapacity.Wrapf(
 			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d under a PoC challenge, %d without a live opt-in, "+
 				"%d without an endpoint, %d already reserved, %d without a reliable weight rate (%d participants needed), "+
 				"%d over the total reserve cap (%d), "+
@@ -508,7 +510,7 @@ func (k Keeper) selectTrainshardNodes(
 			skipped.totalCap, params.MaxTotalReservedNodes,
 			skipped.profileCap, profileCap, skipped.modelCap)
 	}
-	return picked, nil
+	return picked, view.epochIndex, nil
 }
 
 func reserveShareCap(capacity int, shareBps uint32) int {
@@ -559,13 +561,16 @@ func (k Keeper) clearTrainingOptIn(ctx context.Context, participant, nodeId stri
 	return k.TrainingNodeEndpoints.Remove(ctx, key)
 }
 
-func (k Keeper) reserveTrainshardNodes(ctx context.Context, shard *types.Trainshard) error {
+func (k Keeper) reserveTrainshardNodes(ctx context.Context, shard *types.Trainshard, weightEpoch uint64) error {
 	for _, n := range shard.Nodes {
 		if err := k.TrainshardReservations.Set(ctx, collections.Join(n.Participant, n.NodeId), shard.TrainshardId); err != nil {
 			return err
 		}
 	}
 	if err := k.Trainshards.Set(ctx, shard.TrainshardId, *shard); err != nil {
+		return err
+	}
+	if err := k.TrainshardWeightEpoch.Set(ctx, shard.TrainshardId, weightEpoch); err != nil {
 		return err
 	}
 	if err := k.TrainshardActiveIndex.Set(ctx, shard.TrainshardId); err != nil {
@@ -897,7 +902,7 @@ func (k Keeper) plannedShieldWindows(ctx context.Context, host string, from, to 
 			if end < from || start > to {
 				continue
 			}
-			windows = append(windows, reservedNodeWindow{node: n, start: start, end: end})
+			windows = append(windows, reservedNodeWindow{trainshardId: shard.TrainshardId, node: n, start: start, end: end})
 		}
 		return false, nil
 	}); err != nil {
@@ -952,7 +957,7 @@ func trainshardNodeWindow(shard *types.Trainshard, n *types.TrainshardReservedNo
 	return shard.CreatedAtHeight, end
 }
 
-func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64, scope ReservationScope, fn func(n *types.TrainshardReservedNode, start, end int64)) {
+func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64, scope ReservationScope, fn func(trainshardId uint64, n *types.TrainshardReservedNode, start, end int64)) {
 	epochStart, epochEnd := k.epochBlockRange(ctx, epochIndex)
 	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
 		for _, n := range shard.Nodes {
@@ -966,7 +971,7 @@ func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64,
 			if end > epochEnd {
 				end = epochEnd
 			}
-			fn(n, start, end)
+			fn(shard.TrainshardId, n, start, end)
 		}
 		return false, nil
 	}); err != nil {
@@ -1081,9 +1086,37 @@ func (k Keeper) CollectCarriedReservedNodeWeights(ctx context.Context, upcomingE
 		return nil
 	}
 	view := EpochReservedWeightView{windows: k.reservedNodeWindows(ctx, upcomingEpoch.Index, ReservationScopeShield)}
-	view.clampTo(k.GetActiveParticipants(ctx, upcomingEpoch.Index-1))
 	height := upcomingEpoch.PocStartBlockHeight
 	return view.nodeWeights(&height)
+}
+
+func (k Keeper) CarriedReservationWeightEpochs(ctx context.Context, upcomingEpoch types.Epoch) map[string]uint64 {
+	if upcomingEpoch.Index == 0 {
+		return nil
+	}
+	height := upcomingEpoch.PocStartBlockHeight
+	epochs := make(map[string]uint64)
+	unanchored := make(map[string]bool)
+	for _, w := range k.reservedNodeWindows(ctx, upcomingEpoch.Index, ReservationScopeShield) {
+		if w.start > height || w.end < height {
+			continue
+		}
+		host := w.node.Participant
+		epoch, err := k.TrainshardWeightEpoch.Get(ctx, w.trainshardId)
+		if err != nil {
+			k.LogError("carried trainshard has no weight epoch, its host carries nothing", types.Training,
+				"trainshard_id", w.trainshardId, "participant", host, "error", err)
+			unanchored[host] = true
+			continue
+		}
+		if prev, seen := epochs[host]; !seen || epoch < prev {
+			epochs[host] = epoch
+		}
+	}
+	for host := range unanchored {
+		delete(epochs, host)
+	}
+	return epochs
 }
 
 type EpochReservedWeightView struct {
@@ -1093,9 +1126,10 @@ type EpochReservedWeightView struct {
 }
 
 type reservedNodeWindow struct {
-	node  *types.TrainshardReservedNode
-	start int64
-	end   int64
+	trainshardId uint64
+	node         *types.TrainshardReservedNode
+	start        int64
+	end          int64
 }
 
 func (k Keeper) BuildEpochReservedWeightView(ctx context.Context, epochIndex uint64, scope ReservationScope) EpochReservedWeightView {
@@ -1106,8 +1140,8 @@ func (k Keeper) BuildEpochReservedWeightView(ctx context.Context, epochIndex uin
 
 func (k Keeper) reservedNodeWindows(ctx context.Context, epochIndex uint64, scope ReservationScope) []reservedNodeWindow {
 	var windows []reservedNodeWindow
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
-		windows = append(windows, reservedNodeWindow{node: n, start: start, end: end})
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(trainshardId uint64, n *types.TrainshardReservedNode, start, end int64) {
+		windows = append(windows, reservedNodeWindow{trainshardId: trainshardId, node: n, start: start, end: end})
 	})
 	return windows
 }
@@ -1220,7 +1254,7 @@ type hostReservedInterval struct {
 func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex uint64) map[string][]hostReservedInterval {
 	result := make(map[string][]hostReservedInterval)
 	seen := make(map[string]map[hostReservedInterval]bool)
-	k.forEachEpochReservedNode(ctx, epochIndex, ReservationScopeShield, func(n *types.TrainshardReservedNode, start, end int64) {
+	k.forEachEpochReservedNode(ctx, epochIndex, ReservationScopeShield, func(_ uint64, n *types.TrainshardReservedNode, start, end int64) {
 		interval := hostReservedInterval{start: start, end: end, nodeId: n.NodeId, weight: n.PocWeight}
 		if seen[n.Participant] == nil {
 			seen[n.Participant] = make(map[hostReservedInterval]bool)

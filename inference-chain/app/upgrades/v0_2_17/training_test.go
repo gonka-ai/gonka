@@ -118,6 +118,37 @@ func TestBackfillTrainshardNodeStatuses(t *testing.T) {
 	require.Equal(t, int64(150), closed.Nodes[0].ReservedUntilHeight)
 }
 
+func TestBackfillTrainshardWeightEpochs(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	for epochIndex, effectiveAt := range map[uint64]int64{3: 100, 4: 200, 5: 300} {
+		k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{EpochIndex: epochIndex, EffectiveBlockHeight: effectiveAt})
+	}
+	createdAt := map[uint64]int64{1: 250, 2: 200, 3: 301, 4: 50, 5: 250}
+	for id, height := range createdAt {
+		require.NoError(t, k.Trainshards.Set(ctx, id, inferencetypes.Trainshard{TrainshardId: id, CreatedAtHeight: height}))
+	}
+	require.NoError(t, k.TrainshardWeightEpoch.Set(ctx, 5, 3))
+
+	require.NoError(t, backfillTrainshardWeightEpochs(ctx, k))
+
+	for id, want := range map[uint64]uint64{1: 4, 2: 3, 3: 5, 5: 3} {
+		got, err := k.TrainshardWeightEpoch.Get(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, got, "trainshard %d", id)
+	}
+	unresolved, err := k.TrainshardWeightEpoch.Has(ctx, 4)
+	require.NoError(t, err)
+	require.False(t, unresolved)
+}
+
+func TestBackfillTrainshardWeightEpochs_NeedsNoEpochWithoutShards(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	require.NoError(t, backfillTrainshardWeightEpochs(ctx, k))
+}
+
 func TestClearStaleTrainingOptIns(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

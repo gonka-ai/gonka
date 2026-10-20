@@ -155,6 +155,7 @@ type (
 		TrainshardReservations    collections.Map[collections.Pair[string, string], uint64]
 		TrainshardReleaseIndex    collections.KeySet[collections.Triple[int64, string, string]]
 		TrainshardAutokickRequest collections.Map[collections.Pair[uint64, string], string]
+		TrainshardWeightEpoch     collections.Map[uint64, uint64]
 		TrainingNodeOptIns        collections.Map[collections.Pair[string, string], int64]
 		TrainingNodeEndpoints     collections.Map[collections.Pair[string, string], string]
 		TrainshardProposals       collections.Map[uint64, types.TrainshardProposal]
@@ -792,6 +793,13 @@ func NewKeeper(
 			"training_node_endpoints",
 			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
 			collections.StringValue,
+		),
+		TrainshardWeightEpoch: collections.NewMap(
+			sb,
+			types.TrainshardWeightEpochPrefix,
+			"trainshard_weight_epoch",
+			collections.Uint64Key,
+			collections.Uint64Value,
 		),
 		TrainshardProposals: collections.NewMap(
 			sb,

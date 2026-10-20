@@ -99,6 +99,17 @@ func TestAssembleAndSettleTrainshard(t *testing.T) {
 	require.False(t, k.IsNodeReserved(ctx, creator, "node-b"))
 }
 
+func TestAssembleTrainshard_RecordsTheEpochItsWeightsCameFrom(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	weightEpoch, err := k.TrainshardWeightEpoch.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), weightEpoch)
+}
+
 func TestDeferredExpiryThenManualSettle(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 

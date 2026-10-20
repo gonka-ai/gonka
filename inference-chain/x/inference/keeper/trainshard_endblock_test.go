@@ -91,6 +91,7 @@ func TestPruneClosedTrainshards_KeepsTwoEpochsEvenIfRetentionWasSetTooLow(t *tes
 	}
 	require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
 	require.NoError(t, k.TrainshardClosedIndex.Set(ctx, collections.Join(closedAt, shard.TrainshardId)))
+	require.NoError(t, k.TrainshardWeightEpoch.Set(ctx, shard.TrainshardId, 3))
 
 	floor := 2*params.EpochParams.EpochLength + params.TrainingParams.ReleaseBufferBlocks
 
@@ -101,6 +102,9 @@ func TestPruneClosedTrainshards_KeepsTwoEpochsEvenIfRetentionWasSetTooLow(t *tes
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(closedAt + floor))
 	_, err = k.Trainshards.Get(ctx, shard.TrainshardId)
 	require.ErrorIs(t, err, collections.ErrNotFound)
+	hasWeightEpoch, err := k.TrainshardWeightEpoch.Has(ctx, shard.TrainshardId)
+	require.NoError(t, err)
+	require.False(t, hasWeightEpoch)
 }
 
 func TestPruneClosedTrainshards_KeepsAShardUntilItsNodesReturn(t *testing.T) {

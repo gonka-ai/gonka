@@ -62,7 +62,7 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		return nil, err
 	}
 
-	nodes, err := k.selectTrainshardNodes(goCtx, trainshardId, proposal.GpuProfileId, proposal.NodeCount, params)
+	nodes, weightEpoch, err := k.selectTrainshardNodes(goCtx, trainshardId, proposal.GpuProfileId, proposal.NodeCount, params)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		BaseImage:       proposal.BaseImage,
 		RunKey:          proposal.RunKey,
 	}
-	if err := k.reserveTrainshardNodes(goCtx, &shard); err != nil {
+	if err := k.reserveTrainshardNodes(goCtx, &shard, weightEpoch); err != nil {
 		return nil, err
 	}
 	if err := k.TrainshardCounter.Set(goCtx, trainshardId); err != nil {

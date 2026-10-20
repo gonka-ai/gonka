@@ -47,6 +47,7 @@ type carrySetup struct {
 	scales       []*types.ConfirmationWeightScale
 	record       int64
 	inRoot       bool
+	unanchored   bool
 }
 
 func setupTrainingCarry(t *testing.T, s carrySetup) (AppModule, sdk.Context) {
@@ -83,6 +84,9 @@ func setupTrainingCarry(t *testing.T, s carrySetup) (AppModule, sdk.Context) {
 			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
 		}},
 	}))
+	if !s.unanchored {
+		require.NoError(t, k.TrainshardWeightEpoch.Set(ctx, 1, 5))
+	}
 	return am, ctx
 }
 
@@ -116,6 +120,7 @@ func TestTrainingCarryBudget(t *testing.T) {
 		scales       []*types.ConfirmationWeightScale
 		record       int64
 		notInRoot    bool
+		unanchored   bool
 		upcoming     carryModelNodes
 		wantCarry    int64
 		wantWeight   int64
@@ -176,6 +181,12 @@ func TestTrainingCarryBudget(t *testing.T) {
 			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 0, wantWeight: 300,
 		},
+		{
+			name:    "a lease without a weight epoch carries nothing",
+			current: carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)}, record: 100, unanchored: true,
+			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
+			wantCarry: 0, wantWeight: 300,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,6 +196,7 @@ func TestTrainingCarryBudget(t *testing.T) {
 				scales:       tc.scales,
 				record:       tc.record,
 				inRoot:       !tc.notInRoot,
+				unanchored:   tc.unanchored,
 			})
 			upcoming := carryParticipant(host, tc.upcoming)
 
@@ -196,7 +208,7 @@ func TestTrainingCarryBudget(t *testing.T) {
 	}
 }
 
-func TestTrainingCarryBudget_MergedCarryIsClampedToTheCurrentEpoch(t *testing.T) {
+func TestTrainingCarryBudget_MergedCarryStartsFromTheRecord(t *testing.T) {
 	am, ctx := setupTrainingCarry(t, carrySetup{
 		current: carryParticipant(testutil.Executor, carryModelNodes{"model-a": nodesOf(60, 100)}),
 		record:  130,
@@ -209,7 +221,7 @@ func TestTrainingCarryBudget_MergedCarryIsClampedToTheCurrentEpoch(t *testing.T)
 
 	merged := am.mergeReservedNodesIntoPreserved(ctx, carryUpcomingEpoch, nil)
 	require.Len(t, merged, 1)
-	require.Equal(t, int64(60), carriedNodeWeight(merged[0], "n1"))
+	require.Equal(t, int64(130), carriedNodeWeight(merged[0], "n1"))
 }
 
 func TestSeatAndGuard_DropsAHostWhoseOnlyWeightIsAnUnbackedCarry(t *testing.T) {
@@ -233,4 +245,84 @@ func TestSeatAndGuard_DropsAHostWhoseOnlyWeightIsAnUnbackedCarry(t *testing.T) {
 	require.False(t, usedFallback)
 	require.Len(t, result, 1)
 	require.Equal(t, honest, result[0].Index)
+}
+
+func TestTrainingCarryBudget_FreeNodeNoiseDoesNotWearDownTheHost(t *testing.T) {
+	host := testutil.Executor
+	scales := coefficientScales(map[string]float64{"model-a": 1})
+	am, ctx := setupTrainingCarry(t, carrySetup{
+		current:      carryParticipant(host, carryModelNodes{"model-a": nodesOf(8946, 7154)}),
+		confirmation: 16100,
+		scales:       scales,
+		record:       8946,
+		inRoot:       true,
+	})
+
+	carried := int64(8946)
+	for i, free := range []int64{7303, 7303, 7214, 7214, 7333, 7184, 7363} {
+		epoch := types.Epoch{
+			Index:               carryUpcomingEpoch.Index + uint64(i),
+			PocStartBlockHeight: carryUpcomingEpoch.PocStartBlockHeight + int64(i)*100,
+		}
+		require.NoError(t, am.keeper.SetEpoch(ctx, &epoch))
+		upcoming := carryParticipant(host, carryModelNodes{"model-a": nodesOf(carried, free)})
+
+		am.buildTrainingCarryBudget(ctx, epoch).apply([]*types.ActiveParticipant{upcoming})
+
+		require.Equal(t, int64(16100), upcoming.Weight, "epoch %d", epoch.Index)
+		carried = carriedNodeWeight(upcoming, "n1")
+		require.NoError(t, am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+			EpochId:      epoch.Index,
+			Participants: []*types.ActiveParticipant{upcoming},
+		}))
+		am.keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+			EpochIndex:               epoch.Index,
+			ConfirmationWeightScales: scales,
+			ValidationWeights: []*types.ValidationWeight{{
+				MemberAddress:      host,
+				Weight:             upcoming.Weight,
+				ConfirmationWeight: upcoming.Weight * 999 / 1000,
+			}},
+		})
+	}
+}
+
+func TestTrainingCarryBudget_OverlappingLeasesKeepTheEarliestAnchor(t *testing.T) {
+	host := testutil.Executor
+	am, ctx := setupTrainingCarry(t, carrySetup{
+		current: carryParticipant(host, carryModelNodes{"model-a": nodesOf(60, 100, 100, 100)}),
+		record:  100,
+		inRoot:  true,
+	})
+	before := carryParticipant(host, carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)})
+	require.NoError(t, am.keeper.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 300}))
+	require.NoError(t, am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      3,
+		Participants: []*types.ActiveParticipant{before},
+	}))
+	am.keeper.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        3,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: host, Weight: before.Weight}},
+	})
+	require.NoError(t, am.keeper.Trainshards.Set(ctx, 2, types.Trainshard{
+		TrainshardId:    2,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: 310,
+		ExpiresAtHeight: 5000,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: host,
+			NodeId:      "n2",
+			ModelId:     "model-a",
+			PocWeight:   100,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+	require.NoError(t, am.keeper.TrainshardWeightEpoch.Set(ctx, 2, 3))
+	upcoming := carryParticipant(host, carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)})
+
+	am.buildTrainingCarryBudget(ctx, carryUpcomingEpoch).apply([]*types.ActiveParticipant{upcoming})
+
+	require.Equal(t, int64(100), carriedNodeWeight(upcoming, "n1"))
+	require.Equal(t, int64(100), carriedNodeWeight(upcoming, "n2"))
+	require.Equal(t, int64(400), upcoming.Weight)
 }
