@@ -44,7 +44,6 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, migratePocSchemeBlocks(ctx, k))
-	require.NoError(t, migratePocSchemeBlocks(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -107,7 +106,7 @@ func TestMigratePocSchemeBlocksRejectsMissingRecipe(t *testing.T) {
 
 	err = migratePocSchemeBlocks(ctx, k)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "no PREFILL scheme block")
+	require.Contains(t, err.Error(), "invalid prefill seq_len")
 
 	got, getErr := k.GetParams(ctx)
 	require.NoError(t, getErr)
@@ -204,8 +203,4 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		}
 		require.Equal(t, tc.share, decode.DynamicCoefficient.TargetShareBps)
 	}
-	require.NoError(t, migratePocSchemeBlocks(ctx, k))
-	repeated, err := k.GetParams(ctx)
-	require.NoError(t, err)
-	require.Equal(t, got, repeated)
 }

@@ -11,7 +11,6 @@ import (
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
-	gogoproto "github.com/cosmos/gogoproto/proto"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,6 +33,9 @@ func CreateUpgradeHandler(
 		if err := migratePocSchemeBlocks(ctx, k); err != nil {
 			return fromVM, err
 		}
+		if err := freezeActiveEpochRecipe(ctx, k); err != nil {
+			return fromVM, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -43,6 +45,19 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func freezeActiveEpochRecipe(ctx context.Context, k keeper.Keeper) error {
+	epoch, found := k.GetEffectiveEpoch(ctx)
+	if !found || epoch == nil {
+		return fmt.Errorf("cannot freeze upgrade recipe: effective epoch not found")
+	}
+	height := epoch.PocStartBlockHeight
+	if participants, ok := k.GetActiveParticipants(ctx, epoch.Index); ok {
+		height = participants.PocStartBlockHeight
+	}
+	_, err := k.FreezePocStageRecipe(ctx, height)
+	return err
 }
 
 // migratePocSchemeBlocks moves flat fields into PREFILL blocks and clears them.
@@ -55,91 +70,32 @@ func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
 	if params.PocParams == nil {
 		return nil
 	}
-	changed := false
 	for _, model := range params.PocParams.Models {
 		if model == nil {
 			return fmt.Errorf("poc scheme migration: models contains a nil entry")
 		}
-		modelChanged, err := migrateModelScheme(model)
-		if err != nil {
-			return err
+		if model.SeqLen <= 0 {
+			return fmt.Errorf("model %q has invalid prefill seq_len %d", model.ModelId, model.SeqLen)
 		}
-		changed = changed || modelChanged
+		model.Schemes = []*types.PocSchemeParams{
+			{
+				Scheme:             types.PocScheme_POC_SCHEME_PREFILL,
+				SeqLen:             model.SeqLen,
+				StatTest:           model.StatTest,
+				DynamicCoefficient: model.DynamicCoefficient,
+			},
+			decodeScheme(model.ModelId),
+		}
+		model.SeqLen = 0
+		model.StatTest = nil
+		model.DynamicCoefficient = nil
 	}
 	if err := params.Validate(); err != nil {
 		return fmt.Errorf("poc scheme migration produced invalid params: %w", err)
-	}
-	if !changed {
-		return nil
 	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
 	k.LogInfo("migrated prefill scheme blocks", types.Upgrades, "models", len(params.PocParams.Models))
 	return nil
-}
-
-func migrateModelScheme(model *types.PoCModelConfig) (bool, error) {
-	changed := false
-	block := prefillBlock(model)
-	if block == nil {
-		if model.SeqLen <= 0 {
-			return false, fmt.Errorf("model %q has no PREFILL scheme block and seq_len %d", model.ModelId, model.SeqLen)
-		}
-		block = &types.PocSchemeParams{
-			Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
-			SeqLen:      model.SeqLen,
-			DecodeSteps: 0,
-			StatTest:    cloneStatTest(model.StatTest),
-		}
-		model.Schemes = append([]*types.PocSchemeParams{block}, model.Schemes...)
-		changed = true
-	}
-	if block.DynamicCoefficient != nil && model.DynamicCoefficient != nil &&
-		!gogoproto.Equal(block.DynamicCoefficient, model.DynamicCoefficient) {
-		return false, fmt.Errorf("model %q PREFILL dynamic_coefficient differs from the model field", model.ModelId)
-	}
-	if block.DynamicCoefficient == nil && model.DynamicCoefficient != nil {
-		block.DynamicCoefficient = cloneDynamicCoefficient(model.DynamicCoefficient)
-		changed = true
-	}
-	if model.SeqLen != 0 || model.StatTest != nil {
-		model.SeqLen = 0
-		model.StatTest = nil
-		changed = true
-	}
-	if model.DynamicCoefficient != nil && block.DynamicCoefficient != nil {
-		model.DynamicCoefficient = nil
-		changed = true
-	}
-	if _, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_DECODE); !ok {
-		model.Schemes = append(model.Schemes, decodeScheme(model.ModelId))
-		changed = true
-	}
-	return changed, nil
-}
-
-func prefillBlock(model *types.PoCModelConfig) *types.PocSchemeParams {
-	for _, block := range model.Schemes {
-		if block != nil && block.Scheme == types.PocScheme_POC_SCHEME_PREFILL {
-			return block
-		}
-	}
-	return nil
-}
-
-func cloneStatTest(stat *types.PoCStatTestParams) *types.PoCStatTestParams {
-	if stat == nil {
-		return nil
-	}
-	cloned := gogoproto.Clone(stat)
-	return cloned.(*types.PoCStatTestParams)
-}
-
-func cloneDynamicCoefficient(config *types.DynamicCoefficientModelConfig) *types.DynamicCoefficientModelConfig {
-	if config == nil {
-		return nil
-	}
-	cloned := gogoproto.Clone(config)
-	return cloned.(*types.DynamicCoefficientModelConfig)
 }
