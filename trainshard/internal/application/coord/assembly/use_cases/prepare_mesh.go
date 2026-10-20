@@ -156,7 +156,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 		}
 
 		// 10. Kick the worst node and retry
-		worst, found := mesh.Worst(nodes, failed)
+		worst, found := mesh.Worst(shardID, nodes, failed)
 		if !found {
 			return PrepareResult{Released: released, Failed: failed}, nil
 		}

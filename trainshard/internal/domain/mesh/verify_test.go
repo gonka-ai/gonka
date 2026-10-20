@@ -1,6 +1,9 @@
 package mesh_test
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
 	"testing"
 
 	"trainshard/internal/domain/mesh"
@@ -55,33 +58,67 @@ func TestWorstPicksTheNodeWithMoreFailedPairs(t *testing.T) {
 	nodes := []vo.NodeRef{nodeA, nodeB, nodeC}
 	failed := []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
 
-	// act
-	worst, found := mesh.Worst(nodes, failed)
+	for id := vo.ShardID(1); id <= 16; id++ {
+		// act
+		worst, found := mesh.Worst(id, nodes, failed)
 
-	// assert
-	if !found || worst != nodeC {
-		t.Fatalf("got %v found=%v, want %v", worst, found, nodeC)
+		// assert
+		if !found || worst != nodeC {
+			t.Fatalf("shard %d: got %v found=%v, want %v", id, worst, found, nodeC)
+		}
 	}
 }
 
-func TestWorstBreaksTiesTheSameWayEveryTime(t *testing.T) {
+func TestWorstBreaksATieByTheShardHashWhateverTheOrder(t *testing.T) {
 	// arrange
-	nodes := []vo.NodeRef{nodeC, nodeB, nodeA}
 	failed := []mesh.Pair{mesh.NewPair(nodeA, nodeB)}
+	want := nodeA
+	if keyA, keyB := tieKeyOf(shardID, nodeA), tieKeyOf(shardID, nodeB); bytes.Compare(keyB[:], keyA[:]) < 0 {
+		want = nodeB
+	}
+
+	for _, nodes := range [][]vo.NodeRef{{nodeA, nodeB, nodeC}, {nodeC, nodeB, nodeA}, {nodeB, nodeC, nodeA}} {
+		for range 3 {
+			// act
+			worst, found := mesh.Worst(shardID, nodes, failed)
+
+			// assert
+			if !found || worst != want {
+				t.Fatalf("order %v: got %v found=%v, want %v", nodes, worst, found, want)
+			}
+		}
+	}
+}
+
+func TestWorstBreaksATieDifferentlyFromShardToShard(t *testing.T) {
+	// arrange
+	nodes := []vo.NodeRef{nodeA, nodeB, nodeC}
+	failed := []mesh.Pair{mesh.NewPair(nodeA, nodeB)}
+	picked := make(map[vo.NodeRef]bool)
 
 	// act
-	first, _ := mesh.Worst(nodes, failed)
-	second, _ := mesh.Worst([]vo.NodeRef{nodeA, nodeB, nodeC}, failed)
+	for id := vo.ShardID(1); id <= 64; id++ {
+		worst, _ := mesh.Worst(id, nodes, failed)
+		picked[worst] = true
+	}
 
 	// assert
-	if first != nodeA || second != nodeA {
-		t.Fatalf("got %v and %v, want %v both times", first, second, nodeA)
+	if len(picked) != 2 || !picked[nodeA] || !picked[nodeB] {
+		t.Fatalf("got %v picked across shards, want each end of the broken link blamed in some shard", picked)
 	}
+}
+
+func tieKeyOf(id vo.ShardID, node vo.NodeRef) [sha256.Size]byte {
+	buf := binary.BigEndian.AppendUint64(nil, uint64(id))
+	buf = append(buf, node.Participant...)
+	buf = append(buf, 0)
+	buf = append(buf, node.NodeID...)
+	return sha256.Sum256(buf)
 }
 
 func TestWorstBlamesNeitherOfTwoNodes(t *testing.T) {
 	// act
-	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, []mesh.Pair{mesh.NewPair(nodeA, nodeB)})
+	_, found := mesh.Worst(shardID, []vo.NodeRef{nodeA, nodeB}, []mesh.Pair{mesh.NewPair(nodeA, nodeB)})
 
 	// assert
 	if found {
@@ -91,7 +128,7 @@ func TestWorstBlamesNeitherOfTwoNodes(t *testing.T) {
 
 func TestWorstFindsNothingWithoutFailures(t *testing.T) {
 	// act
-	_, found := mesh.Worst([]vo.NodeRef{nodeA, nodeB}, nil)
+	_, found := mesh.Worst(shardID, []vo.NodeRef{nodeA, nodeB}, nil)
 
 	// assert
 	if found {

@@ -71,12 +71,16 @@ func (h *hostsStub) Probe(_ context.Context, _ mesh.Config, _ vo.Host, node vo.N
 }
 
 type verifierStub struct {
-	err error
+	err      error
+	rejected map[string]bool
 }
 
 func (v *verifierStub) Recover(_, signature []byte) (vo.Address, error) {
 	if v.err != nil {
 		return "", v.err
+	}
+	if v.rejected[string(signature)] {
+		return "", errors.New("bad signature")
 	}
 	return vo.Address(strings.TrimSpace(string(signature))), nil
 }

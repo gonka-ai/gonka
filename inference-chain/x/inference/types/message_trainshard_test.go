@@ -44,6 +44,25 @@ func TestValidateTrainingEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidateTrainingNodeId(t *testing.T) {
+	for _, nodeId := range []string{"node-1.a_b", "A", "...", strings.Repeat("n", 64)} {
+		require.NoError(t, ValidateTrainingNodeId(nodeId), nodeId)
+	}
+	for _, nodeId := range []string{"", ".", "..", "node/1", `node\1`, "node 1", " node-1", "nöde", strings.Repeat("n", 65)} {
+		require.ErrorIs(t, ValidateTrainingNodeId(nodeId), ErrTrainshardOptInRequest, nodeId)
+	}
+}
+
+func TestMsgRefreshTrainingNodeOptIn_ValidateBasicChecksTheNodeIds(t *testing.T) {
+	msg := MsgRefreshTrainingNodeOptIn{Creator: sample.AccAddress(), NodeIds: []string{"node-1.a_b"}}
+	require.NoError(t, msg.ValidateBasic())
+
+	for _, nodeId := range []string{"node/1", "..", "nöde", strings.Repeat("n", 65)} {
+		msg.NodeIds = []string{"node-a", nodeId}
+		require.ErrorIs(t, msg.ValidateBasic(), ErrTrainshardOptInRequest, nodeId)
+	}
+}
+
 func TestMsgRefreshTrainingNodeOptIn_ValidateBasicChecksTheEndpoint(t *testing.T) {
 	valid := MsgRefreshTrainingNodeOptIn{Creator: sample.AccAddress(), NodeIds: []string{"node-a"}}
 	require.NoError(t, valid.ValidateBasic(), "an empty endpoint is allowed")

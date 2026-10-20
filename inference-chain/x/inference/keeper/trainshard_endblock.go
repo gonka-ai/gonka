@@ -183,10 +183,6 @@ func (k Keeper) pruneClosedTrainshards(ctx context.Context, height int64, retent
 		if err := k.TrainshardWeightEpoch.Remove(ctx, key.K2()); err != nil {
 			k.LogError("trainshard prune weight epoch failed", types.System, "trainshard_id", key.K2(), "error", err)
 		}
-		requests := collections.NewPrefixedPairRange[uint64, string](key.K2())
-		if err := k.TrainshardAutokickRequest.Clear(ctx, requests); err != nil {
-			k.LogError("trainshard prune autokick requests failed", types.System, "trainshard_id", key.K2(), "error", err)
-		}
 		if err := k.TrainshardClosedIndex.Remove(ctx, key); err != nil {
 			k.LogError("trainshard prune index remove failed", types.System, "trainshard_id", key.K2(), "error", err)
 		}

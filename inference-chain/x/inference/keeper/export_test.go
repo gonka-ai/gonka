@@ -37,3 +37,11 @@ func CollectModelFreeWeightsForTesting(k Keeper, ctx sdk.Context, epochId uint64
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
 }
+
+func SetRawStoreBytesForTesting(k Keeper, ctx sdk.Context, key, value []byte) error {
+	return k.storeService.OpenKVStore(ctx).Set(key, value)
+}
+
+func HasRawStoreKeyForTesting(k Keeper, ctx sdk.Context, key []byte) (bool, error) {
+	return k.storeService.OpenKVStore(ctx).Has(key)
+}

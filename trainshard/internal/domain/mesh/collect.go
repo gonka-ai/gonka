@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"errors"
 	"slices"
 
 	"trainshard/internal/domain/shared/ports"
@@ -15,8 +16,9 @@ type answer struct {
 	err        error
 }
 
-// Collect names a silent host's nodes missing, and fails only when no host answers or an identity
-// does not verify. A host speaks for the nodes the chain places on it and no other
+// Collect names a node missing when its host is silent, offers no identity for it that verifies, or
+// offers a public key another node offers too. It fails only when no host answers or the chain cannot
+// say whether a signer speaks for a host. A host speaks for the nodes the chain places on it and no other
 func Collect(
 	ctx context.Context,
 	hosts Hosts,
@@ -48,10 +50,13 @@ func Collect(
 			}
 			signer, err := verifier.Recover(IdentityPayload(shardID, identity.Member), identity.Signature)
 			if err != nil {
-				return nil, nil, ErrForeignIdentity
+				continue
 			}
 			if err := VerifyIdentity(ctx, identity, signer, delegation); err != nil {
-				return nil, nil, err
+				if errors.Is(err, ErrDelegationUnknown) {
+					return nil, nil, err
+				}
+				continue
 			}
 			collected[identity.Member.Node] = identity.Member
 		}
@@ -60,11 +65,18 @@ func Collect(
 		return nil, nil, silent
 	}
 
+	offered := make(map[string]int, len(collected))
+	for node, member := range collected {
+		if slices.Contains(reserved, node) {
+			offered[member.PublicKey]++
+		}
+	}
+
 	members = make([]Member, 0, len(reserved))
 	missing = make([]vo.NodeRef, 0)
 	for _, node := range reserved {
 		member, found := collected[node]
-		if !found {
+		if !found || offered[member.PublicKey] > 1 {
 			missing = append(missing, node)
 			continue
 		}

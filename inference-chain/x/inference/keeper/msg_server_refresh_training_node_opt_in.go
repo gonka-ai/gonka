@@ -31,6 +31,9 @@ func (k msgServer) RefreshTrainingNodeOptIn(goCtx context.Context, msg *types.Ms
 	height := sdk.UnwrapSDKContext(goCtx).BlockHeight()
 	var expiresAt int64
 	for _, nodeId := range msg.NodeIds {
+		if err := types.ValidateTrainingNodeId(nodeId); err != nil {
+			return nil, err
+		}
 		if !hasHardwareNode(hardware, nodeId) {
 			return nil, types.ErrTrainshardNodeNotOwned.Wrapf("node %s not owned by %s", nodeId, msg.Creator)
 		}

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"cosmossdk.io/collections"
+	storetypes "cosmossdk.io/store/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -149,6 +150,34 @@ func TestBackfillTrainshardWeightEpochs_NeedsNoEpochWithoutShards(t *testing.T) 
 	require.NoError(t, backfillTrainshardWeightEpochs(ctx, k))
 }
 
+func TestClearTrainshardAutokickRequests(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	byName, ok := ctx.MultiStore().(interface{ GetStoreByName(string) storetypes.Store })
+	require.True(t, ok)
+	store, ok := byName.GetStoreByName(inferencetypes.StoreKey).(storetypes.KVStore)
+	require.True(t, ok)
+
+	codec := collections.PairKeyCodec(collections.Uint64Key, collections.StringKey)
+	var requests [][]byte
+	for _, key := range []collections.Pair[uint64, string]{collections.Join(uint64(7), "req-1"), collections.Join(uint64(9), "req-2")} {
+		raw, err := collections.EncodeKeyWithPrefix(retiredTrainshardAutokickRequestPrefix, codec, key)
+		require.NoError(t, err)
+		store.Set(raw, []byte("host/node-a"))
+		requests = append(requests, raw)
+	}
+	require.NoError(t, k.TrainshardWeightEpoch.Set(ctx, 7, 3))
+
+	require.NoError(t, clearTrainshardAutokickRequests(ctx, k))
+
+	for _, raw := range requests {
+		require.False(t, store.Has(raw))
+	}
+	weightEpoch, err := k.TrainshardWeightEpoch.Get(ctx, 7)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), weightEpoch)
+}
+
 func TestClearStaleTrainingOptIns(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
@@ -164,4 +193,34 @@ func TestClearStaleTrainingOptIns(t *testing.T) {
 	expiresAt, err := k.TrainingNodeOptIns.Get(ctx, collections.Join("host", "node-b"))
 	require.NoError(t, err)
 	require.Equal(t, int64(500), expiresAt)
+}
+
+func TestClearStaleTrainingOptIns_DropsNodeIdsTheDaemonCannotAddress(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	for _, nodeId := range []string{"node/a", "..", "node-b"} {
+		key := collections.Join("host", nodeId)
+		require.NoError(t, k.TrainingNodeOptIns.Set(ctx, key, int64(500)))
+		require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, key, "https://a.example.com"))
+	}
+	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join("host", "node c"), "https://c.example.com"))
+
+	require.NoError(t, clearStaleTrainingOptIns(ctx, k))
+
+	for _, nodeId := range []string{"node/a", ".."} {
+		has, err := k.TrainingNodeOptIns.Has(ctx, collections.Join("host", nodeId))
+		require.NoError(t, err)
+		require.False(t, has, nodeId)
+	}
+	for _, nodeId := range []string{"node/a", "..", "node c"} {
+		has, err := k.TrainingNodeEndpoints.Has(ctx, collections.Join("host", nodeId))
+		require.NoError(t, err)
+		require.False(t, has, nodeId)
+	}
+	expiresAt, err := k.TrainingNodeOptIns.Get(ctx, collections.Join("host", "node-b"))
+	require.NoError(t, err)
+	require.Equal(t, int64(500), expiresAt)
+	endpoint, err := k.TrainingNodeEndpoints.Get(ctx, collections.Join("host", "node-b"))
+	require.NoError(t, err)
+	require.Equal(t, "https://a.example.com", endpoint)
 }

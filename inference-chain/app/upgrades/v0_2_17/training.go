@@ -18,6 +18,8 @@ var trainingWarmKeyMsgTypeURLs = []string{
 	sdk.MsgTypeURL(&types.MsgAutokickTrainshardNode{}),
 }
 
+var retiredTrainshardAutokickRequestPrefix = collections.NewPrefix(141)
+
 func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -167,6 +169,15 @@ func effectiveEpochAt(ctx context.Context, k keeper.Keeper, effective uint64, he
 	}
 }
 
+func clearTrainshardAutokickRequests(ctx context.Context, k keeper.Keeper) error {
+	removed, err := k.ClearStorePrefix(ctx, retiredTrainshardAutokickRequestPrefix)
+	if err != nil {
+		return fmt.Errorf("clear trainshard autokick requests: %w", err)
+	}
+	k.LogInfo("cleared trainshard autokick requests", types.Upgrades, "removed", removed)
+	return nil
+}
+
 func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 	iter, err := k.TrainingNodeOptIns.Iterate(ctx, nil)
 	if err != nil {
@@ -180,9 +191,19 @@ func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 		if err != nil {
 			return fmt.Errorf("read training opt-in: %w", err)
 		}
-		if kv.Value == 0 {
+		if kv.Value == 0 || types.ValidateTrainingNodeId(kv.Key.K2()) != nil {
 			stale = append(stale, kv.Key)
 		}
+	}
+
+	var unaddressable []collections.Pair[string, string]
+	if err := k.TrainingNodeEndpoints.Walk(ctx, nil, func(key collections.Pair[string, string], _ string) (bool, error) {
+		if types.ValidateTrainingNodeId(key.K2()) != nil {
+			unaddressable = append(unaddressable, key)
+		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk training endpoints: %w", err)
 	}
 
 	for _, key := range stale {
@@ -190,7 +211,13 @@ func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 			return fmt.Errorf("remove stale training opt-in %s/%s: %w", key.K1(), key.K2(), err)
 		}
 	}
-	k.LogInfo("cleared stale training opt-ins", types.Upgrades, "removed", len(stale))
+	for _, key := range unaddressable {
+		if err := k.TrainingNodeEndpoints.Remove(ctx, key); err != nil {
+			return fmt.Errorf("remove training endpoint %s/%s: %w", key.K1(), key.K2(), err)
+		}
+	}
+	k.LogInfo("cleared stale training opt-ins", types.Upgrades,
+		"removed_opt_ins", len(stale), "removed_endpoints", len(unaddressable))
 	return nil
 }
 

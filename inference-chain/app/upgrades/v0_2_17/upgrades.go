@@ -52,6 +52,9 @@ func CreateUpgradeHandler(
 		if err := backfillTrainshardWeightEpochs(ctx, k); err != nil {
 			return fromVM, err
 		}
+		if err := clearTrainshardAutokickRequests(ctx, k); err != nil {
+			return fromVM, err
+		}
 		if err := clearStaleTrainingOptIns(ctx, k); err != nil {
 			return fromVM, err
 		}

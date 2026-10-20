@@ -23,7 +23,25 @@ const (
 	maxTrainingEndpointLen  = 256
 	maxAutokickReasonLen    = 256
 	maxAutokickRequestIdLen = 128
+	maxTrainingNodeIdLen    = 64
 )
+
+func ValidateTrainingNodeId(nodeId string) error {
+	invalid := nodeId == "" || len(nodeId) > maxTrainingNodeIdLen || nodeId == "." || nodeId == ".."
+	for _, c := range nodeId {
+		letter := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+		digit := c >= '0' && c <= '9'
+		if !letter && !digit && c != '-' && c != '_' && c != '.' {
+			invalid = true
+			break
+		}
+	}
+	if invalid {
+		return ErrTrainshardOptInRequest.Wrapf("node_id %q: must be 1 to %d of A-Z, a-z, 0-9, '.', '_', '-' and not . or ..",
+			nodeId, maxTrainingNodeIdLen)
+	}
+	return nil
+}
 
 func ValidatePinnedImage(image string) error {
 	repository, digest, found := strings.Cut(image, pinnedDigestSeparator)
@@ -68,6 +86,9 @@ func (msg *MsgRefreshTrainingNodeOptIn) ValidateBasic() error {
 	for _, nodeId := range msg.NodeIds {
 		if nodeId == "" {
 			return ErrPocNodeIdEmpty
+		}
+		if err := ValidateTrainingNodeId(nodeId); err != nil {
+			return err
 		}
 		if seen[nodeId] {
 			return ErrTrainshardOptInRequest.Wrapf("duplicate node_id %s", nodeId)

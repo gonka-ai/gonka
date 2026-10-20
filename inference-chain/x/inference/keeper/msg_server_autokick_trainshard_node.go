@@ -2,10 +2,8 @@ package keeper
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -25,19 +23,9 @@ func (k msgServer) AutokickTrainshardNode(goCtx context.Context, msg *types.MsgA
 		return nil, types.ErrTrainshardAutokickNotAllowed
 	}
 
-	requestKey := collections.Join(msg.TrainshardId, msg.RequestId)
-	node := nodeKey(msg.Participant, msg.NodeId)
-	// a retry of the same kick is a no-op, the same id aimed at another node is a
-	// caller bug that would otherwise silently leave that node in the run
-	switch handled, err := k.TrainshardAutokickRequest.Get(goCtx, requestKey); {
-	case err == nil && handled == node:
+	if trainshardNodeAutokicked(&shard, msg.Participant, msg.NodeId) {
 		return &types.MsgAutokickTrainshardNodeResponse{}, nil
-	case err == nil:
-		return nil, types.ErrTrainshardAutokickRequestReused.Wrapf("request %q of %d already kicked another node", msg.RequestId, msg.TrainshardId)
-	case !errors.Is(err, collections.ErrNotFound):
-		return nil, err
 	}
-
 	if shard.Status != types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
 		return nil, types.ErrTrainshardNotActive.Wrapf("%d", msg.TrainshardId)
 	}
@@ -51,9 +39,6 @@ func (k msgServer) AutokickTrainshardNode(goCtx context.Context, msg *types.MsgA
 	}
 	if _, err := k.releaseTrainshardNodes(goCtx, &shard, height,
 		types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, msg.Reason, selected); err != nil {
-		return nil, err
-	}
-	if err := k.TrainshardAutokickRequest.Set(goCtx, requestKey, node); err != nil {
 		return nil, err
 	}
 
@@ -71,6 +56,7 @@ func (k msgServer) AutokickTrainshardNode(goCtx context.Context, msg *types.MsgA
 		sdk.NewAttribute("participant", msg.Participant),
 		sdk.NewAttribute("node_id", msg.NodeId),
 		sdk.NewAttribute("reason", msg.Reason),
+		sdk.NewAttribute("request_id", msg.RequestId),
 		sdk.NewAttribute("height", fmt.Sprintf("%d", height)),
 	)
 	if shard.Status != types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
@@ -83,4 +69,14 @@ func (k msgServer) AutokickTrainshardNode(goCtx context.Context, msg *types.MsgA
 	}
 
 	return &types.MsgAutokickTrainshardNodeResponse{}, nil
+}
+
+func trainshardNodeAutokicked(shard *types.Trainshard, participant, nodeId string) bool {
+	for _, n := range shard.Nodes {
+		if n != nil && n.Participant == participant && n.NodeId == nodeId &&
+			n.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED {
+			return true
+		}
+	}
+	return false
 }

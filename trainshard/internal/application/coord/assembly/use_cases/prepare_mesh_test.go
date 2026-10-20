@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -198,14 +199,6 @@ func TestPrepareRefusesWhatItCannotBuildAMeshFrom(t *testing.T) {
 			},
 			want: errHost,
 		},
-		"an identity signed by another host": {
-			arrange: func(_ *chainStub, h *hostsStub, _ *verifierStub) {
-				stolen := identityOf(nodeA)
-				stolen.Signature = []byte(hostB)
-				h.identities[hostA] = []mesh.Identity{stolen}
-			},
-			want: mesh.ErrForeignIdentity,
-		},
 	}
 
 	for name, tc := range cases {
@@ -261,6 +254,57 @@ func TestPrepareGoesOnWithoutANodeThatStaysQuietPastTheDeadline(t *testing.T) {
 	}
 	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
 		t.Fatalf("got %+v, want the run to go on with the nodes that are ready", result.Config.Peers)
+	}
+}
+
+func TestPrepareGoesOnWithoutANodeWhoseIdentityDoesNotVerify(t *testing.T) {
+	// arrange
+	chain, hosts := newChainStub(), newHostsStub()
+	stolen := identityOf(nodeA)
+	stolen.Signature = []byte(hostB)
+	hosts.identities[hostA] = []mesh.Identity{stolen}
+
+	// act
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
+
+	// assert
+	if err != nil {
+		t.Fatalf("one bad identity must not sink the prepare: %v", err)
+	}
+	if len(chain.releases) != 1 || chain.releases[0].node != nodeA || chain.releases[0].reason != vo.ReleaseFailedPrepare {
+		t.Fatalf("got %+v, want the node with the bad identity released as a failed prepare", chain.releases)
+	}
+	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
+		t.Fatalf("got %+v, want the mesh built from the rest", result.Config.Peers)
+	}
+}
+
+func TestPrepareGoesOnWithoutTheNodesThatOfferOneKey(t *testing.T) {
+	// arrange
+	chain, hosts := newChainStub(), newHostsStub()
+	copied := identityOf(nodeC)
+	copied.Member.PublicKey = identityOf(nodeA).Member.PublicKey
+	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), copied}
+
+	// act
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a copied key must not sink the prepare: %v", err)
+	}
+	released := make([]vo.NodeRef, 0, len(chain.releases))
+	for _, entry := range chain.releases {
+		if entry.reason != vo.ReleaseFailedPrepare {
+			t.Fatalf("got %+v, want every release recorded as a failed prepare", chain.releases)
+		}
+		released = append(released, entry.node)
+	}
+	if len(released) != 2 || !slices.Contains(released, nodeA) || !slices.Contains(released, nodeC) {
+		t.Fatalf("got %v released, want both nodes that offer the key", released)
+	}
+	if len(result.Config.Peers) != 1 || !result.Config.Contains(nodeB) {
+		t.Fatalf("got %+v, want the mesh built from the node with its own key", result.Config.Peers)
 	}
 }
 

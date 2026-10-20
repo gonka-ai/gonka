@@ -55,66 +55,91 @@ func TestCollectTakesAMemberFromTheHostTheChainPlacesItOnOnly(t *testing.T) {
 	}
 }
 
-func TestCollectRefusesAMemberAHostHasNoRightToOffer(t *testing.T) {
+func TestCollectNamesANodeMissingWhenItsIdentityDoesNotVerify(t *testing.T) {
 	// arrange
-	cases := map[string]struct {
-		arrange func(*hostsStub, *verifierStub, *delegationStub)
-		want    error
-	}{
-		"signed by another host": {
-			arrange: func(h *hostsStub, _ *verifierStub, _ *delegationStub) {
-				stolen := identityOf(nodeA)
-				stolen.Signature = []byte(hostB)
-				h.identities[hostA] = []mesh.Identity{stolen}
-			},
-			want: mesh.ErrForeignIdentity,
+	offerForB := func(h *hostsStub, change func(*mesh.Identity)) {
+		bad := identityOf(nodeB)
+		change(&bad)
+		h.identities[hostB] = []mesh.Identity{bad, identityOf(nodeC)}
+	}
+	cases := map[string]func(*hostsStub, *verifierStub){
+		"signed by another host": func(h *hostsStub, _ *verifierStub) {
+			offerForB(h, func(i *mesh.Identity) { i.Signature = []byte(hostA) })
 		},
-		"signed by a key the host never granted": {
-			arrange: func(h *hostsStub, _ *verifierStub, _ *delegationStub) {
-				stranger := identityOf(nodeA)
-				stranger.Signature = []byte("gonka1warm")
-				h.identities[hostA] = []mesh.Identity{stranger}
-			},
-			want: mesh.ErrForeignIdentity,
+		"signed by a key the host never granted": func(h *hostsStub, _ *verifierStub) {
+			offerForB(h, func(i *mesh.Identity) { i.Signature = []byte("gonka1warm") })
 		},
-		"signature that does not verify": {
-			arrange: func(_ *hostsStub, v *verifierStub, _ *delegationStub) { v.err = errors.New("bad signature") },
-			want:    mesh.ErrForeignIdentity,
+		"signature that does not verify": func(h *hostsStub, v *verifierStub) {
+			offerForB(h, func(i *mesh.Identity) { i.Signature = []byte("garbage") })
+			v.rejected = map[string]bool{"garbage": true}
 		},
-		"chain cannot say who the signer is": {
-			arrange: func(h *hostsStub, _ *verifierStub, d *delegationStub) {
-				warm := identityOf(nodeA)
-				warm.Signature = []byte("gonka1warm")
-				h.identities[hostA] = []mesh.Identity{warm}
-				d.err = errors.New("chain down")
-			},
-			want: mesh.ErrDelegationUnknown,
-		},
-		"a member without an address": {
-			arrange: func(h *hostsStub, _ *verifierStub, _ *delegationStub) {
-				incomplete := identityOf(nodeA)
-				incomplete.Member.Address = ""
-				h.identities[hostA] = []mesh.Identity{incomplete}
-			},
-			want: mesh.ErrIncompleteMember,
+		"a member without an address": func(h *hostsStub, _ *verifierStub) {
+			offerForB(h, func(i *mesh.Identity) { i.Member.Address = "" })
 		},
 	}
 
-	for name, tc := range cases {
+	for name, arrange := range cases {
 		t.Run(name, func(t *testing.T) {
 			// arrange
-			hosts, verifier, delegation := newHostsStub(), &verifierStub{}, &delegationStub{}
-			tc.arrange(hosts, verifier, delegation)
+			hosts, verifier := newHostsStub(), &verifierStub{}
+			arrange(hosts, verifier)
 
 			// act
-			_, _, err := mesh.Collect(context.Background(), hosts, verifier, delegation, shardID,
+			members, missing, err := mesh.Collect(context.Background(), hosts, verifier, &delegationStub{}, shardID,
 				machines, []vo.NodeRef{nodeA, nodeB, nodeC})
 
 			// assert
-			if !errors.Is(err, tc.want) {
-				t.Fatalf("got %v, want %v", err, tc.want)
+			if err != nil {
+				t.Fatalf("one bad identity must not sink the mesh: %v", err)
+			}
+			if !slices.Equal(missing, []vo.NodeRef{nodeB}) {
+				t.Fatalf("got %v missing, want only %s", missing, nodeB)
+			}
+			if len(members) != 2 || members[0].Node != nodeA || members[1].Node != nodeC {
+				t.Fatalf("got %+v, want the other nodes of the host and of the mesh kept", members)
 			}
 		})
+	}
+}
+
+func TestCollectStopsWhenTheChainCannotSayWhoTheSignerIs(t *testing.T) {
+	// arrange
+	hosts := newHostsStub()
+	warm := identityOf(nodeA)
+	warm.Signature = []byte("gonka1warm")
+	hosts.identities[hostA] = []mesh.Identity{warm}
+	delegation := &delegationStub{err: errors.New("chain down")}
+
+	// act
+	_, _, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, delegation, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	// assert
+	if !errors.Is(err, mesh.ErrDelegationUnknown) {
+		t.Fatalf("got %v, want %v: a chain that cannot answer is no reason to drop the node", err, mesh.ErrDelegationUnknown)
+	}
+}
+
+func TestCollectNamesBothNodesMissingWhenTheyOfferOneKey(t *testing.T) {
+	// arrange
+	hosts := newHostsStub()
+	copied := identityOf(nodeC)
+	copied.Member.PublicKey = identityOf(nodeA).Member.PublicKey
+	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), copied}
+
+	// act
+	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	// assert
+	if err != nil {
+		t.Fatalf("a copied key must not sink the mesh: %v", err)
+	}
+	if !slices.Equal(missing, []vo.NodeRef{nodeA, nodeC}) {
+		t.Fatalf("got %v missing, want both nodes that offer the key", missing)
+	}
+	if len(members) != 1 || members[0].Node != nodeB {
+		t.Fatalf("got %+v, want only %s kept", members, nodeB)
 	}
 }
 

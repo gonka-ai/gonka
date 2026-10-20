@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 
@@ -329,29 +330,38 @@ func (k Keeper) buildTrainingReservedCounts(ctx context.Context) (*trainingReser
 		perProfile:    make(map[string]int),
 		perCreatorAct: make(map[string]int),
 	}
-	err := k.TrainshardActiveIndex.Walk(ctx, nil, func(id uint64) (bool, error) {
+	if err := k.TrainshardActiveIndex.Walk(ctx, nil, func(id uint64) (bool, error) {
 		shard, err := k.Trainshards.Get(ctx, id)
 		if err != nil {
 			return false, err
 		}
 		counts.activeShards++
 		counts.perCreatorAct[shard.Creator]++
-		seen := make(map[string]bool)
-		for _, n := range shard.Nodes {
-			if !isActiveReservedNode(n) {
-				continue
+		return false, nil
+	}); err != nil {
+		return nil, err
+	}
+
+	shards := make(map[uint64]*types.Trainshard)
+	if err := k.TrainshardReservations.Walk(ctx, nil, func(key collections.Pair[string, string], id uint64) (bool, error) {
+		shard, ok := shards[id]
+		if !ok {
+			loaded, err := k.Trainshards.Get(ctx, id)
+			if err != nil {
+				return false, fmt.Errorf("trainshard %d reserving node %s of %s: %w", id, key.K2(), key.K1(), err)
 			}
-			counts.perModel[n.ModelId]++
-			key := nodeKey(n.Participant, n.NodeId)
-			if !seen[key] {
-				seen[key] = true
-				counts.total++
-				counts.perProfile[shard.GpuProfileId]++
+			shard = &loaded
+			shards[id] = shard
+		}
+		counts.total++
+		counts.perProfile[shard.GpuProfileId]++
+		for _, n := range shard.Nodes {
+			if n.Participant == key.K1() && n.NodeId == key.K2() {
+				counts.perModel[n.ModelId]++
 			}
 		}
 		return false, nil
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
 	return counts, nil
@@ -385,7 +395,7 @@ func (k Keeper) selectTrainshardNodes(
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 
 	var skipped struct {
-		guardian, challenged, optIn, endpoint, reserved, weightRate, totalCap, profileCap, modelCap int
+		nodeId, guardian, challenged, optIn, endpoint, reserved, weightRate, totalCap, profileCap, modelCap int
 	}
 	ofProfile := 0
 	candidates := make([]*trainingEpochNode, 0, len(view.nodes))
@@ -394,6 +404,10 @@ func (k Keeper) selectTrainshardNodes(
 			continue
 		}
 		ofProfile++
+		if types.ValidateTrainingNodeId(node.nodeId) != nil {
+			skipped.nodeId++
+			continue
+		}
 		if guardians[node.participant] {
 			skipped.guardian++
 			continue
@@ -501,11 +515,12 @@ func (k Keeper) selectTrainshardNodes(
 
 	if uint32(takenTotal) < nodeCount {
 		return nil, 0, types.ErrTrainshardCapacity.Wrapf(
-			"found %d of %d needed among %d nodes of profile %s; skipped: %d guardian, %d under a PoC challenge, %d without a live opt-in, "+
+			"found %d of %d needed among %d nodes of profile %s; skipped: %d with an invalid node id, %d guardian, "+
+				"%d under a PoC challenge, %d without a live opt-in, "+
 				"%d without an endpoint, %d already reserved, %d without a reliable weight rate (%d participants needed), "+
 				"%d over the total reserve cap (%d), "+
 				"%d over the profile share cap (%d), %d over a model share cap or its last free node",
-			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.guardian, skipped.challenged, skipped.optIn,
+			takenTotal, nodeCount, ofProfile, gpuProfileId, skipped.nodeId, skipped.guardian, skipped.challenged, skipped.optIn,
 			skipped.endpoint, skipped.reserved, skipped.weightRate, params.MinWeightRateParticipants,
 			skipped.totalCap, params.MaxTotalReservedNodes,
 			skipped.profileCap, profileCap, skipped.modelCap)

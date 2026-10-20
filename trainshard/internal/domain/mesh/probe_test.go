@@ -36,7 +36,7 @@ func TestProbeTakesAHostItCannotAskAsUnreachableByEveryone(t *testing.T) {
 	if mesh.FullyConnected(config.Refs(), failed) {
 		t.Fatalf("got a connected mesh, want the silent node counted as broken")
 	}
-	worst, found := mesh.Worst(config.Refs(), failed)
+	worst, found := mesh.Worst(shardID, config.Refs(), failed)
 	if !found || worst != nodeC {
 		t.Fatalf("got %s, want the silent node to be the worst one", worst)
 	}

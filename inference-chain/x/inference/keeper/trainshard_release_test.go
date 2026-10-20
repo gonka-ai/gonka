@@ -93,7 +93,7 @@ func TestTrainingNodeReservations_ListsANodeUntilItsReturnEnds(t *testing.T) {
 	require.Empty(t, held(until))
 }
 
-func TestAutokickTrainshardNode_IdempotentPerRequestId(t *testing.T) {
+func TestAutokickTrainshardNode_RetryAfterCloseIsANoOp(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 
 	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
@@ -101,23 +101,75 @@ func TestAutokickTrainshardNode_IdempotentPerRequestId(t *testing.T) {
 	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
 	require.NoError(t, err)
 
-	kick := &types.MsgAutokickTrainshardNode{
+	kick := func(requestId string) error {
+		_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+			Creator:      creator,
+			TrainshardId: resp.TrainshardId,
+			Participant:  creator,
+			NodeId:       shard.Nodes[0].NodeId,
+			RequestId:    requestId,
+		})
+		return err
+	}
+	require.NoError(t, kick("req-1"))
+	first, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_EXPIRED, first.Status)
+
+	for _, requestId := range []string{"req-1", "req-2"} {
+		require.NoError(t, kick(requestId))
+		again, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+		require.NoError(t, err)
+		require.Equal(t, first, again)
+	}
+}
+
+func TestAutokickTrainshardNode_RejectsNodeReleasedOnClose(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	host := sample.AccAddress()
+
+	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
+		TrainshardId:    9,
+		Creator:         creator,
+		GpuProfileId:    trainshardTestProfile,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: ctx.BlockHeight() - 10,
+		ClosedAtHeight:  ctx.BlockHeight(),
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "node-h", ModelId: "model1", PocWeight: 100,
+				Status:           types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
+				ReleasedAtHeight: ctx.BlockHeight()},
+		},
+	}))
+
+	_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      creator,
+		TrainshardId: 9,
+		Participant:  host,
+		NodeId:       "node-h",
+		RequestId:    "req-1",
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardNotActive)
+
+	shard, err := k.Trainshards.Get(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, shard.Nodes[0].Status)
+}
+
+func TestAutokickTrainshardNode_RejectsNodeOutsideTheShard(t *testing.T) {
+	_, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+
+	_, err = ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
 		Creator:      creator,
 		TrainshardId: resp.TrainshardId,
 		Participant:  creator,
-		NodeId:       shard.Nodes[0].NodeId,
+		NodeId:       "node-unknown",
 		RequestId:    "req-1",
-	}
-	_, err = ms.AutokickTrainshardNode(ctx, kick)
-	require.NoError(t, err)
-	first, err := k.Trainshards.Get(ctx, resp.TrainshardId)
-	require.NoError(t, err)
-
-	_, err = ms.AutokickTrainshardNode(ctx, kick)
-	require.NoError(t, err)
-	second, err := k.Trainshards.Get(ctx, resp.TrainshardId)
-	require.NoError(t, err)
-	require.Equal(t, first, second)
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardNodeNotActive)
 }
 
 func TestAutokickTrainshardNode_RejectsForeignSigner(t *testing.T) {
@@ -142,7 +194,7 @@ func TestAutokickTrainshardNode_RejectsForeignSigner(t *testing.T) {
 	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, unchanged.Status)
 }
 
-func TestAutokickTrainshardNode_RejectsRequestIdReusedForAnotherNode(t *testing.T) {
+func TestAutokickTrainshardNode_HostCannotPreclaimTheCoordinatorRequestId(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	host := sample.AccAddress()
 
@@ -161,24 +213,25 @@ func TestAutokickTrainshardNode_RejectsRequestIdReusedForAnotherNode(t *testing.
 		},
 	}))
 
-	kick := func(nodeId string) error {
+	coordinatorRequestId := "release/9/" + host + "/node-h2/failed_prepare"
+	kick := func(signer, nodeId string) error {
 		_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
-			Creator:      host,
+			Creator:      signer,
 			TrainshardId: 9,
 			Participant:  host,
 			NodeId:       nodeId,
-			RequestId:    "req-1",
+			RequestId:    coordinatorRequestId,
 		})
 		return err
 	}
-	require.NoError(t, kick("node-h1"))
-	require.ErrorIs(t, kick("node-h2"), types.ErrTrainshardAutokickRequestReused)
-	require.NoError(t, kick("node-h1"))
+	require.NoError(t, kick(host, "node-h1"))
+	require.NoError(t, kick(creator, "node-h2"))
 
 	shard, err := k.Trainshards.Get(ctx, 9)
 	require.NoError(t, err)
 	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, shard.Nodes[0].Status)
-	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE, shard.Nodes[1].Status)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, shard.Nodes[1].Status)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_EXPIRED, shard.Status)
 }
 
 func TestAutokickTrainshardNode_AllowsHostForOwnNode(t *testing.T) {
@@ -573,6 +626,66 @@ func TestSubmitHardwareDiff_RemovingTheNodeClearsTheEndpoint(t *testing.T) {
 	require.ErrorIs(t, err, collections.ErrNotFound)
 	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-a"))
 	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestRefreshTrainingNodeOptIn_HandlerHoldsTheNodeIdToTheGrammar(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	hardware, found := k.GetHardwareNodes(ctx, creator)
+	require.True(t, found)
+	hardware.HardwareNodes = append(hardware.HardwareNodes, &types.HardwareNode{
+		LocalId:  "node/c",
+		Hardware: []*types.Hardware{{Type: "NVIDIA H100", Count: 8}},
+	})
+	require.NoError(t, k.SetHardwareNodes(ctx, hardware))
+
+	_, err := ms.RefreshTrainingNodeOptIn(ctx, &types.MsgRefreshTrainingNodeOptIn{
+		Creator: creator, NodeIds: []string{"node/c"}, Endpoint: "https://c.example.com",
+	})
+	require.ErrorIs(t, err, types.ErrTrainshardOptInRequest)
+
+	_, err = k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node/c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	_, err = k.TrainingNodeEndpoints.Get(ctx, collections.Join(creator, "node/c"))
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
+func TestAssembleTrainshard_SkipsANodeWithAnInvalidId(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	const invalid = "node/a"
+	active, found := k.GetActiveParticipants(ctx, 7)
+	require.True(t, found)
+	active.Participants[0].MlNodes[0].MlNodes[0].NodeId = invalid
+	require.NoError(t, k.SetActiveParticipants(ctx, active))
+	hardware, found := k.GetHardwareNodes(ctx, creator)
+	require.True(t, found)
+	hardware.HardwareNodes[0].LocalId = invalid
+	require.NoError(t, k.SetHardwareNodes(ctx, hardware))
+	require.NoError(t, k.TrainingNodeOptIns.Set(ctx, collections.Join(creator, invalid), trainshardOptInExpiry))
+	require.NoError(t, k.TrainingNodeEndpoints.Set(ctx, collections.Join(creator, invalid), "https://a.example.com"))
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.TrainingParams.MaxReservedSharePerModelBps = 10000
+	params.TrainingParams.MaxReservedSharePerProfileBps = 10000
+	require.NoError(t, k.SetParams(ctx, params))
+	proposal, err := k.TrainshardProposals.Get(ctx, 1)
+	require.NoError(t, err)
+	proposal.NodeCount = 2
+	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, proposal))
+
+	_, err = ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.ErrorContains(t, err, "skipped: 1 with an invalid node id")
+	require.False(t, k.IsNodeReserved(ctx, creator, invalid))
+
+	proposal.NodeCount = 1
+	require.NoError(t, k.TrainshardProposals.Set(ctx, 1, proposal))
+	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.NoError(t, err)
+	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
+	require.NoError(t, err)
+	require.Len(t, shard.Nodes, 1)
+	require.Equal(t, "node-b", shard.Nodes[0].NodeId)
 }
 
 func TestRefreshTrainingNodeOptIn_RejectsForeignNode(t *testing.T) {

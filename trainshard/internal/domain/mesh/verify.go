@@ -1,6 +1,12 @@
 package mesh
 
-import "trainshard/internal/domain/shared/vo"
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/binary"
+
+	"trainshard/internal/domain/shared/vo"
+)
 
 type Pair struct {
 	A vo.NodeRef
@@ -26,7 +32,7 @@ func FullyConnected(nodes []vo.NodeRef, failed []Pair) bool {
 
 // Worst names nothing for two nodes: a broken link between them blames both equally, and kicking
 // either leaves a mesh of one that only looks connected
-func Worst(nodes []vo.NodeRef, failed []Pair) (vo.NodeRef, bool) {
+func Worst(shardID vo.ShardID, nodes []vo.NodeRef, failed []Pair) (vo.NodeRef, bool) {
 	members := index(nodes)
 	if len(members) < 3 {
 		return vo.NodeRef{}, false
@@ -41,14 +47,28 @@ func Worst(nodes []vo.NodeRef, failed []Pair) (vo.NodeRef, bool) {
 	}
 
 	var worst vo.NodeRef
+	var worstKey [sha256.Size]byte
 	best := 0
 	for _, node := range nodes {
 		count := counts[node]
-		if count > best || (count == best && count > 0 && node.Less(worst)) {
-			worst, best = node, count
+		if count == 0 || count < best {
+			continue
+		}
+		key := tieKey(shardID, node)
+		if count > best || bytes.Compare(key[:], worstKey[:]) < 0 {
+			worst, worstKey, best = node, key, count
 		}
 	}
 	return worst, best > 0
+}
+
+func tieKey(shardID vo.ShardID, node vo.NodeRef) [sha256.Size]byte {
+	buf := make([]byte, 8, 8+len(node.Participant)+1+len(node.NodeID))
+	binary.BigEndian.PutUint64(buf, uint64(shardID))
+	buf = append(buf, node.Participant...)
+	buf = append(buf, 0)
+	buf = append(buf, node.NodeID...)
+	return sha256.Sum256(buf)
 }
 
 func index(nodes []vo.NodeRef) map[vo.NodeRef]bool {
