@@ -59,6 +59,20 @@ const (
 	// defaultAttachInFlight is how many anonymous VerifyAttach calls may run
 	// at once. Renewals that present a live token are not in this count.
 	defaultAttachInFlight = 50
+	// defaultOriginAttachBurst is how many anonymous Attaches one origin may
+	// run before the process floor. It is a fraction of defaultAttachBurst,
+	// so one address cannot empty the shared bucket. A tighter process cap
+	// scales this down (originShare).
+	defaultOriginAttachBurst = 10
+	// defaultOriginAttachRefillPerSec refills the origin bucket continuously.
+	defaultOriginAttachRefillPerSec = 10
+	// defaultOriginAttachInFlight is concurrent VerifyAttach calls for one
+	// origin. The process cap stays defaultAttachInFlight.
+	defaultOriginAttachInFlight = 4
+	// maxOriginAttachEntries bounds the origin table. Idle entries are
+	// evicted in batches; an entry with a VerifyAttach in flight stays.
+	maxOriginAttachEntries = 4096
+	originAttachEvictBatch = 32
 	// maxAttachRecvBytes is the HTTP body cap on Attach only. The Connect
 	// mux allows 16 KiB on authenticated RPCs; this
 	// path is unauthenticated and must not buy that read before ECDSA.
@@ -98,13 +112,14 @@ type PeerAuthConfig struct {
 	Version string
 	// KeyID selects the HMAC key. Zero means SessionKeyID.
 	KeyID byte
-	// AttachFloorPerMin sizes the anonymous Attach bucket. Zero means
+	// AttachFloorPerMin sizes the anonymous Attach process bucket. Zero means
 	// Limits.AttachFloorPerMin or defaultAttachFloorPerMin. A value below
 	// defaultAttachBurst is the burst (tests). The default and anything
 	// larger use defaultAttachBurst tokens refilled at defaultAttachRefillPerSec.
-	// Not keyed on peer_address: that field is unsigned. A live session token
-	// skips the bucket and spends the per-peer renewal bucket instead.
-	// math.MaxInt disables it.
+	// Not keyed on peer_address: that field is unsigned. An X-Real-IP that
+	// parses as an address spends a smaller origin bucket first. A live
+	// session token skips both and spends the per-peer renewal bucket.
+	// math.MaxInt disables both.
 	AttachFloorPerMin int
 	// Limits is advertised on Attach and enforced by the channel interceptor.
 	// Nil uses defaults (not process env — production passes LoadChannelLimitConfig).
@@ -137,6 +152,7 @@ type PeerAuthHandler struct {
 
 	attachMu     sync.Mutex
 	attachBucket attachBucket
+	origins      *originAttachTable
 
 	limiter *channelLimiter
 	traffic *transport.RPCTraffic
@@ -199,6 +215,7 @@ func NewPeerAuthHandler(verifier signing.Verifier, hostAddress string, cfg PeerA
 		sessionKey:  key,
 		keyID:       keyID,
 		closeCh:     make(chan struct{}),
+		origins:     newOriginAttachTable(),
 		limiter:     limiter,
 		traffic:     transport.NewRPCTraffic(cfg.Now),
 	}
@@ -286,9 +303,10 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("unsupported protocol_version"))
 	}
 
-	// A live X-Devshard-Session skips the anonymous bucket and spends the
+	// A live X-Devshard-Session skips the anonymous buckets and spends the
 	// token peer's renewal bucket instead. peer_address is unsigned, so it
-	// is not the key for either.
+	// is not a key. X-Real-IP, when it parses as an address, is the origin
+	// key and is spent before the process floor.
 	tokenPeer, tokenLive, tokenExpired := h.sessionHeaderToken(req.Header())
 	// `_` is not a roster, so it cannot open a session. Without a live token
 	// the renewal is refused before ECDSA and the anonymous bucket, and the
@@ -302,10 +320,11 @@ func (h *PeerAuthHandler) attach(ctx context.Context, req *connect.Request[rpcpb
 			return nil, err
 		}
 	} else {
-		if err := h.acquireAttachVerify(); err != nil {
+		release, err := h.acquireAttachVerify(req.Header())
+		if err != nil {
 			return nil, err
 		}
-		defer h.releaseAttachVerify()
+		defer release()
 	}
 
 	recovered, err := transport.VerifyAttach(h.verifier, msg, h.now().Unix())
@@ -478,24 +497,7 @@ func hostRenewalRefused(expired bool) error {
 	return handshakeRequired()
 }
 
-// acquireAttachVerify takes one anonymous-bucket token and an in-flight
-// slot before VerifyAttach. A live session token does not call this.
-func (h *PeerAuthHandler) acquireAttachVerify() error {
-	if !h.spendAttachToken(true) {
-		return attachFloorExhausted(attachRetryAfterSec)
-	}
-	return nil
-}
-
-func (h *PeerAuthHandler) releaseAttachVerify() {
-	h.attachMu.Lock()
-	if h.attachBucket.inFlight > 0 {
-		h.attachBucket.inFlight--
-	}
-	h.attachMu.Unlock()
-}
-
-// takeAttachToken charges one anonymous token after a skipped Attach whose
+// takeAttachToken charges one process-floor token after a skipped Attach whose
 // signature was not for the token's peer. false means the bucket was empty,
 // so this request must not be treated as admitted.
 func (h *PeerAuthHandler) takeAttachToken() bool {
@@ -575,8 +577,23 @@ func (b *attachBucket) refill(now time.Time, burst, perSec float64) {
 	b.last = now
 }
 
+const (
+	// attachProcessLimitMessage is the process-floor refusal. Retry clients
+	// match this substring, so the origin refusal keeps it as a prefix.
+	attachProcessLimitMessage = "too many attach attempts"
+	attachOriginLimitMessage  = "too many attach attempts for this address"
+)
+
 func attachFloorExhausted(retryAfterSec int) error {
-	err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many attach attempts"))
+	return attachExhausted(attachProcessLimitMessage, retryAfterSec)
+}
+
+func attachOriginExhausted(retryAfterSec int) error {
+	return attachExhausted(attachOriginLimitMessage, retryAfterSec)
+}
+
+func attachExhausted(msg string, retryAfterSec int) error {
+	err := connect.NewError(connect.CodeResourceExhausted, errors.New(msg))
 	err.Meta().Set("Retry-After", strconv.Itoa(retryAfterSec))
 	return err
 }

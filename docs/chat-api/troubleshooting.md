@@ -477,7 +477,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #reject-malformed-param-types
 
-**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`. `stop_token_ids` is exempt — it is stripped before any shape check, so a malformed array is dropped rather than rejected. So is `parallel_tool_calls` in a request without `tools`: it is stripped together with `tool_choice` ([#strip-tool-controls-without-tools](#strip-tool-controls-without-tools)).
+**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`. A malformed `stop_token_ids` is rejected too, by the vocabulary check. `parallel_tool_calls` is exempt in a request without `tools`: it is stripped together with `tool_choice` ([#strip-tool-controls-without-tools](#strip-tool-controls-without-tools)).
 
 **Why**: vLLM rejects these with type errors at the engine boundary, producing opaque upstream 400s. The gateway type-checks them up front against the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm) so the client gets an immediate, field-named error instead of a backend round-trip.
 

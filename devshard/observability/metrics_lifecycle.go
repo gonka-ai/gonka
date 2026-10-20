@@ -306,7 +306,7 @@ func initRegistry() {
 	}, []string{"endpoint", "zone"})
 	peerRPCAttachBannedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_peer_rpc_attach_banned_total",
-		Help: "Attach refusals by reason (floor, other). No peer/ip labels.",
+		Help: "Attach refusals by reason (floor, origin, other). No peer/ip labels.",
 	}, []string{"reason"})
 	refusalChallengePages = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_refusal_challenge_pages_total",
@@ -718,7 +718,8 @@ func IncPeerRPCBanned(endpoint, zone string) {
 }
 
 // IncPeerRPCAttachBanned counts an Attach resource_exhausted. reason is
-// floor (process Attach cap) or other (oversized, too many sessions).
+// floor (process Attach cap), origin (one X-Real-IP), or other (oversized,
+// too many sessions).
 func IncPeerRPCAttachBanned(reason string) {
 	ensureMetrics()
 	if reason == "" {

@@ -211,7 +211,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
-	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8081 grpc=true")
+	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8080 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
@@ -819,15 +819,15 @@ func dockerServerArch(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-// loadTestComposeEnv selects the v6 peer-RPC transport for this isolated stack.
-// The normal testenv Compose defaults remain unchanged for non-loadtest testenv and citest runs.
+// loadTestComposeEnv selects the v6 peer-RPC transport for this isolated
+// stack: HTTP/2 (the client default) on versiond-router:8080 with native
+// gRPC. The normal testenv Compose defaults remain unchanged for non-loadtest
+// testenv and citest runs.
 func loadTestComposeEnv() []string {
 	env := os.Environ()
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_PORT", "8081")
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE", "true")
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST", "versiond-router")
+	env = removeEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE")
 	env = setEnvValue(env, "DEVSHARD_RPC_GRPC", "true")
-	return removeEnvValue(env, "DEVSHARD_RPC_H2_HOST")
+	return env
 }
 
 func setEnvValue(env []string, key, value string) []string {

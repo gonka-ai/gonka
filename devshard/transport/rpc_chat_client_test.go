@@ -224,24 +224,25 @@ func TestRPCClient_SendRoundTripGRPCOnH2(t *testing.T) {
 	require.Equal(t, "gzip", obs.requestEncoding(chat), "gRPC Chat envelope must still be gzipped")
 }
 
-func TestRPCClient_SendGRPCMissFailsClosed(t *testing.T) {
+func TestRPCClient_SendGRPCMissFallsBackToConnect(t *testing.T) {
 	obs := newWireObserver()
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	dead.Close()
+	t.Cleanup(dead.Close)
 	rpc, user, pc := startLiveChatRPCPartsObservedCfg(t, transport.DefaultClientConfig(), obs, transport.PeerConnConfig{
 		DialSet:        transport.PeerRPCDialSet{H2URL: dead.URL},
 		GRPC:           true,
 		H2ProbeTimeout: 200 * time.Millisecond,
 	}, false)
 	pc.Start()
-	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond)
+	waitPeerReady(t, pc)
+	require.False(t, pc.UsingGRPC())
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var stream bytes.Buffer
 	_, err := rpc.Send(ctx, chatHostRequest(t, user), &stream, nil)
-	require.Error(t, err)
-	require.Empty(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
+	require.NoError(t, err, "Chat must complete over Connect/HTTP/1.1 when the h2 origin misses")
+	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
 }
 
 func TestRPCClient_SendGzipsRequestAndKeepsFramesSingleGzip(t *testing.T) {

@@ -255,14 +255,15 @@ const (
 	DefaultKeyringPassword    = "testenv1"
 	DefaultVersiondRouterHost = "versiond-router"
 	DefaultVersiondRouterPort = 8080
-	// DefaultVersiondRouterH2Port is versiond-router's inner h2c listen.
-	// Overlay proxy:{DefaultRPCH2Port} speaks proto h2 here. JSON stays
-	// on DefaultVersiondRouterPort.
-	DefaultVersiondRouterH2Port = 8081
-	// DefaultProxyService / DefaultRPCH2Port are the opt-in overlay hop
-	// (docker-compose.proxy.yml). JSON/catalog stay on DefaultEscrowSlotURL.
+	// DefaultProxyService / DefaultProxyPort are the opt-in overlay public
+	// hop (docker-compose.proxy.yml): a one-port stand-in for join's
+	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
+	// as they share join's :80/:443. With the overlay on, pooled hosts'
+	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
 	DefaultProxyService     = "proxy"
-	DefaultRPCH2Port        = 8443
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
@@ -466,6 +467,18 @@ func (c *File) ApplyDefaults() {
 	}
 }
 
+// ProxyOverlayFromEnv is whether TESTENV_PROXY_OVERLAY asks for the proxy
+// overlay. Default citest leaves it unset: peers dial versiond-router:8080
+// directly. The overlay rerun puts the proxy in front of that port.
+func ProxyOverlayFromEnv() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(ProxyOverlayEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 // RouterBaseURL returns the in-network HTTP origin for versiond-router (container port).
 // Host-published ports (e.g. citest 18080) are for localhost probes only; see EndpointsFromConfig.
 func RouterBaseURL(c *File) string {
@@ -605,6 +618,42 @@ func OnChainIdentityHosts(c *File) []HostCfg {
 		identities = append(identities, h)
 	}
 	return identities
+}
+
+// PostgresServiceFor is the Postgres service (and PGHOST) h stores in. With
+// PerParticipant every on-chain identity has its own service, shared by its
+// replicas; otherwise all hosts use Postgres.Host.
+func PostgresServiceFor(c *File, h HostCfg) string {
+	if c == nil {
+		return ""
+	}
+	if !c.Postgres.PerParticipant {
+		return c.Postgres.Host
+	}
+	name := VersiondKeyName(c, h)
+	for _, p := range OnChainIdentityHosts(c) {
+		if VersiondKeyName(c, p) == name {
+			return DefaultPostgresHost + "-" + p.ID
+		}
+	}
+	return DefaultPostgresHost + "-" + h.ID
+}
+
+// PostgresServices lists every Postgres service of the stack, in roster order.
+// It is empty when Postgres is disabled.
+func PostgresServices(c *File) []string {
+	if c == nil || !c.Postgres.Enabled {
+		return nil
+	}
+	if !c.Postgres.PerParticipant {
+		return []string{c.Postgres.Host}
+	}
+	identities := OnChainIdentityHosts(c)
+	out := make([]string, 0, len(identities))
+	for _, h := range identities {
+		out = append(out, PostgresServiceFor(c, h))
+	}
+	return out
 }
 
 // KeyNameReplicaCount is how many containers load h's KEY_NAME. More than one

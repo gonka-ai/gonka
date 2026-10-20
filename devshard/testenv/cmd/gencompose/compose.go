@@ -127,6 +127,26 @@ services:
     restart: unless-stopped
 {{ end }}
 {{ if .Postgres.Enabled }}
+{{ if .Postgres.PerParticipant }}
+{{ range $i, $h := participantHosts . }}
+
+  {{ postgresServiceFor $ $h }}:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: {{ $.Postgres.Database }}
+      POSTGRES_USER: {{ $.Postgres.User }}
+      POSTGRES_PASSWORD: {{ $.Postgres.Password }}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ $.Postgres.User }} -d {{ $.Postgres.Database }}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      testenv:
+        ipv4_address: {{ participantPostgresIP $ $i }}
+    restart: unless-stopped
+{{ end }}
+{{ else }}
 
   devshard-postgres:
     image: postgres:16-alpine
@@ -143,6 +163,7 @@ services:
       testenv:
         ipv4_address: {{ .Postgres.IP }}
     restart: unless-stopped
+{{ end }}
 {{ end }}
 {{ range .Hosts }}
 
@@ -185,12 +206,11 @@ services:
       DEVSHARD_RPC_MSGS_PER_MIN: {{ hostEnv . "DEVSHARD_RPC_MSGS_PER_MIN" "${DEVSHARD_RPC_MSGS_PER_MIN:-}" }}
       DEVSHARD_RPC_MSGS_BURST: {{ hostEnv . "DEVSHARD_RPC_MSGS_BURST" "${DEVSHARD_RPC_MSGS_BURST:-}" }}
       DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: {{ hostEnv . "DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL" "${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}" }}
-      # Client dial. Empty keeps InferenceUrl. Citest sets 8081 + grpc so
-      # peer RPC uses versiond-router's proto h2 bind, not the proxy overlay.
-      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
-      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
+      # Peer RPC dials each peer's InferenceUrl: HTTP/2 first, HTTP/1.1
+      # when that origin does not speak it. Empty is on; "false" forces
+      # Connect over HTTP/1.1 (the §8.2 cells). Citest sets grpc so the
+      # HTTP/2 leg is native gRPC.
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
-      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
@@ -202,7 +222,7 @@ services:
       GONKA_HA: "{{ haDeployment $ }}"
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: {{ hostEnv . "DEVSHARD_STORAGE_MODE" "postgres" }}
-      PGHOST: {{ $.Postgres.Host }}
+      PGHOST: {{ postgresServiceFor $ . }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
@@ -214,7 +234,7 @@ services:
       # leases when the solo validates (sqlite Acquire never writes PG rows).
       # A host env of sqlite keeps payloads in zstd files only.
       DEVSHARD_STORAGE_MODE: {{ hostEnv . "DEVSHARD_STORAGE_MODE" "hybrid" }}
-      PGHOST: {{ $.Postgres.Host }}
+      PGHOST: {{ postgresServiceFor $ . }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
@@ -243,7 +263,10 @@ services:
       {{ .Name }}:
         condition: service_started
 {{ end }}
-{{ if isHAReplica $ . }}
+{{ if $.Postgres.PerParticipant }}
+      {{ postgresServiceFor $ . }}:
+        condition: service_healthy
+{{ else if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
 {{ end }}
@@ -336,10 +359,7 @@ services:
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
-      DEVSHARD_RPC_H2_PORT: ${DEVSHARD_RPC_H2_PORT:-}
-      DEVSHARD_RPC_H2_HOST: ${DEVSHARD_RPC_H2_HOST:-}
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
-      DEVSHARD_RPC_H2_FRONT_HOST: ${DEVSHARD_RPC_H2_FRONT_HOST:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
@@ -389,6 +409,9 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"routingActivationMinReady": routingActivationMinReady,
 		"versiondKeyName":           versiondKeyName,
 		"isHAReplica":               isHAReplica,
+		"participantHosts":          config.OnChainIdentityHosts,
+		"participantPostgresIP":     participantPostgresIP,
+		"postgresServiceFor":        config.PostgresServiceFor,
 		"legacyVersiondHost":        legacyVersiondHost,
 		"mockMLNodes":               mockMLNodes,
 		"mockMLNodesEnv":            mockMLNodesEnv,
@@ -546,6 +569,12 @@ func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 		return false
 	}
 	return config.KeyNameReplicaCount(cfg, h) > 1
+}
+
+// participantPostgresIP is the address of participant i's Postgres service,
+// above the mock ML node range (BaseIP.200+i).
+func participantPostgresIP(cfg *config.File, i int) string {
+	return fmt.Sprintf("%s.%d", cfg.Network.BaseIP, 200+i)
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.
