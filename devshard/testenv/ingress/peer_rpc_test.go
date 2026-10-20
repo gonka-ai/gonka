@@ -148,7 +148,10 @@ func newOrigin(t *testing.T, current bool, h2HealthGate ...<-chan struct{}) *ori
 					return
 				}
 			}
-			if o.down.Load() {
+			// down fails only the HTTP/2 health check. Policy nginx probes
+			// /readyz over HTTP/1.1; a 503 there leaves policy_http down
+			// and HAProxy /readyz never turns 200.
+			if o.down.Load() && r.ProtoMajor == 2 {
 				http.Error(w, "not ready", http.StatusServiceUnavailable)
 			} else if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() && o.childH2.Load() {
 				io.WriteString(w, "peer-rpc-ok\n")
@@ -889,7 +892,8 @@ func TestNonHAV6StreamsStayOffProductionFallback(t *testing.T) {
 		"PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS=200")
 	waitChecked(t, f.socket, "rpc_h2_upstream", true)
 	waitChecked(t, f.socket, "rpc_h1_only", false)
-	require.Equal(t, "512", statValue(t, f.stats(t, "show stat"), "rpc_h1_fallback", "local", "maxconn"))
+	// slim is the server's configured maxconn. show stat has no maxconn column.
+	require.Equal(t, "512", statValue(t, f.stats(t, "show stat"), "rpc_h1_fallback", "local", "slim"))
 
 	pc := transport.NewPeerConn(transport.PeerConnConfig{
 		BaseURL:        f.httpURL,
@@ -975,6 +979,9 @@ func statValue(t *testing.T, dump, backend, server, field string) string {
 			col = map[string]int{}
 			for i, name := range strings.Split(strings.TrimPrefix(line, "# "), ",") {
 				col[strings.TrimSpace(name)] = i
+			}
+			if _, ok := col[field]; !ok {
+				t.Fatalf("stats header has no %s column", field)
 			}
 			continue
 		}
