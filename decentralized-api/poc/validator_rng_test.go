@@ -161,9 +161,9 @@ func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
 		params := testModelPocParams()
 		params.PocScheme = types.PocScheme_POC_SCHEME_DECODE
 		params.Models[0].Schemes = []*types.PocSchemeParams{{
-			Scheme:    types.PocScheme_POC_SCHEME_DECODE,
-			SeqLen:    128,
-			MaxTokens: 64,
+			Scheme:      types.PocScheme_POC_SCHEME_DECODE,
+			SeqLen:      128,
+			DecodeSteps: 64,
 			StatTest: &types.PoCStatTestParams{
 				DistThreshold:   types.DecimalFromFloat(0.03),
 				PMismatch:       types.DecimalFromFloat(0.1),
@@ -184,7 +184,7 @@ func TestValidateParticipant_DecodeSchemePropagated(t *testing.T) {
 		params := testModelPocParams()
 		params.Models[0].Schemes = []*types.PocSchemeParams{
 			{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128},
-			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 64},
+			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, DecodeSteps: 64},
 		}
 		req := runValidateParticipant(t, params, artifact)
 		assert.False(t, req.Params.Decode)

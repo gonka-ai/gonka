@@ -122,8 +122,8 @@ func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch
 			treeDepth: commit.TreeDepth,
 		}
 		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
-			if steps, ok := mc.MaxTokensForScheme(pocParams.PocScheme); ok {
-				work.decodeMax = steps
+			if steps, ok := mc.DecodeStepsForScheme(pocParams.PocScheme); ok {
+				work.decodeSteps = steps
 			}
 		}
 		workItems = append(workItems, work)

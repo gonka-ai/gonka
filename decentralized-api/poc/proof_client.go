@@ -53,7 +53,7 @@ type ProofRequest struct {
 	TreeDepth                uint32
 	LeafIndices              []uint32
 	ParticipantAddress       string // participant whose API we're calling
-	DecodeMaxTokens          int64  // >0: artifacts are packed decode trajectories, one byte per step
+	DecodeSteps              int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofByNonceRequest contains parameters for requesting proofs by nonce.
@@ -65,7 +65,7 @@ type ProofByNonceRequest struct {
 	TreeDepth                uint32
 	Nonces                   []int32
 	ParticipantAddress       string // participant whose API we're calling
-	DecodeMaxTokens          int64  // >0: artifacts are packed decode trajectories, one byte per step
+	DecodeSteps              int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofResponse is the response from the proof API.
@@ -197,7 +197,7 @@ func (c *ProofClient) FetchAndVerifyProofs(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeMaxTokens)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -289,7 +289,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeMaxTokens)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -377,7 +377,7 @@ func validateNonceCoverage(requested []int32, proofs []ProofItem) error {
 	return nil
 }
 
-func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participantAddress string, item ProofItem, decodeMaxTokens int64) (VerifiedArtifact, error) {
+func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participantAddress string, item ProofItem, decodeSteps int64) (VerifiedArtifact, error) {
 	vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
 	if err != nil {
 		logging.Warn("Failed to decode vector bytes", types.PoC,
@@ -386,11 +386,11 @@ func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participan
 	}
 
 	err = ValidateFP16Vector(vectorBytes, DefaultKDim)
-	if decodeMaxTokens > 0 {
+	if decodeSteps > 0 {
 		// Decode scheme: the leaf is the trajectory, the prefill step plus one byte per decode step.
 		err = nil
-		if int64(len(vectorBytes)) != decodeMaxTokens+1 {
-			err = fmt.Errorf("invalid trajectory length: got %d bytes, expected %d", len(vectorBytes), decodeMaxTokens+1)
+		if int64(len(vectorBytes)) != decodeSteps+1 {
+			err = fmt.Errorf("invalid trajectory length: got %d bytes, expected %d", len(vectorBytes), decodeSteps+1)
 		} else if packErr := mlnodeclient.ValidatePackedKSteps(vectorBytes); packErr != nil {
 			err = packErr
 		}

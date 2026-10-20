@@ -494,8 +494,8 @@ data class PocSchemeParams(
     val scheme: String = "POC_SCHEME_PREFILL",
     @SerializedName("seq_len")
     val seqLen: Long? = null,
-    @SerializedName("max_tokens")
-    val maxTokens: Long = 0,
+    @SerializedName("decode_steps")
+    val decodeSteps: Long = 0,
     @SerializedName("stat_test")
     val statTest: PoCStatTestParams? = null,
     @SerializedName("dynamic_coefficient")

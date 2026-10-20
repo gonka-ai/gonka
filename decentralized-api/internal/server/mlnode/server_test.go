@@ -29,7 +29,7 @@ type stubBrokerChainBridge struct {
 	models         []string
 	scheme         types.PocScheme
 	seqLen         int64
-	decodeMax      int64
+	decodeSteps    int64
 	frozenScheme   types.PocScheme
 	frozenSeqLen   int64
 	frozenMax      int64
@@ -78,48 +78,48 @@ func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 		Params: types.Params{
 			PocParams: &types.PocParams{
 				PocScheme: s.scheme,
-				Models:    s.recipeModels(s.scheme, s.seqLen, s.decodeMax),
+				Models:    s.recipeModels(s.scheme, s.seqLen, s.decodeSteps),
 			},
 		},
 	}, nil
 }
 
-func recipeModel(id string, scheme types.PocScheme, seqLen, maxTokens int64) *types.PoCModelConfig {
+func recipeModel(id string, scheme types.PocScheme, seqLen, decodeSteps int64) *types.PoCModelConfig {
 	return &types.PoCModelConfig{
 		ModelId: id,
 		Schemes: []*types.PocSchemeParams{{
-			Scheme:    scheme,
-			SeqLen:    seqLen,
-			MaxTokens: maxTokens,
+			Scheme:      scheme,
+			SeqLen:      seqLen,
+			DecodeSteps: decodeSteps,
 		}},
 	}
 }
 
-func (s stubBrokerChainBridge) recipeModels(scheme types.PocScheme, seqLen, maxTokens int64) []*types.PoCModelConfig {
+func (s stubBrokerChainBridge) recipeModels(scheme types.PocScheme, seqLen, decodeSteps int64) []*types.PoCModelConfig {
 	if len(s.models) == 0 {
 		return []*types.PoCModelConfig{
-			recipeModel(testModelA, scheme, seqLen, maxTokens),
-			recipeModel(testModelB, scheme, seqLen, maxTokens),
+			recipeModel(testModelA, scheme, seqLen, decodeSteps),
+			recipeModel(testModelB, scheme, seqLen, decodeSteps),
 		}
 	}
 	models := make([]*types.PoCModelConfig, 0, len(s.models))
 	for _, id := range s.models {
-		models = append(models, recipeModel(id, scheme, seqLen, maxTokens))
+		models = append(models, recipeModel(id, scheme, seqLen, decodeSteps))
 	}
 	return models
 }
 
 func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
-	scheme, seqLen, maxTokens := s.scheme, s.seqLen, s.decodeMax
+	scheme, seqLen, decodeSteps := s.scheme, s.seqLen, s.decodeSteps
 	if s.overrideFrozen {
-		scheme, seqLen, maxTokens = s.frozenScheme, s.frozenSeqLen, s.frozenMax
+		scheme, seqLen, decodeSteps = s.frozenScheme, s.frozenSeqLen, s.frozenMax
 	}
 	return &types.QueryPocStageRecipeResponse{
 		Found: true,
 		Recipe: &types.PocStageRecipe{
 			StageHeight: stageHeight,
 			Scheme:      scheme,
-			Models:      s.recipeModels(scheme, seqLen, maxTokens),
+			Models:      s.recipeModels(scheme, seqLen, decodeSteps),
 		},
 	}, nil
 }
@@ -132,10 +132,10 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 1, 0, modelIDs...)
 }
 
-func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, seqLen, maxTokens int64, modelIDs ...string) *broker.Broker {
+func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, seqLen, decodeSteps int64, modelIDs ...string) *broker.Broker {
 	t.Helper()
 	return newMLNodeTestBrokerWithBridge(t, phase, stubBrokerChainBridge{
-		models: modelIDs, scheme: scheme, seqLen: seqLen, decodeMax: maxTokens,
+		models: modelIDs, scheme: scheme, seqLen: seqLen, decodeSteps: decodeSteps,
 	})
 }
 
@@ -640,7 +640,7 @@ func TestV3ValidatedCallbackUsesPathModelID(t *testing.T) {
 		Return(nil).
 		Once()
 
-	server := NewServer(mockRecorder, newMLNodeTestBrokerWithBridge(t, types.PoCValidatePhase, stubBrokerChainBridge{models: []string{testModelA}, scheme: types.PocScheme_POC_SCHEME_DECODE, seqLen: 256, decodeMax: 256}))
+	server := NewServer(mockRecorder, newMLNodeTestBrokerWithBridge(t, types.PoCValidatePhase, stubBrokerChainBridge{models: []string{testModelA}, scheme: types.PocScheme_POC_SCHEME_DECODE, seqLen: 256, decodeSteps: 256}))
 
 	body, err := json.Marshal(map[string]any{
 		"block_hash":      "abc",

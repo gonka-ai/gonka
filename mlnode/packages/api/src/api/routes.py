@@ -38,9 +38,7 @@ class VersionsResponse(VersionedResponse):
     poc_validation_inference: bool = False
 
 
-# Cached per loaded model: the capability is a build property of vLLM, but
-# gonka-poc >= 0.1.6 reports it per model (off for GLM-5.3-Flash), so a
-# model switch through /inference/down + /up must re-query.
+# PoC capabilities vary by model, so switching models must invalidate this cache.
 _vllm_versions_cache: Optional[tuple[Optional[str], VersionsResponse]] = None
 
 

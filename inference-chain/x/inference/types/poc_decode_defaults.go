@@ -3,9 +3,9 @@ package types
 // DefaultDecodeScheme returns a fresh, model-independent decode configuration.
 func DefaultDecodeScheme() *PocSchemeParams {
 	return &PocSchemeParams{
-		Scheme:    PocScheme_POC_SCHEME_DECODE,
-		SeqLen:    256,
-		MaxTokens: 256,
+		Scheme:      PocScheme_POC_SCHEME_DECODE,
+		SeqLen:      256,
+		DecodeSteps: 256,
 		StatTest: &PoCStatTestParams{
 			DistThreshold:   DecimalFromFloat(0.4),
 			PMismatch:       DecimalFromFloat(0.1),

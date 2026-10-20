@@ -179,27 +179,22 @@ message PoCStatTestParams {
   Decimal p_value_threshold = 3;   // P-value cutoff to declare fraud (default: 0.05)
 }
 
-// PocScheme is the leaf recipe for a PoC v2 stage (same msgs/MMR/proofs).
-// Zero value is PREFILL so existing params keep today's behavior.
+// PocScheme selects the artifact format; zero preserves PREFILL behavior.
 enum PocScheme {
   POC_SCHEME_PREFILL = 0;  // FP16 k_dim=12 vector
   POC_SCHEME_DECODE  = 1;  // packed decode trajectory, N+1 bytes
 }
 
-// PocSchemeParams is one recipe for one scheme on one model.
-// seq_len is the prompt length in tokens. max_tokens is the decode step count
-// (sphere snaps, not sampled token ids). 0 means there is no decode loop.
-// dynamic_coefficient is the coefficient controller config for this scheme:
-// nonce rates differ per scheme, so relative_difficulty and the bounds do too.
+// PocSchemeParams configures one model and scheme.
 message PocSchemeParams {
   option (gogoproto.equal) = true;
   PocScheme scheme = 1;
-  int64 seq_len = 2;
-  int64 max_tokens = 3;
+  int64 seq_len = 2; // Prompt length in tokens.
+  int64 decode_steps = 3; // DECODE steps (sphere snaps); zero for PREFILL.
   PoCStatTestParams stat_test = 4;
   reserved 5;
   reserved "weight_scale_factor";
-  DynamicCoefficientModelConfig dynamic_coefficient = 6;
+  DynamicCoefficientModelConfig dynamic_coefficient = 6; // Scheme-specific nonce difficulty and coefficient bounds.
 }
 
 message PoCModelConfig {
@@ -209,12 +204,9 @@ message PoCModelConfig {
   PoCStatTestParams stat_test = 3 [deprecated = true]; // v0.2.17 migration input; use schemes[PREFILL].stat_test
   Decimal weight_scale_factor = 4 [deprecated = true]; // Migration input; the static factor only without dynamic_coefficient_params.
   uint64 penalty_start_epoch = 5;
-  // v0.2.16 writes the controller here and clears weight_scale_factor.
-  // v0.2.17 copies it onto schemes[PREFILL] and then clears this field.
-  // Tag 6 stays allocated so a post-v0.2.16 store still decodes.
+  // v0.2.16 migration input; moved to schemes[PREFILL] in v0.2.17.
   DynamicCoefficientModelConfig dynamic_coefficient = 6;
-  // One block per scheme. A stage copies the block whose scheme matches.
-  // Tags 2, 3, 4 stay so mainnet params still decode for the migration.
+  // One recipe block per scheme.
   repeated PocSchemeParams schemes = 7;
 }
 

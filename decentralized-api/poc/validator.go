@@ -109,16 +109,16 @@ const (
 
 // participantWork represents a single participant to validate.
 type participantWork struct {
-	address    string
-	modelId    string
-	url        string
-	pubKey     string
-	count      uint32
-	rootHash   []byte
-	decodeMax  int64 // frozen scheme block max_tokens; 0 = prefill
-	treeDepth  uint32
-	attempt    int       // current attempt number (0-based)
-	retryAfter time.Time // don't process before this time
+	address     string
+	modelId     string
+	url         string
+	pubKey      string
+	count       uint32
+	rootHash    []byte
+	decodeSteps int64 // frozen decode step count; 0 = prefill
+	treeDepth   uint32
+	attempt     int       // current attempt number (0-based)
+	retryAfter  time.Time // don't process before this time
 
 	checksPassed bool               // validatee checks already passed; retries only redo the local dispatch
 	verified     []VerifiedArtifact // artifacts from those checks, reused by every retry
@@ -458,8 +458,8 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			treeDepth: commit.TreeDepth,
 		}
 		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
-			if steps, ok := mc.MaxTokensForScheme(pocParams.PocScheme); ok {
-				work.decodeMax = steps
+			if steps, ok := mc.DecodeStepsForScheme(pocParams.PocScheme); ok {
+				work.decodeSteps = steps
 			}
 		}
 		workItems = append(workItems, work)
@@ -856,7 +856,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
-		DecodeMaxTokens:          work.decodeMax,
+		DecodeSteps:              work.decodeSteps,
 	})
 	if err != nil {
 		logging.Warn("OffChainValidator: proof fetch/verify failed", types.PoC,
@@ -968,11 +968,11 @@ func (v *OffChainValidator) dispatchToMLNode(
 
 	scheme := pocParams.PocScheme
 	seqLen := modelConfig.SeqLen
-	maxTokens := int64(0)
+	decodeSteps := int64(0)
 	if block, ok := modelConfig.SchemeParams(scheme); ok && block != nil {
 		seqLen = block.SeqLen
 		if scheme == types.PocScheme_POC_SCHEME_DECODE {
-			maxTokens = block.MaxTokens
+			decodeSteps = block.DecodeSteps
 		}
 	} else if scheme == types.PocScheme_POC_SCHEME_DECODE {
 		seqLen = 0
@@ -1000,7 +1000,7 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, seqLen, maxTokens, scheme),
+		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, seqLen, decodeSteps, scheme),
 		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,

@@ -68,6 +68,9 @@ func TestPoCParamsForScheme_CopiesBlockLengths(t *testing.T) {
 	require.True(t, decode.Decode)
 	require.Equal(t, int64(256), decode.SeqLen)
 	require.Equal(t, int64(256), decode.MaxTokens)
+	wire, err := json.Marshal(decode)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","seq_len":256,"decode":true,"max_tokens":256}`, string(wire))
 }
 
 func TestKStepsToBytes_RejectsOutOfRange(t *testing.T) {

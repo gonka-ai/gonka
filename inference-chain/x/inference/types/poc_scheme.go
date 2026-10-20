@@ -24,10 +24,10 @@ func (m *PoCModelConfig) SchemeParams(scheme PocScheme) (*PocSchemeParams, bool)
 		return nil, false
 	}
 	return &PocSchemeParams{
-		Scheme:    PocScheme_POC_SCHEME_PREFILL,
-		SeqLen:    m.SeqLen,
-		MaxTokens: 0,
-		StatTest:  m.StatTest,
+		Scheme:      PocScheme_POC_SCHEME_PREFILL,
+		SeqLen:      m.SeqLen,
+		DecodeSteps: 0,
+		StatTest:    m.StatTest,
 	}, true
 }
 
@@ -47,12 +47,12 @@ func (m *PoCModelConfig) DynamicCoefficientFor(scheme PocScheme) *DynamicCoeffic
 	return nil
 }
 
-// DecodeMaxForStage is N for DECODE stages and 0 for PREFILL even if the model has N set.
-func DecodeMaxForStage(scheme PocScheme, decodeMaxTokens int64) int64 {
+// DecodeStepsForStage is N for DECODE stages and 0 for PREFILL even if the model has N set.
+func DecodeStepsForStage(scheme PocScheme, decodeSteps int64) int64 {
 	if scheme != PocScheme_POC_SCHEME_DECODE {
 		return 0
 	}
-	return decodeMaxTokens
+	return decodeSteps
 }
 
 // StatTestForScheme returns the verdict triple for scheme.
@@ -67,9 +67,9 @@ func StatTestForScheme(scheme PocScheme, model *PoCModelConfig) *PoCStatTestPara
 	return block.StatTest
 }
 
-// MaxTokensForScheme is the decode step count for a DECODE block and 0 for PREFILL.
+// DecodeStepsForScheme is the decode step count for a DECODE block and 0 for PREFILL.
 // ok is false when that scheme's block is missing.
-func (m *PoCModelConfig) MaxTokensForScheme(scheme PocScheme) (int64, bool) {
+func (m *PoCModelConfig) DecodeStepsForScheme(scheme PocScheme) (int64, bool) {
 	block, ok := m.SchemeParams(scheme)
 	if !ok || block == nil {
 		return 0, false
@@ -77,7 +77,7 @@ func (m *PoCModelConfig) MaxTokensForScheme(scheme PocScheme) (int64, bool) {
 	if scheme != PocScheme_POC_SCHEME_DECODE {
 		return 0, true
 	}
-	return block.MaxTokens, true
+	return block.DecodeSteps, true
 }
 
 // activePocSchemes includes the first confirmation event's DECODE trial while
@@ -138,11 +138,11 @@ func (m *PoCModelConfig) validateSchemeBlocks(required map[PocScheme]struct{}) e
 		if block.SeqLen <= 0 {
 			return fmt.Errorf("model %q %s seq_len must be > 0", m.ModelId, block.Scheme.String())
 		}
-		if block.Scheme == PocScheme_POC_SCHEME_DECODE && block.MaxTokens <= 0 {
-			return fmt.Errorf("model %q DECODE max_tokens must be > 0", m.ModelId)
+		if block.Scheme == PocScheme_POC_SCHEME_DECODE && block.DecodeSteps <= 0 {
+			return fmt.Errorf("model %q DECODE decode_steps must be > 0", m.ModelId)
 		}
-		if block.Scheme == PocScheme_POC_SCHEME_PREFILL && block.MaxTokens != 0 {
-			return fmt.Errorf("model %q PREFILL max_tokens must be 0", m.ModelId)
+		if block.Scheme == PocScheme_POC_SCHEME_PREFILL && block.DecodeSteps != 0 {
+			return fmt.Errorf("model %q PREFILL decode_steps must be 0", m.ModelId)
 		}
 	}
 	if needPrefill {

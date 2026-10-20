@@ -453,7 +453,7 @@ func (g *EarlyShareGuard) checkInclusion(
 		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
-		DecodeMaxTokens:          work.decodeMax,
+		DecodeSteps:              work.decodeSteps,
 	})
 	if err != nil {
 		if isPermanentProofError(err) {
@@ -484,7 +484,7 @@ func (g *EarlyShareGuard) checkInclusion(
 		TreeDepth:                work.treeDepth,
 		Nonces:                   nonces,
 		ParticipantAddress:       work.address,
-		DecodeMaxTokens:          work.decodeMax,
+		DecodeSteps:              work.decodeSteps,
 	})
 	if err != nil {
 		if isPermanentProofError(err) {

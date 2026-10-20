@@ -59,7 +59,7 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	block := model.Schemes[0]
 	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, block.Scheme)
 	require.Equal(t, int64(128), block.SeqLen)
-	require.Equal(t, int64(0), block.MaxTokens)
+	require.Equal(t, int64(0), block.DecodeSteps)
 	require.Equal(t, stat, block.StatTest)
 	require.Equal(t, coefficient, block.DynamicCoefficient)
 	require.NoError(t, got.Validate())
@@ -186,7 +186,7 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		decode, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_DECODE)
 		require.True(t, ok)
 		require.Equal(t, int64(256), decode.SeqLen)
-		require.Equal(t, int64(256), decode.MaxTokens)
+		require.Equal(t, int64(256), decode.DecodeSteps)
 		for _, value := range []struct {
 			got  *inferencetypes.Decimal
 			want string

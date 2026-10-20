@@ -34,7 +34,7 @@ class PoCSchemeTransitionTests : TestermintTest() {
                             modelId = defaultModel,
                             schemes = listOf(
                                 PocSchemeParams(scheme = prefill, seqLen = 1024, dynamicCoefficient = coefficient),
-                                PocSchemeParams(scheme = decode, seqLen = 256, maxTokens = 256, dynamicCoefficient = coefficient),
+                                PocSchemeParams(scheme = decode, seqLen = 256, decodeSteps = 256, dynamicCoefficient = coefficient),
                             ),
                         ))
                     }
@@ -142,7 +142,7 @@ class PoCSchemeTransitionTests : TestermintTest() {
         val block = recipe.models.single { it.modelId == defaultModel }.schemes!!.single()
         assertThat(block.scheme).isEqualTo(scheme)
         assertThat(block.seqLen).isEqualTo(if (scheme == decode) 256L else 1024L)
-        assertThat(block.maxTokens).isEqualTo(if (scheme == decode) 256L else 0L)
+        assertThat(block.decodeSteps).isEqualTo(if (scheme == decode) 256L else 0L)
     }
 
     private fun assertPreservation(pair: LocalInferencePair, height: Long, expected: Boolean) {

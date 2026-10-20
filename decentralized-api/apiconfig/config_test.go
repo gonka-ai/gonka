@@ -90,14 +90,14 @@ func TestNewPoCParamsCache_LiveSchemeBlock(t *testing.T) {
 			ModelId: "model-a",
 			Schemes: []*types.PocSchemeParams{
 				{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024},
-				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, DecodeSteps: 256},
 			},
 		}},
 	})
 
 	require.Equal(t, apiconfig.PoCParamsCache{
 		Models: []apiconfig.PoCModelConfigCache{
-			{ModelId: "model-a", SeqLen: 256, DecodeMaxTokens: 256},
+			{ModelId: "model-a", SeqLen: 256, DecodeSteps: 256},
 		},
 	}, cache)
 }

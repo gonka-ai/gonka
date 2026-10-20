@@ -1,13 +1,8 @@
 // Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes.
 //
-// v0.2.16 has already run. It left seq_len and stat_test on the model, wrote
-// dynamic_coefficient on the model, and cleared weight_scale_factor. This
-// upgrade copies that recipe and that coefficient onto schemes[PREFILL], then
-// clears the flat fields, adds independent DECODE templates, and keeps poc_scheme.
-//
-// A chain that has not run v0.2.16 still has the flat recipe and the flat
-// weight_scale_factor. The same handler copies the recipe and leaves that
-// static factor on the model.
+// Moves flat recipes and dynamic coefficients into PREFILL blocks, adds DECODE
+// templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
+// on the model.
 package v0_2_17
 
 import (
@@ -50,10 +45,8 @@ func CreateUpgradeHandler(
 	}
 }
 
-// migratePocSchemeBlocks copies the flat prefill recipe, and the v0.2.16
-// model coefficient when one is present, onto schemes[PREFILL]. Flat seq_len,
-// stat_test, and the model coefficient are cleared after the copy. A model
-// that cannot be converted fails the upgrade.
+// migratePocSchemeBlocks moves flat fields into PREFILL blocks and clears them.
+// The upgrade fails if any model cannot be converted.
 func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -94,10 +87,10 @@ func migrateModelScheme(model *types.PoCModelConfig) (bool, error) {
 			return false, fmt.Errorf("model %q has no PREFILL scheme block and seq_len %d", model.ModelId, model.SeqLen)
 		}
 		block = &types.PocSchemeParams{
-			Scheme:    types.PocScheme_POC_SCHEME_PREFILL,
-			SeqLen:    model.SeqLen,
-			MaxTokens: 0,
-			StatTest:  cloneStatTest(model.StatTest),
+			Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
+			SeqLen:      model.SeqLen,
+			DecodeSteps: 0,
+			StatTest:    cloneStatTest(model.StatTest),
 		}
 		model.Schemes = append([]*types.PocSchemeParams{block}, model.Schemes...)
 		changed = true

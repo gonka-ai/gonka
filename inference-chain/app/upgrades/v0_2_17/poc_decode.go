@@ -44,7 +44,7 @@ func decodeScheme(modelID string) *types.PocSchemeParams {
 	block := gogoproto.Clone(template).(*types.PocSchemeParams)
 	block.Scheme = types.PocScheme_POC_SCHEME_DECODE
 	block.SeqLen = 256
-	block.MaxTokens = 256
+	block.DecodeSteps = 256
 	block.StatTest.PMismatch = types.DecimalFromFloat(0.1)
 	block.StatTest.PValueThreshold = types.DecimalFromFloat(0.05)
 	return block

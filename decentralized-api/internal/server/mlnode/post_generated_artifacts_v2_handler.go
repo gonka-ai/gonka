@@ -94,7 +94,7 @@ func (s *Server) postGeneratedArtifacts(ctx echo.Context, scheme types.PocScheme
 	if !ok {
 		return echo.NewHTTPError(http.StatusBadRequest, "model missing from stage recipe")
 	}
-	n, ok := model.MaxTokensForScheme(scheme)
+	n, ok := model.DecodeStepsForScheme(scheme)
 	if !ok {
 		return echo.NewHTTPError(http.StatusBadRequest, "model missing stage scheme")
 	}

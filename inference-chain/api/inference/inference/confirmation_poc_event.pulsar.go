@@ -837,8 +837,7 @@ type ConfirmationPoCEvent struct {
 	// This hash is only set when transitioning to GENERATION phase to prevent
 	// precomputation during the grace period.
 	PocSeedBlockHash string `protobuf:"bytes,9,opt,name=poc_seed_block_hash,json=pocSeedBlockHash,proto3" json:"poc_seed_block_hash,omitempty"`
-	// Frozen at event create. Generate, validate, and evaluateConfirmation read this,
-	// not live PocParams.
+	// Derived from the frozen epoch recipe.
 	Recipe *PocStageRecipe `protobuf:"bytes,10,opt,name=recipe,proto3" json:"recipe,omitempty"`
 }
 

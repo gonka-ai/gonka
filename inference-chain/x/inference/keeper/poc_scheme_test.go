@@ -19,7 +19,7 @@ func TestFreezePocStageRecipe_WriteOnce(t *testing.T) {
 	require.NoError(t, err)
 	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_DECODE
 	params.PocParams.PocStrongerRngEnabled = false
-	params.PocParams.Models[0].Schemes[1].MaxTokens = 99
+	params.PocParams.Models[0].Schemes[1].DecodeSteps = 99
 	require.NoError(t, k.SetParams(ctx, params))
 	second, err := k.FreezePocStageRecipe(ctx, 100)
 	require.NoError(t, err)
@@ -28,11 +28,11 @@ func TestFreezePocStageRecipe_WriteOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, trial.Tracking)
 	require.True(t, trial.PocStrongerRngEnabled)
-	require.Equal(t, int64(256), trial.Models[0].Schemes[0].MaxTokens)
+	require.Equal(t, int64(256), trial.Models[0].Schemes[0].DecodeSteps)
 	next, err := k.FreezePocStageRecipe(ctx, 200)
 	require.NoError(t, err)
 	require.Equal(t, types.PocScheme_POC_SCHEME_DECODE, next.Scheme)
-	require.Equal(t, int64(99), next.Models[0].Schemes[0].MaxTokens)
+	require.Equal(t, int64(99), next.Models[0].Schemes[0].DecodeSteps)
 }
 
 func TestEpochRecipeKeepsFallbackProvenance(t *testing.T) {

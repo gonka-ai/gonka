@@ -262,8 +262,8 @@ type StartPoCNodeCommandV2 struct {
 	Model          string
 	SeqLen         int64
 	PocStrongerRng bool
-	// DecodeMaxTokens is N when Scheme is DECODE; ignored (must be 0) on PREFILL.
-	DecodeMaxTokens      int64
+	// DecodeSteps is N when Scheme is DECODE; ignored (must be 0) on PREFILL.
+	DecodeSteps          int64
 	Scheme               types.PocScheme
 	WindDown             bool
 	LastPocV2BlockHeight int64
@@ -335,7 +335,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		PublicKey:      c.PubKey,
 		NodeId:         int(worker.node.Node.NodeNum),
 		NodeCount:      c.TotalNodes,
-		Params:         mlnodeclient.PoCParamsForScheme(c.Model, c.SeqLen, c.DecodeMaxTokens, c.Scheme),
+		Params:         mlnodeclient.PoCParamsForScheme(c.Model, c.SeqLen, c.DecodeSteps, c.Scheme),
 		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
 		PocStrongerRng: c.PocStrongerRng,
 	}

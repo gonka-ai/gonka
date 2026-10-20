@@ -117,7 +117,7 @@ func TestFreezeUsesFrozenSchemeBlockConfig(t *testing.T) {
 		ModelId: "m",
 		Schemes: []*types.PocSchemeParams{
 			{Scheme: types.PocScheme_POC_SCHEME_PREFILL, SeqLen: 128, DynamicCoefficient: prefill},
-			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, DynamicCoefficient: decode},
+			{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, DecodeSteps: 256, DynamicCoefficient: decode},
 		},
 	})
 	recipe := &types.PocStageRecipe{
@@ -125,7 +125,7 @@ func TestFreezeUsesFrozenSchemeBlockConfig(t *testing.T) {
 		Models: []*types.PoCModelConfig{{
 			ModelId: "m",
 			Schemes: []*types.PocSchemeParams{
-				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, MaxTokens: 256, DynamicCoefficient: decode},
+				{Scheme: types.PocScheme_POC_SCHEME_DECODE, SeqLen: 256, DecodeSteps: 256, DynamicCoefficient: decode},
 			},
 		}},
 	}

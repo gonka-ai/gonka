@@ -16,7 +16,7 @@ func TestEpochRecipeAndConfirmationModes(t *testing.T) {
 			require.False(t, epoch.Tracking)
 			p.PocScheme = PocScheme_POC_SCHEME_DECODE
 			p.PocStrongerRngEnabled = false
-			p.Models[0].Schemes[1].MaxTokens = 99
+			p.Models[0].Schemes[1].DecodeSteps = 99
 			for sequence := uint64(0); sequence < 3; sequence++ {
 				event, err := epoch.ConfirmationRecipe(&ConfirmationPoCEvent{TriggerHeight: 200 + int64(sequence), EventSequence: sequence})
 				require.NoError(t, err)
@@ -32,7 +32,7 @@ func TestEpochRecipeAndConfirmationModes(t *testing.T) {
 				require.Len(t, event.Models[0].Schemes, 1)
 				block := event.Models[0].Schemes[0]
 				if want == PocScheme_POC_SCHEME_DECODE {
-					require.Equal(t, int64(256), block.MaxTokens)
+					require.Equal(t, int64(256), block.DecodeSteps)
 				}
 				block.SeqLen = 7
 				original, _ := epoch.Models[0].SchemeParams(want)
@@ -54,9 +54,9 @@ func TestPocParamsValidateSchemeBlocks(t *testing.T) {
 	p.PocScheme = PocScheme_POC_SCHEME_DECODE
 	p.Models[0].Schemes = []*PocSchemeParams{DefaultDecodeScheme()}
 	require.NoError(t, p.Validate(), "DECODE mode does not require PREFILL")
-	p.Models[0].Schemes[0].MaxTokens = 0
+	p.Models[0].Schemes[0].DecodeSteps = 0
 	require.Error(t, p.Validate())
-	p.Models[0].Schemes[0].MaxTokens = 256
+	p.Models[0].Schemes[0].DecodeSteps = 256
 	p.Models[0].Schemes = append(p.Models[0].Schemes, DefaultDecodeScheme())
 	require.ErrorContains(t, p.Validate(), "duplicate")
 	p.PocScheme = PocScheme(9)
@@ -67,7 +67,7 @@ func TestDecodeDefaultsIndependent(t *testing.T) {
 	first := DefaultDecodeScheme()
 	second := DefaultDecodeScheme()
 	require.Equal(t, int64(256), first.SeqLen)
-	require.Equal(t, int64(256), first.MaxTokens)
+	require.Equal(t, int64(256), first.DecodeSteps)
 	first.StatTest.PMismatch.Value = 999
 	first.DynamicCoefficient.CoeffMin.Value = 999
 	require.NotEqual(t, first.StatTest, second.StatTest)

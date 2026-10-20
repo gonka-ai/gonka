@@ -20,7 +20,7 @@ func TestPrepareGenesisPocModels_ReplacesEmptyPlaceholder(t *testing.T) {
 		block, ok := model.SchemeParams(PocScheme_POC_SCHEME_PREFILL)
 		require.True(t, ok)
 		require.Equal(t, int64(1024), block.SeqLen)
-		require.Equal(t, int64(0), block.MaxTokens)
+		require.Equal(t, int64(0), block.DecodeSteps)
 		require.NotNil(t, block.StatTest)
 		require.NotNil(t, block.DynamicCoefficient)
 		shares += uint64(block.DynamicCoefficient.TargetShareBps)
@@ -36,10 +36,10 @@ func TestPrepareGenesisPocModels_KeepsExistingShares(t *testing.T) {
 	params.PocParams.Models = []*PoCModelConfig{{
 		ModelId: "kept",
 		Schemes: []*PocSchemeParams{{
-			Scheme:    PocScheme_POC_SCHEME_PREFILL,
-			SeqLen:    1024,
-			MaxTokens: 0,
-			StatTest:  DefaultPoCStatTestParams(),
+			Scheme:      PocScheme_POC_SCHEME_PREFILL,
+			SeqLen:      1024,
+			DecodeSteps: 0,
+			StatTest:    DefaultPoCStatTestParams(),
 			DynamicCoefficient: &DynamicCoefficientModelConfig{
 				CoeffMin:           custom,
 				CoeffMax:           custom,

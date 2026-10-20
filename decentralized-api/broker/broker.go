@@ -1425,7 +1425,7 @@ func (b *Broker) getCommandForState(
 					Model:                modelConfig.ModelId,
 					SeqLen:               modelConfig.SeqLen,
 					PocStrongerRng:       pocGenParams.pocStrongerRng,
-					DecodeMaxTokens:      modelConfig.DecodeMaxTokens,
+					DecodeSteps:          modelConfig.DecodeSteps,
 					Scheme:               pocGenParams.scheme,
 					WindDown:             windDown,
 					LastPocV2BlockHeight: nodeState.LastPocV2BlockHeight,
@@ -1468,7 +1468,7 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 func stagePromptAndSteps(model *types.PoCModelConfig, scheme types.PocScheme) (int64, int64) {
 	if block, ok := model.SchemeParams(scheme); ok && block != nil {
 		if scheme == types.PocScheme_POC_SCHEME_DECODE {
-			return block.SeqLen, block.MaxTokens
+			return block.SeqLen, block.DecodeSteps
 		}
 		return block.SeqLen, 0
 	}
@@ -1486,11 +1486,11 @@ func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
 		if modelConfig == nil {
 			continue
 		}
-		seqLen, maxTokens := stagePromptAndSteps(modelConfig, recipe.Scheme)
+		seqLen, decodeSteps := stagePromptAndSteps(modelConfig, recipe.Scheme)
 		params.models[modelConfig.ModelId] = apiconfig.PoCModelConfigCache{
-			ModelId:         modelConfig.ModelId,
-			SeqLen:          seqLen,
-			DecodeMaxTokens: maxTokens,
+			ModelId:     modelConfig.ModelId,
+			SeqLen:      seqLen,
+			DecodeSteps: decodeSteps,
 		}
 	}
 }

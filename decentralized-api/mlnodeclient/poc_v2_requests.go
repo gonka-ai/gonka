@@ -34,12 +34,12 @@ type PoCParamsV2 struct {
 }
 
 // PoCParamsForScheme is the MLNode params for one frozen scheme block.
-// seqLen and maxTokens are copied from that block. Only Decode is set from the scheme.
-func PoCParamsForScheme(model string, seqLen, maxTokens int64, scheme types.PocScheme) PoCParamsV2 {
+// seqLen and decodeSteps are copied from that block. Only Decode is set from the scheme.
+func PoCParamsForScheme(model string, seqLen, decodeSteps int64, scheme types.PocScheme) PoCParamsV2 {
 	return PoCParamsV2{
 		Model:     model,
 		SeqLen:    seqLen,
-		MaxTokens: maxTokens,
+		MaxTokens: decodeSteps,
 		Decode:    scheme == types.PocScheme_POC_SCHEME_DECODE,
 	}
 }

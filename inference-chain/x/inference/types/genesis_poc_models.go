@@ -133,7 +133,7 @@ func ensureGenesisPrefillBlock(model *PoCModelConfig, seqLen int64, stat *PoCSta
 	if block.SeqLen <= 0 {
 		block.SeqLen = model.SeqLen
 	}
-	block.MaxTokens = 0
+	block.DecodeSteps = 0
 	if block.StatTest == nil {
 		block.StatTest = clonePoCStatTest(model.StatTest)
 	}

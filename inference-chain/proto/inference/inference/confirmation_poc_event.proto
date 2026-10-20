@@ -22,8 +22,7 @@ message ConfirmationPoCEvent {
   // precomputation during the grace period.
   string poc_seed_block_hash = 9;
 
-  // Frozen at event create. Generate, validate, and evaluateConfirmation read this,
-  // not live PocParams.
+  // Derived from the frozen epoch recipe.
   PocStageRecipe recipe = 10;
 }
 
