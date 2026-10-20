@@ -315,6 +315,12 @@ func (m *ManagedArtifactStore) modelDir(pocStageStartHeight int64, modelID strin
 }
 
 func encodeModelID(modelID string) string {
+	if modelID == "." {
+		return "%2E"
+	}
+	if modelID == ".." {
+		return "%2E%2E"
+	}
 	return url.PathEscape(modelID)
 }
 

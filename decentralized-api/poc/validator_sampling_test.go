@@ -68,8 +68,8 @@ func TestSampleLeafIndices_DifferentModel(t *testing.T) {
 }
 
 func TestBuildValidationCallbackURL(t *testing.T) {
-	url := buildValidationCallbackURL("http://localhost:8080/callback", "org/model-b")
-	assert.Equal(t, "http://localhost:8080/callback/v2/poc-batches/org%252Fmodel-b", url)
+	url := buildValidationCallbackURL("http://localhost:8080/callback", "org/model-b", 200, 150, "tok")
+	assert.Equal(t, "http://localhost:8080/callback/v2/poc-batches/org%252Fmodel-b/v/200/150/tok", url)
 }
 
 func TestSampleLeafIndices_LargeCount(t *testing.T) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
 
@@ -48,6 +48,7 @@ type OffChainValidator struct {
 	nodeBroker       nodeBrokerFacade
 	phaseTracker     *chainphase.ChainPhaseTracker
 	callbackUrl      string
+	callbackSigner   *callbackauth.Signer
 	pubKey           string
 	validatorAddress string
 	chainNodeUrl     string
@@ -131,8 +132,13 @@ func hasModelList(snapshotFound bool, modelSampling map[string]*modelSamplingDat
 	return snapshotFound && len(modelSampling) > 0
 }
 
-func buildValidationCallbackURL(callbackBase, modelID string) string {
-	return callbackBase + "/v2/poc-batches/" + url.PathEscape(url.PathEscape(modelID))
+func buildValidationCallbackURL(callbackBase, modelID string, sampled int64, minCount uint32, token string) string {
+	return callbackBase + "/v2/poc-batches/" + callbackauth.EncodeModelID(modelID) + callbackauth.ValidationPath(sampled, minCount, token)
+}
+
+func belowMinCommitCount(pocParams *types.PocParams, modelID string, count uint32) bool {
+	minCount := pocParams.MinCommitCount(modelID)
+	return minCount > 0 && count < minCount
 }
 
 // absInt32 returns the absolute value of an int32 as int64,
@@ -171,6 +177,7 @@ func NewOffChainValidator(
 	nodeBroker nodeBrokerFacade,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	callbackUrl string,
+	callbackSigner *callbackauth.Signer,
 	pubKey string,
 	validatorAddress string,
 	chainNodeUrl string,
@@ -183,6 +190,7 @@ func NewOffChainValidator(
 		nodeBroker:       nodeBroker,
 		phaseTracker:     phaseTracker,
 		callbackUrl:      callbackUrl,
+		callbackSigner:   callbackSigner,
 		pubKey:           pubKey,
 		validatorAddress: validatorAddress,
 		chainNodeUrl:     chainNodeUrl,
@@ -388,6 +396,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	workItems := make([]participantWork, 0, len(commitsResp.Commits))
 	skippedNotAssigned := 0
 	skippedExcludedModel := 0
+	skippedBelowMinCount := 0
 	authoritativeModelAllowlist := hasModelList(snapshotFound, modelSampling)
 	for _, commit := range commitsResp.Commits {
 		if authoritativeModelAllowlist {
@@ -395,6 +404,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				skippedExcludedModel++
 				continue
 			}
+		}
+
+		if belowMinCommitCount(pocParams, commit.ModelId, commit.Count) {
+			skippedBelowMinCount++
+			continue
 		}
 
 		// If sampling is enabled, check if we're assigned to validate this participant-model pair.
@@ -456,6 +470,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			"assignedToUs", len(workItems),
 			"skippedNotAssigned", skippedNotAssigned,
 			"skippedExcludedModel", skippedExcludedModel,
+			"skippedBelowMinCount", skippedBelowMinCount,
 		)
 	}
 
@@ -939,8 +954,22 @@ func (v *OffChainValidator) dispatchToMLNode(
 		nonces[i] = int64(a.Nonce)
 	}
 
+	if v.callbackSigner == nil {
+		logging.Error("OffChainValidator: abstaining, callback signer not configured", types.PoC,
+			"participant", work.address, "modelId", work.modelId)
+		return validateAbstain
+	}
+
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
-	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	sampled := int64(len(nonces))
+	minCount := pocParams.MinCommitCount(work.modelId)
+	validationCallbackUrl := buildValidationCallbackURL(
+		v.callbackUrl,
+		work.modelId,
+		sampled,
+		minCount,
+		v.callbackSigner.ValidationToken(pocHeight, work.modelId, work.pubKey, sampled, minCount),
+	)
 	// Commits are gated on governance models, not on PoC params, so a model can
 	// legitimately be committed without a config here.
 	modelConfig, ok := pocParams.GetModelConfig(work.modelId)

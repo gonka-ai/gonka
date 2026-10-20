@@ -135,7 +135,7 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 }
 
 func TestMetricsRoute_ExposesDefaultRegistry(t *testing.T) {
-	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA))
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithCallbackSigner(testCallbackSigner))
 	require.NotNil(t, server.e.Server.ConnState, "ConnState hook must be wired (regression for b53fd8fcd)")
 
 	// Seed a decentralized_api_* series so the exposition is non-vacuous.
@@ -162,7 +162,7 @@ func TestDevshardSDTargets_Shape(t *testing.T) {
 			{Name: "", Binary: "ignored", SHA256: "x"},
 		},
 	})
-	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithConfigManager(cm))
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithConfigManager(cm), WithCallbackSigner(testCallbackSigner))
 
 	req := httptest.NewRequest(http.MethodGet, "/sd/devshardd", nil)
 	rec := httptest.NewRecorder()
@@ -181,7 +181,7 @@ func TestDevshardSDTargets_Shape(t *testing.T) {
 }
 
 func TestDevshardSDTargets_EmptyWithoutConfigManager(t *testing.T) {
-	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA))
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithCallbackSigner(testCallbackSigner))
 
 	req := httptest.NewRequest(http.MethodGet, "/sd/devshardd", nil)
 	rec := httptest.NewRecorder()
@@ -196,7 +196,7 @@ func TestV2GeneratedCallbackRequiresModelScopedRoute(t *testing.T) {
 	defer artifactStore.Close()
 	artifactStore.ActivateStage(100)
 
-	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA, testModelB), WithArtifactStore(artifactStore))
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA, testModelB), WithArtifactStore(artifactStore), WithCallbackSigner(testCallbackSigner))
 
 	body, err := json.Marshal(map[string]any{
 		"block_hash":   "abc",
@@ -215,13 +215,19 @@ func TestV2GeneratedCallbackRequiresModelScopedRoute(t *testing.T) {
 	server.e.ServeHTTP(unscopedRec, unscopedReq)
 	assert.Equal(t, http.StatusNotFound, unscopedRec.Code)
 
-	scopedReq := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/generated", bytes.NewReader(body))
+	legacyReq := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/generated", bytes.NewReader(body))
+	legacyReq.Header.Set("Content-Type", "application/json")
+	legacyRec := httptest.NewRecorder()
+	server.e.ServeHTTP(legacyRec, legacyReq)
+	assert.Equal(t, http.StatusNotFound, legacyRec.Code)
+
+	scopedReq := httptest.NewRequest(http.MethodPost, generatedCallbackPath(testModelA, 100, false, 1), bytes.NewReader(body))
 	scopedReq.Header.Set("Content-Type", "application/json")
 	scopedRec := httptest.NewRecorder()
 	server.e.ServeHTTP(scopedRec, scopedReq)
 	assert.Equal(t, http.StatusOK, scopedRec.Code)
 
-	secondReq := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/org%252Fmodel-b/generated", bytes.NewReader(body))
+	secondReq := httptest.NewRequest(http.MethodPost, generatedCallbackPath(testModelB, 100, false, 1), bytes.NewReader(body))
 	secondReq.Header.Set("Content-Type", "application/json")
 	secondRec := httptest.NewRecorder()
 	server.e.ServeHTTP(secondRec, secondReq)
@@ -248,7 +254,7 @@ func postGeneratedBatch(t *testing.T, server *Server, modelID string, blockHeigh
 		},
 	})
 	assert.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/"+modelID+"/generated", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, generatedCallbackPath(modelID, blockHeight, false, 1), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.e.ServeHTTP(rec, req)
@@ -260,7 +266,7 @@ func TestV2GeneratedCallbackRejectsWrongStageHeight(t *testing.T) {
 	defer artifactStore.Close()
 	artifactStore.ActivateStage(100)
 
-	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithArtifactStore(artifactStore))
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithArtifactStore(artifactStore), WithCallbackSigner(testCallbackSigner))
 	rec := postGeneratedBatch(t, server, testModelA, 999)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
@@ -299,7 +305,7 @@ func TestV2GeneratedCallback_ChallengeStageRejectsOldHeight(t *testing.T) {
 
 	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer artifactStore.Close()
-	server := NewServer(nil, testBroker, WithArtifactStore(artifactStore))
+	server := NewServer(nil, testBroker, WithArtifactStore(artifactStore), WithCallbackSigner(testCallbackSigner))
 
 	old := postGeneratedBatch(t, server, testModelA, 100)
 	assert.Equal(t, http.StatusBadRequest, old.Code)
@@ -326,12 +332,12 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 		Return(nil).
 		Once()
 
-	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA), WithCallbackSigner(testCallbackSigner))
 
 	body, err := json.Marshal(map[string]any{
 		"block_hash":      "abc",
 		"block_height":    100,
-		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"public_key":      testValidatedPubKey,
 		"node_id":         1,
 		"n_total":         5,
 		"n_mismatch":      0,
@@ -341,7 +347,7 @@ func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, validatedCallbackPath(testModelA, 100, testValidatedPubKey, 5), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 
@@ -378,7 +384,7 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 		Return(nil).
 		Once()
 
-	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA), WithCallbackSigner(testCallbackSigner))
 
 	body, err := json.Marshal(map[string]any{
 		"block_hash":      "abc",
@@ -393,7 +399,7 @@ func TestV2ValidatedCallbackSubmitsChallengeMsg(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, validatedCallbackPath(testModelA, 500, pubKey, 5), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.e.ServeHTTP(rec, req)
@@ -423,7 +429,7 @@ func TestV2ValidatedCallback_HeightCollisionUsesRegularMsg(t *testing.T) {
 		Return(nil).
 		Once()
 
-	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA), WithCallbackSigner(testCallbackSigner))
 	body, err := json.Marshal(map[string]any{
 		"block_hash":      "abc",
 		"block_height":    500,
@@ -436,7 +442,7 @@ func TestV2ValidatedCallback_HeightCollisionUsesRegularMsg(t *testing.T) {
 		"fraud_detected":  false,
 	})
 	assert.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, validatedCallbackPath(testModelA, 500, pubKey, 5), bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.e.ServeHTTP(rec, req)
@@ -452,7 +458,7 @@ func TestGetVersions_OracleJSONContract(t *testing.T) {
 			{Name: "v1", Binary: "https://example/v1.zip", SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 		},
 	})
-	server := NewServer(nil, nil, WithConfigManager(cm))
+	server := NewServer(nil, nil, WithConfigManager(cm), WithCallbackSigner(testCallbackSigner))
 
 	req := httptest.NewRequest(http.MethodGet, "/versions", nil)
 	rec := httptest.NewRecorder()

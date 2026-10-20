@@ -3,17 +3,27 @@ package broker
 import (
 	"common/logging"
 	"context"
+	"decentralized-api/internal/callbackauth"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
-	"net/url"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func encodeCallbackModelID(modelID string) string {
-	return url.PathEscape(url.PathEscape(modelID))
+	return callbackauth.EncodeModelID(modelID)
+}
+
+var errCallbackSignerMissing = errors.New("PoC callback signer not configured")
+
+func (c StartPoCNodeCommandV2) generationCallback(nodeNum int) (string, error) {
+	if c.CallbackSigner == nil {
+		return "", errCallbackSignerMissing
+	}
+	token := c.CallbackSigner.GenerationToken(c.BlockHeight, c.Model, false, nodeNum)
+	return c.CallbackUrl + "/" + encodeCallbackModelID(c.Model) + callbackauth.GenerationPath(token), nil
 }
 
 // NodeWorkerCommand defines the interface for commands executed by NodeWorker
@@ -258,6 +268,7 @@ type StartPoCNodeCommandV2 struct {
 	BlockHash            string
 	PubKey               string
 	CallbackUrl          string
+	CallbackSigner       *callbackauth.Signer
 	TotalNodes           int
 	Model                string
 	SeqLen               int64
@@ -326,6 +337,16 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 		}
 	}
 
+	callbackURL, err := c.generationCallback(int(worker.node.Node.NodeNum))
+	if err != nil {
+		logging.Error("[StartPoCNodeCommandV2] Failed to build callback URL", types.PoC, "node_id", worker.nodeId, "error", err)
+		result.Succeeded = false
+		result.Error = err.Error()
+		result.FinalStatus = worker.node.State.CurrentStatus
+		result.FinalPocStatus = worker.node.State.PocCurrentStatus
+		return result
+	}
+
 	req := mlnodeclient.PoCInitGenerateRequestV2{
 		BlockHash:   c.BlockHash,
 		BlockHeight: c.BlockHeight,
@@ -336,7 +357,7 @@ func (c StartPoCNodeCommandV2) Execute(ctx context.Context, worker *NodeWorker) 
 			Model:  c.Model,
 			SeqLen: c.SeqLen,
 		},
-		URL:            c.CallbackUrl + "/" + encodeCallbackModelID(c.Model),
+		URL:            callbackURL,
 		PocStrongerRng: c.PocStrongerRng,
 	}
 
