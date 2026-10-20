@@ -185,10 +185,19 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		req.Model = "test-model"
 	}
 
-	// Latency delays Validate (non-stream JSON) only. Stream first-token
-	// delay is StreamFirstTokenDelay inside streamCompletion; StreamChunkDelay
-	// sleeps after each flushed chunk.
-	if f.Latency > 0 && !req.Stream {
+	// Latency delays Validate (non-stream JSON or an enforced-token replay) only.
+	// Stream first-token delay is StreamFirstTokenDelay inside streamCompletion;
+	// StreamChunkDelay sleeps after each flushed chunk.
+	validate := !req.Stream || isValidationReplay(body)
+	if validate {
+		f.StreamFirstTokenDelay = 0
+		f.StreamChunkDelay = 0
+		f.DropFirstChunk = false
+		f.PartialStream = false
+		f.SSEErrorMessage = ""
+		f.PauseStream = false
+	}
+	if f.Latency > 0 && validate {
 		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
 			s.recordFailure(c.Request().Context())
 			return err
@@ -434,6 +443,13 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		flusher.Flush()
 	}
 	return nil
+}
+
+func isValidationReplay(body []byte) bool {
+	var probe struct {
+		EnforcedTokens json.RawMessage `json:"enforced_tokens"`
+	}
+	return json.Unmarshal(body, &probe) == nil && len(probe.EnforcedTokens) > 0 && string(probe.EnforcedTokens) != "null"
 }
 
 func waitForLatency(ctx context.Context, latency time.Duration) error {

@@ -15,6 +15,7 @@ import (
 	"devshard/transport"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -361,7 +362,23 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 		httpReq.Header.Set("Content-Type", "application/json")
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
-		return v.engine.httpClient.Do(httpReq)
+		resp, doErr := v.engine.httpClient.Do(httpReq)
+		if doErr != nil || resp.StatusCode != http.StatusOK {
+			return resp, doErr
+		}
+		body, readErr := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		statusCode, body, streamErr := commonvalidation.NormalizeReplayStream(resp.StatusCode, body)
+		if streamErr != nil {
+			logging.Warn("validator replay stream failed on ML node", "endpoint", endpoint, "error", streamErr)
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		}
+		resp.StatusCode = statusCode
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("validate inference: %w", err)
