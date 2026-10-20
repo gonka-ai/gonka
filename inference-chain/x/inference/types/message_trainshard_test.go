@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/productscience/inference/testutil/sample"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +52,21 @@ func TestValidateTrainingNodeId(t *testing.T) {
 	for _, nodeId := range []string{"", ".", "..", "node/1", `node\1`, "node 1", " node-1", "nöde", strings.Repeat("n", 65)} {
 		require.ErrorIs(t, ValidateTrainingNodeId(nodeId), ErrTrainshardOptInRequest, nodeId)
 	}
+}
+
+func TestMsgAutokickTrainshardNode_ValidateBasicBoundsTheRequestId(t *testing.T) {
+	msg := MsgAutokickTrainshardNode{
+		Creator:     sample.AccAddress(),
+		Participant: sample.AccAddress(),
+		NodeId:      "node-a",
+		RequestId:   strings.Repeat("r", MaxAutokickRequestIdLen),
+	}
+	require.NoError(t, msg.ValidateBasic())
+
+	msg.RequestId += "r"
+	require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidRequest)
+	msg.RequestId = ""
+	require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidRequest)
 }
 
 func TestMsgRefreshTrainingNodeOptIn_ValidateBasicChecksTheNodeIds(t *testing.T) {

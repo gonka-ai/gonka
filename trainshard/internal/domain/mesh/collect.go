@@ -16,8 +16,8 @@ type answer struct {
 	err        error
 }
 
-// Collect names a node missing when its host is silent, offers no identity for it that verifies, or
-// offers a public key another node offers too. It fails only when no host answers or the chain cannot
+// Collect names a node missing when its host is silent, the first identity the host offers for it
+// does not verify, or it offers a public key another node offers too. It fails only when no host answers or the chain cannot
 // say whether a signer speaks for a host. A host speaks for the nodes the chain places on it and no other
 func Collect(
 	ctx context.Context,
@@ -44,10 +44,13 @@ func Collect(
 		}
 		answered++
 
+		checked := make(map[vo.NodeRef]bool, len(reply.host.Nodes))
 		for _, identity := range reply.identities {
-			if !slices.Contains(reply.host.Nodes, identity.Member.Node) {
+			node := identity.Member.Node
+			if checked[node] || !slices.Contains(reply.host.Nodes, node) {
 				continue
 			}
+			checked[node] = true
 			signer, err := verifier.Recover(IdentityPayload(shardID, identity.Member), identity.Signature)
 			if err != nil {
 				continue
@@ -58,7 +61,7 @@ func Collect(
 				}
 				continue
 			}
-			collected[identity.Member.Node] = identity.Member
+			collected[node] = identity.Member
 		}
 	}
 	if answered == 0 && silent != nil {

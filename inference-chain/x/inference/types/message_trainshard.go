@@ -22,7 +22,7 @@ const (
 	MaxRefreshOptInNodes    = 256
 	maxTrainingEndpointLen  = 256
 	maxAutokickReasonLen    = 256
-	maxAutokickRequestIdLen = 128
+	MaxAutokickRequestIdLen = 256
 	maxTrainingNodeIdLen    = 64
 )
 
@@ -66,8 +66,8 @@ func (msg *MsgAutokickTrainshardNode) ValidateBasic() error {
 	if msg.NodeId == "" {
 		return ErrPocNodeIdEmpty
 	}
-	if msg.RequestId == "" || len(msg.RequestId) > maxAutokickRequestIdLen {
-		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "request_id length must be in (0, %d]", maxAutokickRequestIdLen)
+	if msg.RequestId == "" || len(msg.RequestId) > MaxAutokickRequestIdLen {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "request_id length must be in (0, %d]", MaxAutokickRequestIdLen)
 	}
 	if len(msg.Reason) > maxAutokickReasonLen {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "reason length must not exceed %d", maxAutokickReasonLen)

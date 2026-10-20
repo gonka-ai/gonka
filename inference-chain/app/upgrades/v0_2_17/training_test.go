@@ -150,6 +150,54 @@ func TestBackfillTrainshardWeightEpochs_NeedsNoEpochWithoutShards(t *testing.T) 
 	require.NoError(t, backfillTrainshardWeightEpochs(ctx, k))
 }
 
+func TestRepairTrainshardReservations(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	node := func(id string, status inferencetypes.TrainshardNodeStatus, until int64) *inferencetypes.TrainshardReservedNode {
+		return &inferencetypes.TrainshardReservedNode{Participant: "host", NodeId: id, ModelId: "model1", Status: status, ReservedUntilHeight: until}
+	}
+	require.NoError(t, k.Trainshards.Set(ctx, 1, inferencetypes.Trainshard{
+		TrainshardId: 1,
+		Status:       inferencetypes.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		Nodes: []*inferencetypes.TrainshardReservedNode{
+			node("leased", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE, 0),
+			node("kicked", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, 120),
+		},
+	}))
+	require.NoError(t, k.Trainshards.Set(ctx, 2, inferencetypes.Trainshard{
+		TrainshardId: 2,
+		Status:       inferencetypes.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		Nodes:        []*inferencetypes.TrainshardReservedNode{node("returning", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, 300)},
+	}))
+	for nodeId, shardId := range map[string]uint64{"leased": 1, "kicked": 1, "returning": 2, "foreign": 2, "orphan": 3} {
+		require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join("host", nodeId), shardId))
+	}
+
+	require.NoError(t, repairTrainshardReservations(ctx, k))
+
+	for nodeId, kept := range map[string]bool{"leased": true, "kicked": true, "returning": true, "foreign": false, "orphan": false} {
+		has, err := k.TrainshardReservations.Has(ctx, collections.Join("host", nodeId))
+		require.NoError(t, err)
+		require.Equal(t, kept, has, nodeId)
+	}
+	var indexed []collections.Triple[int64, string, string]
+	require.NoError(t, k.TrainshardReleaseIndex.Walk(ctx, nil, func(key collections.Triple[int64, string, string]) (bool, error) {
+		indexed = append(indexed, key)
+		return false, nil
+	}))
+	require.Equal(t, []collections.Triple[int64, string, string]{
+		collections.Join3(int64(120), "host", "kicked"),
+		collections.Join3(int64(300), "host", "returning"),
+	}, indexed)
+
+	require.NoError(t, repairTrainshardReservations(ctx, k))
+	indexedAgain := 0
+	require.NoError(t, k.TrainshardReleaseIndex.Walk(ctx, nil, func(collections.Triple[int64, string, string]) (bool, error) {
+		indexedAgain++
+		return false, nil
+	}))
+	require.Equal(t, len(indexed), indexedAgain)
+}
+
 func TestClearTrainshardAutokickRequests(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

@@ -3,6 +3,7 @@ package mesh_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -99,6 +100,34 @@ func TestCollectNamesANodeMissingWhenItsIdentityDoesNotVerify(t *testing.T) {
 				t.Fatalf("got %+v, want the other nodes of the host and of the mesh kept", members)
 			}
 		})
+	}
+}
+
+func TestCollectChecksOnlyTheFirstIdentityAHostOffersForANode(t *testing.T) {
+	// arrange
+	hosts := newHostsStub()
+	flood := make([]mesh.Identity, 0, 102)
+	for i := range 101 {
+		stranger := identityOf(nodeA)
+		stranger.Signature = []byte(fmt.Sprintf("gonka1stranger%d", i))
+		flood = append(flood, stranger)
+	}
+	hosts.identities[hostA] = append(flood, identityOf(nodeA))
+	delegation := &delegationStub{}
+
+	// act
+	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, delegation, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	// assert
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	if !slices.Equal(missing, []vo.NodeRef{nodeA}) || len(members) != 2 {
+		t.Fatalf("got %d members and %v missing, want the node judged by its first identity", len(members), missing)
+	}
+	if delegation.calls != 3 {
+		t.Fatalf("got %d delegation lookups, want one per reserved node", delegation.calls)
 	}
 }
 

@@ -138,12 +138,12 @@ func toFault(err *contract.Error) *shared.Fault {
 	return &shared.Fault{Code: err.Code, Reason: err.Message}
 }
 
-func toIdentities(participant vo.Participant, items []contract.MeshIdentity) ([]mesh.Identity, error) {
+func toIdentities(participant vo.Participant, items []contract.MeshIdentity) []mesh.Identity {
 	identities := make([]mesh.Identity, 0, len(items))
 	for _, item := range items {
 		signature, err := hex.DecodeString(item.Signature)
 		if err != nil {
-			return nil, mesh.ErrForeignIdentity
+			continue
 		}
 		identities = append(identities, mesh.Identity{
 			Member: mesh.Member{
@@ -154,7 +154,7 @@ func toIdentities(participant vo.Participant, items []contract.MeshIdentity) ([]
 			Signature: signature,
 		})
 	}
-	return identities, nil
+	return identities
 }
 
 func fromConfig(config mesh.Config, node vo.NodeRef, requestID vo.RequestID, deadline time.Time) contract.MeshRequest {

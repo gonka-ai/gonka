@@ -86,11 +86,13 @@ func (v *verifierStub) Recover(_, signature []byte) (vo.Address, error) {
 }
 
 type delegationStub struct {
-	warm map[vo.Address]vo.Participant
-	err  error
+	warm  map[vo.Address]vo.Participant
+	err   error
+	calls int
 }
 
 func (d *delegationStub) Speaks(_ context.Context, participant vo.Participant, signer vo.Address) (bool, error) {
+	d.calls++
 	if d.err != nil {
 		return false, d.err
 	}

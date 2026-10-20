@@ -18,7 +18,7 @@ func (c *Client) Identities(ctx context.Context, shardID vo.ShardID, host vo.Hos
 	if err := c.call(ctx, host, http.MethodGet, path, vo.NewRequestID(), nil, &result); err != nil {
 		return nil, err
 	}
-	return toIdentities(host.Participant, result.Items)
+	return toIdentities(host.Participant, result.Items), nil
 }
 
 func (c *Client) Apply(ctx context.Context, config mesh.Config, host vo.Host, node vo.NodeRef) error {

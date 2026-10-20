@@ -82,6 +82,22 @@ func TestAssembleTrainshard_ReturnBufferCountsAgainstTheProfileCap(t *testing.T)
 	require.ErrorContains(t, err, "1 over the profile share cap (1)")
 }
 
+func TestAssembleTrainshard_FailsOnReservationTheShardDoesNotHold(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	require.NoError(t, k.Trainshards.Set(ctx, 99, types.Trainshard{
+		TrainshardId: 99,
+		GpuProfileId: trainshardTestProfile,
+		Status:       types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		Nodes: []*types.TrainshardReservedNode{{Participant: creator, NodeId: "node-other", ModelId: "model1",
+			Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE}},
+	}))
+	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(creator, "node-gone"), uint64(99)))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, collections.ErrNotFound)
+	require.ErrorContains(t, err, "trainshard 99 holds no entry for reserved node node-gone")
+}
+
 func TestAssembleTrainshard_FailsOnReservationOfAMissingShard(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	require.NoError(t, k.TrainshardReservations.Set(ctx, collections.Join(creator, "node-gone"), uint64(99)))

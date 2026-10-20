@@ -342,7 +342,7 @@ func (k Keeper) buildTrainingReservedCounts(ctx context.Context) (*trainingReser
 		return nil, err
 	}
 
-	shards := make(map[uint64]*types.Trainshard)
+	shards := make(map[uint64]reservedShard)
 	if err := k.TrainshardReservations.Walk(ctx, nil, func(key collections.Pair[string, string], id uint64) (bool, error) {
 		shard, ok := shards[id]
 		if !ok {
@@ -350,21 +350,40 @@ func (k Keeper) buildTrainingReservedCounts(ctx context.Context) (*trainingReser
 			if err != nil {
 				return false, fmt.Errorf("trainshard %d reserving node %s of %s: %w", id, key.K2(), key.K1(), err)
 			}
-			shard = &loaded
+			shard = indexReservedShard(&loaded)
 			shards[id] = shard
 		}
+		models, found := shard.models[nodeKey(key.K1(), key.K2())]
+		if !found {
+			return false, fmt.Errorf("trainshard %d holds no entry for reserved node %s of %s: %w", id, key.K2(), key.K1(), collections.ErrNotFound)
+		}
 		counts.total++
-		counts.perProfile[shard.GpuProfileId]++
-		for _, n := range shard.Nodes {
-			if n.Participant == key.K1() && n.NodeId == key.K2() {
-				counts.perModel[n.ModelId]++
-			}
+		counts.perProfile[shard.profileId]++
+		for _, model := range models {
+			counts.perModel[model]++
 		}
 		return false, nil
 	}); err != nil {
 		return nil, err
 	}
 	return counts, nil
+}
+
+type reservedShard struct {
+	profileId string
+	models    map[string][]string
+}
+
+func indexReservedShard(shard *types.Trainshard) reservedShard {
+	indexed := reservedShard{profileId: shard.GpuProfileId, models: make(map[string][]string, len(shard.Nodes))}
+	for _, n := range shard.Nodes {
+		if n == nil {
+			continue
+		}
+		key := nodeKey(n.Participant, n.NodeId)
+		indexed.models[key] = append(indexed.models[key], n.ModelId)
+	}
+	return indexed
 }
 
 func candidateSortKey(trainshardId uint64, participant, nodeId string) [32]byte {

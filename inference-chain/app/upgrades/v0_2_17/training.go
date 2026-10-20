@@ -2,6 +2,7 @@ package v0_2_17
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -169,6 +170,63 @@ func effectiveEpochAt(ctx context.Context, k keeper.Keeper, effective uint64, he
 	}
 }
 
+func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
+	var reservations []collections.KeyValue[collections.Pair[string, string], uint64]
+	if err := k.TrainshardReservations.Walk(ctx, nil, func(key collections.Pair[string, string], id uint64) (bool, error) {
+		reservations = append(reservations, collections.KeyValue[collections.Pair[string, string], uint64]{Key: key, Value: id})
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk trainshard reservations: %w", err)
+	}
+
+	shards := make(map[uint64]*types.Trainshard)
+	dropped, indexed := 0, 0
+	for _, reservation := range reservations {
+		key, id := reservation.Key, reservation.Value
+		shard, cached := shards[id]
+		if !cached {
+			loaded, err := k.Trainshards.Get(ctx, id)
+			switch {
+			case err == nil:
+				shard = &loaded
+			case !errors.Is(err, collections.ErrNotFound):
+				return fmt.Errorf("read trainshard %d: %w", id, err)
+			}
+			shards[id] = shard
+		}
+
+		held, active := false, false
+		var until int64
+		if shard != nil {
+			for _, n := range shard.Nodes {
+				if n == nil || n.Participant != key.K1() || n.NodeId != key.K2() {
+					continue
+				}
+				held = true
+				active = active || n.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
+				until = max(until, n.ReservedUntilHeight)
+			}
+		}
+		if !held {
+			if err := k.TrainshardReservations.Remove(ctx, key); err != nil {
+				return fmt.Errorf("remove reservation of node %s of %s: %w", key.K2(), key.K1(), err)
+			}
+			dropped++
+			continue
+		}
+		if active && shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
+			continue
+		}
+		if err := k.TrainshardReleaseIndex.Set(ctx, collections.Join3(until, key.K1(), key.K2())); err != nil {
+			return fmt.Errorf("index return of node %s of %s: %w", key.K2(), key.K1(), err)
+		}
+		indexed++
+	}
+	k.LogInfo("repaired trainshard reservations", types.Upgrades,
+		"dropped_dangling", dropped, "returns_indexed", indexed)
+	return nil
+}
+
 func clearTrainshardAutokickRequests(ctx context.Context, k keeper.Keeper) error {
 	removed, err := k.ClearStorePrefix(ctx, retiredTrainshardAutokickRequestPrefix)
 	if err != nil {
@@ -179,21 +237,14 @@ func clearTrainshardAutokickRequests(ctx context.Context, k keeper.Keeper) error
 }
 
 func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
-	iter, err := k.TrainingNodeOptIns.Iterate(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("iterate training opt-ins: %w", err)
-	}
-	defer iter.Close()
-
 	var stale []collections.Pair[string, string]
-	for ; iter.Valid(); iter.Next() {
-		kv, err := iter.KeyValue()
-		if err != nil {
-			return fmt.Errorf("read training opt-in: %w", err)
+	if err := k.TrainingNodeOptIns.Walk(ctx, nil, func(key collections.Pair[string, string], expiresAt int64) (bool, error) {
+		if expiresAt == 0 || types.ValidateTrainingNodeId(key.K2()) != nil {
+			stale = append(stale, key)
 		}
-		if kv.Value == 0 || types.ValidateTrainingNodeId(kv.Key.K2()) != nil {
-			stale = append(stale, kv.Key)
-		}
+		return false, nil
+	}); err != nil {
+		return fmt.Errorf("walk training opt-ins: %w", err)
 	}
 
 	var unaddressable []collections.Pair[string, string]

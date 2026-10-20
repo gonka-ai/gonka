@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -29,6 +30,25 @@ func TestNodeIdGrammar_ChainAndDaemonAgree(t *testing.T) {
 		}
 		if daemonErr == nil && string(ref.NodeID) == id && chainErr != nil {
 			t.Fatalf("node id %q: the daemon accepts it and the chain rejects it: %v", id, chainErr)
+		}
+	}
+}
+
+func TestReleaseRequestID_FitsTheChainLimitForTheLongestValidRefs(t *testing.T) {
+	node := vo.NodeRef{
+		Participant: vo.Participant("gonka1" + strings.Repeat("q", 84)),
+		NodeID:      vo.NodeID(strings.Repeat("n", 64)),
+	}
+	if err := types.ValidateTrainingNodeId(string(node.NodeID)); err != nil {
+		t.Fatalf("the longest node id the chain admits: %v", err)
+	}
+	reasons := []vo.ReleaseReason{
+		vo.ReleaseFailedPrepare, vo.ReleaseFailedRun, vo.ReleaseUnreachable, vo.ReleaseOperatorAbort, vo.ReleaseManualKick,
+	}
+	for _, reason := range reasons {
+		id := vo.ReleaseRequestID(vo.ShardID(math.MaxUint64), node, reason)
+		if len(id) > types.MaxAutokickRequestIdLen {
+			t.Fatalf("reason %s: request id of %d bytes, the chain takes at most %d", reason, len(id), types.MaxAutokickRequestIdLen)
 		}
 	}
 }
