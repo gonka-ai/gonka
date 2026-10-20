@@ -577,45 +577,6 @@ jobs:
         id: e2e-buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Cache Go mounts for E2E image builds
-        id: e2e-buildkit-go-cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/devshard-e2e-buildkit-go-cache
-          key: ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-buildkit-go-v1-${{ hashFiles('devshard/Dockerfile', 'devshard/Dockerfile.host', 'devshard/Dockerfile.mock-chain') }}-${{ hashFiles('devshard/go.sum', 'common/go.sum', 'inference-chain/go.sum') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-buildkit-go-v1-${{ hashFiles('devshard/Dockerfile', 'devshard/Dockerfile.host', 'devshard/Dockerfile.mock-chain') }}-${{ hashFiles('devshard/go.sum', 'common/go.sum', 'inference-chain/go.sum') }}-
-            ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-buildkit-go-v1-${{ hashFiles('devshard/Dockerfile', 'devshard/Dockerfile.host', 'devshard/Dockerfile.mock-chain') }}-
-
-      # These actions inject before builds and extract in post steps, before
-      # actions/cache saves and setup-buildx removes the builder.
-      - name: Restore Go mounts for E2E mock chain image
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
-        with:
-          builder: ${{ steps.e2e-buildx.outputs.name }}
-          dockerfile: devshard/Dockerfile.mock-chain
-          cache-dir: ${{ runner.temp }}/devshard-e2e-buildkit-go-cache
-          scratch-dir: ${{ runner.temp }}/devshard-e2e-cache-dance-mock-chain
-          skip-extraction: ${{ steps.e2e-buildkit-go-cache.outputs.cache-hit }}
-
-      - name: Restore Go mounts for E2E host image
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
-        with:
-          builder: ${{ steps.e2e-buildx.outputs.name }}
-          dockerfile: devshard/Dockerfile.host
-          cache-dir: ${{ runner.temp }}/devshard-e2e-buildkit-go-cache
-          scratch-dir: ${{ runner.temp }}/devshard-e2e-cache-dance-host
-          skip-extraction: ${{ steps.e2e-buildkit-go-cache.outputs.cache-hit }}
-
-      - name: Restore Go mounts for E2E devshardctl image
-        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
-        with:
-          builder: ${{ steps.e2e-buildx.outputs.name }}
-          dockerfile: devshard/Dockerfile
-          cache-dir: ${{ runner.temp }}/devshard-e2e-buildkit-go-cache
-          scratch-dir: ${{ runner.temp }}/devshard-e2e-cache-dance-devshardctl
-          skip-extraction: ${{ steps.e2e-buildkit-go-cache.outputs.cache-hit }}
-
       - name: Build E2E Mock Chain Image
         uses: docker/build-push-action@v6
         timeout-minutes: 30
