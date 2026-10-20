@@ -33,6 +33,7 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.17 migration steps land below this line.
+		addGlmLanguageModelOnly(ctx, k)
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
