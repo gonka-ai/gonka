@@ -5,10 +5,10 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// Statistical thresholds remain initial values pending decode calibration.
+// DECODE dist_threshold is the claimed-margin tolerance (tau), not PREFILL L2 distance.
 var decodePoCTemplates = map[string]*types.PocSchemeParams{
 	"MiniMaxAI/MiniMax-M2.7": {
-		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.75)},
+		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.0395)},
 		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
 			CoeffMin:           types.DecimalFromFloat(0.3024),
 			CoeffMax:           types.DecimalFromFloat(0.3024),
@@ -17,7 +17,7 @@ var decodePoCTemplates = map[string]*types.PocSchemeParams{
 		},
 	},
 	"deepseek-ai/DeepSeek-V4-Flash-0731": {
-		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.41)},
+		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.027)},
 		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
 			CoeffMin:           types.DecimalFromFloat(0.2012461916454),
 			CoeffMax:           types.DecimalFromFloat(0.672672),
@@ -26,7 +26,7 @@ var decodePoCTemplates = map[string]*types.PocSchemeParams{
 		},
 	},
 	"zai-org/GLM-5.3-Flash": {
-		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.44)},
+		StatTest: &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.017)},
 		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
 			CoeffMin:           types.DecimalFromFloat(0.810962376237),
 			CoeffMax:           types.DecimalFromFloat(1.9118046315786),
