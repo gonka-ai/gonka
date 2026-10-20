@@ -880,7 +880,26 @@ func TestNonHAV6StreamsStayOffProductionFallback(t *testing.T) {
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		// HTTP/2 buffers a small write until the handler returns. A Watch
+		// beat is smaller than that buffer and the handler stays open, so
+		// the client never sees response headers and PeerConn.Close waits
+		// on the stream until the test timeout.
+		buf := make([]byte, 32<<10)
+		flusher, _ := w.(http.Flusher)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
 	})
 	o.server = httptest.NewServer(h2c.NewHandler(versiond, &http2.Server{}))
 	t.Cleanup(o.server.Close)
