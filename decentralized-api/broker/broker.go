@@ -1869,24 +1869,31 @@ func (b *Broker) EnsureReservedNodesCached() error {
 
 	changed := false
 	b.mu.Lock()
+	opening := b.awaitingReservations.Load()
 	for id, node := range b.nodes {
 		held := reserved[id]
-		if node.State.Reserved == held {
+		if node.State.Reserved != held {
+			node.State.Reserved = held
+			changed = true
+			switch {
+			case held:
+				node.State.pinStopped()
+			case !node.State.AdminState.Stopped:
+				node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+				node.State.PocIntendedStatus = PocStatusIdle
+			}
+			logging.Info("Trainshard reservation changed", types.Nodes, "node_id", id, "reserved", held)
 			continue
 		}
-		node.State.Reserved = held
-		changed = true
-		switch {
-		case held:
-			node.State.pinStopped()
-		case !node.State.AdminState.Stopped:
+		if opening && !held && !node.State.AdminState.Stopped && node.State.IntendedStatus == types.HardwareNodeStatus_STOPPED {
 			node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 			node.State.PocIntendedStatus = PocStatusIdle
+			changed = true
+			logging.Info("Node started before the trainshard reservations were read goes to inference", types.Nodes, "node_id", id)
 		}
-		logging.Info("Trainshard reservation changed", types.Nodes, "node_id", id, "reserved", held)
 	}
-	b.mu.Unlock()
 	b.awaitingReservations.Store(false)
+	b.mu.Unlock()
 
 	if changed {
 		b.TriggerReconciliation()

@@ -180,16 +180,17 @@ func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	type nodeRef struct{ participant, nodeId string }
-	returning := make(map[nodeRef]bool)
+	returning := make(map[nodeRef][]collections.Triple[int64, string, string])
 	if err := k.TrainshardReleaseIndex.Walk(ctx, nil, func(key collections.Triple[int64, string, string]) (bool, error) {
-		returning[nodeRef{key.K2(), key.K3()}] = true
+		ref := nodeRef{key.K2(), key.K3()}
+		returning[ref] = append(returning[ref], key)
 		return false, nil
 	}); err != nil {
 		return fmt.Errorf("walk trainshard release index: %w", err)
 	}
 
 	shards := make(map[uint64]*types.Trainshard)
-	dropped, indexed := 0, 0
+	dropped, indexed, unindexed := 0, 0, 0
 	for _, reservation := range reservations {
 		key, id := reservation.Key, reservation.Value
 		shard, cached := shards[id]
@@ -223,7 +224,17 @@ func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
 			dropped++
 			continue
 		}
-		if returning[nodeRef{key.K1(), key.K2()}] || (active && shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE) {
+		returns := returning[nodeRef{key.K1(), key.K2()}]
+		if active && shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE {
+			for _, stale := range returns {
+				if err := k.TrainshardReleaseIndex.Remove(ctx, stale); err != nil {
+					return fmt.Errorf("unindex return of leased node %s of %s: %w", key.K2(), key.K1(), err)
+				}
+				unindexed++
+			}
+			continue
+		}
+		if len(returns) > 0 {
 			continue
 		}
 		if err := k.TrainshardReleaseIndex.Set(ctx, collections.Join3(until, key.K1(), key.K2())); err != nil {
@@ -232,7 +243,7 @@ func repairTrainshardReservations(ctx context.Context, k keeper.Keeper) error {
 		indexed++
 	}
 	k.LogInfo("repaired trainshard reservations", types.Upgrades,
-		"dropped_dangling", dropped, "returns_indexed", indexed)
+		"dropped_dangling", dropped, "returns_indexed", indexed, "stale_returns_unindexed", unindexed)
 	return nil
 }
 

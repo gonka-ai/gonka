@@ -17,6 +17,8 @@ import (
 
 const maxBodyBytes = 1 << 20
 
+const bodyReadTimeout = 30 * time.Second
+
 type contextKey int
 
 const (
@@ -26,9 +28,10 @@ const (
 )
 
 var (
-	errBadSignature = shared.New("BAD_SIGNATURE", shared.ErrUnauthorized, "request signature does not verify")
-	errStaleRequest = shared.New("STALE_REQUEST", shared.ErrUnauthorized, "request timestamp is outside the accepted window")
-	errBadBody      = shared.New("BAD_BODY", shared.ErrValidation, "cannot read request body")
+	errBadSignature  = shared.New("BAD_SIGNATURE", shared.ErrUnauthorized, "request signature does not verify")
+	errStaleRequest  = shared.New("STALE_REQUEST", shared.ErrUnauthorized, "request timestamp is outside the accepted window")
+	errBadBody       = shared.New("BAD_BODY", shared.ErrValidation, "cannot read request body")
+	errUnboundedBody = shared.New("BODY_UNBOUNDED", shared.ErrUnavailable, "this server cannot bound how long a request body is read")
 )
 
 type Guard struct {
@@ -51,7 +54,7 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 			httpx.WriteError(w, "", err)
 			return
 		}
-		address, body, verifiesUntil, err := g.authenticate(r, requestID)
+		address, body, verifiesUntil, err := g.authenticate(w, r, requestID)
 		if err != nil {
 			httpx.WriteError(w, string(requestID), err)
 			return
@@ -64,10 +67,10 @@ func (g *Guard) Wrap(next http.Handler) http.Handler {
 	})
 }
 
-func (g *Guard) authenticate(r *http.Request, requestID vo.RequestID) (vo.Address, []byte, time.Time, error) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
-	if err != nil || len(body) > maxBodyBytes {
-		return "", nil, time.Time{}, errBadBody
+func (g *Guard) authenticate(w http.ResponseWriter, r *http.Request, requestID vo.RequestID) (vo.Address, []byte, time.Time, error) {
+	body, err := readBody(w, r)
+	if err != nil {
+		return "", nil, time.Time{}, err
 	}
 
 	timestamp := r.Header.Get(contract.HeaderTimestamp)
@@ -86,6 +89,21 @@ func (g *Guard) authenticate(r *http.Request, requestID vo.RequestID) (vo.Addres
 		return "", nil, time.Time{}, errBadSignature
 	}
 	return address, body, verifiesUntil, nil
+}
+
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	conn := http.NewResponseController(w)
+	if err := conn.SetReadDeadline(time.Now().Add(bodyReadTimeout)); err != nil {
+		return nil, errUnboundedBody
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if lifted := conn.SetReadDeadline(time.Time{}); lifted != nil {
+		return nil, errUnboundedBody
+	}
+	if err != nil || len(body) > maxBodyBytes {
+		return nil, errBadBody
+	}
+	return body, nil
 }
 
 // the instant returned is the last one this timestamp passes: a spent request id must be kept that long

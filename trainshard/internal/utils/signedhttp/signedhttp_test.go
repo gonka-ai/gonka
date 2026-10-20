@@ -48,6 +48,20 @@ func (v *boundVerifier) Recover(payload, _ []byte) (vo.Address, error) {
 	return v.address, nil
 }
 
+type connRecorder struct {
+	*httptest.ResponseRecorder
+	deadlines []time.Time
+}
+
+func newConnRecorder() *connRecorder {
+	return &connRecorder{ResponseRecorder: httptest.NewRecorder()}
+}
+
+func (c *connRecorder) SetReadDeadline(at time.Time) error {
+	c.deadlines = append(c.deadlines, at)
+	return nil
+}
+
 type signedRequest struct {
 	timestamp string
 	requestID string
@@ -77,7 +91,7 @@ func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 	verifier := &verifierStub{address: "gonka1creator"}
 	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience, endpoint)
 	request := newSignedRequest()
-	recorder := httptest.NewRecorder()
+	recorder := newConnRecorder()
 
 	var caller vo.Address
 	var seen contract.Command
@@ -105,6 +119,51 @@ func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 	}
 }
 
+func TestGuardBoundsTheBodyReadAndLiftsTheBoundBeforeTheHandler(t *testing.T) {
+	// arrange
+	boundary := signedhttp.New(&verifierStub{address: "gonka1creator"}, timex.NewFrozen(now), window, audience, endpoint)
+	recorder := newConnRecorder()
+	var atHandler []time.Time
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		atHandler = append(atHandler, recorder.deadlines...)
+	})
+	started := time.Now()
+
+	// act
+	boundary.Wrap(handler).ServeHTTP(recorder, newSignedRequest().build())
+
+	// assert
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("got %d, want the request accepted: %s", recorder.Code, recorder.Body)
+	}
+	if len(atHandler) != 2 || !atHandler[0].After(started) || !atHandler[1].IsZero() {
+		t.Fatalf("got deadlines %v, want the body read bounded and the bound lifted before a stream or shell takes the connection", atHandler)
+	}
+}
+
+func TestGuardRefusesABodyItCannotBound(t *testing.T) {
+	// arrange
+	boundary := signedhttp.New(&verifierStub{address: "gonka1creator"}, timex.NewFrozen(now), window, audience, endpoint)
+	recorder := httptest.NewRecorder()
+	reached := false
+
+	// act
+	boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })).
+		ServeHTTP(recorder, newSignedRequest().build())
+
+	// assert
+	if reached {
+		t.Fatal("a body nobody can bound must not be read on behalf of an unknown caller")
+	}
+	var envelope contract.Envelope
+	if err := json.NewDecoder(recorder.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.Error == nil || envelope.Error.Code != "BODY_UNBOUNDED" {
+		t.Fatalf("got %+v, want BODY_UNBOUNDED", envelope.Error)
+	}
+}
+
 func TestGuardRefusesARequestSignedForAnotherMachine(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -122,7 +181,7 @@ func TestGuardRefusesARequestSignedForAnotherMachine(t *testing.T) {
 			verifier := &boundVerifier{signed: elsewhere, address: "gonka1creator"}
 			boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience, endpoint)
 			reached := false
-			recorder := httptest.NewRecorder()
+			recorder := newConnRecorder()
 
 			// act
 			boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })).
@@ -148,7 +207,7 @@ func TestGuardCoversTheQueryString(t *testing.T) {
 	built.URL.RawQuery = "tail=100"
 
 	// act
-	boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(httptest.NewRecorder(), built)
+	boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(newConnRecorder(), built)
 
 	// assert
 	want := contract.SigningPayload(string(audience), string(endpoint), http.MethodPost, path, "tail=100", request.timestamp, request.requestID, request.body)
@@ -223,7 +282,7 @@ func TestGuardRefusesWhatItCannotTrust(t *testing.T) {
 			boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience, endpoint)
 			reached := false
 			handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
-			recorder := httptest.NewRecorder()
+			recorder := newConnRecorder()
 
 			// act
 			boundary.Wrap(handler).ServeHTTP(recorder, request.build())

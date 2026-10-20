@@ -184,6 +184,39 @@ func TestSetNodeStoppedCommand_LiftingBeforeTheReservationsAreReadKeepsTheNodeSt
 	assert.Equal(t, types.HardwareNodeStatus_STOPPED, node.State.IntendedStatus)
 }
 
+func TestEnsureReservedNodesCached_SendsANodeStartedBeforeTheReadToInference(t *testing.T) {
+	started := createTestNodeWithStatus("started", types.HardwareNodeStatus_STOPPED)
+	started.State.AdminState.Stopped = true
+	leased := createTestNodeWithStatus("leased", types.HardwareNodeStatus_STOPPED)
+	leased.State.AdminState.Stopped = true
+	held := createTestNodeWithStatus("held", types.HardwareNodeStatus_STOPPED)
+	held.State.AdminState.Stopped = true
+	bridge := &MockBrokerChainBridge{}
+	bridge.On("GetTrainingNodeReservations", reservingHost).Return(&types.QueryTrainingNodeReservationsResponse{
+		NodeIds: []string{"leased"},
+	}, nil)
+	broker := reservationBroker(bridge, started, leased, held)
+	broker.awaitingReservations.Store(true)
+	for _, id := range []string{"started", "leased"} {
+		start := SetNodeStoppedCommand{NodeId: id, Stopped: false, Response: make(chan error, 1)}
+		start.Execute(broker)
+		require.NoError(t, <-start.Response)
+	}
+	<-broker.reconcileTrigger
+
+	require.NoError(t, broker.EnsureReservedNodesCached())
+
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, started.State.IntendedStatus)
+	assert.Equal(t, PocStatusIdle, started.State.PocIntendedStatus)
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, leased.State.IntendedStatus)
+	assert.Equal(t, types.HardwareNodeStatus_STOPPED, held.State.IntendedStatus)
+	select {
+	case <-broker.reconcileTrigger:
+	default:
+		t.Fatal("a node started before the read must wake the reconciler")
+	}
+}
+
 func TestGetCommandForState_StopsAReservedNode(t *testing.T) {
 	broker := NewTestBroker()
 	reserved := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, Reserved: true}

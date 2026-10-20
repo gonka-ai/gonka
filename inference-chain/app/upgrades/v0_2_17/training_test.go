@@ -176,6 +176,7 @@ func TestRepairTrainshardReservations(t *testing.T) {
 	shard2.Nodes = append(shard2.Nodes, node("deferred", inferencetypes.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, 300))
 	require.NoError(t, k.Trainshards.Set(ctx, 2, shard2))
 	require.NoError(t, k.TrainshardReleaseIndex.Set(ctx, collections.Join3(int64(301), "host", "deferred")))
+	require.NoError(t, k.TrainshardReleaseIndex.Set(ctx, collections.Join3(int64(250), "host", "leased")))
 
 	require.NoError(t, repairTrainshardReservations(ctx, k))
 

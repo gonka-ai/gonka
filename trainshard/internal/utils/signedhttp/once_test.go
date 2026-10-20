@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -40,7 +39,7 @@ func served(t *testing.T, address vo.Address, store *servedStub, request signedR
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	boundary := signedhttp.New(&verifierStub{address: address}, store.clock, window, audience, endpoint)
-	recorder := httptest.NewRecorder()
+	recorder := newConnRecorder()
 
 	boundary.Wrap(signedhttp.NewOnce(store).Wrap(handler)).ServeHTTP(recorder, request.build())
 
