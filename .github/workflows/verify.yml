@@ -288,20 +288,40 @@ jobs:
   test-versiond-router-config:
     runs-on: ubuntu-latest
     name: Test versiond-router HAProxy configuration
+    needs: test-versiond-router-suites
+    if: always()
+    steps:
+      - name: Require every router suite to pass
+        env:
+          SUITES_RESULT: ${{ needs.test-versiond-router-suites.result }}
+        run: test "$SUITES_RESULT" = success
+
+  test-versiond-router-suites:
+    runs-on: ubuntu-latest
+    name: Versiond Router / ${{ matrix.suite }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [configuration, fleet-rollouts, fleet-regressions, updater]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
+        if: matrix.suite == 'configuration'
         run: make -C versiond-router test-render
       - name: Check h2 backends with an HTTP/1.1 health check
+        if: matrix.suite == 'configuration'
         run: make -C versiond-router test-h2-backend-h1-check
       - name: Exercise isolated versiond-router fleet rollouts
+        if: matrix.suite == 'fleet-rollouts'
         run: make -C versiond-router test-fleet
       - name: Gate router fleet failure scenarios
+        if: matrix.suite == 'fleet-regressions'
         run: |
           shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
           deploy/join/versiond-router-fleet-regression_test.sh --gate
       - name: Check the join update script
+        if: matrix.suite == 'updater'
         run: |
           shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
             deploy/join/versiond-storage-check.sh deploy/join/updater-rollback.sh \
@@ -309,12 +329,14 @@ jobs:
             deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
       - name: Gate the updater failure scenarios
+        if: matrix.suite == 'updater'
         run: |
           # UPD-PROOF-HEADERS exercises the real BusyBox wget; the harness never pulls.
           docker pull -q busybox:1.36
           deploy/join/update-devshard-regression_test.sh --gate
           python3 deploy/join/updater-rollback_test.py
       - name: Check that every host a service resolves is published on a shared network
+        if: matrix.suite == 'configuration'
         run: deploy/join/compose-contract_test.sh
 
   test-devshard-host-cutover:
