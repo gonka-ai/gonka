@@ -86,6 +86,76 @@ image before deciding which transport a host is on. Only the HAProxy image
 recognises the dedicated peer-RPC route; nginx can accept ordinary H2 from
 the client but still forwards over H1.
 
+## Switching the wrapping
+
+Do this after governance has published the v6 `devshardd` and gateway, and
+after the host is already running them on the old wrapping. This step
+replaces only the wrapping. It does not publish a new child binary.
+
+Update one host at a time, outside PoC/cPoC. `deploy/join/update-devshard.sh`
+is the whole replacement. On a non-HA host it recreates the public `proxy`
+service (the `proxy-router` image) and the nginx policy workers, then
+`versiond`. On an HA host it rolls the `versiond-router` fleet first, then
+that same proxy group, then each `versiond` replica, with
+`VERSIOND_LEGACY_HOST` last. HTTP/2 to `versiond` stays down until the new
+`versiond` answers `GET /readyz?peer-rpc=1` with `peer-rpc-ok`. Until that
+check passes, peer RPC stays on HTTP/1.1. JSON stays on HTTP/1.1 throughout.
+
+The script reads image names from the environment, and it sources
+`deploy/join/config.env`. A v6 checkout defaults these tags, but an older pin
+already in `config.env` wins. Set the target tags there before the run.
+
+Non-HA:
+
+```bash
+export VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.16
+export PROXY_ROUTER_IMAGE=ghcr.io/product-science/proxy-router:0.2.16
+export PROXY_POLICY_IMAGE=ghcr.io/product-science/proxy:0.2.16
+```
+
+HA adds the fleet image:
+
+```bash
+export VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router:0.2.16
+```
+
+`PROXY_ROUTER_IMAGE` is the Compose service named `proxy`. `PROXY_POLICY_IMAGE`
+is both nginx workers (`proxy-policy` and `proxy-policy2`). Leave any older
+assignment of these names in `config.env` replaced by the lines above, so the
+next run cannot select the previous tag.
+
+Download the images while the registry is reachable, from `deploy/join` after
+`source ./config.env`. The script pulls again and, if that pull fails,
+continues with the copies already on the host.
+
+```bash
+git fetch origin
+git checkout <v6 release>
+cd deploy/join
+source ./config.env
+docker pull "$VERSIOND_IMAGE"
+docker pull "$PROXY_ROUTER_IMAGE"
+docker pull "$PROXY_POLICY_IMAGE"
+# HA only:
+docker pull "$VERSIOND_ROUTER_IMAGE"
+./update-devshard.sh --check
+./update-devshard.sh
+```
+
+`--check` renders the model and prints the images it will run. It does not
+replace services. The second command holds the deployment lock and prints
+each Compose step. A failed proxy or `versiond` replacement restores the
+saved container specification.
+
+Recreating `proxy` closes the connections that process is holding. The nginx
+workers and `versiond` stop with a 30-minute grace; a non-HA host has no
+second `versiond` while that one stops. A peer that already recorded this
+host as HTTP/1.1 keeps that choice for about 30 minutes, then probes again.
+
+`--check` and the proxy `/readyz` check do not send a peer RPC. After the
+run, open one through the public InferenceUrl port and confirm it is HTTP/2
+on a v6 `proxy-router` host.
+
 ## What's in this release
 
 | Area | Change |
