@@ -326,13 +326,17 @@ func initialState(
 	previous *types.ConfirmationWeightScale,
 	stepMax mathsdk.LegacyDec,
 ) (mathsdk.LegacyDec, mathsdk.LegacyDec, int32, bool, error) {
-	if previous != nil && previous.BaseCoefficient != nil && previous.AdaptiveStep != nil {
+	if previous != nil && previous.BaseCoefficient != nil {
 		base, err := positiveDecimal(
 			fmt.Sprintf("previous base coefficient for model %q", modelID),
 			previous.BaseCoefficient,
 		)
 		if err != nil {
 			return mathsdk.LegacyDec{}, mathsdk.LegacyDec{}, 0, false, err
+		}
+		// A missing step initializes new adjustment history at the supplied base.
+		if previous.AdaptiveStep == nil {
+			return base, stepMax.QuoInt64(2), 0, false, nil
 		}
 		step, err := positiveDecimal(
 			fmt.Sprintf("previous adaptive step for model %q", modelID),
@@ -544,7 +548,6 @@ func legacyWeightScaleFactor(model *types.PoCModelConfig) mathsdk.LegacyDec {
 	}
 	return dec
 }
-
 
 func cloneParams(params *types.DynamicCoefficientParams) *types.DynamicCoefficientParams {
 	if params == nil {

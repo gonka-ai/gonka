@@ -349,6 +349,10 @@ func TestGovernanceBoundsCarryAndClampPreviousBase(t *testing.T) {
 				model("a", tc.min, tc.max, dec(1, 0), 5000),
 				model("b", dec(1, 0), dec(1, 0), dec(1, 0), 5000),
 			)
+			// PREFILL mode also requires a block for its DECODE trial.
+			for _, model := range config.Models {
+				model.Schemes = append(model.Schemes, types.DefaultDecodeScheme())
+			}
 			require.NoError(t, config.Validate())
 			previous := state("a", dec(62, -2), dec(1, -2), 1)
 			previous.EffectiveCoefficient = dec(55, -2)

@@ -622,7 +622,7 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 	for _, model := range params.PocParams.Models {
 		model.Schemes = []*inferencetypes.PocSchemeParams{
 			{Scheme: inferencetypes.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024, DynamicCoefficient: model.DynamicCoefficient},
-			inferencetypes.DefaultDecodeScheme(model.ModelId),
+			inferencetypes.DefaultDecodeScheme(),
 		}
 	}
 	ms := keeper.NewMsgServerImpl(k)

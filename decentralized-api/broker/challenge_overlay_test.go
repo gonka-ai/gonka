@@ -180,7 +180,7 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	bridge := &MockBrokerChainBridge{}
 	bridge.On("GetEpochPocRecipe", uint64(0)).Return(&types.QueryPocStageRecipeResponse{
 		Found: true, Recipe: &types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_DECODE,
-			Models: []*types.PoCModelConfig{{ModelId: "m", Schemes: []*types.PocSchemeParams{types.DefaultDecodeScheme("m")}}}},
+			Models: []*types.PoCModelConfig{{ModelId: "m", Schemes: []*types.PocSchemeParams{types.DefaultDecodeScheme()}}}},
 	}, nil)
 
 	b := &Broker{phaseTracker: tracker, chainBridge: bridge}

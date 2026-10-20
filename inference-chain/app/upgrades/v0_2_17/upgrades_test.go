@@ -147,3 +147,61 @@ func TestPostV016ParamsRoundTripModelCoefficient(t *testing.T) {
 	require.Empty(t, decoded.Models[0].Schemes)
 	require.NotNil(t, decoded.DynamicCoefficientParams)
 }
+
+func TestMigratePocSchemeBlocksInstallsDecodeCoefficients(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	cases := []struct {
+		id, minimum, maximum, difficulty string
+		share                            uint32
+	}{
+		{"MiniMaxAI/MiniMax-M2.7", "0.302400000000000000", "0.302400000000000000", "1.000000000000000000", 3334},
+		{"deepseek-ai/DeepSeek-V4-Flash-0731", "0.201246191645400000", "0.672672000000000000", "1.925925925925000000", 3333},
+		{"zai-org/GLM-5.3-Flash", "0.810962376237000000", "1.911804631578600000", "5.473684210526000000", 3333},
+	}
+	params.PocParams.Models = nil
+	params.PocParams.PocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
+	for _, tc := range cases {
+		params.PocParams.Models = append(params.PocParams.Models, &inferencetypes.PoCModelConfig{
+			ModelId: tc.id, SeqLen: 1024, StatTest: inferencetypes.DefaultPoCStatTestParams(),
+			DynamicCoefficient: &inferencetypes.DynamicCoefficientModelConfig{
+				CoeffMin: inferencetypes.DecimalFromFloat(1), CoeffMax: inferencetypes.DecimalFromFloat(2),
+				RelativeDifficulty: inferencetypes.DecimalFromFloat(1), TargetShareBps: tc.share,
+			},
+		})
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, got.Validate())
+	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
+	for i, tc := range cases {
+		model := got.PocParams.Models[i]
+		prefill, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_PREFILL)
+		require.True(t, ok)
+		require.Equal(t, params.PocParams.Models[i].DynamicCoefficient, prefill.DynamicCoefficient)
+		decode, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_DECODE)
+		require.True(t, ok)
+		require.Equal(t, int64(256), decode.SeqLen)
+		require.Equal(t, int64(256), decode.MaxTokens)
+		for _, value := range []struct {
+			got  *inferencetypes.Decimal
+			want string
+		}{
+			{decode.DynamicCoefficient.CoeffMin, tc.minimum},
+			{decode.DynamicCoefficient.CoeffMax, tc.maximum},
+			{decode.DynamicCoefficient.RelativeDifficulty, tc.difficulty},
+		} {
+			actual, err := value.got.ToLegacyDec()
+			require.NoError(t, err)
+			require.Equal(t, value.want, actual.String(), tc.id)
+		}
+		require.Equal(t, tc.share, decode.DynamicCoefficient.TargetShareBps)
+	}
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+	repeated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, got, repeated)
+}
