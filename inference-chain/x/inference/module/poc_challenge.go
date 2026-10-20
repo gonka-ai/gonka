@@ -240,6 +240,8 @@ func (am AppModule) challengeCalculatorResult(
 		}
 	}
 
+	storeCommits = am.dropCommitsBelowMinCount(storeCommits, params.PocParams)
+
 	validationsV2 := make(map[types.PoCParticipantModelKey][]types.PoCValidationV2)
 	for _, vote := range validations {
 		key := types.PoCParticipantModelKey{ParticipantAddress: ch.Target, ModelID: vote.ModelId}
