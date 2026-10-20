@@ -962,17 +962,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 			"error", err)
 	}
 
-	validators := make([]string, len(validations))
-	var i = 0
-	for key := range validations {
-		validators[i] = key.ParticipantAddress + ":" + key.ModelID
-		i++
-	}
 	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(validations)", len(validations),
-		"validators", validators)
+		"len(validations)", len(validations))
 
 	// Collect participants and seeds
 	participants := make(map[string]types.Participant)

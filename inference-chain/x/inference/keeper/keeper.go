@@ -42,9 +42,11 @@ type (
 		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// PoC v2 collections
-		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
-		PoCV2StoreCommits         collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
-		MLNodeWeightDistributions collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
+		PoCValidationsV2             collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
+		PoCValidationV2Counts        collections.Map[collections.Pair[int64, sdk.AccAddress], uint64]
+		ConfirmationPoCCleanupCursor collections.Item[confirmationCleanupCursor]
+		PoCV2StoreCommits            collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
+		MLNodeWeightDistributions    collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap                collections.Map[string, uint64]
 		ModelCapacityMap                    collections.Map[string, uint64]
@@ -108,11 +110,11 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Devshard escrow collections
-		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
-		DevshardEscrowCounter     collections.Item[uint64]
-		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
-		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
-		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter       collections.Item[uint64]
+		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
@@ -142,9 +144,9 @@ type (
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
-		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		ClaimRecipientsByEpoch  collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges           collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits     collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
 		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
 	}
 )
@@ -233,6 +235,19 @@ func NewKeeper(
 			"poc_validation_v2",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.PairKeyCodec(collections.StringKey, sdk.AccAddressKey)),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		PoCValidationV2Counts: collections.NewMap(
+			sb,
+			types.PoCValidationV2CountPrefix,
+			"poc_validation_v2_count",
+			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.Uint64Value,
+		),
+		ConfirmationPoCCleanupCursor: collections.NewItem(
+			sb,
+			types.ConfirmationPoCCleanupCursorPrefix,
+			"confirmation_poc_cleanup_cursor",
+			confirmationCleanupCursorCodec{},
 		),
 		PoCV2StoreCommits: collections.NewMap(
 			sb,

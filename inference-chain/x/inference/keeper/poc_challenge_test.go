@@ -47,6 +47,7 @@ func setupChallengeCreate(t *testing.T, height int64) (keeper.Keeper, sdk.Contex
 	params.PocChallengeParams.PaymentRatio = types.DecimalFromFloat(0.1)
 	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(ctx, params))
+	k.SetModel(ctx, &types.Model{Id: challengeTestModel})
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
 	k.SetEpochGroupData(ctx, types.EpochGroupData{

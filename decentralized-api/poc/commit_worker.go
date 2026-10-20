@@ -993,7 +993,7 @@ func getWeightDistribution(distribution map[string]uint32, targetCount uint32) (
 				Weight: count,
 			})
 		}
-		return weights, nil
+		return omitZeroWeights(weights)
 	}
 
 	logging.Warn("CommitWorker: adjusting distribution proportionally", types.PoC,
@@ -1025,7 +1025,24 @@ func getWeightDistribution(distribution map[string]uint32, targetCount uint32) (
 		diff--
 	}
 
-	return weights, nil
+	return omitZeroWeights(weights)
+}
+
+// omitZeroWeights drops rounded zeros before broadcast. Consensus still
+// accepts a structurally valid zero from an older DAPI; this is bandwidth
+// only. The retained rows still sum to targetCount.
+func omitZeroWeights(weights []*types.MLNodeWeight) ([]*types.MLNodeWeight, error) {
+	out := make([]*types.MLNodeWeight, 0, len(weights))
+	for _, weight := range weights {
+		if weight == nil || weight.Weight == 0 {
+			continue
+		}
+		out = append(out, weight)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("distribution sum is 0")
+	}
+	return out, nil
 }
 
 func formatWeightDistribution(weights []*types.MLNodeWeight) string {

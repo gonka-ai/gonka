@@ -120,6 +120,76 @@ const (
 	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
+// Epoch-validation admission defaults. Each number is a per-participant cap,
+// not a chain total. Live values are EpochValidationParams, set by genesis
+// and by the v0.2.17 upgrade, then changed with MsgUpdateParams.
+const (
+	// DefaultMaxPositiveDistributionRows caps positive weight rows stored
+	// for one participant and one model. Epoch 427's largest stored
+	// distribution had 39 such rows.
+	DefaultMaxPositiveDistributionRows = 256
+	// MaxValidationsPerMessage rejects one fee-exempt validation batch.
+	// One observed signer stored at most 40 votes in an epoch.
+	MaxValidationsPerMessage = 128
+	// MaxValidationsPerSignerPerStage stops further stores once this signer
+	// already has this many rows for the stage.
+	MaxValidationsPerSignerPerStage = 256
+)
+
+// DefaultEpochValidationParams is the governance value written at genesis
+// and by the v0.2.17 upgrade.
+func DefaultEpochValidationParams() *EpochValidationParams {
+	return &EpochValidationParams{
+		MaxPositiveDistributionRows:     DefaultMaxPositiveDistributionRows,
+		MaxValidationsPerMessage:        MaxValidationsPerMessage,
+		MaxValidationsPerSignerPerStage: MaxValidationsPerSignerPerStage,
+	}
+}
+
+// PositiveDistributionRowLimit is the governed cap on stored positive
+// distribution rows for one participant and one model. A missing or zero
+// value uses the default so stored params from before the field existed
+// keep the same cap.
+func (p *EpochValidationParams) PositiveDistributionRowLimit() int {
+	if p == nil || p.MaxPositiveDistributionRows == 0 {
+		return DefaultMaxPositiveDistributionRows
+	}
+	return int(p.MaxPositiveDistributionRows)
+}
+
+// ValidationsPerMessageLimit is the governed cap on one validation batch.
+func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
+	if p == nil || p.MaxValidationsPerMessage == 0 {
+		return MaxValidationsPerMessage
+	}
+	return int(p.MaxValidationsPerMessage)
+}
+
+// ValidationsPerSignerPerStageLimit is the governed cap on rows stored for
+// one signer in one stage.
+func (p *EpochValidationParams) ValidationsPerSignerPerStageLimit() int {
+	if p == nil || p.MaxValidationsPerSignerPerStage == 0 {
+		return MaxValidationsPerSignerPerStage
+	}
+	return int(p.MaxValidationsPerSignerPerStage)
+}
+
+func (p *EpochValidationParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaxPositiveDistributionRows == 0 {
+		return fmt.Errorf("epoch_validation_params.max_positive_distribution_rows must be greater than 0")
+	}
+	if p.MaxValidationsPerMessage == 0 {
+		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
+	}
+	if p.MaxValidationsPerSignerPerStage == 0 {
+		return fmt.Errorf("epoch_validation_params.max_validations_per_signer_per_stage must be greater than 0")
+	}
+	return nil
+}
+
 // DefaultMinPunishableSegmentBlocks is the voted-segment floor. A clipped
 // challenge window shorter than this rotates without evaluate.
 // Same-block / minimum clipped duration is max(cutoff,1)+stage+exchange-1.
@@ -216,11 +286,12 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-		DevshardEscrowParams: DefaultDevshardEscrowParams(),
-		MaintenanceParams:    DefaultMaintenanceParams(),
-		DelegationParams:     DefaultDelegationParams(),
-		FeeParams:            DefaultFeeParams(),
-		PocChallengeParams:   DefaultPoCChallengeParams(),
+		DevshardEscrowParams:  DefaultDevshardEscrowParams(),
+		MaintenanceParams:     DefaultMaintenanceParams(),
+		DelegationParams:      DefaultDelegationParams(),
+		FeeParams:             DefaultFeeParams(),
+		PocChallengeParams:    DefaultPoCChallengeParams(),
+		EpochValidationParams: DefaultEpochValidationParams(),
 	}
 }
 
@@ -925,6 +996,12 @@ func (p Params) Validate() error {
 
 	if p.PocChallengeParams != nil {
 		if err := p.PocChallengeParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.EpochValidationParams != nil {
+		if err := p.EpochValidationParams.Validate(); err != nil {
 			return err
 		}
 	}
