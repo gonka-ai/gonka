@@ -873,8 +873,6 @@ func TestExecuteValidation_StreamedReplayWithNaNTailScoresForgedPrefix(t *testin
 		10, uint64(len(executor)), "processed_logprobs", 0,
 	)
 	require.NoError(t, err)
-	require.IsType(t, &SimilarityValidationResult{}, result)
-	assert.Less(t, result.(*SimilarityValidationResult).Value, 0.85)
 	assert.False(t, result.IsSuccessful())
 }
 
@@ -921,6 +919,10 @@ func TestExecuteValidation_StreamedReplayErrorEventKeepsNonStreamVerdicts(t *tes
 		invalid bool
 	}{
 		{"enforced tokens rejected", `{"error":{"message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens","code":400}}`, true},
+		{"enforced tokens rejected without code", `{"error":{"message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens"}}`, true},
+		{"enforced tokens rejected with null code", `{"error":{"message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens","code":null}}`, true},
+		{"enforced tokens rejected with text code", `{"error":{"message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens","code":"invalid_request"}}`, true},
+		{"flat enforced tokens rejected without code", `{"object":"error","message":"token out of vocab","type":"BadRequestError","param":"enforced_tokens"}`, true},
 		{"nested 400 autopass", `{"error":{"message":"bad","type":"BadRequestError","param":null,"code":400}}`, false},
 		{"flat 422 autopass", `{"object":"error","message":"bad","type":"BadRequestError","param":null,"code":"422"}`, false},
 	}

@@ -244,12 +244,14 @@ func NormalizeReplayStream(statusCode int, body []byte) (int, []byte, error) {
 		default:
 			continue
 		}
-		status := replayStreamErrorStatus(code)
-		if status >= 400 && status < 500 {
-			errorBody, err := json.Marshal(map[string]json.RawMessage{"error": errorObject})
-			if err != nil {
-				return 0, nil, err
-			}
+		errorBody, err := json.Marshal(map[string]json.RawMessage{"error": errorObject})
+		if err != nil {
+			return 0, nil, err
+		}
+		if rejectsEnforcedTokens(errorBody) {
+			return http.StatusBadRequest, errorBody, nil
+		}
+		if status := replayStreamErrorStatus(code); status >= 400 && status < 500 {
 			return status, errorBody, nil
 		}
 		return 0, nil, fmt.Errorf("%w: %s", errReplayStreamFailed, payload)
