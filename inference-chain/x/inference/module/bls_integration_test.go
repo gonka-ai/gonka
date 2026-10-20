@@ -1,11 +1,19 @@
 package inference_test
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
+	"math/big"
 	"testing"
+	"time"
 
 	"cosmossdk.io/math"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	hashToCurve "github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -15,6 +23,7 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"golang.org/x/crypto/sha3"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
@@ -649,3 +658,540 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 	// Max allowed should be 3
 	require.Len(t, epochBLSData.Participants[0].AllowedSecp256K1PublicKeys, 3)
 }
+
+func TestBLSKeyGenerationFiltersOffCurvePrimaryAndWarmKeys(t *testing.T) {
+	setupTestAddresses(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	// Off-curve 33-byte compressed key from report: 02 || 31*00 || 05
+	offCurveHex := "020000000000000000000000000000000000000000000000000000000000000005"
+	offCurvePrimaryAddr := generateValidBech32Address(t, offCurveHex)
+
+	// Alice has a valid primary key; offCurvePrimaryAddr has an off-curve primary key in AccountKeeper.
+	participantDetails := map[string]string{
+		aliceAccAddrStr:     aliceSecp256k1PubHex,
+		offCurvePrimaryAddr: offCurveHex,
+	}
+	expectedPubKeysMap := setupMockAccountExpectations(t, mocks.AccountKeeper, participantDetails)
+
+	// Configure grants for Alice:
+	// 1) valid warm key (charlieSecp256k1PubHex, 0x03 prefix)
+	// 2) valid warm key (bobSecp256k1PubHex, 0x02 prefix - sorts before 0x03)
+	// 3) duplicate of bobSecp256k1PubHex
+	// 4) equal to Alice's primary key
+	// 5) off-curve 33-byte key (02 || 31*00 || 05)
+	warmValid03Pub := newSecp256k1PubKeyFromHexStr(t, charlieSecp256k1PubHex)
+	warmValid02Pub := newSecp256k1PubKeyFromHexStr(t, bobSecp256k1PubHex)
+	warmDup02Priv := secp256k1.GenPrivKey() // different grantee address holding same pubkey bytes as bob
+	warmPrimaryPub := newSecp256k1PubKeyFromHexStr(t, aliceSecp256k1PubHex)
+	warmOffCurvePub := newSecp256k1PubKeyFromHexStr(t, offCurveHex)
+
+	type granteeFixture struct {
+		addr   sdk.AccAddress
+		pubKey cryptotypes.PubKey
+	}
+	fixtures := []granteeFixture{
+		{addr: sdk.AccAddress(warmValid03Pub.Address()), pubKey: warmValid03Pub},
+		{addr: sdk.AccAddress(warmValid02Pub.Address()), pubKey: warmValid02Pub},
+		{addr: sdk.AccAddress(warmDup02Priv.PubKey().Address()), pubKey: warmValid02Pub},
+		{addr: sdk.AccAddress([]byte("alice_dup_grantee___")), pubKey: warmPrimaryPub},
+		{addr: sdk.AccAddress([]byte("off_curve_grantee___")), pubKey: warmOffCurvePub},
+	}
+
+	grants := make([]*authztypes.GrantAuthorization, 0, len(fixtures))
+	for _, f := range fixtures {
+		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
+		require.NoError(t, err)
+		grants = append(grants, &authztypes.GrantAuthorization{
+			Granter:       aliceAccAddrStr,
+			Grantee:       f.addr.String(),
+			Authorization: authAny,
+		})
+		baseAcc := authtypes.NewBaseAccount(f.addr, f.pubKey, 0, 0)
+		mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), f.addr).Return(baseAcc).AnyTimes()
+	}
+
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		Return(&authztypes.QueryGranterGrantsResponse{
+			Grants: grants,
+		}, nil).
+		AnyTimes()
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+
+	for _, addrStr := range []string{aliceAccAddrStr, offCurvePrimaryAddr} {
+		k.SetParticipant(ctx, types.Participant{
+			Index:   addrStr,
+			Address: addrStr,
+			Weight:  50,
+			Status:  types.ParticipantStatus_ACTIVE,
+		})
+	}
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: offCurvePrimaryAddr, Weight: 50, CapWeight: 50},
+	}
+
+	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)
+	const epochID = uint64(51)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, 1, "participant with off-curve primary key must be excluded")
+
+	aliceBLS := epochBLSData.Participants[0]
+	require.Equal(t, aliceAccAddrStr, aliceBLS.Address)
+	require.Equal(t, expectedPubKeysMap[aliceAccAddrStr], aliceBLS.Secp256K1PublicKey)
+	require.Equal(t, [][]byte{
+		warmValid02Pub.Bytes(),
+		warmValid03Pub.Bytes(),
+	}, aliceBLS.AllowedSecp256K1PublicKeys, "only valid unique non-primary warm keys must be retained in sorted order")
+}
+
+func TestBLSKeyGeneration_EndToEndOffCurveRegression(t *testing.T) {
+	setupTestAddresses(t)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	ctx = ctx.WithChainID("e2e-offcurve-regression-chain").WithBlockHeight(100)
+
+	offCurveHex := "020000000000000000000000000000000000000000000000000000000000000005"
+	offCurveBytes, err := hex.DecodeString(offCurveHex)
+	require.NoError(t, err)
+	offCurvePubKey := &secp256k1.PubKey{Key: offCurveBytes}
+	offCurveAddr := sdk.AccAddress(offCurvePubKey.Address()).String()
+
+	// 1. Attempt MsgSubmitNewUnfundedParticipant with the off-curve vector and assert failure.
+	inferenceMsgServer := keeper.NewMsgServerImpl(k)
+	unfundedMsg := &types.MsgSubmitNewUnfundedParticipant{
+		Address:      offCurveAddr,
+		Url:          "https://offcurve.example.com",
+		ValidatorKey: base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		WorkerKey:    base64.StdEncoding.EncodeToString(make([]byte, 32)),
+		PubKey:       base64.StdEncoding.EncodeToString(offCurveBytes),
+	}
+	require.Error(t, unfundedMsg.ValidateBasic())
+	_, err = inferenceMsgServer.SubmitNewUnfundedParticipant(ctx, unfundedMsg)
+	require.Error(t, err)
+	_, foundOffCurveParticipant := k.GetParticipant(ctx, offCurveAddr)
+	require.False(t, foundOffCurveParticipant, "off-curve participant must not be stored")
+
+	// 2. Register valid participants (Alice and Bob) + a corrupted state entry for offCurveAddr,
+	//    and configure Alice with 1 valid warm key (Charlie) and 1 off-curve warm key.
+	participantDetails := map[string]string{
+		aliceAccAddrStr: aliceSecp256k1PubHex,
+		bobAccAddrStr:   bobSecp256k1PubHex,
+		offCurveAddr:    offCurveHex,
+	}
+	expectedPubKeysMap := setupMockAccountExpectations(t, mocks.AccountKeeper, participantDetails)
+
+	charlieWarmPub := newSecp256k1PubKeyFromHexStr(t, charlieSecp256k1PubHex)
+	charlieWarmAddr := sdk.AccAddress(charlieWarmPub.Address())
+	offCurveWarmAddr := sdk.AccAddress([]byte("offcurve_warm_grnt__"))
+
+	authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
+	require.NoError(t, err)
+	aliceGrants := []*authztypes.GrantAuthorization{
+		{Granter: aliceAccAddrStr, Grantee: charlieWarmAddr.String(), Authorization: authAny},
+		{Granter: aliceAccAddrStr, Grantee: offCurveWarmAddr.String(), Authorization: authAny},
+	}
+	mocks.AccountKeeper.EXPECT().
+		GetAccount(gomock.Any(), charlieWarmAddr).
+		Return(authtypes.NewBaseAccount(charlieWarmAddr, charlieWarmPub, 0, 0)).
+		AnyTimes()
+	mocks.AccountKeeper.EXPECT().
+		GetAccount(gomock.Any(), offCurveWarmAddr).
+		Return(authtypes.NewBaseAccount(offCurveWarmAddr, offCurvePubKey, 0, 0)).
+		AnyTimes()
+
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ interface{}, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+			if req.Granter == aliceAccAddrStr {
+				return &authztypes.QueryGranterGrantsResponse{Grants: aliceGrants}, nil
+			}
+			return &authztypes.QueryGranterGrantsResponse{}, nil
+		}).
+		AnyTimes()
+
+	for _, addrStr := range []string{aliceAccAddrStr, bobAccAddrStr, offCurveAddr} {
+		k.SetParticipant(ctx, types.Participant{
+			Index:   addrStr,
+			Address: addrStr,
+			Weight:  50,
+			Status:  types.ParticipantStatus_ACTIVE,
+		})
+	}
+
+	// Configure compact BLS params for fast end-to-end cryptographic DKG + group key validation.
+	blsK := k.BlsKeeper.(blskeeper.Keeper)
+	blsParams, err := blsK.GetParams(ctx)
+	require.NoError(t, err)
+	blsParams.ITotalSlots = 10
+	blsParams.TSlotsDegreeOffset = 5
+	blsParams.DealingPhaseDurationBlocks = 5
+	blsParams.VerificationPhaseDurationBlocks = 5
+	blsParams.DisputePhaseDurationBlocks = 5
+	require.NoError(t, blsK.SetParams(ctx, blsParams))
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)
+	blsMsgServer := blskeeper.NewMsgServerImpl(blsK)
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: bobAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: offCurveAddr, Weight: 50, CapWeight: 50},
+	}
+
+	// Helper that runs one full DKG round (Initiate -> Dealing -> Verifying -> Disputing -> Completed)
+	// and returns the completed EpochBLSData along with the summed polynomial coefficients.
+	runFullDKGRound := func(epochID uint64, seedOffset uint64) (sdk.Context, blstypes.EpochBLSData, []fr.Element) {
+		ctx = ctx.WithEventManager(sdk.NewEventManager())
+		appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+		// Verify EventKeyGenerationInitiated was emitted and EpochBLSData contains only valid secp256k1 keys.
+		require.True(t, hasEventType(ctx, "inference.bls.EventKeyGenerationInitiated"))
+		epochData, err := blsK.GetEpochBLSData(ctx, epochID)
+		require.NoError(t, err)
+		require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DEALING, epochData.DkgPhase)
+		require.Len(t, epochData.Participants, 2, "only Alice and Bob must be in the BLS snapshot")
+
+		byAddr := make(map[string]blstypes.BLSParticipantInfo, len(epochData.Participants))
+		for _, p := range epochData.Participants {
+			require.NoError(t, blstypes.ValidateCompressedSecp256k1PubKey(p.Secp256K1PublicKey))
+			for _, warmKey := range p.AllowedSecp256K1PublicKeys {
+				require.NoError(t, blstypes.ValidateCompressedSecp256k1PubKey(warmKey))
+			}
+			byAddr[p.Address] = p
+		}
+		require.Equal(t, expectedPubKeysMap[aliceAccAddrStr], byAddr[aliceAccAddrStr].Secp256K1PublicKey)
+		require.Equal(t, [][]byte{charlieWarmPub.Bytes()}, byAddr[aliceAccAddrStr].AllowedSecp256K1PublicKeys)
+		require.Equal(t, expectedPubKeysMap[bobAccAddrStr], byAddr[bobAccAddrStr].Secp256K1PublicKey)
+		require.Empty(t, byAddr[bobAccAddrStr].AllowedSecp256K1PublicKeys)
+
+		// Generate polynomial commitments and submit dealer parts for all participants.
+		commitmentCount := int(epochData.TSlotsDegree) + 1
+		_, _, _, g2Gen := bls12381.Generators()
+		dealerCoeffs := make([][]fr.Element, len(epochData.Participants))
+		totalCoeffs := make([]fr.Element, commitmentCount)
+
+		for dealerIdx, dealer := range epochData.Participants {
+			dealerCoeffs[dealerIdx] = make([]fr.Element, commitmentCount)
+			commitments := make([][]byte, commitmentCount)
+			for cIdx := 0; cIdx < commitmentCount; cIdx++ {
+				var coeff fr.Element
+				coeff.SetUint64(seedOffset + uint64(dealerIdx*commitmentCount+cIdx+1))
+				dealerCoeffs[dealerIdx][cIdx] = coeff
+				totalCoeffs[cIdx].Add(&totalCoeffs[cIdx], &coeff)
+
+				var g2Point bls12381.G2Affine
+				g2Point.ScalarMultiplication(&g2Gen, coeff.BigInt(new(big.Int)))
+				g2Bytes := g2Point.Bytes()
+				commitments[cIdx] = g2Bytes[:]
+			}
+
+			encryptedShares := make([]blstypes.EncryptedSharesForParticipant, len(epochData.Participants))
+			for recipIdx, recip := range epochData.Participants {
+				slotCount := int(recip.SlotEndIndex - recip.SlotStartIndex + 1)
+				keysPerSlot := 1 + len(recip.AllowedSecp256K1PublicKeys)
+				ciphertexts := make([][]byte, slotCount*keysPerSlot)
+				for sIdx := range ciphertexts {
+					ct := make([]byte, blstypes.HonestEncryptedShareCiphertextLen)
+					ct[0] = 0x04
+					ct[1] = byte(dealerIdx)
+					ct[2] = byte(recipIdx)
+					ct[3] = byte(sIdx)
+					ciphertexts[sIdx] = ct
+				}
+				encryptedShares[recipIdx] = blstypes.EncryptedSharesForParticipant{
+					EncryptedShares: ciphertexts,
+				}
+			}
+
+			_, err := blsMsgServer.SubmitDealerPart(sdk.WrapSDKContext(ctx), &blstypes.MsgSubmitDealerPart{
+				Creator:                        dealer.Address,
+				EpochId:                        epochID,
+				Commitments:                    commitments,
+				EncryptedSharesForParticipants: encryptedShares,
+			})
+			require.NoError(t, err)
+		}
+
+		// Transition DEALING -> VERIFYING
+		ctx = ctx.WithBlockHeight(epochData.DealingPhaseDeadlineBlock)
+		require.NoError(t, blsK.ProcessDKGPhaseTransitionForEpoch(ctx, epochID))
+		epochData, err = blsK.GetEpochBLSData(ctx, epochID)
+		require.NoError(t, err)
+		require.Equal(t, blstypes.DKGPhase_DKG_PHASE_VERIFYING, epochData.DkgPhase)
+
+		// Submit verification vectors (with dealer validity proofs) for all participants
+		for verifierIdx, verifier := range epochData.Participants {
+			var proofs []blstypes.DealerValidityProof
+			for dealerIdx := range epochData.Participants {
+				if dealerIdx == verifierIdx {
+					continue
+				}
+				proofHash := blstypes.BuildDealerValidityProofHash(epochID, uint32(dealerIdx))
+				proofG1 := hashToG1ForTest(t, proofHash)
+				var proofSig []byte
+				for slot := verifier.SlotStartIndex; slot <= verifier.SlotEndIndex; slot++ {
+					var x fr.Element
+					x.SetUint64(uint64(slot + 1))
+					shareScalar := evalPolyForTest(dealerCoeffs[dealerIdx], x)
+					var sig bls12381.G1Affine
+					sig.ScalarMultiplication(&proofG1, shareScalar.BigInt(new(big.Int)))
+					sigBytes := sig.Bytes()
+					proofSig = append(proofSig, sigBytes[:]...)
+				}
+				proofs = append(proofs, blstypes.DealerValidityProof{
+					DealerIndex:    uint32(dealerIdx),
+					ProofSignature: proofSig,
+				})
+			}
+
+			_, err := blsMsgServer.SubmitVerificationVector(sdk.WrapSDKContext(ctx), &blstypes.MsgSubmitVerificationVector{
+				Creator:              verifier.Address,
+				EpochId:              epochID,
+				DealerValidity:       []bool{true, true},
+				DealerValidityProofs: proofs,
+			})
+			require.NoError(t, err)
+		}
+
+		// Transition VERIFYING -> DISPUTING
+		ctx = ctx.WithBlockHeight(epochData.VerifyingPhaseDeadlineBlock)
+		require.NoError(t, blsK.ProcessDKGPhaseTransitionForEpoch(ctx, epochID))
+		epochData, err = blsK.GetEpochBLSData(ctx, epochID)
+		require.NoError(t, err)
+		require.Equal(t, blstypes.DKGPhase_DKG_PHASE_DISPUTING, epochData.DkgPhase)
+
+		// Transition DISPUTING -> COMPLETED
+		ctx = ctx.WithBlockHeight(epochData.DisputingPhaseDeadlineBlock)
+		require.NoError(t, blsK.ProcessDKGPhaseTransitionForEpoch(ctx, epochID))
+		epochData, err = blsK.GetEpochBLSData(ctx, epochID)
+		require.NoError(t, err)
+		require.Equal(t, blstypes.DKGPhase_DKG_PHASE_COMPLETED, epochData.DkgPhase)
+		require.Len(t, epochData.GroupPublicKey, 96)
+		require.Len(t, epochData.SlotPublicKeys, int(epochData.ITotalSlots))
+
+		return ctx, epochData, totalCoeffs
+	}
+
+	// 3 & 4. Run Epoch 1 DKG to COMPLETED.
+	var epoch1Data blstypes.EpochBLSData
+	var epoch1TotalCoeffs []fr.Element
+	ctx, epoch1Data, epoch1TotalCoeffs = runFullDKGRound(1, 10)
+
+	// 5. Run Epoch 2 DKG to COMPLETED, then validate Epoch 2's group key using Epoch 1's slot shares -> SIGNED.
+	var epoch2Data blstypes.EpochBLSData
+	ctx, epoch2Data, _ = runFullDKGRound(2, 100)
+
+	msgHash := computeGroupValidationMsgHashForTest(t, ctx.ChainID(), blsK, epoch2Data.GroupPublicKey, epoch1Data.EpochId)
+	msgG1 := hashToG1ForTest(t, msgHash)
+
+	for _, participant := range epoch1Data.Participants {
+		var slotIndices []uint32
+		var sigPayload []byte
+		for slot := participant.SlotStartIndex; slot <= participant.SlotEndIndex; slot++ {
+			slotIndices = append(slotIndices, slot)
+			var x fr.Element
+			x.SetUint64(uint64(slot + 1))
+			slotScalar := evalPolyForTest(epoch1TotalCoeffs, x)
+
+			var sig bls12381.G1Affine
+			sig.ScalarMultiplication(&msgG1, slotScalar.BigInt(new(big.Int)))
+			sigBytes := sig.Bytes()
+			sigPayload = append(sigPayload, sigBytes[:]...)
+		}
+
+		_, err := blsMsgServer.SubmitGroupKeyValidationSignature(sdk.WrapSDKContext(ctx), &blstypes.MsgSubmitGroupKeyValidationSignature{
+			Creator:          participant.Address,
+			NewEpochId:       epoch2Data.EpochId,
+			SlotIndices:      slotIndices,
+			PartialSignature: sigPayload,
+		})
+		require.NoError(t, err)
+	}
+
+	finalEpoch2Data, err := blsK.GetEpochBLSData(ctx, epoch2Data.EpochId)
+	require.NoError(t, err)
+	require.Equal(t, blstypes.DKGPhase_DKG_PHASE_SIGNED, finalEpoch2Data.DkgPhase)
+	require.NotEmpty(t, finalEpoch2Data.ValidationSignature)
+}
+
+func computeGroupValidationMsgHashForTest(t *testing.T, chainID string, blsK blskeeper.Keeper, groupPublicKey []byte, previousEpochID uint64) []byte {
+	t.Helper()
+	g2Uncompressed256, err := blsK.DecompressG2To256Blst(groupPublicKey)
+	require.NoError(t, err)
+
+	gonkaIDHash := sha256.Sum256([]byte(chainID))
+	previousEpochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(previousEpochBytes, previousEpochID)
+
+	var encoded []byte
+	encoded = append(encoded, previousEpochBytes...)
+	encoded = append(encoded, gonkaIDHash[:]...)
+	encoded = append(encoded, g2Uncompressed256...)
+
+	h := sha3.NewLegacyKeccak256()
+	h.Write(encoded)
+	return h.Sum(nil)
+}
+
+func hashToG1ForTest(t *testing.T, hash []byte) bls12381.G1Affine {
+	t.Helper()
+	require.Len(t, hash, 32)
+	var be [48]byte
+	copy(be[48-32:], hash)
+	var u fp.Element
+	u.SetBytes(be[:])
+	p := bls12381.MapToCurve1(&u)
+	hashToCurve.G1Isogeny(&p.X, &p.Y)
+	var out bls12381.G1Affine
+	out.ClearCofactor(&p)
+	return out
+}
+
+func evalPolyForTest(coeffs []fr.Element, x fr.Element) fr.Element {
+	var result fr.Element
+	result.SetZero()
+	var power fr.Element
+	power.SetOne()
+	for i := range coeffs {
+		var term fr.Element
+		term.Mul(&coeffs[i], &power)
+		result.Add(&result, &term)
+		power.Mul(&power, &x)
+	}
+	return result
+}
+
+func hasEventType(ctx sdk.Context, eventType string) bool {
+	for _, ev := range ctx.EventManager().Events() {
+		if ev.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func setupSnapshotValidationBenchmarkFixture(tb testing.TB, numParticipants, warmKeysPerParticipant int) (inference.AppModule, keeper.Keeper, sdk.Context, []*types.ActiveParticipant) {
+	setupSDKConfig()
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(tb)
+
+	blsK := k.BlsKeeper.(blskeeper.Keeper)
+	blsParams, err := blsK.GetParams(ctx)
+	require.NoError(tb, err)
+	blsParams.ITotalSlots = 1000 // 16384 / 1000 = 16 total keys/slot => up to 15 warm keys per participant
+	require.NoError(tb, blsK.SetParams(ctx, blsParams))
+
+	authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
+	require.NoError(tb, err)
+
+	grantsByGranter := make(map[string][]*authztypes.GrantAuthorization, numParticipants)
+	activeParticipants := make([]*types.ActiveParticipant, numParticipants)
+
+	for i := 0; i < numParticipants; i++ {
+		primaryKey := secp256k1.GenPrivKey()
+		primaryAddr := sdk.AccAddress(primaryKey.PubKey().Address())
+		primaryAddrStr := primaryAddr.String()
+
+		primaryAcc := authtypes.NewBaseAccount(primaryAddr, primaryKey.PubKey(), uint64(i+1), 0)
+		mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), primaryAddr).Return(primaryAcc).AnyTimes()
+
+		grants := make([]*authztypes.GrantAuthorization, warmKeysPerParticipant)
+		for w := 0; w < warmKeysPerParticipant; w++ {
+			warmKey := secp256k1.GenPrivKey()
+			warmAddr := sdk.AccAddress(warmKey.PubKey().Address())
+			warmAcc := authtypes.NewBaseAccount(warmAddr, warmKey.PubKey(), uint64(10000+i*100+w), 0)
+			mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), warmAddr).Return(warmAcc).AnyTimes()
+			grants[w] = &authztypes.GrantAuthorization{
+				Granter:       primaryAddrStr,
+				Grantee:       warmAddr.String(),
+				Authorization: authAny,
+			}
+		}
+		grantsByGranter[primaryAddrStr] = grants
+
+		k.SetParticipant(ctx, types.Participant{
+			Index:   primaryAddrStr,
+			Address: primaryAddrStr,
+			Weight:  10,
+			Status:  types.ParticipantStatus_ACTIVE,
+		})
+		activeParticipants[i] = &types.ActiveParticipant{
+			Index:     primaryAddrStr,
+			Weight:    10,
+			CapWeight: 10,
+		}
+	}
+
+	mocks.AuthzKeeper.EXPECT().
+		GranterGrants(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ interface{}, req *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+			return &authztypes.QueryGranterGrantsResponse{Grants: grantsByGranter[req.Granter]}, nil
+		}).
+		AnyTimes()
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)
+	return appModule, k, ctx, activeParticipants
+}
+
+func TestInitiateBLSKeyGeneration_SnapshotValidationTiming(t *testing.T) {
+	const (
+		numParticipants        = 100
+		warmKeysPerParticipant = 15 // maximum allowed for ITotalSlots=1000 (16384/1000 - 1)
+	)
+	appModule, k, ctx, activeParticipants := setupSnapshotValidationBenchmarkFixture(t, numParticipants, warmKeysPerParticipant)
+
+	start := time.Now()
+	const epochID = uint64(77)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+	fullElapsed := time.Since(start)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, numParticipants)
+
+	finalized := make([]blstypes.ParticipantWithWeightAndKey, numParticipants)
+	for i, p := range epochBLSData.Participants {
+		require.Len(t, p.AllowedSecp256K1PublicKeys, warmKeysPerParticipant)
+		finalized[i] = blstypes.ParticipantWithWeightAndKey{
+			Address:                    p.Address,
+			PercentageWeight:           p.PercentageWeight,
+			Secp256k1PublicKey:         p.Secp256K1PublicKey,
+			AllowedSecp256k1PublicKeys: p.AllowedSecp256K1PublicKeys,
+		}
+	}
+
+	blsStart := time.Now()
+	require.NoError(t, k.BlsKeeper.InitiateKeyGenerationForEpoch(ctx, epochID+1, finalized))
+	blsElapsed := time.Since(blsStart)
+
+	t.Logf("Snapshot validation timing (%d participants x (1 primary + %d warm keys) = %d compressed secp256k1 keys): InitiateKeyGenerationForEpoch=%s, full InitiateBLSKeyGeneration=%s",
+		numParticipants, warmKeysPerParticipant, numParticipants*(1+warmKeysPerParticipant), blsElapsed, fullElapsed)
+	require.Less(t, blsElapsed, 250*time.Millisecond, "x/bls snapshot secp256k1 point validation should remain negligible relative to EndBlock")
+	require.Less(t, fullElapsed, 2*time.Second, "EndBlock BLS snapshot construction + validation should remain well within block budget")
+}
+
+func BenchmarkInitiateBLSKeyGenerationSnapshotValidation(b *testing.B) {
+	const (
+		numParticipants        = 100
+		warmKeysPerParticipant = 15
+	)
+	appModule, _, baseCtx, activeParticipants := setupSnapshotValidationBenchmarkFixture(b, numParticipants, warmKeysPerParticipant)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		epochID := uint64(1000 + i)
+		appModule.InitiateBLSKeyGeneration(baseCtx, epochID, activeParticipants)
+	}
+}
+
+
