@@ -114,7 +114,7 @@ workload:
 | Action | Target | Apply / revert |
 | --- | --- | --- |
 | `pause` | versiond host | `docker compose pause` / `unpause`; `until` required |
-| `throttle` | versiond host | `docker update --cpus <params.cpus>` / remove the limit; `until` required |
+| `throttle` | versiond host | read the container's `HostConfig.NanoCpus`, then `docker update --cpus <params.cpus>` / `docker update --cpus` back to the read limit, or to the Docker host's `NCPU` if it had none, since `docker update --cpus 0` leaves the limit unchanged and Docker offers no update that removes it; `until` required |
 | `container_restart` | versiond host | `docker compose restart` / `start`; no `until` |
 | `container_kill` | versiond host | `docker compose kill -s <params.signal, default KILL>` / `start` at `until` (or at once) |
 | `gateway_restart` | `devshardctl` (implicit) | as `container_kill` on the gateway |

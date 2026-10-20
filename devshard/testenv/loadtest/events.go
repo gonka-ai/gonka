@@ -381,6 +381,7 @@ func zeroPatch(patch map[string]any) (map[string]any, error) {
 // eventOps performs container-level actions; tests replace it with fakes.
 type eventOps interface {
 	Compose(ctx context.Context, args ...string) error
+	CPULimit(ctx context.Context, host string) (float64, error)
 	Throttle(ctx context.Context, host string, cpus float64) error
 	Tripfile(ctx context.Context, host, path string, present bool) error
 }
@@ -413,8 +414,23 @@ func eventSteps(event plannedEvent, ops eventOps, mocks mockControl) (apply, rev
 			func(ctx context.Context) error { return ops.Compose(ctx, "unpause", target) }
 	case "throttle":
 		cpus, _ := numberParam(event.Params, "cpus")
-		return func(ctx context.Context) error { return ops.Throttle(ctx, target, cpus) },
-			func(ctx context.Context) error { return ops.Throttle(ctx, target, 0) }
+		// The revert puts back the limit read before the throttle; if that read failed nothing was throttled, so there is nothing to put back.
+		var before float64
+		read := false
+		return func(ctx context.Context) error {
+				limit, err := ops.CPULimit(ctx, target)
+				if err != nil {
+					return err
+				}
+				before, read = limit, true
+				return ops.Throttle(ctx, target, cpus)
+			},
+			func(ctx context.Context) error {
+				if !read {
+					return nil
+				}
+				return ops.Throttle(ctx, target, before)
+			}
 	case "container_restart":
 		return func(ctx context.Context) error { return ops.Compose(ctx, "restart", target) },
 			func(ctx context.Context) error { return ops.Compose(ctx, "start", target) }
@@ -629,6 +645,8 @@ func participantAddress(cfg *config.File, host config.HostCfg) string {
 
 type composeEventOps struct {
 	dir, project, compose string
+	// docker runs one Docker CLI command and returns its trimmed stdout; tests replace it.
+	docker func(ctx context.Context, args ...string) (string, error)
 }
 
 func (o composeEventOps) Compose(ctx context.Context, args ...string) error {
@@ -636,17 +654,65 @@ func (o composeEventOps) Compose(ctx context.Context, args ...string) error {
 	return runCommandWithEnv(ctx, o.dir, loadTestComposeEnv(), "docker", append([]string{"compose", "-p", o.project, "-f", o.compose}, args...)...)
 }
 
-// Throttle sets the container CPU quota; 0 removes the limit.
-func (o composeEventOps) Throttle(ctx context.Context, host string, cpus float64) error {
-	output, err := exec.CommandContext(ctx, "docker", "compose", "-p", o.project, "-f", o.compose, "ps", "-q", host).Output()
+// CPULimit reads the container's CPU limit in CPUs; 0 means it has none.
+func (o composeEventOps) CPULimit(ctx context.Context, host string) (float64, error) {
+	container, err := o.container(ctx, host)
 	if err != nil {
-		return fmt.Errorf("resolve container for %s: %w", host, err)
+		return 0, err
 	}
-	container := strings.TrimSpace(string(output))
+	output, err := o.docker(ctx, "inspect", "-f", "{{.HostConfig.NanoCpus}}", container)
+	if err != nil {
+		return 0, err
+	}
+	nanoCPUs, err := strconv.ParseInt(output, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("read CPU limit of %s: %w", host, err)
+	}
+	return float64(nanoCPUs) / 1e9, nil
+}
+
+// Throttle sets the container CPU limit. docker update leaves the limit as it is for --cpus 0, so 0 lifts it to the host's CPU count, the highest Docker accepts.
+func (o composeEventOps) Throttle(ctx context.Context, host string, cpus float64) error {
+	container, err := o.container(ctx, host)
+	if err != nil {
+		return err
+	}
+	if cpus == 0 {
+		output, err := o.docker(ctx, "info", "--format", "{{.NCPU}}")
+		if err != nil {
+			return err
+		}
+		hostCPUs, err := strconv.Atoi(output)
+		if err != nil || hostCPUs < 1 {
+			return fmt.Errorf("read Docker host CPU count from %q", output)
+		}
+		cpus = float64(hostCPUs)
+	}
+	_, err = o.docker(ctx, "update", "--cpus", strconv.FormatFloat(cpus, 'f', -1, 64), container)
+	return err
+}
+
+func (o composeEventOps) container(ctx context.Context, host string) (string, error) {
+	container, err := o.docker(ctx, "compose", "-p", o.project, "-f", o.compose, "ps", "-q", host)
+	if err != nil {
+		return "", fmt.Errorf("resolve container for %s: %w", host, err)
+	}
 	if container == "" {
-		return fmt.Errorf("no running container for %s", host)
+		return "", fmt.Errorf("no running container for %s", host)
 	}
-	return runCommand(ctx, o.dir, "docker", "update", "--cpus", strconv.FormatFloat(cpus, 'f', -1, 64), container)
+	return container, nil
+}
+
+func dockerOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("docker %s: %w\n%s", strings.Join(args, " "), err, stderr.Bytes())
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func (o composeEventOps) Tripfile(ctx context.Context, host, path string, present bool) error {
@@ -751,7 +817,9 @@ func startEvents(ctx context.Context, opts RunnerConfig, cfg *config.File, proje
 	if err != nil || len(planned) == 0 {
 		return nil, err
 	}
-	ops := composeEventOps{dir: opts.TestenvDir, project: project, compose: compose}
+	ops := composeEventOps{dir: opts.TestenvDir, project: project, compose: compose, docker: func(ctx context.Context, args ...string) (string, error) {
+		return dockerOutput(ctx, opts.TestenvDir, args...)
+	}}
 	mocks := newHTTPMockControl(cfg)
 	child, cancel := context.WithCancel(ctx)
 	runner := &eventRunner{cancel: cancel, done: make(chan struct{}), outputDir: opts.OutputDir}

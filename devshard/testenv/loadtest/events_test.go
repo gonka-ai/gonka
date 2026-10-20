@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -191,6 +193,10 @@ func (f *fakeEventCalls) Compose(ctx context.Context, args ...string) error {
 	return f.record(ctx, "compose "+strings.Join(args, " "))
 }
 
+func (f *fakeEventCalls) CPULimit(ctx context.Context, host string) (float64, error) {
+	return 0, f.record(ctx, "cpu_limit "+host)
+}
+
 func (f *fakeEventCalls) Throttle(ctx context.Context, host string, cpus float64) error {
 	return f.record(ctx, fmt.Sprintf("throttle %s %g", host, cpus))
 }
@@ -235,7 +241,7 @@ func TestExecuteEventDispatch(t *testing.T) {
 		want  []string
 	}{
 		{Event{Action: "pause", Target: "versiond-2"}, []string{"compose pause versiond-2", "compose unpause versiond-2"}},
-		{Event{Action: "throttle", Target: "versiond-2", Params: map[string]any{"cpus": 0.25}}, []string{"throttle versiond-2 0.25", "throttle versiond-2 0"}},
+		{Event{Action: "throttle", Target: "versiond-2", Params: map[string]any{"cpus": 0.25}}, []string{"cpu_limit versiond-2", "throttle versiond-2 0.25", "throttle versiond-2 0"}},
 		{Event{Action: "container_restart", Target: "versiond-2"}, []string{"compose restart versiond-2", "compose start versiond-2"}},
 		{Event{Action: "container_kill", Target: "versiond-2"}, []string{"compose kill -s KILL versiond-2", "compose start versiond-2"}},
 		{Event{Action: "gateway_restart", Target: "devshardctl", Params: map[string]any{"signal": "TERM"}}, []string{"compose kill -s TERM devshardctl", "compose start devshardctl"}},
@@ -592,6 +598,60 @@ func TestExecuteEventLogsEveryStage(t *testing.T) {
 		for _, want := range tc.want {
 			require.Contains(t, buf.String(), want)
 		}
+	}
+}
+
+type fakeDockerCLI struct {
+	nanoCPUs int64
+	updates  []string
+}
+
+func (f *fakeDockerCLI) run(ctx context.Context, args ...string) (string, error) {
+	call := strings.Join(args, " ")
+	switch {
+	case strings.HasPrefix(call, "compose "):
+		return "c1", nil
+	case call == "inspect -f {{.HostConfig.NanoCpus}} c1":
+		return strconv.FormatInt(f.nanoCPUs, 10), nil
+	case call == "info --format {{.NCPU}}":
+		return "8", nil
+	case strings.HasPrefix(call, "update --cpus "):
+		f.updates = append(f.updates, call)
+		cpus, err := strconv.ParseFloat(args[2], 64)
+		if err != nil {
+			return "", err
+		}
+		if cpus != 0 {
+			f.nanoCPUs = int64(math.Round(cpus * 1e9))
+		}
+		return "c1", nil
+	}
+	return "", fmt.Errorf("unexpected docker %s", call)
+}
+
+// Test flow:
+// 1. Run a 0.2 CPU throttle through executeEvent and composeEventOps against a fake Docker CLI that, like Docker, keeps the limit on update --cpus 0.
+// 2. Start the container once with a 1.5 CPU limit and once with no limit.
+// 3. Check the revert restores 1.5 CPUs, or lifts the limit to the host's 8 CPUs, and never sends --cpus 0.
+func TestThrottleRevertRestoresCPULimit(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		before, after int64
+		revert        string
+	}{
+		{"was limited", 1_500_000_000, 1_500_000_000, "update --cpus 1.5 c1"},
+		{"was unlimited", 0, 8_000_000_000, "update --cpus 8 c1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docker := &fakeDockerCLI{nanoCPUs: tc.before}
+			ops := composeEventOps{project: "loadtest", compose: "compose.yml", docker: docker.run}
+			event := plannedTestEvent(Event{Action: "throttle", Target: "versiond-2", Params: map[string]any{"cpus": 0.2}})
+			record := executeEvent(context.Background(), time.Now(), event, ops, &fakeEventCalls{})
+			require.Empty(t, record.Error)
+			require.Equal(t, []string{"update --cpus 0.2 c1", tc.revert}, docker.updates)
+			require.NotContains(t, docker.updates, "update --cpus 0 c1")
+			require.Equal(t, tc.after, docker.nanoCPUs)
+		})
 	}
 }
 
