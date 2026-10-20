@@ -661,7 +661,8 @@ parent_diagnostic_available() {
 }
 
 # Coarse and versioned listeners are :8080. Peer RPC is a second listen, so
-# its parent backend has to leave rotation in the same drain window.
+# its parent backends (the version twins and the any-router pool) have to
+# leave rotation in the same drain window.
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
@@ -683,7 +684,8 @@ parent_server_refs() {
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
                     backend ~ /^versiond_routers_/ ||
-                    backend == "rpc_h2_upstream") &&
+                    backend == "rpc_h2_upstream" ||
+                    backend == "rpc_h2_routers") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
                 $(column["status"]) ~ status_pattern) {
@@ -737,7 +739,8 @@ parent_address_withdrawal_state() {
             server_address = $(column["addr"])
             if ((backend == "versiond_router_coarse" ||
                     backend ~ /^versiond_routers_/ ||
-                    backend == "rpc_h2_upstream") &&
+                    backend == "rpc_h2_upstream" ||
+                    backend == "rpc_h2_routers") &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
                 ($(column["status"]) ~ /^UP/ ||

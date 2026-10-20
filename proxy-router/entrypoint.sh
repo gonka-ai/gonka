@@ -265,11 +265,16 @@ esac
 # The checks also prove the data dial itself. HA: after the admin readiness,
 # the coarse pool requires HTTP 200 from /healthz on the router's :8081
 # over HTTP/2 (a v5 router has no such listen), and
-# each version twin asks /<version>/healthz over that dial. Non-HA opens
-# versiond's own listen over HTTP/2: a v5 versiond has no h2c and fails. A
-# generation that fails leaves the pool, and the frontend sends peer RPC to
-# the HTTP/1.1 path (the router's :8080, or versiond itself) instead of
-# answering 503 on HTTP/2.
+# each version twin asks /<version>/healthz over that dial. Non-HA asks
+# versiond's own listen for /healthz over HTTP/2: every versiond with h2c
+# forwards peer RPC, and answers 503 itself for a child without it.
+#
+# HTTP/1.1 carries peer RPC only while the hop behind this proxy has no
+# HTTP/2 at all: a v5 router fleet (HA) or a v5 versiond (non-HA).
+# RPC_H1_CLOSED is true outside that state, and a request with no HTTP/2
+# server then gets 503 Unavailable. HA first hands such a request
+# to any router with the :8081 listen (rpc_h2_routers), which applies the same
+# rule to its versiond pool.
 RPC_TLS_LIMITS_FILE=$(mktemp)
 RPC_H2_CHECKS_FILE=$(mktemp)
 RPC_H1_FALLBACK_FILE=$(mktemp)
@@ -285,17 +290,47 @@ if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
 EOF
     RPC_H2_SERVER="server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 2 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr"
     RPC_LEGACY_DEFAULT=versiond_router_coarse
-    printf '%s\n' '# HA peer RPC falls back to the JSON pools of the same router fleet.' > "$RPC_H1_FALLBACK_FILE"
+    RPC_H1_VERSION_ROUTE="use_backend %[var(txn.ver),map_str(${VERSION_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_MAP}) -m found }"
+    # Reached only when rpc_h2_routers is empty too. rpc_h2_routers has rise 1
+    # and the JSON coarse pool rise 2 on the same admin check, so a v6 router
+    # joins rpc_h2_routers before the JSON pool could open HTTP/1.1.
+    RPC_H1_CLOSED='!{ nbsrv(versiond_router_coarse) gt 0 }'
+    cat > "$RPC_H1_FALLBACK_FILE" <<EOF
+# HA peer RPC falls back to the JSON pools of the same router fleet.
+#
+# Routers that have the :8081 listen, ready or not. A request whose own pool
+# has no ready server goes here over HTTP/2, and the router answers it, from
+# its bounded HTTP/1.1 hop to a v5 versiond or with 503.
+backend rpc_h2_routers
+    balance hash var(txn.hashkey)
+    hash-type consistent
+    option httpchk
+    http-check connect port ${ROUTER_ADMIN_PORT} proto h1
+    http-check send meth GET uri /readyz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect status 200
+    http-check connect port ${ROUTER_RPC_PORT} proto h2
+    http-check send meth GET uri /healthz hdr Host ${ROUTER_POOL_HOST}
+    http-check expect rstatus ^(200|503)\$
+    http-reuse safe
+    option redispatch 1
+    retry-on conn-failure empty-response 502
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_RPC_PORT} proto h2 check inter 1s fall 1 rise 1 check-proto h1 resolvers docker init-addr none init-state fully-down hash-key addr
+EOF
 else
     cat > "$RPC_H2_CHECKS_FILE" <<EOF
     option httpchk
     http-check connect port ${RPC_H2_VERSIOND_PORT} proto h2
-    http-check send meth GET uri /readyz?peer-rpc=1 hdr Host ${RPC_H2_VERSIOND_HOST}
+    http-check send meth GET uri /healthz hdr Host ${RPC_H2_VERSIOND_HOST}
     http-check expect status 200
-    http-check expect string peer-rpc-ok
 EOF
-    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down"
+    RPC_H2_SERVER="server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} proto h2 check inter 1s fall 1 rise 1 resolvers docker init-addr none init-state fully-down"
     RPC_LEGACY_DEFAULT=rpc_versiond_h1
+    # The version map's JSON backends address the router fleet. This host does
+    # not run one. versiond selects the child from the path.
+    RPC_H1_VERSION_ROUTE="# Non-HA HTTP/1.1 peer RPC is Connect to versiond."
+    RPC_H1_CLOSED='!{ nbsrv(rpc_h1_only) gt 0 }'
     cat > "$RPC_H1_FALLBACK_FILE" <<EOF
 # Non-HA peer RPC when versiond does not take HTTP/2: Connect over HTTP/1.1
 # to the same versiond, which forwards /rpc/ to the child as nginx would.
@@ -305,6 +340,17 @@ backend rpc_versiond_h1
     retries 2
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
     server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} resolvers docker init-addr none
+
+# Up only while versiond answers the HTTP/2 client preface with an HTTP/1.x
+# status line, which a listen without h2c does. An h2c listen answers with a
+# SETTINGS frame and this check fails, so the fallback stays closed.
+backend rpc_h1_only
+    timeout check 1s
+    option tcp-check
+    tcp-check connect
+    tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]
+    server versiond ${RPC_H2_VERSIOND_HOST}:${RPC_H2_VERSIOND_PORT} check inter 1s fall 1 rise 1 resolvers docker init-addr none init-state fully-down
 EOF
 fi
 
@@ -588,6 +634,14 @@ fi
 cat >> "$RPC_H2_RULES_FILE" <<'EOF'
     # Native gRPC cannot be translated into Connect by an HTTP/1 backend.
     http-request return status 200 errorfile /etc/haproxy/grpc-unavailable.http if peer_rpc is_native_grpc !{ var(txn.rpc_backend),nbsrv gt 0 }
+EOF
+if [ -n "${VERSIOND_ROUTER_POOL_HOST:-}" ]; then
+    cat >> "$RPC_H2_RULES_FILE" <<'EOF'
+    http-request set-var(txn.rpc_backend) str(rpc_h2_routers) if peer_rpc !{ var(txn.rpc_backend),nbsrv gt 0 }
+EOF
+fi
+cat >> "$RPC_H2_RULES_FILE" <<EOF
+    http-request return status 503 content-type application/json string '{"code":"unavailable","message":"peer RPC has no HTTP/2 upstream"}' hdr Retry-After 1 if peer_rpc !{ var(txn.rpc_backend),nbsrv gt 0 } $RPC_H1_CLOSED
     use_backend %[var(txn.rpc_backend)] if peer_rpc { var(txn.rpc_backend),nbsrv gt 0 }
     use_backend rpc_h1_fallback if peer_rpc
 EOF
@@ -644,6 +698,7 @@ sed \
     -e "s|\${RPC_H2_MAX_CONNS_PER_SRC}|$RPC_H2_MAX_CONNS_PER_SRC|g" \
     -e "s|\${RPC_H2_SERVER}|$RPC_H2_SERVER|g" \
     -e "s|\${RPC_LEGACY_DEFAULT}|$RPC_LEGACY_DEFAULT|g" \
+    -e "s|\${RPC_H1_VERSION_ROUTE}|$RPC_H1_VERSION_ROUTE|g" \
     -e "s|\${RPC_FALLBACK_MAXCONN}|$RPC_FALLBACK_MAXCONN|g" \
     -e "s|\${RPC_FALLBACK_MAXQUEUE}|$RPC_FALLBACK_MAXQUEUE|g" \
     -e "s|\${RPC_FALLBACK_QUEUE_MS}|$RPC_FALLBACK_QUEUE_MS|g" \

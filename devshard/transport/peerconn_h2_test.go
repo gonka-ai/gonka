@@ -165,6 +165,110 @@ func TestPeerConn_H2CloseDoesNotFINSharedMux(t *testing.T) {
 // A listen that accepts the preface and then closes without a word (a TLS
 // terminator dropping an unknown ALPN, a TCP-mode reject on the preface)
 // is a miss, not a slow host.
+// An H1-only server that accepts the preface, answers SETTINGS, and then
+// closes the mux makes x/net return "http2: client conn is closed" once a
+// request body is waiting on flow control. That used to skip the HTTP/1.1
+// retry. Every peer must still Attach on InferenceUrl, and the close is
+// cached so the next peer does not probe again.
+func TestPeerConn_H2ClientConnClosedFallsBackToHTTP11(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
+	h2URL := startPrefaceThenClose(t)
+	transport.ResetRPCH2MissCacheForTest()
+	transport.ResetRPCH2ClientPoolForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+
+	const n = 16
+	conns := make([]*transport.PeerConn, n)
+	for i := range conns {
+		conns[i] = newTestPeerConn(t, inf, hostAddr, devtest.MustGenerateKey(t), transport.PeerConnConfig{
+			DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
+			H2ProbeTimeout: 200 * time.Millisecond,
+			BackoffMin:     20 * time.Millisecond,
+		})
+	}
+	for _, pc := range conns {
+		pc.Start()
+	}
+	require.Eventually(t, func() bool {
+		ready := 0
+		for _, pc := range conns {
+			if pc.Ready() && !pc.UsingH2() {
+				ready++
+			}
+		}
+		return ready == n
+	}, 8*time.Second, 20*time.Millisecond, "a closed h2 mux must retry Attach on HTTP/1.1")
+	require.GreaterOrEqual(t, infHits.Load(), int32(n))
+	require.True(t, transport.RPCH2MissCachedForTest(inf.URL), "the close is cached; later peers skip the probe")
+}
+
+// startPrefaceThenClose speaks just enough HTTP/2 for the client to send a
+// request body, then drops the connection.
+func startPrefaceThenClose(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, len(http2.ClientPreface))
+				_, _ = io.ReadFull(c, buf)
+				// Empty SETTINGS, so the client treats the mux as up.
+				_, _ = c.Write([]byte{0, 0, 0, 0x4, 0, 0, 0, 0, 0})
+				time.Sleep(50 * time.Millisecond)
+			}(c)
+		}
+	}()
+	return "http://" + ln.Addr().String()
+}
+
+// A second Attach must not spend its whole deadline waiting for another
+// peer's probe. Half the budget waits on the lease; the rest is the
+// HTTP/1.1 attempt. The wait itself is not cached as a miss.
+func TestPeerConn_ProbeLeaseWaitLeavesTimeForHTTP11(t *testing.T) {
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	var infHits atomic.Int32
+	inf := startPeerRPCServerCounted(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond}, &infHits)
+	h2URL, accepts := startAcceptHold(t)
+	httpguard.SetAllowPrivate(true)
+	transport.ResetRPCH2MissCacheForTest()
+	transport.ResetRPCH2ClientPoolForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+
+	holder := newTestPeerConn(t, inf, hostAddr, devtest.MustGenerateKey(t), transport.PeerConnConfig{
+		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
+		H2ProbeTimeout: 200 * time.Millisecond,
+		BackoffMin:     time.Second,
+	})
+	holder.Start()
+	require.Eventually(t, func() bool { return accepts.Load() > 0 }, time.Second, 10*time.Millisecond)
+	require.Zero(t, infHits.Load(), "the lease holder is still on the blackhole probe")
+
+	started := time.Now()
+	waiter := newTestPeerConn(t, inf, hostAddr, devtest.MustGenerateKey(t), transport.PeerConnConfig{
+		DialSet:        transport.PeerRPCDialSet{H2URL: h2URL},
+		H2ProbeTimeout: 200 * time.Millisecond,
+		BackoffMin:     time.Second,
+	})
+	waiter.Start()
+	require.Eventually(t, func() bool { return waiter.Ready() && len(waiter.LiveToken()) > 0 }, 4*time.Second, 20*time.Millisecond)
+	require.Less(t, time.Since(started), transport.DefaultAttachTimeout,
+		"the waiter must not spend the whole Attach deadline on the lease")
+	require.False(t, waiter.UsingH2())
+	require.Greater(t, infHits.Load(), int32(0), "HTTP/1.1 received the Attach while the probe lease was held")
+	require.False(t, transport.RPCH2MissCachedForTest(inf.URL), "giving up the lease wait is not a discovery result")
+}
+
 func TestPeerConn_H2SilentCloseFallsBackToHTTP11(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)

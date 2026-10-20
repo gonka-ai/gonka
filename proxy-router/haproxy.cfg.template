@@ -261,6 +261,8 @@ ${RPC_H2_VERSION_RULES}
 
 # One H1 request per internal connection, held until the streaming body ends.
 # This admission budget is shared across versions; JSON does not traverse it.
+# The frontend rules send peer RPC here only while the hop behind this proxy
+# has no HTTP/2 (see RPC_H1_CLOSED in entrypoint.sh).
 backend rpc_h1_fallback
     retries 0
     option http-server-close
@@ -284,7 +286,7 @@ frontend rpc_h1_legacy
 
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
     ${UNDECLARED_VERSION_GUARD}
-    use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
+    ${RPC_H1_VERSION_ROUTE}
     default_backend ${RPC_LEGACY_DEFAULT}
 
 ${VERSIOND_ROUTER_BACKENDS}

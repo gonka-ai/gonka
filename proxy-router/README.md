@@ -296,19 +296,28 @@ HTTP/2 RPC. nginx retains TLS for ordinary clients, JSON policy, CORS, and strea
 configuration. `DEVSHARD_RPC_POLICY_HOST` is wired by join Compose; standalone
 nginx deployments with it unset retain their existing routing.
 
-When an RPC HTTP/2 backend has no healthy server, Connect uses a bounded HTTP/1.1
-hop and the original JSON routing maps (including version and legacy placement).
-No POST replay is added. Native gRPC receives `Unavailable` because HTTP/1.1 cannot
-carry it. RPC data checks require HTTP 200; a listening router with an empty RPC
-pool is not ready. JSON capacity is independent of fallback admission. Non-HA
-also requires `/readyz?peer-rpc=1` with the `peer-rpc-ok` capability body. This
-coarse check conservatively keeps all Connect RPC on bounded H1 while any serving
-child is H1-only. HTTPS-only mode rejects plaintext connections on the HTTP port,
-including prior-knowledge H2; a successful TLS connection is required. H2 backends
-start unavailable until their capability checks pass. If a child changes before
-checks notice it, versiond rejects H2 RPC to an H1 child with 503 rather than
-expanding the mux into unbounded H1 connections; the bounded H1 path remains
-available after ingress observes the capability change.
+Peer RPC is served over HTTP/2. Only v6 devshardd serves it; v4 and v5 children
+take JSON over HTTP/1.1 through nginx. A bounded HTTP/1.1 hop, using the original
+JSON routing maps (including version and legacy placement), exists only for a
+downstream that has no HTTP/2:
+
+- Non-HA: the hop opens only while versiond answers the HTTP/2 client preface
+  with an HTTP/1.x status line (`rpc_h1_only`), as a versiond without h2c does.
+  `rpc_h2_upstream` checks versiond `/healthz` over HTTP/2.
+- HA: when the selected RPC pool is empty, the request goes to any router with
+  the `:8081` listen (`rpc_h2_routers`), and that router answers from its own
+  pools and gate. The hop opens only while no router has that listen, which
+  means a v5 fleet.
+
+Otherwise peer RPC with no HTTP/2 server gets an immediate Connect `unavailable`
+(HTTP 503, `Retry-After: 1`), which clients retry. No POST replay is added.
+Native gRPC receives `Unavailable` because HTTP/1.1 cannot carry it. RPC data
+checks require HTTP 200; a listening router with an empty RPC pool is not ready.
+JSON capacity is independent of fallback admission. HTTPS-only mode rejects
+plaintext connections on the HTTP port, including prior-knowledge H2; a
+successful TLS connection is required. H2 backends start unavailable until their
+checks pass. versiond rejects H2 RPC to a child without h2c with 503 rather than
+expanding the mux into unbounded H1 connections; such a child serves no peer RPC.
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |

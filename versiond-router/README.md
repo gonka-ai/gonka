@@ -628,10 +628,14 @@ ownership-bounded teardown of expected and orphan resources.
 ## RPC fallback during mixed-version updates
 
 Port 8081 `/healthz` (or `/<version>/healthz`) reports readiness of the selected
-RPC pool, not its JSON sibling. An empty RPC pool returns 503. Connect requests
-fall back through a private HTTP/1.1 admission hop to the existing JSON maps,
-preserving version/escrow placement. The hop does not retry POSTs. Native gRPC
-cannot use this compatibility path.
+RPC pool, not its JSON sibling. An empty RPC pool returns 503. When the selected
+RPC pool is empty, Connect requests use a private HTTP/1.1 admission hop to the
+existing JSON maps, preserving version/escrow placement, but only while some
+versiond answers the HTTP/2 client preface with an HTTP/1.x status line
+(`versiond_h1_only`), as a versiond without h2c does. Once every versiond has
+h2c, such requests get an immediate Connect `unavailable` (HTTP 503,
+`Retry-After: 1`) instead. The hop does not retry POSTs. Native gRPC cannot use
+this compatibility path.
 
 `VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN` (default 512) bounds active fallback requests
 across all versions. `VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE` (64) rejects arrivals

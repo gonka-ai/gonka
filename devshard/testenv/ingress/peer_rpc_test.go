@@ -20,6 +20,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,9 +33,14 @@ import (
 	"testing"
 	"time"
 
+	"common/httpguard"
 	"connectrpc.com/connect"
+	devtest "devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
+	"devshard/transport/rpcserver"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -108,42 +115,47 @@ func waitHTTP(t *testing.T, url string, code int) {
 	}, 8*time.Second, 50*time.Millisecond, "%s must return %d", url, code)
 }
 
+// origin models versiond. current selects a build with h2c on its listen;
+// childH2 selects a child that serves peer RPC over HTTP/2.
 type origin struct {
-	server           *httptest.Server
-	current          atomic.Bool
-	childH2          atomic.Bool
-	peerHealthStatus atomic.Int32
-	active           atomic.Int32
-	peak             atomic.Int32
-	hold             chan struct{}
-	streamRelease    chan struct{}
-	peerCheckStarted chan struct{}
+	server         *httptest.Server
+	current        atomic.Bool
+	childH2        atomic.Bool
+	down           atomic.Bool
+	active         atomic.Int32
+	peak           atomic.Int32
+	rpcSeen        atomic.Int32
+	hold           chan struct{}
+	streamRelease  chan struct{}
+	h2CheckStarted chan struct{}
 }
 
-func newOrigin(t *testing.T, current bool, peerHealthGate ...<-chan struct{}) *origin {
+func newOrigin(t *testing.T, current bool, h2HealthGate ...<-chan struct{}) *origin {
 	t.Helper()
-	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{}), peerCheckStarted: make(chan struct{}, 1)}
+	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{}), h2CheckStarted: make(chan struct{}, 1)}
 	o.current.Store(current)
 	o.childH2.Store(current)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "healthz") || strings.HasSuffix(r.URL.Path, "readyz") {
-			if r.URL.Query().Get("peer-rpc") == "1" && len(peerHealthGate) > 0 {
+			if r.ProtoMajor == 2 && len(h2HealthGate) > 0 {
 				select {
-				case o.peerCheckStarted <- struct{}{}:
+				case o.h2CheckStarted <- struct{}{}:
 				default:
 				}
 				select {
-				case <-peerHealthGate[0]:
+				case <-h2HealthGate[0]:
 				case <-r.Context().Done():
 					return
 				}
 			}
-			if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() && o.childH2.Load() {
+			// down fails only the HTTP/2 health check. Policy nginx probes
+			// /readyz over HTTP/1.1; a 503 there leaves policy_http down
+			// and HAProxy /readyz never turns 200.
+			if o.down.Load() && r.ProtoMajor == 2 {
+				http.Error(w, "not ready", http.StatusServiceUnavailable)
+			} else if r.URL.Query().Get("peer-rpc") == "1" && o.current.Load() && o.childH2.Load() {
 				io.WriteString(w, "peer-rpc-ok\n")
 			} else {
-				if r.URL.Query().Get("peer-rpc") == "1" && o.peerHealthStatus.Load() != 0 {
-					w.WriteHeader(int(o.peerHealthStatus.Load()))
-				}
 				io.WriteString(w, "ready\n")
 			}
 			return
@@ -151,6 +163,13 @@ func newOrigin(t *testing.T, current bool, peerHealthGate ...<-chan struct{}) *o
 		if r.Method == "PRI" {
 			http.Error(w, "HTTP/1 only", 400)
 			return
+		}
+		if r.ProtoMajor == 2 && !o.childH2.Load() && strings.Contains(r.URL.Path, "/rpc/") {
+			http.Error(w, "peer RPC child requires HTTP/1.1 compatibility admission", http.StatusServiceUnavailable)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/rpc/") {
+			o.rpcSeen.Add(1)
 		}
 		w.Header().Set("X-Seen-IP", r.Header.Get("X-Real-IP"))
 		w.Header().Set("X-Seen-Proto", strconv.Itoa(r.ProtoMajor))
@@ -325,7 +344,11 @@ func request(t *testing.T, c *http.Client, url string, headers map[string]string
 func drain(r *http.Response) { io.Copy(io.Discard, r.Body); r.Body.Close() }
 func (f *fixture) stats(t *testing.T, command string) string {
 	t.Helper()
-	c, err := net.DialTimeout("unix", f.socket, time.Second)
+	return stats(t, f.socket, command)
+}
+func stats(t *testing.T, socket, command string) string {
+	t.Helper()
+	c, err := net.DialTimeout("unix", socket, time.Second)
 	require.NoError(t, err)
 	defer c.Close()
 	c.SetDeadline(time.Now().Add(time.Second))
@@ -333,6 +356,26 @@ func (f *fixture) stats(t *testing.T, command string) string {
 	out, err := io.ReadAll(c)
 	require.NoError(t, err)
 	return string(out)
+}
+
+// waitChecked waits until every server of backend has completed a health
+// check and is UP (up) or DOWN (!up).
+func waitChecked(t *testing.T, socket, backend string, up bool) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		servers := 0
+		for _, line := range strings.Split(stats(t, socket, "show stat"), "\n") {
+			v := strings.Split(line, ",")
+			if len(v) <= 36 || v[0] != backend || v[1] == "BACKEND" || v[1] == "FRONTEND" {
+				continue
+			}
+			servers++
+			if v[36] == "" || strings.Contains(v[36], "INI") || strings.HasPrefix(v[17], "UP") != up {
+				return false
+			}
+		}
+		return servers > 0
+	}, 8*time.Second, 50*time.Millisecond, "%s servers must be checked with up=%v", backend, up)
 }
 
 func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
@@ -430,68 +473,90 @@ func TestProtocolMatrixAndSharedBudgets(t *testing.T) {
 	}
 }
 
+// A versiond without h2c opens the bounded HTTP/1.1 hop.
 func TestH2ToLegacyH1BoundedAcrossVersions(t *testing.T) {
+	o := newOrigin(t, false)
+	f := startProxy(t, "http", o)
+	waitChecked(t, f.socket, "rpc_h1_only", true)
+	c := f.client(t, "h2c")
+	grpc := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
+	_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
+	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "H1 child must not receive native gRPC")
+	var wg sync.WaitGroup
+	var ok, refused atomic.Int32
+	for i := 0; i < 60; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			path := strings.Replace(chat, "/v6/", fmt.Sprintf("/v%d/", i%3), 1)
+			req, _ := http.NewRequest("POST", f.httpURL+path, strings.NewReader("{}"))
+			req.Header.Set("X-Hold", "1")
+			r, e := c.Do(req)
+			if e != nil {
+				t.Errorf("request: %v", e)
+				return
+			}
+			if r.StatusCode == 200 {
+				ok.Add(1)
+			} else if r.StatusCode == 503 {
+				refused.Add(1)
+			} else {
+				t.Errorf("status %d", r.StatusCode)
+			}
+			drain(r)
+		}(i)
+	}
+	require.Eventually(t, func() bool { return o.active.Load() == 8 && refused.Load() >= 52 }, 3*time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(8), o.peak.Load(), "one global fallback budget, not eight per version")
+	// JSON uses a separate capacity path while all RPC fallback slots are busy.
+	r := request(t, f.client(t, "h1"), f.httpURL+"/devshard/v6/healthz", nil)
+	require.Equal(t, 200, r.StatusCode)
+	drain(r)
+	// Runtime queue is empty after its short deadline, even while Watch-like work stays open.
+	for _, line := range strings.Split(f.stats(t, "show stat"), "\n") {
+		if strings.HasPrefix(line, "rpc_h1_fallback,BACKEND,") {
+			require.Equal(t, "0", strings.Split(line, ",")[2])
+		}
+	}
+	for range 8 {
+		o.hold <- struct{}{}
+	}
+	wg.Wait()
+	require.Equal(t, int32(8), ok.Load())
+	require.Equal(t, int32(52), refused.Load())
+}
+
+// Behind a versiond with h2c the HTTP/1.1 hop stays closed. Peer RPC with no
+// HTTP/2 server is refused at once, and HTTP/2 RPC to a child without h2c
+// gets versiond's own 503. Neither reaches a child.
+func TestH2VersiondNeverUsesH1Fallback(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		current bool
-		status  int32
+		name          string
+		down, childH2 bool
 	}{
-		{"old-versiond", false, 0},
-		{"h2-versiond-legacy-health-body", true, 200},
-		{"h2-versiond-h1-child", true, 503},
+		{"h2-upstream-down", true, true},
+		{"h1-child", false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			o := newOrigin(t, tc.current)
-			o.childH2.Store(false)
-			o.peerHealthStatus.Store(tc.status)
+			o := newOrigin(t, true)
+			o.down.Store(tc.down)
+			o.childH2.Store(tc.childH2)
 			f := startProxy(t, "http", o)
-			c := f.client(t, "h2c")
-			grpc := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
-			_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
-			require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "H1 child must not receive native gRPC")
-			var wg sync.WaitGroup
-			var ok, refused atomic.Int32
-			for i := 0; i < 60; i++ {
-				wg.Add(1)
-				go func(i int) {
-					defer wg.Done()
-					path := strings.Replace(chat, "/v6/", fmt.Sprintf("/v%d/", i%3), 1)
-					req, _ := http.NewRequest("POST", f.httpURL+path, strings.NewReader("{}"))
-					req.Header.Set("X-Hold", "1")
-					r, e := c.Do(req)
-					if e != nil {
-						t.Errorf("request: %v", e)
-						return
-					}
-					if r.StatusCode == 200 {
-						ok.Add(1)
-					} else if r.StatusCode == 503 {
-						refused.Add(1)
-					} else {
-						t.Errorf("status %d", r.StatusCode)
-					}
-					drain(r)
-				}(i)
-			}
-			require.Eventually(t, func() bool { return o.active.Load() == 8 && refused.Load() >= 52 }, 3*time.Second, 10*time.Millisecond)
-			require.Equal(t, int32(8), o.peak.Load(), "one global fallback budget, not eight per version")
-			// JSON uses a separate capacity path while all RPC fallback slots are busy.
-			r := request(t, f.client(t, "h1"), f.httpURL+"/devshard/v6/healthz", nil)
-			require.Equal(t, 200, r.StatusCode)
-			drain(r)
-			// Runtime queue is empty after its short deadline, even while Watch-like work stays open.
-			stats := f.stats(t, "show stat")
-			for _, line := range strings.Split(stats, "\n") {
-				if strings.HasPrefix(line, "rpc_h1_fallback,BACKEND,") {
-					require.Equal(t, "0", strings.Split(line, ",")[2])
+			waitChecked(t, f.socket, "rpc_h1_only", false)
+			waitChecked(t, f.socket, "rpc_h2_upstream", !tc.down)
+			for _, kind := range []string{"h1", "h2c"} {
+				c := f.client(t, kind)
+				r := request(t, c, f.httpURL+chat, nil)
+				require.Equal(t, 503, r.StatusCode, kind)
+				if tc.down {
+					require.Equal(t, "1", r.Header.Get("Retry-After"), kind)
 				}
+				drain(r)
+				auth := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1])
+				_, err := auth.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
+				require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "%s refusal must stay retryable", kind)
 			}
-			for range 8 {
-				o.hold <- struct{}{}
-			}
-			wg.Wait()
-			require.Equal(t, int32(8), ok.Load())
-			require.Equal(t, int32(52), refused.Load())
+			require.Zero(t, o.rpcSeen.Load(), "peer RPC reached a child")
 		})
 	}
 }
@@ -542,7 +607,7 @@ func TestShortHTTP10AndFragmentedH2(t *testing.T) {
 	require.NotRegexp(t, regexp.MustCompile(`conn_rate\(1000\)=[1-9]`), f.stats(t, "show table rpc_h2"))
 }
 
-type innerRouter struct{ data, rpc, admin string }
+type innerRouter struct{ data, rpc, admin, socket string }
 
 func startInner(t *testing.T, o *origin) innerRouter {
 	t.Helper()
@@ -554,12 +619,12 @@ func startInner(t *testing.T, o *origin) innerRouter {
 	run(t, env, filepath.Join(repo, "versiond-router/entrypoint.sh"))
 	raw, err := os.ReadFile(cfg)
 	require.NoError(t, err)
-	s := strings.NewReplacer("bind :8080 ", "bind 127.0.0.1:"+data+" ", "bind :8081 ", "bind 127.0.0.1:"+rpc+" ", "dst_port 8081", "dst_port "+rpc, "bind :8404", "bind 127.0.0.1:"+admin, "bind 127.0.0.1:8404", "bind 127.0.0.1:"+admin, "127.0.0.1:8405", "127.0.0.1:"+metrics, "/var/run/haproxy/", dir+"/", "abns@", "abns@"+strconv.Itoa(os.Getpid())+"-inner-"+data+"-", "init-addr none", "init-addr last,libc,none").Replace(string(raw))
+	s := strings.NewReplacer("bind :8080 ", "bind 127.0.0.1:"+data+" ", "bind :8081 ", "bind 127.0.0.1:"+rpc+" ", "dst_port 8081", "dst_port "+rpc, "bind :8404", "bind 127.0.0.1:"+admin, "bind 127.0.0.1:8404", "bind 127.0.0.1:"+admin, "127.0.0.1:8405", "127.0.0.1:"+metrics, "/var/run/haproxy/", dir+"/", "abns@", "abns@"+strconv.Itoa(os.Getpid())+"-inner-"+data+"-", "init-addr none", "init-addr last,libc,none", "mode 660", "mode 666").Replace(string(raw))
 	// With no front bind host the renderer emits only one loopback admin bind.
 	write(t, cfg, s)
 	startContainer(t, "-v", dir+":"+dir, "haproxy:3.2-alpine", "haproxy", "-W", "-db", "-f", cfg)
 	waitHTTP(t, "http://127.0.0.1:"+data+"/v6/healthz", 200)
-	return innerRouter{data: data, rpc: rpc, admin: admin}
+	return innerRouter{data: data, rpc: rpc, admin: admin, socket: filepath.Join(dir, "haproxy.sock")}
 }
 
 func TestMixedVersionUpgradeAndRollback(t *testing.T) {
@@ -569,6 +634,10 @@ func TestMixedVersionUpgradeAndRollback(t *testing.T) {
 	// while its RPC data health correctly refuses admission to the H2 pool.
 	waitHTTP(t, "http://127.0.0.1:"+router.rpc+"/v6/healthz", 503)
 	f := startProxy(t, "http", o, "VERSIOND_ROUTER_POOL_HOST=127.0.0.1", "VERSIOND_ROUTER_FLEET_CAPACITY=1", "VERSIOND_ROUTER_PORT="+router.data, "VERSIOND_ROUTER_ADMIN_PORT="+router.admin, "VERSIOND_VERSIONS=v6", "FIXTURE_ROUTER_RPC_PORT="+router.rpc)
+	// The proxy hands HTTP/2 RPC to any router with the :8081 listen; that
+	// router's own gate opens its bounded H1 hop to the old versiond.
+	waitChecked(t, router.socket, "versiond_h1_only", true)
+	waitChecked(t, f.socket, "rpc_h2_routers", true)
 	h1, h2 := f.client(t, "h1"), f.client(t, "h2c")
 	check := func(want string) {
 		t.Helper()
@@ -602,6 +671,7 @@ func TestMixedVersionUpgradeAndRollback(t *testing.T) {
 		return r.StatusCode == 200 && r.Header.Get("X-Seen-Proto") == "2"
 	}, 8*time.Second, 50*time.Millisecond, "public H2 admission must recover after versiond upgrade")
 	check("2")
+	waitChecked(t, router.socket, "versiond_h1_only", false)
 	o.current.Store(false)
 	waitHTTP(t, "http://127.0.0.1:"+router.rpc+"/v6/healthz", 503)
 	require.Eventually(t, func() bool {
@@ -627,6 +697,7 @@ func TestInnerRouterBoundsLegacyFanout(t *testing.T) {
 	t.Cleanup(tr.CloseIdleConnections)
 	c := &http.Client{Transport: tr, Timeout: 5 * time.Second}
 	base := "http://127.0.0.1:" + router.rpc
+	waitChecked(t, router.socket, "versiond_h1_only", true)
 	var wg sync.WaitGroup
 	var ok, refused atomic.Int32
 	for range 32 {
@@ -688,26 +759,25 @@ func TestNonHACapabilityCheckPending(t *testing.T) {
 	var release sync.Once
 	defer release.Do(func() { close(gate) })
 	o := newOrigin(t, true, gate)
-	o.childH2.Store(false)
-	// Hold the first check until requests have been observed. A longer check
-	// timeout prevents a slow CI startup from accidentally testing a completed
-	// failed check instead of the initial, unverified state.
+	// Hold the first HTTP/2 check until requests have been observed. A longer
+	// check timeout prevents a slow CI startup from accidentally testing a
+	// completed failed check instead of the initial, unverified state.
 	f := startProxy(t, "http", o, "FIXTURE_CHECK_TIMEOUT_SECONDS=60")
 	select {
-	case <-o.peerCheckStarted:
+	case <-o.h2CheckStarted:
 	case <-time.After(5 * time.Second):
-		t.Fatal("capability check did not start")
+		t.Fatal("HTTP/2 check did not start")
 	}
+	waitChecked(t, f.socket, "rpc_h1_only", false)
 	c := f.client(t, "h2c")
 	r := request(t, c, f.httpURL+chat, nil)
-	require.Equal(t, 200, r.StatusCode)
-	require.Equal(t, "1", r.Header.Get("X-Seen-Proto"), "unverified backend must use bounded H1 admission")
+	require.Equal(t, 503, r.StatusCode, "an unverified HTTP/2 upstream must not open the HTTP/1.1 hop")
+	require.Equal(t, "1", r.Header.Get("Retry-After"))
 	drain(r)
 	grpc := rpcpbconnect.NewPeerAuthServiceClient(c, f.httpURL+rpcPath[:len(rpcPath)-1], connect.WithGRPC())
 	_, err := grpc.Attach(context.Background(), connect.NewRequest(&rpcpb.AttachRequest{}))
 	require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err), "unverified H2 backend cannot carry native gRPC")
-	// Once children advertise capability, the successful checks admit H2.
-	o.childH2.Store(true)
+	require.Zero(t, o.rpcSeen.Load(), "peer RPC reached a child before its check passed")
 	release.Do(func() { close(gate) })
 	require.Eventually(t, func() bool {
 		req, _ := http.NewRequest("POST", f.httpURL+chat, strings.NewReader("{}"))
@@ -718,4 +788,228 @@ func TestNonHACapabilityCheckPending(t *testing.T) {
 		defer drain(r)
 		return r.StatusCode == 200 && r.Header.Get("X-Seen-Proto") == "2"
 	}, 8*time.Second, 50*time.Millisecond)
+}
+
+// The production HTTP/1.1 fallback budget is 512. versiond here is the real
+// proxy handler's job: HTTP/2 on its listen, Attach forwarded to a real v6
+// child, v4.2 JSON forwarded to an HTTP/1.1 child. More v6 streams than that
+// budget stay on the HTTP/2 upstream. They do not take fallback slots and do
+// not get the fallback 503.
+func TestNonHAV6StreamsStayOffProductionFallback(t *testing.T) {
+	httpguard.SetAllowPrivate(true)
+	t.Cleanup(func() { httpguard.SetAllowPrivate(false) })
+	hostAddr := devtest.MustGenerateKey(t).Address()
+	peer := devtest.MustGenerateKey(t)
+	auth := rpcserver.NewPeerAuthHandler(signing.NewSecp256k1Verifier(), hostAddr, rpcserver.PeerAuthConfig{Heartbeat: time.Hour})
+	t.Cleanup(auth.Close)
+	mux := rpcserver.NewMux(auth, rpcserver.NewSessionHandler(nil))
+	var childProto atomic.Int32
+	child := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		childProto.Store(int32(r.ProtoMajor))
+		if i := strings.LastIndex(r.URL.Path, "/rpc/"); i >= 0 {
+			u := *r.URL
+			u.Path = r.URL.Path[i+len("/rpc"):]
+			r = r.Clone(rpcserver.WithEscrowID(r.Context(), "escrow-1"))
+			r.URL = &u
+		} else {
+			r = r.WithContext(rpcserver.WithEscrowID(r.Context(), "escrow-1"))
+		}
+		mux.ServeHTTP(w, r)
+	}), &http2.Server{}))
+	t.Cleanup(child.Close)
+	var v42 atomic.Int32
+	legacy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 1 {
+			http.Error(w, "v4.2 is HTTP/1.1", http.StatusHTTPVersionNotSupported)
+			return
+		}
+		v42.Add(1)
+		io.WriteString(w, "ok\n")
+	}))
+	t.Cleanup(legacy.Close)
+
+	o := &origin{hold: make(chan struct{}), streamRelease: make(chan struct{}), h2CheckStarted: make(chan struct{}, 1)}
+	o.current.Store(true)
+	o.childH2.Store(true)
+	childURL, err := url.Parse(child.URL)
+	require.NoError(t, err)
+	legacyURL, err := url.Parse(legacy.URL)
+	require.NoError(t, err)
+	toChild := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}
+	versiond := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			io.WriteString(w, "ready\n")
+			return
+		}
+		if strings.Contains(r.URL.Path, "/v4.2/") {
+			httputil.NewSingleHostReverseProxy(legacyURL).ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("X-Hold") == "1" {
+			w.Header().Set("X-Seen-Proto", strconv.Itoa(r.ProtoMajor))
+			o.active.Add(1)
+			defer o.active.Add(-1)
+			select {
+			case <-o.hold:
+			case <-r.Context().Done():
+			}
+			io.WriteString(w, "ok\n")
+			return
+		}
+		if !strings.Contains(r.URL.Path, "/rpc/") {
+			http.NotFound(w, r)
+			return
+		}
+		out := r.Clone(r.Context())
+		u := *childURL
+		u.Path = r.URL.Path
+		u.RawQuery = r.URL.RawQuery
+		out.URL = &u
+		out.RequestURI = ""
+		resp, err := toChild.RoundTrip(out)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vv := range resp.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		// HTTP/2 buffers a small write until the handler returns. A Watch
+		// beat is smaller than that buffer and the handler stays open, so
+		// the client never sees response headers and PeerConn.Close waits
+		// on the stream until the test timeout.
+		buf := make([]byte, 32<<10)
+		flusher, _ := w.(http.Flusher)
+		for {
+			n, rerr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	})
+	o.server = httptest.NewServer(h2c.NewHandler(versiond, &http2.Server{}))
+	t.Cleanup(o.server.Close)
+	t.Cleanup(func() { close(o.hold); close(o.streamRelease) })
+
+	f := startProxy(t, "http", o,
+		"PROXY_ROUTER_RPC_FALLBACK_MAXCONN=512",
+		"PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE=64",
+		"PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS=200")
+	waitChecked(t, f.socket, "rpc_h2_upstream", true)
+	waitChecked(t, f.socket, "rpc_h1_only", false)
+	// slim is the server's configured maxconn. show stat has no maxconn column.
+	require.Equal(t, "512", statValue(t, f.stats(t, "show stat"), "rpc_h1_fallback", "local", "slim"))
+
+	pc := transport.NewPeerConn(transport.PeerConnConfig{
+		BaseURL:        f.httpURL,
+		HostAddress:    hostAddr,
+		Signer:         peer,
+		DoorEscrowID:   "escrow-1",
+		DialSet:        transport.PeerRPCDialSet{InferenceURL: f.httpURL, H2URL: f.httpURL},
+		H2ProbeTimeout: time.Second,
+		WatchStale:     time.Minute,
+	})
+	t.Cleanup(pc.Close)
+	transport.ResetRPCH2MissCacheForTest()
+	transport.ResetRPCH2ClientPoolForTest()
+	t.Cleanup(transport.ResetRPCH2MissCacheForTest)
+	t.Cleanup(transport.ResetRPCH2ClientPoolForTest)
+	pc.Start()
+	require.Eventually(t, func() bool { return pc.Ready() && len(pc.LiveToken()) > 0 }, 8*time.Second, 20*time.Millisecond)
+	require.True(t, pc.UsingH2(), "Attach reached versiond over HTTP/2")
+	require.Equal(t, int32(2), childProto.Load(), "the v6 child saw HTTP/2")
+
+	tr := &http2.Transport{AllowHTTP: true, DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}}
+	t.Cleanup(tr.CloseIdleConnections)
+	c := &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	const streams = 513
+	var wg sync.WaitGroup
+	var ok, refused atomic.Int32
+	for range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, err := http.NewRequest("POST", f.httpURL+chat, strings.NewReader("{}"))
+			if err != nil {
+				t.Errorf("request: %v", err)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Connect-Protocol-Version", "1")
+			req.Header.Set("X-Hold", "1")
+			r, err := c.Do(req)
+			if err != nil {
+				t.Errorf("request: %v", err)
+				return
+			}
+			defer drain(r)
+			if r.StatusCode == 200 && r.Header.Get("X-Seen-Proto") == "2" {
+				ok.Add(1)
+				return
+			}
+			if r.StatusCode == 503 {
+				refused.Add(1)
+			}
+			t.Errorf("status %d proto %q", r.StatusCode, r.Header.Get("X-Seen-Proto"))
+		}()
+	}
+	require.Eventually(t, func() bool { return o.active.Load() == streams }, 15*time.Second, 20*time.Millisecond)
+	dump := f.stats(t, "show stat")
+	require.Equal(t, "0", statValue(t, dump, "rpc_h1_fallback", "BACKEND", "scur"), "v6 streams took HTTP/1.1 fallback slots")
+	h2, err := strconv.Atoi(statValue(t, dump, "rpc_h2_upstream", "BACKEND", "scur"))
+	require.NoError(t, err)
+	require.Greater(t, h2, 0, "v6 streams are not on the HTTP/2 upstream")
+	jsonReq := request(t, f.client(t, "h1"), f.httpURL+"/devshard/v4.2/chat/completions", nil)
+	require.Equal(t, 200, jsonReq.StatusCode, "v4.2 JSON must keep moving while v6 streams are open")
+	drain(jsonReq)
+	require.Greater(t, v42.Load(), int32(0), "v4.2 JSON must reach the HTTP/1.1 child")
+	require.Zero(t, refused.Load())
+	for range streams {
+		o.hold <- struct{}{}
+	}
+	wg.Wait()
+	require.Equal(t, int32(streams), ok.Load())
+}
+
+func statValue(t *testing.T, dump, backend, server, field string) string {
+	t.Helper()
+	var col map[string]int
+	for _, line := range strings.Split(dump, "\n") {
+		if col == nil {
+			if !strings.Contains(line, "pxname") || !strings.Contains(line, "svname") {
+				continue
+			}
+			col = map[string]int{}
+			for i, name := range strings.Split(strings.TrimPrefix(line, "# "), ",") {
+				col[strings.TrimSpace(name)] = i
+			}
+			if _, ok := col[field]; !ok {
+				t.Fatalf("stats header has no %s column", field)
+			}
+			continue
+		}
+		v := strings.Split(line, ",")
+		if len(v) <= col[field] || v[0] != backend || v[1] != server {
+			continue
+		}
+		return v[col[field]]
+	}
+	t.Fatalf("no %s/%s column %s in stats", backend, server, field)
+	return ""
 }

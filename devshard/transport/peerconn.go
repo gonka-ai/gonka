@@ -991,7 +991,14 @@ func (p *PeerConn) attach() ([]byte, time.Time, error) {
 		}
 		generation, probe := uint64(0), false
 		if !h2Tried && p.cfg.DialSet.H2URL != "" {
-			generation, probe = rpch2Miss.acquire(overall, inferenceHostKey(p.cfg.BaseURL))
+			// Another PeerConn may already hold this origin's probe lease.
+			// Waiting out the whole Attach deadline there never reached
+			// HTTP/1.1. The lease wait gets half; the rest stays for the
+			// HTTP/1.1 attempt. A wait that expires is not a probe, so it
+			// does not cache a miss.
+			leaseCtx, cancelLease := context.WithTimeout(overall, halfRemaining(overall))
+			generation, probe = rpch2Miss.acquire(leaseCtx, inferenceHostKey(p.cfg.BaseURL))
+			cancelLease()
 		}
 		if probe {
 			p.origin.setH2(true)

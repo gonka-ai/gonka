@@ -260,15 +260,28 @@ Feature: v6 peer RPC follows the wrapping, not the binary
     And client B's Chat succeeds
     And client B's GetDiffs succeeds
 
-  @rate-limit @v6-wrapping @http2
-  Scenario: a live renewal survives an anonymous Attach flood
-    Given the cell is SR
-    And the wrapping images are v6
+  @rate-limit @both-wrappings
+  Scenario Outline: an Attach flood stays on one address
+    Given the cell is <cell>
+    And the wrapping images are <wrapping>
     And peer A holds a live session and Watch stays up
-    When anonymous Attach is flooded until the Attach zone or the child floor refuses
-    Then peer A's renewal, well under 4 per minute, still succeeds
+    When anonymous Attach is flooded from a second address until that address is refused
+    Then the refusal is the Attach zone or the child origin bucket
+    And the refused calls do no signature work in the child
+    And peer A's renewal, well under 4 per minute, still succeeds
     And the previous token still admits in-flight calls during its overlap window
     And peer A's Watch does not drop
+    And a third address with no session header completes a first Attach
+    And that third address completes a later Attach with no session header while the flood address is still refused
+
+    Examples:
+      | wrapping                  | cell |
+      | v4                        | S    |
+      | v5                        | SR   |
+      | v6                        | SR   |
+      | v6                        | HR   |
+      | v6 with nginx ingress     | S    |
+      | v6 with nginx ingress     | H    |
 
   @catch-up @both-wrappings
   Scenario Outline: a diff read wider than one page is rejected

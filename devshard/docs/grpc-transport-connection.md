@@ -318,12 +318,13 @@ IP on versiond**.
 | Layer | Key | Default | When it fires |
 |---|---|---|---|
 | JSON POSTs after auth (`RateLimitMiddleware`) | recovered sender | 100 rps, burst 200 | Existing session on InferenceUrl. Chat still records `no_receipt_interrupted`. |
-| Attach process floor (`spendAttachToken`) | this child | 50 tokens, refilled at 50/s | **Before ECDSA**, on an Attach without a live token. `DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` at 50 or above selects this bucket. A value `n` below 50 is `n` tokens refilled at `n`/s. `MaxSessions` (10_000) caps Watches, not this bucket. |
+| Attach origin (`acquireAttachVerify`) | `X-Real-IP`: one IPv4 address, or one IPv6 /64 | 10 tokens, refilled at 10/s, 4 in flight | **Before ECDSA** and **before the process floor**, on an Attach without a live token. A missing or unparseable header is not a key. An empty origin bucket does not spend the process floor. A tighter process cap scales this down so it stays under that cap. |
+| Attach process floor (`spendAttachToken`) | this child | 50 tokens, refilled at 50/s | **Before ECDSA**, after the origin bucket, on an Attach without a live token. `DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` at 50 or above selects this bucket. A value `n` below 50 is `n` tokens refilled at `n`/s. `MaxSessions` (10_000) caps Watches, not this bucket. |
 | Attach renewal (`takeRenewal`) | peer in a live token | burst 4, 4/min | **Before ECDSA**, on an Attach that presents a live token. Off when limits are disabled. |
 | RPC peer weight | session address after Attach | **6000/min**, burst 10% (600) | Authenticated RPCs. Watch is a stream cap, not this bucket. |
 | Unknown-escrow first bind (child) | recovered gonka address | **2 unique ids/min**, process floor **300/min** | Cold `GetEscrow` on Attach / owner chat / height-sync seed |
 | Unknown-escrow first bind (versiond) | inbound **`X-Real-IP`** | **2 misses/min** | Same bind paths, after the child names a miss — next try never reaches the child |
-| `AttachResponse.limits` | advertised + enforced | `messages_per_min`, `messages_burst`, `max_streams`; `ip_weight_per_min` / `ip_burst` = unlimited | Peer numbers match the interceptor. IP fields are unlimited: the child does not key Attach on origin IP. Zeros would look like "refuse all". `PeerConn` paces opted-in RPCs (including Chat) to in-range `messages_per_min` / `messages_burst` × `RPCProcedureWeight`; out-of-range or a wait that cannot fit in 5 s / the RPC deadline is skipped. Watch and Chat also take an advertised `max_streams` slot. |
+| `AttachResponse.limits` | advertised + enforced | `messages_per_min`, `messages_burst`, `max_streams`; `ip_weight_per_min` / `ip_burst` = unlimited | Peer numbers match the interceptor. IP fields stay unlimited: the origin Attach bucket is an admission gate, not a budget peers pace themselves to. Zeros would look like "refuse all". `PeerConn` paces opted-in RPCs (including Chat) to in-range `messages_per_min` / `messages_burst` × `RPCProcedureWeight`; out-of-range or a wait that cannot fit in 5 s / the RPC deadline is skipped. Watch and Chat also take an advertised `max_streams` slot. |
 
 Nginx `limit_req` / `limit_conn` still cover InferenceUrl until phase 6. They are
 not the unknown-id budget and they do not key on gonka address.
@@ -342,10 +343,16 @@ Process-wide Attach before ECDSA is 50 tokens refilled at 50 per second
 (`DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL` unset, or any value of 50 or more).
 The name is the configured ceiling, not the refill rate: a value below 50
 is both the burst and the per-second refill, and a larger value does not
-grow the bucket. `MaxSessions` (10_000) is the Watch cap.
-Per-IP Attach is not a child limiter: `RemoteAddr` is versiond, and an empty
-`X-Real-IP` is not a key. TCP / path rate belongs on versiond / Phase 6 `proxy`
-(`src`). `DEVSHARD_RPC_LIMITS=off` disables the interceptor buckets and the Attach floor.
+grow the bucket. In front of that floor, one origin — one IPv4 address, or
+one IPv6 /64, from `X-Real-IP` — has 10 tokens refilled at 10 per second
+and 4 in-flight signature checks. The origin token is spent first. A miss
+does not take a process token, so one address cannot empty the shared
+floor. Stats count it as `banned_origin` (reason `origin`), apart from the
+process floor. A missing or unparseable header is not a key and uses the process
+floor only. The child still does not key on `RemoteAddr` (that is versiond)
+or on `peer_address` (unsigned). `MaxSessions` (10_000) is the Watch cap.
+`DEVSHARD_RPC_LIMITS=off` disables the interceptor buckets, the origin
+bucket, and the Attach floor.
 `DEVSHARD_RPC_MAX_STREAMS_PER_PEER` is the stream cap. Unset env is the default
 with no log; malformed, `0`, and `4294967295` warn and use the default (`-1`
 is unlimited).

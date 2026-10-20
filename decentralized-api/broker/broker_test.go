@@ -2589,6 +2589,31 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
 }
 
+func TestSetNodesActualStatusCommand_RejectsStatusObservedBeforeTransition(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_POC)
+	observedAt := time.Now()
+	node.State.StatusTimestamp = observedAt
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:     "node-1",
+			PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+			NewStatus:  types.HardwareNodeStatus_STOPPED,
+			Timestamp:  observedAt,
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, types.HardwareNodeStatus_POC, node.State.CurrentStatus)
+}
+
 func TestSetNodesActualStatusCommand_RejectsStaleRegistrationSeq(t *testing.T) {
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
 	node.State.RegistrationSeq = 2

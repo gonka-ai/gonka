@@ -1523,6 +1523,21 @@ test-render: test-local-compose test-compose-contract test-join-versiond-healthc
 		|| fail "peer RPC on an undeclared version does not reach the host-level _rpc twin"; \
 	grep -Fq 'concat(_rpc)] if peer_rpc !rpc_legacy_hop { var(txn.ver),map_str(' "$$tmpdir/mixed.cfg" \
 		|| fail "versioned peer RPC does not select the _rpc twin by path"; \
+	awk ' \
+		$$0 ~ "^backend versiond_h1_only$$" { inside = 1; next } \
+		inside && $$0 ~ "^frontend |^backend " { exit } \
+		inside && /tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a$$/ { preface = 1 } \
+		inside && /tcp-check expect rstring \^HTTP\/1/ { h1 = 1 } \
+		inside && /^ *server-template h1probe 64 versiond-pool:8080 / { pool = 1 } \
+		inside && /^ *server h1probe_legacy versiond:8080 / { legacy = 1 } \
+		inside && /proto h2/ { h2 = 1 } \
+		END { exit !(preface && h1 && pool && legacy && !h2) } \
+	' "$$tmpdir/mixed.cfg" \
+		|| fail "the HTTP/1.1 gate does not ask every versiond, legacy owner included, for an HTTP/1.x answer to the HTTP/2 preface"; \
+	grep -Fq "http-request return status 503 content-type application/json string '{\"code\":\"unavailable\"" "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC with no HTTP/2 server is not refused as Connect unavailable"; \
+	grep -Fq 'hdr Retry-After 1 if peer_rpc !rpc_legacy_hop !{ var(txn.rpc_backend),nbsrv gt 0 } !{ nbsrv(versiond_h1_only) gt 0 }' "$$tmpdir/mixed.cfg" \
+		|| fail "peer RPC may take the HTTP/1.1 hop while every versiond has h2c"; \
 	if grep -q 'deny deny_status 404' "$$tmpdir/mixed.cfg"; then \
 		fail "Connect over HTTP/1.1 must reach the _rpc twin, not a 404"; \
 	fi; \

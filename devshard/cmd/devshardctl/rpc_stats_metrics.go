@@ -62,7 +62,7 @@ func newRPCStatsDescs() rpcStatsDescs {
 		),
 		attachBanned: prometheus.NewDesc(
 			"devshard_gateway_rpc_attach_banned_last_minute",
-			"Attach throttle refusals in the last closed minute (reason=floor or other).",
+			"Attach throttle refusals in the last closed minute (reason=floor, origin, or other).",
 			[]string{"host", "reason"}, nil,
 		),
 		reconnects: prometheus.NewDesc(
@@ -138,6 +138,9 @@ func (d rpcStatsDescs) emit(ch chan<- prometheus.Metric, hosts []rpcStatsHostSta
 		ch <- prometheus.MustNewConstMetric(d.partial, prometheus.GaugeValue, partial, host)
 		ch <- prometheus.MustNewConstMetric(d.attachAttempts, prometheus.GaugeValue, float64(snap.Host.Attach.Attempts), host)
 		ch <- prometheus.MustNewConstMetric(d.attachBanned, prometheus.GaugeValue, float64(snap.Host.Attach.BannedFloor), host, rpcStatsAttachFloor)
+		if snap.Host.Attach.BannedOrigin > 0 {
+			ch <- prometheus.MustNewConstMetric(d.attachBanned, prometheus.GaugeValue, float64(snap.Host.Attach.BannedOrigin), host, rpcStatsAttachOrigin)
+		}
 		if other := attachOtherBanned(snap.Host.Attach); other > 0 {
 			ch <- prometheus.MustNewConstMetric(d.attachBanned, prometheus.GaugeValue, float64(other), host, rpcStatsAttachOther)
 		}
@@ -171,10 +174,11 @@ func emitReqBan(ch chan<- prometheus.Metric, reqDesc, banDesc *prometheus.Desc, 
 }
 
 func attachOtherBanned(a transport.RPCStatsAttach) uint64 {
-	if a.Banned <= a.BannedFloor {
+	named := a.BannedFloor + a.BannedOrigin
+	if a.Banned <= named {
 		return 0
 	}
-	return a.Banned - a.BannedFloor
+	return a.Banned - named
 }
 
 func foldEndpointCounts(rows []transport.RPCStatsEndpoint) map[string]rpcCount {

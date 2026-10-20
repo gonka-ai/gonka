@@ -262,10 +262,9 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 }
 
 func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest string, lim *originLookupLimiter) {
-	// Health checks are asynchronous: a child can be replaced after ingress
-	// admitted this H2 connection. Do not silently expand its RPC streams into
-	// uncapped H1 connections. The ingress's bounded compatibility hop arrives
-	// over H1 and remains available once its capability check observes the change.
+	// Do not silently expand H2 RPC streams into uncapped H1 connections. A
+	// child without h2c predates peer RPC, so this 503 is the final answer;
+	// ingress sends HTTP/1.1 RPC only to a versiond that itself lacks h2c.
 	if r.ProtoMajor == 2 && !target.childH2C && strings.HasPrefix(rest, "/sessions/") && strings.Contains(rest, "/rpc/") {
 		http.Error(w, "peer RPC child requires HTTP/1.1 compatibility admission", http.StatusServiceUnavailable)
 		return
