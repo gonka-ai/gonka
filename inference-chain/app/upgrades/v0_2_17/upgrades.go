@@ -10,6 +10,7 @@ package v0_2_17
 
 import (
 	"context"
+	"fmt"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
@@ -33,6 +34,9 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.17 migration steps land below this line.
+		if err := migratePoCMinCommitCount(ctx, k); err != nil {
+			return fromVM, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -42,4 +46,41 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+const pocMinCommitCount uint32 = 200
+
+func migratePoCMinCommitCount(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	minCount := pocMinCommitCount
+	if sampleSize := params.PocParams.EffectiveValidationSampleSize(); sampleSize > 0 && sampleSize < int64(minCount) {
+		minCount = uint32(sampleSize)
+	}
+	updated := 0
+	for _, model := range params.PocParams.GetModelConfigs() {
+		if model == nil || model.GetStatTest().GetMinCount() != 0 {
+			continue
+		}
+		if model.StatTest == nil {
+			model.StatTest = &types.PoCStatTestParams{}
+		}
+		model.StatTest.MinCount = minCount
+		updated++
+	}
+	if updated == 0 {
+		return nil
+	}
+	if err := params.Validate(); err != nil {
+		return fmt.Errorf("min commit count migration produced invalid params: %w", err)
+	}
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("migrated PoC min commit count", types.Upgrades,
+		"min_count", minCount,
+		"models", updated)
+	return nil
 }
