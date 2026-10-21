@@ -465,6 +465,9 @@ jobs:
   build-and-test-devshard:
     runs-on: ubuntu-22.04
     name: Build and Test Devshard
+    env:
+      # Re-run tests on every CI run while retaining compiled package caches.
+      GOFLAGS: -count=1
     permissions:
       contents: read
       checks: write
@@ -595,6 +598,12 @@ jobs:
           docker --version
           docker compose version
 
+      - name: Resolve E2E version from Makefile
+        id: e2e-version
+        run: |
+          version=$(make -s print-e2e-version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         id: e2e-buildx
         uses: docker/setup-buildx-action@v3
@@ -618,6 +627,7 @@ jobs:
           builder: ${{ steps.e2e-buildx.outputs.name }}
           context: .
           file: devshard/Dockerfile.host
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
           tags: devshard-host:local
           load: true
           cache-from: type=gha,version=2,scope=devshard-e2e-host
@@ -631,6 +641,7 @@ jobs:
           context: .
           file: devshard/Dockerfile
           target: devshardctl-runtime
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
           tags: devshardctl:local
           load: true
           cache-from: type=gha,version=2,scope=devshard-e2e-devshardctl
