@@ -1,4 +1,5 @@
 .PHONY: proto test test-junit gateway-mockenv-test gateway-mockenv-test-junit integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images snapshot-recovery-stress-test
+.PHONY: print-e2e-version
 
 DEVSHARD_VERSION ?= dev
 DEVSHARD_PROTOCOL_VERSION ?= v3
@@ -74,6 +75,10 @@ ci-testenv-integration:
 	$(MAKE) -C testenv citest-stack
 	$(MAKE) -C testenv citest-grpc-transport
 	$(MAKE) -C testenv citest-adversarial
+
+# CI image builds use the same resolved version as local e2e-images builds.
+print-e2e-version:
+	@printf '%s\n' "$(DEVSHARD_E2E_VERSION)"
 
 e2e-images:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain ..
