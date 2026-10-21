@@ -70,6 +70,175 @@ func (TimeoutReason) EnumDescriptor() ([]byte, []int) {
 	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{0}
 }
 
+// ChallengeReason is why the gateway challenged a finished inference.
+// The byte-bound reasons are added after STREAM_UNBOUND and EMPTY_STREAM.
+type ChallengeReason int32
+
+const (
+	ChallengeReason_CHALLENGE_REASON_UNSPECIFIED ChallengeReason = 0
+	// The stream was cut before [DONE] and devshard_meta, or it was complete
+	// and matched neither hash the Finish carries.
+	ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND ChallengeReason = 1
+	// The receipt was applied and the stream ended with no content.
+	ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM ChallengeReason = 2
+)
+
+// Enum value maps for ChallengeReason.
+var (
+	ChallengeReason_name = map[int32]string{
+		0: "CHALLENGE_REASON_UNSPECIFIED",
+		1: "CHALLENGE_REASON_STREAM_UNBOUND",
+		2: "CHALLENGE_REASON_EMPTY_STREAM",
+	}
+	ChallengeReason_value = map[string]int32{
+		"CHALLENGE_REASON_UNSPECIFIED":    0,
+		"CHALLENGE_REASON_STREAM_UNBOUND": 1,
+		"CHALLENGE_REASON_EMPTY_STREAM":   2,
+	}
+)
+
+func (x ChallengeReason) Enum() *ChallengeReason {
+	p := new(ChallengeReason)
+	*p = x
+	return p
+}
+
+func (x ChallengeReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChallengeReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_devshard_v1_tx_proto_enumTypes[1].Descriptor()
+}
+
+func (ChallengeReason) Type() protoreflect.EnumType {
+	return &file_devshard_v1_tx_proto_enumTypes[1]
+}
+
+func (x ChallengeReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChallengeReason.Descriptor instead.
+func (ChallengeReason) EnumDescriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{1}
+}
+
+// ChallengeFault is what a voter found on the body it fetched from the
+// executor. NONE is a valid vote: the checks this host ran found no fault.
+type ChallengeFault int32
+
+const (
+	ChallengeFault_CHALLENGE_FAULT_NONE ChallengeFault = 0
+	// The executor did not serve the body for the whole fetch window, said it
+	// was gone while the escrow epoch is inside its retention, or sent a body
+	// above the size limit.
+	ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE ChallengeFault = 1
+	// The prompt, the body or the served view does not hash to what the
+	// Finish signed, or the executor's payload signature does not verify.
+	ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH ChallengeFault = 2
+	// The body matches its hashes but holds no generated positions.
+	ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM ChallengeFault = 3
+	// The claim is above what the body holds: the token count check, which no
+	// voter runs yet.
+	ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED ChallengeFault = 4
+)
+
+// Enum value maps for ChallengeFault.
+var (
+	ChallengeFault_name = map[int32]string{
+		0: "CHALLENGE_FAULT_NONE",
+		1: "CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE",
+		2: "CHALLENGE_FAULT_HASH_MISMATCH",
+		3: "CHALLENGE_FAULT_EMPTY_STREAM",
+		4: "CHALLENGE_FAULT_USAGE_INFLATED",
+	}
+	ChallengeFault_value = map[string]int32{
+		"CHALLENGE_FAULT_NONE":                0,
+		"CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE": 1,
+		"CHALLENGE_FAULT_HASH_MISMATCH":       2,
+		"CHALLENGE_FAULT_EMPTY_STREAM":        3,
+		"CHALLENGE_FAULT_USAGE_INFLATED":      4,
+	}
+)
+
+func (x ChallengeFault) Enum() *ChallengeFault {
+	p := new(ChallengeFault)
+	*p = x
+	return p
+}
+
+func (x ChallengeFault) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChallengeFault) Descriptor() protoreflect.EnumDescriptor {
+	return file_devshard_v1_tx_proto_enumTypes[2].Descriptor()
+}
+
+func (ChallengeFault) Type() protoreflect.EnumType {
+	return &file_devshard_v1_tx_proto_enumTypes[2]
+}
+
+func (x ChallengeFault) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChallengeFault.Descriptor instead.
+func (ChallengeFault) EnumDescriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{2}
+}
+
+// ChallengeCheck names the check behind a fault.
+type ChallengeCheck int32
+
+const (
+	ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED ChallengeCheck = 0
+	ChallengeCheck_CHALLENGE_CHECK_HASH        ChallengeCheck = 1
+	ChallengeCheck_CHALLENGE_CHECK_POSITIONS   ChallengeCheck = 2
+)
+
+// Enum value maps for ChallengeCheck.
+var (
+	ChallengeCheck_name = map[int32]string{
+		0: "CHALLENGE_CHECK_UNSPECIFIED",
+		1: "CHALLENGE_CHECK_HASH",
+		2: "CHALLENGE_CHECK_POSITIONS",
+	}
+	ChallengeCheck_value = map[string]int32{
+		"CHALLENGE_CHECK_UNSPECIFIED": 0,
+		"CHALLENGE_CHECK_HASH":        1,
+		"CHALLENGE_CHECK_POSITIONS":   2,
+	}
+)
+
+func (x ChallengeCheck) Enum() *ChallengeCheck {
+	p := new(ChallengeCheck)
+	*p = x
+	return p
+}
+
+func (x ChallengeCheck) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ChallengeCheck) Descriptor() protoreflect.EnumDescriptor {
+	return file_devshard_v1_tx_proto_enumTypes[3].Descriptor()
+}
+
+func (ChallengeCheck) Type() protoreflect.EnumType {
+	return &file_devshard_v1_tx_proto_enumTypes[3]
+}
+
+func (x ChallengeCheck) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ChallengeCheck.Descriptor instead.
+func (ChallengeCheck) EnumDescriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{3}
+}
+
 type MsgStartInference struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
@@ -595,6 +764,141 @@ func (x *ErrorMissVote) GetSignature() []byte {
 	return nil
 }
 
+// MsgChallenge carries the hosts' signed verdicts on a finished inference the
+// gateway challenged. Faults of any kind are summed into one tally; above
+// VoteThreshold the inference is invalidated, below it the inference stays
+// finished and paid. The executor's own address does not vote, and only the
+// first MsgChallenge for an inference counts.
+type MsgChallenge struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Votes         []*ChallengeVote       `protobuf:"bytes,2,rep,name=votes,proto3" json:"votes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MsgChallenge) Reset() {
+	*x = MsgChallenge{}
+	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MsgChallenge) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgChallenge) ProtoMessage() {}
+
+func (x *MsgChallenge) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MsgChallenge.ProtoReflect.Descriptor instead.
+func (*MsgChallenge) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *MsgChallenge) GetInferenceId() uint64 {
+	if x != nil {
+		return x.InferenceId
+	}
+	return 0
+}
+
+func (x *MsgChallenge) GetVotes() []*ChallengeVote {
+	if x != nil {
+		return x.Votes
+	}
+	return nil
+}
+
+// ChallengeVote is one host's signed ChallengeVoteContent. The escrow id,
+// the inference id and the response hash come from the state.
+type ChallengeVote struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VoterSlot     uint32                 `protobuf:"varint,1,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
+	Fault         ChallengeFault         `protobuf:"varint,2,opt,name=fault,proto3,enum=devshard.v1.ChallengeFault" json:"fault,omitempty"`
+	Check         ChallengeCheck         `protobuf:"varint,3,opt,name=check,proto3,enum=devshard.v1.ChallengeCheck" json:"check,omitempty"`
+	Deviation     int64                  `protobuf:"varint,4,opt,name=deviation,proto3" json:"deviation,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChallengeVote) Reset() {
+	*x = ChallengeVote{}
+	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChallengeVote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChallengeVote) ProtoMessage() {}
+
+func (x *ChallengeVote) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChallengeVote.ProtoReflect.Descriptor instead.
+func (*ChallengeVote) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ChallengeVote) GetVoterSlot() uint32 {
+	if x != nil {
+		return x.VoterSlot
+	}
+	return 0
+}
+
+func (x *ChallengeVote) GetFault() ChallengeFault {
+	if x != nil {
+		return x.Fault
+	}
+	return ChallengeFault_CHALLENGE_FAULT_NONE
+}
+
+func (x *ChallengeVote) GetCheck() ChallengeCheck {
+	if x != nil {
+		return x.Check
+	}
+	return ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED
+}
+
+func (x *ChallengeVote) GetDeviation() int64 {
+	if x != nil {
+		return x.Deviation
+	}
+	return 0
+}
+
+func (x *ChallengeVote) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 type MsgValidation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Proposer_sig is over CanonicalSignedBytes with domain
@@ -611,7 +915,7 @@ type MsgValidation struct {
 
 func (x *MsgValidation) Reset() {
 	*x = MsgValidation{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	mi := &file_devshard_v1_tx_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -623,7 +927,7 @@ func (x *MsgValidation) String() string {
 func (*MsgValidation) ProtoMessage() {}
 
 func (x *MsgValidation) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	mi := &file_devshard_v1_tx_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -636,7 +940,7 @@ func (x *MsgValidation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgValidation.ProtoReflect.Descriptor instead.
 func (*MsgValidation) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{7}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *MsgValidation) GetInferenceId() uint64 {
@@ -689,7 +993,7 @@ type MsgValidationVote struct {
 
 func (x *MsgValidationVote) Reset() {
 	*x = MsgValidationVote{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	mi := &file_devshard_v1_tx_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -701,7 +1005,7 @@ func (x *MsgValidationVote) String() string {
 func (*MsgValidationVote) ProtoMessage() {}
 
 func (x *MsgValidationVote) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	mi := &file_devshard_v1_tx_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -714,7 +1018,7 @@ func (x *MsgValidationVote) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgValidationVote.ProtoReflect.Descriptor instead.
 func (*MsgValidationVote) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{8}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *MsgValidationVote) GetInferenceId() uint64 {
@@ -765,7 +1069,7 @@ type MsgRevealSeed struct {
 
 func (x *MsgRevealSeed) Reset() {
 	*x = MsgRevealSeed{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[9]
+	mi := &file_devshard_v1_tx_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -777,7 +1081,7 @@ func (x *MsgRevealSeed) String() string {
 func (*MsgRevealSeed) ProtoMessage() {}
 
 func (x *MsgRevealSeed) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[9]
+	mi := &file_devshard_v1_tx_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -790,7 +1094,7 @@ func (x *MsgRevealSeed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgRevealSeed.ProtoReflect.Descriptor instead.
 func (*MsgRevealSeed) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{9}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *MsgRevealSeed) GetSlotId() uint32 {
@@ -829,7 +1133,7 @@ type MsgFinalizeRound struct {
 
 func (x *MsgFinalizeRound) Reset() {
 	*x = MsgFinalizeRound{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[10]
+	mi := &file_devshard_v1_tx_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -841,7 +1145,7 @@ func (x *MsgFinalizeRound) String() string {
 func (*MsgFinalizeRound) ProtoMessage() {}
 
 func (x *MsgFinalizeRound) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[10]
+	mi := &file_devshard_v1_tx_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -854,7 +1158,7 @@ func (x *MsgFinalizeRound) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgFinalizeRound.ProtoReflect.Descriptor instead.
 func (*MsgFinalizeRound) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{10}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{12}
 }
 
 var File_devshard_v1_tx_proto protoreflect.FileDescriptor
@@ -908,7 +1212,17 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
 	"voter_slot\x18\x01 \x01(\rR\tvoterSlot\x12\x16\n" +
 	"\x06accept\x18\x02 \x01(\bR\x06accept\x12\x1c\n" +
-	"\tsignature\x18\x03 \x01(\fR\tsignature\"\xaf\x01\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\"c\n" +
+	"\fMsgChallenge\x12!\n" +
+	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x120\n" +
+	"\x05votes\x18\x02 \x03(\v2\x1a.devshard.v1.ChallengeVoteR\x05votes\"\xd0\x01\n" +
+	"\rChallengeVote\x12\x1d\n" +
+	"\n" +
+	"voter_slot\x18\x01 \x01(\rR\tvoterSlot\x121\n" +
+	"\x05fault\x18\x02 \x01(\x0e2\x1b.devshard.v1.ChallengeFaultR\x05fault\x121\n" +
+	"\x05check\x18\x03 \x01(\x0e2\x1b.devshard.v1.ChallengeCheckR\x05check\x12\x1c\n" +
+	"\tdeviation\x18\x04 \x01(\x03R\tdeviation\x12\x1c\n" +
+	"\tsignature\x18\x05 \x01(\fR\tsignature\"\xaf\x01\n" +
 	"\rMsgValidation\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12%\n" +
 	"\x0evalidator_slot\x18\x02 \x01(\rR\rvalidatorSlot\x12\x14\n" +
@@ -932,7 +1246,21 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\rTimeoutReason\x12\x1e\n" +
 	"\x1aTIMEOUT_REASON_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TIMEOUT_REASON_REFUSED\x10\x01\x12\x1c\n" +
-	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\"\x04\b\x03\x10\x03*\x14TIMEOUT_REASON_ERRORB\x10Z\x0edevshard/typesb\x06proto3"
+	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\"\x04\b\x03\x10\x03*\x14TIMEOUT_REASON_ERROR*{\n" +
+	"\x0fChallengeReason\x12 \n" +
+	"\x1cCHALLENGE_REASON_UNSPECIFIED\x10\x00\x12#\n" +
+	"\x1fCHALLENGE_REASON_STREAM_UNBOUND\x10\x01\x12!\n" +
+	"\x1dCHALLENGE_REASON_EMPTY_STREAM\x10\x02*\xbc\x01\n" +
+	"\x0eChallengeFault\x12\x18\n" +
+	"\x14CHALLENGE_FAULT_NONE\x10\x00\x12'\n" +
+	"#CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE\x10\x01\x12!\n" +
+	"\x1dCHALLENGE_FAULT_HASH_MISMATCH\x10\x02\x12 \n" +
+	"\x1cCHALLENGE_FAULT_EMPTY_STREAM\x10\x03\x12\"\n" +
+	"\x1eCHALLENGE_FAULT_USAGE_INFLATED\x10\x04*j\n" +
+	"\x0eChallengeCheck\x12\x1f\n" +
+	"\x1bCHALLENGE_CHECK_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14CHALLENGE_CHECK_HASH\x10\x01\x12\x1d\n" +
+	"\x19CHALLENGE_CHECK_POSITIONS\x10\x02B\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_tx_proto_rawDescOnce sync.Once
@@ -946,31 +1274,39 @@ func file_devshard_v1_tx_proto_rawDescGZIP() []byte {
 	return file_devshard_v1_tx_proto_rawDescData
 }
 
-var file_devshard_v1_tx_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_devshard_v1_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_devshard_v1_tx_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_devshard_v1_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_devshard_v1_tx_proto_goTypes = []any{
 	(TimeoutReason)(0),          // 0: devshard.v1.TimeoutReason
-	(*MsgStartInference)(nil),   // 1: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),     // 2: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),  // 3: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil), // 4: devshard.v1.MsgTimeoutInference
-	(*TimeoutVote)(nil),         // 5: devshard.v1.TimeoutVote
-	(*MsgErrorMiss)(nil),        // 6: devshard.v1.MsgErrorMiss
-	(*ErrorMissVote)(nil),       // 7: devshard.v1.ErrorMissVote
-	(*MsgValidation)(nil),       // 8: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),   // 9: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),       // 10: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),    // 11: devshard.v1.MsgFinalizeRound
+	(ChallengeReason)(0),        // 1: devshard.v1.ChallengeReason
+	(ChallengeFault)(0),         // 2: devshard.v1.ChallengeFault
+	(ChallengeCheck)(0),         // 3: devshard.v1.ChallengeCheck
+	(*MsgStartInference)(nil),   // 4: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),     // 5: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),  // 6: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil), // 7: devshard.v1.MsgTimeoutInference
+	(*TimeoutVote)(nil),         // 8: devshard.v1.TimeoutVote
+	(*MsgErrorMiss)(nil),        // 9: devshard.v1.MsgErrorMiss
+	(*ErrorMissVote)(nil),       // 10: devshard.v1.ErrorMissVote
+	(*MsgChallenge)(nil),        // 11: devshard.v1.MsgChallenge
+	(*ChallengeVote)(nil),       // 12: devshard.v1.ChallengeVote
+	(*MsgValidation)(nil),       // 13: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),   // 14: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),       // 15: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),    // 16: devshard.v1.MsgFinalizeRound
 }
 var file_devshard_v1_tx_proto_depIdxs = []int32{
-	0, // 0: devshard.v1.MsgTimeoutInference.reason:type_name -> devshard.v1.TimeoutReason
-	5, // 1: devshard.v1.MsgTimeoutInference.votes:type_name -> devshard.v1.TimeoutVote
-	7, // 2: devshard.v1.MsgErrorMiss.votes:type_name -> devshard.v1.ErrorMissVote
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: devshard.v1.MsgTimeoutInference.reason:type_name -> devshard.v1.TimeoutReason
+	8,  // 1: devshard.v1.MsgTimeoutInference.votes:type_name -> devshard.v1.TimeoutVote
+	10, // 2: devshard.v1.MsgErrorMiss.votes:type_name -> devshard.v1.ErrorMissVote
+	12, // 3: devshard.v1.MsgChallenge.votes:type_name -> devshard.v1.ChallengeVote
+	2,  // 4: devshard.v1.ChallengeVote.fault:type_name -> devshard.v1.ChallengeFault
+	3,  // 5: devshard.v1.ChallengeVote.check:type_name -> devshard.v1.ChallengeCheck
+	6,  // [6:6] is the sub-list for method output_type
+	6,  // [6:6] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_tx_proto_init() }
@@ -983,8 +1319,8 @@ func file_devshard_v1_tx_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_tx_proto_rawDesc), len(file_devshard_v1_tx_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   11,
+			NumEnums:      4,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -31,14 +31,15 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 		LatestNonce:   9,
 		Inferences: map[uint64]*InferenceRecord{
 			1: {
-				Status:       StatusStarted,
-				ExecutorSlot: 0,
-				Model:        "model-a",
-				PromptHash:   []byte("prompt"),
-				InputLength:  10,
-				MaxTokens:    100,
-				ReservedCost: 50,
-				ValidatedBy:  Bitmap128{1, 0},
+				Status:          StatusStarted,
+				ExecutorSlot:    0,
+				Model:           "model-a",
+				PromptHash:      []byte("prompt"),
+				InputLength:     10,
+				MaxTokens:       100,
+				ReservedCost:    50,
+				ValidatedBy:     Bitmap128{1, 0},
+				UsageChallenged: true,
 			},
 		},
 		HostStats: map[uint32]*HostStats{
