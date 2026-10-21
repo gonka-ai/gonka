@@ -283,25 +283,51 @@ func (s *Session) RunChallenge(ctx context.Context, nonce uint64, reason types.C
 	if len(votes) == 0 {
 		return result, nil
 	}
-	_, sendErr := s.sendPendingDiff(ctx, []*types.DevshardTx{challengeTx(nonce, votes)}, nil)
+	diff, sendErr := s.sendPendingDiff(ctx, []*types.DevshardTx{challengeTx(nonce, votes)}, nil)
+	applied := diffCarriesChallenge(diff, nonce)
 	after, ok := s.sm.Inference(nonce)
-	if !ok || !after.UsageChallenged {
+	switch {
+	case ok && after.UsageChallenged:
+		result.Invalidated = after.Status == types.StatusInvalidated
+	case !ok && applied:
+		// The record left the live map in the challenge's own diff: the
+		// verdict made it terminal, and the auto-seal takes a terminal record
+		// as soon as its nonce gate clears, in the same apply. The sealed
+		// record keeps the status; without one, the vote weight the state
+		// machine tallied says the same.
+		if sealed, found := s.sm.LookupSealedInference(nonce); found {
+			result.Invalidated = sealed.Status == types.StatusInvalidated
+		} else {
+			result.Invalidated = result.Faults > result.Threshold
+		}
+	default:
 		if sendErr != nil {
 			return result, fmt.Errorf("send challenge diff: %w", sendErr)
 		}
-		if ok && after.Status != types.StatusFinished {
-			// A replay vote moved the record while the votes were collected;
-			// the state machine refuses a challenge on it, as designed.
+		if !ok || after.Status != types.StatusFinished {
+			// A replay vote moved the record while the votes were collected,
+			// and a terminal record may already be sealed; the state machine
+			// refuses a challenge on it, as designed.
 			result.ReplayFirst = true
 			return result, nil
 		}
 		return result, fmt.Errorf("inference %d challenge not applied", nonce)
 	}
-	result.Invalidated = after.Status == types.StatusInvalidated
 	if sendErr != nil {
 		return result, fmt.Errorf("send challenge diff: %w", sendErr)
 	}
 	return result, nil
+}
+
+// diffCarriesChallenge reports whether the diff holds the MsgChallenge of the
+// inference: best-effort composition leaves out a tx the state machine refused.
+func diffCarriesChallenge(diff types.Diff, inferenceID uint64) bool {
+	for _, tx := range diff.Txs {
+		if c := tx.GetChallenge(); c != nil && c.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
 }
 
 func challengeTx(inferenceID uint64, votes []*types.ChallengeVote) *types.DevshardTx {
