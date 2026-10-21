@@ -116,7 +116,7 @@ margin = s_best − s_claimed          where s_k = cos(q, c_k)
 
 ### Chain integration
 
-The scheme is chosen per model on chain (`PocSchemeParams.scheme`: PREFILL or DECODE) and frozen for the epoch, so all nodes in an epoch mine and validate under the same scheme. Moving a model from prefill to decode is a governance parameter change; the switch takes effect at the next epoch boundary and keeps the previous coefficients. One MLNode serves both schemes, selected per request by `params.scheme`.
+The scheme is chosen on chain for the whole network (`PocParams.poc_scheme`: PREFILL or DECODE) and frozen for the epoch, so all nodes in an epoch mine and validate under the same scheme. Moving from prefill to decode is a governance parameter change; the switch takes effect at the next epoch boundary and keeps the previous coefficients. One MLNode serves both schemes, selected per request by `params.scheme`.
 
 
 ## Fraud resistance
@@ -126,7 +126,7 @@ The scheme is chosen per model on chain (`PocSchemeParams.scheme`: PREFILL or DE
 - Every step reads the KV cache written by the prefill and all earlier steps. Skipping steps or replacing decode with a prefill pass changes the attention inputs and the trajectory.
 - Hardcoding the point instead of deriving it from real computation was verified not to be viable: hardcoded variants consistently diverge from the honest pipeline.
 - Even two honest runs never match to the last bit, because different GPUs round the arithmetic slightly differently. Such differences only flip a snap when the query sits on a cell boundary, and then the margin is small. The margin rule forgives these flips, while a cheaper model or lower precision moves the query into a clearly different cell.
-- A claimed id outside the codebook gets margin 2.0. A nonce whose computation produced non-finite values is dropped from the artifacts and leaves the validation sample instead of counting as a pass.
+- A claimed id outside the codebook gets margin 2.0. A nonce whose computation produced non-finite values is dropped from the artifacts; in validation, any such nonce makes the validator abstain from the whole vote instead of counting as a pass.
 
 
 ## Results
@@ -174,7 +174,7 @@ Golden reference trajectories for the current scheme (200 nonces each, 257 steps
 
 PoC runs in its most performant configuration, the same one production inference uses: **CUDA-graph execution** and **large batches**. This is a fairness measure, not only a speed one. When the proof runs as efficiently as real inference, there is no gap between "being fast at PoC" and "being fast at the actual job," so a node cannot tune its setup to score well on the proof while serving inference slowly.
 
-In the current implementation every PoC nonce is an ordinary engine request: it goes through vLLM's scheduler, gets KV blocks from the same KV-cache manager as chat (no reserved blocks), and runs one decode step per scheduler step. All PoC transforms (synthetic embeddings, reflections, seeded routing, the snap) run inside the captured graph. Models that run without `torch.compile` keep a second graph set for batches containing PoC rows, so chat graphs carry no PoC overhead. While PoC rows are live, new chat work is paused and resumes afterwards; a PoC row that needs slots held by paused chat preempts the lowest-priority chat request. Decode mining keeps up to `batch_size` nonces in flight and starts them in staggered groups, so artifacts are published continuously instead of in whole-round bursts.
+In the current implementation every PoC nonce is an ordinary engine request: it goes through vLLM's scheduler, gets KV blocks from the same KV-cache manager as chat (no reserved blocks), and runs one decode step per scheduler step. All PoC transforms (synthetic embeddings, reflections, seeded routing, the snap) run inside the captured graph. Models that run without `torch.compile` keep a second graph set for batches containing PoC rows, so chat graphs carry no PoC overhead. During mining, chat gets 503. During validation, while PoC rows are live, chat work is paused and resumes afterwards; a PoC row that needs slots held by paused chat preempts the lowest-priority chat request. Decode mining keeps up to `batch_size` nonces in flight and starts them in staggered groups, so artifacts are published continuously instead of in whole-round bursts.
 
 August measurement (v0.20 prototype, MiniMax-M2), as the **overhead ratio** (proof throughput divided by the node's normal chat throughput):
 
@@ -209,6 +209,6 @@ A core deliverable of this project was re-building PoC as a **CUDA-graph-based a
 | Threshold | one value | τ per model on chain |
 | Pre-snap vector | recorded per token as a fallback | optional (`poc_vector_artifacts`), evidence only |
 | Execution | separate PoC loop in CUDA graphs | PoC nonces are engine requests: shared scheduler, KV cache and graphs |
-| Chat during PoC | shared | paused while PoC rows are live |
-| Scheme selection | decode only | prefill or decode per model, frozen per epoch on chain |
+| Chat during PoC | shared | 503 during mining, paused during validation |
+| Scheme selection | decode only | prefill or decode for the whole network, frozen per epoch on chain |
 | MoE routing | route window 256 | seeded contiguous expert run, single ladder base |
