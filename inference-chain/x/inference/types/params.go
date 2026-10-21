@@ -92,6 +92,7 @@ const (
 	DefaultLogprobsMode   = LogprobsModeProcessed
 
 	DefaultPocValidationVoteThresholdBps uint32 = 5000
+	DefaultPocValidationSampleSize              = 200
 )
 
 const (
@@ -278,7 +279,7 @@ func DefaultValidationParams() *ValidationParams {
 func DefaultPocParams() *PocParams {
 	return &PocParams{
 		DefaultDifficulty:            5,
-		ValidationSampleSize:         200,
+		ValidationSampleSize:         DefaultPocValidationSampleSize,
 		PocDataPruningEpochThreshold: 1,
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
@@ -943,6 +944,9 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	if p.ValidationSampleSize < 0 {
+		return fmt.Errorf("poc_params.validation_sample_size cannot be negative")
+	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
 		if model == nil {
@@ -957,6 +961,15 @@ func (p *PocParams) Validate() error {
 		if model.SeqLen < 0 {
 			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
 		}
+		if minCount := model.GetStatTest().GetMinCount(); minCount > 0 && int64(minCount) > p.EffectiveValidationSampleSize() {
+			return fmt.Errorf(
+				"poc_params.models[%q].stat_test.min_count %d exceeds validation_sample_size %d",
+				model.ModelId, minCount, p.EffectiveValidationSampleSize(),
+			)
+		}
+	}
+	if p.GetStatTest().GetMinCount() != 0 {
+		return fmt.Errorf("poc_params.stat_test.min_count is not supported, use poc_params.models[*].stat_test.min_count")
 	}
 	if p.DynamicCoefficientParams != nil {
 		if err := p.validateDynamicCoefficientParams(); err != nil {
@@ -1654,6 +1667,21 @@ func (p *PocParams) GetPrimaryModelConfig() *PoCModelConfig {
 		return DefaultPoCModelConfig()
 	}
 	return configs[0]
+}
+
+func (p *PocParams) EffectiveValidationSampleSize() int64 {
+	if p == nil || p.ValidationSampleSize == 0 {
+		return DefaultPocValidationSampleSize
+	}
+	return int64(p.ValidationSampleSize)
+}
+
+func (p *PocParams) MinCommitCount(modelID string) uint32 {
+	config, ok := p.GetModelConfig(modelID)
+	if !ok {
+		return 0
+	}
+	return config.GetStatTest().GetMinCount()
 }
 
 func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {
