@@ -622,6 +622,7 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	e.picker.start()
 	if session != nil {
 		session.SetServedBindingHandler(e.handleServedBinding)
+		session.SetChallengeHandler(e.handleChallenge)
 	}
 	return e
 }
@@ -2452,10 +2453,22 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 					"panic", fmt.Sprint(r),
 					"stack", string(debug.Stack()),
 				)
+				// The gateway's own failure, not the executor's stream: closed
+				// with nothing to challenge, or the stream would be challenged
+				// as open past the grace.
+				if e.session != nil {
+					e.session.StreamEnded(inf.nonce)
+				}
 			}
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
+		if e.session != nil {
+			e.session.StreamOpened(inf.nonce)
+		}
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		// Read before the deferred cancel: a cancelled attempt context means
+		// the gateway cut this stream itself (race loser, drain cap, stop).
+		gatewayCut := attemptCtx.Err() != nil
 		inf.markEnded(time.Now())
 		if inf.preludeOverflow.Load() {
 			inf.err = errPendingPreludeTooLarge
@@ -2481,6 +2494,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
 			e.maybeRecordVersionRefusal(inf)
+			e.closeAttemptStream(inf, gatewayCut || phaseTransitionCut(inf))
 			return
 		}
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed",
@@ -2546,9 +2560,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"poc_reason", currentPoCPhaseReason(),
 			)
 		}
-		if e.session != nil && bindsReceivedStream(inf) {
-			e.session.BindReceivedStream(inf.nonce, inf.resp.ReceivedResponseHashes)
-		}
+		e.closeAttemptStream(inf, gatewayCut)
 	}()
 }
 
