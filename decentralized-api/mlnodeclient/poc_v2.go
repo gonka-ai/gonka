@@ -30,16 +30,17 @@ type GeneratedArtifactBatchV2 struct {
 
 // ValidatedResultV2 is the V2 validated-artifacts callback payload.
 type ValidatedResultV2 struct {
-	RequestId      string  `json:"request_id,omitempty"`
-	BlockHash      string  `json:"block_hash,omitempty"`
-	BlockHeight    int64   `json:"block_height,omitempty"`
-	PublicKey      string  `json:"public_key,omitempty"`
-	NodeId         int     `json:"node_id,omitempty"`
-	NTotal         int64   `json:"n_total"`
-	NMismatch      int64   `json:"n_mismatch"`
-	MismatchNonces []int64 `json:"mismatch_nonces"`
-	PValue         float64 `json:"p_value"`
-	FraudDetected  bool    `json:"fraud_detected"`
+	RequestId          string  `json:"request_id,omitempty"`
+	BlockHash          string  `json:"block_hash,omitempty"`
+	BlockHeight        int64   `json:"block_height,omitempty"`
+	PublicKey          string  `json:"public_key,omitempty"`
+	NodeId             int     `json:"node_id,omitempty"`
+	NTotal             int64   `json:"n_total"`
+	NMismatch          int64   `json:"n_mismatch"`
+	MismatchNonces     []int64 `json:"mismatch_nonces"`
+	PValue             float64 `json:"p_value"`
+	FraudDetected      bool    `json:"fraud_detected"`
+	InsufficientSample bool    `json:"insufficient_sample,omitempty"`
 }
 
 // ToValidatedWeight returns NTotal (sample size) on success, -1 on fraud/failure.

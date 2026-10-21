@@ -135,6 +135,11 @@ func buildValidationCallbackURL(callbackBase, modelID string) string {
 	return callbackBase + "/v2/poc-batches/" + url.PathEscape(url.PathEscape(modelID))
 }
 
+func belowMinCommitCount(pocParams *types.PocParams, modelID string, count uint32) bool {
+	minCount := pocParams.MinCommitCount(modelID)
+	return minCount > 0 && count < minCount
+}
+
 // absInt32 returns the absolute value of an int32 as int64,
 // safely handling math.MinInt32 which overflows when negated in int32.
 func absInt32(n int32) int64 {
@@ -388,6 +393,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	workItems := make([]participantWork, 0, len(commitsResp.Commits))
 	skippedNotAssigned := 0
 	skippedExcludedModel := 0
+	skippedBelowMinCount := 0
 	authoritativeModelAllowlist := hasModelList(snapshotFound, modelSampling)
 	for _, commit := range commitsResp.Commits {
 		if authoritativeModelAllowlist {
@@ -395,6 +401,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				skippedExcludedModel++
 				continue
 			}
+		}
+
+		if belowMinCommitCount(pocParams, commit.ModelId, commit.Count) {
+			skippedBelowMinCount++
+			continue
 		}
 
 		// If sampling is enabled, check if we're assigned to validate this participant-model pair.
@@ -456,6 +467,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			"assignedToUs", len(workItems),
 			"skippedNotAssigned", skippedNotAssigned,
 			"skippedExcludedModel", skippedExcludedModel,
+			"skippedBelowMinCount", skippedBelowMinCount,
 		)
 	}
 

@@ -516,6 +516,8 @@ data class PoCStatTestParams(
     val pMismatch: Decimal? = null,
     @SerializedName("p_value_threshold")
     val pValueThreshold: Decimal? = null,
+    @SerializedName("min_count")
+    val minCount: Long = 0,
 )
 
 data class PoCModelParams(
