@@ -944,6 +944,16 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	am.LogInfo("ComputeNewWeights: Found inference-serving nodes", types.PoC,
 		"inferenceServingNodeIds", inferenceServingNodeIds)
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting params", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return computedWeights{}
+	}
+	allStoreCommits = am.dropCommitsBelowMinCount(allStoreCommits, params.PocParams)
+
 	// Filter out store commits with distributions that only have inference-serving nodes
 	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(allStoreCommits, allWeightDistributions, inferenceServingNodeIds)
 
@@ -1036,14 +1046,6 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	}
 
 	// Create weight calculator and calculate
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting params", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		return computedWeights{}
-	}
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
 	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
 	guardianSet := make(map[string]bool, len(guardianAddrs))
@@ -1189,6 +1191,25 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		participants: allActiveParticipants,
 		freshNodeIDs: freshNodeIDs,
 	}
+}
+
+func (am AppModule) dropCommitsBelowMinCount(
+	commits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+	pocParams *types.PocParams,
+) map[types.PoCParticipantModelKey]types.PoCV2StoreCommit {
+	kept := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, len(commits))
+	for key, commit := range commits {
+		if minCount := pocParams.MinCommitCount(key.ModelID); minCount > 0 && commit.Count < minCount {
+			am.LogWarn("PoC commit below min_count, no PoC weight", types.PoC,
+				"participant", key.ParticipantAddress,
+				"modelId", key.ModelID,
+				"count", commit.Count,
+				"minCount", minCount)
+			continue
+		}
+		kept[key] = commit
+	}
+	return kept
 }
 
 // filterStoreCommitsFromInferenceNodes filters store commits and their weight distributions

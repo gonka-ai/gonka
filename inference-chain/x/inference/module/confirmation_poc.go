@@ -560,6 +560,14 @@ func (am AppModule) updateConfirmationWeightsV2(
 		return nil
 	}
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
+		return nil
+	}
+
+	storeCommits = am.dropCommitsBelowMinCount(storeCommits, params.PocParams)
+
 	// Get weight distributions for per-node weights
 	weightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, event.TriggerHeight)
 	if err != nil {
@@ -614,12 +622,6 @@ func (am AppModule) updateConfirmationWeightsV2(
 	am.LogInfo("calculateConfirmationPoCWeight: Resolved guardian addresses", types.PoC,
 		"guardianEnabled", guardianEnabled,
 		"guardianAccAddrs", guardianAccAddrs)
-
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
-		return nil
-	}
 
 	var appHash string
 	var validationSlots int
