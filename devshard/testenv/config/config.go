@@ -115,6 +115,8 @@ type MockDapiCfg struct {
 	GRPCPort int    `yaml:"grpc_port"`
 	HTTPPort int    `yaml:"http_port"`
 	Host     string `yaml:"host"`
+	// AnnounceVersion makes /versions name versiond.version_name instead of the built-in v2.
+	AnnounceVersion bool `yaml:"announce_version,omitempty"`
 }
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
@@ -156,13 +158,16 @@ type VersiondCfg struct {
 	KeyringPassword          string `yaml:"keyring_password"`
 	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
 	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
+	// Image runs this prebuilt image instead of building versiond from the checkout.
+	Image string `yaml:"image,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
 type VersiondRouterCfg struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	IP   string `yaml:"ip"`
+	Host  string `yaml:"host"`
+	Port  int    `yaml:"port"`
+	IP    string `yaml:"ip"`
+	Image string `yaml:"image,omitempty"`
 }
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
@@ -171,6 +176,7 @@ type DevshardctlCfg struct {
 	Port      int    `yaml:"port"`
 	StatsPort int    `yaml:"stats_port"`
 	IP        string `yaml:"ip"`
+	Image     string `yaml:"image,omitempty"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.

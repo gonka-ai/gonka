@@ -32,6 +32,8 @@ type RunnerConfig struct {
 	MetricsInterval time.Duration
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
+	// Build runs prebuilt artifacts instead of building them from the checkout.
+	Build *Build
 }
 
 type RunResult struct {
@@ -209,13 +211,24 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
+	devshardd := filepath.Join(opts.TestenvDir, "..", "..", "build", "devshardd")
+	if opts.Build != nil {
+		devshardd = opts.Build.Devshardd
+		if err := recordBuild(ctx, opts.Build, opts.OutputDir); err != nil {
+			return RunResult{}, err
+		}
+		log.Printf("loadtest: build=%s protocol=%s binary=%s", opts.Build.Name, opts.Build.Protocol, opts.Build.BinaryVersion)
+	}
+	if err := requireTestenvHooks(scenario, devshardd); err != nil {
+		return RunResult{}, err
+	}
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
 	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8080 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
-		if err := writeRunnerConfig(opts.TestenvDir, workDir, scenario, profiles, replaySelector != nil, replayModels); err != nil {
+		if err := writeRunnerConfig(opts.TestenvDir, workDir, scenario, profiles, replaySelector != nil, replayModels, opts.Build); err != nil {
 			return RunResult{}, err
 		}
 		if err := runCommand(ctx, opts.TestenvDir, "go", "run", "./cmd/gencompose", "-config", filepath.Join(workDir, "config.yaml"), "-out", composePath); err != nil {
@@ -224,7 +237,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err := fixComposePaths(composePath, opts.TestenvDir); err != nil {
 			return RunResult{}, err
 		}
-		if err := checkChildBinaryArch(filepath.Join(opts.TestenvDir, "..", "..", "build", "devshardd"), dockerArch); err != nil {
+		if err := checkChildBinaryArch(devshardd, dockerArch); err != nil {
 			return RunResult{}, err
 		}
 		err := runCommandWithEnv(ctx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
@@ -569,7 +582,7 @@ func baseRunnerConfig(testenvDir string) (*config.File, error) {
 	return cfg, nil
 }
 
-func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile, replayEnabled bool, replayModels []string) error {
+func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile, replayEnabled bool, replayModels []string, build *Build) error {
 	cfg, err := baseRunnerConfig(testenvDir)
 	if err != nil {
 		return err
@@ -580,6 +593,9 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
 	configureParticipants(cfg, scenario.Topology.Participants)
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
+	if build != nil {
+		build.apply(cfg)
+	}
 	if scenario.Protocol.RefusalTimeout != "" {
 		refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
 		if err != nil {

@@ -78,7 +78,11 @@ services:
       MOCK_DAPI_HOST_ADDRS: "{{ mockDapiHostAddrsEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
-      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+{{ if .MockDapi.AnnounceVersion }}      # The routing catalog and versiond reconcile must name the version the hosts run.
+      MOCK_DAPI_VERSION_NAME: "{{ .Versiond.VersionName }}"
+      MOCK_DAPI_VERSION_BINARY: "file://{{ .Versiond.OverridePath }}"
+      MOCK_DAPI_VERSION_SHA256: "0000000000000000000000000000000000000000000000000000000000000000"
+{{ end }}      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
@@ -168,11 +172,12 @@ services:
 {{ range .Hosts }}
 
   {{ .ID }}:
-    build:
+{{ if $.Versiond.Image }}    image: {{ $.Versiond.Image }}
+{{ else }}    build:
       context: ../../versioned
       dockerfile: Dockerfile
     image: devshard-versiond:latest
-    environment:
+{{ end }}    environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
       VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
@@ -286,11 +291,12 @@ services:
 {{ end }}
 
   versiond-router:
-    build:
+{{ if .VersiondRouter.Image }}    image: {{ .VersiondRouter.Image }}
+{{ else }}    build:
       context: ../..
       dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
-    environment:
+{{ end }}    environment:
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_PORT: "8080"
@@ -331,14 +337,15 @@ services:
     restart: unless-stopped
 
   devshardctl:
-    build:
+{{ if .Devshardctl.Image }}    image: {{ .Devshardctl.Image }}
+{{ else }}    build:
       context: ../..
       dockerfile: devshard/Dockerfile
       target: devshardctl-runtime
       args:
         DEVSHARD_VERSION: "{{ .Versiond.VersionName }}"
     image: devshard-runtime:latest
-    entrypoint: ["devshardctl"]
+{{ end }}    entrypoint: ["devshardctl"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
       DEVSHARD_STATS_PORT: "{{ .Devshardctl.StatsPort }}"

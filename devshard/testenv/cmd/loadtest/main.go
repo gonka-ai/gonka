@@ -27,6 +27,7 @@ func main() {
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
+	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
 	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
 	flag.Parse()
 	if *recheckDir != "" {
@@ -62,6 +63,12 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var build *loadtest.Build
+	if *buildPath != "" {
+		if build, err = loadtest.LoadBuild(*buildPath); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if *runTimeout < 0 {
 		log.Fatal("timeout must be positive")
 	}
@@ -94,6 +101,7 @@ func main() {
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
 		StrictXFail:     *strictXFail,
+		Build:           build,
 	})
 	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)

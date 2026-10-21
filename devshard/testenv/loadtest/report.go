@@ -29,6 +29,7 @@ type runReport struct {
 	windows []requestWindowStats
 	ladder  ladderReport
 	health  *harnessHealth
+	build   *BuildRecord
 }
 
 // WriteReport renders the run's fixed-template report from its artifacts
@@ -56,6 +57,9 @@ func loadRunReport(outputDir string) (runReport, error) {
 	}
 	run.passed, run.checks = assertions.Passed, assertions.Checks
 	if err := readReportArtifact(outputDir, "summary.json", false, &run.summary); err != nil {
+		return run, err
+	}
+	if err := readReportArtifact(outputDir, buildFileName, false, &run.build); err != nil {
 		return run, err
 	}
 	if err := readReportArtifact(outputDir, "events.json", false, &run.events); err != nil {
@@ -141,6 +145,9 @@ func (r runReport) render(runName string) string {
 		countCells = append(countCells, fmt.Sprintf("%s: %d", status, counts[status]))
 	}
 	fmt.Fprintf(&out, "# Load test report: %s, seed %d, %s\n\n", r.summary.Scenario, r.summary.Seed, runName)
+	if r.build != nil {
+		fmt.Fprintf(&out, "Build: %s, protocol %s, binary %s, devshardd sha256 %s.\n\n", r.build.Name, r.build.Protocol, r.build.BinaryVersion, r.build.DevsharddSHA256)
+	}
 	fmt.Fprintf(&out, "Verdict: %s. %s\n\n", verdict, strings.Join(countCells, " · "))
 	r.renderStalledShare(&out)
 	out.WriteString("FIX: a bound was broken and needs a fix. XPASS: a known bug no longer reproduces; drop its marker. INVALID: a harness stall covers the check. XFAIL: a known bug failed as expected. NOT_JUDGED: the run left no data for the check. PASS: the bound held.\n")

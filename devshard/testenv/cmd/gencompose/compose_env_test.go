@@ -97,3 +97,51 @@ func TestWriteCompose_PerHostStorageMode(t *testing.T) {
 	require.Equal(t, "postgres", envs["versiond-0"]["DEVSHARD_STORAGE_MODE"])
 	require.Equal(t, "postgres", envs["versiond-1"]["DEVSHARD_STORAGE_MODE"])
 }
+
+// Test flow:
+// 1. Render compose from the defaults and check versiond, versiond-router and devshardctl build from the checkout.
+// 2. Name a prebuilt image for each and render again.
+// 3. Check each of the three runs its image and has no build section, while the mocks still build.
+// 4. Check mock-dapi names no version by default and the hosts' version when asked, which the router catalog and versiond follow.
+func TestWriteCompose_PrebuiltImages(t *testing.T) {
+	type service struct {
+		Image string         `yaml:"image"`
+		Build map[string]any `yaml:"build"`
+	}
+	render := func(cfg *config.File) map[string]service {
+		outPath := filepath.Join(t.TempDir(), "docker-compose.yml")
+		require.NoError(t, writeCompose(cfg, outPath))
+		body, err := os.ReadFile(outPath)
+		require.NoError(t, err)
+		var compose struct {
+			Services map[string]service `yaml:"services"`
+		}
+		require.NoError(t, yaml.Unmarshal(body, &compose))
+		return compose.Services
+	}
+	cfg := perHostEnvConfig(t)
+	services := render(cfg)
+	require.NotContains(t, renderServices(t, cfg)["mock-dapi"], "MOCK_DAPI_VERSION_NAME")
+	require.Equal(t, "devshard-versiond:latest", services["versiond-0"].Image)
+	require.NotEmpty(t, services["versiond-0"].Build)
+	require.NotEmpty(t, services["versiond-router"].Build)
+	require.NotEmpty(t, services["devshardctl"].Build)
+
+	cfg.Versiond.Image = "lab/versiond:67230e4dcc0a"
+	cfg.VersiondRouter.Image = "lab/versiond-router:67230e4dcc0a"
+	cfg.Devshardctl.Image = "lab/devshard-gateway:67230e4dcc0a"
+	services = render(cfg)
+	for _, host := range cfg.Hosts {
+		require.Equal(t, "lab/versiond:67230e4dcc0a", services[host.ID].Image)
+		require.Empty(t, services[host.ID].Build)
+	}
+	require.Equal(t, "lab/versiond-router:67230e4dcc0a", services["versiond-router"].Image)
+	require.Empty(t, services["versiond-router"].Build)
+	require.Equal(t, "lab/devshard-gateway:67230e4dcc0a", services["devshardctl"].Image)
+	require.Empty(t, services["devshardctl"].Build)
+	require.NotEmpty(t, services["mock-chain"].Build)
+
+	cfg.Versiond.VersionName = "v6"
+	cfg.MockDapi.AnnounceVersion = true
+	require.Equal(t, "v6", renderServices(t, cfg)["mock-dapi"]["MOCK_DAPI_VERSION_NAME"])
+}

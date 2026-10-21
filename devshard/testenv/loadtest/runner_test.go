@@ -528,7 +528,7 @@ func TestWriteRunnerConfigThreadsChunkAFields(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(testenvDir, "config"), 0o755))
 	require.NoError(t, base.Save(filepath.Join(testenvDir, "config", "config.yaml")))
 	workDir := t.TempDir()
-	require.NoError(t, writeRunnerConfig(testenvDir, workDir, scenario, profiles, false, nil))
+	require.NoError(t, writeRunnerConfig(testenvDir, workDir, scenario, profiles, false, nil, nil))
 	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
 	require.NoError(t, err)
 	require.Len(t, cfg.Hosts, 4)
@@ -577,7 +577,7 @@ func TestWriteRunnerConfigWithoutBaseConfig(t *testing.T) {
 	require.NoError(t, scenario.Validate())
 	profiles := map[string]Profile{"fast": {TTFT: "1ms", TokenInterval: "1ms", Workers: 1}}
 	workDir := t.TempDir()
-	require.NoError(t, writeRunnerConfig(t.TempDir(), workDir, scenario, profiles, false, nil))
+	require.NoError(t, writeRunnerConfig(t.TempDir(), workDir, scenario, profiles, false, nil, nil))
 	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
 	require.NoError(t, err)
 	require.Len(t, cfg.Hosts, 6)
