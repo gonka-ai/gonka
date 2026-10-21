@@ -184,6 +184,27 @@ func finishedChallengeSession(t *testing.T) (*Session, []*signing.Secp256k1Signe
 func finishedChallengeSessionOf(t *testing.T, numHosts int) (*Session, []*signing.Secp256k1Signer, uint64, int, []byte) {
 	t.Helper()
 	session, hosts, _ := setupSession(t, numHosts, 100000, 10)
+	nonce, execIdx, responseHash := finishChallengeInference(t, session, hosts, numHosts)
+	return session, hosts, nonce, execIdx, responseHash
+}
+
+// finishedChallengeSessionSealingEveryNonce is finishedChallengeSession on a
+// session that evaluates the auto-seal at every nonce with a one-nonce grace:
+// a record that turns terminal in a diff is sealed in that same diff.
+func finishedChallengeSessionSealingEveryNonce(t *testing.T) (*Session, []*signing.Secp256k1Signer, uint64, int, []byte) {
+	t.Helper()
+	config := testutil.DefaultConfig(3)
+	config.AutoSealEveryNNonces = 1
+	config.InferenceSealGraceNonces = 1
+	session, hosts, _ := setupSessionWithConfigAndEngine(t, 3, 100000, 10, config, nil)
+	nonce, execIdx, responseHash := finishChallengeInference(t, session, hosts, 3)
+	return session, hosts, nonce, execIdx, responseHash
+}
+
+// finishChallengeInference starts, confirms and finishes one inference on the
+// session and returns its nonce, executor and response hash.
+func finishChallengeInference(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, numHosts int) (uint64, int, []byte) {
+	t.Helper()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -199,7 +220,7 @@ func finishedChallengeSessionOf(t *testing.T, numHosts int) (*Session, []*signin
 	require.True(t, ok)
 	require.Equal(t, types.StatusFinished, rec.Status)
 	require.Equal(t, uint32(numHosts/2), session.StateMachine().VoteThreshold())
-	return session, hosts, nonce, execIdx, append([]byte(nil), rec.ResponseHash...)
+	return nonce, execIdx, append([]byte(nil), rec.ResponseHash...)
 }
 
 func fastChallengeReask(t *testing.T) {
@@ -266,6 +287,44 @@ func TestRunChallenge_ReasksOnPendingAndInvalidates(t *testing.T) {
 			require.Equal(t, 2, c.askCount(), "nothing is asked for a record that is not Finished")
 		}
 	}
+}
+
+// The challenge's diff can be the diff that seals the record: an invalidated
+// record is terminal, and the auto-seal takes a terminal record as soon as its
+// nonce gate clears, in the same apply. The record is then no longer live when
+// the gateway reads the outcome back, and the verdict has to come from the
+// sealed record: a challenge the state machine applied is not "not applied".
+func TestRunChallenge_ReadsTheVerdictOfARecordSealedInItsOwnDiff(t *testing.T) {
+	session, hosts, nonce, execIdx, responseHash := finishedChallengeSessionSealingEveryNonce(t)
+	for i, c := range session.clients {
+		client := &scriptedChallengeClient{HostClient: c, err: errors.New("the executor is not asked")}
+		if i != execIdx {
+			client.err = nil
+			client.answers = []*transport.VerifyChallengeResponse{
+				signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
+			}
+		}
+		session.clients[i] = client
+	}
+	result, err := session.RunChallenge(context.Background(), nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
+	require.NoError(t, err)
+	require.True(t, result.Invalidated)
+	require.Len(t, result.Votes, 2)
+
+	_, live := session.StateMachine().Inference(nonce)
+	require.False(t, live, "the invalidated record is sealed in the challenge's own diff")
+	require.Contains(t, session.StateMachine().SealedAtOrBefore([]uint64{nonce}, session.Nonce()), nonce)
+	sealed, ok := session.StateMachine().LookupSealedInference(nonce)
+	require.True(t, ok)
+	require.Equal(t, types.StatusInvalidated, sealed.Status)
+	diffs := session.Diffs()
+	var challenge *types.MsgChallenge
+	for _, tx := range diffs[len(diffs)-1].Txs {
+		if c := tx.GetChallenge(); c != nil {
+			challenge = c
+		}
+	}
+	require.NotNil(t, challenge, "the MsgChallenge is in the diff that sealed the record")
 }
 
 // A vote whose signature does not recover to the host that answered is
@@ -489,9 +548,11 @@ func TestRunChallenge_SkipsASessionBeforeTheChallengeProtocol(t *testing.T) {
 			for i, c := range session.clients {
 				clients[i] = &scriptedChallengeClient{HostClient: c, err: errors.New("nothing is asked")}
 				if i != execIdx {
+					// A fault from each voter, so that both are asked: a first NONE
+					// would settle the outcome before the other host is reached.
 					clients[i].err = nil
 					clients[i].answers = []*transport.VerifyChallengeResponse{
-						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_NONE, responseHash),
+						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
 					}
 				}
 				session.clients[i] = clients[i]
@@ -636,9 +697,11 @@ func TestCollectChallengeVotes_ResourceExhaustedWaitsForRetryAfter(t *testing.T)
 				if i == execIdx {
 					continue
 				}
+				// A fault from each voter: with NONE the first answer would settle the
+				// outcome and the second host would not be asked again at all.
 				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", testCase.err)},
 					answers: []*transport.VerifyChallengeResponse{
-						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_NONE, responseHash),
+						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
 					}}
 				verifiers[i] = client
 				limited = append(limited, client)

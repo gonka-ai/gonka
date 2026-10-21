@@ -60,13 +60,19 @@ func setupSessionWithOptions(t *testing.T, numHosts int, balance uint64, grace u
 
 func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace uint64, engines []devshard.InferenceEngine) (*Session, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
 	t.Helper()
+	return setupSessionWithConfigAndEngine(t, numHosts, balance, grace, testutil.DefaultConfig(numHosts), engines)
+}
+
+// setupSessionWithConfigAndEngine is setupSessionWithEngine on a session config
+// of the test's own, for the gates the default config leaves at their defaults.
+func setupSessionWithConfigAndEngine(t *testing.T, numHosts int, balance uint64, grace uint64, config types.SessionConfig, engines []devshard.InferenceEngine) (*Session, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hosts {
 		hosts[i] = testutil.MustGenerateKey(t)
 	}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
-	config := testutil.DefaultConfig(numHosts)
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Create hosts.
