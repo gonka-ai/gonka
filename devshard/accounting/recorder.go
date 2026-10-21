@@ -102,12 +102,13 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 
 	for _, tx := range diff.Txs {
 		// An applied timeout moves HostStats.Missed and a verdict moves
-		// HostStats.Invalid, both on the executor slot. Nothing else in a diff
-		// touches the tallies.
+		// HostStats.Invalid, both on the executor slot. A challenge is a
+		// verdict too: fault votes above the threshold invalidate the record.
+		// Nothing else in a diff touches the tallies.
 		var inferenceID uint64
 		verdict := false
 		statsOnly := false
-		switch timeout, validation, vote, finish, errorMiss := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(), tx.GetFinishInference(), tx.GetErrorMiss(); {
+		switch timeout, validation, vote, finish, errorMiss, challenge := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(), tx.GetFinishInference(), tx.GetErrorMiss(), tx.GetChallenge(); {
 		case finish != nil:
 			inferenceID, statsOnly = finish.InferenceId, true
 		case errorMiss != nil:
@@ -119,6 +120,8 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			validatorSlots = append(validatorSlots, validation.ValidatorSlot)
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
+		case challenge != nil:
+			inferenceID, verdict = challenge.InferenceId, true
 		default:
 			continue
 		}
