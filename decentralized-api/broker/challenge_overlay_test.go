@@ -189,6 +189,7 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	require.NotNil(t, params)
 	require.Equal(t, int64(777), params.startPoCBlockHeight)
 	require.Equal(t, "abcd", params.startPoCBlockHash)
+	require.True(t, params.epochModelsOnly)
 }
 
 func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
@@ -211,6 +212,7 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 	require.NotNil(t, params)
 	require.Equal(t, int64(100), params.startPoCBlockHeight)
 	require.Equal(t, "regular-hash", params.startPoCBlockHash)
+	require.False(t, params.epochModelsOnly)
 }
 
 func TestChallengeGenerateNeedsDispatch(t *testing.T) {

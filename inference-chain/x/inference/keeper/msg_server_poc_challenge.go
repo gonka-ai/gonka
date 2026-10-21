@@ -56,6 +56,9 @@ func (k msgServer) PoCChallengeStoreCommit(goCtx context.Context, msg *types.Msg
 	if err != nil {
 		return nil, sdkerrors.Wrap(types.ErrInvalidAddress, fmt.Sprintf("invalid creator address: %v", err))
 	}
+	if err := k.CheckEpochModelCommit(goCtx, ch.EpochIndex, addr, msg.Entries); err != nil {
+		return nil, err
+	}
 	existingByModel, err := k.loadExistingChallengeCommits(goCtx, addr)
 	if err != nil {
 		return nil, err

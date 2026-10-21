@@ -204,6 +204,12 @@ func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Ms
 		}
 		return ppd.checkMLNodeWeightDistribution(ctx, m)
 
+	case *inferencetypes.MsgPoCChallengeStoreCommit:
+		if ppd.inferenceKeeper == nil {
+			return nil
+		}
+		return ppd.inferenceKeeper.CheckPoCChallengeStoreCommitMempool(ctx, m)
+
 	case *authztypes.MsgExec:
 		// Recursively validate messages inside MsgExec. Fail closed on
 		// unpack errors and nested wrappers — this is a mempool admission filter.

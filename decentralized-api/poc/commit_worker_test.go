@@ -70,7 +70,7 @@ func (s *commitWorkerQueryServer) MLNodeWeightDistribution(_ context.Context, re
 	}, nil
 }
 
-func newCommitWorkerQueryClient(t *testing.T, server *commitWorkerQueryServer) (types.QueryClient, func()) {
+func newCommitWorkerQueryClient(t *testing.T, server types.QueryServer) (types.QueryClient, func()) {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)

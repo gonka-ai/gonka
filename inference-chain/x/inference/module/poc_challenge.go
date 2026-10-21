@@ -182,6 +182,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	if calcErr != nil {
 		return calcErr
 	}
+	calculatorResult = restrictToEpochModels(calculatorResult, participants.Participants)
 	if len(calculatorResult) > 0 {
 		fullMeasured := weightByParticipant(calculatorResult, presentScales)
 		measured[ch.Target] = fullMeasured[ch.Target]
