@@ -74,6 +74,28 @@ type VerifyErrorMissResponse struct {
 	RejectCause string   `json:"reject_cause,omitempty"` // no_finish_tx, no_payload, sig, hash_mismatch, not_error_body
 }
 
+// VerifyChallengeRequest asks a host for its verdict on a finished inference
+// (Connect SessionService.VerifyChallenge only). Diffs let a cold or lagging
+// host open the session and apply the Finish.
+type VerifyChallengeRequest struct {
+	InferenceID uint64                `json:"inference_id"`
+	Reason      types.ChallengeReason `json:"reason"`
+	Diffs       []DiffJSON            `json:"diffs,omitempty"`
+}
+
+// VerifyChallengeResponse is the host's kept verdict. Pending means the fetch
+// from the executor is still open; a RejectCause without a signature means
+// the host cannot vote (see host.ChallengeReject*).
+type VerifyChallengeResponse struct {
+	Pending     bool                 `json:"pending,omitempty"`
+	Fault       types.ChallengeFault `json:"fault,omitempty"`
+	Check       types.ChallengeCheck `json:"check,omitempty"`
+	Deviation   int64                `json:"deviation,omitempty"`
+	Signature   []byte               `json:"signature,omitempty"`
+	VoterSlot   uint32               `json:"voter_slot"`
+	RejectCause string               `json:"reject_cause,omitempty"`
+}
+
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
 type VerifyTimeoutResponse struct {
 	Accept      bool     `json:"accept"`

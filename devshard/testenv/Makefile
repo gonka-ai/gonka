@@ -114,7 +114,7 @@ STACK_CITEST_PATTERN := ^Test(StackSmoke|BaselineSmoke|RouterStickiness|ParamsLo
 BASELINE_VERSIOND_IMAGE ?= devshard-versiond:0.2.15-v5
 BASELINE_VERSIOND_ROUTER_IMAGE ?= devshard-versiond-router:0.2.15-v5
 # §8.2 RPC-on columns.
-PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
+PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat
 # Native gRPC on the no-proxy stack. Peers dial versiond-router:8080 with
 # prior-knowledge HTTP/2, the same listen that serves JSON; the HTTP/2 probe
 # is the client default. Pin targets must not inherit this.

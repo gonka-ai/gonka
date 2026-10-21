@@ -105,3 +105,36 @@ func TestServer_VerifyErrorMiss_RejectsWithoutArtifacts(t *testing.T) {
 	require.Empty(t, resp.Signature)
 	require.Equal(t, host.ErrorTimeoutRejectNoFinishTx, resp.RejectCause)
 }
+
+// The challenge core applies the catch-up diffs before it asks the host, so a
+// lagging host answers on the state the gateway sent. A reason this build does
+// not know, as from a newer gateway, is answered like any other: the vote is
+// decided on the body, and an error here would only be retried.
+func TestServer_VerifyChallenge_AppliesDiffsAndAnswersAnyReason(t *testing.T) {
+	env := setupServerEnv(t)
+	ctx := context.Background()
+
+	resp, err := env.server.ServeVerifyChallenge(ctx, VerifyChallengeRequest{InferenceID: 1, Reason: types.ChallengeReason(99)})
+	require.NoError(t, err)
+	require.Equal(t, host.ChallengeRejectNotLive, resp.RejectCause, "unknown reason")
+
+	resp, err = env.server.ServeVerifyChallenge(ctx, VerifyChallengeRequest{
+		InferenceID: 1,
+		Reason:      types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND,
+	})
+	require.NoError(t, err)
+	require.Equal(t, host.ChallengeRejectNotLive, resp.RejectCause)
+	require.Empty(t, resp.Signature)
+
+	start := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := DiffToJSON(start)
+	require.NoError(t, err)
+	resp, err = env.server.ServeVerifyChallenge(ctx, VerifyChallengeRequest{
+		InferenceID: 1,
+		Reason:      types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND,
+		Diffs:       []DiffJSON{dj},
+	})
+	require.NoError(t, err)
+	require.Equal(t, host.ChallengeRejectNotFinished, resp.RejectCause, "the start in diffs was applied")
+	require.False(t, resp.Pending)
+}

@@ -153,7 +153,7 @@ This grid forces HTTP/1.1 and so does not run that dial.
 RPC-on cells set:
 
 ```text
-DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
+DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat
 ```
 
 | Scenario | What we validate | Test | Run |

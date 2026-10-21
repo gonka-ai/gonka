@@ -131,7 +131,7 @@ func (c *RPCClient) WaitReady(ctx context.Context) error {
 			return nil
 		}
 		if !c.conn.hasAttachDoor() {
-			return fmt.Errorf("%w: no attach door", ErrPeerNotReady)
+			return fmt.Errorf("%w: %w", ErrPeerNotReady, ErrPeerNoAttachDoor)
 		}
 		if err := c.conn.ctx.Err(); err != nil {
 			return fmt.Errorf("%w: %v", ErrPeerNotReady, err)
@@ -141,7 +141,7 @@ func (c *RPCClient) WaitReady(ctx context.Context) error {
 			return nil
 		}
 		if !c.conn.hasAttachDoor() {
-			return fmt.Errorf("%w: no attach door", ErrPeerNotReady)
+			return fmt.Errorf("%w: %w", ErrPeerNotReady, ErrPeerNoAttachDoor)
 		}
 		if err := c.conn.ctx.Err(); err != nil {
 			return fmt.Errorf("%w: %v", ErrPeerNotReady, err)
@@ -936,6 +936,68 @@ func (c *RPCClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reaso
 		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
 	}
 	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+// ErrVerifyChallengeNeedsRPC is VerifyChallenge on a client whose endpoint set
+// leaves it off. The method has no HTTP route to fall back to.
+var ErrVerifyChallengeNeedsRPC = errors.New("verify-challenge needs peer RPC")
+
+// SendVerifyChallenge asks the host for its challenge verdict.
+func (c *RPCClient) SendVerifyChallenge(ctx context.Context, req VerifyChallengeRequest) (*VerifyChallengeResponse, error) {
+	if !c.Uses(EndpointVerifyChallenge) {
+		return nil, ErrVerifyChallengeNeedsRPC
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
+	defer cancel()
+	payload, err := proto.Marshal(VerifyChallengeRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	var out *VerifyChallengeResponse
+	err = c.rpcAttempt(ctx, rpcpbconnect.SessionServiceVerifyChallengeProcedure, func() error {
+		env, err := c.signEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		creq, err := tokenRequest(ctx, c, env)
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionLargeClient().VerifyChallenge(ctx, creq)
+		if err != nil {
+			return err
+		}
+		out = VerifyChallengeResponseFromProto(resp.Msg)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("verify-challenge: %w", err)
+	}
+	if out == nil {
+		return nil, errors.New("verify-challenge: empty response")
+	}
+	return out, nil
+}
+
+// VerifyChallenge sends the catch-up diffs with the challenge and returns the
+// host's verdict as it answered it.
+func (c *RPCClient) VerifyChallenge(ctx context.Context, inferenceID uint64, reason types.ChallengeReason, diffs []types.Diff) (*VerifyChallengeResponse, error) {
+	var djList []DiffJSON
+	if len(diffs) > 0 {
+		djList = make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
+		}
+	}
+	return c.SendVerifyChallenge(ctx, VerifyChallengeRequest{
+		InferenceID: inferenceID,
+		Reason:      reason,
+		Diffs:       djList,
+	})
 }
 
 func (c *RPCClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
