@@ -1,6 +1,8 @@
 import os
 import shutil
 import hashlib
+import shlex
+import urllib.parse
 import urllib.request
 import zipfile
 import subprocess
@@ -27,6 +29,8 @@ GENESIS_VAL_NAME = "testnet-genesis"
 GONKA_REPO_DIR = BASE_DIR / "gonka"
 DEPLOY_DIR = GONKA_REPO_DIR / "deploy/join"
 COLD_KEY_NAME = "gonka-account-key"
+# Enough for registration and grant gas. Genesis is created with 150000000ngonka.
+JOIN_FUND_NGONKA = 20_000_000
 
 INFERENCED_BINARY = SimpleNamespace(
     zip_file=BASE_DIR / "inferenced-linux-amd64.zip",
@@ -1172,62 +1176,269 @@ def copy_final_genesis_to_repo():
     print("Finalized genesis.json copied to repository successfully!")
 
 
-def register_joining_participant(service="api"):
-    """
-    Register this node as a new participant in the existing network using Docker compose
-    """
-    working_dir = GONKA_REPO_DIR / "deploy/join"
-    config_file = working_dir / "config.env"
-    
-    if not working_dir.exists():
-        raise FileNotFoundError(f"Working directory not found: {working_dir}")
-    
-    if not config_file.exists():
-        raise FileNotFoundError(f"Config file not found: {config_file}")
-    
-    # Get required configuration values
-    public_url = CONFIG_ENV.get("PUBLIC_URL")
-    account_pubkey = CONFIG_ENV.get("ACCOUNT_PUBKEY")
+def seed_chain_rpc():
     seed_api_url = CONFIG_ENV.get("SEED_API_URL")
-    
-    if not public_url:
-        raise ValueError("PUBLIC_URL not found in CONFIG_ENV")
-    if not account_pubkey:
-        raise ValueError("ACCOUNT_PUBKEY not found in CONFIG_ENV")
     if not seed_api_url:
         raise ValueError("SEED_API_URL not found in CONFIG_ENV")
-    
-    print(f"Registering joining participant using service: {service}")
-    
-    # Build the command to run inside the container
-    # NOTE! variable are getting renamed inside the container
-    compose_files = get_compose_files_arg(include_mlnode=True)
-    register_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T {service} sh -lc \"inferenced register-new-participant \\$DAPI_API__PUBLIC_URL \\$ACCOUNT_PUBKEY --node-address \\$DAPI_CHAIN_NODE__SEED_API_URL\"'"
-    
-    print(f"Running command: {register_cmd}")
-    
+    return seed_api_url.rstrip("/") + "/chain-rpc/"
+
+
+def parse_json_object(text):
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[start:])
+        return obj
+    except json.JSONDecodeError:
+        return None
+
+
+def fetch_chain_id(node):
+    request = urllib.request.Request(node.rstrip("/") + "/status")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.load(response)
+    network = payload.get("result", {}).get("node_info", {}).get("network")
+    if not network:
+        raise ValueError(f"Chain status from {node} did not include node_info.network")
+    return network
+
+
+def query_ngonka_balance(address, node):
     result = subprocess.run(
-        register_cmd,
-        shell=True,
-        cwd=working_dir,
+        [
+            str(INFERENCED_BINARY.path),
+            "query", "bank", "balance", address, "ngonka",
+            "--node", node,
+            "--output", "json",
+        ],
         capture_output=True,
-        text=True
+        text=True,
     )
-    
-    print("Participant registration completed!")
-    print("Output:")
-    print("=" * 50)
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print("Errors/Warnings:")
-        print(result.stderr)
-    print("=" * 50)
-    
+    output = (result.stdout or "") + (result.stderr or "")
     if result.returncode != 0:
-        print(f"Participant registration failed with return code: {result.returncode}")
-        raise subprocess.CalledProcessError(result.returncode, register_cmd)
-    
+        if "not found" in output.lower():
+            return 0
+        raise subprocess.CalledProcessError(result.returncode, result.args, result.stdout, result.stderr)
+    parsed = parse_json_object(result.stdout or "")
+    if not parsed:
+        raise ValueError(f"Could not parse balance for {address}: {output}")
+    amount = parsed.get("balance", {}).get("amount", "0")
+    return int(amount)
+
+
+def run_signed_tx(args):
+    password = CONFIG_ENV["KEYRING_PASSWORD"]
+    cmd = [
+        str(INFERENCED_BINARY.path),
+        *args,
+        "--keyring-backend", "file",
+        "--home", str(INFERENCED_STATE_DIR),
+        "--output", "json",
+        "--yes",
+    ]
+    print(f"Running command: {' '.join(cmd)}")
+    process = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate(input=f"{password}\n{password}\n")
+    output = (stdout or "") + (stderr or "")
+    print(output)
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, cmd, stdout, stderr)
+    parsed = parse_json_object(stdout or output)
+    tx = parsed.get("tx_response", parsed) if parsed else None
+    code = None if tx is None else tx.get("code", parsed.get("code") if parsed else None)
+    if code not in (0, "0"):
+        raw_log = tx.get("raw_log") if tx else output
+        raise RuntimeError(f"Transaction failed (code {code}): {raw_log}")
+    return tx
+
+
+def wait_for_tx(txhash, node):
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        result = subprocess.run(
+            [
+                str(INFERENCED_BINARY.path),
+                "query", "tx", txhash,
+                "--node", node,
+                "--output", "json",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        parsed = parse_json_object(result.stdout or "")
+        height = parsed.get("height") if parsed else None
+        if result.returncode == 0 and height not in (None, "", "0", 0):
+            code = parsed.get("code", 0)
+            if code not in (0, "0"):
+                raise RuntimeError(f"Transaction {txhash} failed in block (code {code}): {parsed.get('raw_log')}")
+            return parsed
+        time.sleep(2)
+    raise TimeoutError(f"Transaction {txhash} was not included within 120 seconds")
+
+
+def key_exists(name):
+    result = subprocess.run(
+        [
+            str(INFERENCED_BINARY.path),
+            "keys", "show", name, "--address",
+            "--keyring-backend", "file",
+            "--home", str(INFERENCED_STATE_DIR),
+        ],
+        capture_output=True,
+        text=True,
+        input=f"{CONFIG_ENV['KEYRING_PASSWORD']}\n",
+    )
+    return result.returncode == 0 and bool((result.stdout or "").strip())
+
+
+def fund_cold_account(address, node, chain_id):
+    """Bank-send from a funded account so the cold key can sign registration."""
+    balance = query_ngonka_balance(address, node)
+    if balance >= JOIN_FUND_NGONKA:
+        print(f"Cold account {address} already has {balance}ngonka")
+        return
+
+    funder_name = os.environ.get("FUNDER_KEY_NAME", "").strip()
+    if funder_name and funder_name != COLD_KEY_NAME and key_exists(funder_name):
+        print(f"Funding {address} from local key {funder_name}")
+        run_signed_tx([
+            "tx", "bank", "send",
+            funder_name, address, f"{JOIN_FUND_NGONKA}ngonka",
+            "--from", funder_name,
+            "--chain-id", chain_id,
+            "--gas", "auto",
+            "--gas-adjustment", "1.5",
+            "--gas-prices", "1ngonka",
+            "--node", node,
+        ])
+    else:
+        fund_cold_account_from_genesis_host(address, node, chain_id)
+
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        balance = query_ngonka_balance(address, node)
+        if balance >= JOIN_FUND_NGONKA:
+            print(f"Cold account {address} funded with {balance}ngonka")
+            return
+        time.sleep(2)
+    raise TimeoutError(f"Cold account {address} was not funded within 120 seconds (balance={balance})")
+
+
+def fund_cold_account_from_genesis_host(address, node, chain_id):
+    """The genesis cold key lives on the seed host. Sign the bank send there."""
+    seed_api_url = CONFIG_ENV["SEED_API_URL"]
+    host = urllib.parse.urlparse(seed_api_url).hostname
+    if not host:
+        raise ValueError(f"SEED_API_URL has no host: {seed_api_url}")
+    target = os.environ.get("FUNDER_SSH", f"ubuntu@{host}")
+    password = os.environ.get("FUNDER_KEYRING_PASSWORD", CONFIG_ENV["KEYRING_PASSWORD"])
+    remote = f"""
+set -e
+APP="$HOME/inferenced"
+if [ ! -x "$APP" ]; then APP=inferenced; fi
+"$APP" tx bank send {shlex.quote(COLD_KEY_NAME)} {shlex.quote(address)} {JOIN_FUND_NGONKA}ngonka \\
+  --from {shlex.quote(COLD_KEY_NAME)} \\
+  --keyring-backend file \\
+  --home "$HOME/.inference" \\
+  --chain-id {shlex.quote(chain_id)} \\
+  --gas auto --gas-adjustment 1.5 --gas-prices 1ngonka \\
+  --node {shlex.quote(node)} \\
+  --output json --yes
+"""
+    print(f"Funding {address} via {target}")
+    process = subprocess.Popen(
+        [
+            "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new",
+            target, remote,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate(input=f"{password}\n{password}\n")
+    output = (stdout or "") + (stderr or "")
+    print(output)
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"Could not fund {address} from {target}. "
+            f"Set FUNDER_KEY_NAME to a funded local key, or FUNDER_SSH to the genesis host. "
+            f"On that host: inferenced tx bank send {COLD_KEY_NAME} {address} {JOIN_FUND_NGONKA}ngonka "
+            f"--from {COLD_KEY_NAME} --chain-id {chain_id} --gas-prices 1ngonka --node {node} --yes"
+        )
+    parsed = parse_json_object(stdout or output)
+    tx = parsed.get("tx_response", parsed) if parsed else None
+    code = None if tx is None else tx.get("code", parsed.get("code") if parsed else None)
+    if code not in (0, "0"):
+        raw_log = tx.get("raw_log") if tx else output
+        raise RuntimeError(f"Genesis funding transaction failed (code {code}): {raw_log}")
+
+
+def fetch_local_consensus_key():
+    working_dir = GONKA_REPO_DIR / "deploy/join"
+    config_file = working_dir / "config.env"
+    compose_files = get_compose_files_arg(include_mlnode=False)
+    cmd = (
+        f"bash -c 'source {config_file} && docker compose {compose_files} "
+        f"exec -T node inferenced comet show-validator'"
+    )
+    deadline = time.time() + 90
+    last_output = ""
+    while time.time() < deadline:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            cwd=working_dir,
+            capture_output=True,
+            text=True,
+        )
+        last_output = (result.stdout or "") + (result.stderr or "")
+        parsed = parse_json_object(last_output)
+        key = parsed.get("key") if parsed else None
+        if result.returncode == 0 and key:
+            print(f"Consensus key: {key}")
+            return key
+        print("Validator key not yet available, waiting 5 seconds")
+        time.sleep(5)
+    raise TimeoutError(f"Failed to read the consensus key within 90 seconds: {last_output}")
+
+
+def register_joining_participant(account_key: AccountKey):
+    """
+    Fund the cold account, then sign MsgSubmitNewParticipant with the cold key.
+    """
+    public_url = CONFIG_ENV.get("PUBLIC_URL")
+    if not public_url:
+        raise ValueError("PUBLIC_URL not found in CONFIG_ENV")
+    if not INFERENCED_BINARY.path.exists():
+        raise FileNotFoundError(f"Inferenced binary not found at {INFERENCED_BINARY.path}")
+
+    node = seed_chain_rpc()
+    chain_id = fetch_chain_id(node)
+    print(f"Registering {account_key.address} on {chain_id} via {node}")
+    fund_cold_account(account_key.address, node, chain_id)
+    consensus_key = fetch_local_consensus_key()
+    submitted = run_signed_tx([
+        "tx", "inference", "submit-new-participant", public_url,
+        "--validator-key", consensus_key,
+        "--from", COLD_KEY_NAME,
+        "--chain-id", chain_id,
+        "--gas", "auto",
+        "--gas-adjustment", "1.5",
+        "--gas-prices", "1ngonka",
+        "--node", node,
+    ])
+    txhash = submitted.get("txhash") if submitted else None
+    if not txhash:
+        raise RuntimeError(f"submit-new-participant did not return a tx hash: {submitted}")
+    wait_for_tx(txhash, node)
     print("Participant registration completed successfully!")
 
 
@@ -1250,6 +1461,8 @@ def grant_key_permissions(warm_key_address: str):
         raise ValueError("KEYRING_PASSWORD not found in CONFIG_ENV")
     
     # Build the command
+    node = seed_chain_rpc()
+    chain_id = fetch_chain_id(node)
     cmd = [
         str(INFERENCED_BINARY.path),
         "tx", "inference", "grant-ml-ops-permissions",
@@ -1258,8 +1471,11 @@ def grant_key_permissions(warm_key_address: str):
         "--from", COLD_KEY_NAME,
         "--keyring-backend", "file",
         "--home", str(INFERENCED_STATE_DIR),
+        "--chain-id", chain_id,
         "--gas", "2000000",
-        "--node", f"{seed_api_url}/chain-rpc/"
+        "--gas-prices", "1ngonka",
+        "--node", node,
+        "--yes",
     ]
     
     print(f"Running command: {' '.join(cmd)}")
@@ -1427,7 +1643,7 @@ def join_route(account_key: AccountKey):
     # Get warm key for ML operations
     warm_key = get_or_create_warm_key()
     
-    register_joining_participant()
+    register_joining_participant(account_key)
     grant_key_permissions(warm_key.address)
 
 

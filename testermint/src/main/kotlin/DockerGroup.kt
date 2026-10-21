@@ -22,6 +22,9 @@ import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
 
+/** Covers registration and the following grant. Genesis liquid starts near 2 GNK. */
+private const val JOIN_REGISTRATION_FUND_NGONKA = 50_000_000L
+
 private const val VERSIOND_COMPOSE_FILE = "docker-compose.versiond.yml"
 
 /**
@@ -232,11 +235,10 @@ data class DockerGroup(
 
     fun init() {
         setupFiles()
-        val accountPubKey = if (!isGenesis) {
-            val accountPubkey = createColdKey()
+        if (!isGenesis) {
+            createColdKey()
             createWarmKey()
-            accountPubkey
-        } else ""
+        }
         val composeArgs = mutableListOf("compose", "-p", pairName)
         composeFiles.forEach { file ->
             composeArgs.addAll(listOf("-f", file))
@@ -297,12 +299,33 @@ data class DockerGroup(
                     Thread.sleep(Duration.ofSeconds(5))
                 }
             }
-            node.registerNewParticipant(
-                publicUrl,
-                accountPubKey,
-                validatorKey,
-                this.genesisGroup?.apiUrl ?: "http://genesis-api:9000"
-            )
+            val coldAddress = node.getColdAddress()
+            val genesisCli = retryGetCli(config, genesisGroup!!.keyName)
+            // Joins register in parallel and share the genesis payer, so the send
+            // and its inclusion stay on one lock.
+            val funded = synchronized(genesisFundingLock) {
+                Logger.info("Funding join cold account {} from genesis", coldAddress)
+                val fund = genesisCli.sendTransactionDirectly(
+                    listOf(
+                        "bank",
+                        "send",
+                        genesisCli.getColdAddress(),
+                        coldAddress,
+                        "$JOIN_REGISTRATION_FUND_NGONKA${config.denom}",
+                    )
+                )
+                if (fund.code != 0) {
+                    error("Failed to fund join cold account $coldAddress: ${fund.rawLog}")
+                }
+                val included = genesisCli.waitForTxProcessed(fund.txhash)
+                if (included.code != 0) {
+                    error("Funding join cold account $coldAddress failed in block: ${included.rawLog}")
+                }
+                included
+            }
+            node.waitForMinimumBlock(funded.height, "join cold account funded")
+            val consensusKey = validatorKey ?: error("validator key missing")
+            node.submitNewParticipant(publicUrl, consensusKey)
             node.waitForNextBlock(2)
             node.grantMlOpsPermissionsToWarmAccount()
             // Services to start after registration. edge-api is listed explicitly:
@@ -624,6 +647,10 @@ data class DockerGroup(
     }
 
     var coldAccountPubkey: String? = null
+
+    companion object {
+        private val genesisFundingLock = Any()
+    }
 
     private fun getCommonEnvMap(useSnapshots: Boolean): Map<String, String> {
         return buildMap {
