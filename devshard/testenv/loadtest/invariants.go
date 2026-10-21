@@ -2198,11 +2198,8 @@ func evalNoSkippedValidationLeases(c *invariantContext) ([]AssertionResult, any)
 	if excluded := c.leaseExcluded(); excluded != "" {
 		expected += "; " + excluded
 	}
-	if c.in.Leases == nil {
-		if c.in.LeasesError == "" {
-			return nil, nil
-		}
-		return []AssertionResult{invariantCheck("no-skipped-validation-leases.no_skipped_leases", caseID, false, "lease counts available", "unavailable", c.in.LeasesError)}, map[string]any{"excluded_hosts": c.in.LeaseExcluded}
+	if c.in.Leases == nil && c.in.LeasesError == "" {
+		return nil, nil
 	}
 	skipped := map[string]int{}
 	var bad []string
@@ -2216,8 +2213,15 @@ func evalNoSkippedValidationLeases(c *invariantContext) ([]AssertionResult, any)
 			bad = append(bad, fmt.Sprintf("%s skipped=%d", row.InstanceAddress, row.Count))
 		}
 	}
+	actual := fmt.Sprintf("violations=%d", len(bad))
+	if c.in.LeasesError != "" {
+		// An unreadable Postgres hides its participant's leases, so the check cannot pass.
+		expected = "lease counts available from every Postgres service; " + expected
+		actual = strings.TrimPrefix(actual+", unavailable", "violations=0, ")
+		bad = append(bad, c.in.LeasesError)
+	}
 	return []AssertionResult{
-		invariantCheck("no-skipped-validation-leases.no_skipped_leases", caseID, len(bad) == 0, expected, fmt.Sprintf("violations=%d", len(bad)), strings.Join(bad, "; ")),
+		invariantCheck("no-skipped-validation-leases.no_skipped_leases", caseID, len(bad) == 0, expected, actual, strings.Join(bad, "; ")),
 	}, map[string]any{"skipped_by_instance": skipped, "excluded_hosts": c.in.LeaseExcluded}
 }
 

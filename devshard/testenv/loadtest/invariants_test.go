@@ -750,8 +750,8 @@ func TestInvariantFaultFired(t *testing.T) {
 
 // Test flow:
 // 1. Report a skipped lease for an honest host and one for an unknown instance.
-// 2. Fail the lease query.
-// 3. Require no-skipped-validation-leases to fail on each and to stay silent when Postgres is not used.
+// 2. Fail the lease query, then fail it for one participant's Postgres while the others answer.
+// 3. Require no-skipped-validation-leases to fail on each, to name both the skip and the unreachable service, and to stay silent when Postgres is not used.
 func TestInvariantSkippedLeases(t *testing.T) {
 	runInvariantCases(t, []invariantCase{
 		{name: "pass faulty host skipped", check: "no-skipped-validation-leases.no_skipped_leases", passed: true},
@@ -764,10 +764,22 @@ func TestInvariantSkippedLeases(t *testing.T) {
 		{name: "query failed", check: "no-skipped-validation-leases.no_skipped_leases", passed: false, mutate: func(in *InvariantInputs) {
 			in.Leases, in.LeasesError = nil, "psql: connection refused"
 		}},
+		{name: "one participant's Postgres unreachable", check: "no-skipped-validation-leases.no_skipped_leases", passed: false, mutate: func(in *InvariantInputs) {
+			in.LeasesError = `devshard-postgres-versiond-1 process probe: exit status 1: service "devshard-postgres-versiond-1" is not running`
+		}},
 	})
 	in := passingInputs()
-	in.Leases = nil
+	in.Leases = append(in.Leases, LeaseCount{"p1", "skipped", 2})
+	in.LeasesError = `devshard-postgres-versiond-2 process probe: exit status 1: service "devshard-postgres-versiond-2" is not running`
 	checks, _ := evaluateInvariants(in)
+	check := checksNamed(t, checks, "no-skipped-validation-leases.no_skipped_leases")[0]
+	require.False(t, check.Passed)
+	require.Equal(t, "violations=1, unavailable", check.Actual)
+	require.Contains(t, check.Details, "p1 skipped=2")
+	require.Contains(t, check.Details, `service "devshard-postgres-versiond-2" is not running`)
+	in = passingInputs()
+	in.Leases = nil
+	checks, _ = evaluateInvariants(in)
 	for _, check := range checks {
 		require.NotEqual(t, "invariants.no-skipped-validation-leases.no_skipped_leases", check.Name)
 	}

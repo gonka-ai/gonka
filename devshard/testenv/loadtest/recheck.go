@@ -295,12 +295,12 @@ func legacyRunInputs(dir string, scenario Scenario, summary Summary) (RunInputs,
 	} else {
 		notes = append(notes, "compose-pre-drain.log not readable (decompress compose-pre-drain.log.gz first): no burns, reconcile ticks, escrow-missing or did-not-compress lines")
 	}
+	end.LeaseExcluded = leaseExcludedHosts(scenario)
 	for _, host := range zstdPayloadHosts(scenario) {
 		if end.PayloadFiles == nil {
-			end.PayloadFiles, end.LeaseExcluded = map[string]PayloadFileStats{}, map[string]string{}
+			end.PayloadFiles = map[string]PayloadFileStats{}
 		}
 		end.PayloadFiles[host] = scanPayloadDir(filepath.Join(dir, "payload-sample", host))
-		end.LeaseExcluded[host] = sqliteLeaseExclusion
 	}
 	inputs.Invariants = end
 	return inputs, notes

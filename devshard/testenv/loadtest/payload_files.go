@@ -53,6 +53,19 @@ func zstdPayloadHosts(s Scenario) []string {
 	return hosts
 }
 
+// leaseExcludedHosts maps each host no-skipped-validation-leases skips to the reason, or is nil when none is.
+// sqlite hosts never write the Postgres lease table, so their Postgres is not probed.
+func leaseExcludedHosts(s Scenario) map[string]string {
+	var excluded map[string]string
+	for _, host := range zstdPayloadHosts(s) {
+		if excluded == nil {
+			excluded = map[string]string{}
+		}
+		excluded[host] = sqliteLeaseExclusion
+	}
+	return excluded
+}
+
 // payloadSampleProbe tars up to $2 payload files under $1; a missing dir yields an empty stream.
 const payloadSampleProbe = `cd "$1" 2>/dev/null || exit 0
 find . -type f ! -name '*.tmp' | sort | head -n "$2" | xargs -r tar -cf -`

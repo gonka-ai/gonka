@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -579,15 +580,48 @@ type LeaseCount struct {
 
 const leaseCountQuery = "SELECT instance_address, status, count(*) FROM devshard_validation_leases GROUP BY 1, 2 ORDER BY 1, 2"
 
-func queryLeaseCounts(ctx context.Context, dir, project, compose string, pg config.PostgresCfg) ([]LeaseCount, error) {
-	cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "-f", compose, "exec", "-T", "devshard-postgres",
-		"psql", "-U", pg.User, "-d", pg.Database, "-tA", "-F", "\t", "-c", leaseCountQuery)
-	cmd.Dir = dir
-	output, err := probeCommandOutput(cmd, "devshard-postgres")
-	if err != nil {
-		return nil, err
+// queryLeaseCounts reads the lease table of every Postgres service of the stack
+// (one per participant with per_participant storage) and returns the rows it
+// could read, with an error naming each service it could not. A service whose
+// hosts are all in excluded (e.g. sqlite hosts) is not probed.
+func queryLeaseCounts(ctx context.Context, dir, project, compose string, cfg *config.File, excluded map[string]string) ([]LeaseCount, error) {
+	services := config.PostgresServices(cfg)
+	if len(services) == 0 {
+		return nil, fmt.Errorf("no Postgres service in the stack")
 	}
-	return parseLeaseCounts(output)
+	// A service shared with an included host (an HA replica) is still probed.
+	included := map[string]bool{}
+	for _, host := range cfg.Hosts {
+		if _, skip := excluded[host.ID]; !skip {
+			included[config.PostgresServiceFor(cfg, host)] = true
+		}
+	}
+	rows := []LeaseCount{}
+	var failures []string
+	for _, service := range services {
+		if !included[service] {
+			continue
+		}
+		// gencompose gives every Postgres service the same Postgres.User and Postgres.Database.
+		cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "-f", compose, "exec", "-T", service,
+			"psql", "-U", cfg.Postgres.User, "-d", cfg.Postgres.Database, "-tA", "-F", "\t", "-c", leaseCountQuery)
+		cmd.Dir = dir
+		output, err := probeCommandOutput(cmd, service)
+		if err != nil {
+			failures = append(failures, err.Error())
+			continue
+		}
+		parsed, err := parseLeaseCounts(output)
+		if err != nil {
+			failures = append(failures, service+": "+err.Error())
+			continue
+		}
+		rows = append(rows, parsed...)
+	}
+	if len(failures) > 0 {
+		return rows, errors.New(strings.Join(failures, "; "))
+	}
+	return rows, nil
 }
 
 func parseLeaseCounts(output string) ([]LeaseCount, error) {

@@ -133,18 +133,12 @@ func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []str
 		end.EscrowMissing = ids
 	}
 	if r.cfg.Postgres.Enabled {
-		// sqlite hosts never write the Postgres lease table, so no-skipped-validation-leases names them as excluded.
+		end.LeaseExcluded = leaseExcludedHosts(r.scenario)
 		for _, host := range zstdPayloadHosts(r.scenario) {
-			if end.LeaseExcluded == nil {
-				end.LeaseExcluded = map[string]string{}
-			}
-			end.LeaseExcluded[host] = sqliteLeaseExclusion
-			log.Printf("loadtest: invariants no-skipped-validation-leases excludes %s: %s", host, sqliteLeaseExclusion)
+			log.Printf("loadtest: invariants no-skipped-validation-leases excludes %s: %s", host, end.LeaseExcluded[host])
 		}
-		if end.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg.Postgres); err != nil {
+		if end.Leases, err = queryLeaseCounts(ctx, r.opts.TestenvDir, r.project, r.compose, r.cfg, end.LeaseExcluded); err != nil {
 			end.LeasesError = err.Error()
-		} else if end.Leases == nil {
-			end.Leases = []LeaseCount{}
 		}
 	}
 	if count, err := countLogLines(logPath, "did not compress"); err == nil {
