@@ -164,6 +164,7 @@ const (
 	pgInferenceValidationObsParent = "devshard_inference_validation_obs"
 	pgSealedValidationObsParent    = "devshard_sealed_validation_obs"
 	pgValidationLeasesParent       = "devshard_validation_leases"
+	pgChallengeVotesParent         = "devshard_challenge_votes"
 	pgSessionIndex                 = "devshard_session_index"
 )
 
@@ -179,6 +180,7 @@ var postgresPartitionedParents = []string{
 	pgInferenceValidationObsParent,
 	pgSealedValidationObsParent,
 	pgValidationLeasesParent,
+	pgChallengeVotesParent,
 }
 
 func pgSessionsPartition(epochID uint64) string {
@@ -207,6 +209,9 @@ func pgSealedValidationObsPartition(epochID uint64) string {
 }
 func pgValidationLeasesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgValidationLeasesParent, epochID)
+}
+func pgChallengeVotesPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgChallengeVotesParent, epochID)
 }
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
@@ -786,6 +791,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return err
 	}
 	if err := create(pgValidationLeasesParent, pgValidationLeasesPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgChallengeVotesParent, pgChallengeVotesPartition(epochID)); err != nil {
 		return err
 	}
 
@@ -2268,6 +2276,7 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 		pgSealedValidationObsPartition(epochID),
 		pgSealedValidationObsPartition(epochID),
 		pgValidationLeasesPartition(epochID),
+		pgChallengeVotesPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))

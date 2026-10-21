@@ -48,6 +48,11 @@ const DefaultAttachTimeout = 5 * time.Second
 // published a token. Callers must fail fast — do not wait on Attach.
 var ErrPeerNotReady = errors.New("peer rpc session not ready")
 
+// ErrPeerNoAttachDoor wraps ErrPeerNotReady when the peer refused Attach on
+// every escrow this host shares with it (escrow_not_found or escrow_settled),
+// so no door is left to try. That is the peer's answer, not this host's state.
+var ErrPeerNoAttachDoor = errors.New("no attach door")
+
 // ErrPeerPayloadUnanswered wraps ErrPeerNotReady when a payload RPC's own
 // handshake wait expired, or the live token was gone when that RPC was
 // built. A connection this process already closed stays a plain
