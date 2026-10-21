@@ -3178,6 +3178,15 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 		}
 
+		// Snapshot "every attempt is done" before deriving the escalation
+		// trigger, never after. An attempt that ends between the two reads is
+		// seen as still running by nextEscalationTrigger (so no attempt_failed
+		// trigger) and as done by a later allInflightsDone, and the race would
+		// settle with escalationC nil instead of moving on to the next host. The
+		// chunk wake makes the loop run mid-stream, which is what opens that
+		// window. Read first, a late finisher leaves allDone false and its done
+		// signal drives the next iteration.
+		allDone := allInflightsDone(attempts)
 		trigger, hasTrigger := e.nextEscalationTrigger(attempts, params)
 		maxAttempts := e.maxAttempts()
 		var escalationTimer *time.Timer
@@ -3244,7 +3253,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				}
 			}
 		}
-		if allInflightsDone(attempts) && escalationC == nil {
+		if allDone && escalationC == nil {
 			if stallTimer != nil {
 				stopTimer(stallTimer)
 			}
