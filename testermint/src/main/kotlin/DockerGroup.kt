@@ -22,8 +22,9 @@ import kotlin.io.path.exists
 
 const val GENESIS_KEY_NAME = "genesis"
 
-/** Covers registration and the following grant. Genesis liquid starts near 2 GNK. */
+/** Balance written onto each join cold account in genesis. Fees are off; this creates the account. */
 private const val JOIN_REGISTRATION_FUND_NGONKA = 50_000_000L
+private const val JOIN_GENESIS_ACCOUNTS_FILE = "join_genesis_accounts.txt"
 
 private const val VERSIOND_COMPOSE_FILE = "docker-compose.versiond.yml"
 
@@ -111,6 +112,7 @@ private val PAIR_POSTGRES_SERVICES = listOf(
 
 val GENESIS_COMPOSE_FILES = BASE_COMPOSE_FILES +
     "${LOCAL_TEST_NET_DIR}/docker-compose.genesis.yml" +
+    "${LOCAL_TEST_NET_DIR}/docker-compose.testermint-genesis.yml" +
     DNS_OVERRIDES_COMPOSE_FILE +
     POSTGRES_HOST_OVERLAY
 // Joins use dns-overrides only. Declaring test-dns in every pair's compose set made
@@ -124,6 +126,8 @@ data class GenesisUrls(val keyName: String) {
     val rpcUrl = "http://$keyName-node:26657"
     val p2pUrl = "tcp://$keyName-node:26656"
 }
+
+data class ColdKeyMaterial(val address: String, val pubkey: String)
 
 data class DockerGroup(
     val dockerClient: DockerClient,
@@ -176,8 +180,7 @@ data class DockerGroup(
 
     val warmKeyPassword = this.pairName.padEnd(10, '0')
 
-    // return the pubkey for the cold key
-    fun createColdKey(): String {
+    fun createColdKey(): ColdKeyMaterial {
         val command = listOf(
             "docker", "compose",
             "-p", pairName
@@ -196,14 +199,22 @@ data class DockerGroup(
         val output = process.inputStream.bufferedReader().use { it.readText() }
         val errorOutput = process.errorStream.bufferedReader().use { it.readText() }
 
-        process.waitFor()
+        val exitCode = process.waitFor()
 
         Logger.info("Cold key created: $output", "")
-        if (errorOutput.isNotBlank()) Logger.warn("Errors during warm key creation: $errorOutput", "")
+        if (errorOutput.isNotBlank()) Logger.warn("Errors during cold key creation: $errorOutput", "")
+        if (exitCode != 0) {
+            throw IllegalStateException("Cold key creation exited $exitCode: $errorOutput")
+        }
 
         val pubkeyRegex = """"key":"([^"]+)"""".toRegex()
-        return pubkeyRegex.find(output)?.groupValues?.get(1)
+        val addressRegex = """(?:"address"\s*:\s*"([^"]+)"|address:\s*(\S+))""".toRegex()
+        val pubkey = pubkeyRegex.find(output)?.groupValues?.get(1)
             ?: throw IllegalStateException("Could not extract pubkey from output: $output")
+        val addressMatch = addressRegex.find(output)
+            ?: throw IllegalStateException("Could not extract address from output: $output")
+        val address = addressMatch.groupValues[1].ifBlank { addressMatch.groupValues[2] }
+        return ColdKeyMaterial(address, pubkey)
     }
 
     fun createWarmKey(): String {
@@ -233,10 +244,27 @@ data class DockerGroup(
         return output
     }
 
-    fun init() {
-        setupFiles()
+    /**
+     * Writes join cold addresses into the genesis home so init can add them
+     * before the chain starts. [setupFiles] must already have run.
+     */
+    fun writeJoinGenesisAccounts(addresses: List<String>) {
+        val file = Path.of(workingDirectory, "prod-local", pairName, JOIN_GENESIS_ACCOUNTS_FILE)
+        val body = addresses.joinToString("\n") { address ->
+            "$address $JOIN_REGISTRATION_FUND_NGONKA${config.denom}"
+        }
+        Files.writeString(file, body + "\n", StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+        Logger.info("Staged {} join genesis accounts in {}", addresses.size, file)
+    }
+
+    fun init(skipFileSetup: Boolean = false, coldKeyReady: Boolean = false) {
+        if (!skipFileSetup) {
+            setupFiles()
+        }
         if (!isGenesis) {
-            createColdKey()
+            if (!coldKeyReady) {
+                createColdKey()
+            }
             createWarmKey()
         }
         val composeArgs = mutableListOf("compose", "-p", pairName)
@@ -299,31 +327,34 @@ data class DockerGroup(
                     Thread.sleep(Duration.ofSeconds(5))
                 }
             }
-            val coldAddress = node.getColdAddress()
-            val genesisCli = retryGetCli(config, genesisGroup!!.keyName)
-            // Joins register in parallel and share the genesis payer, so the send
-            // and its inclusion stay on one lock.
-            val funded = synchronized(genesisFundingLock) {
-                Logger.info("Funding join cold account {} from genesis", coldAddress)
-                val fund = genesisCli.sendTransactionDirectly(
-                    listOf(
-                        "bank",
-                        "send",
-                        genesisCli.getColdAddress(),
-                        coldAddress,
-                        "$JOIN_REGISTRATION_FUND_NGONKA${config.denom}",
+            if (!coldKeyReady) {
+                val coldAddress = node.getColdAddress()
+                val genesisCli = retryGetCli(config, genesisGroup!!.keyName)
+                // Late joins are created after genesis, so they are not in the
+                // genesis account list. The send stays serialized because those
+                // joins share the genesis payer.
+                val funded = synchronized(genesisFundingLock) {
+                    Logger.info("Funding join cold account {} from genesis", coldAddress)
+                    val fund = genesisCli.sendTransactionDirectly(
+                        listOf(
+                            "bank",
+                            "send",
+                            genesisCli.getColdAddress(),
+                            coldAddress,
+                            "$JOIN_REGISTRATION_FUND_NGONKA${config.denom}",
+                        )
                     )
-                )
-                if (fund.code != 0) {
-                    error("Failed to fund join cold account $coldAddress: ${fund.rawLog}")
+                    if (fund.code != 0) {
+                        error("Failed to fund join cold account $coldAddress: ${fund.rawLog}")
+                    }
+                    val included = genesisCli.waitForTxProcessed(fund.txhash)
+                    if (included.code != 0) {
+                        error("Funding join cold account $coldAddress failed in block: ${included.rawLog}")
+                    }
+                    included
                 }
-                val included = genesisCli.waitForTxProcessed(fund.txhash)
-                if (included.code != 0) {
-                    error("Funding join cold account $coldAddress failed in block: ${included.rawLog}")
-                }
-                included
+                node.waitForMinimumBlock(funded.height, "join cold account funded")
             }
-            node.waitForMinimumBlock(funded.height, "join cold account funded")
             val consensusKey = validatorKey ?: error("validator key missing")
             node.submitNewParticipant(publicUrl, consensusKey)
             node.waitForNextBlock(2)
@@ -734,7 +765,7 @@ data class DockerGroup(
     }
 
     @OptIn(ExperimentalPathApi::class)
-    private fun setupFiles() {
+    internal fun setupFiles() {
         val baseDir = Path.of(workingDirectory)
         if (isGenesis) {
             val prodLocal = baseDir.resolve("prod-local")
@@ -1107,7 +1138,19 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
             recreateChainPublicNetworkIfPossible()
         }
         ensureSharedTestDns()
-        genesisGroup.init()
+        // Join cold accounts have to exist before they can sign registration.
+        // A bank send cannot create them while user-to-user transfers are
+        // restricted, so their balances are written into genesis instead.
+        val genesisFundedJoins = joinGroups.isNotEmpty()
+        if (genesisFundedJoins) {
+            genesisGroup.setupFiles()
+            val joinAddresses = joinGroups.map { group ->
+                group.setupFiles()
+                group.createColdKey().address
+            }
+            genesisGroup.writeJoinGenesisAccounts(joinAddresses)
+        }
+        genesisGroup.init(skipFileSetup = genesisFundedJoins)
         Thread.sleep(Duration.ofSeconds(30L))
         val genesisNode = retryGetCli(config, genesisGroup.pairName)
         Logger.info("Waiting for genesis RPC readiness", "")
@@ -1154,7 +1197,7 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
             joinGroups.map { group ->
                 Thread {
                     try {
-                        group.init()
+                        group.init(skipFileSetup = true, coldKeyReady = true)
                     } catch (e: Throwable) {
                         failures.add(e)
                     }
