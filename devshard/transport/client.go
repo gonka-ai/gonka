@@ -655,7 +655,10 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var forwardedInference bool
 	var sawMeta bool // true once we observe a devshard_meta tail
 	received := completionapi.NewReceivedResponseHasher()
-	defer func() { result.ReceivedResponseHashes = received.Sums() }()
+	defer func() {
+		result.ReceivedResponseHashes = received.Sums()
+		result.ReceivedComplete = received.Complete()
+	}()
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
