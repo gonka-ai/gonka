@@ -143,6 +143,12 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 		return err
 	}
 
+	if body.InsufficientSample {
+		logging.Warn("ValidatedArtifactsV2-callback. Abstaining - ML node reported insufficient sample", types.PoC,
+			"publicKey", body.PublicKey, "modelId", modelID, "nTotal", body.NTotal)
+		return ctx.NoContent(http.StatusOK)
+	}
+
 	epochState := s.broker.GetPhaseTracker().GetCurrentEpochState()
 	if !poc.ShouldAcceptValidatedArtifacts(epochState) {
 		logging.Warn("ValidatedArtifactsV2-callback. Rejected - not in PoC validate phase", types.PoC,
