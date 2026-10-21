@@ -217,9 +217,6 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	if err != nil {
 		return fmt.Errorf("failed to freeze confirmation PoC recipe: %w", err)
 	}
-	if err := am.keeper.PocStageRecipes.Set(ctx, blockHeight, *recipe); err != nil {
-		return err
-	}
 	event.Recipe = recipe
 
 	// Store the event

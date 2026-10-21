@@ -76,6 +76,12 @@ func TestUpgradeFreezesActiveEpochRecipe(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, found)
 			require.Equal(t, recipe, repeated, "existing recipe must not be overwritten")
+
+			_, err = k.FreezePocStageRecipe(ctx, 200)
+			require.NoError(t, err)
+			retained, err := k.RetainedPocStageRecipe.Get(ctx)
+			require.NoError(t, err)
+			require.Equal(t, recipe, retained, "the first post-upgrade round retains the active measurement")
 		})
 	}
 }

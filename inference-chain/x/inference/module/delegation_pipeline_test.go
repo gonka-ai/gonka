@@ -1444,11 +1444,11 @@ func TestResolveEpochCoefficients_SchemeChangePreservesBase(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 100}))
 			require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 200}))
-			require.NoError(t, k.PocStageRecipes.Set(ctx, 100, types.PocStageRecipe{
+			require.NoError(t, k.RetainedPocStageRecipe.Set(ctx, types.PocStageRecipe{
 				StageHeight: 100,
 				Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
 			}))
-			require.NoError(t, k.PocStageRecipes.Set(ctx, 200, types.PocStageRecipe{
+			require.NoError(t, k.LatestPocStageRecipe.Set(ctx, types.PocStageRecipe{
 				StageHeight: 200,
 				Scheme:      types.PocScheme_POC_SCHEME_DECODE,
 			}))

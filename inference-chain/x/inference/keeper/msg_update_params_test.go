@@ -84,6 +84,8 @@ func TestMsgUpdateParamsRequiresUsablePocRecipe(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, original, stored, "rejected update must not change live params")
 
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 100}))
+	require.NoError(t, k.EffectiveEpochIndex.Set(ctx, 1))
 	for _, scheme := range []types.PocScheme{types.PocScheme_POC_SCHEME_PREFILL, types.PocScheme_POC_SCHEME_DECODE} {
 		params := types.DefaultParams()
 		params.PocParams.PocScheme = scheme

@@ -80,7 +80,8 @@ type (
 		ActiveConfirmationPoCEventItem collections.Item[types.ConfirmationPoCEvent]
 		LastUpgradeHeightItem          collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
-		PocStageRecipes                collections.Map[int64, types.PocStageRecipe]
+		LatestPocStageRecipe           collections.Item[types.PocStageRecipe]
+		RetainedPocStageRecipe         collections.Item[types.PocStageRecipe]
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
 		BridgeTransactionsMap   collections.Map[collections.Triple[string, string, string], types.BridgeTransaction]
@@ -448,11 +449,16 @@ func NewKeeper(
 			"poc_v2_enabled_epoch",
 			collections.Uint64Value,
 		),
-		PocStageRecipes: collections.NewMap(
+		LatestPocStageRecipe: collections.NewItem(
 			sb,
-			types.PocStageRecipesPrefix,
-			"poc_stage_recipes",
-			collections.Int64Key,
+			types.LatestPocStageRecipePrefix,
+			"latest_poc_stage_recipe",
+			codec.CollValue[types.PocStageRecipe](cdc),
+		),
+		RetainedPocStageRecipe: collections.NewItem(
+			sb,
+			types.RetainedPocStageRecipePrefix,
+			"retained_poc_stage_recipe",
 			codec.CollValue[types.PocStageRecipe](cdc),
 		),
 		BridgeContractAddresses: collections.NewMap(

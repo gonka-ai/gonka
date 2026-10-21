@@ -635,8 +635,8 @@ var _ types.AccountKeeper = (*formationAccountKeeper)(nil)
 
 func TestFailedDecodeTransitionRetainsProvenanceAndRetries(t *testing.T) {
 	f := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 0, 2)
-	require.NoError(t, f.keeper.PocStageRecipes.Set(f.ctx, 100, types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_PREFILL}))
-	require.NoError(t, f.keeper.PocStageRecipes.Set(f.ctx, 200, types.PocStageRecipe{StageHeight: 200, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
+	require.NoError(t, f.keeper.RetainedPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_PREFILL}))
+	require.NoError(t, f.keeper.LatestPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 200, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
 	changed, err := f.module.regularSchemeChanged(f.ctx, f.upcomingEpoch.Index, f.upcomingEpoch.PocStartBlockHeight)
 	require.NoError(t, err)
 	require.True(t, changed)
@@ -658,7 +658,7 @@ func TestFailedDecodeTransitionRetainsProvenanceAndRetries(t *testing.T) {
 	require.Equal(t, oldRoot.DynamicCoefficientParams, root.DynamicCoefficientParams)
 
 	// The next regular attempt still sees a scheme change and excludes preservation.
-	require.NoError(t, f.keeper.PocStageRecipes.Set(f.ctx, 300, types.PocStageRecipe{StageHeight: 300, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
+	require.NoError(t, f.keeper.LatestPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 300, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
 	changed, err = f.module.regularSchemeChanged(f.ctx, 3, 300)
 	require.NoError(t, err)
 	require.True(t, changed)
