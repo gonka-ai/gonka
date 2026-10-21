@@ -766,15 +766,16 @@ func TestBLSKeyGeneration_EndToEndOffCurveRegression(t *testing.T) {
 	// 1. Attempt MsgSubmitNewUnfundedParticipant with the off-curve vector and assert failure.
 	inferenceMsgServer := keeper.NewMsgServerImpl(k)
 	unfundedMsg := &types.MsgSubmitNewUnfundedParticipant{
+		Creator:      aliceAccAddrStr,
 		Address:      offCurveAddr,
 		Url:          "https://offcurve.example.com",
 		ValidatorKey: base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		WorkerKey:    base64.StdEncoding.EncodeToString(make([]byte, 32)),
 		PubKey:       base64.StdEncoding.EncodeToString(offCurveBytes),
 	}
-	require.Error(t, unfundedMsg.ValidateBasic())
+	require.ErrorContains(t, unfundedMsg.ValidateBasic(), "not a valid curve point")
 	_, err = inferenceMsgServer.SubmitNewUnfundedParticipant(ctx, unfundedMsg)
-	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrDeprecated)
 	_, foundOffCurveParticipant := k.GetParticipant(ctx, offCurveAddr)
 	require.False(t, foundOffCurveParticipant, "off-curve participant must not be stored")
 
