@@ -33,6 +33,10 @@ import (
 // is on.
 var errExecutorPayloadFault = errors.New("executor payload fault")
 
+// errExecutorPayloadSignature marks a fetched payload whose executor
+// signature does not verify.
+var errExecutorPayloadSignature = errors.New("verify executor signature")
+
 func tagExecutorPayloadFault(err error) error {
 	if err == nil {
 		return nil
@@ -150,7 +154,7 @@ func fetchPayloadsFromExecutor(
 		req.ExecutorAddress,
 		encodedPubKeys,
 	); err != nil {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: %w", errExecutorPayloadSignature, err))
 	}
 
 	if err := verifyFetchedPayloadHashes(req, payloadResp.PromptPayload, payloadResp.ResponsePayload); err != nil {
