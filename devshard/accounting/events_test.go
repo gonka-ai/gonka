@@ -145,6 +145,50 @@ func TestEvents_ReachTheFeedThroughACommittedDiff(t *testing.T) {
 	require.Equal(t, "req-committed", events[0].RequestID)
 }
 
+// A challenge whose fault votes pass the threshold invalidates the record,
+// and the executor's HostStats.Invalid moves with it; the accounting reads it
+// as a verdict like a replay's, or the gateway's count of invalids falls
+// behind the chain's. A challenge whose votes found no fault leaves the
+// record Finished and is no verdict.
+func TestEvents_AChallengeThatInvalidatesIsAVerdict(t *testing.T) {
+	challengeDiff := types.Diff{Nonce: 2, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Challenge{Challenge: &types.MsgChallenge{InferenceId: 1}},
+	}}}
+	t.Run("invalidated", func(t *testing.T) {
+		tracker := newTestTracker(t)
+		registerEscrow(t, tracker, "e1", 33, "m")
+		require.NoError(t, tracker.RecordDiff("e1", 1, true))
+		state := &fakeProtocolView{
+			phase:      types.PhaseActive,
+			inferences: map[uint64]types.InferenceRecord{1: {ExecutorSlot: 1, Status: types.StatusInvalidated, UsageChallenged: true}},
+			hostStats:  map[uint32]types.HostStats{1: {Invalid: 1}},
+		}
+		recorder := NewRecorder(tracker, nil)
+
+		recorder.committedDiff("e1", challengeDiff, state)
+
+		events := tracker.Events(QueryFilter{EpochIndex: 33})
+		require.Len(t, events, 1)
+		require.Equal(t, ProtocolInvalidated, events[0].Kind)
+		require.Equal(t, uint64(1), events[0].Nonce)
+		require.Equal(t, uint32(1), events[0].SlotID)
+	})
+	t.Run("no fault found", func(t *testing.T) {
+		tracker := newTestTracker(t)
+		registerEscrow(t, tracker, "e1", 33, "m")
+		require.NoError(t, tracker.RecordDiff("e1", 1, true))
+		state := &fakeProtocolView{
+			phase:      types.PhaseActive,
+			inferences: map[uint64]types.InferenceRecord{1: {ExecutorSlot: 1, Status: types.StatusFinished, UsageChallenged: true}},
+		}
+		recorder := NewRecorder(tracker, nil)
+
+		recorder.committedDiff("e1", challengeDiff, state)
+
+		require.Empty(t, tracker.Events(QueryFilter{EpochIndex: 33}))
+	})
+}
+
 // A start inference is the ordinary path and carries no verdict against anyone.
 func TestEvents_ACommittedStartLeavesNoEvent(t *testing.T) {
 	tracker := newTestTracker(t)

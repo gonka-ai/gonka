@@ -1170,6 +1170,27 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 					inf.VotesInvalid += weight
 				}
 				resolveFoldedChallenge(inf, threshold)
+			case *types.DevshardTx_Challenge:
+				msg := inner.Challenge
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil || inf.UsageChallenged || inf.Status != types.StatusFinished {
+					continue
+				}
+				// The journal holds only applied txs, so every vote here
+				// passed applyChallenge's checks.
+				var faultWeight uint32
+				for _, vote := range msg.Votes {
+					if vote.Fault != types.ChallengeFault_CHALLENGE_FAULT_NONE {
+						faultWeight += sm.addressToSlotCount[sm.slotToAddress[vote.VoterSlot]]
+					}
+				}
+				inf.UsageChallenged = true
+				if faultWeight > threshold {
+					inf.Status = types.StatusInvalidated
+				}
 			}
 		}
 	}
