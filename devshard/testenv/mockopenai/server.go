@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,6 +24,7 @@ type Server struct {
 	replay     *replay.Dataset
 	mu         sync.RWMutex
 	fault      FaultConfig
+	seedUsage  map[int]FaultConfig
 	streamGate chan struct{}
 	capacity   chan struct{}
 	workers    chan struct{}
@@ -83,6 +85,20 @@ func (s *Server) handleModelStatus(c echo.Context) error {
 func (s *Server) patchFault(p FaultPatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if p.Seed != nil {
+		var knobs FaultConfig
+		p.apply(&knobs)
+		knobs = usageKnobs(knobs)
+		if knobs == (FaultConfig{}) {
+			delete(s.seedUsage, *p.Seed)
+			return
+		}
+		if s.seedUsage == nil {
+			s.seedUsage = map[int]FaultConfig{}
+		}
+		s.seedUsage[*p.Seed] = knobs
+		return
+	}
 	if p.PauseStream != nil {
 		if *p.PauseStream {
 			s.releaseStreamLocked()
@@ -92,6 +108,34 @@ func (s *Server) patchFault(p FaultPatch) {
 		}
 	}
 	p.apply(&s.fault)
+}
+
+// usageKnobs keeps the knobs a seed patch may scope.
+func usageKnobs(f FaultConfig) FaultConfig {
+	return FaultConfig{
+		UsageCompletionTokens: f.UsageCompletionTokens,
+		UsagePromptTokens:     f.UsagePromptTokens,
+		PadEmptyChunks:        f.PadEmptyChunks,
+		DropTokens:            f.DropTokens,
+	}
+}
+
+// withSeedUsage replaces the usage knobs of f with the ones patched for
+// seed, if any.
+func (s *Server) withSeedUsage(f FaultConfig, seed *int) FaultConfig {
+	if seed == nil {
+		return f
+	}
+	s.mu.RLock()
+	knobs, ok := s.seedUsage[*seed]
+	s.mu.RUnlock()
+	if ok {
+		f.UsageCompletionTokens = knobs.UsageCompletionTokens
+		f.UsagePromptTokens = knobs.UsagePromptTokens
+		f.PadEmptyChunks = knobs.PadEmptyChunks
+		f.DropTokens = knobs.DropTokens
+	}
+	return f
 }
 
 func (s *Server) streamFaults() (FaultConfig, <-chan struct{}) {
@@ -184,6 +228,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	if req.Model == "" {
 		req.Model = "test-model"
 	}
+	f = s.withSeedUsage(f, req.Seed)
 
 	// Latency delays Validate (non-stream JSON or an enforced-token replay) only.
 	// Stream first-token delay is StreamFirstTokenDelay inside streamCompletion;
@@ -196,6 +241,10 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		f.PartialStream = false
 		f.SSEErrorMessage = ""
 		f.PauseStream = false
+		f.UsageCompletionTokens = 0
+		f.UsagePromptTokens = 0
+		f.PadEmptyChunks = 0
+		f.DropTokens = false
 	}
 	if f.Latency > 0 && validate {
 		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
@@ -217,17 +266,24 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	}
 
 	text := completionText(body)
+	var recorded *replay.Recorded
 	if s.replay != nil {
-		sample, _, ok := s.replay.Lookup(req.Model, replayMessages(req.Messages))
+		sample, ok := s.lookupReplay(req, body)
 		if !ok {
 			s.stats.replayMisses.Add(1)
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "mock-openai replay sample not found"})
 		}
 		s.stats.replayHits.Add(1)
 		text = sample.Response.Content
+		recorded = sample.Recorded
 	}
 	if req.Stream {
-		err := s.streamCompletion(c, req, text, body, f, streamGate)
+		var err error
+		if recorded != nil {
+			err = s.streamRecorded(c, recorded.Stream, f, streamGate)
+		} else {
+			err = s.streamCompletion(c, req, text, body, f, streamGate)
+		}
 		if err != nil || f.PartialStream || f.DropFirstChunk {
 			s.recordFailure(c.Request().Context())
 			return err
@@ -235,13 +291,27 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		s.stats.successfulResponses.Add(1)
 		return nil
 	}
-	err = s.jsonCompletion(c, req, text, body)
+	if recorded != nil {
+		err = c.Blob(http.StatusOK, echo.MIMEApplicationJSON, recorded.NonStream)
+	} else {
+		err = s.jsonCompletion(c, req, text, body)
+	}
 	if err != nil {
 		s.recordFailure(c.Request().Context())
 		return err
 	}
 	s.stats.successfulResponses.Add(1)
 	return nil
+}
+
+// lookupReplay prefers a recorded sample for the exact request and falls back
+// to the text-only samples matched by model and messages.
+func (s *Server) lookupReplay(req ChatRequest, body []byte) (replay.Sample, bool) {
+	if sample, _, ok := s.replay.LookupRequest(body); ok {
+		return sample, true
+	}
+	sample, _, ok := s.replay.Lookup(req.Model, replayMessages(req.Messages))
+	return sample, ok
 }
 
 func (s *Server) acquire(ctx context.Context) bool {
@@ -450,6 +520,267 @@ func isValidationReplay(body []byte) bool {
 		EnforcedTokens json.RawMessage `json:"enforced_tokens"`
 	}
 	return json.Unmarshal(body, &probe) == nil && len(probe.EnforcedTokens) > 0 && string(probe.EnforcedTokens) != "null"
+}
+
+// streamRecorded writes recorded SSE payloads as they are, so the replay keeps
+// the ML node's chunk boundaries, key order and number spelling. The fault
+// knobs act on it as in streamCompletion, with the recorded token chunks (the
+// ones carrying a sampled token, before the chunk that finishes the choice)
+// standing in for its one-rune chunks: DropFirstChunk drops the first token
+// chunk, PauseStream holds after the first token chunk written, PartialStream
+// stops after the middle one, and SSEErrorMessage keeps up to four of them
+// ahead of the error event. The usage and padding knobs rewrite the
+// recording first.
+func (s *Server) streamRecorded(c echo.Context, chunks []json.RawMessage, f FaultConfig, streamGate <-chan struct{}) error {
+	chunks, err := overstateRecordedStream(chunks, f)
+	if err != nil {
+		return err
+	}
+	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
+		return err
+	}
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+
+	w := c.Response().Writer
+	flusher, _ := w.(http.Flusher)
+	writeData := func(data []byte) error {
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if f.StreamChunkDelay > 0 {
+			time.Sleep(f.StreamChunkDelay)
+		}
+		return nil
+	}
+
+	isToken, final := recordedLayout(chunks)
+	if msg := strings.TrimSpace(f.SSEErrorMessage); msg != "" {
+		written := 0
+		for i, chunk := range chunks[:final] {
+			if isToken[i] {
+				if written == 4 {
+					break
+				}
+				written++
+			}
+			if err := writeData(chunk); err != nil {
+				return err
+			}
+		}
+		errPayload, err := json.Marshal(OpenAIErrorBody(500, msg))
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", errPayload); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	}
+	tokens := 0
+	for _, token := range isToken[:final] {
+		if token {
+			tokens++
+		}
+	}
+	token := -1
+	paused := false
+	for i, chunk := range chunks {
+		if f.PartialStream && i >= final {
+			return nil
+		}
+		if isToken[i] {
+			token++
+			if token == 0 && f.DropFirstChunk {
+				continue
+			}
+		}
+		if err := writeData(chunk); err != nil {
+			return err
+		}
+		if !isToken[i] {
+			continue
+		}
+		if !paused && f.PauseStream && streamGate != nil {
+			paused = true
+			select {
+			case <-streamGate:
+			case <-c.Request().Context().Done():
+				return c.Request().Context().Err()
+			}
+		}
+		if f.PartialStream && token == tokens/2 {
+			return nil
+		}
+	}
+	if f.PartialStream {
+		return nil
+	}
+	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
+// overstateRecordedStream applies the usage and padding knobs to a recording.
+// A chunk with usage is re-encoded with the new counts, so its keys come out
+// sorted; every other recorded chunk keeps its bytes.
+func overstateRecordedStream(chunks []json.RawMessage, f FaultConfig) ([]json.RawMessage, error) {
+	if f.UsageCompletionTokens <= 0 && f.UsagePromptTokens <= 0 && f.PadEmptyChunks <= 0 && !f.DropTokens {
+		return chunks, nil
+	}
+	isToken, _ := recordedLayout(chunks)
+	out := make([]json.RawMessage, 0, len(chunks)+max(f.PadEmptyChunks, 0))
+	for i, chunk := range chunks {
+		rewritten, err := overstateUsage(chunk, f.UsagePromptTokens, f.UsageCompletionTokens)
+		if err == nil && f.DropTokens && isToken[i] {
+			rewritten, err = withoutTokens(rewritten)
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rewritten)
+	}
+	if f.PadEmptyChunks <= 0 || len(out) == 0 {
+		return out, nil
+	}
+	pad, err := emptyContentChunk(out[0])
+	if err != nil {
+		return nil, err
+	}
+	_, final := recordedLayout(out)
+	padded := make([]json.RawMessage, 0, len(out)+f.PadEmptyChunks)
+	padded = append(padded, out[:final]...)
+	for i := 0; i < f.PadEmptyChunks; i++ {
+		padded = append(padded, pad)
+	}
+	return append(padded, out[final:]...), nil
+}
+
+// overstateUsage replaces the positive counts in chunk's usage and keeps
+// total_tokens their sum. A chunk without usage is returned unchanged.
+func overstateUsage(chunk json.RawMessage, promptTokens, completionTokens int) (json.RawMessage, error) {
+	if promptTokens <= 0 && completionTokens <= 0 {
+		return chunk, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(chunk, &fields); err != nil {
+		return nil, fmt.Errorf("decode recorded chunk: %w", err)
+	}
+	raw, ok := fields["usage"]
+	if !ok || string(raw) == "null" {
+		return chunk, nil
+	}
+	var usage map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &usage); err != nil {
+		return nil, fmt.Errorf("decode recorded usage: %w", err)
+	}
+	var counts struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	}
+	if err := json.Unmarshal(raw, &counts); err != nil {
+		return nil, fmt.Errorf("decode recorded usage: %w", err)
+	}
+	if promptTokens > 0 {
+		counts.PromptTokens = promptTokens
+	}
+	if completionTokens > 0 {
+		counts.CompletionTokens = completionTokens
+	}
+	usage["prompt_tokens"] = json.RawMessage(strconv.Itoa(counts.PromptTokens))
+	usage["completion_tokens"] = json.RawMessage(strconv.Itoa(counts.CompletionTokens))
+	usage["total_tokens"] = json.RawMessage(strconv.Itoa(counts.PromptTokens + counts.CompletionTokens))
+	encoded, err := json.Marshal(usage)
+	if err != nil {
+		return nil, err
+	}
+	fields["usage"] = encoded
+	return json.Marshal(fields)
+}
+
+// withoutTokens empties the delta of every choice in chunk and drops its
+// logprobs and token_ids; finish_reason and usage stay.
+func withoutTokens(chunk json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(chunk, &fields); err != nil {
+		return nil, fmt.Errorf("decode recorded chunk: %w", err)
+	}
+	var choices []map[string]json.RawMessage
+	if err := json.Unmarshal(fields["choices"], &choices); err != nil {
+		return nil, fmt.Errorf("decode recorded choices: %w", err)
+	}
+	for _, choice := range choices {
+		choice["delta"] = json.RawMessage(`{"content":""}`)
+		choice["logprobs"] = json.RawMessage(`null`)
+		delete(choice, "token_ids")
+	}
+	encoded, err := json.Marshal(choices)
+	if err != nil {
+		return nil, err
+	}
+	fields["choices"] = encoded
+	return json.Marshal(fields)
+}
+
+// emptyContentChunk is a chunk of the recorded answer whose only choice
+// carries an empty content delta, no logprobs and no finish_reason.
+func emptyContentChunk(template json.RawMessage) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(template, &fields); err != nil {
+		return nil, fmt.Errorf("decode recorded chunk: %w", err)
+	}
+	delete(fields, "usage")
+	fields["choices"] = json.RawMessage(`[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":null}]`)
+	return json.Marshal(fields)
+}
+
+// recordedLayout marks the chunks that carry a sampled token (token_ids or
+// logprobs entries) and returns the index of the first chunk that sets a
+// finish_reason or carries usage, len(chunks) when there is none.
+func recordedLayout(chunks []json.RawMessage) ([]bool, int) {
+	isToken := make([]bool, len(chunks))
+	final := len(chunks)
+	for i, chunk := range chunks {
+		var head struct {
+			Choices []struct {
+				FinishReason *string `json:"finish_reason"`
+				TokenIDs     []int64 `json:"token_ids"`
+				Logprobs     *struct {
+					Content []json.RawMessage `json:"content"`
+				} `json:"logprobs"`
+			} `json:"choices"`
+			Usage json.RawMessage `json:"usage"`
+		}
+		if err := json.Unmarshal(chunk, &head); err != nil {
+			continue
+		}
+		for _, choice := range head.Choices {
+			if len(choice.TokenIDs) > 0 || (choice.Logprobs != nil && len(choice.Logprobs.Content) > 0) {
+				isToken[i] = true
+			}
+			if choice.FinishReason != nil && final == len(chunks) {
+				final = i
+			}
+		}
+		if len(head.Usage) > 0 && string(head.Usage) != "null" && final == len(chunks) {
+			final = i
+		}
+	}
+	return isToken, final
 }
 
 func waitForLatency(ctx context.Context, latency time.Duration) error {
