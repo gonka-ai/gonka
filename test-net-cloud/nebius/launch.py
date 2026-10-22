@@ -40,6 +40,8 @@ INFERENCED_BINARY = SimpleNamespace(
 )
 
 INFERENCED_STATE_DIR = BASE_DIR / ".inference"
+# Survives clean_state(), which deletes INFERENCED_STATE_DIR before each launch.
+FUNDER_STATE_DIR = BASE_DIR / ".inference-funder"
 
 def load_config_from_env(hf_home: str = None):
     """Load configuration from environment variables, with defaults"""
@@ -1227,13 +1229,13 @@ def query_ngonka_balance(address, node):
     return int(amount)
 
 
-def run_signed_tx(args):
-    password = CONFIG_ENV["KEYRING_PASSWORD"]
+def run_signed_tx(args, home=None, password=None):
+    password = password or CONFIG_ENV["KEYRING_PASSWORD"]
     cmd = [
         str(INFERENCED_BINARY.path),
         *args,
         "--keyring-backend", "file",
-        "--home", str(INFERENCED_STATE_DIR),
+        "--home", str(home or INFERENCED_STATE_DIR),
         "--output", "json",
         "--yes",
     ]
@@ -1283,19 +1285,24 @@ def wait_for_tx(txhash, node):
     raise TimeoutError(f"Transaction {txhash} was not included within 120 seconds")
 
 
-def key_exists(name):
+def key_exists(name, home=None, password=None):
     result = subprocess.run(
         [
             str(INFERENCED_BINARY.path),
             "keys", "show", name, "--address",
             "--keyring-backend", "file",
-            "--home", str(INFERENCED_STATE_DIR),
+            "--home", str(home or INFERENCED_STATE_DIR),
         ],
         capture_output=True,
         text=True,
-        input=f"{CONFIG_ENV['KEYRING_PASSWORD']}\n",
+        input=f"{password or CONFIG_ENV['KEYRING_PASSWORD']}\n",
     )
     return result.returncode == 0 and bool((result.stdout or "").strip())
+
+
+def funder_keyring_home():
+    configured = os.environ.get("FUNDER_KEYRING_HOME", "").strip()
+    return Path(configured) if configured else FUNDER_STATE_DIR
 
 
 def fund_cold_account(address, node, chain_id):
@@ -1306,8 +1313,20 @@ def fund_cold_account(address, node, chain_id):
         return
 
     funder_name = os.environ.get("FUNDER_KEY_NAME", "").strip()
-    if funder_name and funder_name != COLD_KEY_NAME and key_exists(funder_name):
-        print(f"Funding {address} from local key {funder_name}")
+    if funder_name:
+        if funder_name == COLD_KEY_NAME:
+            raise RuntimeError(
+                "FUNDER_KEY_NAME must name a key other than the cold key being funded"
+            )
+        home = funder_keyring_home()
+        password = os.environ.get("FUNDER_KEYRING_PASSWORD", CONFIG_ENV["KEYRING_PASSWORD"])
+        if not key_exists(funder_name, home=home, password=password):
+            raise RuntimeError(
+                f"FUNDER_KEY_NAME={funder_name} was not found in {home}. "
+                "clean_state() deletes the cold keyring, so the funder has to live in this "
+                "separate directory. Import it there, or unset FUNDER_KEY_NAME to fund from the genesis host."
+            )
+        print(f"Funding {address} from {funder_name} in {home}")
         run_signed_tx([
             "tx", "bank", "send",
             funder_name, address, f"{JOIN_FUND_NGONKA}ngonka",
@@ -1317,7 +1336,7 @@ def fund_cold_account(address, node, chain_id):
             "--gas-adjustment", "1.5",
             "--gas-prices", "1ngonka",
             "--node", node,
-        ])
+        ], home=home, password=password)
     else:
         fund_cold_account_from_genesis_host(address, node, chain_id)
 
@@ -1339,18 +1358,46 @@ def fund_cold_account_from_genesis_host(address, node, chain_id):
         raise ValueError(f"SEED_API_URL has no host: {seed_api_url}")
     target = os.environ.get("FUNDER_SSH", f"ubuntu@{host}")
     password = os.environ.get("FUNDER_KEYRING_PASSWORD", CONFIG_ENV["KEYRING_PASSWORD"])
+    # flock is on the genesis host so two join launches cannot sign the same sequence.
+    # The lock is held until the transaction is included.
     remote = f"""
 set -e
+exec 9>"$HOME/.gonka-join-fund.lock"
+flock 9
 APP="$HOME/inferenced"
 if [ ! -x "$APP" ]; then APP=inferenced; fi
-"$APP" tx bank send {shlex.quote(COLD_KEY_NAME)} {shlex.quote(address)} {JOIN_FUND_NGONKA}ngonka \\
+broadcast=$("$APP" tx bank send {shlex.quote(COLD_KEY_NAME)} {shlex.quote(address)} {JOIN_FUND_NGONKA}ngonka \\
   --from {shlex.quote(COLD_KEY_NAME)} \\
   --keyring-backend file \\
   --home "$HOME/.inference" \\
   --chain-id {shlex.quote(chain_id)} \\
   --gas auto --gas-adjustment 1.5 --gas-prices 1ngonka \\
   --node {shlex.quote(node)} \\
-  --output json --yes
+  --output json --yes)
+printf '%s\\n' "$broadcast"
+txhash=$(printf '%s\\n' "$broadcast" | sed -n 's/.*"txhash"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p' | head -n 1)
+if [ -z "$txhash" ]; then
+  echo "funding broadcast did not return a txhash" >&2
+  exit 1
+fi
+i=0
+while [ "$i" -lt 60 ]; do
+  i=$((i + 1))
+  query=$("$APP" query tx "$txhash" --node {shlex.quote(node)} --output json 2>/dev/null || true)
+  printf '%s\\n' "$query"
+  code=$(printf '%s\\n' "$query" | sed -n 's/.*"code"[[:space:]]*:[[:space:]]*\\([0-9][0-9]*\\).*/\\1/p' | head -n 1)
+  height=$(printf '%s\\n' "$query" | sed -n 's/.*"height"[[:space:]]*:[[:space:]]*"\\?\\([0-9][0-9]*\\)"\\?.*/\\1/p' | head -n 1)
+  if [ -n "$height" ] && [ "$height" != "0" ]; then
+    if [ -n "$code" ] && [ "$code" != "0" ]; then
+      echo "funding tx $txhash failed in block (code $code)" >&2
+      exit 1
+    fi
+    exit 0
+  fi
+  sleep 2
+done
+echo "funding tx $txhash was not included within 120 seconds" >&2
+exit 1
 """
     print(f"Funding {address} via {target}")
     process = subprocess.Popen(
@@ -1382,12 +1429,17 @@ if [ ! -x "$APP" ]; then APP=inferenced; fi
 
 
 def fetch_local_consensus_key():
+    """Read the signer key from the running TMKMS container.
+
+    The join node deletes its local validator key when TMKMS_PORT is set, so
+    `comet show-validator` does not return the key that signs blocks.
+    """
     working_dir = GONKA_REPO_DIR / "deploy/join"
     config_file = working_dir / "config.env"
     compose_files = get_compose_files_arg(include_mlnode=False)
     cmd = (
         f"bash -c 'source {config_file} && docker compose {compose_files} "
-        f"exec -T node inferenced comet show-validator'"
+        f"exec -T tmkms /bin/sh -c tmkms-pubkey'"
     )
     deadline = time.time() + 90
     last_output = ""
@@ -1400,14 +1452,14 @@ def fetch_local_consensus_key():
             text=True,
         )
         last_output = (result.stdout or "") + (result.stderr or "")
-        parsed = parse_json_object(last_output)
-        key = parsed.get("key") if parsed else None
-        if result.returncode == 0 and key:
+        match = re.search(r'([A-Za-z0-9+/=]{40,})', last_output)
+        if result.returncode == 0 and match:
+            key = match.group(1)
             print(f"Consensus key: {key}")
             return key
-        print("Validator key not yet available, waiting 5 seconds")
+        print("TMKMS consensus key not yet available, waiting 5 seconds")
         time.sleep(5)
-    raise TimeoutError(f"Failed to read the consensus key within 90 seconds: {last_output}")
+    raise TimeoutError(f"Failed to read the TMKMS consensus key within 90 seconds: {last_output}")
 
 
 def register_joining_participant(account_key: AccountKey):

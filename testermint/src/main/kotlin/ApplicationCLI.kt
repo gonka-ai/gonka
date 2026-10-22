@@ -518,7 +518,11 @@ data class ApplicationCLI(
         if (response.code != 0) {
             throw IllegalStateException("submit-new-participant failed: ${response.rawLog}")
         }
-        waitForTxProcessed(response.txhash)
+        val included = waitForTxProcessed(response.txhash)
+        if (included.code != 0) {
+            throw IllegalStateException("submit-new-participant failed in block: ${included.rawLog}")
+        }
+        included
     }
 
     fun grantMlOpsPermissionsToWarmAccount(retries:Int = 3): Unit = wrapLog("grantMlOpsPermissions", false) {
