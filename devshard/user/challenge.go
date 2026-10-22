@@ -39,7 +39,10 @@ var (
 	// waiting for the stream to end. The executor signs the Finish over the
 	// whole body, so an honest stream ends seconds after it, not minutes;
 	// one that drags on past the hosts' first-ask limit would make the
-	// gateway's challenge late by the executor's choice.
+	// gateway's challenge late by the executor's choice. Only the time the
+	// gateway waited on the executor counts: the relay to the gateway's own
+	// client has no buffer, so a client that reads slowly holds the stream
+	// open too, and that wait is not the executor's.
 	ChallengeOpenStreamGrace = time.Minute
 )
 
@@ -179,26 +182,42 @@ func (s *Session) challengeFinishAppliedLocked(nonce uint64) bool {
 		s.challengeFinishes = make(map[uint64]time.Time)
 	}
 	s.challengeFinishes[nonce] = s.nowLocked()
-	if _, open := s.streamsOpen[nonce]; open {
-		time.AfterFunc(ChallengeOpenStreamGrace, func() { s.challengeOpenStream(nonce) })
+	if stream, open := s.streamsOpen[nonce]; open {
+		s.armOpenStreamChallenge(nonce, time.Now(), stream.clientWaited(), ChallengeOpenStreamGrace)
 	}
 	return false
 }
 
-// challengeOpenStream fires ChallengeOpenStreamGrace after a Finish applied
-// while its stream was open. A stream still open then is challenged as not
-// bound; one that ended since was handled on its own way out.
-func (s *Session) challengeOpenStream(nonce uint64) {
+// armOpenStreamChallenge checks the stream of nonce again after wait. since
+// is when its Finish applied and clientWaitAtFinish the client wait the
+// stream had accrued by then.
+func (s *Session) armOpenStreamChallenge(nonce uint64, since time.Time, clientWaitAtFinish, wait time.Duration) {
+	time.AfterFunc(wait, func() { s.challengeOpenStream(nonce, since, clientWaitAtFinish) })
+}
+
+// challengeOpenStream fires once the grace since a Finish applied with its
+// stream open has run out. A stream still open then is challenged as not
+// bound; one that ended since was handled on its own way out. The time the
+// gateway stood in writes to its own client since the Finish is not the
+// executor's: it is taken out of the grace, and the stream is checked again
+// when the rest has passed.
+func (s *Session) challengeOpenStream(nonce uint64, since time.Time, clientWaitAtFinish time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, open := s.streamsOpen[nonce]; !open {
+	stream, open := s.streamsOpen[nonce]
+	if !open {
 		return
 	}
 	if _, applied := s.challengeFinishes[nonce]; !applied {
 		return
 	}
+	clientWait := stream.clientWaited() - clientWaitAtFinish
+	if onExecutor := time.Since(since) - clientWait; onExecutor < ChallengeOpenStreamGrace {
+		s.armOpenStreamChallenge(nonce, since, clientWaitAtFinish, ChallengeOpenStreamGrace-onExecutor)
+		return
+	}
 	logging.Info("challenge_stream_open_after_finish", "subsystem", "challenge", "escrow", s.escrowID, "nonce", nonce,
-		"grace_ms", ChallengeOpenStreamGrace.Milliseconds())
+		"grace_ms", ChallengeOpenStreamGrace.Milliseconds(), "client_wait_ms", clientWait.Milliseconds())
 	s.startChallengeLocked(nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
 }
 
