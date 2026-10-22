@@ -744,6 +744,11 @@ func emptyContentChunk(template json.RawMessage) (json.RawMessage, error) {
 		return nil, fmt.Errorf("decode recorded chunk: %w", err)
 	}
 	delete(fields, "usage")
+	// vLLM reports the prompt on the first chunk of a stream only; a pad
+	// is one of the chunks after it.
+	delete(fields, "prompt_text")
+	delete(fields, "prompt_token_ids")
+	delete(fields, "prompt_logprobs")
 	fields["choices"] = json.RawMessage(`[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":null}]`)
 	return json.Marshal(fields)
 }
