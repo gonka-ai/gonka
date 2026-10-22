@@ -76,3 +76,84 @@ func TestGhostSetKeepsBurnsToTheirEscrow(t *testing.T) {
 	require.Empty(t, ghosts.escrow("2"))
 	require.Equal(t, map[string]bool{"7": false}, ghosts.escrow(""))
 }
+
+// A paused participant cannot receive Chats and needs time to catch up after resuming.
+// Only its throttled/catching-up burns within the actual pause plus grace are excused.
+func TestBurnExcusePauseRecovery(t *testing.T) {
+	in := InvariantInputs{
+		Started: fixtureT0, Workload: 5 * time.Minute,
+		Settings: invariantSettings{Grace: 95 * time.Second},
+		Hosts:    []InvariantHost{{ID: "versiond-2", Participant: "participant-hukvxfc7"}},
+		Events:   []EventRecord{{ID: "pause", Action: "pause", Target: "versiond-2", StartedAt: atPtr(90 * time.Second), EndedAt: atPtr(150 * time.Second)}},
+	}
+	for _, reason := range []string{"participant_throttled_no_send", "participant_catching_up_no_send"} {
+		t.Run(reason, func(t *testing.T) {
+			for _, tc := range []struct {
+				name   string
+				offset time.Duration
+				want   bool
+			}{
+				{"before pause", 90*time.Second - time.Nanosecond, false},
+				{"pause starts", 90 * time.Second, true},
+				{"during pause", 120 * time.Second, true},
+				{"after resume", 160 * time.Second, true},
+				{"just before grace ends", 245*time.Second - time.Nanosecond, true},
+				{"grace ends", 245 * time.Second, false},
+				{"after grace", 246 * time.Second, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					burn := gatewayBurn{At: at(tc.offset), Host: "hukvxfc7", Reason: reason}
+					require.Equal(t, tc.want, burnExcuse(in)(burn))
+				})
+			}
+		})
+	}
+	excused := burnExcuse(in)
+	for _, burn := range []gatewayBurn{
+		{At: at(120 * time.Second), Host: "other123", Reason: "participant_catching_up_no_send"},
+		{At: at(120 * time.Second), Reason: "participant_catching_up_no_send"},
+		{Host: "hukvxfc7", Reason: "participant_catching_up_no_send"},
+		{At: at(120 * time.Second), Host: "hukvxfc7", Reason: "no_compatible_request_after_stale"},
+		{At: at(120 * time.Second), Host: "hukvxfc7", Reason: "participant_state_diverged_no_send"},
+	} {
+		require.False(t, excused(burn), "%+v", burn)
+	}
+	in.Events[0].StartedAt = nil
+	require.False(t, burnExcuse(in)(gatewayBurn{At: at(120 * time.Second), Host: "hukvxfc7", Reason: "participant_catching_up_no_send"}))
+}
+
+// Exercise the catch-up scenario's legacy host_faults alias through the real drain judge.
+// Expected burns must not fail a clean run, but a genuine orphan must still fail it.
+func TestCatchUpPauseBurnsDoNotFailNoOrphanedWork(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "catch-up.yaml"))
+	require.NoError(t, err)
+	events := scenario.TimelineEvents()
+	require.Len(t, events, 1)
+	pause := events[0]
+	inputs := RunInputs{
+		Started: fixtureT0,
+		Hosts:   []InvariantHost{{ID: pause.Target, Participant: "participant-hukvxfc7"}},
+		Burns: []gatewayBurn{
+			{At: at(120 * time.Second), EscrowID: "11", Nonce: "2", Host: "hukvxfc7", Reason: "participant_throttled_no_send"},
+			{At: at(160 * time.Second), EscrowID: "11", Nonce: "3", Host: "hukvxfc7", Reason: "participant_catching_up_no_send"},
+		},
+	}
+	judge := orphanJudgeFor(scenario, inputs, []EventRecord{{ID: pause.ID, Action: pause.Action, Target: pause.Target, StartedAt: atPtr(90 * time.Second), EndedAt: atPtr(150 * time.Second)}})
+	inferences := map[string]debugInference{"1": {Status: "finished"}, "2": {Status: "pending"}, "3": {Status: "pending"}}
+	poll := orphanPoll{Last: &orphanSnapshot{At: at(7 * time.Minute), Runtimes: []orphanRuntime{{EscrowID: "11", Active: true, Inferences: inferences}}}, TimedOut: true}
+
+	summary, done, err := judgeOrphans(poll, judge)
+
+	require.NoError(t, err)
+	require.True(t, done)
+	require.Equal(t, 2, summary.GhostExcluded)
+	require.Equal(t, 1, summary.Total)
+	require.Zero(t, summary.GhostRate)
+	require.Zero(t, summary.Orphaned)
+
+	inferences["4"] = debugInference{Status: "pending"}
+	summary, done, err = judgeOrphans(poll, judge)
+	require.True(t, done)
+	require.Equal(t, 1, summary.Orphaned)
+	require.ErrorContains(t, err, "orphaned inference work")
+}
