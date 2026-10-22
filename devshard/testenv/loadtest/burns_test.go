@@ -78,7 +78,7 @@ func TestGhostSetKeepsBurnsToTheirEscrow(t *testing.T) {
 }
 
 // A paused participant cannot receive Chats and needs time to catch up after resuming.
-// Only its throttled/catching-up burns within the actual pause plus grace are excused.
+// Only its throttled/catching-up burns within the actual pause plus 60s recovery are excused.
 func TestBurnExcusePauseRecovery(t *testing.T) {
 	in := InvariantInputs{
 		Started: fixtureT0, Workload: 5 * time.Minute,
@@ -97,9 +97,9 @@ func TestBurnExcusePauseRecovery(t *testing.T) {
 				{"pause starts", 90 * time.Second, true},
 				{"during pause", 120 * time.Second, true},
 				{"after resume", 160 * time.Second, true},
-				{"just before grace ends", 245*time.Second - time.Nanosecond, true},
-				{"grace ends", 245 * time.Second, false},
-				{"after grace", 246 * time.Second, false},
+				{"just before recovery ends", 210*time.Second - time.Nanosecond, true},
+				{"recovery ends", 210 * time.Second, false},
+				{"resume plus 90s", 240 * time.Second, false},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					burn := gatewayBurn{At: at(tc.offset), Host: "hukvxfc7", Reason: reason}
@@ -120,6 +120,54 @@ func TestBurnExcusePauseRecovery(t *testing.T) {
 	}
 	in.Events[0].StartedAt = nil
 	require.False(t, burnExcuse(in)(gatewayBurn{At: at(120 * time.Second), Host: "hukvxfc7", Reason: "participant_catching_up_no_send"}))
+}
+
+func TestPauseRecoveryIsIndependentOfSweepGrace(t *testing.T) {
+	for _, tc := range []struct {
+		recovery string
+		grace    time.Duration
+		end      time.Duration
+	}{
+		{"", time.Second, 210 * time.Second},
+		{"0s", 5 * time.Minute, 150 * time.Second},
+		{"30s", 5 * time.Minute, 180 * time.Second},
+		{"2m", time.Second, 270 * time.Second},
+	} {
+		t.Run(tc.recovery, func(t *testing.T) {
+			in := InvariantInputs{
+				Started: fixtureT0, Workload: 5 * time.Minute,
+				Settings: invariantSettings{Grace: tc.grace},
+				Hosts:    []InvariantHost{{ID: "versiond-2", Participant: "p2"}, {ID: "versiond-3", Participant: "p3"}},
+				Events:   []EventRecord{{Action: "pause", Target: "versiond-2", Recovery: tc.recovery, StartedAt: atPtr(90 * time.Second), EndedAt: atPtr(150 * time.Second)}},
+			}
+			excused := burnExcuse(in)
+			for _, reason := range []string{"participant_catching_up_no_send", "participant_throttled_no_send"} {
+				require.True(t, excused(gatewayBurn{At: at(tc.end - time.Nanosecond), Host: "p2", Reason: reason}))
+				require.False(t, excused(gatewayBurn{At: at(tc.end), Host: "p2", Reason: reason}))
+				require.False(t, excused(gatewayBurn{At: at(120 * time.Second), Host: "p3", Reason: reason}))
+			}
+		})
+	}
+}
+
+// Each shipped pause scenario must retain a workload tail where stuck catch-up burns count.
+func TestCatchUpScenariosLeaveTimeAfterRecovery(t *testing.T) {
+	for _, name := range []string{"catch-up", "catch-up-15m", "missrate-catch-up"} {
+		t.Run(name, func(t *testing.T) {
+			scenario, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
+			require.NoError(t, err)
+			for _, pause := range scenario.TimelineEvents() {
+				if pause.Action != "pause" {
+					continue
+				}
+				end, err := time.ParseDuration(pause.Until)
+				require.NoError(t, err)
+				recovery, err := parsePauseRecovery(pause.Recovery)
+				require.NoError(t, err)
+				require.Less(t, end+recovery, scenario.Duration())
+			}
+		})
+	}
 }
 
 // Exercise the catch-up scenario's legacy host_faults alias through the real drain judge.
@@ -151,7 +199,16 @@ func TestCatchUpPauseBurnsDoNotFailNoOrphanedWork(t *testing.T) {
 	require.Zero(t, summary.GhostRate)
 	require.Zero(t, summary.Orphaned)
 
+	// A host still catching up 90s after resume must fail even without client errors.
+	inputs.Burns = append(inputs.Burns, gatewayBurn{At: at(240 * time.Second), EscrowID: "11", Nonce: "4", Host: "hukvxfc7", Reason: "participant_catching_up_no_send"})
 	inferences["4"] = debugInference{Status: "pending"}
+	summary, done, err = judgeOrphans(poll, orphanJudgeFor(scenario, inputs, []EventRecord{{Action: pause.Action, Target: pause.Target, StartedAt: atPtr(90 * time.Second), EndedAt: atPtr(150 * time.Second)}}))
+	require.True(t, done)
+	require.Equal(t, 2, summary.GhostExcluded)
+	require.Equal(t, 1, summary.Ghost)
+	require.ErrorContains(t, err, "ghost inference rate")
+
+	// Without a matching logged burn, the same unfinished nonce remains a genuine orphan.
 	summary, done, err = judgeOrphans(poll, judge)
 	require.True(t, done)
 	require.Equal(t, 1, summary.Orphaned)

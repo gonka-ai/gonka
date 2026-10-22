@@ -465,6 +465,55 @@ func TestTimelineEventsAlias(t *testing.T) {
 	require.NoError(t, scenario.Validate())
 }
 
+func TestPauseRecoveryConfiguration(t *testing.T) {
+	for _, alias := range []bool{false, true} {
+		for _, raw := range []string{"", "0s", "30s", "2m", "-1s", "invalid"} {
+			t.Run(fmt.Sprintf("alias=%t/recovery=%s", alias, raw), func(t *testing.T) {
+				scenario := eventScenario()
+				if alias {
+					scenario.Workload.HostFaults = []HostFault{{Host: "versiond-2", Mode: "pause", StartAfter: "90s", Duration: "60s", Recovery: raw}}
+				} else {
+					scenario.Workload.Events = []Event{{Action: "pause", Target: "versiond-2", At: "90s", Until: "150s", Recovery: raw}}
+				}
+				require.Equal(t, raw, scenario.TimelineEvents()[0].Recovery)
+				err := scenario.Validate()
+				if raw == "-1s" || raw == "invalid" {
+					require.ErrorContains(t, err, "recovery must be a non-negative duration")
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
+	scenario := eventScenario()
+	scenario.Workload.Events = []Event{{Action: "container_restart", Target: "versiond-2", At: "90s", Recovery: "30s"}}
+	require.ErrorContains(t, scenario.Validate(), "recovery is only for pause events")
+}
+
+// Save and reload the configured recovery so offline rechecks use the same window as live runs.
+func TestPauseRecoverySurvivesEventExecutionAndJSON(t *testing.T) {
+	fake := &fakeEventCalls{}
+	event := plannedTestEvent(Event{ID: "pause", Action: "pause", Target: "versiond-2", Recovery: "30s"})
+	record := executeEvent(context.Background(), time.Now(), event, fake, fake)
+	require.Empty(t, record.Error)
+	require.Equal(t, "30s", record.Recovery)
+	dir := t.TempDir()
+	require.NoError(t, writeEventRecords(dir, []EventRecord{record}))
+	body, err := os.ReadFile(filepath.Join(dir, "events.json"))
+	require.NoError(t, err)
+	var records []EventRecord
+	require.NoError(t, json.Unmarshal(body, &records))
+	require.Equal(t, "30s", records[0].Recovery)
+	inputs := InvariantInputs{
+		Started: *record.StartedAt, Workload: 5 * time.Minute,
+		Settings: invariantSettings{Grace: 5 * time.Minute},
+		Hosts:    []InvariantHost{{ID: "versiond-2", Participant: "p2"}}, Events: records,
+	}
+	excused := burnExcuse(inputs)
+	require.True(t, excused(gatewayBurn{At: record.EndedAt.Add(29 * time.Second), Host: "p2", Reason: "participant_catching_up_no_send"}))
+	require.False(t, excused(gatewayBurn{At: record.EndedAt.Add(30 * time.Second), Host: "p2", Reason: "participant_catching_up_no_send"}))
+}
+
 // Test flow:
 // 1. Write one finished and one never-started record to events.json.
 // 2. Decode the file as generic JSON.

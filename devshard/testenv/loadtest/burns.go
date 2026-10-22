@@ -114,7 +114,7 @@ func (g ghostSet) escrow(id string) map[string]bool {
 
 // burnExcuse reports whether the ghost rate leaves a burn out: the gateway ejected or cut off the
 // slot's host inside one of its graced fault windows, or throttled it or caught it up inside a
-// graced pause or peer-budget fault window, so the fault caused it.
+// pause's recovery window or a graced peer-budget window, so the fault caused it.
 func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 	c := newInvariantContext(in)
 	return func(burn gatewayBurn) bool {
@@ -128,8 +128,27 @@ func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 			if faultBurnReasons[burn.Reason] && c.inForegroundWindow(participant, burn.At, burn.At) {
 				return true
 			}
-			for _, w := range c.faultyDuring(participant, burn.At, burn.At) {
-				if recoveryBurnReasons[burn.Reason] && (w.Event.Action == "pause" || w.Event.Params["observe"] == "host_rate_limited") {
+			if !recoveryBurnReasons[burn.Reason] {
+				continue
+			}
+			for _, w := range c.windows {
+				if w.Participant != participant {
+					continue
+				}
+				span := w.Graced
+				if w.Event.Action == "pause" {
+					recovery, err := parsePauseRecovery(w.Event.Recovery)
+					if err != nil {
+						continue
+					}
+					span = w.Span
+					if w.Event.EndedAt != nil {
+						span.To = span.To.Add(recovery)
+					}
+				} else if w.Event.Params["observe"] != "host_rate_limited" {
+					continue
+				}
+				if span.overlapsAfter(burn.At, burn.At) {
 					return true
 				}
 			}
