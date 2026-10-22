@@ -98,6 +98,8 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Baseline smoke** | Pinned 0.2.15-v5 versiond/router, this child, RPC off, no proxy | `TestBaselineSmoke` |
 | **Peer RPC chat** | Gateway chat over Connect HTTP/1.1; child counts Attach and Chat | `TestPeerRPCChat` |
 | **Peer RPC HA session** | Two escrows hashed to different children both seed and chat; one stateless token admits on both | `TestPeerRPCHASessionSpread` |
+| **Usage challenge** | Replayed vLLM streams with a cut, a hash mismatch and a usage overclaim; the gateway asks the fleet, the verdict lands in the chain state | `TestUsageOverclaimScenarios` |
+| **Usage challenge, old hosts** | Children on the baseline tag have no VerifyChallenge; the challenge finishes with no votes and the usage stands | `TestUsageChallengeOnOldHosts` |
 | **Mixed fleet** | versiond-0 on 0.2.15-v5, versiond-1 and router on this tree, RPC on, both `:8080` HTTP/1.1 | `TestMixedFleetNoProxy` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented

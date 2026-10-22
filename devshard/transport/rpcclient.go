@@ -37,8 +37,8 @@ type RPCClient struct {
 	// session client.
 	sessionQuery rpcpbconnect.SessionServiceClient
 	// sessionLarge is a third SessionServiceClient with the 10 MiB dispute
-	// read cap (VerifyTimeout, VerifyErrorMiss, and a decoded
-	// ChallengeReceipt). Catch-up pages use challengeLarge with the same
+	// read cap (VerifyTimeout, VerifyErrorMiss, VerifyChallenge, and a
+	// decoded ChallengeReceipt). Catch-up pages use challengeLarge with the same
 	// gzip options.
 	sessionLarge rpcpbconnect.SessionServiceClient
 	// challengeLarge sends ChallengeReceipt: a nil-payload catch-up page and

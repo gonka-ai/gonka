@@ -36,7 +36,9 @@ import (
 // The executor binary is honest in every row. An inflating executor is an
 // operator running a modified engine or tampering with storage, so the
 // injection sits in mock-openai, which stands for the executor's ML node and
-// serves vLLM answers recorded byte for byte. The same mock answers the
+// serves answers recorded from vLLM's output processor: token ids, chunk
+// boundaries, finish reasons and usage are vLLM's, the logprob values are
+// synthetic. The same mock answers the
 // validators' replays with the honest recording, since it also stands for
 // their ML nodes.
 //

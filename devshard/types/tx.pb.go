@@ -76,8 +76,9 @@ type ChallengeReason int32
 
 const (
 	ChallengeReason_CHALLENGE_REASON_UNSPECIFIED ChallengeReason = 0
-	// The stream was cut before [DONE] and devshard_meta, or it was complete
-	// and matched neither hash the Finish carries.
+	// The stream was cut before [DONE] and devshard_meta, it was complete and
+	// matched neither hash the Finish carries, or it was still open a grace
+	// after its Finish applied.
 	ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND ChallengeReason = 1
 	// The receipt was applied and the stream ended with no content.
 	ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM ChallengeReason = 2

@@ -109,7 +109,8 @@ func TestServer_VerifyErrorMiss_RejectsWithoutArtifacts(t *testing.T) {
 // The challenge core applies the catch-up diffs before it asks the host, so a
 // lagging host answers on the state the gateway sent. A reason this build does
 // not know, as from a newer gateway, is answered like any other: the vote is
-// decided on the body, and an error here would only be retried.
+// decided on the body, and the gateway takes an InvalidArgument as this host's
+// final answer, so an error here would cost the vote.
 func TestServer_VerifyChallenge_AppliesDiffsAndAnswersAnyReason(t *testing.T) {
 	env := setupServerEnv(t)
 	ctx := context.Background()
