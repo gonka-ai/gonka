@@ -28,6 +28,8 @@ type Server struct {
 	streamGate chan struct{}
 	capacity   chan struct{}
 	workers    chan struct{}
+	journal    journalState
+	chaos      ChaosConfig
 	stats      struct {
 		requestsReceived    atomic.Uint64
 		successfulResponses atomic.Uint64
@@ -49,7 +51,10 @@ func NewServer(cfg Config) *Server {
 
 // NewServerWithError builds the HTTP server and loads an optional replay file.
 func NewServerWithError(cfg Config) (*Server, error) {
-	s := &Server{fault: cfg.Faults}
+	if err := cfg.Chaos.Validate(); err != nil {
+		return nil, err
+	}
+	s := &Server{fault: cfg.Faults, chaos: cfg.Chaos}
 	if cfg.ReplayFile != "" {
 		dataset, err := replay.LoadFile(cfg.ReplayFile)
 		if err != nil {
@@ -69,6 +74,7 @@ func NewServerWithError(cfg Config) (*Server, error) {
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.GET("/testenv/stats", s.handleStats)
+	e.GET("/testenv/log", s.handleLog)
 	e.POST("/api/v1/models/status", s.handleModelStatus)
 	e.POST("/testenv/fault", s.handleFaultPatch)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
@@ -85,6 +91,9 @@ func (s *Server) handleModelStatus(c echo.Context) error {
 func (s *Server) patchFault(p FaultPatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if p.Chaos != nil {
+		s.chaos = *p.Chaos
+	}
 	if p.Seed != nil {
 		var knobs FaultConfig
 		p.apply(&knobs)
@@ -138,6 +147,12 @@ func (s *Server) withSeedUsage(f FaultConfig, seed *int) FaultConfig {
 	return f
 }
 
+func (s *Server) chaosConfig() ChaosConfig {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.chaos
+}
+
 func (s *Server) streamFaults() (FaultConfig, <-chan struct{}) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -168,19 +183,30 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 	if err := c.Bind(&p); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if p.Chaos != nil {
+		if err := p.Chaos.Validate(); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+	}
 	s.patchFault(p)
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleStats(c echo.Context) error {
-	return c.JSON(http.StatusOK, Stats{
-		RequestsReceived:    s.stats.requestsReceived.Load(),
-		SuccessfulResponses: s.stats.successfulResponses.Load(),
-		FailedResponses:     s.stats.failedResponses.Load(),
-		Timeouts:            s.stats.timeouts.Load(),
-		ReplayHits:          s.stats.replayHits.Load(),
-		ReplayMisses:        s.stats.replayMisses.Load(),
-	})
+	st := s.journal.snapshotStats()
+	st.RequestsReceived = s.stats.requestsReceived.Load()
+	st.SuccessfulResponses = s.stats.successfulResponses.Load()
+	st.FailedResponses = s.stats.failedResponses.Load()
+	st.Timeouts = s.stats.timeouts.Load()
+	st.ReplayHits = s.stats.replayHits.Load()
+	st.ReplayMisses = s.stats.replayMisses.Load()
+	return c.JSON(http.StatusOK, st)
+}
+
+// handleLog exports the whole request log. "complete" is false when records were dropped at the bound.
+func (s *Server) handleLog(c echo.Context) error {
+	recs, dropped := s.journal.snapshotLog()
+	return c.JSON(http.StatusOK, map[string]any{"complete": dropped == 0, "dropped": dropped, "records": recs})
 }
 
 func (s *Server) recordFailure(ctx context.Context) {
@@ -191,44 +217,123 @@ func (s *Server) recordFailure(ctx context.Context) {
 	s.stats.failedResponses.Add(1)
 }
 
-func (s *Server) handleChatCompletions(c echo.Context) error {
+func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
+	start := time.Now()
+	ctx := c.Request().Context()
 	s.stats.requestsReceived.Add(1)
-	if !s.acquire(c.Request().Context()) {
-		s.recordFailure(c.Request().Context())
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
-	}
-	defer s.release()
-
-	f, streamGate := s.streamFaults()
-	if f.Hang {
-		<-c.Request().Context().Done()
-		s.stats.timeouts.Add(1)
-		return c.Request().Context().Err()
-	}
-	if f.StreamErrorEnvelope {
-		s.stats.failedResponses.Add(1)
-		return s.streamErrorEnvelope(c)
-	}
-	if f.HTTPStatus >= 400 {
-		s.stats.failedResponses.Add(1)
-		return c.JSON(f.HTTPStatus, OpenAIErrorBody(f.HTTPStatus, "mock-openai fault injection"))
-	}
-
+	// The body is read before any fault applies, so a faulted answer is logged with its request.
 	body, err := readBody(c.Request())
 	if err != nil {
-		s.recordFailure(c.Request().Context())
+		s.recordFailure(ctx)
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	var req ChatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		s.recordFailure(c.Request().Context())
+		s.recordFailure(ctx)
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	if req.Model == "" {
 		req.Model = "test-model"
 	}
+
+	phase := PhaseExecute
+	if req.EnforcedTokens != nil {
+		phase = PhaseReplay
+	}
+	rec := RequestRecord{
+		StartUnixMs: start.UnixMilli(), Phase: phase, Seed: req.Seed, PromptKey: PromptKey(body), Model: req.Model,
+		Stream: req.Stream, ChunkTokens: 1, Outcome: "ok", Wire: wireViewOf(body),
+	}
+	if req.EnforcedTokens != nil {
+		rec.EnforcedTokens = len(req.EnforcedTokens.Tokens)
+		rec.EnforcedTops = countTops(req.EnforcedTokens)
+	}
+	defer func() {
+		// Status stays 0 when nothing was written: a dropped connection or a request left hanging.
+		if rec.Status == 0 && c.Response().Committed {
+			rec.Status = c.Response().Status
+		}
+		// An answer cut short because the caller hung up (its context ended, or a write to the
+		// closed connection failed) is not a full answer, whatever status went out first.
+		if (rec.Outcome == "ok" || rec.Outcome == "prelude") && (retErr != nil || ctx.Err() != nil) {
+			rec.Outcome = OutcomeClientGone
+		}
+		rec.DurationMs = time.Since(start).Milliseconds()
+		s.journal.record(rec)
+	}()
+	if !s.acquire(ctx) {
+		s.recordFailure(ctx)
+		rec.Status, rec.Outcome = http.StatusServiceUnavailable, "capacity_exhausted"
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
+	}
+	defer s.release()
+	rec.ActiveAtStart = s.journal.enter()
+	defer s.journal.leave()
+
+	// Faults are read once a worker is free: a request that waited behind a hang is answered by
+	// the faults in force when its turn comes, not by those of its arrival.
+	f, streamGate := s.streamFaults()
+	if f.Hang {
+		<-ctx.Done()
+		s.stats.timeouts.Add(1)
+		rec.Outcome = "fault_hang"
+		return ctx.Err()
+	}
+	if f.StreamErrorEnvelope {
+		s.stats.failedResponses.Add(1)
+		rec.Outcome = "fault_stream_error_envelope"
+		return s.streamErrorEnvelope(c)
+	}
+	if f.HTTPStatus >= 400 {
+		s.stats.failedResponses.Add(1)
+		rec.Outcome = "fault_status"
+		return c.JSON(f.HTTPStatus, OpenAIErrorBody(f.HTTPStatus, "mock-openai fault injection"))
+	}
 	f = s.withSeedUsage(f, req.Seed)
+
+	// Chaos shapes executions of synthetic answers; a node that serves a replay file answers as the
+	// recorded ML node did.
+	var prelude preludeSpec
+	if chaos := s.chaosConfig(); chaos.Enabled && phase == PhaseExecute && s.replay == nil {
+		rec.Chaos = chaos.Pick(rec.PromptKey, req.Seed, req.Stream)
+		switch rec.Chaos {
+		case ChaosDelay:
+			select {
+			case <-time.After(time.Duration(chaos.delayMs()) * time.Millisecond):
+			case <-ctx.Done():
+				rec.Outcome = "client_gone_during_chaos_delay"
+				return ctx.Err()
+			}
+		case ChaosClientError:
+			s.stats.failedResponses.Add(1)
+			rec.Outcome = "chaos_status"
+			return c.JSON(http.StatusBadRequest, OpenAIErrorBody(http.StatusBadRequest, "mock-openai chaos: request rejected"))
+		case ChaosServerError:
+			s.stats.failedResponses.Add(1)
+			rec.Outcome = "chaos_status"
+			return c.JSON(http.StatusInternalServerError, OpenAIErrorBody(http.StatusInternalServerError, "mock-openai chaos: engine failure"))
+		case ChaosErrorString:
+			s.stats.failedResponses.Add(1)
+			rec.Outcome = "chaos_status"
+			return c.JSON(http.StatusInternalServerError, map[string]any{"error": "mock-openai chaos: error as a string"})
+		case ChaosAbort:
+			rec.Outcome = "chaos_abort"
+			panic(http.ErrAbortHandler)
+		case ChaosPrelude:
+			prelude = preludeSpec{chunks: 3, hold: 2 * time.Second}
+		case ChaosPartial:
+			f.PartialStream = true
+		case ChaosSSEError:
+			f.SSEErrorMessage = "mock-openai chaos: engine failure mid-stream"
+		case ChaosEmpty:
+			f.emptyAnswer = true
+		case ChaosOddUsage:
+			f.oddUsage = true
+		case ChaosWrongAnswer:
+			f.wrongAnswer = true
+		}
+	}
 
 	// Latency delays Validate (non-stream JSON or an enforced-token replay) only.
 	// Stream first-token delay is StreamFirstTokenDelay inside streamCompletion;
@@ -247,8 +352,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		f.DropTokens = false
 	}
 	if f.Latency > 0 && validate {
-		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
-			s.recordFailure(c.Request().Context())
+		if err := waitForLatency(ctx, f.Latency); err != nil {
+			s.recordFailure(ctx)
+			rec.Outcome = "client_gone_during_latency"
 			return err
 		}
 	}
@@ -261,6 +367,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 				status = http.StatusServiceUnavailable
 			}
 			s.stats.failedResponses.Add(1)
+			rec.Outcome = "fault_failure_rate"
 			return c.JSON(status, map[string]string{"error": "mock-openai fault injection"})
 		}
 	}
@@ -271,21 +378,34 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		sample, ok := s.lookupReplay(req, body)
 		if !ok {
 			s.stats.replayMisses.Add(1)
+			rec.Outcome = "replay_miss"
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "mock-openai replay sample not found"})
 		}
 		s.stats.replayHits.Add(1)
 		text = sample.Response.Content
 		recorded = sample.Recorded
 	}
+	if f.emptyAnswer {
+		text = ""
+	}
 	if req.Stream {
 		var err error
 		if recorded != nil {
-			err = s.streamRecorded(c, recorded.Stream, f, streamGate)
+			err = s.streamRecorded(c, recorded.Stream, f, streamGate, &rec)
 		} else {
-			err = s.streamCompletion(c, req, text, body, f, streamGate)
+			err = s.streamCompletion(c, req, text, body, f, streamGate, &rec, prelude)
 		}
 		if err != nil || f.PartialStream || f.DropFirstChunk {
-			s.recordFailure(c.Request().Context())
+			// A stream the fault cut is not a full answer, even though it ended cleanly.
+			if err == nil && (rec.Outcome == "ok" || rec.Outcome == "prelude") {
+				switch {
+				case f.PartialStream:
+					rec.Outcome = "fault_partial_stream"
+				case f.DropFirstChunk:
+					rec.Outcome = "fault_drop_first_chunk"
+				}
+			}
+			s.recordFailure(ctx)
 			return err
 		}
 		s.stats.successfulResponses.Add(1)
@@ -293,11 +413,18 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	}
 	if recorded != nil {
 		err = c.Blob(http.StatusOK, echo.MIMEApplicationJSON, recorded.NonStream)
+		if err == nil {
+			positions, completion := recordedAnswer(recorded.NonStream)
+			rec.TokensOut = positions
+			if completion != nil {
+				rec.UsageCompletion = *completion
+			}
+		}
 	} else {
-		err = s.jsonCompletion(c, req, text, body)
+		err = s.jsonCompletion(c, req, text, body, f, &rec)
 	}
 	if err != nil {
-		s.recordFailure(c.Request().Context())
+		s.recordFailure(ctx)
 		return err
 	}
 	s.stats.successfulResponses.Add(1)
@@ -342,12 +469,26 @@ func (s *Server) release() {
 	<-s.capacity
 }
 
-func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte) error {
+// preludeSpec is the role-only prefix a chaos action puts in front of a streamed answer.
+type preludeSpec struct {
+	chunks int
+	hold   time.Duration
+}
+
+func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, rec *RequestRecord) error {
 	promptTok := promptTokenEstimate(body)
 	completionTok := len(text) / 4
-	if completionTok < 1 {
+	rec.TokensOut = len([]rune(text))
+	if f.HonestUsage {
+		completionTok = rec.TokensOut
+	}
+	if completionTok < 1 && !f.emptyAnswer {
 		completionTok = 1
 	}
+	if f.oddUsage {
+		completionTok = oddUsage(rec.TokensOut)
+	}
+	rec.UsageCompletion = completionTok
 	choice := map[string]any{
 		"index": 0,
 		"message": map[string]any{
@@ -357,9 +498,11 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 		"finish_reason": "stop",
 	}
 	if req.Logprobs {
-		choice["logprobs"] = map[string]any{
-			"content": buildLogprobContent(text, req.TopLogprobs),
+		content := buildLogprobContent(text, req.TopLogprobs)
+		if f.wrongAnswer {
+			forgeLogprobs(content)
 		}
+		choice["logprobs"] = map[string]any{"content": content}
 	} else {
 		choice["logprobs"] = nil
 	}
@@ -378,7 +521,7 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
+func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}, rec *RequestRecord, prelude preludeSpec) error {
 	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
 		return err
 	}
@@ -420,8 +563,26 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		return nil
 	}
 
+	if prelude.chunks > 0 {
+		for i := 0; i < prelude.chunks; i++ {
+			if err := writeChunk(map[string]any{"role": "assistant"}, nil, nil); err != nil {
+				rec.Outcome = "client_gone_during_prelude"
+				return err
+			}
+		}
+		rec.Outcome = "prelude"
+		if prelude.hold > 0 {
+			select {
+			case <-time.After(prelude.hold):
+			case <-c.Request().Context().Done():
+				rec.Outcome = "client_gone_during_prelude_hold"
+				return c.Request().Context().Err()
+			}
+		}
+	}
+
 	tokens := []rune(text)
-	if len(tokens) == 0 {
+	if len(tokens) == 0 && !f.emptyAnswer {
 		tokens = []rune(" ")
 	}
 	// vLLM-style streaming error: optional content prefix, then error event + [DONE].
@@ -432,9 +593,20 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 			prefix = prefix[:4]
 		}
 		for _, r := range prefix {
-			if err := writeChunk(map[string]any{"content": string(r)}, nil, nil); err != nil {
+			// vLLM sends logprobs with every content chunk before the error, and a host counts only
+			// the chunks that carry them.
+			var lp any
+			if req.Logprobs {
+				content := buildLogprobContent(string(r), req.TopLogprobs)
+				if f.wrongAnswer {
+					forgeLogprobs(content)
+				}
+				lp = map[string]any{"content": content}
+			}
+			if err := writeChunk(map[string]any{"content": string(r)}, nil, lp); err != nil {
 				return err
 			}
+			rec.TokensOut++
 		}
 		errPayload, err := json.Marshal(OpenAIErrorBody(500, msg))
 		if err != nil {
@@ -463,13 +635,16 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		tok := string(r)
 		var lp any
 		if req.Logprobs {
-			lp = map[string]any{
-				"content": buildLogprobContent(tok, req.TopLogprobs),
+			content := buildLogprobContent(tok, req.TopLogprobs)
+			if f.wrongAnswer {
+				forgeLogprobs(content)
 			}
+			lp = map[string]any{"content": content}
 		}
 		if err := writeChunk(map[string]any{"content": tok}, nil, lp); err != nil {
 			return err
 		}
+		rec.TokensOut++
 		if !paused && f.PauseStream && streamGate != nil {
 			paused = true
 			select {
@@ -491,9 +666,16 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 	}
 	promptTok := promptTokenEstimate(body)
 	completionTok := len(text) / 4
-	if completionTok < 1 {
+	if f.HonestUsage {
+		completionTok = len(tokens)
+	}
+	if completionTok < 1 && !f.emptyAnswer {
 		completionTok = 1
 	}
+	if f.oddUsage {
+		completionTok = oddUsage(len(tokens))
+	}
+	rec.UsageCompletion = completionTok
 	usageChunk := map[string]any{
 		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
 		"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
@@ -531,7 +713,7 @@ func isValidationReplay(body []byte) bool {
 // stops after the middle one, and SSEErrorMessage keeps up to four of them
 // ahead of the error event. The usage and padding knobs rewrite the
 // recording first.
-func (s *Server) streamRecorded(c echo.Context, chunks []json.RawMessage, f FaultConfig, streamGate <-chan struct{}) error {
+func (s *Server) streamRecorded(c echo.Context, chunks []json.RawMessage, f FaultConfig, streamGate <-chan struct{}, rec *RequestRecord) error {
 	chunks, err := overstateRecordedStream(chunks, f)
 	if err != nil {
 		return err
@@ -549,6 +731,11 @@ func (s *Server) streamRecorded(c echo.Context, chunks []json.RawMessage, f Faul
 	writeData := func(data []byte) error {
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 			return err
+		}
+		positions, completion := recordedAnswer(data)
+		rec.TokensOut += positions
+		if completion != nil {
+			rec.UsageCompletion = *completion
 		}
 		if flusher != nil {
 			flusher.Flush()

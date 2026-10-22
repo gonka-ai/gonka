@@ -608,3 +608,29 @@ func TestFillConfig_MaterializesKeyrings(t *testing.T) {
 	_, err := os.Stat(filepath.Join(keyringBase, "keyhash"))
 	require.NoError(t, err)
 }
+
+// The chaos config reaches the one mock node whose profile asks for it, and survives the YAML quoting.
+func TestWriteCompose_ChaosReachesOnlyItsMockNode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	chaos := `{"enabled":true,"seed":7,"weights":{"ok":4,"wrong_answer":1}}`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", Workers: 1},
+		{Name: "mock-openai-1", Workers: 1, ChaosJSON: chaos},
+	}
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, chaos, compose.Services["mock-openai-1"].Environment["MOCK_OPENAI_CHAOS_JSON"])
+	require.NotContains(t, compose.Services["mock-openai-0"].Environment, "MOCK_OPENAI_CHAOS_JSON", "an honest node gets no chaos")
+}

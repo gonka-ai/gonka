@@ -104,7 +104,8 @@ services:
       MOCK_OPENAI_HANG: "{{ $node.Hang }}"
       MOCK_OPENAI_FAILURE_RATE: "{{ $node.FailureRate }}"
       MOCK_OPENAI_HTTP_STATUS: "{{ $node.HTTPStatus }}"
-{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ if $node.ChaosJSON }}      MOCK_OPENAI_CHAOS_JSON: '{{ $node.ChaosJSON }}'
+{{ end }}{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
 {{ end }}
 {{ if $.MockOpenAI.ReplayFile }}    volumes:
       - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro

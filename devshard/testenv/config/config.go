@@ -135,6 +135,9 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// ChaosJSON is the mock's chaos config (the chaos object of POST /testenv/fault) the node runs
+	// with from the start; empty answers every execution honestly.
+	ChaosJSON string `yaml:"chaos_json,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.

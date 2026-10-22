@@ -19,16 +19,9 @@ type Config struct {
 	Workers    int
 	Queue      int
 	ReplayFile string
-}
-
-// Stats is the test-only request outcome snapshot exposed by a Mock ML node.
-type Stats struct {
-	RequestsReceived    uint64 `json:"requests_received"`
-	SuccessfulResponses uint64 `json:"successful_responses"`
-	FailedResponses     uint64 `json:"failed_responses"`
-	Timeouts            uint64 `json:"timeouts"`
-	ReplayHits          uint64 `json:"replay_hits"`
-	ReplayMisses        uint64 `json:"replay_misses"`
+	// Chaos picks an answer shape for every execution (chaos.go). It lives here rather than in
+	// FaultConfig, which is compared with == and cannot hold the weights map.
+	Chaos ChaosConfig
 }
 
 // DefaultConfig returns local dev defaults.
@@ -75,6 +68,15 @@ type FaultConfig struct {
 	UsagePromptTokens     int
 	PadEmptyChunks        int
 	DropTokens            bool
+	// HonestUsage reports usage.completion_tokens as the number of tokens the answer actually carried,
+	// as vLLM does. Off, the mock reports len(text)/4 while it emits one token per rune, and a check
+	// that compares a host's Finish against the ML cannot tell an overclaim from the mock's own estimate.
+	HonestUsage bool
+
+	// Set per request by a chaos action, never by a patch.
+	emptyAnswer bool
+	oddUsage    bool
+	wrongAnswer bool
 }
 
 // ShouldFail deterministically selects requests for a configured failure
@@ -116,6 +118,9 @@ type FaultPatch struct {
 	// can each get their own; the other knobs of such a patch are ignored.
 	// A seed patch with all of them zero removes the seed's knobs.
 	Seed *int `json:"seed,omitempty"`
+
+	// Chaos replaces the chaos config; a seed patch does not scope it.
+	Chaos *ChaosConfig `json:"chaos,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -192,6 +197,20 @@ type ChatRequest struct {
 	Logprobs    bool            `json:"logprobs,omitempty"`
 	TopLogprobs int             `json:"top_logprobs,omitempty"`
 	Raw         json.RawMessage `json:"-"`
+
+	// EnforcedTokens is set on a validator replay; the token ids are the ones the executor produced.
+	EnforcedTokens *EnforcedTokens `json:"enforced_tokens,omitempty"`
+}
+
+// EnforcedTokens mirrors the wire shape of completionapi.EnforcedTokens. It is declared here on
+// purpose: the mock must not share the production parser it is used to check.
+type EnforcedTokens struct {
+	Tokens []EnforcedToken `json:"tokens"`
+}
+
+type EnforcedToken struct {
+	Token     string   `json:"token"`
+	TopTokens []string `json:"top_tokens"`
 }
 
 type ChatMessage struct {
