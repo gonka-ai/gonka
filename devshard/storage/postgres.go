@@ -1606,8 +1606,8 @@ const postgresInsertSealedInferenceSQL = `INSERT INTO devshard_sealed_inferences
 			sealed_input_length, sealed_max_tokens,
 			sealed_input_tokens, sealed_output_tokens,
 			sealed_reserved_cost, sealed_actual_cost,
-			sealed_started_at, sealed_confirmed_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+			sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
 		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = EXCLUDED.sealed_nonce,
 			obs_present = EXCLUDED.obs_present,
@@ -1626,7 +1626,8 @@ const postgresInsertSealedInferenceSQL = `INSERT INTO devshard_sealed_inferences
 			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
 			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
 			sealed_started_at = EXCLUDED.sealed_started_at,
-			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at,
+			sealed_usage_challenged = EXCLUDED.sealed_usage_challenged`
 
 type postgresExecer interface {
 	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
@@ -1641,7 +1642,7 @@ func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer,
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAt, row.SealedConfirmedAt,
+		row.SealedStartedAt, row.SealedConfirmedAt, row.SealedChallenged,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -1667,21 +1668,22 @@ const postgresInsertSealedInferencesSQL = `INSERT INTO devshard_sealed_inference
 			sealed_input_length, sealed_max_tokens,
 			sealed_input_tokens, sealed_output_tokens,
 			sealed_reserved_cost, sealed_actual_cost,
-			sealed_started_at, sealed_confirmed_at
+			sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
 		)
 		SELECT $1, $2, t.* FROM unnest(
 			$3::bigint[], $4::bigint[], $5::boolean[], $6::int[], $7::int[],
 			$8::int[], $9::int[], $10::bytea[], $11::text[], $12::bytea[],
 			$13::bytea[], $14::bigint[], $15::bigint[], $16::bigint[],
 			$17::bigint[], $18::bigint[], $19::bigint[], $20::bigint[],
-			$21::bigint[]
+			$21::bigint[], $22::boolean[]
 		) AS t(
 			inference_id, sealed_nonce, obs_present, sealed_status,
 			sealed_executor_slot, sealed_votes_valid, sealed_votes_invalid,
 			sealed_validated_by, sealed_model, sealed_prompt_hash,
 			sealed_response_hash, sealed_input_length, sealed_max_tokens,
 			sealed_input_tokens, sealed_output_tokens, sealed_reserved_cost,
-			sealed_actual_cost, sealed_started_at, sealed_confirmed_at
+			sealed_actual_cost, sealed_started_at, sealed_confirmed_at,
+			sealed_usage_challenged
 		)
 		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = EXCLUDED.sealed_nonce,
@@ -1701,7 +1703,8 @@ const postgresInsertSealedInferencesSQL = `INSERT INTO devshard_sealed_inference
 			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
 			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
 			sealed_started_at = EXCLUDED.sealed_started_at,
-			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at,
+			sealed_usage_challenged = EXCLUDED.sealed_usage_challenged`
 
 // InsertSealedInferences upserts a chunk per statement instead of a statement
 // per row. Chunking the transaction alone still cost a round trip per
@@ -1735,7 +1738,7 @@ var postgresSealedInferenceColumns = []string{
 	"sealed_input_length", "sealed_max_tokens",
 	"sealed_input_tokens", "sealed_output_tokens",
 	"sealed_reserved_cost", "sealed_actual_cost",
-	"sealed_started_at", "sealed_confirmed_at",
+	"sealed_started_at", "sealed_confirmed_at", "sealed_usage_challenged",
 }
 
 // BulkInsertSealedInferences loads rows with COPY. What is left of the upsert
@@ -1790,7 +1793,7 @@ func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, row
 				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
 				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
 				int64(r.SealedReservedCost), int64(r.SealedActualCost),
-				r.SealedStartedAt, r.SealedConfirmedAt,
+				r.SealedStartedAt, r.SealedConfirmedAt, r.SealedChallenged,
 			}, nil
 		}),
 	)
@@ -1835,6 +1838,7 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 	actualCosts := make([]int64, n)
 	startedAt := make([]int64, n)
 	confirmedAt := make([]int64, n)
+	usageChallenged := make([]bool, n)
 	for i, row := range deduped {
 		inferenceIDs[i] = int64(row.InferenceID)
 		sealedNonces[i] = int64(row.SealedNonce)
@@ -1855,6 +1859,7 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 		actualCosts[i] = int64(row.SealedActualCost)
 		startedAt[i] = row.SealedStartedAt
 		confirmedAt[i] = row.SealedConfirmedAt
+		usageChallenged[i] = row.SealedChallenged
 	}
 
 	ctx, cancel := s.opCtx()
@@ -1864,6 +1869,7 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 		executorSlots, votesValid, votesInvalid, validatedBy, models,
 		promptHashes, responseHashes, inputLengths, maxTokens, inputTokens,
 		outputTokens, reservedCosts, actualCosts, startedAt, confirmedAt,
+		usageChallenged,
 	); err != nil {
 		return fmt.Errorf("insert sealed inferences: %w", err)
 	}
@@ -1884,7 +1890,7 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		        sealed_input_length, sealed_max_tokens,
 		        sealed_input_tokens, sealed_output_tokens,
 		        sealed_reserved_cost, sealed_actual_cost,
-		        sealed_started_at, sealed_confirmed_at
+		        sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
 		   FROM devshard_sealed_inferences
 		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
 		epochID, escrowID, inferenceID,
@@ -1897,7 +1903,7 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAt, &out.SealedConfirmedAt,
+		&out.SealedStartedAt, &out.SealedConfirmedAt, &out.SealedChallenged,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil
