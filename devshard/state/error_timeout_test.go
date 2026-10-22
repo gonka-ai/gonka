@@ -481,3 +481,51 @@ func TestInference_ReturnsCopyNotAlias(t *testing.T) {
 	_, ok = sm.Inference(99)
 	require.False(t, ok)
 }
+
+func TestApplyDiff_Timeout_Error_UnwindsFinishedAndPasses(t *testing.T) {
+	hosts := errorTimeoutHosts(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	slot := applyStartConfirm(t, sm, user, hosts, 1)
+	hash := []byte(errorTimeoutResponseHash)
+
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinish(signedFinish(t, hosts, 1, slot, 80, 40, hash))})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	var validators []uint32
+	for s := uint32(0); s < uint32(len(hosts)) && len(validators) < 2; s++ {
+		if s != slot {
+			validators = append(validators, s)
+		}
+	}
+	for _, v := range validators {
+		msg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: v, Valid: true, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, hosts[v], msg)
+		nonce = sm.SnapshotState().LatestNonce + 1
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(msg)}))
+		require.NoError(t, err)
+	}
+	mid := sm.SnapshotState()
+	require.Equal(t, uint32(1), mid.HostStats[slot].Finished)
+	require.Equal(t, uint32(2), mid.HostStats[slot].Validated)
+
+	var voters []uint32
+	for s := uint32(0); s < uint32(len(hosts)) && len(voters) < 3; s++ {
+		if s != slot {
+			voters = append(voters, s)
+		}
+	}
+	nonce = sm.SnapshotState().LatestNonce + 1
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 1, Votes: errorTimeoutVotes(t, hosts, 1, hash, voters),
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	state := sm.SnapshotState()
+	require.Equal(t, types.StatusTimedOut, state.Inferences[1].Status)
+	require.Equal(t, uint32(1), state.HostStats[slot].Missed)
+	require.Equal(t, uint32(0), state.HostStats[slot].Finished, "an error-miss is not a completion")
+	require.Equal(t, uint32(0), state.HostStats[slot].Validated, "passes on an error-missed inference are withdrawn")
+}

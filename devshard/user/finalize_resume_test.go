@@ -607,7 +607,9 @@ func TestFinalize_ResumeRefreshDoesNotPushCatchUpToLaggingHost(t *testing.T) {
 	runFinalizeRounds(t, session, numHosts-1)
 	require.Equal(t, types.PhaseFinalizing, session.StateMachine().Phase())
 	session.mu.Lock()
-	require.NotEmpty(t, session.diffsForHost(1))
+	laggingDiffs, err := session.diffsForHost(1)
+	require.NoError(t, err)
+	require.NotEmpty(t, laggingDiffs)
 	session.mu.Unlock()
 
 	lagging.drop.Store(false)

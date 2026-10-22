@@ -43,7 +43,9 @@ import (
 //
 //   - host stats mirror absolute on-chain per-host numbers (the tracker merges
 //     them with max, see maxHostStats), so they are shared rows merged with
-//     GREATEST.
+//     GREATEST. validated and finished are the exception: a challenge or an
+//     error-miss lowers them, so they are carried with stats_nonce and the row
+//     keeps whichever writer saw the newer nonce.
 //   - latest_nonce is a watermark merged with GREATEST; phase is monotonic and
 //     merged by rank.
 //   - escrow metadata (epoch, model, slots, timeouts) is identity written at
@@ -242,6 +244,12 @@ CREATE TABLE IF NOT EXISTS accounting_escrow_host_stats (
 	completed_validations BIGINT NOT NULL,
 	PRIMARY KEY (escrow_id, slot_id)
 );
+ALTER TABLE accounting_escrow_host_stats
+	ADD COLUMN IF NOT EXISTS validated BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE accounting_escrow_host_stats
+	ADD COLUMN IF NOT EXISTS finished BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE accounting_escrow_host_stats
+	ADD COLUMN IF NOT EXISTS stats_nonce BIGINT NOT NULL DEFAULT 0;
 CREATE TABLE IF NOT EXISTS accounting_escrow_invalid_nonces (
 	escrow_id TEXT NOT NULL,
 	nonce BIGINT NOT NULL,
@@ -295,6 +303,7 @@ func (l *loadedLedger) blob(escrowID string) *escrowBlob {
 	if blob == nil {
 		blob = &escrowBlob{
 			HostStats:       make(map[uint32]types.HostStats),
+			HostStatsNonce:  make(map[uint32]uint64),
 			ChallengeBySlot: make(map[uint32]uint64),
 			InvalidBySlot:   make(map[uint32]uint64),
 		}
@@ -430,27 +439,33 @@ func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedg
 	slotRows.Close()
 
 	hostRows, err := q.Query(ctx, `
-		SELECT escrow_id, slot_id, missed, invalid, cost, required_validations, completed_validations
+		SELECT escrow_id, slot_id, missed, invalid, cost, required_validations, completed_validations,
+			validated, finished, stats_nonce
 		FROM accounting_escrow_host_stats`)
 	if err != nil {
 		return nil, fmt.Errorf("load accounting host stats: %w", err)
 	}
 	for hostRows.Next() {
 		var (
-			escrowID                                           string
-			slotID, missed, invalid, cost, required, completed int64
+			escrowID                                                                            string
+			slotID, missed, invalid, cost, required, completed, validated, finished, statsNonce int64
 		)
-		if err := hostRows.Scan(&escrowID, &slotID, &missed, &invalid, &cost, &required, &completed); err != nil {
+		if err := hostRows.Scan(&escrowID, &slotID, &missed, &invalid, &cost, &required, &completed,
+			&validated, &finished, &statsNonce); err != nil {
 			hostRows.Close()
 			return nil, err
 		}
-		out.blob(escrowID).HostStats[uint32(slotID)] = types.HostStats{
+		blob := out.blob(escrowID)
+		blob.HostStats[uint32(slotID)] = types.HostStats{
 			Missed:               uint32(missed),
 			Invalid:              uint32(invalid),
 			Cost:                 uint64(cost),
 			RequiredValidations:  uint32(required),
 			CompletedValidations: uint32(completed),
+			Validated:            uint32(validated),
+			Finished:             uint32(finished),
 		}
+		blob.HostStatsNonce[uint32(slotID)] = uint64(statsNonce)
 	}
 	if err := hostRows.Err(); err != nil {
 		hostRows.Close()
@@ -632,16 +647,27 @@ func writeEscrowRows(ctx context.Context, tx pgx.Tx, writerID string, blob escro
 	for slot, stats := range blob.HostStats {
 		batch.Queue(`
 			INSERT INTO accounting_escrow_host_stats (
-				escrow_id, slot_id, missed, invalid, cost, required_validations, completed_validations
-			) VALUES ($1, $2, $3, $4, $5, $6, $7)
+				escrow_id, slot_id, missed, invalid, cost, required_validations, completed_validations,
+				validated, finished, stats_nonce
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 			ON CONFLICT (escrow_id, slot_id) DO UPDATE SET
 				missed = GREATEST(accounting_escrow_host_stats.missed, EXCLUDED.missed),
 				invalid = GREATEST(accounting_escrow_host_stats.invalid, EXCLUDED.invalid),
 				cost = GREATEST(accounting_escrow_host_stats.cost, EXCLUDED.cost),
 				required_validations = GREATEST(accounting_escrow_host_stats.required_validations, EXCLUDED.required_validations),
-				completed_validations = GREATEST(accounting_escrow_host_stats.completed_validations, EXCLUDED.completed_validations)`,
+				completed_validations = GREATEST(accounting_escrow_host_stats.completed_validations, EXCLUDED.completed_validations),
+				validated = CASE
+					WHEN EXCLUDED.stats_nonce >= accounting_escrow_host_stats.stats_nonce THEN EXCLUDED.validated
+					ELSE accounting_escrow_host_stats.validated
+				END,
+				finished = CASE
+					WHEN EXCLUDED.stats_nonce >= accounting_escrow_host_stats.stats_nonce THEN EXCLUDED.finished
+					ELSE accounting_escrow_host_stats.finished
+				END,
+				stats_nonce = GREATEST(accounting_escrow_host_stats.stats_nonce, EXCLUDED.stats_nonce)`,
 			escrowID, int64(slot), int64(stats.Missed), int64(stats.Invalid), int64(stats.Cost),
 			int64(stats.RequiredValidations), int64(stats.CompletedValidations),
+			int64(stats.Validated), int64(stats.Finished), int64(blob.HostStatsNonce[slot]),
 		)
 	}
 

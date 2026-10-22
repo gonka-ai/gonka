@@ -261,6 +261,9 @@ func owedOtherSlot(rng *rand.Rand, executor uint32, n int) uint32 {
 func owedFreeSlot(rng *rand.Rand, rec *types.InferenceRecord, n int) (uint32, bool) {
 	var free []uint32
 	for slot := uint32(0); slot < uint32(n); slot++ {
+		if slot == rec.ExecutorSlot {
+			continue
+		}
 		if !rec.ValidatedBy.IsSet(slot) {
 			free = append(free, slot)
 		}
