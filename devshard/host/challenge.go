@@ -267,9 +267,11 @@ func (h *Host) challengeJobFor(inferenceID uint64, run func(context.Context) (Ch
 // may clear is retried inside the window; one still failing at the deadline
 // is the executor's fault only if it was the executor's side and this host
 // had tried before the window ended. An attempt still running
-// challengeFetchGrace past the deadline is cut and counts as the executor
-// not answering inside the window. A fetch this host cannot run, or one it
-// first tried after the window, gives no vote.
+// challengeFetchGrace past the deadline is cut; the fetcher reports which
+// side the cut landed on, the executor's payload call or this host's own
+// lookups after it, and only the former counts as the executor not answering
+// inside the window. A fetch this host cannot run, or one it first tried
+// after the window, gives no vote.
 func (h *Host) runChallengeFetch(
 	ctx context.Context,
 	fetcher devshard.ChallengeFetcher,
@@ -299,9 +301,6 @@ func (h *Host) runChallengeFetch(
 		fetch := fetcher.FetchChallengePayload(fetchCtx, req)
 		if ctx.Err() != nil {
 			return ChallengeAnswer{Pending: true}, nil
-		}
-		if fetchCtx.Err() != nil {
-			fetch = devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchRetry, ExecutorSide: true, Cause: "executor did not answer the fetch inside the window"}
 		}
 		if verdict, ok := challengeVerdict(fetch, rec); ok {
 			return h.settleChallengeVote(store, inferenceID, rec.ResponseHash, verdict, attempts, fetch.Cause)
