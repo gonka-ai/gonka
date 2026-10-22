@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -425,6 +426,32 @@ func TestRunChallenge_TheCapReachedDuringCollectionIsNonceCap(t *testing.T) {
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 	require.False(t, rec.UsageChallenged)
+}
+
+// A voter's reject cause is the voter's own text. It is cut to a line before
+// it reaches the gateway's log and the challenge result, so a hostile voter
+// cannot fill either with the 10 MiB the answer may carry.
+func TestCollectChallengeVotes_CutsALongRejectCause(t *testing.T) {
+	fastChallengeReask(t)
+	session, _, nonce, execIdx, responseHash := finishedChallengeSession(t)
+	long := strings.Repeat("x", 4096)
+	verifiers := map[int]ChallengeVerifier{}
+	for i, c := range session.clients {
+		if i == execIdx {
+			continue
+		}
+		verifiers[i] = &scriptedChallengeClient{HostClient: c, answers: []*transport.VerifyChallengeResponse{{RejectCause: long}}}
+	}
+	executorAddr := session.StateMachine().SlotAddress(uint32(execIdx))
+
+	_, unanswered, _, causes := session.CollectChallengeVotes(context.Background(), nonce,
+		types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND, responseHash, executorAddr, verifiers, time.Now().Add(30*time.Millisecond))
+	require.Equal(t, 2, unanswered)
+	require.NotEmpty(t, causes)
+	for _, cause := range causes {
+		require.LessOrEqual(t, len(cause), 200+len("…"), "a line of the cause is kept, not the body")
+		require.True(t, strings.HasPrefix(cause, "xxx"), "the head of the cause is kept")
+	}
 }
 
 // A vote whose signature does not recover to the host that answered is
