@@ -97,6 +97,14 @@ func ReadLoadtestRequests(runDir string, mock []mockopenai.RequestRecord, diffs 
 	if err != nil {
 		return nil, rep, err
 	}
+	// An inference whose prompt a host stored is the request's its tag names: an execution of another
+	// request is not tied to it by model, seed and time.
+	owner := map[InferenceRef]string{}
+	for id, refs := range stored {
+		for _, ref := range refs {
+			owner[ref] = id
+		}
+	}
 
 	execs := map[string][]mockopenai.RequestRecord{}
 	for _, m := range mock {
@@ -186,6 +194,9 @@ func ReadLoadtestRequests(runDir string, mock []mockopenai.RequestRecord, diffs 
 				}
 				hits = nil
 				for _, ref := range started[modelSeed{m.Model, uint64(*m.Seed)}] {
+					if id, ok := owner[ref]; ok && id != r.RequestID {
+						continue
+					}
 					at := startedAt[ref] * 1000
 					if m.StartUnixMs >= at-MatchWindowBeforeMs && m.StartUnixMs <= at+MatchWindowAfterMs {
 						hits = append(hits, ref)
@@ -341,6 +352,14 @@ func CheckLoadtestRun(runDir string, known []KnownViolation) (PromiseReport, err
 	case err != nil:
 		return PromiseReport{}, err
 	}
+	if in.Timeouts, err = ReadEscrowTimeouts(exportDir); err != nil {
+		return PromiseReport{}, err
+	}
+	// No manifest leaves the export time unknown, and the deadline checks say so.
+	if in.ObservedUntil, err = ExportTime(exportDir); err != nil && !os.IsNotExist(err) {
+		return PromiseReport{}, err
+	}
+	in.Slack = DeadlineSlack
 	var link LoadtestLinkReport
 	if in.Requests, link, err = ReadLoadtestRequests(runDir, in.Mock, in.Diffs, executors); err != nil {
 		return PromiseReport{}, err

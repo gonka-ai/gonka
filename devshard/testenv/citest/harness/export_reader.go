@@ -56,7 +56,9 @@ type ExportedFile struct {
 
 // ExportManifest lists the files and says whether the export is whole.
 type ExportManifest struct {
-	// ExportedAt is when the export was finished; checks judge deadlines against it.
+	// StartedAt is when the export began, before the first database was read; checks judge deadlines
+	// against it. ExportedAt is when the export was finished.
+	StartedAt  time.Time      `json:"started_at,omitempty"`
 	ExportedAt time.Time      `json:"exported_at"`
 	Files      []ExportedFile `json:"files"`
 	Complete   bool           `json:"complete"`
@@ -76,6 +78,7 @@ type Exporter struct {
 	files  map[string]*ExportedFile
 	probs  []string
 	done   bool
+	start  time.Time
 }
 
 // NewExporter prepares dir. It refuses tmpfs locations and a directory that already holds an export.
@@ -95,7 +98,7 @@ func NewExporter(dir string, limits ExportLimits) (*Exporter, error) {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		return nil, err
 	}
-	return &Exporter{dir: abs, limits: limits, files: map[string]*ExportedFile{}}, nil
+	return &Exporter{dir: abs, limits: limits, files: map[string]*ExportedFile{}, start: time.Now().UTC()}, nil
 }
 
 func (e *Exporter) clean(name string) (string, error) {
@@ -152,7 +155,7 @@ func (e *Exporter) Finish() (ExportManifest, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.done = true
-	m := ExportManifest{ExportedAt: time.Now().UTC(), Complete: true, Problems: append([]string(nil), e.probs...)}
+	m := ExportManifest{StartedAt: e.start, ExportedAt: time.Now().UTC(), Complete: true, Problems: append([]string(nil), e.probs...)}
 	names := make([]string, 0, len(e.files))
 	for n := range e.files {
 		names = append(names, n)

@@ -18,7 +18,7 @@ func TestPromiseReportSaysWhatEachCheckPromisesAndWhereItBroke(t *testing.T) {
 	require.NoError(t, WritePromiseReport(&b, "System promise checks: dishonest-executor-overclaim", rep))
 	out := b.String()
 
-	require.Contains(t, out, "1 checks violated, 0 held, 1 without a verdict")
+	require.Contains(t, out, "1 checks violated, 0 held, 3 without a verdict")
 	require.Contains(t, out, "| paid_output_within_produced | Finish.OutputTokens equals the tokens the ML execution produced and never exceeds max_tokens | VIOLATED | 7 | 12 finishes \\| judged |",
 		"a pipe in a note does not break the table")
 	require.Contains(t, out, "| charge_only_the_guilty | ")
