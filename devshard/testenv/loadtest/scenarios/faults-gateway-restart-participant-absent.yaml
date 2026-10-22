@@ -1,0 +1,98 @@
+schema_version: v1
+scenario: faults-gateway-restart-participant-absent
+seed: 1515
+
+# Does the model keep serving when the gateway restarts while one participant
+# is absent on chain? P4 (versiond-5) is absent for 5 min and the gateway
+# restarts 15 s into the absence. At start-up the gateway skips every active
+# escrow whose group holds P4 (bridge.ErrParticipantNotFound, "keeping it
+# active") and waits for P4 to come back. If no replacement escrow is created,
+# all requests answer 502 "no devshard runtimes available" for the rest of the
+# absence (devshard-gateway v6 RC1: 100% for 5 min, runtimes back 18 s after P4
+# returned), about half of this run, far above error_rate. Expected: only the
+# requests in flight at the restart fail (~10 s at 8 rps, ~2% of the run).
+# Needs the scenario loader with events and cases (#1989); without it the
+# events are dropped and the run is plain load.
+
+cases:
+  - {id: participant-absent-on-chain, title: participant absent on chain for 5 min}
+  - {id: gateway-restart-while-participant-absent, title: gateway restart while a participant is absent on chain}
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 5
+  chain:
+    escrow_amount: 5000000000
+    max_nonce: 1700
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+      - {name: mock-openai-5, profile: prod-like, host: versiond-5}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  max_in_flight: 256
+  duration: 10m
+  report_interval: 30s
+  traffic:
+    type: stages
+    stages:
+      - {duration: 10m, rps: 8}
+  request:
+    model: model-a
+    stream: false
+    max_tokens: 128
+    timeout: 2m
+    messages:
+      - {role: user, content: "Summarise the main idea of this sentence briefly."}
+    mix:
+      stream_ratio: 0.5
+      max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 25}]
+      models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
+  events:
+    - {id: participant-absent-on-chain, case: participant-absent-on-chain, action: chain_participant, target: versiond-5, at: 3m, until: 8m,
+       params: {mode: absent}}
+    - {id: gateway-restart-while-participant-absent, case: gateway-restart-while-participant-absent, action: gateway_restart, at: 3m15s}
+
+gateway:
+  participant_throttle:
+    transport_failure_quarantine: 45s
+    http_quarantine: 45s
+  escrow_rotation:
+    enabled: true
+    settlement_enabled: true
+    pre_poc_blocks: 1
+    temp_count: 1
+    target_count: 1
+    amount: 5000000000
+    private_key_env: DEVSHARD_PRIVATE_KEY
+    models:
+      - {model: model-b, settlement_enabled: false}
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # The restart may fail the requests in flight; a model that stops serving for the absence does not fit.
+    error_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  invariants:
+    enabled: true
+    # Kept at the value the other fault scenarios pin, so a nonce that waits out the 90 s deadline is graced.
+    grace: 3m10s
+    baseline: {from: 1m, to: 2m}
+    trend_early: {from: 2m, to: 3m}
+    trend_late: {from: 9m, to: 10m}
+    cases: {no-escrow-falsely-marked-missing: gateway-restart-while-participant-absent}
+
+drain_timeout: 3m
