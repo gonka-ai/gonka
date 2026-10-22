@@ -1,0 +1,114 @@
+schema_version: v1
+scenario: catch-up-15m
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    # Keep the active escrow funded and below its nonce limit throughout the run.
+    escrow_amount: 2000000000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+workload:
+  max_in_flight: 128
+  duration: 15m
+  traffic:
+    type: constant
+    rps: 16
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "catch-up-15m request"
+  host_faults:
+    - host: versiond-2
+      mode: pause
+      start_after: 5m
+      duration: 5m
+
+gateway:
+  escrow_rotation:
+    enabled: false
+  participant_throttle:
+    transport_failure_quarantine: 70s
+    http_quarantine: 70s
+  redundancy:
+    secondary_wait_after_winner: 30s
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 2m
+
+# Five minutes healthy, five minutes paused, five minutes after unpause.
+diagnostics:
+  logs:
+    tail: all
+  cpu_profiles:
+    # Baseline toward the end of the healthy phase.
+    - start_after: 4m
+      duration: 30s
+    # Start before freezing: the paused child's profiler cannot start via exec.
+    # Covers 5s before pause and 115s after unpause, including quarantine expiry.
+    - start_after: 4m55s
+      duration: 7m
+    # Later steady state, after recovery.
+    - start_after: 14m
+      duration: 30s
+  heap_profiles:
+    - start_after: 4m45s
+      targets: [gateway, versiond-2, versiond-1]
+    # Observe Gateway's pending work while the target is frozen.
+    - start_after: 7m30s
+      targets: [gateway, versiond-1]
+    - start_after: 9m50s
+      targets: [gateway, versiond-1]
+    - start_after: 10m2s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 10m10s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 10m30s
+      targets: [gateway, versiond-2, versiond-1]
+    # Approximately after the 70s quarantine; actual expiry is error-driven.
+    - start_after: 11m15s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 11m50s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 14m30s
+      targets: [gateway, versiond-2, versiond-1]
+  goroutine_profiles:
+    - start_after: 7m30s
+      targets: [gateway, versiond-1]
+    - start_after: 9m50s
+      targets: [gateway, versiond-1]
+    - start_after: 10m2s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 10m10s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 10m30s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 11m15s
+      targets: [gateway, versiond-2, versiond-1]

@@ -44,6 +44,18 @@ case "$command" in
                 print "," status
             }'
         done
+        if [ -n "${H2_TWIN:-}" ]; then
+            case "$H2_TWIN" in
+                up) h2_state=UP ;;
+                down) h2_state=DOWN ;;
+                *) h2_state=$H2_TWIN ;;
+            esac
+            awk -v h2_state="$h2_state" 'BEGIN {
+                printf "%s,router1", "versiond_routers_v5_rpc"
+                for (field = 3; field < 18; field++) printf ","
+                print "," h2_state
+            }'
+        fi
         ;;
     *)
         exit 1
@@ -112,5 +124,28 @@ if INVALID_SERVERS_OUTPUT=true run_status v5 192.0.2.10 >/dev/null 2>&1; then
     echo "route-status accepted an invalid show servers state response" >&2
     exit 1
 fi
+
+# Prefix assignments on functions persist in this shell, so clear the
+# failure injections from the cases above.
+if ! H2_TWIN=up INVALID_MAP_OUTPUT= INVALID_SERVERS_OUTPUT= FAIL_COMMAND= STAT_STATUS= \
+    run_status v5 192.0.2.10 >/dev/null 2>&1; then
+    echo "route-status rejected a version whose peer RPC twin is UP" >&2
+    exit 1
+fi
+
+# A DOWN twin is not a rejection: peer RPC then rides the admitted JSON
+# backend over HTTP/1.1. The twin's state is reported on stderr.
+if ! twin_note=$(H2_TWIN=down INVALID_MAP_OUTPUT= INVALID_SERVERS_OUTPUT= FAIL_COMMAND= STAT_STATUS= \
+    run_status v5 192.0.2.10 2>&1 >/dev/null); then
+    echo "route-status rejected a version whose peer RPC twin is DOWN" >&2
+    exit 1
+fi
+case $twin_note in
+    *"versiond_routers_v5_rpc/"*"DOWN"*"HTTP/1.1"*) ;;
+    *)
+        echo "route-status did not report the DOWN peer RPC twin: $twin_note" >&2
+        exit 1
+        ;;
+esac
 
 echo "route-status_test: ok"

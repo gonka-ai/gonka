@@ -1,0 +1,23 @@
+syntax = "proto3";
+package devshard.transport.v1;
+option go_package = "devshard/transport/rpcpb";
+
+import "devshard/transport/v1/auth.proto";
+
+message GossipNonceRequest {
+  uint64 nonce      = 1;
+  bytes  state_hash = 2;
+  bytes  state_sig  = 3;
+  uint32 slot_id    = 4;
+}
+
+message GossipTxsRequest {
+  repeated bytes txs = 1; // proto bytes of types.DevshardTx
+}
+
+message GossipAck {}
+
+service GossipService {
+  rpc Nonce(SignedEnvelope) returns (GossipAck);
+  rpc Txs(SignedEnvelope) returns (GossipAck);
+}

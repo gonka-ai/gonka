@@ -55,12 +55,12 @@ const (
 	// pass a per-inference limit (unknown token counts).
 	MaxPayloadResponseBytes = 64 << 20
 
-	// maxPayloadResponseBytesHard is the last-resort memory bound on a derived
+	// MaxPayloadResponseBytesHard is the last-resort memory bound on a derived
 	// per-inference cap. A 200k-token generation with wide logprobs can exceed
 	// this; operators raising request_max_tokens_cap that far need a larger
 	// process limit, but unbounded derived caps would let a claimed token count
 	// OOM the validator.
-	maxPayloadResponseBytesHard = 512 << 20
+	MaxPayloadResponseBytesHard = 512 << 20
 
 	// maxPayloadErrorBodyBytes caps how much of a non-200 body is quoted into
 	// the returned error. That text reaches validation logs and, for
@@ -87,25 +87,27 @@ func PayloadResponseByteLimit(outputTokens uint64) int64 {
 	// Past this many tokens the response term alone exceeds the hard bound, so
 	// clip before multiplying. Without this guard a large claimed token count
 	// overflows int64 and yields a *smaller* cap than a modest one.
-	const maxDerivableOutputTokens = maxPayloadResponseBytesHard / maxSSEBytesPerOutputToken
+	const maxDerivableOutputTokens = MaxPayloadResponseBytesHard / maxSSEBytesPerOutputToken
 	if outputTokens > maxDerivableOutputTokens {
-		return maxPayloadResponseBytesHard
+		return MaxPayloadResponseBytesHard
 	}
 	promptWire := int64(maxPromptPayloadBytes) * 4 / 3
 	respWire := int64(outputTokens) * maxSSEBytesPerOutputToken * 4 / 3
 	total := promptWire + respWire + 64<<10
-	if total > maxPayloadResponseBytesHard {
-		return maxPayloadResponseBytesHard
+	if total > MaxPayloadResponseBytesHard {
+		return MaxPayloadResponseBytesHard
 	}
 	return total
 }
 
-func payloadReadLimit(maxBytes int64) int64 {
+// PayloadReadLimit is the HTTP GET / Connect GetPayload body cap after
+// applying the default (MaxPayloadResponseBytes) and the hard bound.
+func PayloadReadLimit(maxBytes int64) int64 {
 	if maxBytes <= 0 {
 		return MaxPayloadResponseBytes
 	}
-	if maxBytes > maxPayloadResponseBytesHard {
-		return maxPayloadResponseBytesHard
+	if maxBytes > MaxPayloadResponseBytesHard {
+		return MaxPayloadResponseBytesHard
 	}
 	return maxBytes
 }
@@ -205,7 +207,7 @@ func FetchPayloadsHTTP(
 	}
 
 	var payloadResp PayloadResponse
-	limit := payloadReadLimit(maxBytes)
+	limit := PayloadReadLimit(maxBytes)
 	body := &cappedReader{r: resp.Body, remaining: limit}
 	if err := json.NewDecoder(body).Decode(&payloadResp); err != nil {
 		if errors.Is(err, ErrPayloadTooLarge) {
