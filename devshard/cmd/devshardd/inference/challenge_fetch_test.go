@@ -81,6 +81,39 @@ func TestFetchChallengePayload_VoteFalseSwitchOff(t *testing.T) {
 	}
 }
 
+// With the switch off, replay casts no vote on a payload the executor failed
+// to keep inside the retention, handed over too large, or signed over a body
+// that does not hash to its Finish: executorFaultVerdict returns nil and
+// Validate returns an error. The challenge voter follows it and leaves such a
+// fetch unchecked instead of settling a fault vote on it.
+func TestFetchChallengePayload_VoteFalseSwitchOffWithholdsImmediateFaults(t *testing.T) {
+	ctx := context.Background()
+	gone := fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
+	hashMismatch := tagExecutorPayloadFault(fmt.Errorf("%w: response", commonvalidation.ErrHashMismatch))
+	for _, testCase := range []struct {
+		name      string
+		err       error
+		voteFalse bool
+		want      devshardpkg.ChallengeFetchOutcome
+	}{
+		{name: "gone inside the retention, switch on", err: gone, voteFalse: true, want: devshardpkg.ChallengeFetchUnavailable},
+		{name: "gone inside the retention, switch off", err: gone, voteFalse: false, want: devshardpkg.ChallengeFetchLocal},
+		{name: "too large, switch off", err: classifyPayloadFetchError(ctx, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)), voteFalse: false, want: devshardpkg.ChallengeFetchLocal},
+		{name: "hash mismatch, switch on", err: hashMismatch, voteFalse: true, want: devshardpkg.ChallengeFetchMismatch},
+		{name: "hash mismatch, switch off", err: hashMismatch, voteFalse: false, want: devshardpkg.ChallengeFetchLocal},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			v := newFaultTestValidator(11, testCase.voteFalse, taggedFetch(testCase.err), func(context.Context, string, string, []byte) (*http.Response, error) {
+				t.Fatal("a challenge fetch must not call a model")
+				return nil, nil
+			}, nil)
+			got := v.FetchChallengePayload(ctx, devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
+			require.Equal(t, testCase.want, got.Outcome)
+			require.False(t, got.ExecutorSide)
+		})
+	}
+}
+
 func TestFetchChallengePayload_FetchedBodyAndLease(t *testing.T) {
 	body := []byte(`{"events":[]}`)
 	inner := newFaultTestValidator(10, true, func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
