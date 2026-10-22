@@ -136,7 +136,8 @@ func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 					continue
 				}
 				span := w.Graced
-				if w.Event.Action == "pause" {
+				switch {
+				case w.Event.Action == "pause":
 					recovery, err := parsePauseRecovery(w.Event.Recovery)
 					if err != nil {
 						continue
@@ -145,7 +146,9 @@ func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 					if w.Event.EndedAt != nil {
 						span.To = span.To.Add(recovery)
 					}
-				} else if w.Event.Params["observe"] != "host_rate_limited" {
+				case w.Event.Params["observe"] == "host_rate_limited":
+					// Peer-budget faults keep the existing graced window.
+				default:
 					continue
 				}
 				if span.overlapsAfter(burn.At, burn.At) {
