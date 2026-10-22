@@ -2476,7 +2476,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		if e.session != nil {
-			e.session.StreamOpened(inf.nonce)
+			e.session.StreamOpened(inf.nonce, nil)
 		}
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		// Read before the deferred cancel: a cancelled attempt context means

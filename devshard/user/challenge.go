@@ -123,16 +123,31 @@ func (s *Session) MarkChallengeStream(nonce uint64, reason types.ChallengeReason
 	s.forgetExpiredServedBindingsLocked(now)
 }
 
+// openStream is an attempt stream the gateway is reading. clientWait reports
+// how long the gateway has stood in writes to its own client on this stream,
+// time the executor does not drive; nil when the caller cannot tell.
+type openStream struct {
+	clientWait func() time.Duration
+}
+
+func (o openStream) clientWaited() time.Duration {
+	if o.clientWait == nil {
+		return 0
+	}
+	return o.clientWait()
+}
+
 // StreamOpened records that the gateway is reading the attempt stream of
 // inference nonce. It is paired with MarkChallengeStream, BindReceivedStream
-// or StreamEnded when the stream ends.
-func (s *Session) StreamOpened(nonce uint64) {
+// or StreamEnded when the stream ends. clientWait is read when the stream
+// outlives its Finish; see openStream.
+func (s *Session) StreamOpened(nonce uint64, clientWait func() time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.streamsOpen == nil {
-		s.streamsOpen = make(map[uint64]struct{})
+		s.streamsOpen = make(map[uint64]openStream)
 	}
-	s.streamsOpen[nonce] = struct{}{}
+	s.streamsOpen[nonce] = openStream{clientWait: clientWait}
 }
 
 // StreamEnded records that the stream of inference nonce ended with nothing

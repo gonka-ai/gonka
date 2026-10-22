@@ -332,7 +332,7 @@ type Session struct {
 	// unless the stream ends within ChallengeOpenStreamGrace. streamsEnded
 	// holds the nonces whose stream ended with nothing to challenge, so the
 	// retention sweep does not log their Finish as unchecked.
-	streamsOpen  map[uint64]struct{}
+	streamsOpen  map[uint64]openStream
 	streamsEnded map[uint64]time.Time
 
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss

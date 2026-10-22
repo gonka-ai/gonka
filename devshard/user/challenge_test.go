@@ -620,7 +620,7 @@ func TestAFinishWithAnOpenStreamIsChallengedAfterTheGrace(t *testing.T) {
 	t.Run("still open after the grace", func(t *testing.T) {
 		session := bindingSession(&[]servedBindingReport{})
 		started := lockedChallengeHandler(session)
-		session.StreamOpened(11)
+		session.StreamOpened(11, nil)
 		applyFinish(session, 11)
 		require.Empty(t, started(), "the grace has not passed")
 		require.Eventually(t, func() bool { return len(started()) == 1 }, time.Second, time.Millisecond)
@@ -629,7 +629,7 @@ func TestAFinishWithAnOpenStreamIsChallengedAfterTheGrace(t *testing.T) {
 	t.Run("bound within the grace", func(t *testing.T) {
 		session := bindingSession(&[]servedBindingReport{})
 		started := lockedChallengeHandler(session)
-		session.StreamOpened(12)
+		session.StreamOpened(12, nil)
 		applyFinish(session, 12)
 		session.BindReceivedStream(12, [][32]byte{storedSum})
 		time.Sleep(5 * ChallengeOpenStreamGrace)
@@ -638,7 +638,7 @@ func TestAFinishWithAnOpenStreamIsChallengedAfterTheGrace(t *testing.T) {
 	t.Run("ended with nothing to check within the grace", func(t *testing.T) {
 		session := bindingSession(&[]servedBindingReport{})
 		started := lockedChallengeHandler(session)
-		session.StreamOpened(13)
+		session.StreamOpened(13, nil)
 		applyFinish(session, 13)
 		session.StreamEnded(13)
 		time.Sleep(5 * ChallengeOpenStreamGrace)
@@ -651,6 +651,46 @@ func TestAFinishWithAnOpenStreamIsChallengedAfterTheGrace(t *testing.T) {
 		time.Sleep(5 * ChallengeOpenStreamGrace)
 		require.Empty(t, started())
 	})
+}
+
+// A stream still open after the grace because the gateway stands in writes
+// to its own client is held by that client, not by the executor: the grace
+// counts only the time the gateway waited on the executor. Once the client
+// has caught up and the stream still drags, the challenge follows.
+func TestAStreamHeldOpenByTheClientIsNotChallenged(t *testing.T) {
+	saved := ChallengeOpenStreamGrace
+	ChallengeOpenStreamGrace = 20 * time.Millisecond
+	t.Cleanup(func() { ChallengeOpenStreamGrace = saved })
+
+	session := bindingSession(&[]servedBindingReport{})
+	started := lockedChallengeHandler(session)
+	// Every moment while the client is slow is spent in a write to it.
+	var mu sync.Mutex
+	clientSlow := true
+	var waited time.Duration
+	last := time.Now()
+	clientWait := func() time.Duration {
+		mu.Lock()
+		defer mu.Unlock()
+		now := time.Now()
+		if clientSlow {
+			waited += now.Sub(last)
+		}
+		last = now
+		return waited
+	}
+
+	session.StreamOpened(16, clientWait)
+	applyFinish(session, 16)
+	time.Sleep(5 * ChallengeOpenStreamGrace)
+	require.Empty(t, started(), "the gateway stood in writes to its client the whole time")
+
+	mu.Lock()
+	clientSlow = false
+	mu.Unlock()
+	require.Eventually(t, func() bool { return len(started()) == 1 }, time.Second, time.Millisecond,
+		"the client caught up and the stream still has not ended")
+	require.Equal(t, []startedChallenge{{nonce: 16, reason: types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND}}, started())
 }
 
 // A session on a protocol before MsgChallenge is not challenged: its hosts
@@ -901,7 +941,7 @@ func TestAnOpenStreamChallengeKeepsTheFinishForTheServedBinding(t *testing.T) {
 			reports := &[]servedBindingReport{}
 			session := bindingSession(reports)
 			started := lockedChallengeHandler(session)
-			session.StreamOpened(15)
+			session.StreamOpened(15, nil)
 			applyFinish(session, 15)
 			require.Eventually(t, func() bool { return len(started()) == 1 }, time.Second, time.Millisecond)
 
