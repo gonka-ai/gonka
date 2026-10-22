@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -408,7 +409,7 @@ func (s *Session) CollectChallengeVotes(
 				return
 			}
 			if len(resp.Signature) == 0 {
-				results <- answer{rejectCause: resp.RejectCause, addr: av.addr}
+				results <- answer{rejectCause: cutChallengeRejectCause(resp.RejectCause), addr: av.addr}
 				return
 			}
 			vote := &types.ChallengeVote{
@@ -461,6 +462,17 @@ func (s *Session) CollectChallengeVotes(
 }
 
 var errChallengeStillPending = errors.New("host still fetching at the gateway deadline")
+
+// maxChallengeRejectCause is how much of a voter's reject cause the gateway
+// keeps: the cause is the voter's text and the answer may carry 10 MiB.
+const maxChallengeRejectCause = 200
+
+func cutChallengeRejectCause(cause string) string {
+	if len(cause) <= maxChallengeRejectCause {
+		return cause
+	}
+	return strings.ToValidUTF8(cause[:maxChallengeRejectCause], "") + "…"
+}
 
 func (s *Session) askChallengeUntilAnswered(
 	ctx context.Context,
