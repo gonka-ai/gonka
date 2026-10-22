@@ -283,10 +283,24 @@ func (s *Session) RunChallenge(ctx context.Context, nonce uint64, reason types.C
 	result.Unanswered = unanswered
 	result.UnansweredWeight = unansweredWeight
 	result.Faults = s.challengeFaultWeight(votes)
+	if ctx.Err() != nil {
+		// Cancelled, not settled: a MsgChallenge below the threshold would
+		// mark the record challenged for good while the hosts still fetching
+		// could have invalidated it.
+		return result, fmt.Errorf("collect challenge votes: %w", ctx.Err())
+	}
 	if len(votes) == 0 {
 		return result, nil
 	}
 	diff, sendErr := s.sendPendingDiff(ctx, []*types.DevshardTx{challengeTx(nonce, votes)}, nil)
+	if errors.Is(sendErr, types.ErrNonceLimitExceeded) {
+		// The cap arrived while the votes were collected: no diff can carry
+		// the tx, as none could have had the cap been there before the asks.
+		result.NonceCap = true
+		logging.Info("challenge_skipped", "subsystem", "challenge", "escrow", s.escrowID, "nonce", nonce,
+			"reason", types.ChallengeReasonLabel(reason), "cause", "nonce_cap_reached", "votes", len(votes))
+		return result, nil
+	}
 	applied := diffCarriesChallenge(diff, nonce)
 	after, ok := s.sm.Inference(nonce)
 	switch {
