@@ -1272,6 +1272,9 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 		SealedActualCost:        rec.ActualCost,
 		SealedStartedAtHeight:   int64(rec.StartedAtHeight),
 		SealedConfirmedAtHeight: int64(rec.ConfirmedAtHeight),
+		// A challenge is part of the record: the seal says it was challenged
+		// as the live record did.
+		SealedChallenged: rec.UsageChallenged,
 	}
 	if len(rec.PromptHash) > 0 {
 		row.SealedPromptHash = append([]byte(nil), rec.PromptHash...)
@@ -1286,7 +1289,7 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 }
 
 func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
-	return types.InferenceRecord{
+	rec := types.InferenceRecord{
 		Status:            types.InferenceStatus(row.SealedStatus),
 		ExecutorSlot:      row.SealedExecutorSlot,
 		Model:             row.SealedModel,
@@ -1304,4 +1307,6 @@ func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
 		VotesInvalid:      row.SealedVotesInvalid,
 		ValidatedBy:       types.Bitmap128FromBytes(row.SealedValidatedBy),
 	}
+	rec.UsageChallenged = row.SealedChallenged
+	return rec
 }

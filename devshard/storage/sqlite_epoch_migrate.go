@@ -146,6 +146,11 @@ CREATE TABLE IF NOT EXISTS challenge_votes (
     PRIMARY KEY (escrow_id, inference_id)
 )`},
 	},
+	{
+		ID:         10,
+		Name:       "sealed_inferences_usage_challenged",
+		Statements: []string{`ALTER TABLE sealed_inferences ADD COLUMN sealed_usage_challenged INTEGER NOT NULL DEFAULT 0`},
+	},
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

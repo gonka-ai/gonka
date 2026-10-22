@@ -310,6 +310,13 @@ CREATE TABLE IF NOT EXISTS devshard_challenge_votes (
     PRIMARY KEY (epoch_id, escrow_id, inference_id)
 ) PARTITION BY RANGE (epoch_id)`},
 	},
+	{
+		ID:   22,
+		Name: "devshard_sealed_inferences_usage_challenged",
+		Statements: []string{`
+ALTER TABLE devshard_sealed_inferences
+    ADD COLUMN IF NOT EXISTS sealed_usage_challenged BOOLEAN NOT NULL DEFAULT FALSE`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
