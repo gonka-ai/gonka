@@ -15,8 +15,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
@@ -190,10 +192,42 @@ func exportRun(cfg *config.File, outDir string, stack stackAccess, client *http.
 	return e.Finish()
 }
 
+// promisesHoldMargin is added to the hold so the export comes strictly after the last deadline.
+const promisesHoldMargin = 30 * time.Second
+
+// promisesHold is how long after the load the runner waits before it exports a run held to the
+// promises: until an inference started or confirmed at the end of the load is due, so the deadline
+// checks judge every inference of the run instead of listing it as open.
+func promisesHold(refusal, execution int64) time.Duration {
+	return time.Duration(max(refusal, execution))*time.Second + harness.TimeoutSkew + harness.TimeoutVoteWindow +
+		harness.TimeoutSweepPeriod + harness.DeadlineSlack + promisesHoldMargin
+}
+
+// orphanWait is how long the orphan check waits for the gateway to settle: the drain, or for a run
+// held to the promises the hold when it is longer. The gateway times out an inference left open only
+// after its execution timeout, its grace and a sweep, which can outlast a short drain.
+func (s Scenario) orphanWait() time.Duration {
+	wait := s.DrainDuration()
+	if !s.Assertions.Promises || s.Protocol.ExecutionTimeout == "" {
+		return wait
+	}
+	refusal, err := protocolTimeoutSeconds(s.Protocol.RefusalTimeout)
+	if err != nil {
+		return wait
+	}
+	execution, err := protocolTimeoutSeconds(s.Protocol.ExecutionTimeout)
+	if err != nil {
+		return wait
+	}
+	return max(wait, promisesHold(refusal, execution))
+}
+
 // promisesAssertion holds an exported run to the system properties and writes report.json and
 // report.md next to it. It fails when a property is broken, the run cannot be read, or the run is
-// not valid: a node with a dishonest profile that never answered dishonestly leaves nothing for the
-// checks to catch.
+// not valid: a node with a dishonest profile that never answered dishonestly, a fault rule that never
+// fired, a deadline check that judged nothing, or (when the scenario asks for it) no node ever full
+// leaves the checks nothing to catch, and a node bound to a host that mock-dapi
+// also handed a caller it maps to no host means the binding did not hold.
 func promisesAssertion(outputDir string, scenario Scenario, profiles map[string]Profile) AssertionResult {
 	check := AssertionResult{Name: "promises", Expected: "no violation of the system properties"}
 	rep, err := harness.CheckLoadtestRun(outputDir, nil)
@@ -211,6 +245,49 @@ func promisesAssertion(outputDir string, scenario Scenario, profiles map[string]
 	for _, n := range scenario.Topology.MockML.Nodes {
 		if p := profiles[n.Profile]; p.Chaos != nil && lied[n.Name] == 0 {
 			rep.Invalid = append(rep.Invalid, fmt.Sprintf("%s (profile %s) gave no dishonest answer", n.Name, n.Profile))
+		}
+	}
+	// A rule fires on whichever node the pool hands the request it selects, so a rule counts for the
+	// run once it fired anywhere.
+	// A full node queues a request for a worker or, with its queue full too, answers 503.
+	fired, full := map[string]bool{}, false
+	for _, r := range mock {
+		if r.Rule != "" {
+			fired[r.Rule] = true
+		}
+		full = full || r.QueuedMs > 0 || r.Outcome == "capacity_exhausted"
+	}
+	var ruleNames []string
+	ruleNodes := map[string][]string{}
+	for _, n := range scenario.Topology.MockML.Nodes {
+		for _, r := range append(slices.Clone(profiles[n.Profile].Rules), scenario.Topology.MockML.Rules...) {
+			if ruleNodes[r.Name] == nil {
+				ruleNames = append(ruleNames, r.Name)
+			}
+			ruleNodes[r.Name] = append(ruleNodes[r.Name], n.Name)
+		}
+	}
+	for _, name := range ruleNames {
+		if !fired[name] {
+			rep.Invalid = append(rep.Invalid, fmt.Sprintf("fault rule %s (%s) never fired", name, strings.Join(ruleNodes[name], ", ")))
+		}
+	}
+	hosts, hostsErr := readHostStats(outputDir)
+	if slices.ContainsFunc(scenario.Topology.MockML.Nodes, func(n MockMLNode) bool { return n.Host != "" }) {
+		switch {
+		case hostsErr != nil:
+			rep.Invalid = append(rep.Invalid, fmt.Sprintf("node binding not checked: %v", hostsErr))
+		case hosts[unmappedDapiHost].Allocations > 0:
+			rep.Invalid = append(rep.Invalid, fmt.Sprintf("mock-dapi handed %d ML nodes to callers it maps to no host: the node binding did not hold",
+				hosts[unmappedDapiHost].Allocations))
+		}
+	}
+	if scenario.Assertions.MockML.RequireFullNode && !full {
+		rep.Invalid = append(rep.Invalid, "no ML node was ever full: none queued a request for a worker or refused one at capacity")
+	}
+	for _, name := range []string{harness.InferenceClosesInTime, harness.ServedRequestFinished} {
+		if m := rep.Checked[name]; !m.Measured {
+			rep.Invalid = append(rep.Invalid, fmt.Sprintf("%s judged nothing (%s)", name, m.Note))
 		}
 	}
 	body, err := json.MarshalIndent(rep, "", "  ")
@@ -234,4 +311,17 @@ func promisesAssertion(outputDir string, scenario Scenario, profiles map[string]
 		check.Actual, check.Details = "run not valid", strings.Join(rep.Invalid, "; ")
 	}
 	return check
+}
+
+// readHostStats reads the mock-dapi host stats the runner wrote next to the run.
+func readHostStats(outputDir string) (map[string]DapiHostStats, error) {
+	raw, err := os.ReadFile(filepath.Join(outputDir, "host-stats.json"))
+	if err != nil {
+		return nil, err
+	}
+	var stats map[string]DapiHostStats
+	if err := json.Unmarshal(raw, &stats); err != nil {
+		return nil, fmt.Errorf("host-stats.json: %w", err)
+	}
+	return stats, nil
 }

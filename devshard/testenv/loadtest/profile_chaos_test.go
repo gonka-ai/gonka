@@ -89,11 +89,11 @@ func TestPromisesNeedTheWholeComposeLog(t *testing.T) {
 }
 
 // Test flow:
-//  1. A finished run directory holds the runner's request log, the scenario and an export whose
-//     host chain is empty.
-//  2. Hold the run to the promises.
-//  3. Check the assertion passes and the report is written as JSON and Markdown; without the export
-//     the assertion fails and says why.
+//  1. A finished run directory holds the runner's request log and the scenario but no export; then a
+//     run whose export every check can judge.
+//  2. Hold each run to the promises.
+//  3. Check the first fails and says why, and the second passes with the report written as JSON and
+//     Markdown.
 func TestPromisesAssertionWritesTheReport(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.yaml"), []byte("workload:\n  request:\n    model: test-model\n    messages:\n      - {role: user, content: hello}\n"), 0o644))
@@ -103,9 +103,7 @@ func TestPromisesAssertionWritesTheReport(t *testing.T) {
 	require.False(t, check.Passed)
 	require.Contains(t, check.Details, "devshard_diffs.csv")
 
-	diffs := filepath.Join(dir, "export", "postgres", "public.devshard_diffs.csv")
-	require.NoError(t, os.MkdirAll(filepath.Dir(diffs), 0o755))
-	require.NoError(t, os.WriteFile(diffs, []byte("escrow_id,nonce,txs_proto,post_state_root\n"), 0o644))
+	dir = writePromisesRun(t, honestExecution("mock-openai-0"))
 	check = promisesAssertion(dir, testScenario(), nil)
 	require.True(t, check.Passed, "%+v", check)
 	require.Equal(t, "promises", check.Name)
@@ -174,20 +172,10 @@ func TestPromisesAssertionRefusesARunWhoseDishonestNodeNeverLied(t *testing.T) {
 	scenario.Topology.MockML.Nodes = []MockMLNode{{Name: "mock-openai-0", Profile: "fast"}, {Name: "mock-openai-1", Profile: "overclaim"}}
 	profiles := map[string]Profile{"fast": {}, "overclaim": {Chaos: &ProfileChaos{Seed: 7, Weights: map[string]int{"ok": 4, "odd_usage": 1}}}}
 	run := func(chaos string) string {
-		dir := t.TempDir()
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "run.yaml"), []byte("workload:\n  request:\n    model: test-model\n    messages:\n      - {role: user, content: hello}\n"), 0o644))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "requests.jsonl"), []byte(`{"request_id":"r-1","status":200,"outcome":"completed"}`+"\n"), 0o644))
-		diffs := filepath.Join(dir, "export", "postgres", "public.devshard_diffs.csv")
-		require.NoError(t, os.MkdirAll(filepath.Dir(diffs), 0o755))
-		require.NoError(t, os.WriteFile(diffs, []byte("escrow_id,nonce,txs_proto,post_state_root\n"), 0o644))
-		seed := 1
-		raw, err := json.Marshal(map[string]any{"complete": true, "records": []mockopenai.RequestRecord{
-			{Phase: mockopenai.PhaseExecute, Node: "mock-openai-0", Seed: &seed, Status: 200, Outcome: "ok"},
-			{Phase: mockopenai.PhaseExecute, Node: "mock-openai-1", Seed: &seed, Status: 200, Outcome: "ok", Chaos: chaos},
-		}})
-		require.NoError(t, err)
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "export", "mock-log.json"), raw, 0o644))
-		return dir
+		lie := honestExecution("mock-openai-1")
+		lie.Chaos = chaos
+		lie.Seed = nil
+		return writePromisesRun(t, honestExecution("mock-openai-0"), lie)
 	}
 
 	dir := run(mockopenai.ChaosOK)

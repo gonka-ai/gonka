@@ -452,6 +452,11 @@ The profile controls response timing and failure behavior:
 | `overclaim` | One execution in five reports usage of 3n+7 tokens for n sent. |
 | `wrong-answer` | One execution in five answers with logprobs the replay does not confirm. |
 | `empty-stream` | Every execution answers with no content. |
+| `oracle-chunk1` | Oracle mode, one token per streamed chunk, first content at 50 ms and the last chunk at 400 ms, replays in 1 s. |
+| `oracle-chunk4` | `oracle-chunk1` with four tokens per chunk. |
+| `oracle-exec-slow` | `oracle-chunk1` whose executions stream for 40 s, past the generator's 30 s client timeout. |
+| `oracle-replay-slow` | `oracle-chunk1` whose replays take 1.5 s. |
+| `oracle-shared` | `oracle-chunk1` with room for 5 requests and a queue of 512; a full node queues a request until a worker frees, as vLLM does, instead of answering 503. |
 
 Profile fields currently supported:
 
@@ -488,6 +493,43 @@ chaos:
 
 Every Mock ML node of a load-test stack reports `usage.completion_tokens` as the
 tokens it sent, as vLLM does, so a host's Finish can be compared with it.
+
+`oracle` set to `true` makes the node a replay oracle: a validator's replay is answered
+from the enforced tokens it carries, exactly as received (their ids, their
+alternatives, their count), with logprobs that depend only on each token's rank;
+the original answer is built by the same rule, so a replay of a full sequence
+matches it and a replay of a sequence a host cut comes back short. A replay that
+asks to stream, as the validator's always does, is answered as SSE. The other
+knobs, `chunk_tokens`, `first_content_ms`, `exec_ms`, `replay_ms` and `rules`,
+shape the answer:
+
+```yaml
+oracle: true
+chunk_tokens: 4         # tokens per streamed chunk, of an execution and of a replay; 0 and 1 send one
+first_content_ms: 50    # the first content chunk of a streamed execution, from the request start
+exec_ms: 400            # the last chunk; the others go out evenly between (not before first_content_ms)
+replay_ms: 1000         # service time of a replay; executions are not delayed
+rules:
+  - name: replay-busy   # unique on the node; the request log and stats name the rule that fired
+    phase: replay       # execute or replay; empty matches both
+    prompt_contains: "3]"
+    times: 0            # how often the rule fires on this node; 0 is every match
+    http_status: 503    # 400-599
+```
+
+A rule selects requests by `seeds` (the request's seed field) or
+`prompt_contains` (a substring of the message text), at least one of the two, and
+by `phase`. The generator ends every prompt with
+`[load-request:<scenario>-<seed>-<index>]`, the index as six digits, so a
+substring such as `000007]` names one request and `7]` every tenth. Unless the
+client sends a seed, the host sends the inference id as the seed of an execution
+and the validator replays with the same number, so `seeds` names an inference in
+both phases and on every escrow that reached that id; `phase` tells them apart.
+The actions are `delay_ms` (first), then `abort` (drop the connection) or
+`http_status`, and `prelude_chunks` with `prelude_hold_ms` (role-only chunks
+before the content of a streamed execution, then a pause). `rules` under
+`topology.mock_ml` in a scenario go to every node after its profile's own, so a
+rule fires whichever node the pool hands the request.
 
 To add a profile, create `profiles/<name>.yaml` with `schema_version: v1`, the
 same value in `profile`, valid duration fields, a positive `workers` value, and
@@ -564,6 +606,9 @@ Gateway lets speculative losers finish after a winner is selected.
 `drain_timeout` is the load-test deadline for the DevShard orphan check and
 should be long enough for the configured Gateway grace period when cleanup is
 part of the scenario.
+A run with `promises: true` waits at least as long as its export hold (below):
+the Gateway times out an inference left open only after its execution
+timeout, its grace and a sweep, which can outlast a short drain.
 
 Participant quarantine durations can be shortened for recovery tests:
 
@@ -621,7 +666,10 @@ When `assertions.devshard.no_orphaned_work` is enabled, the runner polls
 (`finished`, `validated`, `invalidated`, or `timed_out`). The DevShard record
 count does not have to equal the number of client requests: cache hits,
 speculative attempts, and ghost probes can make those counts different. An
-empty successful debug snapshot is also considered clean.
+empty successful debug snapshot is also considered clean. A warm-up probe a host
+served is left to settlement and counted as `settling`: no request follows it to
+carry its receipt and Finish, so they wait for the escrow's next diff. Ghost and
+warm-up slots are read from the gateway trace by escrow and nonce.
 
 ## Assertions
 
@@ -633,6 +681,7 @@ Assertions are declared in the scenario and are evaluated after the workload:
 | `requests.terminal_outcome` | Requires the configured client outcome, usually `completed`. |
 | `requests.error_rate` | Limits HTTP failures and generator drops. |
 | `mock_ml.require_each_node_used` | Requires every configured Mock ML node to receive an allocation. |
+| `mock_ml.require_full_node` | With `promises`: the run is not valid unless a node was full: a Mock ML node queued a request for a worker (`queued_ms` in its log) or answered one 503 at capacity. |
 | `devshard.no_orphaned_work` | Checks terminal DevShard state and the configured ghost-rate limit. |
 | `escrow_rotation.require_new_escrow` | Requires a new escrow after rotation. |
 | `promises` | Holds the exported run to the system properties below; requires `diagnostics.export` and `diagnostics.logs.tail: all`. |
@@ -642,8 +691,21 @@ With `promises: true` the runner checks the run after the export and writes
 
 | Property | Holds |
 | --- | --- |
+| `inference_closes_in_time` | Every started inference leaves Pending and Started through Finish, a timeout or an error miss by its deadline: the escrow's refusal timeout from Start while Pending, its execution timeout from ConfirmStart while Started, plus the grace and the period of the Gateway's timeout sweep and a minute for the votes to reach a diff. |
+| `served_request_finished` | A request the client got a 200 for has a Finish on every exported host's chain. |
 | `paid_output_within_produced` | A host's Finish claims no more output tokens than its Start allowed, nor a count other than the ML node produced for that execution. |
 | `charge_only_the_guilty` | An executor the ML log shows answering in full is not charged a miss, an invalid or an invalidation by a usage challenge whose fault votes outweigh the session's vote threshold, a request the client spoiled charges no host, and an answer with forged logprobs is not voted valid. |
+
+Both deadline checks judge each host's chain on its own, except a host whose
+chain of an escrow is a matching, shorter prefix of the longest one: the Gateway
+sends each diff to one host and the others catch up on their next request, so
+such a host is only behind and the inference is judged on the longest chain (an
+observation names it). An inference still within its deadline at the export is
+listed as open, not judged; the export time is when the export started. So that
+every inference is judged, a run with `promises: true` holds the export until an
+inference confirmed at the end of the load is past its deadline: the scenario's
+largest protocol timeout plus 4 min 5 s after the load ends (a scenario without
+`protocol` timeouts is not held, and its deadline checks judge nothing).
 
 `report.md` opens with a one-line verdict, then a table with one row per
 property: what it promises, held, violated or not measured, the number of
@@ -657,7 +719,10 @@ reasons, the voters' answers and the time from a challenge's start to its
 outcome).
 
 A run whose generator dropped requests, whose dishonest node never answered
-dishonestly, or whose export lost what the checks read (a host's diffs or
+dishonestly, whose fault rule never fired, whose deadline checks judged nothing,
+whose nodes bound to hosts were also handed to a caller mock-dapi maps to no
+host (the `unmapped` row of `host-stats.json`, or no `host-stats.json` to tell),
+or whose export lost what the checks read (a host's diffs or
 sessions, its SQLite files, the mock log) is reported as not valid and fails the
 check; the verdict line says why. A gap elsewhere in the export, such as a table
 over the file bound, is an observation. A finished
@@ -668,6 +733,17 @@ cannot be read or the report not written, and 3 when the run is not valid.
 `dishonest-executor-overclaim`, `dishonest-executor-wrong-answer` and
 `usage-challenge-wave` use it; `dishonest-executor-honest` and
 `usage-challenge-wave-honest` are the same runs with every node honest.
+
+Four scenarios hold the shape of an ML node's stream and its timing to the same
+checks, each on four escrows with one oracle node per host, `mock-openai-N` on
+`versiond-N`:
+
+| Scenario | What it varies |
+| --- | --- |
+| `chunk-shapes` | Two nodes send one token per chunk and two send four, on one schedule. A host has to count every token whatever the grouping. |
+| `phase-faults` | Slow replays, an execution that outlives the client's timeout, and fault rules on every node: replays of requests ending in 7 drop the connection, those ending in 3 answer 503, and request 000007's first execution on each node drops the connection. A failed replay must not charge the executor. |
+| `drain` | A minute of load, then none: everything in flight, the replays owed and the timeouts due have to settle. |
+| `shared-endpoint` | Every escrow a host serves draws from that host's node, one node per host. The four nodes together keep up with the load and the nodes of the solo hosts do not; a full node queues requests as vLLM does and everything on it slows down. Served requests must still finish, deadlines close, Finish counts match the ML, an executor whose ML answered in full and a request the client spoiled are not charged, and the drain settles everything. |
 
 The final report prints each check with its expected value, actual value, and
 diagnostic details. Failed checks are also listed in `assertions.json`.
@@ -688,6 +764,7 @@ records, summaries, state snapshots, and logs:
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |
+| `host-stats.json` | Mock-dapi's rows per versiond host: its nodes, allocations, acquire errors and challenge rejections, with callers it maps to no host under `unmapped`. |
 | `gateway-inferences.json` | Gateway inference records collected for diagnosis. |
 | `gateway-state.json` | Gateway diff, nonce, pending transaction, and applied-key counts. |
 | `compose-pre-drain.log` | Container logs captured before the drain check. |
