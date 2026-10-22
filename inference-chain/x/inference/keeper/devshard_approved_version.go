@@ -101,9 +101,11 @@ func (k Keeper) PassCountFor(ctx context.Context, version string) (types.Devshar
 }
 
 // RecordVersionPassCount applies ResolvePassCount and writes the result.
-// Omitted pass_count keeps a stored policy; a new name becomes SAMPLED; an
-// explicit SAMPLED or DERIVED overwrites. Returns the value to stamp on the
-// approved-version row so it never disagrees with the policy store.
+// Omitted pass_count keeps a stored policy. An approved name with no policy
+// row yet is a pre-pass_count binary: omitted keeps the scoring mode already
+// on that row, or DERIVED when the row has none. A new name becomes SAMPLED.
+// An explicit SAMPLED or DERIVED overwrites. Returns the value to stamp on
+// the approved-version row so it never disagrees with the policy store.
 func (k Keeper) RecordVersionPassCount(ctx context.Context, name string, requested types.DevshardPassCount) (types.DevshardPassCount, error) {
 	p, ok, err := k.GetVersionPolicy(ctx, name)
 	if err != nil {
@@ -113,16 +115,42 @@ func (k Keeper) RecordVersionPassCount(ctx context.Context, name string, request
 	if ok {
 		c := p.PassCount
 		existing = &c
+	} else {
+		approved, err := k.DevshardApprovedVersionsMap.Get(ctx, name)
+		if err != nil && !errors.Is(err, collections.ErrNotFound) {
+			return 0, err
+		}
+		if err == nil {
+			// No policy row. Consult the approved-version row so a binary/sha
+			// roll that omits pass_count cannot record SAMPLED for a legacy name.
+			c := passCountForUnpoliciedApproved(approved.PassCount)
+			existing = &c
+		}
 	}
 	resolved, err := types.ResolvePassCount(existing, requested)
 	if err != nil {
 		return 0, err
 	}
-	if existing != nil && *existing == resolved {
+	// Skip the write only when the policy row already stores this value.
+	// A synthesized DERIVED from an unpolicied approved name must still be recorded.
+	if ok && p.PassCount == resolved {
 		return resolved, nil
 	}
 	if err := k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{Name: name, PassCount: resolved}); err != nil {
 		return 0, err
 	}
 	return resolved, nil
+}
+
+// passCountForUnpoliciedApproved is the scoring mode of an approved name that
+// has no policy row. Legacy rows store UNSPECIFIED; that is DERIVED. An
+// explicit SAMPLED or DERIVED already on the row is kept.
+func passCountForUnpoliciedApproved(c types.DevshardPassCount) types.DevshardPassCount {
+	switch c {
+	case types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+		types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED:
+		return c
+	default:
+		return types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+	}
 }

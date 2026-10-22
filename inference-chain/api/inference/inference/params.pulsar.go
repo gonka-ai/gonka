@@ -27558,16 +27558,17 @@ type DevshardPassCount int32
 
 const (
 	// Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
-	// policy; SAMPLED if the name is new (Put). Unstamped genesis / upgrade
-	// names still record DERIVED.
+	// policy; SAMPLED if the name is new (Put). An already-approved name with
+	// no policy row yet stays DERIVED. Unstamped genesis / upgrade names still
+	// record DERIVED.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED DevshardPassCount = 0
 	// HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
 	// Default for a new Put name when pass_count is omitted or mistyped.
 	// Older payloads that omit validated/finished still settle (0 passes).
 	DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED DevshardPassCount = 1
-	// assigned - missed - invalid (the 0.2.16 formula). Older binaries; v0.2.16
-	// stamps existing names. Live names without a recorded policy score as
-	// DERIVED. apply_sampled_pass_count is ignored.
+	// assigned - missed - invalid (the 0.2.16 formula). Older binaries; the
+	// v0.2.18 upgrade stamps existing names. Live names without a recorded
+	// policy score as DERIVED. apply_sampled_pass_count is ignored.
 	DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED DevshardPassCount = 2
 )
 
@@ -29847,8 +29848,8 @@ type DevshardApprovedVersion struct {
 	// Hash of binary to check if update is already installed
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
-	// keep the stored policy, or SAMPLED for a new name. An explicit value
-	// overwrites the stored policy.
+	// keep the stored policy, DERIVED for an already-approved name with no
+	// policy row, or SAMPLED for a new name. An explicit value overwrites.
 	PassCount DevshardPassCount `protobuf:"varint,4,opt,name=pass_count,json=passCount,proto3,enum=inference.inference.DevshardPassCount" json:"pass_count,omitempty"`
 }
 

@@ -368,7 +368,6 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 			Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 		},
 	}
-	params.DevshardEscrowParams.ApplySampledPassCount = true
 	require.NoError(t, k.SetParams(ctx, params))
 
 	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
@@ -378,36 +377,13 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, "v1", got[0].Name)
 	require.Equal(t, "v2", got[1].Name)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[0].PassCount)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got[1].PassCount)
-	pol, found, err := k.GetVersionPolicy(ctx, "v1")
+	_, found, err := k.GetVersionPolicy(ctx, "v1")
 	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
+	require.False(t, found, "v0.2.16 already ran; policy rows are stamped in v0.2.18")
 
 	after, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Empty(t, after.DevshardEscrowParams.ApprovedVersions)
-	require.False(t, after.DevshardEscrowParams.ApplySampledPassCount)
-}
-
-func TestMigrateDevshardApprovedVersions_StampsExistingStore(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
-	require.NoError(t, k.SetApprovedVersion(ctx, inferencetypes.DevshardApprovedVersion{
-		Name:   "v-store",
-		Binary: "https://example.com/store.zip",
-		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-	}))
-
-	require.NoError(t, migrateDevshardApprovedVersions(ctx, k))
-
-	got, found := k.GetApprovedVersion(ctx, "v-store")
-	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
-	pol, found, err := k.GetVersionPolicy(ctx, "v-store")
-	require.NoError(t, err)
-	require.True(t, found)
-	require.Equal(t, inferencetypes.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
 }
 
 func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {

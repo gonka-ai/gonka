@@ -126,7 +126,7 @@ passes (`CurrentEpochStats.ValidatedInferences`). That choice is a per-name
 
 | `pass_count` | Passes credited | When to use |
 |--------------|-----------------|-------------|
-| `DEVSHARD_PASS_COUNT_DERIVED` | `assigned - missed - invalid` (the 0.2.16 formula; `apply_sampled_pass_count` is ignored) | Older binaries; v0.2.16 stamps existing names |
+| `DEVSHARD_PASS_COUNT_DERIVED` | `assigned - missed - invalid` (the 0.2.16 formula; `apply_sampled_pass_count` is ignored) | Older binaries; the v0.2.18 upgrade stamps existing names |
 | `DEVSHARD_PASS_COUNT_SAMPLED` | By default still `assigned - missed - invalid` for SPRT; log capped `HostStats.validated`. Flag on applies sampled: `HostStats.validated` capped by `2 * finished * validation_rate_bps / 10000 + 2` | **Default for a new Put name** when `pass_count` is omitted or mistyped. Older payloads that omit those fields still settle |
 
 Settlement verification and scoring both read the **policy store** for
@@ -140,17 +140,20 @@ so `pass_count` uses `UNSPECIFIED = 0`:
 - omitted on a **new** name → record `SAMPLED`
 - omitted when a policy **already exists** (including after
   `MsgDeleteDevshardApprovedVersion`) → keep the stored value
+- omitted on an **already-approved** name that has no policy row yet →
+  `DERIVED` (legacy names). An explicit `SAMPLED` or `DERIVED` already on
+  that approved-version row is kept
 - explicit `SAMPLED` or `DERIVED` → overwrite the stored policy
 - a mistyped value is the same as omitted (does not fail the tx)
 
-Unstamped genesis / leftover params-list names, and the v0.2.16 upgrade of
+Unstamped genesis / leftover params-list names, and the v0.2.18 upgrade of
 already-approved names, still record `DERIVED`. A name that has never been
 recorded scores as `DERIVED` at settlement (`PassCountFor`).
 
 ### `apply_sampled_pass_count` (off by default)
 
 `DevshardEscrowParams.apply_sampled_pass_count` is **chain-wide** and **off**.
-Defaults, genesis, and the v0.2.16 upgrade all write `false`. **DERIVED**
+Defaults and genesis leave it `false`. **DERIVED**
 names ignore it: they always credit `assigned - missed - invalid` and never
 log sampled. The flag only changes **SAMPLED** names:
 

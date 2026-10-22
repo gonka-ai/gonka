@@ -432,16 +432,17 @@ message DelegationParams {
 // UNSPECIFIED (does not fail the tx).
 enum DevshardPassCount {
   // Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
-  // policy; SAMPLED if the name is new (Put). Unstamped genesis / upgrade
-  // names still record DERIVED.
+  // policy; SAMPLED if the name is new (Put). An already-approved name with
+  // no policy row yet stays DERIVED. Unstamped genesis / upgrade names still
+  // record DERIVED.
   DEVSHARD_PASS_COUNT_UNSPECIFIED = 0;
   // HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
   // Default for a new Put name when pass_count is omitted or mistyped.
   // Older payloads that omit validated/finished still settle (0 passes).
   DEVSHARD_PASS_COUNT_SAMPLED = 1;
-  // assigned - missed - invalid (the 0.2.16 formula). Older binaries; v0.2.16
-  // stamps existing names. Live names without a recorded policy score as
-  // DERIVED. apply_sampled_pass_count is ignored.
+  // assigned - missed - invalid (the 0.2.16 formula). Older binaries; the
+  // v0.2.18 upgrade stamps existing names. Live names without a recorded
+  // policy score as DERIVED. apply_sampled_pass_count is ignored.
   DEVSHARD_PASS_COUNT_DERIVED = 2;
 }
 
@@ -455,8 +456,8 @@ message DevshardApprovedVersion {
   // Hash of binary to check if update is already installed
   string sha256 = 3;
   // How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
-  // keep the stored policy, or SAMPLED for a new name. An explicit value
-  // overwrites the stored policy.
+  // keep the stored policy, DERIVED for an already-approved name with no
+  // policy row, or SAMPLED for a new name. An explicit value overwrites.
   DevshardPassCount pass_count = 4;
 }
 

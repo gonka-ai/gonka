@@ -241,6 +241,67 @@ func TestPutDevshardApprovedVersion_PassCountKeepAndOverwrite(t *testing.T) {
 	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount, "mistyped pass_count on a new name is SAMPLED")
 }
 
+func TestPutDevshardApprovedVersion_OmittedKeepsDerivedWithoutPolicyRow(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	// Legacy approved name: row exists, policy store is empty, pass_count was
+	// never set. A binary/sha roll that omits pass_count must stay DERIVED.
+	legacy := validApprovedVersion("v4.1")
+	require.NoError(t, k.SetApprovedVersion(wctx, legacy))
+	_, found, err := k.GetVersionPolicy(wctx, "v4.1")
+	require.NoError(t, err)
+	require.False(t, found)
+
+	rolled := validApprovedVersion("v4.1")
+	rolled.Binary = "https://example.com/v4.1-new.zip"
+	rolled.Sha256 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
+		Authority: k.GetAuthority(),
+		Version:   rolled,
+	})
+	require.NoError(t, err)
+	got, found := k.GetApprovedVersion(wctx, "v4.1")
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.PassCount)
+	require.Equal(t, rolled.Sha256, got.Sha256)
+	pol, found, err := k.GetVersionPolicy(wctx, "v4.1")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, pol.PassCount)
+
+	// Explicit SAMPLED still overwrites a legacy name.
+	explicit := validApprovedVersion("v4.2")
+	require.NoError(t, k.SetApprovedVersion(wctx, explicit))
+	explicit.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
+		Authority: k.GetAuthority(),
+		Version:   explicit,
+	})
+	require.NoError(t, err)
+	got, found = k.GetApprovedVersion(wctx, "v4.2")
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+
+	// No policy row, but the approved-version row already says SAMPLED.
+	// Omitted pass_count keeps that mode.
+	rowSampled := validApprovedVersion("v-row-sampled")
+	rowSampled.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED
+	require.NoError(t, k.SetApprovedVersion(wctx, rowSampled))
+	_, err = ms.PutDevshardApprovedVersion(wctx, &types.MsgPutDevshardApprovedVersion{
+		Authority: k.GetAuthority(),
+		Version:   validApprovedVersion("v-row-sampled"),
+	})
+	require.NoError(t, err)
+	got, found = k.GetApprovedVersion(wctx, "v-row-sampled")
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.PassCount)
+	pol, found, err = k.GetVersionPolicy(wctx, "v-row-sampled")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
+}
+
 func TestPassCountFor_MissingIsDerived(t *testing.T) {
 	k, _, ctx := setupMsgServer(t)
 	wctx := sdk.UnwrapSDKContext(ctx)
