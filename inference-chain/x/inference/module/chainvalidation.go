@@ -2,12 +2,14 @@ package inference
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
 
+	"cosmossdk.io/collections"
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -923,16 +925,6 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		return computedWeights{}
 	}
 
-	// Get weight distributions for per-node weights
-	allWeightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, epochStartBlockHeight)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting weight distributions by PoC stage", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		// Continue without distributions - will use single "unknown" node
-	}
-
 	// Build inference-serving node IDs for filtering
 	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
 	servingNodeCount := 0
@@ -943,40 +935,14 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"participantCount", len(inferenceServingNodeIds),
 		"nodeCount", servingNodeCount)
 
-	// Filter out store commits with distributions that only have inference-serving nodes
-	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(allStoreCommits, allWeightDistributions, inferenceServingNodeIds)
-
-	am.LogInfo("ComputeNewWeights: Filtered store commits", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"originalCommitsCount", len(allStoreCommits),
-		"filteredCommitsCount", len(storeCommits))
-
-	// Get PoC validations
-	validations, err := am.keeper.GetPoCValidationsV2ByStage(ctx, epochStartBlockHeight)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-	}
-
-	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index,
-		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-		"len(validations)", len(validations))
-
-	// Collect participants and seeds
+	// Allowlist, participant, and seed checks read the store-commit keys.
+	// Distributions for keys that fail are not decoded.
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
-	allowedCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
-	allowedDistributions := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution)
+	admittedCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
 
-	sortedCommitKeys := sortedStoreCommitKeys(storeCommits)
-
-	for _, commitKey := range sortedCommitKeys {
+	for _, commitKey := range sortedStoreCommitKeys(allStoreCommits) {
 		participantAddress := commitKey.ParticipantAddress
-		// Check participant allowlist
 		if !am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress) {
 			am.LogInfo("ComputeNewWeights: Participant not in allowlist, skipping", types.PoC,
 				"address", participantAddress,
@@ -1007,11 +973,44 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 			continue
 		}
 		seeds[participantAddress] = seed
-		allowedCommits[commitKey] = storeCommits[commitKey]
-		if dist, ok := weightDistributions[commitKey]; ok {
-			allowedDistributions[commitKey] = dist
-		}
+		admittedCommits[commitKey] = allStoreCommits[commitKey]
 	}
+
+	admittedDistributions, err := am.distributionsForAdmittedKeys(ctx, epochStartBlockHeight, sortedStoreCommitKeys(admittedCommits))
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting weight distributions by PoC stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		// One bad value drops every distribution, matching the previous
+		// full-prefix read. Formation then keeps no per-node weights.
+		admittedDistributions = nil
+	}
+
+	// Filter out store commits with distributions that only have inference-serving nodes
+	storeCommits, weightDistributions := am.filterStoreCommitsFromInferenceNodes(admittedCommits, admittedDistributions, inferenceServingNodeIds)
+	allowedCommits := storeCommits
+	allowedDistributions := weightDistributions
+
+	am.LogInfo("ComputeNewWeights: Filtered store commits", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"originalCommitsCount", len(allStoreCommits),
+		"filteredCommitsCount", len(storeCommits))
+
+	// Get PoC validations
+	validations, err := am.keeper.GetPoCValidationsV2ByStage(ctx, epochStartBlockHeight)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting PoC validations by stage", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+	}
+
+	am.LogInfo("ComputeNewWeights: Retrieved PoC validations", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+		"len(validations)", len(validations))
 
 	// Add seeds for preserved participants
 	for _, preservedParticipant := range preservedParticipants {
@@ -1181,6 +1180,24 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		participants: allActiveParticipants,
 		freshNodeIDs: freshNodeIDs,
 	}
+}
+
+// distributionsForAdmittedKeys reads one distribution per key. A missing key is
+// skipped. Any other error drops the map so far, so one bad value does not
+// leave a partial set of node weights.
+func (am AppModule) distributionsForAdmittedKeys(ctx context.Context, stageHeight int64, keys []types.PoCParticipantModelKey) (map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution, error) {
+	result := make(map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution, len(keys))
+	for _, key := range keys {
+		distribution, err := am.keeper.GetMLNodeWeightDistribution(ctx, stageHeight, key.ParticipantAddress, key.ModelID)
+		if errors.Is(err, collections.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result[key] = distribution
+	}
+	return result, nil
 }
 
 // filterStoreCommitsFromInferenceNodes filters store commits and their weight distributions

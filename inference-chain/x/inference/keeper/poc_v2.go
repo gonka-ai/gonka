@@ -301,6 +301,16 @@ func (k Keeper) GetAllMLNodeWeightDistributionsForStage(ctx context.Context, poc
 	return result, nil
 }
 
+// GetMLNodeWeightDistribution reads one stored distribution. A missing key
+// returns collections.ErrNotFound.
+func (k Keeper) GetMLNodeWeightDistribution(ctx context.Context, pocStageStartBlockHeight int64, participantAddress, modelID string) (types.MLNodeWeightDistribution, error) {
+	addr, err := sdk.AccAddressFromBech32(participantAddress)
+	if err != nil {
+		return types.MLNodeWeightDistribution{}, err
+	}
+	return k.MLNodeWeightDistributions.Get(ctx, pocV2StoreCommitKey(pocStageStartBlockHeight, addr, modelID))
+}
+
 // SetPoCV2StoreCommit stores a PoCV2StoreCommit (for testing). Returns error on invalid address or storage failure.
 func (k Keeper) SetPoCV2StoreCommit(ctx context.Context, commit types.PoCV2StoreCommit) error {
 	addr, err := sdk.AccAddressFromBech32(commit.ParticipantAddress)

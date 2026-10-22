@@ -585,24 +585,20 @@ func (am AppModule) updateConfirmationWeightsV2(
 		return nil
 	}
 
-	// Get weight distributions for per-node weights
-	weightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, event.TriggerHeight)
-	if err != nil {
-		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
-		// Continue without distributions
-	}
-
 	validationsV2, err := am.keeper.GetPoCValidationsV2ByStage(ctx, event.TriggerHeight)
 	if err != nil {
 		am.LogError("updateConfirmationWeightsV2: failed to get PoC v2 validations for confirmation", types.PoC, "error", err)
 		return nil
 	}
 
-	// Collect participants and seeds
+	// Collect participants and seeds. This path has no allowlist check.
+	// Distributions are loaded only for keys that have both, because a missing
+	// participant or seed already produces no confirmation weight.
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
+	admittedKeys := make([]types.PoCParticipantModelKey, 0, len(storeCommits))
 
-	for key := range storeCommits {
+	for _, key := range sortedStoreCommitKeys(storeCommits) {
 		participantAddress := key.ParticipantAddress
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
@@ -614,9 +610,17 @@ func (am AppModule) updateConfirmationWeightsV2(
 		participants[participantAddress] = participant
 
 		seed, found := am.keeper.GetRandomSeed(ctx, event.EpochIndex, participantAddress)
-		if found {
-			seeds[participantAddress] = seed
+		if !found {
+			continue
 		}
+		seeds[participantAddress] = seed
+		admittedKeys = append(admittedKeys, key)
+	}
+
+	weightDistributions, err := am.distributionsForAdmittedKeys(ctx, event.TriggerHeight, admittedKeys)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
+		weightDistributions = nil
 	}
 
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
