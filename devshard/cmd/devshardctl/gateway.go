@@ -85,9 +85,6 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
-	awaitingParticipantMu        sync.Mutex
-	awaitingParticipant          map[string]struct{}
-	awaitingParticipantRetrying  atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
@@ -1028,7 +1025,6 @@ func (g *Gateway) checkBalances() {
 	g.mu.Unlock()
 	chainMaxNonce := g.chainMaxNonce()
 	shareChainMaxNonce(runtimes, chainMaxNonce)
-	g.startRetryAwaitingParticipants()
 	if !isRotationEnabled {
 		g.releaseEscrowHolds(runtimes, "rotation_disabled")
 		return

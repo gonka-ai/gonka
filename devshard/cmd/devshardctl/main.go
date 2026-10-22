@@ -31,13 +31,12 @@ import (
 type adminAuthContextKey struct{}
 
 const (
-	defaultChainGRPCURL                 = "localhost:9090"
-	defaultPublicAPIURL                 = "http://localhost:9000"
-	defaultModelName                    = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort                   = "8080"
-	defaultMaxConcurrentRequests        = 512
-	startupSkipReasonLocalRecovery      = "local_recovery_failed"
-	startupSkipReasonParticipantMissing = "participant_missing"
+	defaultChainGRPCURL            = "localhost:9090"
+	defaultPublicAPIURL            = "http://localhost:9000"
+	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort              = "8080"
+	defaultMaxConcurrentRequests   = 512
+	startupSkipReasonLocalRecovery = "local_recovery_failed"
 )
 
 type startupSkippedEscrow struct {
@@ -503,7 +502,6 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
-	gateway.awaitParticipants(startupSkipped)
 	wireStopTokenVocabulary(chainClient.InferenceQueryClient(), func() uint64 { return gateway.phaseGate.Snapshot().EpochIndex })
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
@@ -591,16 +589,6 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 			if !allEntries[res.idx].active {
 				log.Printf("inactive devshard %s could not be loaded, skipping runtime: %v", cfg.ID, res.err)
 				skipped = append(skipped, res.idx)
-				continue
-			}
-			if errors.Is(res.err, bridge.ErrParticipantNotFound) {
-				log.Printf("devshard %s group holds a slot with no participant on chain, skipping runtime and keeping it active: %v", cfg.ID, res.err)
-				skipped = append(skipped, res.idx)
-				startupSkipped = append(startupSkipped, startupSkippedEscrow{
-					EscrowID: cfg.ID,
-					Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
-					Reason:   startupSkipReasonParticipantMissing,
-				})
 				continue
 			}
 			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
