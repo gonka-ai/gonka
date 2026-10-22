@@ -111,19 +111,51 @@ func TestGenesis_ApprovedVersionsRoundTrip(t *testing.T) {
 		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 	}
 	v2 := &types.DevshardApprovedVersion{
-		Name:   "v2",
-		Binary: "https://example.com/v2.zip",
-		Sha256: "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		Name:      "v2",
+		Binary:    "https://example.com/v2.zip",
+		Sha256:    "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
 	}
 	genesisState := mocks.StubGenesisState()
 	genesisState.DevshardApprovedVersions = []*types.DevshardApprovedVersion{v2, v1}
+	genesisState.DevshardVersionPolicies = []*types.DevshardVersionPolicy{
+		{Name: "v1", PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED},
+		{Name: "v2", PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED},
+	}
 
 	inference.InitGenesis(ctx, k, genesisState)
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 2)
 	require.Equal(t, "v1", got.DevshardApprovedVersions[0].Name)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardApprovedVersions[0].PassCount)
 	require.Equal(t, "v2", got.DevshardApprovedVersions[1].Name)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[1].PassCount)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+	require.Len(t, got.DevshardVersionPolicies, 2)
+	require.Equal(t, "v1", got.DevshardVersionPolicies[0].Name)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardVersionPolicies[0].PassCount)
+}
+
+// A genesis exported before pass_count existed has approved versions but no
+// policies, and omitted pass_count is UNSPECIFIED. Import records DERIVED,
+// the 0.2.16 formula, so already-working settlements keep settling.
+func TestGenesis_ApprovedVersionsWithoutPoliciesAreDerived(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+
+	genesisState := mocks.StubGenesisState()
+	genesisState.DevshardApprovedVersions = []*types.DevshardApprovedVersion{{
+		Name:   "v1",
+		Binary: "https://example.com/v1.zip",
+		Sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+	}}
+
+	inference.InitGenesis(ctx, k, genesisState)
+	got := inference.ExportGenesis(ctx, k)
+	require.Len(t, got.DevshardApprovedVersions, 1)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
+	require.Len(t, got.DevshardVersionPolicies, 1)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
 }
 
 func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
@@ -143,7 +175,10 @@ func TestGenesis_LegacyParamsApprovedVersionsMigrated(t *testing.T) {
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 1)
 	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+	require.Len(t, got.DevshardVersionPolicies, 1)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
 }
 
 func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
@@ -164,5 +199,29 @@ func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
 	got := inference.ExportGenesis(ctx, k)
 	require.Len(t, got.DevshardApprovedVersions, 1)
 	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardApprovedVersions[0].PassCount)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED, got.DevshardVersionPolicies[0].PassCount)
+}
+
+func TestGenesis_ExplicitPassCountOverwritesPolicy(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+
+	genesisState := mocks.StubGenesisState()
+	genesisState.DevshardApprovedVersions = []*types.DevshardApprovedVersion{{
+		Name:      "v1",
+		Binary:    "https://example.com/v1.zip",
+		Sha256:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+	}}
+	genesisState.DevshardVersionPolicies = []*types.DevshardVersionPolicy{{
+		Name:      "v1",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+	}}
+
+	inference.InitGenesis(ctx, k, genesisState)
+	got := inference.ExportGenesis(ctx, k)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardApprovedVersions[0].PassCount)
+	require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, got.DevshardVersionPolicies[0].PassCount)
 }

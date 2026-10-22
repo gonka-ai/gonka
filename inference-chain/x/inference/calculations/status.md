@@ -12,9 +12,19 @@ This document provides a formal description of the status calculation implemente
   - `participant` (`types.Participant`) with fields:
     - `ConsecutiveInvalidInferences` (denoted $`N`$)
     - `CurrentEpochStats` (may be `nil`), with fields
-      - `ValidatedInferences` (denoted $`V`$)
+      - `ValidatedInferences` (denoted $`V`$) — SPRT **passes**. For ordinary
+        inference this is still paired with $`I`$ as $`n = V + I`$. For
+        **devshard settlement**, $`V`$ is filled from `host_stats` according to
+        the protocol name's `pass_count` policy (legacy derived count, or
+        sampled `HostStats.validated` with a rate cap). $`I`$ is still
+        `host_stats.invalid`. $`\text{InferenceCount}`$ (`n` below) stays
+        assigned-minus-missed completed work and is **not** required to equal
+        $`V + I`$ under sampled scoring. See
+        [devshard/docs/upgrade.md](../../../../devshard/docs/upgrade.md#settlement-pass_count).
       - `InvalidatedInferences` (denoted $`I`$)
-      - $`\text{InferenceCount} = V + I`$ (denoted $`n`$)
+      - $`\text{InferenceCount}`$ (denoted $`n`$; downtime SPRT uses this with
+        `MissedRequests`. The identity $`n = V + I`$ holds for ordinary
+        inference, not necessarily for sampled devshard settlements.)
     - `EpochsCompleted` (denoted $`E`$)
 
 - Outputs from `ComputeStatus`:
