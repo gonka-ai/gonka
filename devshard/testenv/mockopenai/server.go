@@ -77,6 +77,7 @@ func NewServerWithError(cfg Config) (*Server, error) {
 	e.GET("/testenv/log", s.handleLog)
 	e.POST("/api/v1/models/status", s.handleModelStatus)
 	e.POST("/testenv/fault", s.handleFaultPatch)
+	e.POST("/testenv/rules", s.handleRules)
 	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
 	return s, nil
@@ -192,6 +193,20 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// SetRules replaces the fault rules (same as POST /testenv/rules).
+func (s *Server) SetRules(rules []FaultRule) error { return s.journal.setRules(rules) }
+
+func (s *Server) handleRules(c echo.Context) error {
+	var rules []FaultRule
+	if err := c.Bind(&rules); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	if err := s.SetRules(rules); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	return c.JSON(http.StatusOK, map[string]int{"rules": len(rules)})
+}
+
 func (s *Server) handleStats(c echo.Context) error {
 	st := s.journal.snapshotStats()
 	st.RequestsReceived = s.stats.requestsReceived.Load()
@@ -243,7 +258,7 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 	}
 	rec := RequestRecord{
 		StartUnixMs: start.UnixMilli(), Phase: phase, Seed: req.Seed, PromptKey: PromptKey(body), Model: req.Model,
-		Stream: req.Stream, ChunkTokens: 1, Outcome: "ok", Wire: wireViewOf(body),
+		Stream: req.Stream, Outcome: "ok", Wire: wireViewOf(body),
 	}
 	if req.EnforcedTokens != nil {
 		rec.EnforcedTokens = len(req.EnforcedTokens.Tokens)
@@ -262,7 +277,10 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 		rec.DurationMs = time.Since(start).Milliseconds()
 		s.journal.record(rec)
 	}()
-	if !s.acquire(ctx) {
+	queuedAt := time.Now()
+	acquired := s.acquire(ctx)
+	rec.QueuedMs = time.Since(queuedAt).Milliseconds()
+	if !acquired {
 		s.recordFailure(ctx)
 		rec.Status, rec.Outcome = http.StatusServiceUnavailable, "capacity_exhausted"
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})
@@ -334,6 +352,32 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 			f.wrongAnswer = true
 		}
 	}
+	// Only a synthetic streamed answer carries a prelude: a recorded stream and an oracle replay do not.
+	preludeFits := req.Stream && s.replay == nil && !(f.Oracle && phase == PhaseReplay)
+	if rule := s.journal.matchRule(phase, req.Seed, promptText(req.Messages), preludeFits); rule != nil {
+		rec.Rule = rule.Name
+		if rule.PreludeChunks > 0 {
+			prelude = preludeSpec{chunks: rule.PreludeChunks, hold: time.Duration(rule.PreludeHoldMs) * time.Millisecond}
+		}
+		if rule.DelayMs > 0 {
+			select {
+			case <-time.After(time.Duration(rule.DelayMs) * time.Millisecond):
+			case <-ctx.Done():
+				rec.Outcome = "client_gone_during_rule_delay"
+				return ctx.Err()
+			}
+		}
+		if rule.Abort {
+			// Dropping the connection is what a transport error looks like to the caller.
+			rec.Outcome = "rule_abort"
+			panic(http.ErrAbortHandler)
+		}
+		if rule.HTTPStatus >= 400 {
+			s.stats.failedResponses.Add(1)
+			rec.Outcome = "rule_status"
+			return c.JSON(rule.HTTPStatus, OpenAIErrorBody(rule.HTTPStatus, "mock-openai fault rule "+rule.Name))
+		}
+	}
 
 	// Latency delays Validate (non-stream JSON or an enforced-token replay) only.
 	// Stream first-token delay is StreamFirstTokenDelay inside streamCompletion;
@@ -342,6 +386,8 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 	if validate {
 		f.StreamFirstTokenDelay = 0
 		f.StreamChunkDelay = 0
+		f.FirstContentDelay = 0
+		f.ExecDuration = 0
 		f.DropFirstChunk = false
 		f.PartialStream = false
 		f.SSEErrorMessage = ""
@@ -351,8 +397,12 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 		f.PadEmptyChunks = 0
 		f.DropTokens = false
 	}
-	if f.Latency > 0 && validate {
-		if err := waitForLatency(ctx, f.Latency); err != nil {
+	latency := f.Latency
+	if phase == PhaseReplay && f.ReplayDelay > 0 {
+		latency = f.ReplayDelay
+	}
+	if latency > 0 && validate {
+		if err := waitForLatency(ctx, latency); err != nil {
 			s.recordFailure(ctx)
 			rec.Outcome = "client_gone_during_latency"
 			return err
@@ -372,6 +422,14 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 		}
 	}
 
+	if f.Oracle && phase == PhaseReplay {
+		if err := s.replayCompletion(c, req, f.ChunkTokens, &rec); err != nil {
+			s.recordFailure(ctx)
+			return err
+		}
+		s.stats.successfulResponses.Add(1)
+		return nil
+	}
 	text := completionText(body)
 	var recorded *replay.Recorded
 	if s.replay != nil {
@@ -393,7 +451,7 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 		if recorded != nil {
 			err = s.streamRecorded(c, recorded.Stream, f, streamGate, &rec)
 		} else {
-			err = s.streamCompletion(c, req, text, body, f, streamGate, &rec, prelude)
+			err = s.streamCompletion(c, req, text, body, f, streamGate, start, &rec, prelude)
 		}
 		if err != nil || f.PartialStream || f.DropFirstChunk {
 			// A stream the fault cut is not a full answer, even though it ended cleanly.
@@ -469,18 +527,112 @@ func (s *Server) release() {
 	<-s.capacity
 }
 
-// preludeSpec is the role-only prefix a chaos action puts in front of a streamed answer.
+// preludeSpec is the role-only prefix a chaos action or a fault rule puts in front of a streamed answer.
 type preludeSpec struct {
 	chunks int
 	hold   time.Duration
 }
 
+// oraclePromptTokens counts prompt tokens from the message contents alone, so an execution and the
+// replay of it report the same figure even though the two request bodies differ in options.
+func oraclePromptTokens(req ChatRequest) int {
+	n := len(promptText(req.Messages)) / 4
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// replayCompletion answers a validator replay from the enforced tokens it carries, as received. A
+// replay that asks to stream (the validator always does) gets SSE as from vLLM: chunks of chunkTokens
+// tokens, each with its logprob entries, then the usage chunk and [DONE]. Otherwise one JSON answer.
+func (s *Server) replayCompletion(c echo.Context, req ChatRequest, chunkTokens int, rec *RequestRecord) error {
+	n := len(req.EnforcedTokens.Tokens)
+	rec.TokensOut, rec.UsageCompletion = n, n
+	promptTok := oraclePromptTokens(req)
+	usage := map[string]any{"prompt_tokens": promptTok, "completion_tokens": n, "total_tokens": promptTok + n}
+	var content []map[string]any
+	if req.Logprobs {
+		content = replayLogprobContent(req.EnforcedTokens, req.TopLogprobs)
+	}
+	created := time.Now().Unix()
+	if !req.Stream {
+		choice := map[string]any{
+			"index":         0,
+			"message":       map[string]any{"role": "assistant", "content": fmt.Sprintf("replay of %d enforced tokens", n)},
+			"finish_reason": "stop",
+			"logprobs":      nil,
+		}
+		if req.Logprobs {
+			choice["logprobs"] = map[string]any{"content": content}
+		}
+		return c.JSON(http.StatusOK, map[string]any{
+			"id": "chatcmpl-mockopenai-replay", "object": "chat.completion", "created": created, "model": req.Model,
+			"choices": []map[string]any{choice}, "usage": usage,
+		})
+	}
+	rec.ChunkTokens = max(chunkTokens, 1)
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().WriteHeader(http.StatusOK)
+	w := c.Response().Writer
+	flusher, _ := w.(http.Flusher)
+	write := func(data []byte) error {
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	}
+	chunk := func(choice map[string]any, extra map[string]any) error {
+		ev := map[string]any{"id": "chatcmpl-mockopenai-replay", "object": "chat.completion.chunk", "created": created,
+			"model": req.Model, "choices": []map[string]any{choice}}
+		for k, v := range extra {
+			ev[k] = v
+		}
+		data, err := json.Marshal(ev)
+		if err != nil {
+			return err
+		}
+		return write(data)
+	}
+	pos := 0
+	for _, size := range chunkSizes(n, chunkTokens) {
+		ids := make([]string, 0, size)
+		for _, t := range req.EnforcedTokens.Tokens[pos : pos+size] {
+			ids = append(ids, t.Token)
+		}
+		var lp any
+		if req.Logprobs {
+			lp = map[string]any{"content": content[pos : pos+size]}
+		}
+		pos += size
+		if err := chunk(map[string]any{"index": 0, "delta": map[string]any{"content": strings.Join(ids, " ")},
+			"logprobs": lp, "finish_reason": nil}, nil); err != nil {
+			return err
+		}
+	}
+	if err := chunk(map[string]any{"index": 0, "delta": map[string]any{"content": ""}, "logprobs": nil, "finish_reason": "stop"}, nil); err != nil {
+		return err
+	}
+	if err := chunk(map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}, map[string]any{"usage": usage}); err != nil {
+		return err
+	}
+	return write([]byte("[DONE]"))
+}
+
 func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, rec *RequestRecord) error {
+	oracle := f.Oracle
 	promptTok := promptTokenEstimate(body)
 	completionTok := len(text) / 4
 	rec.TokensOut = len([]rune(text))
-	if f.HonestUsage {
+	if oracle || f.HonestUsage {
 		completionTok = rec.TokensOut
+	}
+	if oracle {
+		promptTok = oraclePromptTokens(req)
 	}
 	if completionTok < 1 && !f.emptyAnswer {
 		completionTok = 1
@@ -521,9 +673,11 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}, rec *RequestRecord, prelude preludeSpec) error {
-	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
-		return err
+func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}, start time.Time, rec *RequestRecord, prelude preludeSpec) error {
+	if f.FirstContentDelay <= 0 && f.ExecDuration <= 0 {
+		if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
+			return err
+		}
 	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
@@ -535,6 +689,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 	created := time.Now().Unix()
 	id := "chatcmpl-mockopenai"
 	model := req.Model
+	scheduled := f.FirstContentDelay > 0 || f.ExecDuration > 0
 
 	writeChunk := func(delta map[string]any, finish *string, logprobs any) error {
 		choice := map[string]any{"index": 0, "delta": delta, "logprobs": logprobs}
@@ -557,7 +712,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if f.StreamChunkDelay > 0 {
+		if !scheduled && f.StreamChunkDelay > 0 {
 			time.Sleep(f.StreamChunkDelay)
 		}
 		return nil
@@ -587,6 +742,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 	}
 	// vLLM-style streaming error: optional content prefix, then error event + [DONE].
 	if msg := strings.TrimSpace(f.SSEErrorMessage); msg != "" {
+		rec.ChunkTokens = 1
 		// Emit a short content prefix so partial body capture has bytes before the error.
 		prefix := tokens
 		if len(prefix) > 4 {
@@ -624,15 +780,28 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		}
 		return nil
 	}
+	// ChunkTokens groups tokens into chunks; 0 and 1 keep one token per chunk.
+	groups := chunkSizes(len(tokens), f.ChunkTokens)
+	rec.ChunkTokens = max(f.ChunkTokens, 1)
 	first := true
 	paused := false
-	for i, r := range tokens {
+	pos := 0
+	for i, size := range groups {
+		tok := string(tokens[pos : pos+size])
+		pos += size
 		if first && f.DropFirstChunk {
 			first = false
 			continue
 		}
 		first = false
-		tok := string(r)
+		if scheduled {
+			wait := time.Until(start.Add(emitOffset(i, len(groups), f.FirstContentDelay, f.ExecDuration)))
+			select {
+			case <-time.After(wait):
+			case <-c.Request().Context().Done():
+				return c.Request().Context().Err()
+			}
+		}
 		var lp any
 		if req.Logprobs {
 			content := buildLogprobContent(tok, req.TopLogprobs)
@@ -644,7 +813,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		if err := writeChunk(map[string]any{"content": tok}, nil, lp); err != nil {
 			return err
 		}
-		rec.TokensOut++
+		rec.TokensOut += size
 		if !paused && f.PauseStream && streamGate != nil {
 			paused = true
 			select {
@@ -653,7 +822,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 				return c.Request().Context().Err()
 			}
 		}
-		if f.PartialStream && i == len(tokens)/2 {
+		if f.PartialStream && i == len(groups)/2 {
 			return nil
 		}
 	}
@@ -666,8 +835,11 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 	}
 	promptTok := promptTokenEstimate(body)
 	completionTok := len(text) / 4
-	if f.HonestUsage {
+	if f.Oracle || f.HonestUsage {
 		completionTok = len(tokens)
+	}
+	if f.Oracle {
+		promptTok = oraclePromptTokens(req)
 	}
 	if completionTok < 1 && !f.emptyAnswer {
 		completionTok = 1
