@@ -922,3 +922,34 @@ func TestVerifyDevshardSettlement_SampledChecksValidated(t *testing.T) {
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED)
 	require.NoError(t, err, "DERIVED does not extra-check validated")
 }
+
+func TestVerifyDevshardSettlement_FinishedBoundedByCompleted(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots, ValidationRate: 1000,
+	}
+	// nonce 42, 16 slots: slot 0 assigned = 2. missed = 0, so completed = 2.
+	atBound := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	atBound[0].Finished = 2
+	msg := buildSettlementTestData(t, escrow, keys, atBound, 0)
+	for _, passCount := range []types.DevshardPassCount{
+		types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+		types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+	} {
+		err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, passCount)
+		require.NoError(t, err, "finished equal to completed settles for %s", passCount)
+	}
+
+	over := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	over[0].Finished = 3
+	msg = buildSettlementTestData(t, escrow, keys, over, 0)
+	for _, passCount := range []types.DevshardPassCount{
+		types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+		types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+	} {
+		err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil, passCount)
+		require.ErrorContains(t, err, "finished count", "finished above completed is rejected for %s", passCount)
+	}
+}

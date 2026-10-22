@@ -103,6 +103,10 @@ func TestAggregateDevshardHostStats_OldDerivedPath(t *testing.T) {
 	p := &types.Participant{Address: "gonka1x"}
 	require.NoError(t, keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(p, tooMany, assigned, slots, derivedPolicy(1000, false, nil)))
 	require.Equal(t, uint64(8000), p.CurrentEpochStats.ValidatedInferences, "0.2.16 does not extra-check validated")
+
+	overFinished := types.DevshardSettlementHostStats{SlotId: 0, Finished: assigned + 1}
+	err := keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(&types.Participant{Address: "gonka1x"}, overFinished, assigned, slots, derivedPolicy(1000, false, nil))
+	require.ErrorContains(t, err, "finished count", "raw finished is bounded for derived too")
 }
 
 func TestAggregateDevshardHostStats_SampledLogOnly(t *testing.T) {
@@ -165,11 +169,10 @@ func TestAggregateDevshardHostStats_SampledApply(t *testing.T) {
 	require.Equal(t, uint64(2), p.CurrentEpochStats.ValidatedInferences, "SAMPLED does not extra-verify finished")
 
 	inflated := types.DevshardSettlementHostStats{SlotId: 0, Missed: 0, Invalid: 0, Validated: 99999, Finished: 99999}
-	p = &types.Participant{Address: "gonka1x"}
-	require.NoError(t, keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(p, inflated, assigned, slots, sampledPolicy(1000, true, nil)))
-	require.Equal(t, uint64(1602), p.CurrentEpochStats.ValidatedInferences, "finished above completed is clamped in the cap, not rejected")
+	err := keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(&types.Participant{Address: "gonka1x"}, inflated, assigned, slots, sampledPolicy(1000, true, nil))
+	require.ErrorContains(t, err, "finished count", "finished above completed is rejected, not only clamped")
 
 	tooMany := types.DevshardSettlementHostStats{SlotId: 0, Validated: 8000*16 + 1}
-	err := keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(&types.Participant{Address: "gonka1x"}, tooMany, assigned, slots, sampledPolicy(1000, true, nil))
+	err = keeper.AggregateDevshardHostStatsIntoCurrentEpochStats(&types.Participant{Address: "gonka1x"}, tooMany, assigned, slots, sampledPolicy(1000, true, nil))
 	require.ErrorContains(t, err, "validated count", "flag on still extra-checks sampled-era values")
 }

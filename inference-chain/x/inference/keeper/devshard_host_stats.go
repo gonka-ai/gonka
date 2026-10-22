@@ -107,6 +107,12 @@ func DevshardSprtPassCap(finished uint64, validationRateBps uint32) uint64 {
 }
 
 func (p DevshardPassPolicy) checkSlot(hs *types.DevshardSettlementHostStats, completed, slotCount uint64) error {
+	// finished is stored raw on the epoch aggregate. Bound it by completed
+	// (nonce-derived assignment minus misses) for every policy. Omitted
+	// finished is 0 and still settles.
+	if uint64(hs.Finished) > completed {
+		return fmt.Errorf("finished count %d exceeds completed %d", hs.Finished, completed)
+	}
 	if p.PassCount.Derived() {
 		// 0.2.16 verification is missed ≤ assigned and invalid ≤ completed
 		// (already applied).
