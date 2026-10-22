@@ -241,6 +241,45 @@ func TestApplyDiff_Challenge_SealedRejected(t *testing.T) {
 	require.Equal(t, *before.HostStats[1], *after.HostStats[1])
 }
 
+// A challenge is part of the record: the sealed snapshot says the record was
+// challenged as the live one did, whether the challenge invalidated it or left
+// it Finished.
+func TestLookupSealedInference_KeepsUsageChallenged(t *testing.T) {
+	cases := []struct {
+		name   string
+		specs  []challengeVoteSpec
+		status types.InferenceStatus
+	}{
+		{"invalidated", []challengeVoteSpec{
+			{0, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE},
+			{2, types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH},
+			{3, types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM},
+		}, types.StatusInvalidated},
+		{"finished below the threshold", []challengeVoteSpec{
+			{0, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE},
+			{2, types.ChallengeFault_CHALLENGE_FAULT_NONE},
+			{3, types.ChallengeFault_CHALLENGE_FAULT_NONE},
+		}, types.StatusFinished},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, user, hosts, _ := finishedForChallenge(t)
+			votes := challengeVotes(t, hosts, 1, testutil.TestResponseHash, tc.specs)
+			require.NoError(t, applyChallengeDiff(t, sm, user, &types.MsgChallenge{InferenceId: 1, Votes: votes}))
+			live, ok := sm.GetInference(1)
+			require.True(t, ok)
+			require.Equal(t, tc.status, live.Status)
+			require.True(t, live.UsageChallenged)
+
+			require.NoError(t, sm.SealInference(1))
+			sealed, ok := sm.LookupSealedInference(1)
+			require.True(t, ok)
+			require.Equal(t, tc.status, sealed.Status)
+			require.True(t, sealed.UsageChallenged, "the seal keeps the challenge")
+		})
+	}
+}
+
 func TestApplyDiff_Challenge_VoteRejections(t *testing.T) {
 	cases := map[string]struct {
 		votes func(t *testing.T, hosts []*signing.Secp256k1Signer) []*types.ChallengeVote
