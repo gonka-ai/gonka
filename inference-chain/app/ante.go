@@ -170,12 +170,12 @@ func cw20SendTarget(raw []byte) (string, bool) {
 		return "", false
 	}
 	msg, ok := jsonString(fields["msg"])
-	if !ok {
+	if !ok || strings.ContainsAny(msg, "\r\n") {
 		return "", false
 	}
-	hook, err := base64.StdEncoding.DecodeString(msg)
+	hook, err := base64.StdEncoding.Strict().DecodeString(msg)
 	if err != nil {
-		if hook, err = base64.RawStdEncoding.DecodeString(msg); err != nil {
+		if hook, err = base64.RawStdEncoding.Strict().DecodeString(msg); err != nil {
 			return "", false
 		}
 	}
