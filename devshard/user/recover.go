@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"devshard/heightsync"
 	"devshard/signing"
@@ -468,15 +469,21 @@ func noteAppliedTxKeys(sess *Session, page []types.DiffRecord) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	now := sess.nowLocked()
 	for _, rec := range page {
-		noteAppliedTxsLocked(sess, rec.Txs)
+		noteAppliedTxsLocked(sess, rec.Txs, now)
 	}
 }
 
-func noteAppliedTxsLocked(sess *Session, txs []*types.DevshardTx) {
+func noteAppliedTxsLocked(sess *Session, txs []*types.DevshardTx, now time.Time) {
 	for _, tx := range txs {
 		if key := devshardTxKey(tx); key != "" {
 			sess.appliedTxKeys[key] = struct{}{}
+		}
+		if finish := tx.GetFinishInference(); finish != nil {
+			if record, found := sess.sm.GetInference(finish.InferenceId); found && record.Status == types.StatusFinished {
+				sess.rememberAppliedFinishLocked(tx, now)
+			}
 		}
 	}
 	if len(sess.appliedTxKeys) > maxAppliedTxKeys {

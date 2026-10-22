@@ -422,7 +422,7 @@ func TestRaceWriter_CapabilityErrorsDoNotSelectWinner(t *testing.T) {
 	require.False(t, rg.hasDecided(), "capability miss should let redundancy try another host")
 }
 
-func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
+func TestRaceWriter_TwoHostsTrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAttemptEnds(t *testing.T) {
 	cases := []struct {
 		name       string
 		errorEvent string
@@ -434,11 +434,18 @@ func TestRaceWriter_ATrustedDeterministicRejectionMarksTheWholeRaceBeforeTheAtte
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			race, writer := newSingleAttemptRaceWriter(false)
+			second := &raceWriter{group: race, nonce: 2, inf: &inflight{
+				hostID: "host-B", escrowID: "escrow-x", nonce: 2,
+				done: make(chan struct{}), receiptCh: make(chan struct{}), firstTokenCh: make(chan struct{}),
+			}}
 
 			_, err := writer.Write([]byte(testCase.errorEvent))
-
 			require.NoError(t, err)
-			require.True(t, race.isDeterministicallyRejected(), "the rejection must stop new attempts before this attempt finishes")
+			require.False(t, race.isDeterministicallyRejected(), "one host's rejection must not stop other hosts from serving the request")
+
+			_, err = second.Write([]byte(testCase.errorEvent))
+			require.NoError(t, err)
+			require.True(t, race.isDeterministicallyRejected(), "a second host's rejection must stop new attempts before this attempt finishes")
 			require.False(t, race.hasDecided(), "a rejection is not an answer")
 		})
 	}
@@ -528,7 +535,7 @@ func TestContextRefusalBeyondModelLimit(t *testing.T) {
 // 1. A trusted host streams a context-length refusal for DeepSeek, whose context limit is 400000 tokens.
 // 2. The race writer classifies the refusal.
 // 3. Only a refusal no larger host could avoid stops the race; one from a smaller host leaves it open.
-func TestRaceWriter_AContextLengthRejectionForAModelWithAKnownLimitStopsOnlyWhenFinal(t *testing.T) {
+func TestRaceWriter_TwoHostsContextLengthRejectionForAModelWithAKnownLimitStopsOnlyWhenFinal(t *testing.T) {
 	cases := []struct {
 		name         string
 		message      string
@@ -541,9 +548,16 @@ func TestRaceWriter_AContextLengthRejectionForAModelWithAKnownLimitStopsOnlyWhen
 		t.Run(testCase.name, func(t *testing.T) {
 			race, writer := newSingleAttemptRaceWriter(false)
 			writer.inf.model = "deepseek-ai/DeepSeek-V4-Flash-0731"
+			second := &raceWriter{group: race, nonce: 2, inf: &inflight{
+				hostID: "host-B", escrowID: "escrow-x", nonce: 2, model: "deepseek-ai/DeepSeek-V4-Flash-0731",
+				done: make(chan struct{}), receiptCh: make(chan struct{}), firstTokenCh: make(chan struct{}),
+			}}
+			event := []byte(`data: {"error":{"code":400,"message":"` + testCase.message + `","type":"BadRequestError"}}` + "\n\n")
 
-			_, err := writer.Write([]byte(`data: {"error":{"code":400,"message":"` + testCase.message + `","type":"BadRequestError"}}` + "\n\n"))
-
+			_, err := writer.Write(event)
+			require.NoError(t, err)
+			require.False(t, race.isDeterministicallyRejected(), "one host's rejection must not stop other hosts from serving the request")
+			_, err = second.Write(event)
 			require.NoError(t, err)
 			require.Equal(t, testCase.wantRejected, race.isDeterministicallyRejected())
 		})
@@ -606,10 +620,10 @@ func TestRunInference_ContextRefusalBeyondModelLimitIsNotRetried(t *testing.T) {
 		wantHostRequests int32
 	}{
 		{
-			name:             "host_already_serves_the_model_limit",
+			name:             "host_already_serves_the_model_limit_stops_at_the_second_host",
 			message:          "This model's maximum context length is 400000 tokens. However, you requested 1000000 tokens.",
 			isWholeGroup:     true,
-			wantHostRequests: 1,
+			wantHostRequests: 2,
 		},
 		{
 			name:             "a_host_with_the_model_limit_could_still_serve_it",
