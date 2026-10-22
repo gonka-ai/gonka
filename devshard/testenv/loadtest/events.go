@@ -287,18 +287,16 @@ func parsePauseRecovery(raw string) (time.Duration, error) {
 }
 
 func validateEventParams(event Event) error {
-	if event.Recovery != "" {
-		if event.Action != "pause" {
-			return fmt.Errorf("recovery is only for pause events")
-		}
-		if _, err := parsePauseRecovery(event.Recovery); err != nil {
-			return err
-		}
+	if event.Recovery != "" && event.Action != "pause" {
+		return fmt.Errorf("recovery is only for pause events")
 	}
 	if isBackground(event.Params) && event.Action != "marker" {
 		return fmt.Errorf("params.background is only for marker events")
 	}
 	switch event.Action {
+	case "pause":
+		_, err := parsePauseRecovery(event.Recovery)
+		return err
 	case "marker":
 		if raw, ok := event.Params["observe"]; ok {
 			if observe, _ := raw.(string); !markerObservations[observe] {
