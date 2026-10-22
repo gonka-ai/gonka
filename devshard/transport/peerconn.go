@@ -96,8 +96,8 @@ type PeerConnConfig struct {
 	// ReadMaxBytes overrides DefaultRPCReadMaxBytes for handshake and
 	// ordinary unary Connect clients. Zero uses 16 KiB.
 	// GetDiffs and GetMempool responses use DefaultRPCQueryReadMaxBytes (10 MiB).
-	// VerifyTimeout / VerifyErrorMiss / ChallengeReceipt use
-	// DefaultRPCLargeReadMaxBytes (10 MiB). GetPayload client reads use
+	// VerifyTimeout / VerifyErrorMiss / VerifyChallenge / ChallengeReceipt
+	// use DefaultRPCLargeReadMaxBytes (10 MiB). GetPayload client reads use
 	// GetPayload client reads use the smallest rpcPayloadReadBuckets
 	// entry >= PayloadReadLimit (32 / 64 / 256 / 512 MiB). Chat stays
 	// DefaultMaxBodySize.

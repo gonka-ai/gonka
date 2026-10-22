@@ -243,7 +243,7 @@ func MessagesFingerprint(messages []Message) string {
 // so sampling knobs and seed do not pick it, and the validator replays with
 // its own seed anyway. stream, stream_options, logprobs, top_logprobs,
 // return_token_ids, skip_special_tokens and n are forced on the way to the ML
-// node, and the validator replay sets stream to false and adds enforced_tokens
+// node, and the validator replay forces stream on and adds enforced_tokens
 // and logprobs_mode, so none of them may split an executor request from its
 // validator replay.
 var requestKeyFields = []string{

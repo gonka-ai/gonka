@@ -348,7 +348,7 @@ Compose images are reused by default (Makefile runs `citest-images` first). For 
 Debugging tips:
 
 - Set `TESTENV_CITEST_KEEP_STACK=1` to keep the generated compose stack/workdir after the test, and `TESTENV_CITEST_DUMP_LOGS=1` to dump compose logs during test cleanup.
-- Set `TESTENV_CITEST_ATTACH_STACK=<workdir>` to run the usage scenario tables (`TestUsageOverclaimScenarios`) against a stack an earlier run kept with `TESTENV_CITEST_KEEP_STACK=1`, instead of booting a new one; the stack is left up afterwards.
+- Set `TESTENV_CITEST_ATTACH_STACK=<workdir>` to run the usage scenario tests (`TestUsageOverclaimScenarios`, `TestUsageChallengeOnOldHosts`) against a stack an earlier run kept with `TESTENV_CITEST_KEEP_STACK=1`, instead of booting a new one; the stack is left up afterwards. The attached stack keeps the model, replay file, validation rate and child binary it was booted with; the test's own values for them are not applied.
 - When running Go tests from a Docker-based runner, set `TESTENV_HOST_ADDR=host.docker.internal` so probes from inside the runner can reach host-published compose ports.
 - On Docker Desktop for macOS, mount this repository into the runner at the same absolute host path. Synthetic paths such as `/work` can make generated bind mounts fail because the host daemon does not have that path shared.
 

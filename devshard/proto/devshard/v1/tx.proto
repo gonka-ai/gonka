@@ -81,8 +81,9 @@ message ErrorMissVote {
 // The byte-bound reasons are added after STREAM_UNBOUND and EMPTY_STREAM.
 enum ChallengeReason {
   CHALLENGE_REASON_UNSPECIFIED = 0;
-  // The stream was cut before [DONE] and devshard_meta, or it was complete
-  // and matched neither hash the Finish carries.
+  // The stream was cut before [DONE] and devshard_meta, it was complete and
+  // matched neither hash the Finish carries, or it was still open a grace
+  // after its Finish applied.
   CHALLENGE_REASON_STREAM_UNBOUND = 1;
   // The receipt was applied and the stream ended with no content.
   CHALLENGE_REASON_EMPTY_STREAM = 2;
