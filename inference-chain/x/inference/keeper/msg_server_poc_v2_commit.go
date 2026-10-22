@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"cosmossdk.io/collections"
 	sdkerrors "cosmossdk.io/errors"
@@ -70,6 +71,9 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		if !activeEvent.IsInBatchSubmissionWindow(currentBlockHeight, epochParams) {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC batch submission window closed")
 		}
+		if err := k.CheckEpochModelCommit(ctx, activeEvent.EpochIndex, addr, msg.Entries); err != nil {
+			return nil, err
+		}
 	} else {
 		epochParams := params.EpochParams
 		upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
@@ -106,6 +110,40 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 	}
 
 	return &types.MsgPoCV2StoreCommitResponse{}, nil
+}
+
+func (k Keeper) CheckEpochModelCommit(
+	ctx context.Context,
+	epochIndex uint64,
+	participant sdk.AccAddress,
+	entries []*types.PoCV2CommitEntry,
+) error {
+	participants, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("active participants not found for epoch %d", epochIndex))
+	}
+	index := participant.String()
+	var epochModels []string
+	member := false
+	for _, p := range participants.Participants {
+		if p != nil && p.Index == index {
+			epochModels = p.Models
+			member = true
+			break
+		}
+	}
+	if !member {
+		return sdkerrors.Wrap(types.ErrParticipantNotFound, fmt.Sprintf("%s is not an active participant of epoch %d", index, epochIndex))
+	}
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if !slices.Contains(epochModels, entry.ModelId) {
+			return sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not one of the participant's epoch models", entry.ModelId))
+		}
+	}
+	return nil
 }
 
 func (k msgServer) loadExistingPoCV2StoreCommits(

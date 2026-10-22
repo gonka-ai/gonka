@@ -469,14 +469,14 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 
-	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
-	measured := weightByParticipant(confirmationParticipants, presentScales)
-
 	participants, found := am.keeper.GetActiveParticipants(ctx, event.EpochIndex)
 	if !found {
 		return fmt.Errorf("evaluateConfirmation: active participants not found for epoch %d", event.EpochIndex)
 	}
 	activeParticipants := participants.Participants
+
+	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
+	measured := weightByParticipant(restrictToEpochModels(confirmationParticipants, activeParticipants), presentScales)
 
 	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
@@ -770,4 +770,40 @@ func preservedWeightByParticipant(
 		preserved[p.Index] = types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 	}
 	return preserved
+}
+
+func restrictToEpochModels(
+	measured []*types.ActiveParticipant,
+	epochParticipants []*types.ActiveParticipant,
+) []*types.ActiveParticipant {
+	epochModels := make(map[string]map[string]bool, len(epochParticipants))
+	for _, p := range epochParticipants {
+		if p == nil {
+			continue
+		}
+		models := make(map[string]bool, len(p.Models))
+		for _, modelID := range p.Models {
+			if modelID != "" {
+				models[modelID] = true
+			}
+		}
+		epochModels[p.Index] = models
+	}
+	out := make([]*types.ActiveParticipant, 0, len(measured))
+	for _, p := range measured {
+		if p == nil {
+			continue
+		}
+		allowed := epochModels[p.Index]
+		filtered := &types.ActiveParticipant{Index: p.Index}
+		for i, modelID := range p.Models {
+			if !allowed[modelID] || i >= len(p.MlNodes) {
+				continue
+			}
+			filtered.Models = append(filtered.Models, modelID)
+			filtered.MlNodes = append(filtered.MlNodes, p.MlNodes[i])
+		}
+		out = append(out, filtered)
+	}
+	return out
 }

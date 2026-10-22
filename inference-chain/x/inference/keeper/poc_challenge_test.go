@@ -161,6 +161,13 @@ func TestPoCChallengeStoreCommit_FreezesAtFinish(t *testing.T) {
 		Index:   testutil.Executor,
 		Address: testutil.Executor,
 	}))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Models: []string{challengeTestModel},
+		}},
+	}))
 	ms := keeper.NewMsgServerImpl(k)
 	msg := &types.MsgPoCChallengeStoreCommit{
 		Creator:                  testutil.Executor,
