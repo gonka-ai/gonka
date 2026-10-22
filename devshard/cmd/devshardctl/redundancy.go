@@ -25,7 +25,6 @@ import (
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
-
 	"go.opentelemetry.io/otel/trace"
 
 	"common/completionapi"
@@ -47,6 +46,15 @@ var errAttemptPanicked = errors.New("attempt panicked")
 var errPendingPreludeTooLarge = errors.New("pre-content stream exceeded the attempt prelude budget")
 
 var errGatewayPendingPressure = errors.New("gateway pre-content retention pool exhausted")
+
+// Fail-closed when every attempted host receipts (or never receipts) and none
+// produce a first token, with no unused host left to start. Always-stream
+// first-token / receipt timers are failover triggers; at the attempt limit they
+// must still fail the client instead of waiting for host Execute or meta-drain.
+var (
+	errAllHostsFirstTokenTimeout = errors.New("all hosts timed out waiting for first token")
+	errAllHostsReceiptTimeout    = errors.New("all hosts timed out waiting for receipt")
+)
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
@@ -1011,10 +1019,13 @@ func (inf *inflight) receiptAt() time.Time {
 	return time.Time{}
 }
 
-// cancelByGateway ends an attempt for the race's own reasons, so nothing it
-// leaves unfinished is charged to its host.
-func (inf *inflight) cancelByGateway() {
-	inf.endedByGateway.Store(true)
+// cancelAttempt ends an attempt for the race's own reasons. One still inside
+// its receipt or first-token deadline is marked as ended by the gateway and is
+// not charged to its host; one past it ends as the host's own miss.
+func (e *Redundancy) cancelAttempt(inf *inflight, params user.InferenceParams) {
+	if deadline, ok := e.attemptDeadline(inf, params, time.Now()); !ok || time.Now().Before(deadline) {
+		inf.endedByGateway.Store(true)
+	}
 	if inf.cancel != nil {
 		inf.cancel()
 	}
@@ -2806,6 +2817,10 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
+	// A fail-closed put off while another attempt held a receipt. It fires
+	// once no attempt holds a live receipt.
+	var deferredFailClosed *escalationTrigger
+
 	for {
 		winner := race.winnerNonce()
 		var winnerC <-chan struct{}
@@ -2869,6 +2884,24 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			stallInf = inf
 			stallTimer = time.NewTimer(wait)
 			stallC = stallTimer.C
+		}
+		var holderTimer *time.Timer
+		var holderC <-chan time.Time
+		if deferredFailClosed != nil && winner == 0 && !allInflightsDone(attempts) {
+			holder, until := e.liveReceiptHolder(attempts, params)
+			if holder == nil {
+				stopTimer(escalationTimer)
+				stopTimer(stallTimer)
+				logInferenceStage(settleCtx, deferredFailClosed.inf.escrowID, deferredFailClosed.inf.nonce, "escalation_fail_closed_resumed",
+					"host", deferredFailClosed.inf.hostID,
+					"stage", deferredFailClosed.stage,
+				)
+				return e.failClosedNoWinner(settleCtx, attempts, params, decision, *deferredFailClosed, clientFlag)
+			}
+			if !until.IsZero() {
+				holderTimer = time.NewTimer(max(time.Until(until), 0))
+				holderC = holderTimer.C
+			}
 		}
 		var winnerHardTimeoutTimer *time.Timer
 		var winnerHardTimeoutC <-chan time.Time
@@ -2974,7 +3007,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if race.winnerNonce() != 0 {
 				break
 			}
-			if fallback, released := suspiciousWinnerRelease(attempts); released && deadlineEscalationStage(trigger.stage) {
+			if fallback, released := suspiciousWinnerRelease(attempts); released && failClosedEscalationStage(trigger.stage) {
 				if err := race.promoteFallbackWinner(fallback); err != nil {
 					stopTimer(stallTimer)
 					stopTimer(winnerHardTimeoutTimer)
@@ -2995,6 +3028,29 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					e.watchInflightDone(next, doneCh)
 					break
 				}
+			}
+			if failClosedEscalationStage(trigger.stage) {
+				if holder, _ := e.liveReceiptHolder(attempts, params); holder != nil {
+					trigger.inf.escalated = true
+					if deferredFailClosed == nil {
+						deferred := trigger
+						deferredFailClosed = &deferred
+					}
+					logInferenceStage(settleCtx, trigger.inf.escrowID, trigger.inf.nonce, "escalation_fail_closed_deferred",
+						"host", trigger.inf.hostID,
+						"stage", trigger.stage,
+						"receipt_holder", holder.hostID,
+						"receipt_holder_nonce", holder.nonce,
+					)
+					break
+				}
+				if stallTimer != nil {
+					stopTimer(stallTimer)
+				}
+				if winnerHardTimeoutTimer != nil {
+					stopTimer(winnerHardTimeoutTimer)
+				}
+				return e.failClosedNoWinner(settleCtx, attempts, params, decision, trigger, clientFlag)
 			}
 			trigger.inf.escalated = true
 			logInferenceStage(settleCtx, trigger.inf.escrowID, trigger.inf.nonce, "escalation_skipped",
@@ -3058,6 +3114,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if winning.cancel != nil {
 				winning.cancel()
 			}
+		case <-holderC:
 		case <-winnerC:
 		case <-streamCtx.Done():
 			if escalationTimer != nil {
@@ -3086,6 +3143,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		if winnerHardTimeoutTimer != nil {
 			stopTimer(winnerHardTimeoutTimer)
 		}
+		stopTimer(holderTimer)
 	}
 }
 
@@ -3115,7 +3173,7 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 	return chosen, ok
 }
 
-func deadlineEscalationStage(stage string) bool {
+func failClosedEscalationStage(stage string) bool {
 	switch stage {
 	case "first_token_timeout_wait_elapsed", "receipt_timeout_wait_elapsed":
 		return true
@@ -3131,7 +3189,77 @@ func shouldArmEscalationTimer(hasTrigger bool, winner uint64, nAttempts, maxAtte
 	if nAttempts < maxAttempts {
 		return true
 	}
-	return deadlineEscalationStage(stage)
+	return failClosedEscalationStage(stage)
+}
+
+func failClosedErrorForStage(stage string) error {
+	if stage == "receipt_timeout_wait_elapsed" {
+		return errAllHostsReceiptTimeout
+	}
+	return errAllHostsFirstTokenTimeout
+}
+
+// receiptHolderFirstTokenPatience is how many first-token budgets a race at
+// its attempt limit waits on an attempt that holds a receipt. The budget is
+// the p95 first-token latency, a cue to start another attempt rather than a
+// verdict that the host failed.
+const receiptHolderFirstTokenPatience = 3
+
+// liveReceiptHolder returns a running attempt that holds a receipt and either
+// streams or is still inside receiptHolderFirstTokenPatience first-token
+// budgets. While one exists the race is not lost: that host has signed for the
+// work. until is when that patience ends, zero once the holder streams.
+func (e *Redundancy) liveReceiptHolder(attempts []*inflight, params user.InferenceParams) (holder *inflight, until time.Time) {
+	now := time.Now()
+	for _, inf := range attempts {
+		if inf == nil || inf.probe || !inf.hasReceipt() || inflightDone(inf) {
+			continue
+		}
+		if inf.hasFirstToken() {
+			return inf, time.Time{}
+		}
+		start, _ := inf.clockStart(now)
+		if deadline := start.Add(receiptHolderFirstTokenPatience * e.firstTokenFallbackDelay(params)); now.Before(deadline) {
+			return inf, deadline
+		}
+	}
+	return nil, time.Time{}
+}
+
+func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, trigger escalationTrigger, clientFlag *cancelFlag) error {
+	err := failClosedErrorForStage(trigger.stage)
+	pending := pendingInflights(attempts)
+	hostID := ""
+	nonce := uint64(0)
+	escrowID := e.devshardID
+	if trigger.inf != nil {
+		hostID = trigger.inf.hostID
+		nonce = trigger.inf.nonce
+		escrowID = trigger.inf.escrowID
+	}
+	logInferenceStage(ctx, escrowID, nonce, "escalation_fail_closed",
+		"host", hostID,
+		"stage", trigger.stage,
+		"reason", trigger.reason,
+		"pending", len(pending),
+		"attempts", len(attempts),
+		"max_attempts", e.maxAttempts(),
+		"decision", decision.Reason,
+		"error", err,
+	)
+	for _, inf := range pending {
+		if inf.cancel != nil {
+			inf.cancel()
+		}
+	}
+	e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
+		e.finishRaceWhenPendingDone(cleanupCtx, attempts, params, decision, 0, raceFinishOptions{
+			forceTreatAsFailure:  true,
+			recordFailureSamples: true,
+			clientGone:           clientFlag,
+		})
+	})
+	return err
 }
 
 // escalationForInflight escalates a suspicious attempt at once only while
@@ -3168,27 +3296,41 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "attempt_failed",
 		}, true
 	}
-	if inf.sendTime.IsZero() {
+	deadline, ok := e.attemptDeadline(inf, params, time.Now())
+	if !ok {
 		return escalationTrigger{}, false
 	}
-	start, _ := inf.clockStart(time.Now())
 	if !inf.hasReceipt() {
 		return escalationTrigger{
 			inf:      inf,
-			deadline: start.Add(receiptTimeoutForInput(params.InputLength)),
+			deadline: deadline,
 			stage:    "receipt_timeout_wait_elapsed",
 			reason:   "receipt_timeout",
 		}, true
 	}
-	if inf.hasFirstToken() {
-		return escalationTrigger{}, false
-	}
 	return escalationTrigger{
 		inf:      inf,
-		deadline: start.Add(e.firstTokenFallbackDelay(params)),
+		deadline: deadline,
 		stage:    "first_token_timeout_wait_elapsed",
 		reason:   "first_token_timeout",
 	}, true
+}
+
+// attemptDeadline is when a sent attempt misses its receipt timeout, or its
+// first-token budget once it holds a receipt. ok is false before the send and
+// once a receipted attempt streams.
+func (e *Redundancy) attemptDeadline(inf *inflight, params user.InferenceParams, now time.Time) (deadline time.Time, ok bool) {
+	if inf.sendTime.IsZero() {
+		return time.Time{}, false
+	}
+	start, _ := inf.clockStart(now)
+	if !inf.hasReceipt() {
+		return start.Add(receiptTimeoutForInput(params.InputLength)), true
+	}
+	if inf.hasFirstToken() {
+		return time.Time{}, false
+	}
+	return start.Add(e.firstTokenFallbackDelay(params)), true
 }
 
 func (e *Redundancy) escalationDelay(stage string, params user.InferenceParams) time.Duration {
@@ -3770,7 +3912,7 @@ func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*
 	bgCtx, _ := ensureRequestLogContext(context.Background())
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 
-	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
+	e.waitForPendingLosers(bgCtx, winnerNonce, attempts, params)
 
 	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, opts); err != nil {
 		logRequestStage(bgCtx, "background_race_finalize_failed", "escrow", e.devshardID, "error", err)
@@ -3782,7 +3924,7 @@ func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, 
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 
 	winner := inflightByNonce(attempts, winnerNonce)
-	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
+	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts, params)
 	if abandonedWinner {
 		e.recordStalledWinnerFailureOnce(winner, params)
 		if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
@@ -3808,7 +3950,7 @@ func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, 
 	}
 }
 
-func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight) bool {
+func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight, params user.InferenceParams) bool {
 	pending := pendingInflights(attempts)
 	if len(pending) == 0 {
 		return false
@@ -3851,7 +3993,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 					"host", inf.hostID,
 					"reason", reason,
 				)
-				inf.cancelByGateway()
+				e.cancelAttempt(inf, params)
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "client_timeout_wait_drain_abandoned",
@@ -3874,7 +4016,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 // A transport that ignores cancel is abandoned: finishRaceOutcome must not
 // read resp/err until that attempt's done closes, so a hung host cannot hold
 // pendingRaceCleanup (and finalize) for InferenceTimeout.
-func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint64, attempts []*inflight) {
+func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint64, attempts []*inflight, params user.InferenceParams) {
 	pending := pendingInflights(attempts)
 	if len(pending) == 0 {
 		return
@@ -3910,7 +4052,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 					"host", inf.hostID,
 					"reason", "winner_grace_expired",
 				)
-				inf.cancelByGateway()
+				e.cancelAttempt(inf, params)
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "speculative_wait_drain_abandoned",
