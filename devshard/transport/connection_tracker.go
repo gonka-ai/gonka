@@ -1,5 +1,10 @@
 package transport
 
+// HostConnectionTracker counts TCP connections per remote host. Connect
+// over HTTP/1.1 (DEVSHARD_RPC_H2_UPGRADE off, or a peer whose public port
+// does not speak HTTP/2) is still one connection per request. On an HTTP/2
+// origin the same gauges count connections, not streams.
+
 import (
 	"context"
 	"io"
@@ -38,8 +43,9 @@ type hostConnectionCounts struct {
 }
 
 type trackedConnState struct {
-	address string
-	state   connLifecycleState
+	address  string
+	state    connLifecycleState
+	requests int
 }
 
 type HostConnectionTracker struct {
@@ -80,6 +86,12 @@ func NewHostConnectionTracker(holdDuration time.Duration) *HostConnectionTracker
 
 func DefaultHostConnectionTracker() *HostConnectionTracker {
 	return defaultHostConnectionTracker
+}
+
+func closeIdleConnections(rt http.RoundTripper) {
+	if c, ok := rt.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
 }
 
 func (t *HostConnectionTracker) WrapRoundTripper(base http.RoundTripper) http.RoundTripper {
@@ -139,6 +151,13 @@ func (t *HostConnectionTracker) Snapshots() []HostConnectionSnapshot {
 	return snapshots
 }
 
+func (rt *instrumentedRoundTripper) CloseIdleConnections() {
+	if rt == nil {
+		return
+	}
+	closeIdleConnections(rt.base)
+}
+
 func (rt *instrumentedRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	if rt == nil || rt.base == nil {
 		return nil, http.ErrUseLastResponse
@@ -147,6 +166,9 @@ func (rt *instrumentedRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	var conn net.Conn
 	trace := &httptrace.ClientTrace{
 		GotConn: func(info httptrace.GotConnInfo) {
+			if conn != nil {
+				rt.tracker.markIdle(conn)
+			}
 			conn = info.Conn
 			if rt.tracker != nil {
 				rt.tracker.markActive(info.Conn)
@@ -157,7 +179,12 @@ func (rt *instrumentedRoundTripper) RoundTrip(req *http.Request) (*http.Response
 	req = req.Clone(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := rt.base.RoundTrip(req)
 	if err != nil {
+		rt.tracker.markIdle(conn)
 		return nil, err
+	}
+	if resp == nil || resp.Body == nil || resp.Body == http.NoBody {
+		rt.tracker.markIdle(conn)
+		return resp, nil
 	}
 	if conn != nil && resp.Body != nil && rt.tracker != nil {
 		resp.Body = &trackedBody{
@@ -214,9 +241,24 @@ func (t *HostConnectionTracker) trackConn(conn net.Conn, fallbackAddress string)
 	return tracked
 }
 
+// tls.Conn exposes its underlying tracked dial connection via NetConn.
+func unwrapTrackedConn(conn net.Conn) *trackedConn {
+	for conn != nil {
+		if tracked, ok := conn.(*trackedConn); ok {
+			return tracked
+		}
+		wrapper, ok := conn.(interface{ NetConn() net.Conn })
+		if !ok {
+			return nil
+		}
+		conn = wrapper.NetConn()
+	}
+	return nil
+}
+
 func (t *HostConnectionTracker) markActive(conn net.Conn) {
-	tracked, ok := conn.(*trackedConn)
-	if !ok || t == nil {
+	tracked := unwrapTrackedConn(conn)
+	if tracked == nil || t == nil {
 		return
 	}
 
@@ -227,6 +269,7 @@ func (t *HostConnectionTracker) markActive(conn net.Conn) {
 	if !ok {
 		return
 	}
+	state.requests++
 	counts := t.ensureCountsLocked(state.address)
 	switch state.state {
 	case connStateIdle:
@@ -238,8 +281,8 @@ func (t *HostConnectionTracker) markActive(conn net.Conn) {
 }
 
 func (t *HostConnectionTracker) markIdle(conn net.Conn) {
-	tracked, ok := conn.(*trackedConn)
-	if !ok || t == nil {
+	tracked := unwrapTrackedConn(conn)
+	if tracked == nil || t == nil {
 		return
 	}
 
@@ -248,6 +291,12 @@ func (t *HostConnectionTracker) markIdle(conn net.Conn) {
 
 	state, ok := t.conns[tracked]
 	if !ok {
+		return
+	}
+	if state.requests > 0 {
+		state.requests--
+	}
+	if state.requests > 0 {
 		return
 	}
 	counts := t.ensureCountsLocked(state.address)

@@ -103,18 +103,53 @@ func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, e
 	}
 
 	name := strconv.FormatUint(inferenceId, 10)
-	targetPath := filepath.Join(dir, name+suffix)
-	tempPath := targetPath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
+	// The first stored payload is kept, as in Postgres (ON CONFLICT DO NOTHING): a finish may already
+	// commit its hash. The reader prefers the compressed name, so a file under either name counts.
+	for _, existing := range []string{name + compressedSuffix, name + plainSuffix} {
+		if _, err := os.Lstat(filepath.Join(dir, existing)); err == nil {
+			return ErrAlreadyStored
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("payloads: stat: %w", err)
+		}
+	}
+
+	temp, err := os.CreateTemp(dir, name+suffix+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("payloads: create temp: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(data); err != nil {
+		_ = temp.Close()
 		return fmt.Errorf("payloads: write temp: %w", err)
 	}
+	// A first payload is never rewritten, so a file cut short by a crash would stay.
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return fmt.Errorf("payloads: sync temp: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return fmt.Errorf("payloads: close temp: %w", err)
+	}
+	if err := os.Chmod(tempPath, 0o644); err != nil {
+		return fmt.Errorf("payloads: chmod temp: %w", err)
+	}
+	// A link never replaces an existing name, so of two concurrent writers exactly one wins and the
+	// reader sees either no file or a complete one.
+	targetPath := filepath.Join(dir, name+suffix)
+	linkErr := os.Link(tempPath, targetPath)
+	if linkErr == nil {
+		return nil
+	}
+	if os.IsExist(linkErr) {
+		return ErrAlreadyStored
+	}
+	// A filesystem without hard links: rename keeps the check above, but a concurrent writer may replace.
+	logging.Warn("Storing the payload by rename: link failed", types.PayloadStorage,
+		"inferenceId", inferenceId, "error", linkErr)
 	if err := os.Rename(tempPath, targetPath); err != nil {
-		_ = os.Remove(tempPath)
 		return fmt.Errorf("payloads: rename: %w", err)
 	}
-	// The reader prefers the compressed name, so a sibling written under the other setting would
-	// outrank what was just stored.
-	_ = os.Remove(filepath.Join(dir, name+siblingSuffix(suffix)))
 	return nil
 }
 
@@ -127,13 +162,6 @@ func namePayloadFile(plain, compressed []byte, compressErr error, inferenceId ui
 		return plain, plainSuffix
 	}
 	return compressed, compressedSuffix
-}
-
-func siblingSuffix(suffix string) string {
-	if suffix == compressedSuffix {
-		return plainSuffix
-	}
-	return compressedSuffix
 }
 
 func (f *FileStorage) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) ([]byte, []byte, error) {

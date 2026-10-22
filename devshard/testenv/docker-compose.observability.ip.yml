@@ -1,12 +1,9 @@
 # Fixed IPs on the testenv bridge (high slot .60+) so observability containers
 # do not collide with gencompose static assignments (.2–.11).
-# Adjust base_ip if you change network.base_ip in config.yaml (default 172.30.0).
+# Default profile: tempo-alloy (no jaeger/promtail blocks — Compose rejects
+# unknown services). Citest regenerates this per profile.
 
 services:
-  jaeger:
-    networks:
-      testenv:
-        ipv4_address: 172.30.0.60
   prometheus:
     networks:
       testenv:
@@ -15,11 +12,15 @@ services:
     networks:
       testenv:
         ipv4_address: 172.30.0.62
-  promtail:
-    networks:
-      testenv:
-        ipv4_address: 172.30.0.63
   grafana:
     networks:
       testenv:
         ipv4_address: 172.30.0.64
+  tempo:
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.65
+  alloy:
+    networks:
+      testenv:
+        ipv4_address: 172.30.0.66

@@ -609,12 +609,58 @@ func (h *HybridStorage) AppendDiff(escrowID string, rec types.DiffRecord) error 
 	return b.AppendDiff(escrowID, rec)
 }
 
+func (h *HybridStorage) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return appendDiffBatchVia(ctx, b, escrowID, recs)
+}
+
+// appendDiffBatchVia forwards to a DiffBatchWriter, or appends one record at
+// a time when the store has none (each AppendDiff is replay-safe).
+func appendDiffBatchVia(ctx context.Context, store Storage, escrowID string, recs []types.DiffRecord) error {
+	if w, ok := store.(DiffBatchWriter); ok {
+		return w.AppendDiffBatch(ctx, escrowID, recs)
+	}
+	for _, rec := range recs {
+		if err := store.AppendDiff(escrowID, rec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return nil, err
 	}
 	return b.GetDiffs(escrowID, fromNonce, toNonce)
+}
+
+func (h *HybridStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.GetDiffWires(escrowID, fromNonce, toNonce)
+}
+
+func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
+func (h *HybridStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.DiffStateHash(escrowID, nonce)
 }
 
 func (h *HybridStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
@@ -857,6 +903,30 @@ func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	return b.ClearValidationObs(escrowID)
 }
 
+func (h *HybridStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func (h *HybridStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return false, err
+	}
+	return b.ValidationObsRebuildPending(escrowID)
+}
+
+func (h *HybridStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.LockValidationObsRebuild(escrowID)
+}
+
 func (h *HybridStorage) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, owner LeaseOwner) (bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -891,6 +961,18 @@ func (h *HybridStorage) AcquireOneStale(ctx context.Context, escrowID string, ow
 		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
 	}
 	return ls.AcquireOneStale(ctx, escrowID, owner, ttl)
+}
+
+func (h *HybridStorage) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return 0, 0, err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStaleAmong(ctx, escrowID, epochID, inferenceIDs, owner, ttl)
 }
 
 func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {

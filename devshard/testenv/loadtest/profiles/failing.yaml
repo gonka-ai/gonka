@@ -1,0 +1,10 @@
+schema_version: v1
+profile: failing
+
+ttft: 3s
+token_interval: 2ms
+workers: 100
+queue: 500
+failure_rate: 0.7
+http_status: 503
+failures: []

@@ -243,9 +243,9 @@ func (f *FloorIndex) Len() int {
 	return len(f.entries)
 }
 
-// Clone returns a copy so trial-apply cannot leak into committed state. It runs
-// on the apply hot path (snapshotMutable, several times per diff), so the hashes
-// are shared rather than copied: appendEntry stores a fresh slice and nothing
+// Clone returns a copy so trial-apply cannot leak into committed state. The
+// apply journal calls it on diffs that carry a floor claim, so the hashes are
+// shared rather than copied: appendEntry stores a fresh slice and nothing
 // rewrites one in place afterwards.
 func (f *FloorIndex) Clone() *FloorIndex {
 	if f == nil {

@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,6 +15,21 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+type notifyingHostPingSink struct {
+	inner    *hostPingSink
+	observed chan struct{}
+	once     sync.Once
+}
+
+func (s *notifyingHostPingSink) Observe(result probe.Result) {
+	s.inner.Observe(result)
+	s.once.Do(func() { close(s.observed) })
+}
+
+func (s *notifyingHostPingSink) Forget(key string) {
+	s.inner.Forget(key)
+}
 
 func TestHostPingTargetsRefcountAndDedupe(t *testing.T) {
 	targets := newHostPingTargets()
@@ -72,10 +92,12 @@ func TestHostPingRefcountExhaustivenessTeardownPaths(t *testing.T) {
 			},
 		},
 		{
-			name: "deactivateAndSettleDevshardByID",
+			name: "deactivateDepletedEscrow",
 			run: func(t *testing.T, g *Gateway, escrowID string) {
-				// No store/chain — settle may no-op after deactivate; release must still run.
-				g.deactivateAndSettleDevshardByID(escrowID, "test")
+				g.store = newGatewayStoreWithActiveEscrow(t, escrowID)
+				isTakenOutOfService, err := g.deactivateDepletedEscrow(context.Background(), escrowID, "", "test", GatewaySettings{})
+				require.NoError(t, err)
+				require.True(t, isTakenOutOfService)
 			},
 		},
 		{
@@ -191,6 +213,74 @@ func TestHostPingObserveAfterReleaseDoesNotRestoreSeries(t *testing.T) {
 	requireHostPingTargets(t, metrics, 0)
 }
 
+func TestHostPingInFlightProbeAfterReleaseDoesNotRestoreSeries(t *testing.T) {
+	probeStarted := make(chan struct{})
+	unblockProbe := make(chan struct{})
+	var startOnce sync.Once
+	var unblockOnce sync.Once
+	releaseProbe := func() {
+		unblockOnce.Do(func() { close(unblockProbe) })
+	}
+	t.Cleanup(releaseProbe)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startOnce.Do(func() { close(probeStarted) })
+		select {
+		case <-unblockProbe:
+			w.WriteHeader(http.StatusNoContent)
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{
+		Interval:    10 * time.Second,
+		Timeout:     2 * time.Second,
+		Concurrency: 1,
+	})
+	const escrowID = "e1"
+	const participantKey = "pk-in-flight"
+	job.ObserveEscrowHost(escrowID, server.URL, "", participantKey)
+
+	prober, err := probe.New(probe.Config{
+		Interval:    10 * time.Second,
+		Timeout:     2 * time.Second,
+		Concurrency: 1,
+		Transport:   server.Client().Transport,
+	})
+	require.NoError(t, err)
+	observed := make(chan struct{})
+	sink := &notifyingHostPingSink{
+		inner:    &hostPingSink{metrics: metrics, targets: job.targets},
+		observed: observed,
+	}
+	scheduler := probe.NewScheduler(prober, job.targets, sink, &hostPingObserver{metrics: metrics})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go scheduler.Run(ctx)
+
+	select {
+	case <-probeStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("host ping probe did not start")
+	}
+
+	job.ReleaseEscrow(escrowID)
+	assertNoHostPingSeriesForHost(t, metrics, server.URL)
+	requireHostPingTargets(t, metrics, 0)
+
+	releaseProbe()
+	select {
+	case <-observed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("host ping probe result was not observed")
+	}
+
+	assertNoHostPingSeriesForHost(t, metrics, server.URL)
+	requireHostPingTargets(t, metrics, 0)
+}
+
 func TestHostPingCleanupCompleteness(t *testing.T) {
 	metrics := NewDevshardMetrics()
 	const dial = "http://cleanup.example:8080"
@@ -264,7 +354,9 @@ func TestHostPingHardInvariantProbeFailureDoesNotQuarantine(t *testing.T) {
 	limiter.SetMetrics(metrics)
 	before := metricCounterSum(t, metrics, "devshard_gateway_participant_quarantine_transitions_total")
 
-	sink := &hostPingSink{metrics: metrics, targets: newHostPingTargets()}
+	targets := newHostPingTargets()
+	targets.ObserveEscrowHost("e1", "http://fail.example:1", "/devshard/v4", "pk-fail")
+	sink := &hostPingSink{metrics: metrics, targets: targets}
 	for i := 0; i < 5; i++ {
 		sink.Observe(probe.Result{
 			Key:  "http://fail.example:1",
@@ -435,4 +527,49 @@ func metricCounterSum(t *testing.T, metrics *DevshardMetrics, name string) float
 		}
 	}
 	return sum
+}
+
+func TestHostPingConcurrentProbeAndRelease(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{})
+	sink := &hostPingSink{metrics: metrics, targets: job.targets}
+	const dial = "http://concurrent.example:8080"
+	for i := 0; i < 100; i++ {
+		escrowID := fmt.Sprintf("escrow-%d", i)
+		job.ObserveEscrowHost(escrowID, dial, "", "pk")
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			<-start
+			sink.Observe(probe.Result{Key: dial, Up: true, At: time.Now()})
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			job.ReleaseEscrow(escrowID)
+		}()
+		close(start)
+		wg.Wait()
+		assertNoHostPingSeriesForHost(t, metrics, dial)
+	}
+}
+
+func TestHostPingSharedHostStillAcceptsProbeAfterRelease(t *testing.T) {
+	metrics := NewDevshardMetrics()
+	job := newHostPingJob(metrics, hostPingConfig{})
+	const dial = "http://shared.example:8080"
+	job.ObserveEscrowHost("e1", dial, "", "pk-shared")
+	job.ObserveEscrowHost("e2", dial, "", "pk-shared")
+	job.ReleaseEscrow("e1")
+	sink := &hostPingSink{metrics: metrics, targets: job.targets}
+	sink.Observe(probe.Result{Key: dial, Up: true, At: time.Now()})
+	// A stale scheduler Forget must not delete a currently registered host.
+	sink.Forget(dial)
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_host_ping_up", map[string]string{"host": dial}, 1)
+	job.ReleaseEscrow("e2")
+	assertNoHostPingSeriesForHost(t, metrics, dial)
 }

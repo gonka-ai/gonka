@@ -19,6 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	singleFunctionToolJSON = `[{"type":"function","function":{"name":"x"}}]`
+)
+
 func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	oldDefault := DefaultRequestMaxTokens
 	oldCap := RequestMaxTokensCap
@@ -246,6 +250,30 @@ func TestNormalizeChatRequestKeepsMinTokensWithinEffectiveMax(t *testing.T) {
 	require.EqualValues(t, 128, raw["min_tokens"])
 }
 
+// Test flow:
+// 1. Normalize grammar-constrained requests that carry a caller min_tokens.
+// 2. The forwarded body carries no min_tokens and keeps max_tokens.
+func TestNormalizeChatRequestDropsMinTokensOnGrammarRequests(t *testing.T) {
+	constraints := map[string]string{
+		"response_format json_schema": `"response_format":{"type":"json_schema","json_schema":{"name":"a","schema":{"type":"object"}}}`,
+		"response_format json_object": `"response_format":{"type":"json_object"}`,
+		"structured_outputs regex":    `"structured_outputs":{"regex":"[a-z]+"}`,
+		"tool_choice named":           `"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"f"}}`,
+	}
+	for name, fields := range constraints {
+		t.Run(name, func(t *testing.T) {
+			body, req, err := normalizeChatRequest([]byte(`{"max_tokens":100,"min_tokens":16,"messages":[{"role":"user","content":"hi"}],` + fields + `}`))
+			require.NoError(t, err)
+			require.EqualValues(t, 100, req.MaxTokens)
+
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(body, &raw))
+			require.NotContains(t, raw, "min_tokens")
+			require.EqualValues(t, 100, raw["max_tokens"])
+		})
+	}
+}
+
 func TestNormalizeChatRequestStripsTemperatureAboveMax(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
@@ -348,46 +376,47 @@ func TestNormalizeChatRequestKimiClampsZeroMaxTokensInsteadOfRejecting(t *testin
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_tokens"])
+	require.EqualValues(t, 16, raw["max_tokens"])
 }
 
-// Regression (found via e2e against the live Kimi route): a Kimi request that
-// sends only max_completion_tokens must floor it AND mirror into max_tokens, so
-// the thinking_token_budget defaulter (which derives from max_tokens) bounds
-// reasoning. Without the mirror the whole budget is spent thinking → empty content.
+// Test flow:
+// 1. Normalize a Kimi request that sends only max_completion_tokens 0.
+// 2. max_completion_tokens is raised to 16 and mirrored into max_tokens, so thinking_token_budget is derived.
 func TestNormalizeChatRequestKimiMaxCompletionTokensZeroMirrorsToMaxTokens(t *testing.T) {
 	body, req, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`), kimiK26ModelID)
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_tokens"], "max_tokens mirrored + floored")
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_completion_tokens"], "max_completion_tokens floored")
-	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.EqualValues(t, 16, raw["max_tokens"], "max_tokens mirrored + raised")
+	require.EqualValues(t, 16, raw["max_completion_tokens"], "max_completion_tokens raised")
+	require.EqualValues(t, 16, req.MaxTokens)
 	require.Contains(t, raw, "thinking_token_budget", "thinking budget derives from the mirrored max_tokens")
 }
 
 func TestNormalizeChatRequestRejectsNonBoolFlags(t *testing.T) {
 	for _, field := range []string{"skip_special_tokens", "detokenize", "parallel_tool_calls"} {
-		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"` + field + `":"yes"}`))
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"tools":` + singleFunctionToolJSON + `,"` + field + `":"yes"}`))
 		require.Error(t, err, field)
 		require.Contains(t, err.Error(), field)
 	}
-	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"skip_special_tokens":true,"parallel_tool_calls":false}`))
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"tools":` + singleFunctionToolJSON + `,"skip_special_tokens":true,"parallel_tool_calls":false}`))
 	require.NoError(t, err)
 }
 
-func TestNormalizeChatRequestStripsStopTokenIdsWithoutValidatingThem(t *testing.T) {
+// Test flow:
+// 1. Install no stop-token vocabulary source.
+// 2. Every request with stop_token_ids is refused with ErrStopTokenIDs and status 400.
+func TestNormalizeChatRequestRefusesStopTokenIdsWithoutVocabulary(t *testing.T) {
+	withStopTokenVocabulary(t, nil)
 	for _, body := range []string{
 		`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,"two",3]}`,
 		`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,2,3]}`,
+		`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[163586,9999999],"min_tokens":100}`,
 	} {
-		normalized, _, err := normalizeChatRequest([]byte(body))
-		require.NoError(t, err)
-
-		var raw map[string]any
-		require.NoError(t, json.Unmarshal(normalized, &raw))
-		require.NotContains(t, raw, "stop_token_ids")
+		_, _, err := normalizeChatRequest([]byte(body))
+		require.ErrorIs(t, err, completionapi.ErrStopTokenIDs, body)
+		require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0))
 	}
 }
 
@@ -594,34 +623,10 @@ func TestNormalizeChatRequestRejectsPromptLogprobs(t *testing.T) {
 	require.Contains(t, err.Error(), "prompt_logprobs")
 }
 
-func TestNormalizeChatRequestStripsStopTokenIdsKeepsMinTokens(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"messages": [{"role": "user", "content": "hi"}],
-		"stop_token_ids": [163586, 9999999],
-		"min_tokens": 100
-	}`))
-	require.NoError(t, err)
-
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.NotContains(t, raw, "stop_token_ids")
-	require.EqualValues(t, 100, raw["min_tokens"])
-}
-
-func TestNormalizeChatRequestStripsStopTokenIdsWithoutMinTokens(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"messages": [{"role": "user", "content": "hi"}],
-		"stop_token_ids": [7]
-	}`))
-	require.NoError(t, err)
-
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.NotContains(t, raw, "stop_token_ids")
-}
-
-// min_tokens below the floor is bumped up to MinTokensFloor (mirrors EnforceTokenBudgetFloor).
-func TestNormalizeChatRequestFloorsMinTokensBelowFloor(t *testing.T) {
+// Test flow:
+// 1. Normalize a request with min_tokens 5.
+// 2. min_tokens 5 is kept as sent.
+func TestNormalizeChatRequestKeepsCallerMinTokens(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
 		"min_tokens": 5
@@ -630,11 +635,13 @@ func TestNormalizeChatRequestFloorsMinTokensBelowFloor(t *testing.T) {
 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["min_tokens"])
+	require.EqualValues(t, 5, raw["min_tokens"])
 }
 
-// The floor injects min_tokens=MinTokensFloor even when the client omits it entirely.
-func TestNormalizeChatRequestInjectsMinTokensFloorWhenAbsent(t *testing.T) {
+// Test flow:
+// 1. Normalize a request without min_tokens.
+// 2. The body has no min_tokens.
+func TestNormalizeChatRequestInjectsNoMinTokensWhenAbsent(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}]
 	}`))
@@ -642,31 +649,30 @@ func TestNormalizeChatRequestInjectsMinTokensFloorWhenAbsent(t *testing.T) {
 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["min_tokens"])
+	require.NotContains(t, raw, "min_tokens")
 }
 
-// A small max_tokens with no min_tokens is floored so the request generates at least MinTokensFloor
-// tokens -- max_tokens bumped up, min_tokens injected, and the max_completion_tokens alias the
-// client omitted is not introduced.
-func TestNormalizeChatRequestFloorsSmallMaxTokensAndInjectsMinTokens(t *testing.T) {
+// Test flow:
+// 1. Normalize a request with max_tokens 16 and no min_tokens.
+// 2. max_tokens stays 16, and neither min_tokens nor max_completion_tokens is added.
+func TestNormalizeChatRequestKeepsSmallMaxTokens(t *testing.T) {
 	body, req, err := normalizeChatRequest([]byte(`{
 		"messages": [{"role": "user", "content": "hi"}],
 		"max_tokens": 16
 	}`))
 	require.NoError(t, err)
-	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.EqualValues(t, 16, req.MaxTokens)
 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_tokens"])
-	require.EqualValues(t, completionapi.MinTokensFloor, raw["min_tokens"])
+	require.EqualValues(t, 16, raw["max_tokens"])
+	require.NotContains(t, raw, "min_tokens")
 	require.NotContains(t, raw, "max_completion_tokens")
 }
 
-// The signed prompt body's effective max_tokens must equal the declared MaxTokens the escrow
-// reserves against, so verifyPayloadWorkload (EffectiveMaxTokens(prompt) <= declared) holds and the
-// reservation matches what the node actually produces. Locks the floor-before-reservation fix so a
-// future change can't reintroduce the reserve-1/produce-64 gap.
+// Test flow:
+// 1. Normalize a request with max_tokens 1.
+// 2. The declared MaxTokens is 1 and equals the body's effective max_tokens.
 func TestNormalizedBodyMaxTokensMatchesDeclaredForAccounting(t *testing.T) {
 	body, req, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":1}`))
 	require.NoError(t, err)
@@ -674,22 +680,53 @@ func TestNormalizedBodyMaxTokensMatchesDeclaredForAccounting(t *testing.T) {
 	effective, err := completionapi.EffectiveMaxTokens(body)
 	require.NoError(t, err)
 
-	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.EqualValues(t, 1, req.MaxTokens)
 	require.EqualValues(t, req.MaxTokens, effective)
 }
 
-func TestNormalizeChatRequestStripsEmptyTools(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
-		"tool_choice": "auto",
-		"tools": [],
-		"messages": [{"role": "user", "content": "hello"}]
-	}`))
-	require.NoError(t, err)
+func TestNormalizeChatRequestStripsToolControlsWithoutTools(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "tools absent", body: `{"tool_choice":"auto","parallel_tool_calls":true,"messages":[{"role":"user","content":"hello"}]}`},
+		{name: "tools empty", body: `{"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"messages":[{"role":"user","content":"hello"}]}`},
+		{name: "malformed values are dropped rather than rejected", body: `{"tool_choice":42,"parallel_tool_calls":"yes","messages":[{"role":"user","content":"hello"}]}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			body, _, err := normalizeChatRequest([]byte(testCase.body))
+			require.NoError(t, err)
 
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.NotContains(t, raw, "tools")
-	require.NotContains(t, raw, "tool_choice")
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(body, &raw))
+			require.NotContains(t, raw, "tools")
+			require.NotContains(t, raw, "tool_choice")
+			require.NotContains(t, raw, "parallel_tool_calls")
+		})
+	}
+}
+
+func TestNormalizeChatRequestAcceptsToolParametersOfExactly64KiB(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(chatRequestWithToolParametersOfSize(64 * 1024)))
+
+	require.NoError(t, err, "a tool schema grown by long descriptions must pass while it stays within 64 KiB")
+}
+
+func TestNormalizeChatRequestRejectsToolParametersOneByteOver64KiB(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(chatRequestWithToolParametersOfSize(64*1024 + 1)))
+
+	require.Error(t, err)
+	require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
+	require.Contains(t, err.Error(), "tools[0].function.parameters: serialized size exceeded")
+}
+
+// chatRequestWithToolParametersOfSize returns a chat request whose only tool's parameters serialize to exactly parametersBytes bytes.
+func chatRequestWithToolParametersOfSize(parametersBytes int) string {
+	const emptyDescriptionParameters = `{"properties":{"query":{"description":"","type":"string"}},"type":"object"}`
+	description := strings.Repeat("a", parametersBytes-len(emptyDescriptionParameters))
+	parameters := strings.Replace(emptyDescriptionParameters, `"description":""`, `"description":"`+description+`"`, 1)
+	return `{"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"x","parameters":` + parameters + `}}]}`
 }
 
 func TestNormalizeChatRequestKeepsToolChoiceAutoWithTools(t *testing.T) {
@@ -736,18 +773,19 @@ func TestNormalizeChatRequestCoercesRequiredToAuto(t *testing.T) {
 }
 
 func TestNormalizeChatRequestRejectsMalformedToolChoice(t *testing.T) {
-	tests := []string{
-		`{"tool_choice":"force","messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":42,"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":true,"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":["auto"],"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"plugin","function":{"name":"x"}},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function"},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function","function":{}},"messages":[{"role":"user","content":"hi"}]}`,
-		`{"tool_choice":{"type":"function","function":{"name":""}},"messages":[{"role":"user","content":"hi"}]}`,
+	toolChoices := []string{
+		`"force"`,
+		`42`,
+		`true`,
+		`["auto"]`,
+		`{"type":"plugin","function":{"name":"x"}}`,
+		`{"type":"function"}`,
+		`{"type":"function","function":{}}`,
+		`{"type":"function","function":{"name":""}}`,
 	}
-	for _, body := range tests {
-		t.Run(body, func(t *testing.T) {
+	for _, toolChoice := range toolChoices {
+		t.Run(toolChoice, func(t *testing.T) {
+			body := `{"tools":` + singleFunctionToolJSON + `,"tool_choice":` + toolChoice + `,"messages":[{"role":"user","content":"hi"}]}`
 			_, _, err := normalizeChatRequest([]byte(body))
 			require.Error(t, err)
 			require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
@@ -2147,6 +2185,7 @@ func TestNormalizeChatRequestAcceptsOpenAIObservabilityFields(t *testing.T) {
 		"messages":[{"role":"user","content":"hi"}],
 		"user":"alice",
 		"metadata":{"trace_id":"abc","span_id":"def"},
+		"tools":` + singleFunctionToolJSON + `,
 		"parallel_tool_calls":false,
 		"stream":true,
 		"stream_options":{"include_usage":true}
@@ -2420,15 +2459,14 @@ func TestNormalizeChatRequestThinkingTokenBudgetStrippedForOtherModelsEvenIfClie
 	require.NotContains(t, string(body), `thinking_token_budget`)
 }
 
-// The universal MinTokensFloor dominates the Kimi max_tokens min (16): any value below the
-// floor is bumped to MinTokensFloor, so the Kimi-specific clamp is no longer separately observable here.
+// Test flow:
+// 1. Normalize Kimi requests with max_tokens 1, 8, 16 and 100.
+// 2. Values below Kimi's minimum of 16 are raised to 16; larger ones are kept.
 func TestNormalizeChatRequestKimiMaxTokensClampedBelow(t *testing.T) {
-	floor := uint64(completionapi.MinTokensFloor)
-	above := floor + 36
 	for _, c := range []struct {
 		in, want uint64
 	}{
-		{1, floor}, {8, floor}, {16, floor}, {above, above},
+		{1, 16}, {8, 16}, {16, 16}, {100, 100},
 	} {
 		body := fmt.Sprintf(`{"messages":[{"role":"user","content":"x"}],"max_tokens":%d,"thinking_token_budget":0}`, c.in)
 		out, req, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
@@ -2445,18 +2483,21 @@ func TestNormalizeChatRequestKimiMaxCompletionTokensClampedBelow(t *testing.T) {
 		kimiK26ModelID,
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, completionapi.MinTokensFloor))
-	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.Contains(t, string(body), `"max_completion_tokens":16`)
+	require.EqualValues(t, 16, req.MaxTokens)
 }
 
-func TestNormalizeChatRequestMaxTokensFlooredForOtherModels(t *testing.T) {
+// Test flow:
+// 1. Normalize a non-Kimi request with max_tokens 1.
+// 2. max_tokens stays 1 in the body and the declared MaxTokens.
+func TestNormalizeChatRequestMaxTokensNotRaisedForOtherModels(t *testing.T) {
 	body, req, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":1}`),
 		"some/other-model",
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, completionapi.MinTokensFloor))
-	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.Contains(t, string(body), `"max_tokens":1`)
+	require.EqualValues(t, 1, req.MaxTokens)
 }
 
 // safety_identifier is forwarded to Kimi K2.6 (Moonshot consumes it for abuse tracking)
@@ -3136,4 +3177,52 @@ func TestNormalizeForMinimaxStripsToolsFunctionStrict(t *testing.T) {
 	require.Len(t, tools, 1)
 	fn := tools[0].(map[string]any)["function"].(map[string]any)
 	require.NotContains(t, fn, "strict")
+}
+
+// ====================================================================
+// GLM-5.3-Flash route — see docs/chat-api/glm-5.3-flash.md
+// ====================================================================
+
+// Every way a caller says "no thinking" must reach vLLM as thinking on: the template opens <think> anyway, and a false kwarg only switches the parser off (vLLM #54744).
+func TestNormalizeForGLM53KeepsTheReasoningParserOn(t *testing.T) {
+	cases := []struct {
+		name               string
+		body               string
+		chatTemplateKwargs map[string]any
+	}{
+		{name: "chat_template_kwargs enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "chat_template_kwargs thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"thinking":false}}`, chatTemplateKwargs: map[string]any{"thinking": false, "enable_thinking": true}},
+		{name: "top-level enable_thinking false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning_effort none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+		{name: "reasoning enabled false", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning":{"enabled":false}}`, chatTemplateKwargs: map[string]any{"enable_thinking": true}},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			out, _, err := normalizeChatRequestForModel([]byte(testCase.body), glm53FlashModelID)
+			require.NoError(t, err)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(out, &raw))
+			require.Equal(t, testCase.chatTemplateKwargs, raw["chat_template_kwargs"], "vLLM would switch the GLM-5.3 reasoning parser off and leave the scratchpad in content")
+		})
+	}
+}
+
+// Only the thinking switches are overruled; the caller's other template variables reach the template as sent.
+func TestNormalizeForGLM53KeepsOtherTemplateKwargs(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false,"clear_thinking":true}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), glm53FlashModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": true, "clear_thinking": true}, raw["chat_template_kwargs"])
+}
+
+// GLM-5.2-FP8's template does read enable_thinking and renders an empty <think></think> for false, so the caller's switch reaches it unchanged.
+func TestNormalizeForGLM52KeepsEnableThinkingFalse(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"chat_template_kwargs":{"enable_thinking":false}}`
+	out, _, err := normalizeChatRequestForModel([]byte(body), "zai-org/GLM-5.2-FP8")
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Equal(t, map[string]any{"enable_thinking": false}, raw["chat_template_kwargs"])
 }

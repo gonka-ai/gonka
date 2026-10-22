@@ -171,11 +171,14 @@ func (x *InferenceHeightSyncSection) GetSenderSignature() []byte {
 
 // InferenceRequestEnvelope wraps the existing JSON InferenceRequest (transport.InferenceRequest)
 // as bytes plus optional height sync. Omit mode: height_sync unset.
+// prompt is the chat body as raw bytes. It is not inside inference_request_json,
+// so the JSON encoder does not base64 it.
 type InferenceRequestEnvelope struct {
 	state                protoimpl.MessageState      `protogen:"open.v1"`
 	SchemaVersion        int32                       `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
 	HeightSync           *InferenceHeightSyncSection `protobuf:"bytes,2,opt,name=height_sync,json=heightSync,proto3" json:"height_sync,omitempty"`
 	InferenceRequestJson []byte                      `protobuf:"bytes,3,opt,name=inference_request_json,json=inferenceRequestJson,proto3" json:"inference_request_json,omitempty"`
+	Prompt               []byte                      `protobuf:"bytes,4,opt,name=prompt,proto3" json:"prompt,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -227,6 +230,13 @@ func (x *InferenceRequestEnvelope) GetHeightSync() *InferenceHeightSyncSection {
 func (x *InferenceRequestEnvelope) GetInferenceRequestJson() []byte {
 	if x != nil {
 		return x.InferenceRequestJson
+	}
+	return nil
+}
+
+func (x *InferenceRequestEnvelope) GetPrompt() []byte {
+	if x != nil {
+		return x.Prompt
 	}
 	return nil
 }
@@ -306,12 +316,13 @@ const file_devshard_v1_inference_envelope_proto_rawDesc = "" +
 	"\bresponse\x18\x05 \x01(\bR\bresponse\x120\n" +
 	"\x14originator_sender_id\x18\x06 \x01(\tR\x12originatorSenderId\x12?\n" +
 	"\x1coriginator_timestamp_unix_ms\x18\a \x01(\x03R\x19originatorTimestampUnixMs\x12)\n" +
-	"\x10sender_signature\x18\b \x01(\fR\x0fsenderSignature\"\xc1\x01\n" +
+	"\x10sender_signature\x18\b \x01(\fR\x0fsenderSignature\"\xd9\x01\n" +
 	"\x18InferenceRequestEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12H\n" +
 	"\vheight_sync\x18\x02 \x01(\v2'.devshard.v1.InferenceHeightSyncSectionR\n" +
 	"heightSync\x124\n" +
-	"\x16inference_request_json\x18\x03 \x01(\fR\x14inferenceRequestJson\"\xc4\x01\n" +
+	"\x16inference_request_json\x18\x03 \x01(\fR\x14inferenceRequestJson\x12\x16\n" +
+	"\x06prompt\x18\x04 \x01(\fR\x06prompt\"\xc4\x01\n" +
 	"\x19InferenceResponseEnvelope\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12H\n" +
 	"\vheight_sync\x18\x02 \x01(\v2'.devshard.v1.InferenceHeightSyncSectionR\n" +
