@@ -205,6 +205,19 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
 		PocSeedBlockHash:      "", // Will be set when transitioning to GENERATION phase
 	}
+	epochRecipe, found, err := am.keeper.GetEpochPocRecipe(ctx, event.EpochIndex)
+	if err != nil {
+		return err
+	}
+	if !found {
+		am.LogInfo("Skipping confirmation before the first frozen regular PoC", types.PoC, "epoch", event.EpochIndex)
+		return nil
+	}
+	recipe, err := epochRecipe.ConfirmationRecipe(&event)
+	if err != nil {
+		return fmt.Errorf("failed to freeze confirmation PoC recipe: %w", err)
+	}
+	event.Recipe = recipe
 
 	// Store the event
 	err = am.keeper.SetConfirmationPoCEvent(ctx, event)
@@ -223,7 +236,9 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		"eventSequence", event.EventSequence,
 		"triggerHeight", event.TriggerHeight,
 		"generationStartHeight", event.GenerationStartHeight,
-		"validationEndHeight", event.GetValidationEnd(epochParams))
+		"validationEndHeight", event.GetValidationEnd(epochParams),
+		"scheme", recipe.Scheme.String(),
+		"tracking", recipe.Tracking)
 
 	return nil
 }
@@ -412,6 +427,14 @@ func (am AppModule) evaluateConfirmation(
 	event *types.ConfirmationPoCEvent,
 	epochGroupData *types.EpochGroupData,
 ) error {
+	if event.GetRecipe().GetTracking() {
+		am.LogInfo("evaluateConfirmation: tracking recipe, skip haircut", types.PoC,
+			"epochIndex", event.EpochIndex,
+			"triggerHeight", event.TriggerHeight,
+			"scheme", event.Recipe.Scheme.String())
+		return nil
+	}
+
 	scales := epochGroupData.GetConfirmationWeightScales()
 	if len(scales) == 0 {
 		am.LogWarn("evaluateConfirmation: no confirmation weight scales, skipping event", types.PoC,
