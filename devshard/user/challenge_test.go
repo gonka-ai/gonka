@@ -125,9 +125,15 @@ type scriptedChallengeClient struct {
 	err     error
 	asks    int
 	askedAt []time.Time
+	// onAsk runs at every ask, outside the client's lock: what the session
+	// learns while a host is being asked.
+	onAsk func()
 }
 
 func (c *scriptedChallengeClient) VerifyChallenge(ctx context.Context, _ uint64, reason types.ChallengeReason, _ []types.Diff) (*transport.VerifyChallengeResponse, error) {
+	if c.onAsk != nil {
+		c.onAsk()
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.asks++
@@ -331,6 +337,94 @@ func TestRunChallenge_ReadsTheVerdictOfARecordSealedInItsOwnDiff(t *testing.T) {
 		}
 	}
 	require.NotNil(t, challenge, "the MsgChallenge is in the diff that sealed the record")
+}
+
+// A collection the caller cancels has no settled outcome: the votes in hand
+// are not sent, or a MsgChallenge below the threshold would mark the record
+// challenged for good while the hosts still fetching could have invalidated
+// it.
+func TestRunChallenge_ACancelledCollectionSendsNoPartialVerdict(t *testing.T) {
+	fastChallengeReask(t)
+	session, hosts, nonce, execIdx, responseHash := finishedChallengeSessionOf(t, 5)
+	require.Equal(t, uint32(2), session.StateMachine().VoteThreshold())
+	var hanging []*scriptedChallengeClient
+	answered := false
+	for i, c := range session.clients {
+		client := &scriptedChallengeClient{HostClient: c, err: errors.New("the executor is not asked")}
+		if i != execIdx {
+			client.err = nil
+			if !answered {
+				answered = true
+				client.answers = []*transport.VerifyChallengeResponse{
+					signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_NONE, responseHash),
+				}
+			} else {
+				// Nothing scripted: the ask hangs until it is cancelled.
+				hanging = append(hanging, client)
+			}
+		}
+		session.clients[i] = client
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var result ChallengeResult
+	var err error
+	done := make(chan struct{})
+	go func() {
+		result, err = session.RunChallenge(ctx, nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
+		close(done)
+	}()
+	require.Eventually(t, func() bool {
+		for _, c := range hanging {
+			if c.askCount() == 0 {
+				return false
+			}
+		}
+		return true
+	}, 3*time.Second, 5*time.Millisecond, "every voter is asked")
+	cancel()
+	<-done
+
+	require.Error(t, err, "a cancelled collection is no outcome")
+	require.Len(t, result.Votes, 1, "the one NONE vote was collected")
+	for _, diff := range session.Diffs() {
+		for _, tx := range diff.Txs {
+			require.Nil(t, tx.GetChallenge(), "no MsgChallenge is sent after a cancelled collection")
+		}
+	}
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	require.False(t, rec.UsageChallenged, "the record can still be challenged")
+}
+
+// The active nonce cap can arrive while the votes are collected. No diff can
+// carry the MsgChallenge then, just as nothing would have been asked had the
+// cap been there before: the outcome is nonce_cap, not a failure.
+func TestRunChallenge_TheCapReachedDuringCollectionIsNonceCap(t *testing.T) {
+	session, hosts, nonce, execIdx, responseHash := finishedChallengeSession(t)
+	for i, c := range session.clients {
+		client := &scriptedChallengeClient{HostClient: c, err: errors.New("the executor is not asked")}
+		if i != execIdx {
+			client.err = nil
+			client.answers = []*transport.VerifyChallengeResponse{
+				signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
+			}
+			client.onAsk = func() { capAtCurrentNonce(session) }
+		}
+		session.clients[i] = client
+	}
+	result, err := session.RunChallenge(context.Background(), nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
+	require.NoError(t, err)
+	require.True(t, result.NonceCap)
+	require.Len(t, result.Votes, 2, "the votes were collected before the cap was seen")
+	for _, diff := range session.Diffs() {
+		for _, tx := range diff.Txs {
+			require.Nil(t, tx.GetChallenge(), "no diff carries the MsgChallenge past the cap")
+		}
+	}
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	require.False(t, rec.UsageChallenged)
 }
 
 // A vote whose signature does not recover to the host that answered is
