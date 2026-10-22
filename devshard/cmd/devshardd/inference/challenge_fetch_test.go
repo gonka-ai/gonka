@@ -114,6 +114,36 @@ func TestFetchChallengePayload_VoteFalseSwitchOffWithholdsImmediateFaults(t *tes
 	}
 }
 
+// A deadline that ends during the executor's payload call is the executor
+// not answering; one that ends during this host's own lookups after the body
+// arrived is this host's. The voter's deadline cut is classified here, by the
+// call it landed on, so the host does not have to guess from the clock.
+func TestFetchChallengePayload_ACutIsTheSideItLandedOn(t *testing.T) {
+	cut, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, testCase := range []struct {
+		name         string
+		err          error
+		voteFalse    bool
+		want         devshardpkg.ChallengeFetchOutcome
+		executorSide bool
+	}{
+		{name: "payload call cut", err: fmt.Errorf("%w: %w", errExecutorFetchCut, context.DeadlineExceeded), voteFalse: true, want: devshardpkg.ChallengeFetchRetry, executorSide: true},
+		{name: "payload call cut, switch off", err: fmt.Errorf("%w: %w", errExecutorFetchCut, context.DeadlineExceeded), voteFalse: false, want: devshardpkg.ChallengeFetchRetry, executorSide: false},
+		{name: "own key lookup cut", err: fmt.Errorf("resolve executor pubkeys: %w", context.DeadlineExceeded), voteFalse: true, want: devshardpkg.ChallengeFetchLocal, executorSide: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			v := newFaultTestValidator(10, testCase.voteFalse, taggedFetch(testCase.err), func(context.Context, string, string, []byte) (*http.Response, error) {
+				t.Fatal("a challenge fetch must not call a model")
+				return nil, nil
+			}, nil)
+			got := v.FetchChallengePayload(cut, devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
+			require.Equal(t, testCase.want, got.Outcome)
+			require.Equal(t, testCase.executorSide, got.ExecutorSide)
+		})
+	}
+}
+
 func TestFetchChallengePayload_FetchedBodyAndLease(t *testing.T) {
 	body := []byte(`{"events":[]}`)
 	inner := newFaultTestValidator(10, true, func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {

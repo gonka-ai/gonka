@@ -58,7 +58,13 @@ func classifyChallengeFetch(ctx context.Context, phase *chain.Phase, epochID uin
 	}
 	cause := truncateCause(err.Error())
 	switch {
+	case errors.Is(err, errExecutorFetchCut):
+		// The caller's deadline ended while the executor had not answered
+		// the payload call: kept until the window ends, then the executor's.
+		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
 	case ctx.Err() != nil, errors.Is(err, errPayloadRPCUnavailable), transport.OutboundPeersReleased():
+		// The deadline ended on this host's side of the fetch (its own
+		// signer, peer or chain lookup), or the fetch cannot run here.
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchLocal, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrHashMismatch), errors.Is(err, errExecutorPayloadSignature):
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchMismatch, Cause: cause}

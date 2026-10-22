@@ -540,6 +540,8 @@ func TestVerifyChallenge_AFetchPastTheWindowIsCut(t *testing.T) {
 	fetcher := &scriptedChallengeFetcher{
 		script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}},
 		gate:   make(chan struct{}),
+		// What the fetcher reports for a payload call the deadline cut.
+		onCut: &devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchRetry, ExecutorSide: true, Cause: "executor did not answer the payload call before the deadline"},
 	}
 	h := f.voter(t, 0, fetcher, 1)
 	answer, err := h.VerifyChallenge(context.Background(), 1)
