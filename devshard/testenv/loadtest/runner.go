@@ -463,6 +463,9 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	if scenario.Assertions.Promises {
+		// The checks read metrics.jsonl: the collector takes its final snapshot and closes the file
+		// first, so no line is still being written and the readings after the drain are all there.
+		result.Metrics = collector.stop()
 		log.Printf("loadtest: stage=promises")
 		check := promisesAssertion(opts.OutputDir, scenario, profiles)
 		result.Assertions = append(result.Assertions, check)

@@ -92,6 +92,7 @@ var runtimeMetricNames = []string{
 	"process_resident_memory_bytes", "process_cpu_seconds_total", "process_start_time_seconds",
 	"go_memstats_heap_alloc_bytes", "go_memstats_heap_inuse_bytes", "go_memstats_heap_objects",
 	"go_memstats_alloc_bytes_total", "go_memstats_last_gc_time_seconds", "go_goroutines",
+	"go_memstats_next_gc_bytes", "go_memstats_stack_inuse_bytes",
 }
 var counterMetricNames = []string{"process_cpu_seconds_total", "go_memstats_alloc_bytes_total", "go_gc_duration_seconds_count", "go_gc_duration_seconds_sum"}
 
