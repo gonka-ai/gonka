@@ -182,3 +182,23 @@ func testScenario() Scenario {
 	scenario.Assertions.Requests.TerminalOutcome = "completed"
 	return scenario
 }
+
+// Test flow:
+//  1. The gateway answers a request with a body of known size.
+//  2. Execute the request.
+//  3. Check the client log records the bytes of the answer, which the gateway heap check weighs its
+//     growth against.
+func TestExecuteRequestRecordsTheBytesOfTheAnswer(t *testing.T) {
+	const answer = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, answer)
+	}))
+	defer server.Close()
+
+	result := executeRequest(context.Background(), GeneratorConfig{
+		GatewayURL: server.URL,
+		Scenario:   testScenario(),
+		Client:     &http.Client{},
+	}, 1)
+	require.Equal(t, int64(len(answer)), result.ResponseBytes)
+}

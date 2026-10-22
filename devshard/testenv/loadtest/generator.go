@@ -38,6 +38,7 @@ type RequestResult struct {
 	Status            int           `json:"status"`
 	Outcome           string        `json:"outcome"`
 	Error             string        `json:"error,omitempty"`
+	ResponseBytes     int64         `json:"response_bytes,omitempty"`
 }
 
 type Summary struct {
@@ -339,6 +340,7 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	defer resp.Body.Close()
 	result.Status = resp.StatusCode
 	responseBody, err := io.ReadAll(resp.Body)
+	result.ResponseBytes = int64(len(responseBody))
 	if err != nil {
 		result.Error = err.Error()
 		result.Outcome = "error"
