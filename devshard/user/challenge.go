@@ -461,11 +461,19 @@ func (s *Session) CollectChallengeVotes(
 		}(av)
 	}
 	var faultWeight uint32
+	settled := false
 	for range asked {
 		res := <-results
 		weight := s.sm.AddressSlotCount(res.addr)
 		pendingWeight -= weight
 		switch {
+		case res.err != nil && settled:
+			// Cut by the gateway once the outcome was settled: not a voter
+			// that let the gateway down.
+			unanswered++
+			unansweredWeight += weight
+			logging.Info("challenge_vote_not_awaited", "subsystem", "challenge", "escrow", s.escrowID, "nonce", nonce,
+				"host", shortAddress(res.addr))
 		case res.err != nil:
 			unanswered++
 			unansweredWeight += weight
@@ -489,6 +497,7 @@ func (s *Session) CollectChallengeVotes(
 		}
 		if ctx.Err() == nil && (faultWeight > threshold || faultWeight+pendingWeight <= threshold) {
 			// Settled: the asks still out are cancelled and drain as errors.
+			settled = true
 			cancel()
 		}
 	}
