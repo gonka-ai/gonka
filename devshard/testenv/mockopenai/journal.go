@@ -43,8 +43,9 @@ type RequestRecord struct {
 	// UsageCompletion is the completion_tokens the answer reported in usage. By default the mock
 	// reports len(text)/4 while it emits one token per rune, so it differs from TokensOut.
 	UsageCompletion int       `json:"usage_completion_tokens,omitempty"`
-	ChunkTokens     int       `json:"chunk_tokens"`
+	ChunkTokens     int       `json:"chunk_tokens"` // tokens per streamed chunk; 0 for an answer sent as one JSON
 	ActiveAtStart   int       `json:"active_at_start"`
+	QueuedMs        int64     `json:"queued_ms,omitempty"` // waited in the node's queue for a worker; 0 when one was free
 	Rule            string    `json:"rule,omitempty"`
 	Chaos           string    `json:"chaos,omitempty"` // the chaos action the execution was answered with
 	Status          int       `json:"status"`          // 0: connection dropped or stream cut before a status was settled
@@ -113,6 +114,8 @@ type Stats struct {
 	LogRecords int            `json:"log_records"`
 	LogDropped int            `json:"log_dropped"`
 
+	RuleApplied map[string]int `json:"rule_applied"`
+
 	RequestsReceived    uint64 `json:"requests_received"`
 	SuccessfulResponses uint64 `json:"successful_responses"`
 	FailedResponses     uint64 `json:"failed_responses"`
@@ -123,6 +126,7 @@ type Stats struct {
 
 type journalState struct {
 	mu      sync.Mutex
+	rules   []*ruleEntry
 	active  int
 	peak    int
 	reqs    map[string]int
@@ -168,11 +172,14 @@ func (j *journalState) snapshotStats() Stats {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	st := Stats{
-		Active: j.active, PeakActive: j.peak, Requests: map[string]int{},
+		Active: j.active, PeakActive: j.peak, Requests: map[string]int{}, RuleApplied: map[string]int{},
 		LogRecords: len(j.log), LogDropped: j.dropped,
 	}
 	for k, v := range j.reqs {
 		st.Requests[k] = v
+	}
+	for _, e := range j.rules {
+		st.RuleApplied[e.rule.Name] = e.applied
 	}
 	return st
 }

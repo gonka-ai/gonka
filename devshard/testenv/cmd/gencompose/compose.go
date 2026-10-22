@@ -107,7 +107,13 @@ services:
       MOCK_OPENAI_HANG: "{{ $node.Hang }}"
       MOCK_OPENAI_FAILURE_RATE: "{{ $node.FailureRate }}"
       MOCK_OPENAI_HTTP_STATUS: "{{ $node.HTTPStatus }}"
-{{ if $node.ChaosJSON }}      MOCK_OPENAI_CHAOS_JSON: '{{ $node.ChaosJSON }}'
+{{ if $node.ChaosJSON }}      MOCK_OPENAI_CHAOS_JSON: {{ composeQuote $node.ChaosJSON }}
+{{ end }}{{ if $node.Oracle }}      MOCK_OPENAI_ORACLE: "1"
+{{ end }}{{ if $node.ChunkTokens }}      MOCK_OPENAI_CHUNK_TOKENS: "{{ $node.ChunkTokens }}"
+{{ end }}{{ if $node.FirstContentMs }}      MOCK_OPENAI_FIRST_CONTENT_MS: "{{ $node.FirstContentMs }}"
+{{ end }}{{ if $node.ExecMs }}      MOCK_OPENAI_EXEC_MS: "{{ $node.ExecMs }}"
+{{ end }}{{ if $node.ReplayMs }}      MOCK_OPENAI_REPLAY_MS: "{{ $node.ReplayMs }}"
+{{ end }}{{ if $node.RulesJSON }}      MOCK_OPENAI_RULES_JSON: {{ composeQuote $node.RulesJSON }}
 {{ end }}{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
 {{ end }}
 {{ if $.MockOpenAI.ReplayFile }}    volumes:
@@ -391,6 +397,12 @@ services:
     restart: unless-stopped
 `
 
+// composeQuote writes operator text (a node's chaos or rules JSON) as one single-quoted YAML scalar
+// that Compose passes on unchanged: a quote is doubled for YAML, a "$" for Compose interpolation.
+func composeQuote(v string) string {
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(v, "$", "$$"), "'", "''") + "'"
+}
+
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
 		"versionEnvSuffix":          versionEnvSuffix,
@@ -415,6 +427,7 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"mlNodeIPOffset":            config.MLNodeIPOffset,
 		"mlNodeHostPort":            mlNodeHostPort,
 		"primaryMLEndpoint":         primaryMLEndpoint,
+		"composeQuote":              composeQuote,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {

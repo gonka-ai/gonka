@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"devshard/testenv/mockopenai"
 
@@ -166,7 +167,8 @@ func TestRequestLogCarriesWhatWasSeenAndAnswered(t *testing.T) {
 	_, ts := journalServer(t, nil)
 	execJSON := execBody("logged", 4242)
 	postMap(t, ts, execJSON)
-	postMap(t, ts, replayBody("req logged", 4243, eightTokens))
+	// The validator replays with the execution's seed: both are the inference id.
+	postMap(t, ts, replayBody("req logged", 4242, eightTokens))
 
 	export := getLog(t, ts)
 	require.True(t, export.Complete)
@@ -237,6 +239,20 @@ func TestRequestLogRecordsAStreamedExecution(t *testing.T) {
 	require.True(t, rec.Stream)
 	require.Equal(t, 28, rec.TokensOut, "tokens emitted, not chunks")
 	require.Equal(t, 1, rec.ChunkTokens)
+	require.Equal(t, http.StatusOK, rec.Status)
+	require.Equal(t, "ok", rec.Outcome)
+}
+
+func TestRequestLogRecordsAGroupedStream(t *testing.T) {
+	_, ts := oracleServer(t, func(c *mockopenai.Config) { c.Faults.ChunkTokens = 4 })
+	streamRequest(t, ts, streamBody)
+
+	export := getLog(t, ts)
+	require.Len(t, export.Records, 1)
+	rec := export.Records[0]
+	require.True(t, rec.Stream)
+	require.Equal(t, 28, rec.TokensOut, "tokens emitted, not chunks")
+	require.Equal(t, 4, rec.ChunkTokens)
 	require.Equal(t, http.StatusOK, rec.Status)
 	require.Equal(t, "ok", rec.Outcome)
 }
@@ -342,4 +358,57 @@ func TestRequestLogKeepsTheCapacityRefusal(t *testing.T) {
 	heldRec := byKey[mockopenai.PromptKey([]byte(heldBody))]
 	require.Equal(t, http.StatusOK, heldRec.Status)
 	require.Equal(t, "ok", heldRec.Outcome)
+}
+
+// A full node queues a request as vLLM does instead of refusing it, and the log keeps how long the
+// request waited for a worker, so a check can tell a full node from a slow one.
+func TestRequestLogKeepsTheTimeARequestWaitedForAWorker(t *testing.T) {
+	_, ts := journalServer(t, func(c *mockopenai.Config) {
+		c.Faults.PauseStream = true
+		c.Workers, c.Queue = 1, 1
+	})
+
+	// The held request is a stream paused after its first chunk: once that chunk is read, the
+	// only worker is taken.
+	const heldBody = `{"model":"test-model","stream":true,"messages":[{"role":"user","content":"busy held"}]}`
+	const queuedBody = `{"model":"test-model","messages":[{"role":"user","content":"busy queued"}]}`
+	held, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", strings.NewReader(heldBody))
+	require.NoError(t, err)
+	defer held.Body.Close()
+	line, err := bufio.NewReader(held.Body).ReadString('\n')
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(line, "data: "), line)
+
+	queued := make(chan error, 1)
+	go func() {
+		resp, err := http.Post(ts.URL+"/v1/chat/completions", "application/json", strings.NewReader(queuedBody))
+		if err == nil {
+			_, err = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}
+		queued <- err
+	}()
+	require.Eventually(t, func() bool { return getStats(t, ts).RequestsReceived == 2 }, 5*time.Second, 5*time.Millisecond)
+	const wait = 50 * time.Millisecond
+	time.Sleep(wait)
+
+	release, err := http.Post(ts.URL+"/testenv/stream/release", "application/json", nil)
+	require.NoError(t, err)
+	require.NoError(t, release.Body.Close())
+	_, err = io.Copy(io.Discard, held.Body)
+	require.NoError(t, err)
+	require.NoError(t, <-queued)
+
+	byKey := map[string]mockopenai.RequestRecord{}
+	for _, rec := range getLog(t, ts).Records {
+		byKey[rec.PromptKey] = rec
+	}
+	require.Len(t, byKey, 2)
+	heldRec := byKey[mockopenai.PromptKey([]byte(heldBody))]
+	require.Equal(t, "ok", heldRec.Outcome)
+	require.Zero(t, heldRec.QueuedMs, "a free worker took the first request at once")
+	queuedRec := byKey[mockopenai.PromptKey([]byte(queuedBody))]
+	require.Equal(t, http.StatusOK, queuedRec.Status)
+	require.Equal(t, "ok", queuedRec.Outcome)
+	require.GreaterOrEqual(t, queuedRec.QueuedMs, wait.Milliseconds(), "the second request waited until the first let its worker go")
 }

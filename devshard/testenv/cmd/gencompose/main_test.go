@@ -663,3 +663,64 @@ func TestWriteCompose_MockDapiNodeMaxConcurrent(t *testing.T) {
 	cfg.MockOpenAI.Nodes[1].Host = "versiond-9"
 	require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[1].host")
 }
+
+// The oracle knobs and the fault rules reach the one mock node whose profile asks for them.
+func TestWriteCompose_OracleKnobsReachOnlyTheirMockNode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	rules := `[{"name":"replay-busy","phase":"replay","prompt_contains":"load-request","http_status":503}]`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", Workers: 1},
+		{Name: "mock-openai-1", Workers: 1, Oracle: true, ChunkTokens: 4, FirstContentMs: 50, ExecMs: 400, ReplayMs: 300, RulesJSON: rules},
+	}
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	env := compose.Services["mock-openai-1"].Environment
+	require.Equal(t, "1", env["MOCK_OPENAI_ORACLE"])
+	require.Equal(t, "4", env["MOCK_OPENAI_CHUNK_TOKENS"])
+	require.Equal(t, "50", env["MOCK_OPENAI_FIRST_CONTENT_MS"])
+	require.Equal(t, "400", env["MOCK_OPENAI_EXEC_MS"])
+	require.Equal(t, "300", env["MOCK_OPENAI_REPLAY_MS"])
+	require.Equal(t, rules, env["MOCK_OPENAI_RULES_JSON"])
+	honest := compose.Services["mock-openai-0"].Environment
+	for _, key := range []string{"MOCK_OPENAI_ORACLE", "MOCK_OPENAI_CHUNK_TOKENS", "MOCK_OPENAI_FIRST_CONTENT_MS",
+		"MOCK_OPENAI_EXEC_MS", "MOCK_OPENAI_REPLAY_MS", "MOCK_OPENAI_RULES_JSON"} {
+		require.NotContains(t, honest, key, "a node without the knobs keeps the PR 1 mock as it was")
+	}
+}
+
+// Operator text in a rule (a quote, a dollar) stays one YAML scalar and reaches the node as written:
+// compose reads "$$" as a literal "$" instead of interpolating a variable.
+func TestWriteCompose_RulesAndChaosTextSurviveTheYAML(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	rules := `[{"name":"it's","prompt_contains":"don't $HOME","http_status":503}]`
+	chaos := `{"enabled":true,"note":"it's $X"}`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0", Workers: 1, RulesJSON: rules, ChaosJSON: chaos}}
+	cfg.MLNodes = 1
+	require.NoError(t, fillConfig(cfg))
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose), "the rules JSON must stay one YAML scalar")
+	env := compose.Services["mock-openai-0"].Environment
+	require.Equal(t, strings.ReplaceAll(rules, "$", "$$"), env["MOCK_OPENAI_RULES_JSON"])
+	require.Equal(t, strings.ReplaceAll(chaos, "$", "$$"), env["MOCK_OPENAI_CHAOS_JSON"])
+}
