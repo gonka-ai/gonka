@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"devshard/types"
 )
 
 // maxQueuedObsOps bounds the per-escrow queue held during a repair. Overflow
@@ -101,6 +103,10 @@ func (g *ObsRepairGate) PruneCutoff() uint64 {
 		return h.PruneCutoff()
 	}
 	return 0
+}
+
+func (g *ObsRepairGate) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	return appendDiffBatchVia(ctx, g.Storage, escrowID, recs)
 }
 
 // RepairInProgress reports whether an escrow's obs writes are being queued.

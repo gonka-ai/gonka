@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime/pprof"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -255,7 +257,7 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 
 	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, Model: "llama", InputLength: 100,
-		MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		MaxTokens: 0, StartedAt: 1000,
 	}}}}
 	_, err = sm.ApplyLocal(1, txs)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
@@ -311,7 +313,8 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
-	require.Len(t, srv.PeerClients(), 3, "every group slot including self")
+	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 3 }, 5*time.Second, time.Millisecond,
+		"every group slot including self")
 	require.Nil(t, srv.Gossip(), "production child must not wire gossip")
 
 	before := srv.Host().HostMempool().Len()
@@ -319,27 +322,145 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.Equal(t, before, srv.Host().HostMempool().Len(), "inbound gossip txs must be dropped")
 }
 
-func TestHostManager_WireHostToHostGetHostInfoError(t *testing.T) {
-	store := newManagerTestStore(t)
+// hungHostInfoBridge blocks GetHostInfo for one address until gate is closed.
+type hungHostInfoBridge struct {
+	mockBridge
+	hungAddr string
+	gate     chan struct{}
+	calls    atomic.Int32
+}
+
+func (b *hungHostInfoBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	if address == b.hungAddr {
+		b.calls.Add(1)
+		<-b.gate
+	}
+	return b.mockBridge.GetHostInfo(address)
+}
+
+func threeHostEscrow(t *testing.T) ([]*signing.Secp256k1Signer, *bridge.EscrowInfo) {
+	t.Helper()
 	hosts := make([]*signing.Secp256k1Signer, 3)
+	addresses := make([]string, len(hosts))
 	for i := range hosts {
 		hosts[i] = mustGenerateKey(t)
+		addresses[i] = hosts[i].Address()
 	}
 	user := mustGenerateKey(t)
-	addresses := make([]string, len(hosts))
-	for i, h := range hosts {
-		addresses[i] = h.Address()
+	return hosts, &bridge.EscrowInfo{
+		EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
+	}
+}
+
+// Tests that a chain error on neighbour URLs does not stop the session from opening.
+//  1. Bind an escrow while every GetHostInfo fails.
+//  2. Bind it again.
+//  3. Expect both binds to return the same live session with no peer clients, not a cached refusal.
+func TestHostManager_PeerHostInfoErrorStillOpensSession(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts, escrow := threeHostEscrow(t)
+	br := &hostInfoErrBridge{
+		mockBridge: mockBridge{escrow: escrow},
+		err:        fmt.Errorf("Participant: %w", bridge.ErrChainUnavailable),
+	}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+
+	srv, err := mgr.getOrCreate("1", nil)
+	require.NoError(t, err, "Chat does not use neighbour clients, so their URLs must not gate the session")
+	require.NotNil(t, srv)
+	require.Empty(t, srv.PeerClients())
+
+	again, err := mgr.getOrCreate("1", nil)
+	require.NoError(t, err)
+	require.Same(t, srv, again)
+}
+
+// Tests that a participant whose URL is only whitespace leaves just its own slot empty.
+//  1. Publish "   " as one neighbour's InferenceUrl.
+//  2. Bind the escrow.
+//  3. Expect the session to open with clients for the other two slots.
+func TestHostManager_BlankPeerURLLeavesOnlyThatSlotEmpty(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts, escrow := threeHostEscrow(t)
+	br := &mockBridge{escrow: escrow, hostURLs: map[string]string{hosts[2].Address(): "   "}}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+
+	srv, err := mgr.getOrCreate("1", nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 2 }, 5*time.Second, time.Millisecond)
+	peers := srv.PeerClients()
+	require.Contains(t, peers, 0)
+	require.Contains(t, peers, 1)
+	require.NotContains(t, peers, 2)
+}
+
+// Tests that a stored session still recovers when neighbour URLs cannot be read.
+//  1. Store an active session and fail every GetHostInfo.
+//  2. Run boot recovery.
+//  3. Expect the session to be recovered and counted as recovered, not failed.
+func TestRecoverSessions_PeerHostInfoErrorStillRecovers(t *testing.T) {
+	store := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, store, 3)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
 	}
 	br := &hostInfoErrBridge{
 		mockBridge: mockBridge{escrow: &bridge.EscrowInfo{
 			EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
 		}},
-		err: fmt.Errorf("host info down"),
+		err: fmt.Errorf("Participant: %w", bridge.ErrChainUnavailable),
 	}
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	require.NoError(t, mgr.RecoverSessions())
+
+	mgr.sessionsMutex.RLock()
+	srv := mgr.sessions["1"]
+	mgr.sessionsMutex.RUnlock()
+	require.NotNil(t, srv)
+	require.Empty(t, srv.PeerClients())
+	progress := mgr.RecoveryProgressSnapshot()
+	require.EqualValues(t, 1, progress.Recovered)
+	require.Zero(t, progress.Failed)
+}
+
+// Tests that binding does not wait on a neighbour's URL lookup.
+//  1. Hang GetHostInfo for one neighbour and bind the escrow.
+//  2. Expect the bind to return with the other slots filled in the background, then send a repair probe to the hung slot.
+//  3. Release the chain and expect the probe to join the running lookup and the slot to be filled by one query.
+func TestHostManager_BindDoesNotWaitForPeerLookups(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts, escrow := threeHostEscrow(t)
+	br := &hungHostInfoBridge{mockBridge: mockBridge{escrow: escrow}, hungAddr: hosts[2].Address(), gate: make(chan struct{})}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			close(br.gate)
+		}
+	}
+	t.Cleanup(release)
 	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
-	_, err := mgr.getOrCreate("1", nil)
-	require.Error(t, err)
-	require.ErrorContains(t, err, "host info")
+
+	srv, err := mgr.getOrCreate("1", nil)
+	require.NoError(t, err, "bind must not wait for the hung lookup")
+	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 2 }, 5*time.Second, time.Millisecond)
+	require.NotContains(t, srv.PeerClients(), 2)
+	// The healthy slots can finish before the hung lookup goroutine starts.
+	// Wait for that lookup before checking that the repair joins it.
+	require.Eventually(t, func() bool { return br.calls.Load() == 1 }, 5*time.Second, time.Millisecond)
+
+	probed := make(chan struct{})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		defer close(probed)
+		_, _ = srv.RepairProbe(ctx, 2, &heightsync.RepairRequest{})
+	}()
+	release()
+	<-probed
+	require.Contains(t, srv.PeerClients(), 2)
+	require.EqualValues(t, 1, br.calls.Load(), "the probe reuses the bind's lookup")
 }
 
 func TestHostManager_WireHostToHostUsesCachedSlotURLs(t *testing.T) {
@@ -380,7 +501,7 @@ func TestHostManager_WireHostToHostUsesCachedSlotURLs(t *testing.T) {
 	srv := mgr.sessions["1"]
 	mgr.sessionsMutex.RUnlock()
 	require.NotNil(t, srv)
-	require.Len(t, srv.PeerClients(), 3)
+	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 3 }, 5*time.Second, time.Millisecond)
 }
 
 func TestRecoverSessions_Nonce0(t *testing.T) {

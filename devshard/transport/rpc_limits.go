@@ -16,20 +16,21 @@ const (
 	// DefaultRPCMessagesBurst is the peer-bucket pulse (10% of the minute).
 	DefaultRPCMessagesBurst = DefaultRPCMessagesPerMin / 10
 	// DefaultRPCMaxChatsPerPeer is concurrent Chat streams for one peer.
-	// Watch has its own cap and does not spend this.
-	DefaultRPCMaxChatsPerPeer uint32 = 10240
+	// Watch has its own cap and does not spend this. It is a quarter of
+	// DefaultRPCMaxChatsTotal: one gateway that parks its streams cannot
+	// refuse every other gateway on the same child.
+	DefaultRPCMaxChatsPerPeer uint32 = 2560
 	// DefaultRPCMaxStreams is the per-peer non-Watch stream cap. Chat
 	// uses at most max-1 when max>1, so this stays one above the chat
 	// cap. This is the Connect interceptor, not HTTP/2 SETTINGS (per TCP).
 	DefaultRPCMaxStreams uint32 = DefaultRPCMaxChatsPerPeer + 1
+	// DefaultRPCMaxChatsTotal is the child-wide Chat ceiling. Watch does
+	// not spend this.
+	DefaultRPCMaxChatsTotal uint32 = 10240
 	// DefaultRPCMaxStreamsTotal is the child-wide non-Watch stream ceiling.
-	// Watch does not spend it; Watch is capped at MaxSessions. It matches
-	// the per-peer cap so one peer can fill its chat roster. SETTINGS
+	// Watch does not spend it; Watch is capped at MaxSessions. SETTINGS
 	// stays DefaultH2MaxConcurrentStreams so one mux can carry that roster.
-	DefaultRPCMaxStreamsTotal uint32 = DefaultRPCMaxStreams
-	// DefaultRPCMaxChatsTotal is the child-wide Chat ceiling. It matches
-	// the per-peer chat cap. Watch does not spend this.
-	DefaultRPCMaxChatsTotal uint32 = DefaultRPCMaxChatsPerPeer
+	DefaultRPCMaxStreamsTotal uint32 = DefaultRPCMaxChatsTotal + 1
 	// DefaultH2MaxConcurrentStreams is SETTINGS_MAX_CONCURRENT_STREAMS on
 	// the child h2c listen. Overlay muxes every peer's Watch onto one
 	// (or a few) versiond→child TCP connections, so this must match

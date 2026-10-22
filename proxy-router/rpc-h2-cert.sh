@@ -84,7 +84,7 @@ reload_rpc_h2_cert() {
         return 0
     fi
     if load_rpc_h2_cert "$sock" "$pem"; then
-        echo "proxy-router: loaded renewed certificate for DEVSHARD_RPC_H2_PORT" >&2
+        echo "proxy-router: loaded renewed certificate for peer RPC on :443" >&2
         printf '%s\n' "$next"
         return 0
     fi

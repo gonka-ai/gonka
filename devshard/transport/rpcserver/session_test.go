@@ -1,6 +1,7 @@
 package rpcserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -104,7 +105,7 @@ func (s stubLookup) SessionForOwner(id, addr string) (SessionCore, error) {
 	return s.SessionServerExisting(id)
 }
 
-func (s stubLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (SessionCore, error) {
+func (s stubLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (SessionCore, error) {
 	return s.SessionForParticipant(id, addr)
 }
 
@@ -128,7 +129,7 @@ func (s countingLookup) SessionForOwner(id, addr string) (SessionCore, error) {
 	return s.SessionServerExisting(id)
 }
 
-func (s countingLookup) SessionForStartProof(id, addr string, _ []types.Diff, _ string) (SessionCore, error) {
+func (s countingLookup) SessionForStartProof(id, addr string, _ func() ([]types.Diff, error), _ string) (SessionCore, error) {
 	return s.SessionForParticipant(id, addr)
 }
 
@@ -152,7 +153,7 @@ func (s *countingBindLookup) SessionForOwner(string, string) (SessionCore, error
 	return s.core, nil
 }
 
-func (s *countingBindLookup) SessionForStartProof(string, string, []types.Diff, string) (SessionCore, error) {
+func (s *countingBindLookup) SessionForStartProof(string, string, func() ([]types.Diff, error), string) (SessionCore, error) {
 	s.bind++
 	return s.core, nil
 }
@@ -170,9 +171,61 @@ func (s *recordingStartLookup) SessionForOwner(id, addr string) (SessionCore, er
 	return s.stubLookup.SessionForOwner(id, addr)
 }
 
-func (s *recordingStartLookup) SessionForStartProof(_ string, _ string, diffs []types.Diff, claimed string) (SessionCore, error) {
+type predecodedCore struct {
+	stubCore
+	diffs []types.Diff
+}
+
+func (p *predecodedCore) ServeChallengeReceipt(ctx context.Context, _ transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
+	p.diffs = transport.PredecodedDiffs(ctx)
+	return &transport.ChallengeReceiptResponse{}, nil
+}
+
+// coldDecodeLookup calls decode twice, the way a cold bind must not parse the
+// page twice. The handler caches the first result.
+type coldDecodeLookup struct {
+	core SessionCore
+}
+
+func (s *coldDecodeLookup) SessionServerExisting(string) (SessionCore, error) {
+	return nil, storage.ErrSessionNotFound
+}
+
+func (s *coldDecodeLookup) SessionForParticipant(string, string) (SessionCore, error) {
+	return nil, storage.ErrSessionNotFound
+}
+
+func (s *coldDecodeLookup) SessionForOwner(string, string) (SessionCore, error) {
+	return nil, storage.ErrSessionNotFound
+}
+
+func (s *coldDecodeLookup) SessionForStartProof(_ string, _ string, decode func() ([]types.Diff, error), _ string) (SessionCore, error) {
+	if decode == nil {
+		return nil, storage.ErrSessionNotFound
+	}
+	first, err := decode()
+	if err != nil {
+		return nil, err
+	}
+	second, err := decode()
+	if err != nil {
+		return nil, err
+	}
+	if len(first) == 0 || len(second) == 0 || &first[0] != &second[0] {
+		return nil, errors.New("challenge page decoded twice")
+	}
+	return s.core, nil
+}
+
+func (s *recordingStartLookup) SessionForStartProof(_ string, _ string, decode func() ([]types.Diff, error), claimed string) (SessionCore, error) {
 	s.proofs++
-	s.diffs = append([]types.Diff(nil), diffs...)
+	if decode != nil {
+		diffs, err := decode()
+		if err != nil {
+			return nil, err
+		}
+		s.diffs = append([]types.Diff(nil), diffs...)
+	}
 	s.claimed = claimed
 	return s.core, nil
 }
@@ -369,6 +422,15 @@ func TestMapInferenceError_UnavailableLabel(t *testing.T) {
 	var ce *connect.Error
 	require.ErrorAs(t, err, &ce)
 	require.Equal(t, transport.DevshardErrorRequestsDisabled, ce.Meta().Get(transport.HeaderDevshardError))
+
+	busyErr := fmt.Errorf("persist diff nonce 1..200: %w", storage.ErrStorageBusy)
+	busy := echo.NewHTTPError(http.StatusServiceUnavailable, busyErr.Error()).SetInternal(busyErr)
+	for _, err := range []error{mapInferenceError(busy), mapCoreError(busyErr)} {
+		require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+		require.ErrorAs(t, err, &ce)
+		require.Equal(t, transport.DevshardErrorStorageBusy, ce.Meta().Get(transport.HeaderDevshardError))
+		require.True(t, transport.IsStorageBusy(err))
+	}
 
 	draining := echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
 	err = mapInferenceError(draining)
@@ -655,6 +717,41 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 		require.Error(t, err)
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 		require.Contains(t, err.Error(), "restricted to escrow owner or group member")
+	})
+	t.Run("bound host does not decode challenge diffs", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		_, err := env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{
+				InferenceId: 1,
+				Diffs: []*rpcpb.Diff{{
+					Nonce:         1,
+					Txs:           []byte{0xff},
+					UserSig:       []byte{1},
+					PostStateRoot: bytes.Repeat([]byte{2}, 32),
+				}},
+			})), env.token))
+		require.NoError(t, err)
+	})
+	t.Run("cold host decodes challenge diffs once", func(t *testing.T) {
+		user := testutil.MustGenerateKey(t)
+		diff := testutil.SignDiff(t, user, "escrow-1", 1, nil)
+		dj, err := transport.DiffToJSON(diff)
+		require.NoError(t, err)
+		core := &predecodedCore{stubCore: stubCore{member: true}}
+		env := newSessionEnv(t, &coldDecodeLookup{core: core}, "escrow-1")
+		_, err = env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{
+				InferenceId: 1,
+				Diffs: []*rpcpb.Diff{{
+					Nonce:         dj.Nonce,
+					Txs:           dj.Txs,
+					UserSig:       dj.UserSig,
+					PostStateRoot: dj.PostStateRoot,
+				}},
+			})), env.token))
+		require.NoError(t, err)
+		require.Len(t, core.diffs, 1)
+		require.Equal(t, uint64(1), core.diffs[0].Nonce)
 	})
 	t.Run("group member can challenge receipt", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")

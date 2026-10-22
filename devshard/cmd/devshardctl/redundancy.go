@@ -44,10 +44,9 @@ var errEmptyStream = errors.New("empty content stream")
 // input must fail that one attempt rather than terminate the gateway process.
 var errAttemptPanicked = errors.New("attempt panicked")
 
-// Fail-closed when every attempted host receipts (or never receipts) and none
-// produce a first token, with no unused host left to start. Always-stream
-// first-token / receipt timers are failover triggers; at the attempt limit they
-// must still fail the client instead of waiting for host Execute or meta-drain.
+var errPendingPreludeTooLarge = errors.New("pre-content stream exceeded the attempt prelude budget")
+
+var errGatewayPendingPressure = errors.New("gateway pre-content retention pool exhausted")
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
@@ -607,6 +606,11 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 		model:     model,
 	}
 	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.escrowStateBlockReason)
+	if session != nil {
+		e.picker.catchingUp = func(hostIdx int) bool {
+			return session.HostCatchingUp(hostIdx) && session.OtherHostReady(hostIdx)
+		}
+	}
 	e.picker.start()
 	if session != nil {
 		session.SetServedBindingHandler(e.handleServedBinding)
@@ -869,7 +873,14 @@ type inflight struct {
 
 	receiptOnce     sync.Once
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	attemptNanos    atomic.Int64  // send-to-end duration in ns plus one; 0 means the end was not recorded
 	receiptCh       chan struct{} // closed when receipt arrives
+
+	// catchUpFirst marks an attempt whose SendOnly runs a chunked catch-up
+	// before the request. Its receipt and first-token clocks start at
+	// requestSentNano, when the request itself goes out.
+	catchUpFirst    bool
+	requestSentNano atomic.Int64 // unix nano; 0 while the catch-up runs
 
 	tokenOnce         sync.Once
 	firstTokenNano    atomic.Int64 // unix nano; 0 means no chunk of any kind yet
@@ -899,6 +910,15 @@ type inflight struct {
 	// writer when this attempt becomes the winner; it is discarded if a
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
+
+	pendingReserved         int
+	preludeOverflow         atomic.Bool
+	preludePressure         atomic.Bool
+	pendingOwner            atomic.Int32
+	answerRetention         atomic.Bool
+	participantPendingBytes *atomic.Int64
+	participantAnswerBytes  *atomic.Int64
+	answerReserved          int
 
 	// classifyPartial keeps the tail after the last '\n' from prior Writes;
 	// used to reassemble fragmented SSE events for the classifier.
@@ -1004,12 +1024,52 @@ func (inf *inflight) hasReceipt() bool {
 	return inf.receiptTimeNano.Load() != 0
 }
 
+// maxCatchUpBeforeSend bounds how long an attempt's own catch-up may hold
+// back its receipt clock.
+const maxCatchUpBeforeSend = 60 * time.Second
+
+// clockStart is when the attempt's receipt and first-token clocks started.
+// ok is false while its catch-up is still running; the clock then starts
+// no later than maxCatchUpBeforeSend after sendTime.
+func (inf *inflight) clockStart(now time.Time) (start time.Time, ok bool) {
+	if !inf.catchUpFirst {
+		return inf.sendTime, true
+	}
+	if n := inf.requestSentNano.Load(); n != 0 {
+		return time.Unix(0, n), true
+	}
+	if limit := inf.sendTime.Add(maxCatchUpBeforeSend); !now.Before(limit) {
+		return limit, true
+	}
+	return now, false
+}
+
 func (inf *inflight) setReceiptAt(t time.Time) {
 	if t.IsZero() {
 		inf.receiptTimeNano.Store(0)
 		return
 	}
 	inf.receiptTimeNano.Store(t.UnixNano())
+}
+
+// markEnded records the duration of the attempt as of the moment its send call returned. The
+// duration is computed here, from t and sendTime, so it keeps the monotonic clock reading that
+// time.Since used before. Only the first call counts.
+func (inf *inflight) markEnded(t time.Time) {
+	d := t.Sub(inf.sendTime)
+	if d < 0 {
+		d = 0
+	}
+	inf.attemptNanos.CompareAndSwap(0, int64(d)+1)
+}
+
+// attemptDuration is the time from send until this attempt ended. An attempt whose end was never
+// recorded falls back to the time elapsed until now.
+func (inf *inflight) attemptDuration(now time.Time) time.Duration {
+	if n := inf.attemptNanos.Load(); n != 0 {
+		return time.Duration(n - 1)
+	}
+	return now.Sub(inf.sendTime)
 }
 
 func (inf *inflight) firstTokenAt() time.Time {
@@ -1202,6 +1262,7 @@ type raceGroup struct {
 	holdCandidates map[uint64]*inflight
 	decided        atomic.Bool
 	clientDetached atomic.Bool
+	clientFlag     *cancelFlag
 	logCtx         context.Context
 	writeCtx       context.Context
 	escrow         string
@@ -1238,20 +1299,20 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	rg.clientMu.Lock()
 	defer rg.clientMu.Unlock()
 	if rg.isClientDetached() || len(inf.pendingBuf) == 0 || rg.w == nil {
-		inf.pendingBuf = nil
+		inf.releasePendingBuf()
 		return nil
 	}
 	if rg.writeCtx != nil {
 		if err := rg.writeCtx.Err(); err != nil {
-			inf.pendingBuf = nil
+			inf.releasePendingBuf()
 			return err
 		}
 	}
 	if _, err := rg.w.Write(inf.pendingBuf); err != nil {
-		inf.pendingBuf = nil
+		inf.releasePendingBuf()
 		return err
 	}
-	inf.pendingBuf = nil
+	inf.releasePendingBuf()
 	return nil
 }
 
@@ -1366,7 +1427,7 @@ func (rg *raceGroup) detachClient() {
 }
 
 func (rg *raceGroup) isClientDetached() bool {
-	return rg != nil && rg.clientDetached.Load()
+	return rg != nil && (rg.clientDetached.Load() || rg.clientFlag.Gone())
 }
 
 const (
@@ -1374,6 +1435,12 @@ const (
 	defaultMaxClassifyPartialParticipant = 10 << 20  // 10 MiB per participant
 	defaultMaxClassifyPartialGlobal      = 100 << 20 // 100 MiB process-wide
 	defaultMaxErrorStreamBytes           = 1 << 20   // 1 MiB per error attempt
+	defaultMaxPendingPreludeBytes        = 1 << 20
+	defaultMaxPendingPreludeParticipant  = 10 << 20
+	defaultMaxPendingPreludeGlobal       = 100 << 20
+	defaultMaxPendingAnswerBytes         = 256 << 20
+	defaultMaxPendingAnswerParticipant   = 512 << 20
+	defaultMaxPendingAnswerGlobal        = 1024 << 20
 )
 
 // Reassembly-buffer caps, tunable at startup via configureClassifyCapsFromEnv.
@@ -1383,6 +1450,12 @@ var (
 	maxClassifyPartialParticipant int64 = defaultMaxClassifyPartialParticipant
 	maxClassifyPartialGlobal      int64 = defaultMaxClassifyPartialGlobal
 	maxErrorStreamBytes                 = defaultMaxErrorStreamBytes
+	maxPendingPreludeBytes              = defaultMaxPendingPreludeBytes
+	maxPendingPreludeParticipant  int64 = defaultMaxPendingPreludeParticipant
+	maxPendingPreludeGlobal       int64 = defaultMaxPendingPreludeGlobal
+	maxPendingAnswerBytes               = defaultMaxPendingAnswerBytes
+	maxPendingAnswerParticipant   int64 = defaultMaxPendingAnswerParticipant
+	maxPendingAnswerGlobal        int64 = defaultMaxPendingAnswerGlobal
 )
 
 // configureClassifyCapsFromEnv overrides the reassembly caps from the
@@ -1392,10 +1465,24 @@ func configureClassifyCapsFromEnv() {
 	maxClassifyPartialParticipant = readInt64Env("GATEWAY_CLASSIFY_MAX_PARTICIPANT_BYTES", defaultMaxClassifyPartialParticipant)
 	maxClassifyPartialGlobal = readInt64Env("GATEWAY_CLASSIFY_MAX_GLOBAL_BYTES", defaultMaxClassifyPartialGlobal)
 	maxErrorStreamBytes = int(readInt64Env("GATEWAY_ERROR_STREAM_MAX_ATTEMPT_BYTES", int64(defaultMaxErrorStreamBytes)))
+	maxPendingPreludeBytes = int(readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_ATTEMPT_BYTES", int64(defaultMaxPendingPreludeBytes)))
+	maxPendingPreludeParticipant = readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_PARTICIPANT_BYTES", defaultMaxPendingPreludeParticipant)
+	maxPendingPreludeGlobal = readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_GLOBAL_BYTES", defaultMaxPendingPreludeGlobal)
+	maxPendingAnswerBytes = int(readInt64Env("GATEWAY_PENDING_ANSWER_MAX_ATTEMPT_BYTES", int64(defaultMaxPendingAnswerBytes)))
+	maxPendingAnswerParticipant = readInt64Env("GATEWAY_PENDING_ANSWER_MAX_PARTICIPANT_BYTES", defaultMaxPendingAnswerParticipant)
+	maxPendingAnswerGlobal = readInt64Env("GATEWAY_PENDING_ANSWER_MAX_GLOBAL_BYTES", defaultMaxPendingAnswerGlobal)
 }
 
 // classifyPartialBytes is the live total of every inflight's classifyPartial.
 var classifyPartialBytes atomic.Int64
+
+var pendingPreludeBytes atomic.Int64
+
+var participantPending = &participantClassifyTracker{counters: map[string]*atomic.Int64{}}
+
+var pendingAnswerBytes atomic.Int64
+
+var participantAnswer = &participantClassifyTracker{counters: map[string]*atomic.Int64{}}
 
 // participantClassify bounds live reassembly bytes per participant so one
 // hostile participant can't exhaust the shared global pool and starve others.
@@ -1660,6 +1747,9 @@ func (inf *inflight) meanChunkGap() time.Duration {
 }
 
 func (rw *raceWriter) Write(p []byte) (int, error) {
+	if rw.inf.preludeOverflow.Load() {
+		return len(p), nil
+	}
 	now := time.Now()
 	rw.inf.capturePayloadResponseChunk(p)
 	rw.inf.finishActiveStall(now)
@@ -1709,6 +1799,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	if chunkHasContent && !rw.inf.suspicious {
 		rw.group.setWinner(rw.nonce)
 	} else if chunkHasContent && rw.inf.suspicious {
+		rw.inf.answerRetention.Store(true)
 		rw.inf.suspiciousWinnerDeferredLog.Do(func() {
 			logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "suspicious_winner_deferred", "host", rw.inf.hostID)
 		})
@@ -1743,11 +1834,11 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		rw.group.clientMu.Lock()
 		defer rw.group.clientMu.Unlock()
 		if rw.group.isClientDetached() {
-			rw.inf.pendingBuf = nil
+			rw.inf.releasePendingBuf()
 			return len(p), nil
 		}
 		if err := rw.ctxErr(); err != nil {
-			rw.inf.pendingBuf = nil
+			rw.inf.releasePendingBuf()
 			rw.inf.ctxCancelledLog.Do(func() {
 				logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "winner_write_ctx_cancelled",
 					"host", rw.inf.hostID,
@@ -1768,11 +1859,11 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// ordering is preserved end-to-end.
 		if !hadContentBefore && len(rw.inf.pendingBuf) > 0 && rw.group.w != nil {
 			if _, err := rw.group.w.Write(rw.inf.pendingBuf); err != nil {
-				rw.inf.pendingBuf = nil
+				rw.inf.releasePendingBuf()
 				return 0, err
 			}
 		}
-		rw.inf.pendingBuf = nil
+		rw.inf.releasePendingBuf()
 		if rw.group.w == nil {
 			return len(p), nil
 		}
@@ -1782,7 +1873,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// Another attempt has already won; suppress this attempt's stream
 		// entirely (existing behavior). Discard any buffered pre-content
 		// bytes — they will never be forwarded.
-		rw.inf.pendingBuf = nil
+		rw.inf.releasePendingBuf()
 		rw.inf.suppressedLog.Do(func() {
 			logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "stream_suppressed", "host", rw.inf.hostID, "winner_nonce", winnerNonce)
 		})
@@ -1794,8 +1885,112 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// will become the winner and these bytes will be flushed in order.
 		// If the attempt completes with no content at all, the buffer is
 		// discarded by startInflight's empty-stream handling.
+		if !rw.retainPending(p) {
+			return len(p), nil
+		}
 		rw.inf.pendingBuf = append(rw.inf.pendingBuf, p...)
 		return len(p), nil
+	}
+}
+
+func (rw *raceWriter) retainPending(p []byte) bool {
+	inf := rw.inf
+	if len(p) == 0 || inf.preludeOverflow.Load() {
+		return false
+	}
+	if rw.group.isClientDetached() {
+		return inf.retainDetachedSample(p)
+	}
+	answer := inf.answerRetention.Load()
+	attemptCap := maxPendingPreludeBytes
+	if answer {
+		attemptCap = maxPendingAnswerBytes
+	}
+	if attemptCap > 0 && len(inf.pendingBuf)+len(p) > attemptCap {
+		rw.abortPendingPrelude("attempt_cap", int64(attemptCap), len(p))
+		return false
+	}
+	if reason, limit := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
+		rw.abortPendingPrelude(reason, limit, len(p))
+		return false
+	}
+	if answer {
+		inf.answerReserved += len(p)
+	} else {
+		inf.pendingReserved += len(p)
+	}
+	return true
+}
+
+func (inf *inflight) retainDetachedSample(p []byte) bool {
+	if inf.answerRetention.Load() {
+		inf.releasePendingBuf()
+		return false
+	}
+	if len(inf.pendingBuf)+len(p) > emptyStreamBodySampleLimit {
+		return false
+	}
+	if reason, _ := inf.reserveRetentionBytes(int64(len(p))); reason != "" {
+		return false
+	}
+	inf.pendingReserved += len(p)
+	return true
+}
+
+func (inf *inflight) reserveRetentionBytes(n int64) (string, int64) {
+	if inf.answerRetention.Load() {
+		return reserveRetentionInto(inf.participantAnswerBytes, &pendingAnswerBytes, n,
+			maxPendingAnswerParticipant, maxPendingAnswerGlobal)
+	}
+	return reserveRetentionInto(inf.participantPendingBytes, &pendingPreludeBytes, n,
+		maxPendingPreludeParticipant, maxPendingPreludeGlobal)
+}
+
+func reserveRetentionInto(participant, global *atomic.Int64, n, participantCap, globalCap int64) (string, int64) {
+	if participant != nil {
+		if total := participant.Add(n); participantCap > 0 && total > participantCap {
+			participant.Add(-n)
+			return "participant_cap", participantCap
+		}
+	}
+	if total := global.Add(n); globalCap > 0 && total > globalCap {
+		global.Add(-n)
+		if participant != nil {
+			participant.Add(-n)
+		}
+		return "global_cap", globalCap
+	}
+	return "", 0
+}
+
+func (rw *raceWriter) abortPendingPrelude(reason string, limit int64, chunk int) {
+	inf := rw.inf
+	if inf.preludeOverflow.Swap(true) {
+		return
+	}
+	if reason == "global_cap" {
+		inf.preludePressure.Store(true)
+	}
+	if inf.emptyResponseBodySample == "" {
+		inf.emptyResponseBodySample, inf.emptyResponseBodySampleTruncated = bodySampleForLog(inf.pendingBuf, emptyStreamBodySampleLimit)
+	}
+	pool := "prelude"
+	if inf.answerRetention.Load() {
+		pool = "answer"
+	}
+	logInferenceStage(rw.group.logCtx, inf.escrowID, rw.nonce, "pending_prelude_overflow",
+		"host", inf.hostID,
+		"reason", reason,
+		"pool", pool,
+		"limit_bytes", limit,
+		"pending_bytes", len(inf.pendingBuf),
+		"chunk_bytes", chunk,
+		"output_chunks", inf.outputChunks.Load(),
+		"content_chunks", inf.contentChunks.Load(),
+	)
+	inf.releasePendingBuf()
+	if inf.cancel != nil {
+		inf.cancel()
 	}
 }
 
@@ -1838,6 +2033,60 @@ func (rw *raceWriter) appendErrorStreamLines(lines []string) {
 			inf.errorStreamComplete = true
 		}
 	}
+}
+
+const (
+	pendingOwnedBySender int32 = iota
+	pendingHandedOff
+	pendingOrphaned
+)
+
+func releasePendingBufs(attempts []*inflight) {
+	for _, inf := range attempts {
+		if inf == nil || inf.pendingOwner.CompareAndSwap(pendingOwnedBySender, pendingOrphaned) {
+			continue
+		}
+		inf.releasePendingBuf()
+	}
+}
+
+func (inf *inflight) pendingBufPromotable() bool {
+	return inf != nil && inf.suspicious && !inf.preludeOverflow.Load() && inf.contentChunks.Load() > 0
+}
+
+func (inf *inflight) releasePendingBufUnlessPromotable() {
+	if inf == nil {
+		return
+	}
+	if !inf.pendingBufPromotable() {
+		inf.releasePendingBuf()
+	}
+	if !inf.pendingOwner.CompareAndSwap(pendingOwnedBySender, pendingHandedOff) {
+		inf.releasePendingBuf()
+	}
+}
+
+func (inf *inflight) releasePendingBuf() {
+	if inf == nil {
+		return
+	}
+	if inf.pendingReserved > 0 {
+		n := int64(inf.pendingReserved)
+		pendingPreludeBytes.Add(-n)
+		if inf.participantPendingBytes != nil {
+			inf.participantPendingBytes.Add(-n)
+		}
+		inf.pendingReserved = 0
+	}
+	if inf.answerReserved > 0 {
+		n := int64(inf.answerReserved)
+		pendingAnswerBytes.Add(-n)
+		if inf.participantAnswerBytes != nil {
+			inf.participantAnswerBytes.Add(-n)
+		}
+		inf.answerReserved = 0
+	}
+	inf.pendingBuf = nil
 }
 
 func (inf *inflight) releaseErrorStreamRetention() {
@@ -2025,6 +2274,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	}
 	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made", decisionFields...)
 	race := newRaceGroup(settleCtx, ctx, e.devshardID, w)
+	race.clientFlag = clientFlag
 	attempts := []*inflight{primary}
 
 	// Always start the primary.
@@ -2126,6 +2376,8 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			noWinnerQuarantineMode:   noWinner.quarantineMode,
 			noWinnerFailureStrikes:   noWinner.failureStrikes,
 			participantClassifyBytes: participantClassify.counterFor(participantKey),
+			participantPendingBytes:  participantPending.counterFor(participantKey),
+			participantAnswerBytes:   participantAnswer.counterFor(participantKey),
 			done:                     make(chan struct{}),
 			receiptCh:                make(chan struct{}),
 			firstTokenCh:             make(chan struct{}),
@@ -2174,6 +2426,14 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// fallback never fires). Setting sendTime here makes the invariant hold
 	// before awaitRace can observe the attempt.
 	inf.sendTime = time.Now()
+	if inf.prepared != nil && inf.prepared.NeedsCatchUp() {
+		inf.catchUpFirst = true
+		inf.prepared.OnSend(func() {
+			now := time.Now()
+			inf.requestSentNano.Store(now.UnixNano())
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "catch_up_done", "host", inf.hostID, "elapsed_ms", now.Sub(inf.sendTime).Milliseconds())
+		})
+	}
 	inf.startedBeforePoCGeneration = !currentPoCGenerationActive()
 	e.recordGatewayAttemptStarted(ctx, inf, params)
 	inf.startDispatchPhase()
@@ -2184,6 +2444,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		defer cancel()
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
+		defer inf.releasePendingBufUnlessPromotable()
 		// Registered last so it runs first: inf.err must be set before done closes.
 		defer func() {
 			if r := recover(); r != nil {
@@ -2197,6 +2458,13 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		inf.markEnded(time.Now())
+		if inf.preludeOverflow.Load() {
+			inf.err = errPendingPreludeTooLarge
+			if inf.preludePressure.Load() {
+				inf.err = errGatewayPendingPressure
+			}
+		}
 		streamBytes := int64(0)
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
@@ -2239,7 +2507,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			inf.emptyResponseBodySampleTruncated = responseSampleTruncated
 			// Discard any buffered bytes so they are never flushed if this
 			// attempt is later promoted incorrectly.
-			inf.pendingBuf = nil
+			inf.releasePendingBuf()
 			inf.err = errEmptyStream
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "empty_stream",
 				"host", inf.hostID,
@@ -2538,7 +2806,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
-
 	for {
 		winner := race.winnerNonce()
 		var winnerC <-chan struct{}
@@ -2627,6 +2894,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if winner == 0 {
 				if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
 					if err := race.promoteFallbackWinner(fallback); err != nil {
+						releasePendingBufs(attempts)
 						return err
 					}
 					winner = fallback.nonce
@@ -2700,7 +2968,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			// majority of a healthy run. Skip and let the loop re-schedule
 			// the correct next trigger.
 			current, stillValid := e.escalationForInflight(trigger.inf, params, len(attempts) < e.maxAttempts())
-			if !stillValid || current.stage != trigger.stage {
+			if !stillValid || current.stage != trigger.stage || time.Now().Before(current.deadline) {
 				break
 			}
 			if race.winnerNonce() != 0 {
@@ -2903,10 +3171,11 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	if inf.sendTime.IsZero() {
 		return escalationTrigger{}, false
 	}
+	start, _ := inf.clockStart(time.Now())
 	if !inf.hasReceipt() {
 		return escalationTrigger{
 			inf:      inf,
-			deadline: inf.sendTime.Add(receiptTimeoutForInput(params.InputLength)),
+			deadline: start.Add(receiptTimeoutForInput(params.InputLength)),
 			stage:    "receipt_timeout_wait_elapsed",
 			reason:   "receipt_timeout",
 		}, true
@@ -2916,7 +3185,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 	}
 	return escalationTrigger{
 		inf:      inf,
-		deadline: inf.sendTime.Add(e.firstTokenFallbackDelay(params)),
+		deadline: start.Add(e.firstTokenFallbackDelay(params)),
 		stage:    "first_token_timeout_wait_elapsed",
 		reason:   "first_token_timeout",
 	}, true
@@ -3911,8 +4180,12 @@ func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
 	return inf.nonce == winnerNonce && deliveredWholeAnswer(inf)
 }
 
+func isDiscardedOverflowAttempt(inf *inflight) bool {
+	return inf != nil && inf.preludeOverflow.Load()
+}
+
 func isFailedStreamAttempt(inf *inflight) bool {
-	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
+	return isDiscardedOverflowAttempt(inf) || isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
 }
 
 func (e *Redundancy) markPhaseTransitionAbort(inf *inflight) bool {
@@ -4090,6 +4363,9 @@ func fallbackSuspiciousWinner(attempts []*inflight) *inflight {
 		if inf == nil || inf.probe || !inf.suspicious {
 			continue
 		}
+		if inf.preludeOverflow.Load() {
+			continue
+		}
 		if inf.contentChunks.Load() > 0 && !isFailedStreamAttempt(inf) {
 			return inf
 		}
@@ -4120,6 +4396,9 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		return
 	}
 	if e.longResponseFailureExempt(inf) {
+		return
+	}
+	if inf != nil && inf.preludePressure.Load() {
 		return
 	}
 	inf.sampleOnce.Do(func() {
@@ -4364,7 +4643,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			InputTokens:    params.InputLength,
 		}
 		if !inf.sendTime.IsZero() {
-			sample.TotalTime = time.Since(inf.sendTime)
+			sample.TotalTime = inf.attemptDuration(time.Now())
 		}
 		e.recordFailureSample(sample)
 	})
@@ -4413,6 +4692,7 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 // running), the request is always settled as a failure even if another
 // attempt later completes successfully on the protocol layer.
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
+	defer releasePendingBufs(attempts)
 	// Process all responses first so Session has complete protocol state.
 	// Pin error-stream Finishes immediately: ProcessResponse queues them in
 	// pending, and the quiet settle (or a height-sync heartbeat) can compose
@@ -4495,7 +4775,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		attemptMs := int64(0)
 		if !inf.sendTime.IsZero() {
-			attemptMs = finishedAt.Sub(inf.sendTime).Milliseconds()
+			attemptMs = inf.attemptDuration(finishedAt).Milliseconds()
 		}
 		fields := []any{
 			"host", inf.hostID,
@@ -4801,7 +5081,7 @@ func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params 
 		if inf.hasFirstToken() {
 			hi.FirstTokenMs = float64(inf.firstTokenAt().Sub(inf.sendTime).Milliseconds())
 		}
-		hi.TotalTimeMs = float64(time.Since(inf.sendTime).Milliseconds())
+		hi.TotalTimeMs = float64(inf.attemptDuration(time.Now()).Milliseconds())
 	}
 	return hi
 }
@@ -4843,7 +5123,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		InputTokens:    params.InputLength,
 	}
 	if !inf.sendTime.IsZero() {
-		sample.TotalTime = time.Since(inf.sendTime)
+		sample.TotalTime = inf.attemptDuration(time.Now())
 	}
 	e.perf.Record(sample)
 	if responsive {

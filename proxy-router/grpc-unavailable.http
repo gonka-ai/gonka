@@ -1,0 +1,7 @@
+HTTP/1.0 200 OK
+Cache-Control: no-cache
+Connection: close
+Content-Type: application/grpc
+grpc-status: 14
+grpc-message: HTTP2 upstream unavailable
+

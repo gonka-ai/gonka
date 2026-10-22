@@ -20,7 +20,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/metrics"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,6 +34,7 @@ import (
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/internal/e2econfig"
+	"devshard/memwatch"
 	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
@@ -106,6 +106,10 @@ type Gateway struct {
 
 	hostPing *hostPingJob
 	rpcStats *rpcStatsPoller
+
+	// memory is the process snapshot logger. main starts it. A nil logger
+	// means this process is not recording snapshots.
+	memory *memwatch.Logger
 }
 
 type devshardRuntime struct {
@@ -415,7 +419,6 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if deps.metrics != nil {
 		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}
-	noteRetiredCompressRequestBodies()
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:              keyHex,
 		EscrowID:                   cfg.ID,
@@ -1514,6 +1517,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/accounting/purge", g.handleAdminAccountingPurge)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
+	mux.HandleFunc("/v1/debug/memory", g.handleDebugMemory)
 	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
 	mux.HandleFunc("/v1/debug/rpc-traffic", g.handleDebugRPCTraffic)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
@@ -1546,7 +1550,7 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 	if !allowGetOrHead(w, r) {
 		return
 	}
-	mem, err := readGatewayMemory()
+	proc, err := memwatch.ReadProcess()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1554,63 +1558,21 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	loadedRuntimes := len(g.runtimeOrder)
 	g.mu.Unlock()
-	mem["loaded_runtimes"] = loadedRuntimes
-	mem["num_goroutine"] = runtime.NumGoroutine()
-	writeJSON(w, mem)
-}
-
-// readGatewayMemory reads the same heap fields the debug endpoint used to take
-// from ReadMemStats. runtime/metrics sums counters the runtime already keeps
-// and does not stop the world. gc_cpu_fraction is GC CPU time divided by total
-// CPU time over the life of the process.
-func readGatewayMemory() (map[string]any, error) {
-	samples := []metrics.Sample{
-		{Name: "/memory/classes/heap/objects:bytes"},
-		{Name: "/memory/classes/heap/unused:bytes"},
-		{Name: "/memory/classes/heap/free:bytes"},
-		{Name: "/memory/classes/heap/released:bytes"},
-		{Name: "/gc/heap/objects:objects"},
-		{Name: "/memory/classes/heap/stacks:bytes"},
-		{Name: "/memory/classes/total:bytes"},
-		{Name: "/gc/heap/goal:bytes"},
-		{Name: "/gc/cycles/total:gc-cycles"},
-		{Name: "/cpu/classes/gc/total:cpu-seconds"},
-		{Name: "/cpu/classes/total:cpu-seconds"},
-	}
-	metrics.Read(samples)
-	for _, sample := range samples[:9] {
-		if sample.Value.Kind() != metrics.KindUint64 {
-			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
-		}
-	}
-	for _, sample := range samples[9:] {
-		if sample.Value.Kind() != metrics.KindFloat64 {
-			return nil, fmt.Errorf("metric %s kind %v", sample.Name, sample.Value.Kind())
-		}
-	}
-	objects := samples[0].Value.Uint64()
-	unused := samples[1].Value.Uint64()
-	free := samples[2].Value.Uint64()
-	released := samples[3].Value.Uint64()
-	inuse := objects + unused
-	idle := free + released
-	var gcFraction float64
-	if total := samples[10].Value.Float64(); total > 0 {
-		gcFraction = samples[9].Value.Float64() / total
-	}
-	return map[string]any{
-		"heap_inuse":      inuse,
-		"heap_alloc":      objects,
-		"heap_sys":        inuse + idle,
-		"heap_idle":       idle,
-		"heap_released":   released,
-		"heap_objects":    samples[4].Value.Uint64(),
-		"stack_inuse":     samples[5].Value.Uint64(),
-		"sys":             samples[6].Value.Uint64(),
-		"next_gc":         samples[7].Value.Uint64(),
-		"num_gc":          samples[8].Value.Uint64(),
-		"gc_cpu_fraction": gcFraction,
-	}, nil
+	writeJSON(w, map[string]any{
+		"heap_inuse":      proc.HeapInuse,
+		"heap_alloc":      proc.HeapAlloc,
+		"heap_sys":        proc.HeapInuse + proc.HeapIdle,
+		"heap_idle":       proc.HeapIdle,
+		"heap_released":   proc.HeapReleased,
+		"heap_objects":    proc.HeapObjects,
+		"stack_inuse":     proc.StackInuse,
+		"sys":             proc.Sys,
+		"next_gc":         proc.NextGC,
+		"num_gc":          proc.NumGC,
+		"gc_cpu_fraction": proc.GCCPUFraction,
+		"loaded_runtimes": loadedRuntimes,
+		"num_goroutine":   runtime.NumGoroutine(),
+	})
 }
 
 // handleDebugHeightSync is the last-N cadence ring, sealed-height detail, and

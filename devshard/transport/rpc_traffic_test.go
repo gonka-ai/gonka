@@ -69,8 +69,28 @@ func TestRPCTraffic_AttachFloor(t *testing.T) {
 	require.Equal(t, uint64(1), snap.Host.Attach.Attempts)
 	require.Equal(t, uint64(1), snap.Host.Attach.Banned)
 	require.Equal(t, uint64(1), snap.Host.Attach.BannedFloor)
+	require.Equal(t, uint64(0), snap.Host.Attach.BannedOrigin)
 	require.Equal(t, RPCZoneAttachFloor, snap.Host.Zones[0].Zone)
 	require.Empty(t, snap.Host.IPs)
+}
+
+func TestRPCTraffic_AttachOrigin(t *testing.T) {
+	now := time.Unix(1_710_000_000, 0)
+	clock := now
+	tr := NewRPCTraffic(func() time.Time { return clock })
+	tr.Observe(context.Background(), RPCSample{
+		Procedure:    rpcpbconnect.PeerAuthServiceAttachProcedure,
+		Attach:       true,
+		Banned:       true,
+		AttachOrigin: true,
+	})
+	clock = now.Add(time.Minute)
+	snap := tr.Snapshot(clock)
+	require.Equal(t, uint64(1), snap.Host.Attach.Attempts)
+	require.Equal(t, uint64(1), snap.Host.Attach.Banned)
+	require.Equal(t, uint64(0), snap.Host.Attach.BannedFloor)
+	require.Equal(t, uint64(1), snap.Host.Attach.BannedOrigin)
+	require.Equal(t, RPCZoneAttachOrigin, snap.Host.Zones[0].Zone)
 }
 
 func TestRPCTraffic_PeerCapFoldsOther(t *testing.T) {
@@ -481,4 +501,40 @@ func TestRPCTraffic_ClosedWarnSurvivesPruneWindow(t *testing.T) {
 	})
 	require.Equal(t, int64(1), warns.Load())
 	require.Equal(t, uint64(2), banned.Load(), "a minute past the ring window must still warn with both shards")
+}
+
+func TestRPCStatsLabelsFoldUnknown(t *testing.T) {
+	procs := []string{
+		rpcpbconnect.PeerAuthServiceAttachProcedure,
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		rpcpbconnect.SessionServiceChatProcedure,
+		rpcpbconnect.SessionServiceSeedHeightSyncProcedure,
+		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
+		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
+		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
+		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetMempoolProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
+		rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		rpcpbconnect.GossipServiceNonceProcedure,
+		rpcpbconnect.GossipServiceTxsProcedure,
+		rpcpbconnect.PayloadServiceGetPayloadProcedure,
+	}
+	for _, p := range procs {
+		name := RPCEndpointName(p)
+		require.Equal(t, name, RPCStatsEndpointLabel(name), p)
+	}
+	require.Equal(t, RPCStatsOtherLabel, RPCStatsEndpointLabel("not-a-method"))
+	require.Equal(t, RPCStatsOtherLabel, RPCStatsEndpointLabel(""))
+	require.Equal(t, RPCZoneShared, RPCStatsZoneLabel(RPCZoneShared))
+	require.Equal(t, RPCZoneStreams, RPCStatsZoneLabel(RPCZoneStreams))
+	require.Equal(t, RPCZoneAttachFloor, RPCStatsZoneLabel(RPCZoneAttachFloor))
+	require.Equal(t, RPCZoneAttachOrigin, RPCStatsZoneLabel(RPCZoneAttachOrigin))
+	require.Equal(t, RPCZoneAttachRenew, RPCStatsZoneLabel(RPCZoneAttachRenew))
+	require.Equal(t, RPCStatsOtherLabel, RPCStatsZoneLabel("made-up"))
+	require.Equal(t, ReconnectWatch, RPCStatsReconnectReason(ReconnectWatch))
+	require.Equal(t, ReconnectTTL, RPCStatsReconnectReason(ReconnectTTL))
+	require.Equal(t, ReconnectFirstAttach, RPCStatsReconnectReason(ReconnectFirstAttach))
+	require.Equal(t, RPCStatsOtherLabel, RPCStatsReconnectReason("invented"))
 }

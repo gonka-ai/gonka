@@ -185,7 +185,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
-	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8081 grpc=true")
+	log.Printf("loadtest: peer_rpc_transport=h2 endpoint=versiond-router:8080 grpc=true")
 	for attempt := 1; attempt <= maxStartAttempts; attempt++ {
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
@@ -742,15 +742,15 @@ func runCommandWithEnv(ctx context.Context, dir string, env []string, name strin
 	return nil
 }
 
-// loadTestComposeEnv selects the v6 peer-RPC transport for this isolated stack.
-// The normal testenv Compose defaults remain unchanged for legacy and citest runs.
+// loadTestComposeEnv selects the v6 peer-RPC transport for this isolated
+// stack: HTTP/2 (the client default) on versiond-router:8080 with native
+// gRPC. The normal testenv Compose defaults remain unchanged for legacy and
+// citest runs.
 func loadTestComposeEnv() []string {
 	env := os.Environ()
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_PORT", "8081")
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE", "true")
-	env = setEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST", "versiond-router")
+	env = removeEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE")
 	env = setEnvValue(env, "DEVSHARD_RPC_GRPC", "true")
-	return removeEnvValue(env, "DEVSHARD_RPC_H2_HOST")
+	return env
 }
 
 func setEnvValue(env []string, key, value string) []string {
@@ -1238,6 +1238,17 @@ func readGhostInferenceIDs(path string) (map[string]struct{}, error) {
 	}
 	ghosts := make(map[string]struct{})
 	for _, line := range strings.Split(string(body), "\n") {
+		if strings.Contains(line, `"stage":"ghost_probe_skipped"`) {
+			start := strings.IndexByte(line, '{')
+			var entry struct {
+				Nonce *uint64 `json:"nonce"`
+			}
+			if start < 0 || json.Unmarshal([]byte(line[start:]), &entry) != nil || entry.Nonce == nil {
+				return nil, fmt.Errorf("parse ghost line in %s: %q", path, line)
+			}
+			ghosts[strconv.FormatUint(*entry.Nonce, 10)] = struct{}{}
+			continue
+		}
 		if !strings.Contains(line, "stage=ghost_probe_skipped") {
 			continue
 		}

@@ -106,18 +106,22 @@ type Server struct {
 	store        storage.Storage
 	gossip       *gossip.Gossip // nil until gossip is wired
 	verifier     signing.Verifier
-	userAddr     string                 // session user address, allowed alongside group members
-	peerClients  map[int]HostPeerClient // slot index -> client, for timeout verification
-	rateLimit    *rateLimiter           // nil = no limiting
-	maxBodySize  int64                  // max request body bytes, 0 = no limit
-	bridge       bridge.MainnetBridge   // optional, for warm key verification
-	receiptDelay time.Duration          // optional test hook before receipt SSE write
+	userAddr     string               // session user address, allowed alongside group members
+	peers        peerRoster           // slot index -> client, for timeout verification and repair
+	rateLimit    *rateLimiter         // nil = no limiting
+	maxBodySize  int64                // max request body bytes, 0 = no limit
+	bridge       bridge.MainnetBridge // optional, for warm key verification
+	receiptDelay time.Duration        // optional test hook before receipt SSE write
 
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncLogOracle blocks.BlockOracle
 	heightSyncAudit     *heightsync.AuditRing
 	heightSyncMarks     *heightsync.MarkLog
 	heightSyncSeedRPC   bool
+
+	// coldWalks remembers, for this process only, how far a gated catch-up
+	// got for each executor address. One address can own several slots.
+	coldWalks *host.ColdWalks
 
 	pendingUntrustedMu        sync.Mutex
 	pendingUntrustedBySession map[string]*pendingUntrustedTip
@@ -155,7 +159,7 @@ func WithServerGossip(g *gossip.Gossip) ServerOption {
 // WithServerPeerClients sets executor clients for timeout verification.
 func WithServerPeerClients(peers map[int]HostPeerClient) ServerOption {
 	return func(s *Server) {
-		s.peerClients = peers
+		s.peers.setClients(peers)
 		if s.host != nil {
 			s.host.SetRepairProbe(s.RepairProbe)
 		}
@@ -188,6 +192,7 @@ func NewServer(
 		verifier:    verifier,
 		userAddr:    userAddr,
 		maxBodySize: DefaultMaxBodySize,
+		coldWalks:   host.NewColdWalks(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -199,8 +204,23 @@ func NewServer(
 func (s *Server) Host() *host.Host { return s.host }
 
 // PeerClients is the slot→client roster SetPeerClients stored. Includes this
-// host's slot so timeout verify can reach the executor when it is us.
-func (s *Server) PeerClients() map[int]HostPeerClient { return s.peerClients }
+// host's slot so timeout verify can reach the executor when it is us. Slots
+// the resolver filled later are included; unresolved slots are absent.
+func (s *Server) PeerClients() map[int]HostPeerClient {
+	s.peers.mu.Lock()
+	slots := s.peers.slots
+	s.peers.mu.Unlock()
+	if slots == nil {
+		return nil
+	}
+	out := make(map[int]HostPeerClient, len(slots))
+	for slot, l := range slots {
+		if pc, ok := l.Peek(); ok {
+			out[slot] = pc
+		}
+	}
+	return out
+}
 
 // Gossip is the outbound nonce/tx propagator, or nil if unwired.
 func (s *Server) Gossip() *gossip.Gossip { return s.gossip }
@@ -215,12 +235,14 @@ func (s *Server) CloseOutbound() {
 		s.gossip.Stop()
 		s.gossip = nil
 	}
-	for _, pc := range s.peerClients {
-		if pc != nil {
-			pc.Close()
-		}
+	s.peers.mu.Lock()
+	slots := s.peers.slots
+	s.peers.slots = nil
+	s.peers.closed = true
+	s.peers.mu.Unlock()
+	for _, l := range slots {
+		l.Close()
 	}
-	s.peerClients = nil
 }
 
 // SetGossip attaches a gossip instance for nonce/tx propagation.
@@ -559,7 +581,7 @@ func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFun
 // SelectTransport results so RPC Attach identity matches gossip and
 // RepairProbe CloneWithSigner is identity-preserving.
 func (s *Server) SetPeerClients(peers map[int]HostPeerClient) {
-	s.peerClients = peers
+	s.peers.setClients(peers)
 	if s.host != nil {
 		s.host.SetRepairProbe(s.RepairProbe)
 	}
@@ -625,15 +647,17 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 		s.host.ApplyCatchUpDiffs(diffs)
 	}
 
-	st := s.host.SnapshotState()
+	st, rec, ok := s.host.SnapshotForTimeout(req.InferenceID)
+	if !ok || rec == nil {
+		return nil, fmt.Errorf("inference %d not found", req.InferenceID)
+	}
 	localMempool := s.host.MempoolTxs()
 
-	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
-	var executorClient host.ExecutorClient
-	if s.peerClients != nil {
-		if pc, ok := s.peerClients[executorIdx]; ok {
-			executorClient = pc
-		}
+	group := s.host.Group()
+	executorIdx := int(req.InferenceID % uint64(len(group)))
+	executorClient, err := s.timeoutExecutor(ctx, executorIdx)
+	if err != nil {
+		return nil, err
 	}
 
 	nowUnix := time.Now().Unix()
@@ -641,9 +665,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, group[executorIdx].ValidatorAddress, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
@@ -818,19 +842,31 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
 		return forged, nil
 	}
-	diffs, err := decodeDiffsJSON(req.Diffs)
+	wires := make([]types.DiffWire, len(req.Diffs))
+	for i, dj := range req.Diffs {
+		wires[i] = types.DiffWire{
+			Nonce:         dj.Nonce,
+			Txs:           dj.Txs,
+			UserSig:       dj.UserSig,
+			PostStateRoot: dj.PostStateRoot,
+		}
+	}
+
+	payload := PayloadFromJSON(req.Payload)
+	receipt, _, err := s.host.ChallengeReceiptWire(ctx, req.InferenceID, payload, wires, PredecodedDiffs(ctx))
 	if err != nil {
 		return nil, err
 	}
 
-	receipt, _, err := s.host.ChallengeReceipt(ctx, req.InferenceID, PayloadFromJSON(req.Payload), diffs)
-	if err != nil {
-		return nil, err
-	}
-
-	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
-	if err != nil {
-		return nil, err
+	// A nil payload with diffs is catch-up. The verifier discards the mempool,
+	// and building it takes the host lock. An execution vote sends no diffs
+	// and reads this mempool, so that call still builds it.
+	var mempoolBytes [][]byte
+	if payload != nil || len(wires) == 0 {
+		mempoolBytes, err = DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes}, nil
 }
@@ -838,6 +874,9 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 func mapVerifyHTTP(c echo.Context, err error) error {
 	if errors.Is(err, devshard.ErrRequestsDisabled) {
 		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
+	}
+	if errors.Is(err, storage.ErrStorageBusy) {
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorStorageBusy, err.Error())
 	}
 	var cre *clientRequestError
 	if errors.As(err, &cre) {

@@ -225,12 +225,24 @@ func (m *ManagedStorage) AppendDiff(escrowID string, rec types.DiffRecord) error
 	return m.inner.AppendDiff(escrowID, rec)
 }
 
+func (m *ManagedStorage) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	return appendDiffBatchVia(ctx, m.inner, escrowID, recs)
+}
+
 func (m *ManagedStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return m.inner.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (m *ManagedStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	return m.inner.GetDiffWires(escrowID, fromNonce, toNonce)
+}
+
 func (m *ManagedStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	return m.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
+func (m *ManagedStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	return m.inner.DiffStateHash(escrowID, nonce)
 }
 
 func (m *ManagedStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {

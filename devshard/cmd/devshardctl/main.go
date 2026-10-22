@@ -191,6 +191,9 @@ func main() {
 			log.Printf("close gateway: %v", err)
 		}
 	}()
+	// Registered after the Close defer, so the logger stops first.
+	stopMemoryLog := startGatewayMemoryLog(gateway)
+	defer stopMemoryLog()
 	statsServer, err := startAccountingServer(gateway)
 	if err != nil {
 		log.Printf("start accounting server: %v", err)
@@ -501,6 +504,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.awaitParticipants(startupSkipped)
+	wireStopTokenVocabulary(chainClient.InferenceQueryClient(), func() uint64 { return gateway.phaseGate.Snapshot().EpochIndex })
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
 	gateway.runtimeParams = runtimeParams

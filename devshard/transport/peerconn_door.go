@@ -170,7 +170,7 @@ func (p *PeerConn) doorAuthClient(escrowID string) rpcpbconnect.PeerAuthServiceC
 	}
 	var c rpcpbconnect.PeerAuthServiceClient
 	if grpc {
-		c = rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
+		c = rpcpbconnect.NewPeerAuthServiceClient(p.httpFor(true), p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
 		if p.authByDoorGRPC == nil {
 			p.authByDoorGRPC = make(map[string]rpcpbconnect.PeerAuthServiceClient)
 		}

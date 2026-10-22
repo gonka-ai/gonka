@@ -107,22 +107,30 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("executor has no URL")
 	}
 
-	timestamp := time.Now().UnixNano()
 	validatorAddress := recorder.GetAccountAddress()
-	signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("sign request: %w", err)
-	}
-
 	var rpc *transport.RPCClient
 	if rpcFor != nil {
 		rpc = rpcFor(executorInfo.URL, req.ExecutorAddress, req.EscrowID)
 	}
-	payloadResp, err := fetchSignedPayloads(
-		ctx, client, rpc, executorInfo.URL, requestPath,
-		inferenceID, validatorAddress, timestamp, epochID, signature,
-		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
-	)
+	// Each attempt signs a fresh timestamp: the executor refuses one older
+	// than 60s, and the rate-limit retry waits 30s or more.
+	var signErr error
+	payloadResp, err := fetchPayloadsWithRateLimitRetry(ctx, req, func(ctx context.Context) (*commonvalidation.PayloadResponse, error) {
+		timestamp := time.Now().UnixNano()
+		signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
+		if err != nil {
+			signErr = fmt.Errorf("sign request: %w", err)
+			return nil, signErr
+		}
+		return fetchSignedPayloads(
+			ctx, client, rpc, executorInfo.URL, requestPath,
+			inferenceID, validatorAddress, timestamp, epochID, signature,
+			commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
+		)
+	})
+	if signErr != nil {
+		return nil, nil, signErr
+	}
 	if err != nil {
 		return nil, nil, classifyPayloadFetchError(ctx, err)
 	}
@@ -184,6 +192,17 @@ const payloadFetchTimeout = 30 * time.Second
 var payloadFetchHeaderTimeout = 10 * time.Second
 
 var payloadFetchRetryBackoff = 500 * time.Millisecond
+
+// payloadRateLimitRetryDelay is the wait before the one retry after a 429.
+// A longer Retry-After from the executor wins, up to
+// payloadRateLimitRetryMaxDelay. escrow_lookup_limited carries no
+// Retry-After and counts lookups over a sliding minute, so it waits
+// payloadEscrowLookupRetryDelay. All are overridable in tests.
+var (
+	payloadRateLimitRetryDelay    = 30 * time.Second
+	payloadEscrowLookupRetryDelay = time.Minute
+	payloadRateLimitRetryMaxDelay = time.Minute
+)
 
 func newPayloadFetchClient() *http.Client {
 	transport := cloneHTTPTransport()
@@ -247,9 +266,23 @@ func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 // Valid:false on that would punish an honest executor.
 var errPayloadRPCUnavailable = errors.New("payload is served over Connect; the HTTP payload route is retired")
 
+// ErrPayloadRateLimited is a 429 from the executor, including
+// escrow_lookup_limited. It describes the caller's rate, not the payload,
+// so fetchPayloadsWithRateLimitRetry waits and fetches once more before a
+// 429 can become a verdict.
+var ErrPayloadRateLimited = errors.New("payload fetch rate limited")
+
+// errPayloadRateLimitRetried marks a 429 on the retry after the wait.
+// classifyPayloadFetchError tags only this one as an executor fault.
+var errPayloadRateLimitRetried = errors.New("still rate limited after retry")
+
 // classifyPayloadFetchError leaves a failure of this process's closed peer
 // untagged, so the lease is released and another generation can fetch. A
-// payload that is gone or too large is still the executor's result.
+// payload that is gone, too large, or never reached because the executor
+// did not finish Attach is the executor's result. A 429 is the executor's
+// result only after the retry. A bare ErrPeerNotReady is still this
+// process's own session; ErrPeerPayloadUnanswered is the executor's missing
+// session.
 func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
@@ -257,7 +290,16 @@ func classifyPayloadFetchError(ctx context.Context, err error) error {
 	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, errPayloadRPCUnavailable) || ctx.Err() != nil {
 		return err
 	}
+	if errors.Is(err, ErrPayloadRateLimited) {
+		if errors.Is(err, errPayloadRateLimitRetried) && !transport.OutboundPeersReleased() {
+			return tagExecutorPayloadFault(err)
+		}
+		return err
+	}
 	if errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+		return tagExecutorPayloadFault(err)
+	}
+	if errors.Is(err, transport.ErrPeerPayloadUnanswered) && !transport.OutboundPeersReleased() {
 		return tagExecutorPayloadFault(err)
 	}
 	if errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
@@ -284,6 +326,12 @@ func fetchSignedPayloads(
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
+		// The executor did not finish Attach within the header budget, so
+		// the payload fetch got no response. A session this process already
+		// closed returns before that budget and stays untagged.
+		if payloadAttachTimedOut(ctx, waitCtx) {
+			return nil, tagExecutorPayloadFault(err)
+		}
 		return nil, err
 	}
 	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
@@ -295,13 +343,27 @@ func fetchSignedPayloads(
 	}, maxBytes)
 }
 
+// payloadAttachTimedOut reports that the handshake wait expired while this
+// validation is still running. A cancelled caller or a released peer
+// generation is this process stopping, not an executor that stayed silent.
+func payloadAttachTimedOut(ctx, waitCtx context.Context) bool {
+	return waitCtx.Err() != nil && ctx.Err() == nil && !transport.OutboundPeersReleased()
+}
+
 func payloadResponseFromRPC(resp *rpcpb.GetPayloadResponse, err error) (*commonvalidation.PayloadResponse, error) {
 	if err != nil {
 		switch connect.CodeOf(err) {
 		case connect.CodeNotFound:
 			return nil, fmt.Errorf("payload not found on executor: %w", commonvalidation.ErrPayloadGone)
 		case connect.CodeResourceExhausted:
-			return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			// The read cap and a 429 share this code. Only an oversized body
+			// is "too large". A 429, including escrow_lookup_limited, is the
+			// caller's rate. It is not a statement about the payload.
+			status, _, _, ok := transport.ConnectApplicationStatus(err)
+			if ok && status == http.StatusRequestEntityTooLarge {
+				return nil, fmt.Errorf("%w: rpc read cap", commonvalidation.ErrPayloadTooLarge)
+			}
+			return nil, fmt.Errorf("%w: %w", ErrPayloadRateLimited, err)
 		default:
 			return nil, err
 		}
@@ -386,20 +448,71 @@ func fetchPayloadsRPCWithRetry(
 }
 
 // payloadRPCFetchDone reports an error that must not be tried again at this
-// layer: the payload is gone or oversize, or rpcRetry already spent its
-// budget on an unanswered connection.
+// layer: the payload is gone or oversize, the call was rate limited
+// (fetchPayloadsWithRateLimitRetry owns that retry), or rpcRetry already
+// spent its budget on an unanswered connection.
 func payloadRPCFetchDone(err error) bool {
 	if err == nil {
 		return true
 	}
-	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
+	if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) || errors.Is(err, ErrPayloadRateLimited) {
 		return true
 	}
 	return transport.IsRetryableNonInference(err)
 }
 
+// fetchPayloadsWithRateLimitRetry runs fetch, and after a 429 waits
+// payloadRateLimitWait and runs it once more. The caller keeps its lease
+// during the wait, so no sibling takes a second retry. A 429 on the retry
+// is returned with errPayloadRateLimitRetried. A release of outbound peers
+// ends the wait with an untagged error.
+func fetchPayloadsWithRateLimitRetry(ctx context.Context, req devshardpkg.ValidateRequest, fetch func(context.Context) (*commonvalidation.PayloadResponse, error)) (*commonvalidation.PayloadResponse, error) {
+	resp, err := fetch(ctx)
+	if !errors.Is(err, ErrPayloadRateLimited) {
+		return resp, err
+	}
+	wait := payloadRateLimitWait(err)
+	observability.Log(ctx, observability.LevelWarn, "payload fetch rate limited; retrying once",
+		observability.StageValidationStarted, observability.WhereRuntimeValidate, req.EscrowID, observability.ReasonRateLimited, err,
+		"inference_id", req.InferenceID,
+		"executor_address", req.ExecutorAddress,
+		"wait", wait.String())
+	waitCtx, stop := transport.WithPayloadFetchCancel(ctx)
+	waitErr := sleepPayloadFetch(waitCtx, wait)
+	stop()
+	if waitErr != nil {
+		return nil, fmt.Errorf("rate limit retry wait: %w", waitErr)
+	}
+	resp, err = fetch(ctx)
+	if errors.Is(err, ErrPayloadRateLimited) {
+		return nil, fmt.Errorf("%w: %w", errPayloadRateLimitRetried, err)
+	}
+	return resp, err
+}
+
+// payloadRateLimitWait is payloadRateLimitRetryDelay, or the lookup window
+// for escrow_lookup_limited, or the executor's Retry-After when that is
+// longer, capped at payloadRateLimitRetryMaxDelay.
+func payloadRateLimitWait(err error) time.Duration {
+	wait := payloadRateLimitRetryDelay
+	if transport.IsEscrowLookupLimitedError(err) && payloadEscrowLookupRetryDelay > wait {
+		wait = payloadEscrowLookupRetryDelay
+	}
+	if ra := transport.ConnectRetryAfter(err); ra > wait {
+		wait = ra
+	}
+	if wait > payloadRateLimitRetryMaxDelay {
+		wait = payloadRateLimitRetryMaxDelay
+	}
+	return wait
+}
+
 func sleepPayloadFetchRetry(ctx context.Context) error {
-	timer := time.NewTimer(payloadFetchRetryBackoff)
+	return sleepPayloadFetch(ctx, payloadFetchRetryBackoff)
+}
+
+func sleepPayloadFetch(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
 	select {
 	case <-ctx.Done():
 		if !timer.Stop() {

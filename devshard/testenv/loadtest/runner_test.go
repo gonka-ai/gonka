@@ -83,17 +83,11 @@ func TestIsAddressInUse(t *testing.T) {
 }
 
 func TestLoadTestComposeEnvEnablesH2(t *testing.T) {
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
 	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
-	t.Setenv("DEVSHARD_RPC_H2_FRONT_HOST", "")
 	t.Setenv("DEVSHARD_RPC_GRPC", "false")
 
 	env := loadTestComposeEnv()
-	require.Equal(t, "8081", testEnvValue(env, "DEVSHARD_RPC_H2_PORT"))
-	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_HOST"))
-	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"))
-	require.Equal(t, "versiond-router", testEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST"))
+	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"), "the HTTP/2 default must not be forced off")
 	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_GRPC"))
 }
 
@@ -245,6 +239,17 @@ func TestReadGhostInferenceIDs(t *testing.T) {
 	ghosts, err := readGhostInferenceIDs(path)
 	require.NoError(t, err)
 	require.Equal(t, map[string]struct{}{"9": {}}, ghosts)
+}
+
+func TestReadGhostInferenceIDsJSONLogs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.log")
+	log := `devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"1","nonce":271,"reason":"participant_catching_up_no_send"}` + "\n" +
+		`devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
+
+	ghosts, err := readGhostInferenceIDs(path)
+	require.NoError(t, err)
+	require.Equal(t, map[string]struct{}{"271": {}}, ghosts)
 }
 
 func TestFetchGatewayStateSizes(t *testing.T) {

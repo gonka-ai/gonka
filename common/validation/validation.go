@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 
 	"common/completionapi"
 	"common/logging"
@@ -165,6 +166,122 @@ func rejectsEnforcedTokens(body []byte) bool {
 	return json.Unmarshal(body, &errorBody) == nil && errorBody.Error.Param == "enforced_tokens"
 }
 
+var (
+	errReplayStreamIncomplete = errors.New("validator replay stream ended without [DONE]")
+	errReplayStreamNoUsage    = errors.New("validator replay stream carried no usage")
+	errReplayStreamFailed     = errors.New("validator replay stream failed")
+)
+
+func replayDataLines(body []byte) ([]string, bool) {
+	var lines []string
+	for _, raw := range strings.Split(string(body), "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case line == "", strings.HasPrefix(line, ":"):
+			continue
+		case strings.HasPrefix(line, "data:"):
+			lines = append(lines, line)
+		case strings.HasPrefix(line, "event:"), strings.HasPrefix(line, "id:"), strings.HasPrefix(line, "retry:"):
+			continue
+		case len(lines) == 0:
+			return nil, false
+		default:
+			lines = append(lines, line)
+		}
+	}
+	return lines, len(lines) > 0
+}
+
+func replayDataPayload(line string) string {
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+}
+
+func replayStreamErrorStatus(code json.RawMessage) int {
+	var number float64
+	if json.Unmarshal(code, &number) == nil {
+		return int(number)
+	}
+	var text string
+	if json.Unmarshal(code, &text) == nil {
+		if parsed, err := strconv.Atoi(text); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func NormalizeReplayStream(statusCode int, body []byte) (int, []byte, error) {
+	if statusCode != http.StatusOK {
+		return statusCode, body, nil
+	}
+	lines, isStream := replayDataLines(body)
+	if !isStream {
+		return statusCode, body, nil
+	}
+	for _, line := range lines {
+		var event struct {
+			Error  json.RawMessage `json:"error"`
+			Object string          `json:"object"`
+			Code   json.RawMessage `json:"code"`
+		}
+		payload := replayDataPayload(line)
+		if json.Unmarshal([]byte(payload), &event) != nil {
+			continue
+		}
+		var errorObject json.RawMessage
+		var code json.RawMessage
+		switch {
+		case len(event.Error) > 0 && string(event.Error) != "null":
+			errorObject = event.Error
+			var nested struct {
+				Code json.RawMessage `json:"code"`
+			}
+			_ = json.Unmarshal(event.Error, &nested)
+			code = nested.Code
+		case event.Object == "error":
+			errorObject = json.RawMessage(payload)
+			code = event.Code
+		default:
+			continue
+		}
+		errorBody, err := json.Marshal(map[string]json.RawMessage{"error": errorObject})
+		if err != nil {
+			return 0, nil, err
+		}
+		if rejectsEnforcedTokens(errorBody) {
+			return http.StatusBadRequest, errorBody, nil
+		}
+		if status := replayStreamErrorStatus(code); status >= 400 && status < 500 {
+			return status, errorBody, nil
+		}
+		return 0, nil, fmt.Errorf("%w: %s", errReplayStreamFailed, payload)
+	}
+	if replayDataPayload(lines[len(lines)-1]) != "[DONE]" {
+		return 0, nil, errReplayStreamIncomplete
+	}
+	if _, err := parseReplayResponse(body); err != nil {
+		return 0, nil, err
+	}
+	return statusCode, body, nil
+}
+
+func parseReplayResponse(body []byte) (completionapi.CompletionResponse, error) {
+	lines, isStream := replayDataLines(body)
+	if !isStream {
+		return completionapi.NewCompletionResponseFromBytes(body)
+	}
+	response, err := completionapi.NewCompletionResponseFromLines(lines)
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range response.(*completionapi.StreamedCompletionResponse).Resp.Data {
+		if !chunk.Usage.IsEmpty() {
+			return response, nil
+		}
+	}
+	return nil, errReplayStreamNoUsage
+}
+
 func validationReplaySeed(inferenceID string) int32 {
 	parsed, err := strconv.ParseUint(inferenceID, 10, 64)
 	if err != nil {
@@ -183,8 +300,20 @@ func TokenCountInflated(claimed, validation uint64) bool {
 	return claimed > validation && claimed-validation > tokenCountTolerance
 }
 
-// CompareLogits compares original and validation logits and returns a ValidationResult.
-func CompareLogits(
+// CompareLogitsWithPolicy compares original and validation logits under policy.
+func CompareLogitsWithPolicy(
+	originalLogits, validationLogits []completionapi.Logprob,
+	baseComparisonResult BaseValidationResult,
+	policy ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
+	if mismatch := compareTokens(originalLogits, validationLogits, baseComparisonResult); mismatch != nil {
+		return mismatch
+	}
+	return shortOutputVerdict(originalLogits, validationLogits, policy, logprobsMode, baseComparisonResult)
+}
+
+func compareTokens(
 	originalLogits []completionapi.Logprob,
 	validationLogits []completionapi.Logprob,
 	baseComparisonResult BaseValidationResult,
@@ -205,57 +334,7 @@ func CompareLogits(
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 	}
-	similarity := customSimilarity(originalLogits, validationLogits)
-
-	return &SimilarityValidationResult{BaseValidationResult: baseComparisonResult, Value: similarity}
-}
-
-func customSimilarity(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) float64 {
-	distance, err := customDistance(originalLogprobs, validationLogprobs)
-	if err != nil {
-		logging.Error("Error calculating custom distance", types.Validation, "error", err)
-		return 0
-	}
-	if math.IsNaN(distance) || math.IsInf(distance, 0) {
-		return 0
-	}
-	similarity := 1 - distance
-	if similarity < 0 {
-		logging.Error("Similarity value is negative", types.Validation, "similarity", similarity)
-		return 0
-	}
-	return similarity
-}
-
-func customDistance(
-	originalLogprobs []completionapi.Logprob,
-	validationLogprobs []completionapi.Logprob,
-) (float64, error) {
-	if len(originalLogprobs) == 0 {
-		return 0.0, nil
-	}
-	distance := 0.0
-	for i := range originalLogprobs {
-		o := originalLogprobs[i]
-		v := validationLogprobs[i]
-		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
-		originalTopLogprobs := o.TopLogprobs
-		if len(originalTopLogprobs) > len(v.TopLogprobs) {
-			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
-		}
-		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
-		if err != nil {
-			logging.Error("Error calculating position distance", types.Validation, "error", err)
-			return math.Inf(1), err
-		}
-		distance += posDistance
-	}
-	totalLogprobs := max(100, len(originalLogprobs))
-
-	return distance / float64(totalLogprobs), nil
+	return nil
 }
 
 // maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
@@ -339,6 +418,22 @@ func ExecuteValidation(
 	logprobsMode string,
 	vocabularySize int,
 ) (ValidationResult, error) {
+	return ExecuteValidationWithPolicy(ctx, inferenceID, promptPayload, responsePayload, execute,
+		claimedInputTokens, claimedOutputTokens, logprobsMode, vocabularySize, DefaultShortOutputScoringPolicy)
+}
+
+// ExecuteValidationWithPolicy is ExecuteValidation under an explicit scoring policy.
+func ExecuteValidationWithPolicy(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	responsePayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
+	vocabularySize int,
+	scoring ScoringPolicy,
+) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
 		promptPayload,
@@ -388,6 +483,17 @@ func ExecuteValidation(
 		}
 	}
 
+	stopTokenIDs := completionapi.StopTokenIDsOf(requestMap)
+	// Runs for the empty-sentinel replay too: both forward stop_token_ids to the node.
+	if err := completionapi.ValidateStopTokenIDs(requestMap, vocabularySize); err != nil {
+		if vocabularySize > 0 {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "stop_token_ids outside the model vocabulary.", Error: err}, nil
+		}
+		// Unknown vocab on this validator is not the executor's fault: replay without the ids so
+		// the node cannot index out of range, and keep the stop-before-end check below.
+		delete(requestMap, "stop_token_ids")
+	}
+
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
 			"inferenceId", inferenceID)
@@ -395,9 +501,9 @@ func ExecuteValidation(
 	} else {
 		requestMap["enforced_tokens"] = enforcedTokens
 	}
-	requestMap["stream"] = false
+	requestMap["stream"] = true
+	requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
 	requestMap["skip_special_tokens"] = false
-	delete(requestMap, "stream_options")
 
 	requestBody, err := json.Marshal(requestMap)
 	if err != nil {
@@ -410,14 +516,18 @@ func ExecuteValidation(
 	}
 	defer resp.Body.Close()
 
-	respBodyBytes, err := io.ReadAll(resp.Body)
+	respBodyBytes, err := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+	if err != nil {
+		return nil, err
+	}
+	statusCode, respBodyBytes, err := NormalizeReplayStream(resp.StatusCode, respBodyBytes)
 	if err != nil {
 		return nil, err
 	}
 
-	if resp.StatusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
+	if statusCode == http.StatusBadRequest && rejectsEnforcedTokens(respBodyBytes) {
 		logging.Warn("validation failed: validator node rejected the executor's enforced tokens", types.Validation,
-			"inferenceId", inferenceID, "status", resp.StatusCode)
+			"inferenceId", inferenceID, "status", statusCode)
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Enforced tokens rejected by validator node."}, nil
 	}
 
@@ -428,26 +538,26 @@ func ExecuteValidation(
 	// invalid: absent proof the executor cheated, it is not punished. Keep mainnet
 	// semantics and rely on the warn logs to surface any cases worth marking
 	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+	if statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity {
 		logging.Warn("validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
-			types.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
+			types.Validation, "inferenceId", inferenceID, "status", statusCode)
 		return &SimilarityValidationResult{
 			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
 			Value:                1.0,
 		}, nil
 	}
 
-	if isEmptySentinel && resp.StatusCode == http.StatusOK {
-		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
-			"inferenceId", inferenceID)
-		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
-	}
-
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
-	responseValidation, err := completionapi.NewCompletionResponseFromBytes(respBodyBytes)
+	responseValidation, err := parseReplayResponse(respBodyBytes)
 	if err != nil {
 		logging.Error("Failed to unmarshal responseValidation", types.Validation, "id", inferenceID, "error", err)
 		return nil, err
+	}
+
+	if isEmptySentinel && statusCode == http.StatusOK {
+		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
+			"inferenceId", inferenceID)
+		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
@@ -471,7 +581,7 @@ func ExecuteValidation(
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
-	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// CompareLogitsWithPolicy short-circuits to perfect similarity (1.0) when the ORIGINAL
 	// logits are empty, so an executor that stored a response with no logprobs
 	// would always pass. Reject only the asymmetric case (exactly one side empty):
 	// the executor's output cannot be verified against the validator's
@@ -500,24 +610,35 @@ func ExecuteValidation(
 		)
 	}
 
-	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
-	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
-	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
-	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
-	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
-	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
-	// above; empty-sentinel errors are exempt.
+	return shortOutputChecks(inferenceID, requestMap, originalLogits, validationLogits,
+		stopTokenIDs, isEmptySentinel, baseResult, scoring, logprobsMode), nil
+}
+
+// shortOutputChecks enforces a caller min_tokens on the output length and that a requested stop id
+// only ends the output, then scores the output under the short-output rule.
+func shortOutputChecks(
+	inferenceID string,
+	requestMap map[string]interface{},
+	originalLogits, validationLogits []completionapi.Logprob,
+	stopTokenIDs map[string]struct{},
+	isEmptySentinel bool,
+	baseResult BaseValidationResult,
+	scoring ScoringPolicy,
+	logprobsMode string,
+) ValidationResult {
 	if !isEmptySentinel && len(originalLogits) > 0 {
-		minTokens := completionapi.MinTokensOf(requestMap)
-		if minTokens > 0 && len(originalLogits) < minTokens {
-			logging.Warn("validation failed: output below min_tokens floor",
-				types.Validation, "inferenceId", inferenceID,
-				"outputTokens", len(originalLogits), "minTokens", minTokens)
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		if minTokens := completionapi.MinTokensOf(requestMap); minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below the requested min_tokens", types.Validation,
+				"inferenceId", inferenceID, "outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than the requested min_tokens."}
+		}
+		if stopTokenBeforeEnd(originalLogits, stopTokenIDs) {
+			logging.Warn("validation failed: output continues past a requested stop token", types.Validation, "inferenceId", inferenceID)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output continues past a requested stop token."}
 		}
 	}
 
-	return CompareLogits(originalLogits, validationLogits, baseResult), nil
+	return CompareLogitsWithPolicy(originalLogits, validationLogits, baseResult, scoring.ForRequest(requestMap), logprobsMode)
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {

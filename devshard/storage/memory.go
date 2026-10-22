@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -168,6 +169,51 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	return nil
+}
+
+// AppendDiffBatch implements DiffBatchWriter: every record is checked before
+// any is written, so a fork leaves the session unchanged.
+func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	}
+	for i, rec := range recs {
+		if i > 0 && rec.Nonce <= recs[i-1].Nonce {
+			return fmt.Errorf("diff batch nonces must ascend: %d after %d", rec.Nonce, recs[i-1].Nonce)
+		}
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			if err := checkDiffReplayIdentity(escrowID, rec, s.diffs[idx]); err != nil {
+				return err
+			}
+		}
+	}
+	for _, rec := range recs {
+		if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+			existing := s.diffs[idx]
+			if existing.Signatures == nil {
+				existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
+			}
+			for slotID, sig := range rec.Signatures {
+				existing.Signatures[slotID] = append([]byte(nil), sig...)
+			}
+			s.diffs[idx] = existing
+			continue
+		}
+		rec.Signatures = copySignatures(rec.Signatures)
+		rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
+		s.diffs = append(s.diffs, rec)
+		s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	}
 	return nil
 }
 
@@ -658,6 +704,47 @@ func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 		return true
 	})
 	return result, nil
+}
+
+func (m *Memory) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	var out []types.DiffWire
+	var err error
+	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
+		txs, mErr := marshalTxs(d.Txs)
+		if mErr != nil {
+			err = mErr
+			return false
+		}
+		out = append(out, types.DiffWire{
+			Nonce:         d.Nonce,
+			Txs:           txs,
+			UserSig:       append([]byte(nil), d.UserSig...),
+			PostStateRoot: append([]byte(nil), d.PostStateRoot...),
+		})
+		return true
+	})
+	return out, err
+}
+
+func (m *Memory) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, false, fmt.Errorf("session %s not found", escrowID)
+	}
+	idx, ok := s.nonceToIndex[nonce]
+	if !ok {
+		return nil, false, nil
+	}
+	return append([]byte(nil), s.diffs[idx].StateHash...), true, nil
 }
 
 func (m *Memory) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {

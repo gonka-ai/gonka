@@ -12,6 +12,7 @@ import (
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
+	"devshard/storage"
 )
 
 // InferenceSink is the SSE byte destination. HTTP uses Echo's Response
@@ -100,6 +101,11 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 				"HandleInference: requests disabled", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}
+		if errors.Is(err, storage.ErrStorageBusy) {
+			call.Sink.Header().Set(HeaderDevshardError, DevshardErrorStorageBusy)
+			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
+				"HandleInference: storage busy", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
+		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 			"HandleInference: handle request", inferenceHTTPError(err))
 	}
@@ -184,17 +190,19 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			s.logOutboundHeightSync(nil, req.Nonce)
 		}
 	}
+	// The receipt's ConfirmStart is already in the mempool, so a receipt the
+	// client did not get still binds this host: execute without the client.
 	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
 		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
 		if resp.ExecutionJob != nil {
-			s.host.ReleaseExecution(resp.InferenceID)
+			s.host.RunExecutionDetached(ctx, resp.ExecutionJob)
 		}
 		return werr
 	}
 	if werr := flushSSENow(w); werr != nil {
 		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
 		if resp.ExecutionJob != nil {
-			s.host.ReleaseExecution(resp.InferenceID)
+			s.host.RunExecutionDetached(ctx, resp.ExecutionJob)
 		}
 		return werr
 	}
@@ -209,7 +217,9 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		}
 	} else if resp.ExecutionJob != nil {
 		resp.ExecutionJob.ResponseWriter = w
-		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
+		execCtx, cancelExec := s.host.ExecutionContext(ctx)
+		execResult, execErr := s.host.RunExecution(execCtx, resp.ExecutionJob)
+		cancelExec()
 		if execErr != nil {
 			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
 			if errors.Is(ctx.Err(), context.Canceled) {

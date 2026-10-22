@@ -12,7 +12,6 @@ import (
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -51,6 +50,9 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	}
 	return cost, nil
 }
+
+// MinReservationTokens is the smallest max_tokens a MsgStartInference may reserve.
+const MinReservationTokens = 1
 
 func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
 	return tokenCost(inputLength, maxTokens, tokenPrice)
@@ -366,8 +368,56 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
+// ValidateDiffs is ValidateDiff for a contiguous run. Each diff is
+// trial-applied on top of the previous one's post-state, and the whole run is
+// undone before return, so the live state is unchanged. It returns a handle
+// for every diff of the valid prefix, in order, and the error that ended it.
+// The handles must be committed in order with CommitValidated.
+func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, error) {
+	var sigErr error
+	for i, diff := range diffs {
+		if err := sm.verifyDiffUserSig(diff); err != nil {
+			diffs, sigErr = diffs[:i], err
+			break
+		}
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	out := make([]*ValidatedDiff, 0, len(diffs))
+	defer func() {
+		for i := len(out) - 1; i >= 0; i-- {
+			sm.undoJournalLocked(out[i].journal)
+		}
+	}()
+	for _, diff := range diffs {
+		var obs []deferredObsWrite
+		var marks []heightsync.AttributableMark
+		sm.obsDeferred = &obs
+		sm.marksDeferred = &marks
+		root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		sm.obsDeferred = nil
+		sm.marksDeferred = nil
+		if err != nil {
+			return out, err
+		}
+		warmAfter := copyStringMap(sm.state.WarmKeys)
+		sm.detachJournalLocked(j)
+		sm.installJournalLocked(j)
+		out = append(out, &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
+	}
+	return out, sigErr
+}
+
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 	return VerifyDiffUserSig(sm.verifier, sm.userAddress, sm.state.EscrowID, diff)
+}
+
+// VerifyDiffUserSig checks that the escrow creator signed diff. It takes no
+// lock: the verifier, creator and escrow id never change.
+func (sm *StateMachine) VerifyDiffUserSig(diff types.Diff) error {
+	return sm.verifyDiffUserSig(diff)
 }
 
 // ApplyLocal applies txs without signature verification. Used by the user
@@ -876,7 +926,23 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	src := sm.state
+	return snapshotNoInferencesLocked(sm.state)
+}
+
+// SnapshotWithInference copies the escrow summary and one inference record
+// under the same lock. The returned state has a nil inference map.
+func (sm *StateMachine) SnapshotWithInference(id uint64) (types.EscrowState, *types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	st := snapshotNoInferencesLocked(sm.state)
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return st, nil, false
+	}
+	return st, copyInferenceRecord(rec), true
+}
+
+func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
 	// only ever replaced wholesale (append to a nil slice), never mutated in
 	// place, so readers of the snapshot see a stable value.
@@ -1119,8 +1185,8 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
-	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
-		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	if !sm.replayingPersisted && msg.MaxTokens < MinReservationTokens {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, MinReservationTokens)
 	}
 
 	// Duplicate inference ID guard.
@@ -1878,22 +1944,27 @@ func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
+	if sm.HostSignerBoundAddr(expected, recovered) {
+		return true
+	}
+	return sm.CheckWarmKey(recovered, expected)
+}
+
+func (sm *StateMachine) HostSignerBoundAddr(expected, recovered string) bool {
+	if expected == "" || recovered == "" {
+		return false
+	}
 	if recovered == expected {
 		return true
 	}
 	sm.mu.RLock()
-	cached := false
+	defer sm.mu.RUnlock()
 	for _, slot := range sm.addressToSlots[expected] {
 		if sm.hostSignerCachedLocked(slot, recovered) {
-			cached = true
-			break
+			return true
 		}
 	}
-	sm.mu.RUnlock()
-	if cached {
-		return true
-	}
-	return sm.CheckWarmKey(recovered, expected)
+	return false
 }
 
 // ResolveWarmKey checks if recovered is an authorized warm key for the given slot.

@@ -288,20 +288,40 @@ jobs:
   test-versiond-router-config:
     runs-on: ubuntu-latest
     name: Test versiond-router HAProxy configuration
+    needs: test-versiond-router-suites
+    if: always()
+    steps:
+      - name: Require every router suite to pass
+        env:
+          SUITES_RESULT: ${{ needs.test-versiond-router-suites.result }}
+        run: test "$SUITES_RESULT" = success
+
+  test-versiond-router-suites:
+    runs-on: ubuntu-latest
+    name: Versiond Router / ${{ matrix.suite }}
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [configuration, fleet-rollouts, fleet-regressions, updater]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
+        if: matrix.suite == 'configuration'
         run: make -C versiond-router test-render
       - name: Check h2 backends with an HTTP/1.1 health check
+        if: matrix.suite == 'configuration'
         run: make -C versiond-router test-h2-backend-h1-check
       - name: Exercise isolated versiond-router fleet rollouts
+        if: matrix.suite == 'fleet-rollouts'
         run: make -C versiond-router test-fleet
       - name: Gate router fleet failure scenarios
+        if: matrix.suite == 'fleet-regressions'
         run: |
           shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
           deploy/join/versiond-router-fleet-regression_test.sh --gate
       - name: Check the join update script
+        if: matrix.suite == 'updater'
         run: |
           shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
             deploy/join/versiond-storage-check.sh deploy/join/updater-rollback.sh \
@@ -309,12 +329,14 @@ jobs:
             deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
       - name: Gate the updater failure scenarios
+        if: matrix.suite == 'updater'
         run: |
           # UPD-PROOF-HEADERS exercises the real BusyBox wget; the harness never pulls.
           docker pull -q busybox:1.36
           deploy/join/update-devshard-regression_test.sh --gate
           python3 deploy/join/updater-rollback_test.py
       - name: Check that every host a service resolves is published on a shared network
+        if: matrix.suite == 'configuration'
         run: deploy/join/compose-contract_test.sh
 
   test-devshard-host-cutover:
@@ -341,6 +363,11 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Set up Go for ingress regression tests
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: devshard/go.mod
+          cache-dependency-path: devshard/go.sum
       - name: Render public proxy configuration
         run: make -C proxy-router test-render
       - name: Check peer RPC health in a live show stat
@@ -351,6 +378,8 @@ jobs:
         run: make -C proxy-router test-routing
       - name: Render private policy configuration
         run: make -C proxy test-render
+      - name: Exercise mixed protocol ingress and rolling compatibility
+        run: make -C proxy-router test-rpc-upgrade
 
   test-proxy-ssl-install:
     runs-on: ubuntu-latest
@@ -436,6 +465,9 @@ jobs:
   build-and-test-devshard:
     runs-on: ubuntu-22.04
     name: Build and Test Devshard
+    env:
+      # Re-run tests on every CI run while retaining compiled package caches.
+      GOFLAGS: -count=1
     permissions:
       contents: read
       checks: write
@@ -465,21 +497,20 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25.9'
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
+          # Cache modules and build outputs, including race-instrumented packages.
+          cache: true
+          cache-dependency-path: |
+            devshard/go.sum
+            common/go.sum
+            inference-chain/go.sum
 
       - name: Install dependencies
         run: go mod download
 
       - name: Install ripgrep
         # Pin the package version for reproducible CI; keep in sync with runner image.
-        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2
+        # nginx is the old wrapping in TestAttachOriginThroughNginxAndVersiond.
+        run: sudo apt-get update && sudo apt-get install -y ripgrep=13.0.0-2 nginx
 
       - name: Build
         run: go build ./...
@@ -501,17 +532,6 @@ jobs:
       - name: Run MockEnv Tests and Generate JUnit Report
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: make gateway-mockenv-test-junit
-
-      - name: Verify Docker Installation
-        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
-        run: |
-          docker --version
-          docker compose version
-
-      - name: Run E2E Tests
-        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
-        timeout-minutes: 30
-        run: make e2e
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
@@ -543,15 +563,129 @@ jobs:
           path: devshard/mockenv-junit-report.xml
           reporter: java-junit
 
+  test-devshard-e2e:
+    # E2E builds its own images and can run alongside build-and-test-devshard.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+    runs-on: ubuntu-22.04
+    name: Devshard E2E
+    permissions:
+      contents: read
+      checks: write
+    defaults:
+      run:
+        working-directory: ./devshard
+
+    steps:
+      - name: Free up disk space on runner
+        working-directory: /
+        run: |
+          echo "=== Disk Space Before Cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af --volumes
+          sudo apt-get clean
+          echo "=== Disk Space After Cleanup ==="
+          df -h
+
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Verify Docker Installation
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Resolve E2E version from Makefile
+        id: e2e-version
+        run: |
+          version=$(make -s print-e2e-version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        id: e2e-buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build E2E Mock Chain Image
+        uses: docker/build-push-action@v6
+        timeout-minutes: 30
+        with:
+          builder: ${{ steps.e2e-buildx.outputs.name }}
+          context: .
+          file: devshard/Dockerfile.mock-chain
+          tags: devshard-mock-chain:local
+          load: true
+          cache-from: type=gha,version=2,scope=devshard-e2e-mock-chain
+          cache-to: type=gha,version=2,scope=devshard-e2e-mock-chain,mode=max
+
+      - name: Build E2E Host Image
+        uses: docker/build-push-action@v6
+        timeout-minutes: 30
+        with:
+          builder: ${{ steps.e2e-buildx.outputs.name }}
+          context: .
+          file: devshard/Dockerfile.host
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
+          tags: devshard-host:local
+          load: true
+          cache-from: type=gha,version=2,scope=devshard-e2e-host
+          cache-to: type=gha,version=2,scope=devshard-e2e-host,mode=max
+
+      - name: Build E2E Devshardctl Image
+        uses: docker/build-push-action@v6
+        timeout-minutes: 30
+        with:
+          builder: ${{ steps.e2e-buildx.outputs.name }}
+          context: .
+          file: devshard/Dockerfile
+          target: devshardctl-runtime
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
+          tags: devshardctl:local
+          load: true
+          cache-from: type=gha,version=2,scope=devshard-e2e-devshardctl
+          cache-to: type=gha,version=2,scope=devshard-e2e-devshardctl,mode=max
+
+      - name: Cache E2E Go modules and build outputs
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/devshard-e2e-go-cache
+          key: ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-go-v1-${{ hashFiles('devshard/docker-compose.e2e.yml', 'devshard/Makefile') }}-${{ hashFiles('devshard/go.sum', 'common/go.sum', 'inference-chain/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-go-v1-${{ hashFiles('devshard/docker-compose.e2e.yml', 'devshard/Makefile') }}-${{ hashFiles('devshard/go.sum', 'common/go.sum', 'inference-chain/go.sum') }}-
+            ${{ runner.os }}-${{ runner.arch }}-devshard-e2e-go-v1-${{ hashFiles('devshard/docker-compose.e2e.yml', 'devshard/Makefile') }}-
+
+      - name: Prepare E2E Go cache directories
+        run: |
+          cache_root="$RUNNER_TEMP/devshard-e2e-go-cache"
+          mkdir -p "$cache_root/mod" "$cache_root/build"
+          echo "DEVSHARD_E2E_GOMODCACHE=$cache_root/mod" >> "$GITHUB_ENV"
+          echo "DEVSHARD_E2E_GOCACHE=$cache_root/build" >> "$GITHUB_ENV"
+
+      - name: Run E2E Tests
+        timeout-minutes: 30
+        run: make e2e-test
+
+      - name: Fix E2E Go cache ownership
+        if: always()
+        # The Go container runs as root; actions/cache runs as the runner user.
+        run: |
+          for cache_dir in "$DEVSHARD_E2E_GOMODCACHE" "$DEVSHARD_E2E_GOCACHE"; do
+            if [ -d "$cache_dir" ]; then
+              sudo chown -R "$(id -u):$(id -g)" "$cache_dir"
+            fi
+          done
+
       - name: Publish E2E Test Results
         uses: actions/upload-artifact@v4
-        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        if: always()
         with:
           name: devshard-e2e-junit-report
           path: devshard/build/test-results/e2e/junit.xml
 
       - name: Report E2E Test Results in GitHub
-        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        if: always()
         uses: dorny/test-reporter@v1
         with:
           name: Devshard E2E Tests

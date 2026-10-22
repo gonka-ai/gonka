@@ -84,12 +84,59 @@ func PinVersiondServiceImage(t *testing.T, composePath, service, image string) {
 	requireDockerImage(t, image)
 	body, err := os.ReadFile(composePath)
 	require.NoError(t, err)
-	updated, err := pinVersiondServiceImage(string(body), service, image)
+	updated, err := pinComposeServiceImage(string(body), service, image, composeVersiondImageLatest)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(composePath, []byte(updated), 0o644))
 }
 
-func pinVersiondServiceImage(text, service, image string) (string, error) {
+// PinVersiondRouterServiceImage retags only the generated versiond-router
+// service and drops its build block, leaving all versiond services on the
+// current tree. This is used by router compatibility tests that need to run a
+// legacy router against current versiond hosts.
+func PinVersiondRouterServiceImage(t *testing.T, composePath, image string) {
+	t.Helper()
+	requireDockerImage(t, image)
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	updated, err := pinComposeServiceImage(string(body), "versiond-router", image, composeVersiondRouterImageLatest)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(composePath, []byte(updated), 0o644))
+}
+
+// PatchComposeServiceImage replaces the image reference for one generated
+// service. Unlike the Pin helpers it does not require a build block, so it can
+// switch an already-pinned service back and forth during a rolling-deploy test.
+func PatchComposeServiceImage(t *testing.T, composePath, service, image string) {
+	t.Helper()
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+
+	lines := strings.Split(string(body), "\n")
+	start := -1
+	for i, line := range lines {
+		if line == "  "+service+":" {
+			start = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, start, 0, "compose %s: service %q not found", composePath, service)
+
+	imageLine := regexp.MustCompile(`^(\s*image:\s*).*$`)
+	for i := start + 1; i < len(lines); i++ {
+		if trimmed := strings.TrimLeft(lines[i], " "); trimmed != "" &&
+			len(lines[i])-len(trimmed) <= 2 {
+			break
+		}
+		if match := imageLine.FindStringSubmatch(lines[i]); match != nil {
+			lines[i] = match[1] + image
+			require.NoError(t, os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0o644))
+			return
+		}
+	}
+	t.Fatalf("compose %s: service %q has no image entry", composePath, service)
+}
+
+func pinComposeServiceImage(text, service, image, latestImage string) (string, error) {
 	marker := "\n  " + service + ":\n"
 	start := strings.Index(text, marker)
 	if start < 0 {
@@ -107,12 +154,16 @@ func pinVersiondServiceImage(text, service, image string) (string, error) {
 	if updated == block {
 		return "", fmt.Errorf("compose: service %s has no build: block", service)
 	}
-	const latest = "image: " + composeVersiondImageLatest
+	latest := "image: " + latestImage
 	if !strings.Contains(updated, latest) {
-		return "", fmt.Errorf("compose: service %s missing %s", service, latest)
+		return "", fmt.Errorf("compose: service %s missing %s", service, latestImage)
 	}
 	updated = strings.Replace(updated, latest, "image: "+image, 1)
 	return text[:start] + updated + text[end:], nil
+}
+
+func pinVersiondServiceImage(text, service, image string) (string, error) {
+	return pinComposeServiceImage(text, service, image, composeVersiondImageLatest)
 }
 
 func dropComposeBuildBeforeImage(text, image string) (string, error) {

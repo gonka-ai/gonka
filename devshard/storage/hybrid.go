@@ -609,6 +609,28 @@ func (h *HybridStorage) AppendDiff(escrowID string, rec types.DiffRecord) error 
 	return b.AppendDiff(escrowID, rec)
 }
 
+func (h *HybridStorage) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return appendDiffBatchVia(ctx, b, escrowID, recs)
+}
+
+// appendDiffBatchVia forwards to a DiffBatchWriter, or appends one record at
+// a time when the store has none (each AppendDiff is replay-safe).
+func appendDiffBatchVia(ctx context.Context, store Storage, escrowID string, recs []types.DiffRecord) error {
+	if w, ok := store.(DiffBatchWriter); ok {
+		return w.AppendDiffBatch(ctx, escrowID, recs)
+	}
+	for _, rec := range recs {
+		if err := store.AppendDiff(escrowID, rec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -617,12 +639,28 @@ func (h *HybridStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]
 	return b.GetDiffs(escrowID, fromNonce, toNonce)
 }
 
+func (h *HybridStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.GetDiffWires(escrowID, fromNonce, toNonce)
+}
+
 func (h *HybridStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return nil, err
 	}
 	return b.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
+func (h *HybridStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	return b.DiffStateHash(escrowID, nonce)
 }
 
 func (h *HybridStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {

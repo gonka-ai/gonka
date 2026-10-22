@@ -17,9 +17,10 @@ import (
 const mixedFleetBaselineImage = "devshard-versiond:0.2.15-v5"
 
 // TestMixedFleetNoProxy is the §8.2 mixed fleet: versiond-0 on 0.2.15-v5,
-// versiond-1 and versiond-router on this tree, same escrow, RPC on, both hops
-// HTTP/1.1 :8080. Chat plus Attach run through the replica that owns the
-// escrow; sticky healthz must still hit both images.
+// versiond-1 and versiond-router on this tree, same escrow, RPC on, Connect
+// over HTTP/1.1 on :8080 (DEVSHARD_RPC_H2_UPGRADE=false). Chat plus Attach
+// run through the replica that owns the escrow; sticky healthz must still
+// hit both images.
 func TestMixedFleetNoProxy(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	requireNoProxyRPC(t)
@@ -65,10 +66,9 @@ func TestMixedFleetNoProxy(t *testing.T) {
 
 func requireVersiondRPC(t *testing.T, stack *harness.Stack, service string) {
 	t.Helper()
-	h2, err := stack.ComposeExecOutput(service, "printenv", "DEVSHARD_RPC_H2_PORT")
-	if err == nil && strings.TrimSpace(h2) != "" {
-		t.Fatalf("%s DEVSHARD_RPC_H2_PORT=%q", service, strings.TrimSpace(h2))
-	}
+	upgrade, err := stack.ComposeExecOutput(service, "printenv", "DEVSHARD_RPC_H2_UPGRADE")
+	require.NoError(t, err, "%s DEVSHARD_RPC_H2_UPGRADE", service)
+	require.Equal(t, "false", strings.TrimSpace(upgrade), "%s must dial Connect over HTTP/1.1", service)
 }
 
 func requireAttachOK(t *testing.T, stack *harness.Stack, cfg *config.File, host string) {

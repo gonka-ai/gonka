@@ -99,11 +99,11 @@ func mapRepairHTTP(err error) error {
 // must already be attached as s.host.Signer() (SetPeerClients); a
 // user-signed RPCClient clone fails openSigned.
 func (s *Server) RepairProbe(ctx context.Context, targetSlot uint32, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
-	if s.peerClients == nil {
-		return nil, fmt.Errorf("repair: no peer clients")
+	pc, err := s.peerClient(ctx, int(targetSlot))
+	if err != nil {
+		return nil, fmt.Errorf("repair: slot %d: %w", targetSlot, err)
 	}
-	pc, ok := s.peerClients[int(targetSlot)]
-	if !ok || pc == nil {
+	if pc == nil {
 		return nil, fmt.Errorf("repair: no client for slot %d", targetSlot)
 	}
 	timeout := DefaultRepairTimeout

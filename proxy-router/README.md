@@ -11,9 +11,12 @@ It has three data-plane responsibilities:
    router network.
 
 The nginx workers still own TLS and HTTP/2 on `:80` and `:443`, plus CORS,
-rate limits, path rewrites, and the on-chain route table. Peer RPC is a
-separate HAProxy listen (`DEVSHARD_RPC_H2_PORT`, default 9443) and does not
-enter those workers. This keeps one policy implementation for JSON while
+rate limits, path rewrites, and the on-chain route table. Peer RPC shares
+those two ports: the public frontends recognise a peer by the first bytes
+of its connection (the HTTP/2 client preface on `:80`, ALPN `gonka-rpc/1`
+on `:443`) and hand it to an HAProxy frontend in the same process, so it
+does not enter those workers. Every other connection is JSON and goes to
+nginx exactly as before. This keeps one policy implementation for JSON while
 allowing the service-pool distributors to scale and restart independently.
 
 ## Request path
@@ -25,11 +28,24 @@ client
        -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
 
-peer RPC (skips nginx)
-  -> proxy-router :${DEVSHARD_RPC_H2_PORT}  (9443; TLS+ALPN h2 when NGINX_MODE is https/both)
+peer RPC (same :80/:443, skips nginx)
+  -> proxy-router :80  (HTTP/2 preface)  -> rpc_h2 frontend (h2c)
+  -> proxy-router :443 (ALPN gonka-rpc/1) -> rpc_h2 frontend (TLS with nginx's cert, HTTP/2)
        HA:     versiond_routers_<version>_rpc -> versiond-router-fleet:8081 proto h2
        non-HA: versiond:8080 proto h2
 ```
+
+A client whose first bytes are neither (an older devshard, a browser, curl)
+never sees the peer-RPC frontend. A peer whose host still runs an older
+wrapping normally falls back to Connect on HTTP/1.1 through nginx. With an
+HTTP URL and old nginx in `NGINX_MODE=both`, nginx can accept h2c instead:
+the client-to-nginx hop stays H2, but nginx still forwards over H1. This
+is not end-to-end multiplexing or the new public RPC connection policy.
+Intermediate separate-port v6 testnet clients/routers are not a supported
+mixed-generation combination; see the compatibility table in the
+[canonical host guide](https://gonka.ai/docs/host/devshard-high-availability/). The hand-off waits for the
+first bytes at most `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` (default 5); an
+idle connection then goes to nginx.
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between
 the client and nginx. `send-proxy-v2` carries the original source address to the
@@ -152,7 +168,7 @@ services and containers owned by other active overlays remain unchanged.
 
 | Listener | Purpose |
 | --- | --- |
-| `:80`, `:443` | public TCP ingress to policy workers |
+| `:80`, `:443` | public TCP ingress to policy workers; peer RPC connections are recognised here and kept in this process |
 | policy network `:18081` | private versiond-router distributor |
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
@@ -202,6 +218,7 @@ availability.
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
+| `PROXY_ROUTER_RPC_MAX_CONNS_PER_SRC` | `32` | concurrent peer RPC connections one client address may hold; `:80`/`:443` count a connection as soon as its HTTP/2 preface or peer RPC ALPN is seen, and close the next one before the hand-off. The key is one IPv4 address, or one IPv6 /64; with `PROXY_ROUTER_PROXY_PROTOCOL_FROM` it is the address in the balancer's preamble. A TLS handshake that stalls holds its slot until `timeout client-hs` (5s) closes it. A socket that never sends the preface or the ALPN token is passed to nginx after `PROXY_ROUTER_PUBLIC_INSPECT_SECONDS` and never counts. Without PROXY protocol, clients behind one L4 balancer share that balancer's address |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 | `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |
@@ -270,3 +287,62 @@ router health, an unavailable router data port, and a legacy edge-api-router
 fixture. It verifies failover, a policy replacement that receives a new Docker
 IP, withdrawal before replacement admission, exactly-once POST execution in the
 tested connection-failure path, and the unchanged edge-api routing path.
+
+## Peer RPC compatibility and admission
+
+Connect RPC arriving through nginx returns to the private `:18081` frontend,
+including in non-HA deployments. It shares procedure/IP stick tables with direct
+HTTP/2 RPC. nginx retains TLS for ordinary clients, JSON policy, CORS, and streaming
+configuration. `DEVSHARD_RPC_POLICY_HOST` is wired by join Compose; standalone
+nginx deployments with it unset retain their existing routing.
+
+Peer RPC is served over HTTP/2. Only v6 devshardd serves it; v4 and v5 children
+take JSON over HTTP/1.1 through nginx. A bounded HTTP/1.1 hop, using the original
+JSON routing maps (including version and legacy placement), exists only for a
+downstream that has no HTTP/2:
+
+- Non-HA: the hop opens only while versiond answers the HTTP/2 client preface
+  with an HTTP/1.x status line (`rpc_h1_only`), as a versiond without h2c does.
+  `rpc_h2_upstream` checks versiond `/healthz` over HTTP/2.
+- HA: when the selected RPC pool is empty, the request goes to any router with
+  the `:8081` listen (`rpc_h2_routers`), and that router answers from its own
+  pools and gate. The hop opens only while no router has that listen, which
+  means a v5 fleet.
+
+Otherwise peer RPC with no HTTP/2 server gets an immediate Connect `unavailable`
+(HTTP 503, `Retry-After: 1`), which clients retry. No POST replay is added.
+Native gRPC receives `Unavailable` because HTTP/1.1 cannot carry it. RPC data
+checks require HTTP 200; a listening router with an empty RPC pool is not ready.
+JSON capacity is independent of fallback admission. HTTPS-only mode rejects
+plaintext connections on the HTTP port, including prior-knowledge H2; a
+successful TLS connection is required. H2 backends start unavailable until their
+checks pass. versiond rejects H2 RPC to a child without h2c with 503 rather than
+expanding the mux into unbounded H1 connections; such a child serves no peer RPC.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `PROXY_ROUTER_RPC_FALLBACK_MAXCONN` | `512` | Global active H1 fallback requests across versions, including long streams |
+| `PROXY_ROUTER_RPC_FALLBACK_MAXQUEUE` | `64` | Queue rejection threshold; simultaneous arrivals may overshoot this threshold |
+| `PROXY_ROUTER_RPC_FALLBACK_QUEUE_MS` | `200` | Maximum wait for a fallback connection, in milliseconds |
+
+All three values must be positive integers. Overload returns 503; ordinary
+procedure limits return Connect `ResourceExhausted` (HTTP 429 with Retry-After) or
+native gRPC status 8. Do not size the active budget solely for short unary calls:
+Watch and Chat occupy fallback connections for their lifetime.
+
+For the upgrade and rollback procedure, use the canonical
+[host guide in gonka-docs](https://github.com/snevolin/gonka-docs/blob/sn/devshard-ha-v6/docs/host/devshard-high-availability.md)
+([documentation PR #1515](https://github.com/gonka-ai/gonka-docs/pull/1515)).
+The proxy/policy pair must both be updated to enforce the shared budgets. A public
+proxy restart closes its connections; this is not a zero-downtime guarantee.
+
+Run `make -C proxy-router test-rpc-upgrade` from the repository root with Go and a
+Linux Docker daemon. The suite builds the production nginx image and runs HAProxy
+3.2 with configurations rendered by the production entrypoints. It covers H1,
+h2c, TLS H1, custom ALPN H2, ordinary nginx H2, streaming, shared limits, encoded
+paths, fragmented prefaces, bounded fallback, and versiond upgrade/rollback.
+Its versiond endpoint is simulated; it does not prove signed session continuity
+through actual binary replacement or the updater's transaction/rollback logic.
+Client transport tests separately cover Attach, renewal, Watch, backoff, and H2
+connection accounting. After rollout, verify an authenticated RPC on the public
+port as well as readiness.

@@ -27,7 +27,7 @@ const (
 	rpcStatsEnvConcurrency = "DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY"
 	rpcStatsEnvDisabled    = "DEVSHARD_GATEWAY_RPC_STATS_DISABLED"
 
-	defaultRPCStatsInterval    = 15 * time.Second
+	defaultRPCStatsInterval = 15 * time.Second
 	// Heavier than host ping (2s /clock): WAN RTT + versiond merge + child fetches.
 	defaultRPCStatsTimeout     = 4 * time.Second
 	defaultRPCStatsConcurrency = 8
@@ -40,7 +40,15 @@ const (
 	rpcStatsMaxBodyBytes  = 8 << 20
 	rpcStatsProcessEscrow = "_"
 	rpcStatsAttachFloor   = "floor"
+	rpcStatsAttachOrigin  = "origin"
 	rpcStatsAttachOther   = "other"
+
+	// One host snapshot is an untrusted JSON body (capped at
+	// rpcStatsMaxBodyBytes). Each reconnect and each escrow id becomes a
+	// Prometheus label on the loopback scrape, so the rows kept per snapshot
+	// are bounded. The busiest rows stay; the rest sum into "other".
+	rpcStatsMaxReconnectRows = 128
+	rpcStatsMaxShardRows     = 128
 )
 
 var errRPCStatsTooLarge = errors.New("rpc stats body too large")

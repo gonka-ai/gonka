@@ -314,12 +314,19 @@ func syncChainSeed(cfg *config.File) {
 	// Distinct on-chain participants: one per KEY_NAME. Hosts sharing a
 	// KEY_NAME are replicas, not extra identities. Solos keep their own key
 	// and a direct InferenceURL so gateway/gossip bypass the sticky pool.
+	// With the proxy overlay, the pooled InferenceUrl is the overlay proxy
+	// in front of versiond-router, the way join's InferenceUrl is the
+	// public proxy: peer RPC and JSON then share that one port.
+	pooledURL := routerURL
+	if config.ProxyOverlayFromEnv() {
+		pooledURL = config.ProxyOverlayURL
+	}
 	participants := make([]config.Participant, 0, len(cfg.Hosts))
 	for _, h := range config.OnChainIdentityHosts(cfg) {
 		if h.Address == "" {
 			continue
 		}
-		url := routerURL
+		url := pooledURL
 		if cfg.Versiond.Mode == config.VersiondModeMulti && !config.IsRouterPooledHost(cfg, h) {
 			url = fmt.Sprintf("http://%s:%d", h.ID, config.DefaultHostPort)
 		}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/transport"
@@ -85,6 +86,47 @@ func TestTheExecutorReceiptIsQueuedWhileTheStreamIsStillOpen(t *testing.T) {
 
 	close(holding.release)
 	<-sent
+}
+
+type countingRecoverer struct {
+	signing.Verifier
+	calls atomic.Int32
+}
+
+func (v *countingRecoverer) RecoverAddress(message, sig []byte) (string, error) {
+	v.calls.Add(1)
+	return v.Verifier.RecoverAddress(message, sig)
+}
+
+func TestTheSameReceiptSeenAgainIsNotVerifiedAgain(t *testing.T) {
+	session, hosts, user := setupSession(t, 3, 100000, 10)
+	recoverer := &countingRecoverer{Verifier: signing.NewSecp256k1Verifier()}
+	sm := statetest.MustStateMachine(t, "escrow-1", testutil.DefaultConfig(3), session.group, 100000, user.Address(), recoverer)
+	session, err := NewSession(sm, user, "escrow-1", session.group, session.clients, signing.NewSecp256k1Verifier())
+	require.NoError(t, err)
+
+	nonce := prepareNonce(t, session)
+	confirmedAt := time.Now().Unix()
+	receipt := &host.HostResponse{
+		Nonce:       nonce,
+		Receipt:     signedExecutorReceipt(t, session, hosts, nonce, confirmedAt),
+		ConfirmedAt: confirmedAt,
+	}
+	session.confirmStartOnReceipt(nonce, receipt)
+	require.Equal(t, int32(1), recoverer.calls.Load(), "the first copy is the one that is verified")
+
+	final := *receipt
+	final.Mempool = []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: nonce, ExecutorSig: receipt.Receipt, ConfirmedAt: confirmedAt,
+	}}}}
+	rec, ok := session.sm.GetInference(nonce)
+	require.True(t, ok)
+	recoverer.calls.Store(0)
+	require.NoError(t, session.ProcessResponse(int(rec.ExecutorSlot), &final, nonce))
+
+	require.Zero(t, recoverer.calls.Load(),
+		"the final response and the host's mempool carry the queued confirm again; it is already verified")
+	require.Equal(t, []uint64{nonce}, pendingConfirmStarts(session))
 }
 
 func TestAResponseWithoutAReceiptQueuesNothing(t *testing.T) {
@@ -635,15 +677,19 @@ func TestRewindMakesTheNextCatchUpCarryTheWholeHistory(t *testing.T) {
 	}
 	session.mu.Lock()
 	session.hostSyncNonce[2] = 4
-	before := len(session.diffsForHost(2))
+	beforeDiffs, err := session.diffsForHost(2)
 	session.mu.Unlock()
+	require.NoError(t, err)
+	before := len(beforeDiffs)
 	require.NotZero(t, before, "precondition: the cursor hides part of a non-empty history")
 
 	require.True(t, session.RewindHostCatchUp(2, "escrow_state_root_diverged"))
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	require.Greater(t, len(session.diffsForHost(2)), before,
+	afterDiffs, err := session.diffsForHost(2)
+	require.NoError(t, err)
+	require.Greater(t, len(afterDiffs), before,
 		"a rewound host has to be handed the chain its cursor claimed it already had")
 }
 

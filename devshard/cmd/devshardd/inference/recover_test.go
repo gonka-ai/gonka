@@ -72,7 +72,7 @@ func streamedExecution(t *testing.T, store PayloadStore, epoch uint64) *devshard
 			request, _ := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(string(body)))
 			return http.DefaultClient.Do(request)
 		},
-		fixedChainParams{}, true)
+		fixedChainParams{}, true, fixedVocabularySize(0))
 	if err != nil {
 		t.Fatalf("executeInference: %v", err)
 	}
@@ -129,6 +129,30 @@ func TestRecoveryRebuildsTheResultTheFirstExecutionCommitted(t *testing.T) {
 	}
 	if strings.Count(streamed, "[DONE]") != 1 {
 		t.Fatalf("replay must end with exactly one [DONE]: %q", streamed)
+	}
+}
+
+type goneWriter struct{ header http.Header }
+
+func (w *goneWriter) Header() http.Header       { return w.header }
+func (w *goneWriter) Write([]byte) (int, error) { return 0, errors.New("client gone") }
+func (w *goneWriter) WriteHeader(int)           {}
+
+func TestRecoveryFinishesWhenTheStoredResponseCannotBeRelayed(t *testing.T) {
+	store := &memoryPayloads{}
+	original := streamedExecution(t, store, 5)
+
+	req := recoveryRequest(t, devshardpkg.RecoveryStoredFirst, 5)
+	req.ResponseWriter = &goneWriter{header: http.Header{}}
+	result, err := executeWithRecovery(context.Background(), req, store, 5, func(context.Context) (*devshardpkg.ExecuteResult, error) {
+		t.Fatal("a stored response must not run the model again")
+		return nil, nil
+	})
+	if err != nil {
+		t.Fatalf("a relay failure must not fail a stored execution: %v", err)
+	}
+	if result == nil || string(result.ResponseHash) != string(original.ResponseHash) {
+		t.Fatal("the stored result is still returned so the Finish is queued")
 	}
 }
 
