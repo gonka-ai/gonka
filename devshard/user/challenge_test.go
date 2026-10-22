@@ -417,7 +417,13 @@ func TestCollectChallengeVotes_PendingAtDeadlineAndRejects(t *testing.T) {
 		require.Empty(t, votes)
 		require.Equal(t, 2, unanswered)
 		require.Equal(t, uint32(2), unansweredWeight)
-		require.Equal(t, []string{"unchecked", "unchecked"}, causes)
+		// The first reject settles the outcome (no fault can reach the
+		// threshold any more), so the other ask may be cancelled before it
+		// answers and then drains as an error without a cause.
+		require.NotEmpty(t, causes)
+		for _, cause := range causes {
+			require.Equal(t, "unchecked", cause)
+		}
 	})
 }
 
