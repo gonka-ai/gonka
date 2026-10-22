@@ -59,9 +59,15 @@ func TestAMarkAfterTheFinishStartsTheChallenge(t *testing.T) {
 
 	applyFinish(session, 6)
 	require.Empty(t, started)
+	require.Contains(t, session.appliedFinishHashes, uint64(6), "the Finish waits for a stream to judge")
 	session.MarkChallengeStream(6, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM)
 
 	require.Equal(t, []startedChallenge{{nonce: 6, reason: types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM}}, started)
+	// The mark says the stream ended without binding: there is no stream left
+	// to judge the Finish against, so the retention sweep must not report it
+	// as unchecked later.
+	require.NotContains(t, session.appliedFinishHashes, uint64(6))
+	require.NotContains(t, session.challengeFinishes, uint64(6))
 }
 
 // A complete stream is judged by the served binding: a mismatch is a stream
