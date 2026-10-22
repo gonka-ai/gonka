@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/transport"
 	"devshard/types"
@@ -840,6 +841,40 @@ func TestCollectChallengeVotes_StopsWhenTheOutcomeIsSettled(t *testing.T) {
 		require.Len(t, votes, 1)
 		require.Equal(t, 1, unanswered)
 		require.Less(t, time.Since(start), 2*time.Second, "one NONE plus one silent voter cannot pass the threshold of one")
+	})
+	// The asks the gateway stopped waiting for did not fail: the outcome was
+	// settled without them. The log says so, and does not count them as
+	// voters that let the gateway down.
+	t.Run("the asks cut by the settled outcome are not failures", func(t *testing.T) {
+		logs := &captureLogger{}
+		logging.SetLogger(logs)
+		t.Cleanup(func() { logging.SetLogger(logging.NewSlogAdapter()) })
+
+		session, hosts, nonce, execIdx, responseHash := finishedChallengeSessionOf(t, 5)
+		verifiers := map[int]ChallengeVerifier{}
+		var silent *scriptedChallengeClient
+		for i, c := range session.clients {
+			if i == execIdx {
+				continue
+			}
+			if silent == nil {
+				silent = &scriptedChallengeClient{HostClient: c}
+				verifiers[i] = silent
+				continue
+			}
+			verifiers[i] = &scriptedChallengeClient{HostClient: c, answers: []*transport.VerifyChallengeResponse{
+				signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
+			}}
+		}
+		executorAddr := session.StateMachine().SlotAddress(uint32(execIdx))
+
+		_, unanswered, _, _ := session.CollectChallengeVotes(context.Background(), nonce,
+			types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND, responseHash, executorAddr, verifiers, time.Now().Add(10*time.Second))
+		require.Equal(t, 1, unanswered)
+		require.Empty(t, logs.find("challenge_vote_failed"), "the silent voter was not awaited, it did not fail")
+		notAwaited := logs.find("challenge_vote_not_awaited")
+		require.Len(t, notAwaited, 1)
+		require.Equal(t, nonce, notAwaited[0].kv["nonce"])
 	})
 }
 
