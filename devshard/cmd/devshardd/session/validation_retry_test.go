@@ -762,11 +762,11 @@ func TestRetryStaleValidation_TerminalInferenceDoesNotAppearInMempoolEndpoint(t 
 	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
 	voteMsg := &types.MsgValidationVote{
 		InferenceId: 1,
-		VoterSlot:   1,
+		VoterSlot:   2,
 		VoteValid:   false,
 		EscrowId:    "escrow-1",
 	}
-	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], voteMsg)
 	validationDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
 		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
@@ -965,7 +965,7 @@ func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T)
 
 func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t *testing.T) {
 	const escrowID = "1"
-	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	store, hosts, user, group := newStoredFinishedRetrySessionWithHosts(t, escrowID, 3)
 	appendTerminalInvalidationDiffToStore(t, store, escrowID, hosts, user)
 
 	mgr := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
@@ -1199,7 +1199,12 @@ func newRetryHostManager(t *testing.T, store storage.Storage, signer *signing.Se
 
 func newStoredFinishedRetrySession(t *testing.T, escrowID string) (*storage.Memory, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment) {
 	t.Helper()
-	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, escrowID)
+	return newStoredFinishedRetrySessionWithHosts(t, escrowID, 2)
+}
+
+func newStoredFinishedRetrySessionWithHosts(t *testing.T, escrowID string, hostCount int) (*storage.Memory, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment) {
+	t.Helper()
+	hosts, user, group, diffs := newFinishedRetryFixtureWithHosts(t, escrowID, hostCount)
 	store := storage.NewMemory()
 	config := retrySessionConfig()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
@@ -1226,11 +1231,11 @@ func newStoredFinishedRetrySession(t *testing.T, escrowID string) (*storage.Memo
 
 func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, escrowID string, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer) {
 	t.Helper()
-	require.Len(t, hosts, 2)
+	require.Len(t, hosts, 3)
 
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err)
-	require.Len(t, meta.Group, 2)
+	require.Len(t, meta.Group, 3)
 
 	version := meta.Version
 	if version == "" {
@@ -1267,11 +1272,11 @@ func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, 
 	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
 	voteMsg := &types.MsgValidationVote{
 		InferenceId: 1,
-		VoterSlot:   meta.Group[1].SlotID,
+		VoterSlot:   meta.Group[2].SlotID,
 		VoteValid:   false,
 		EscrowId:    escrowID,
 	}
-	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], voteMsg)
 	txs := []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
 		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
@@ -1293,7 +1298,7 @@ func newFinishedRetryHost(t *testing.T) *host.Host {
 
 func newFinishedRetryHostWithSigners(t *testing.T) (*host.Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
 	t.Helper()
-	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, "escrow-1")
+	hosts, user, group, diffs := newFinishedRetryFixtureWithHosts(t, "escrow-1", 3)
 	h := newRetryHostFromDiffs(t, hosts, user, group, diffs)
 	return h, hosts, user
 }
@@ -1306,7 +1311,15 @@ func newFinishedRetryHostPair(t *testing.T) (*host.Host, *host.Host, []types.Slo
 
 func newFinishedRetryFixtureForEscrow(t *testing.T, escrowID string) ([]*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment, []types.Diff) {
 	t.Helper()
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	return newFinishedRetryFixtureWithHosts(t, escrowID, 2)
+}
+
+func newFinishedRetryFixtureWithHosts(t *testing.T, escrowID string, hostCount int) ([]*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment, []types.Diff) {
+	t.Helper()
+	hosts := make([]*signing.Secp256k1Signer, hostCount)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	engine := stub.NewInferenceEngine()

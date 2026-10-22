@@ -1359,7 +1359,9 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	rec.ActualCost = actualCost
 
 	// Update host stats.
-	sm.hostStatsForWriteLocked(rec.ExecutorSlot).Cost += actualCost
+	hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+	hs.Cost += actualCost
+	hs.Finished++
 
 	logging.Debug("inference started -> finished", "subsystem", "state",
 		"inference_id", msg.InferenceId,
@@ -1417,7 +1419,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	if _, ok := sm.slotToAddress[msg.ValidatorSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ValidatorSlot)
 	}
-	if msg.ValidatorSlot == rec.ExecutorSlot {
+	if msg.ValidatorSlot == rec.ExecutorSlot || sm.slotToAddress[msg.ValidatorSlot] == sm.slotToAddress[rec.ExecutorSlot] {
 		return types.ErrSelfValidation
 	}
 
@@ -1455,9 +1457,17 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		rec.ValidatedBy.Set(msg.ValidatorSlot)
 		if msg.Valid {
 			rec.VotesValid += weight
+			sm.hostStatsForWriteLocked(rec.ExecutorSlot).Validated++
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
+			suspended := rec.ValidatedBy.Count() - 1
+			hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+			if hs.Validated < suspended {
+				hs.Validated = 0
+			} else {
+				hs.Validated -= suspended
+			}
 			// Obs row is not part of post_state_root; a storage blip must not fail
 			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
 			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
@@ -1514,6 +1524,7 @@ func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *t
 		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
+		sm.hostStatsForWriteLocked(rec.ExecutorSlot).Validated++
 		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
 		logging.Debug("inference challenged -> validated", "subsystem", "state",
 			"inference_id", inferenceID,
@@ -1544,6 +1555,9 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)
+	}
+	if sm.slotToAddress[msg.VoterSlot] == sm.slotToAddress[rec.ExecutorSlot] {
+		return types.ErrSelfValidation
 	}
 
 	// Skip already-resolved challenge votes (allows safe vote batching).
@@ -1735,6 +1749,14 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		hs.Cost = 0
 	} else {
 		hs.Cost -= rec.ActualCost
+	}
+	if hs.Finished > 0 {
+		hs.Finished--
+	}
+	if passes := rec.ValidatedBy.Count(); hs.Validated < passes {
+		hs.Validated = 0
+	} else {
+		hs.Validated -= passes
 	}
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",

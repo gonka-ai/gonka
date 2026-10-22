@@ -358,3 +358,42 @@ func invalidTotal(t *testing.T, tr *Tracker, epoch uint64) uint64 {
 	}
 	return total
 }
+
+func TestPostgresAccountingHostStatsValidatedFollowsLatestNonce(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	a := openWriterTracker(t, "writer-a")
+	registerEscrow(t, a, "e-passes", 15, "m")
+	b := openWriterTracker(t, "writer-b")
+	registerEscrow(t, b, "e-passes", 15, "m")
+
+	require.NoError(t, a.SyncState("e-passes", 6, map[uint32]*types.HostStats{
+		0: {Missed: 1, Validated: 3, Finished: 9},
+	}))
+	require.NoError(t, a.Flush(ctx))
+
+	require.NoError(t, b.SyncState("e-passes", 4, map[uint32]*types.HostStats{
+		0: {Missed: 1, Validated: 7, Finished: 9},
+	}))
+	require.NoError(t, b.Flush(ctx))
+	require.NoError(t, a.Close())
+	require.NoError(t, b.Close())
+
+	merged := openWriterTracker(t, "writer-c")
+	stats := merged.escrows["e-passes"].HostStats[0]
+	require.Equal(t, uint32(3), stats.Validated, "a stale writer must not resurrect suspended passes")
+	require.Equal(t, uint32(9), stats.Finished)
+
+	require.NoError(t, merged.SyncState("e-passes", 7, map[uint32]*types.HostStats{
+		0: {Missed: 1, Validated: 0, Finished: 8},
+	}))
+	require.NoError(t, merged.Flush(ctx))
+	require.NoError(t, merged.Close())
+
+	reopened := openWriterTracker(t, "writer-d")
+	defer reopened.Close()
+	stats = reopened.escrows["e-passes"].HostStats[0]
+	require.Equal(t, uint32(0), stats.Validated, "a newer nonce lowers the credited passes")
+	require.Equal(t, uint32(8), stats.Finished)
+}

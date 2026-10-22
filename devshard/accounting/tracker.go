@@ -42,9 +42,10 @@ type Tracker struct {
 }
 
 type escrowState struct {
-	Meta      EscrowMetadata             `json:"meta"`
-	Latest    uint64                     `json:"latest"`
-	HostStats map[uint32]types.HostStats `json:"host_stats"`
+	Meta           EscrowMetadata             `json:"meta"`
+	Latest         uint64                     `json:"latest"`
+	HostStats      map[uint32]types.HostStats `json:"host_stats"`
+	HostStatsNonce map[uint32]uint64          `json:"host_stats_nonce"`
 	// Counters holds the dispositions derived from a local nonceState. Only the
 	// instance that dispatched a nonce can produce one, so writers hold disjoint
 	// sets and the persisted rows are summed across them.
@@ -333,6 +334,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			tracker:         t,
 			Meta:            meta,
 			HostStats:       make(map[uint32]types.HostStats),
+			HostStatsNonce:  make(map[uint32]uint64),
 			Counters:        make(map[CounterKey]uint64),
 			ProtocolOnly:    make(map[uint64]uint32),
 			Challenge:       make(map[uint64]challengeRecord),
@@ -439,7 +441,7 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 		if int(slot) >= len(e.Meta.Slots) {
 			return fmt.Errorf("slot %d out of range", slot)
 		}
-		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		e.mergeHostStats(nonce, slot, stats)
 		if recordsProtocolEvent(kind) {
 			e.appendProtocolEvent(nonce, slot, kind, t.nowUTC())
 		}
@@ -488,7 +490,7 @@ func (t *Tracker) RecordHostStats(escrowID string, slot uint32, stats types.Host
 		if int(slot) >= len(e.Meta.Slots) {
 			return fmt.Errorf("slot %d out of range", slot)
 		}
-		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		e.mergeHostStats(e.Latest, slot, stats)
 		return nil
 	})
 }
@@ -792,6 +794,19 @@ func (t *Tracker) ErrorCounts() (recording, writer uint64) {
 	return t.errCount, t.wrCount
 }
 
+func (t *Tracker) slotCount(escrowID string) int {
+	if t == nil {
+		return 0
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	e := t.escrows[strings.TrimSpace(escrowID)]
+	if e == nil {
+		return 0
+	}
+	return len(e.Meta.Slots)
+}
+
 // RetainsEscrow reports whether the escrow is still in the ledger, which retention and purges shrink.
 func (t *Tracker) RetainsEscrow(escrowID string) bool {
 	if t == nil {
@@ -923,9 +938,23 @@ func (e *escrowState) mergeState(latest uint64, hostStats map[uint32]*types.Host
 	}
 	for slot, stats := range hostStats {
 		if stats != nil {
-			e.HostStats[slot] = maxHostStats(e.HostStats[slot], *stats)
+			e.mergeHostStats(latest, slot, *stats)
 		}
 	}
+}
+
+func (e *escrowState) mergeHostStats(nonce uint64, slot uint32, stats types.HostStats) {
+	if nonce < e.HostStatsNonce[slot] {
+		return
+	}
+	if e.HostStatsNonce == nil {
+		e.HostStatsNonce = make(map[uint32]uint64)
+	}
+	e.HostStatsNonce[slot] = nonce
+	merged := maxHostStats(e.HostStats[slot], stats)
+	merged.Validated = stats.Validated
+	merged.Finished = stats.Finished
+	e.HostStats[slot] = merged
 }
 
 func (e *escrowState) recordPhase(phase EscrowPhase) error {
