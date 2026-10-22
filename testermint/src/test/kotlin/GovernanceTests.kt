@@ -185,7 +185,8 @@ class GovernanceTests : TestermintTest() {
         logSection("Verifying Proposal")
         val newGovBalance = genesis.node.getBalance(governanceAddress, "ngonka")
         val newRecipientBalance = genesis.node.getBalance(recipientAddress, "ngonka")
-        assertThat(newGovBalance.balance.amount).isEqualTo(0)
+        // SettleAccounts can deposit 1-2 ngonka of integer-division remainder into gov if an epoch boundary crosses the vote.
+        assertThat(newGovBalance.balance.amount).isBetween(0L, 10L)
         // amount should be unaffected immediately
         assertThat(newRecipientBalance.balance.amount).isEqualTo(recipientBalance.balance.amount)
         val newVestingSchedule = genesis.node.queryVestingSchedule(recipientAddress)
