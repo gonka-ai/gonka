@@ -148,6 +148,14 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	if params.EpochParams == nil || params.PocParams == nil {
 		return evaluationError("missing epoch or poc params")
 	}
+	recipe, found, err := am.keeper.GetEpochPocRecipe(ctx, ch.EpochIndex)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return evaluationError("epoch has no frozen PoC recipe")
+	}
+	params.PocParams = types.ApplyStageRecipe(params.PocParams, &recipe)
 	epochGroupData, found := am.keeper.GetEpochGroupData(ctx, ch.EpochIndex, "")
 	if !found {
 		return evaluationError(fmt.Sprintf("epoch group data not found for epoch %d", ch.EpochIndex))

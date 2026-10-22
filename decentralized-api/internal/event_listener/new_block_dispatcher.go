@@ -266,7 +266,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Update PoC params cache for multi-model support
 			if params.Params.PocParams != nil {
-				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams.GetModelConfigs()))
+				_ = d.configManager.SetPoCParams(apiconfig.NewPoCParamsCache(params.Params.PocParams))
 			}
 
 			if params.Params.DevshardEscrowParams != nil {

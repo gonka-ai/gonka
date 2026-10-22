@@ -7,7 +7,12 @@ services:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
+      # Model-specific image and PoC settings: docs/mlnode-configs.md.
       - POC_BATCH_SIZE_DEFAULT=${POC_BATCH_SIZE_DEFAULT:-32}
+      - POC_WORKER_MINING=${POC_WORKER_MINING:-0}
+      - POC_CALLBACK_INTERVAL_SEC=${POC_CALLBACK_INTERVAL_SEC:-5}
+      # Set to 0 for DeepSeek-V4-Flash on 2xH200 (see docs/mlnode-configs.md).
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-1}
     deploy:
       resources:
         reservations:
