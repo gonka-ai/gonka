@@ -198,6 +198,9 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err := fixComposePaths(composePath, opts.TestenvDir); err != nil {
 			return RunResult{}, err
 		}
+		if err := applyLoadTestComposeOverrides(composePath); err != nil {
+			return RunResult{}, err
+		}
 		err := runCommandWithEnv(ctx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
 		if err == nil {
 			break
@@ -230,8 +233,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		// single dataset model uses the multi-DevShard debug route.
 		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
 	}
+	if scenario.Topology.Chain.Escrows > 1 {
+		// Several escrows answer only on the routes scoped to one of them.
+		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
+	}
 	debugGatewayURL := stateGatewayURL
-	if scenario.Gateway.EscrowRotation.Enabled {
+	if scenario.severalRuntimes() {
 		// Rotation adds runtimes while the test is running. The orphan check
 		// discovers and inspects all of them through the Gateway root.
 		debugGatewayURL = result.GatewayURL
@@ -240,6 +247,18 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
+	}
+	if n := scenario.Topology.Chain.Escrows; n > 1 {
+		log.Printf("loadtest: stage=escrows creating %d more of model %s", n-1, scenario.Workload.Request.Model)
+		created, err := addScenarioEscrows(ctx, result.GatewayURL, apiKey, scenario.Workload.Request.Model,
+			scenario.Topology.Chain.EscrowAmount, n, escrowsReadyTimeout)
+		if err != nil {
+			_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+			return RunResult{}, fmt.Errorf("scenario escrows: %w", err)
+		}
+		for _, id := range created {
+			initialEscrowIDs[id] = struct{}{}
+		}
 	}
 	var accountingInitial accountingAPIResponse
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -403,6 +422,22 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, statsErr
 	}
 	_ = writeGatewayInferences(ctx, stateGatewayURL, apiKey, opts.OutputDir)
+	if scenario.Diagnostics.Export {
+		log.Printf("loadtest: stage=export")
+		manifest, err := exportRun(cfg, opts.OutputDir, composeStackAccess(ctx, project, composePath, cfg), &http.Client{Timeout: 2 * time.Minute})
+		switch {
+		case err != nil:
+			log.Printf("loadtest: export failed: %v", err)
+		case !manifest.Complete:
+			log.Printf("loadtest: export incomplete: %v", manifest.Problems)
+		}
+	}
+	if scenario.Assertions.Promises {
+		log.Printf("loadtest: stage=promises")
+		check := promisesAssertion(opts.OutputDir, scenario, profiles)
+		result.Assertions = append(result.Assertions, check)
+		assertionErr = appendAssertionFailure(assertionErr, check)
+	}
 	if assertionErr != nil {
 		return result, assertionErr
 	}
@@ -424,6 +459,7 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 	for name, value := range map[string]string{
 		"transport_failure_quarantine": scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine,
 		"http_quarantine":              scenario.Gateway.ParticipantThrottle.HTTPQuarantine,
+		"empty_stream_quarantine":      scenario.Gateway.ParticipantThrottle.EmptyStreamQuarantine,
 	} {
 		if value == "" {
 			continue
@@ -548,6 +584,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	for i := range cfg.Escrows {
 		cfg.Escrows[i].Amount = scenario.Topology.Chain.EscrowAmount
 	}
+	applyValidationThreshold(cfg, scenario.Topology.Chain.ValidationThreshold)
 	cfg.MockOpenAI.Nodes = make([]config.MockOpenAINodeCfg, 0, len(scenario.Topology.MockML.Nodes))
 	cfg.MockOpenAI.ReplayFile = ""
 	if replayEnabled {
@@ -555,6 +592,10 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	}
 	for _, node := range scenario.Topology.MockML.Nodes {
 		profile := profiles[node.Profile]
+		chaos, err := profile.chaosJSON()
+		if err != nil {
+			return fmt.Errorf("node %s profile %s: %w", node.Name, node.Profile, err)
+		}
 		cfg.MockOpenAI.Nodes = append(cfg.MockOpenAI.Nodes, config.MockOpenAINodeCfg{
 			Name:          node.Name,
 			TTFT:          profile.TTFT,
@@ -564,6 +605,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 			Hang:          profile.Hang,
 			FailureRate:   profile.FailureRate,
 			HTTPStatus:    profile.HTTPStatus,
+			ChaosJSON:     chaos,
 		})
 	}
 	if err := randomizeTestenv(cfg); err != nil {
@@ -621,6 +663,37 @@ func configureReplayModels(cfg *config.File, models []string) error {
 	cfg.Escrows = escrows
 	cfg.EpochGroups = groups
 	return nil
+}
+
+// applyValidationThreshold sets the scenario's similarity bar on every epoch group. A config with no
+// group yet gets one per escrow model here, since gencompose would otherwise add the 0.50 default.
+func applyValidationThreshold(cfg *config.File, threshold *ChainDecimal) {
+	if threshold == nil {
+		return
+	}
+	if len(cfg.EpochGroups) == 0 {
+		// A config with no escrow gets one of the default model from gencompose.
+		escrows := cfg.Escrows
+		if len(escrows) == 0 {
+			escrows = []config.Escrow{{}}
+		}
+		seen := make(map[string]bool)
+		for _, escrow := range escrows {
+			model := escrow.ModelID
+			if model == "" {
+				model = config.DefaultModelID
+			}
+			if seen[model] {
+				continue
+			}
+			seen[model] = true
+			cfg.EpochGroups = append(cfg.EpochGroups, config.EpochGroupBinding{EpochIndex: cfg.Epoch.Index, ModelID: model})
+		}
+	}
+	for i := range cfg.EpochGroups {
+		cfg.EpochGroups[i].ValidationThreshold = threshold.Value
+		cfg.EpochGroups[i].ValidationExponent = threshold.Exponent
+	}
 }
 
 // configureParticipants keeps the default HA pair as one participant and
@@ -951,7 +1024,7 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 	terminal := TerminalSummary{}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
 		var orphanErr error
-		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), scenario.Gateway.EscrowRotation.Enabled)
+		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), scenario.severalRuntimes())
 		check := AssertionResult{
 			Name:     "devshard.no_orphaned_work",
 			Passed:   orphanErr == nil,

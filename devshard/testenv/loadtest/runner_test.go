@@ -327,6 +327,7 @@ func TestApplyGatewayParticipantQuarantine(t *testing.T) {
 		{name: "transport only", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "30s"}, want: map[string]int64{"transport_failure_quarantine_ms": 30000}},
 		{name: "http only", settings: GatewayParticipantThrottle{HTTPQuarantine: "45s"}, want: map[string]int64{"http_quarantine_ms": 45000}},
 		{name: "both", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "70s", HTTPQuarantine: "70s"}, want: map[string]int64{"transport_failure_quarantine_ms": 70000, "http_quarantine_ms": 70000}},
+		{name: "empty stream", settings: GatewayParticipantThrottle{EmptyStreamQuarantine: "1s"}, want: map[string]int64{"empty_stream_quarantine_ms": 1000}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scenario := testScenario()
@@ -348,4 +349,77 @@ func TestApplyGatewayParticipantQuarantine(t *testing.T) {
 			require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
 		})
 	}
+}
+
+// testenvWithBaseConfig is a testenv dir whose config/config.yaml is empty, so the runner starts
+// from the config defaults; the real file is written per checkout and not tracked.
+func testenvWithBaseConfig(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "config"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config", "config.yaml"), []byte("{}\n"), 0o644))
+	return dir
+}
+
+// Test flow:
+// 1. Load both dishonest-executor scenarios, which ask for mainnet's 0.958 similarity bar.
+// 2. Write the runner config from a testenv dir with no config/config.yaml.
+// 3. Check every epoch group carries 958e-3, not the 0.50 default no logprob mismatch can fail.
+func TestWriteRunnerConfigCarriesTheScenarioValidationThreshold(t *testing.T) {
+	for _, name := range []string{"dishonest-executor-wrong-answer", "dishonest-executor-overclaim"} {
+		scenario, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
+		require.NoError(t, err, name)
+		require.NotNil(t, scenario.Topology.Chain.ValidationThreshold, name)
+		profiles := make(map[string]Profile)
+		for _, node := range scenario.Topology.MockML.Nodes {
+			profile, err := LoadProfile("profiles", node.Profile)
+			require.NoError(t, err, name)
+			profiles[node.Profile] = profile
+		}
+		workDir := t.TempDir()
+		require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, scenario, profiles, false, nil), name)
+		cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
+		require.NoError(t, err, name)
+		require.NotEmpty(t, cfg.EpochGroups, name)
+		for _, group := range cfg.EpochGroups {
+			require.Equal(t, int64(958), group.ValidationThreshold, name)
+			require.Equal(t, int32(-3), group.ValidationExponent, name)
+		}
+	}
+}
+
+// Test flow:
+// 1. Take a scenario without a validation_threshold.
+// 2. Write the runner config.
+// 3. Check the runner leaves epoch groups alone, so gencompose keeps its default.
+func TestWriteRunnerConfigWithoutThresholdLeavesGroupsToTheDefault(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "catch-up.yaml"))
+	require.NoError(t, err)
+	require.Nil(t, scenario.Topology.Chain.ValidationThreshold)
+	profiles := make(map[string]Profile)
+	for _, node := range scenario.Topology.MockML.Nodes {
+		profile, err := LoadProfile("profiles", node.Profile)
+		require.NoError(t, err)
+		profiles[node.Profile] = profile
+	}
+	workDir := t.TempDir()
+	require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, scenario, profiles, false, nil))
+	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
+	require.NoError(t, err)
+	require.Empty(t, cfg.EpochGroups)
+}
+
+// Test flow:
+//  1. Take scenarios whose validation_threshold is 9.58, 1.0 and 1.00, and one at mainnet's 0.958.
+//  2. Validate them.
+//  3. Check a bar no similarity can pass (1 or more) is refused and 0.958 is accepted.
+func TestValidateRefusesAValidationThresholdNoSimilarityCanPass(t *testing.T) {
+	for _, bar := range []ChainDecimal{{Value: 958, Exponent: -2}, {Value: 10, Exponent: -1}, {Value: 100, Exponent: -2}} {
+		s := testScenario()
+		s.Topology.Chain.ValidationThreshold = &bar
+		require.ErrorContains(t, s.Validate(), "validation_threshold must be above 0 and below 1", "%d e%d", bar.Value, bar.Exponent)
+	}
+	s := testScenario()
+	s.Topology.Chain.ValidationThreshold = &ChainDecimal{Value: 958, Exponent: -3}
+	require.NoError(t, s.Validate())
 }

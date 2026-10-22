@@ -2,12 +2,16 @@
 package loadtest
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"devshard/testenv/mockopenai"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,6 +43,10 @@ type Diagnostics struct {
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
 	ContentionProfiles       bool               `yaml:"contention_profiles"`
+	// Export copies the hosts' databases and every mock ML node's request log into the output
+	// directory before the stack stops, for checks that compare what the ML produced with what the
+	// hosts recorded (export.go).
+	Export bool `yaml:"export"`
 }
 
 type ProfileSnapshot struct {
@@ -72,6 +80,7 @@ type Gateway struct {
 type GatewayParticipantThrottle struct {
 	TransportFailureQuarantine string `yaml:"transport_failure_quarantine"`
 	HTTPQuarantine             string `yaml:"http_quarantine"`
+	EmptyStreamQuarantine      string `yaml:"empty_stream_quarantine"`
 }
 
 type GatewayRedundancy struct {
@@ -113,6 +122,20 @@ type HostFault struct {
 type ChainTopology struct {
 	EscrowAmount uint64 `yaml:"escrow_amount"`
 	MaxNonce     uint32 `yaml:"max_nonce"`
+	// ValidationThreshold is the replay similarity bar the chain hands the hosts for every model.
+	// Unset keeps the testenv default, 0.50, which no logprob mismatch can fail: one position adds
+	// less than 0.5 to the distance, so similarity with matching tokens stays above 0.5.
+	ValidationThreshold *ChainDecimal `yaml:"validation_threshold"`
+	// Escrows is how many escrows of the request model the gateway holds during the load, as an operator
+	// that funds several does; it spreads the requests over them. The first is the configured one, the
+	// rest are created through the gateway admin API before the load. 0 and 1 keep the one.
+	Escrows int `yaml:"escrows"`
+}
+
+// ChainDecimal is a chain decimal, value × 10^exponent; mainnet's 0.958 is value 958, exponent -3.
+type ChainDecimal struct {
+	Value    int64 `yaml:"value"`
+	Exponent int32 `yaml:"exponent"`
 }
 
 type MockMLTopology struct {
@@ -185,6 +208,9 @@ type Assertions struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
 	} `yaml:"mock_ml"`
 	Accounting AccountingAssertions `yaml:"accounting"`
+	// Promises holds the exported run to the system properties of citest/harness (CheckLoadtestRun)
+	// and writes report.json and report.md; a violation fails the run.
+	Promises bool `yaml:"promises"`
 }
 
 type AccountingAssertions struct {
@@ -205,6 +231,32 @@ type Profile struct {
 	FailureRate   float64 `yaml:"failure_rate"`
 	HTTPStatus    int     `yaml:"http_status"`
 	Failures      []any   `yaml:"failures"`
+	// Chaos makes the node a dishonest executor: each execution gets one answer shape drawn by these
+	// weights (mockopenai chaos actions, e.g. wrong_answer, odd_usage). A validator's replay is
+	// always answered honestly, so a shape other than ok is one the protocol should catch.
+	Chaos *ProfileChaos `yaml:"chaos"`
+}
+
+// ProfileChaos is the chaos part of an ML node profile.
+type ProfileChaos struct {
+	Seed    int64          `yaml:"seed"`
+	Weights map[string]int `yaml:"weights"`
+}
+
+// chaosJSON is the mock's MOCK_OPENAI_CHAOS_JSON for the profile, empty when it has no chaos.
+func (p Profile) chaosJSON() (string, error) {
+	if p.Chaos == nil {
+		return "", nil
+	}
+	c := mockopenai.ChaosConfig{Enabled: true, Seed: p.Chaos.Seed, Weights: p.Chaos.Weights}
+	if len(c.Weights) == 0 {
+		return "", fmt.Errorf("chaos needs weights")
+	}
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(c)
+	return string(raw), err
 }
 
 func LoadScenario(path string) (Scenario, error) {
@@ -232,6 +284,9 @@ func LoadProfile(dir, name string) (Profile, error) {
 	}
 	if _, err := time.ParseDuration(profile.TokenInterval); err != nil {
 		return Profile{}, fmt.Errorf("profile %s token_interval: %w", path, err)
+	}
+	if _, err := profile.chaosJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s chaos: %w", path, err)
 	}
 	if profile.Workers <= 0 || profile.Queue < 0 {
 		return Profile{}, fmt.Errorf("profile %s workers must be positive and queue non-negative", path)
@@ -268,6 +323,13 @@ func (s Scenario) Validate() error {
 	}
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")
+	}
+	// A similarity is at most 1, so a bar of 1 or more fails every honest replay.
+	if t := s.Topology.Chain.ValidationThreshold; t != nil && (t.Value <= 0 || t.Exponent >= 0 || float64(t.Value) >= math.Pow10(int(-t.Exponent))) {
+		return fmt.Errorf("topology.chain.validation_threshold must be above 0 and below 1")
+	}
+	if s.Topology.Chain.Escrows < 0 || s.Topology.Chain.Escrows > maxScenarioEscrows {
+		return fmt.Errorf("topology.chain.escrows must be between 0 and %d", maxScenarioEscrows)
 	}
 	if s.Topology.MockML.Allocator != "round_robin" {
 		return fmt.Errorf("mock DAPI scenarios require mock_ml allocator round_robin")
@@ -400,6 +462,7 @@ func (s Scenario) Validate() error {
 	for name, value := range map[string]string{
 		"transport_failure_quarantine": s.Gateway.ParticipantThrottle.TransportFailureQuarantine,
 		"http_quarantine":              s.Gateway.ParticipantThrottle.HTTPQuarantine,
+		"empty_stream_quarantine":      s.Gateway.ParticipantThrottle.EmptyStreamQuarantine,
 	} {
 		if value == "" {
 			continue
@@ -432,6 +495,13 @@ func (s Scenario) Validate() error {
 	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)
+	}
+	if s.Assertions.Promises && !s.Diagnostics.Export {
+		return fmt.Errorf("assertions.promises requires diagnostics.export")
+	}
+	// The checks find the executor of every inference in compose.log; a cut log hides the early ones.
+	if s.Assertions.Promises && s.Diagnostics.LogTail() != "all" {
+		return fmt.Errorf("assertions.promises requires diagnostics.logs.tail: all")
 	}
 	return nil
 }
