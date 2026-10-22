@@ -719,7 +719,10 @@ data class LocalInferencePair(
                 "Join validators (join1/join2) not yet on chain; " +
                     "waiting past SET_NEW_VALIDATORS before inference routing"
             )
-            return waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
+            // SetComputeValidators runs the block after the stage. Its CometBFT
+            // update is emitted one block later and becomes active two blocks
+            // after that, so the join set is visible at stage + 4.
+            return waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 4)
         }
 
         val epochData = getEpochData()

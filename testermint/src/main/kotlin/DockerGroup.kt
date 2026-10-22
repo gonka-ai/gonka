@@ -25,6 +25,8 @@ const val GENESIS_KEY_NAME = "genesis"
 /** Balance written onto each join cold account in genesis. Fees are off; this creates the account. */
 private const val JOIN_REGISTRATION_FUND_NGONKA = 50_000_000L
 private const val JOIN_GENESIS_ACCOUNTS_FILE = "join_genesis_accounts.txt"
+/** Reserve join slots staged in genesis so [LocalCluster.withAdditionalJoin] works while transfers are restricted. */
+private const val RESERVE_LATE_JOIN_COUNT = 2
 
 private const val VERSIOND_COMPOSE_FILE = "docker-compose.versiond.yml"
 
@@ -257,6 +259,11 @@ data class DockerGroup(
         Logger.info("Staged {} join genesis accounts in {}", addresses.size, file)
     }
 
+    fun hasPrecreatedColdKey(): Boolean {
+        val keyInfo = Path.of(workingDirectory, "prod-local", pairName, "keyring-file", "$coldKeyName.info")
+        return Files.exists(keyInfo)
+    }
+
     fun init(skipFileSetup: Boolean = false, coldKeyReady: Boolean = false) {
         if (!skipFileSetup) {
             setupFiles()
@@ -354,10 +361,13 @@ data class DockerGroup(
                     included
                 }
                 node.waitForMinimumBlock(funded.height, "join cold account funded")
+            } else {
+                node.waitForState("join node synced", staleTimeout = Duration.ofSeconds(90)) {
+                    it.syncInfo.latestBlockHeight >= 1 && !it.syncInfo.catchingUp
+                }
             }
             val consensusKey = validatorKey ?: error("validator key missing")
             node.submitNewParticipant(publicUrl, consensusKey)
-            node.waitForNextBlock(2)
             node.grantMlOpsPermissionsToWarmAccount()
             // Services to start after registration. edge-api is listed explicitly:
             // proxy depends_on it, but Compose sometimes skips that dependency when
@@ -1141,14 +1151,41 @@ fun initializeCluster(joinCount: Int = 0, config: ApplicationConfig, currentClus
         // Join cold accounts have to exist before they can sign registration.
         // A bank send cannot create them while user-to-user transfers are
         // restricted, so their balances are written into genesis instead.
-        val genesisFundedJoins = joinGroups.isNotEmpty()
+        // Reserve slots are staged alongside initial joins for withAdditionalJoin().
+        val reserveJoinGroups = if (joinGroups.isNotEmpty()) {
+            (joinCount + 1..joinCount + RESERVE_LATE_JOIN_COUNT).map { joinIndex ->
+                createDockerGroup(
+                    joinIndex,
+                    joinIndex * 10,
+                    GenesisUrls(genesisGroup.pairName.trimStart('/')),
+                    config,
+                    useSnapshots = true,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        val genesisAccountGroups = joinGroups + reserveJoinGroups
+        val genesisFundedJoins = genesisAccountGroups.isNotEmpty()
         if (genesisFundedJoins) {
             genesisGroup.setupFiles()
-            val joinAddresses = joinGroups.map { group ->
-                group.setupFiles()
-                group.createColdKey().address
-            }
-            genesisGroup.writeJoinGenesisAccounts(joinAddresses)
+            val keyErrors = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+            val addressesByIndex = arrayOfNulls<String>(genesisAccountGroups.size)
+            genesisAccountGroups.mapIndexed { idx, group ->
+                Thread {
+                    try {
+                        group.setupFiles()
+                        addressesByIndex[idx] = group.createColdKey().address
+                    } catch (e: Throwable) {
+                        keyErrors.add(e)
+                    }
+                }.apply {
+                    name = "cold-key-${group.pairName}"
+                    start()
+                }
+            }.forEach { it.join() }
+            keyErrors.firstOrNull()?.let { throw it }
+            genesisGroup.writeJoinGenesisAccounts(addressesByIndex.map { it ?: error("Missing join cold address") })
         }
         genesisGroup.init(skipFileSetup = genesisFundedJoins)
         Thread.sleep(Duration.ofSeconds(30L))
@@ -1313,7 +1350,10 @@ data class LocalCluster(
                 )
             }
         newJoinGroups.forEach { it.tearDownExisting() }
-        newJoinGroups.forEach { it.init() }
+        newJoinGroups.forEach { group ->
+            val coldKeyReady = group.hasPrecreatedColdKey()
+            group.init(skipFileSetup = coldKeyReady, coldKeyReady = coldKeyReady)
+        }
         return getLocalCluster(this.genesis.config)!!
     }
 

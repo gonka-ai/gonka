@@ -173,21 +173,22 @@ class GovernanceTests : TestermintTest() {
         logSection("Submit Proposal to send funds")
         val governanceBalance = genesis.node.getBalance(governanceAddress, "ngonka")
         assertThat(governanceBalance.balance.amount).isGreaterThanOrEqualTo(fundAmount)
-        val genesisBalance = genesis.node.getBalance(genesisAddress, "ngonka")
+        val recipientAddress = genesis.node.createKey("gov-vesting-recipient-${System.currentTimeMillis()}").address
+        val recipientBalance = genesis.node.getBalance(recipientAddress, "ngonka")
         val sendFunds = MsgTransferWithVesting(
             sender = governanceAddress,
-            recipient = genesisAddress,
+            recipient = recipientAddress,
             amount = listOf(Coin("ngonka", governanceBalance.balance.amount)),
             vestingEpochs = 100
         )
         val proposalId = genesis.runProposal(cluster, sendFunds)
         logSection("Verifying Proposal")
         val newGovBalance = genesis.node.getBalance(governanceAddress, "ngonka")
-        val newGenesisBalance = genesis.node.getBalance(genesisAddress, "ngonka")
+        val newRecipientBalance = genesis.node.getBalance(recipientAddress, "ngonka")
         assertThat(newGovBalance.balance.amount).isEqualTo(0)
         // amount should be unaffected immediately
-        assertThat(newGenesisBalance.balance.amount).isEqualTo(genesisBalance.balance.amount)
-        val newVestingSchedule = genesis.node.queryVestingSchedule(genesisAddress)
+        assertThat(newRecipientBalance.balance.amount).isEqualTo(recipientBalance.balance.amount)
+        val newVestingSchedule = genesis.node.queryVestingSchedule(recipientAddress)
         assertThat(newVestingSchedule).withFailMessage { "No vesting schedule added" }.isNotNull
         val totalAmount = newVestingSchedule.vestingSchedule?.epochAmounts?.sumOf { it.coins.sumOf { it.amount } } ?: 0
         assertThat(totalAmount).isEqualTo(governanceBalance.balance.amount)
