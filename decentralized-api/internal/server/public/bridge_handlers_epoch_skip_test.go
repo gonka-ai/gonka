@@ -111,7 +111,7 @@ func TestClassifyBridgeExchangeSubmit(t *testing.T) {
 // Without this, a Sync Code=0 + DeliverTx reject stalls on confirm timeout.
 func TestCommitReceipt_AnteShapedPermanentRejectAdvances(t *testing.T) {
 	mockClient := &cosmosclient.MockCosmosMessageClient{}
-	mockClient.On("GetAccountAddress").Return("gonka1validator")
+	mockClient.On("GetAccountAddress").Return(quarantineTestValidator(t))
 	mockClient.On("BridgeExchange", mock.AnythingOfType("*types.MsgBridgeExchange")).Return(
 		fmt.Errorf("bridge exchange failed: code=5 rawLog=%s",
 			types.ErrBridgeValidatorNotInTxEpochGroup.Error()),
@@ -136,7 +136,7 @@ func TestCommitReceipt_AnteShapedPermanentRejectAdvances(t *testing.T) {
 
 func TestCommitReceipt_UncertainRejectPausesDrain(t *testing.T) {
 	mockClient := &cosmosclient.MockCosmosMessageClient{}
-	mockClient.On("GetAccountAddress").Return("gonka1validator")
+	mockClient.On("GetAccountAddress").Return(quarantineTestValidator(t))
 	mockClient.On("BridgeExchange", mock.AnythingOfType("*types.MsgBridgeExchange")).Return(
 		fmt.Errorf("bridge exchange failed: code=11 rawLog=out of gas"),
 	)

@@ -122,6 +122,20 @@ CREATE TABLE IF NOT EXISTS bridge_state (
   chain_id TEXT PRIMARY KEY,
   latest_block INTEGER NOT NULL,
   updated_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now'))
+);
+
+CREATE TABLE IF NOT EXISTS bridge_quarantined_receipts (
+  chain_id TEXT NOT NULL,
+  block_number TEXT NOT NULL,
+  receipt_index TEXT NOT NULL,
+  contract_address TEXT NOT NULL,
+  owner_pub_key TEXT NOT NULL,
+  amount_prefix TEXT NOT NULL,
+  amount_len INTEGER NOT NULL,
+  reason TEXT NOT NULL,
+  error TEXT NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
+  PRIMARY KEY(chain_id, block_number, receipt_index)
 );`
 	_, err := db.ExecContext(ctx, stmt)
 	return err
@@ -157,6 +171,111 @@ ON CONFLICT(chain_id) DO UPDATE SET
   updated_at = STRFTIME('%Y-%m-%d %H:%M:%f','now')
 `, chain, blockNum)
 	return err
+}
+
+// maxBridgeQuarantineFieldLen caps attacker-controlled text stored per quarantined
+// receipt (the amount comes straight from Ethereum log data, bounded only by gas).
+const maxBridgeQuarantineFieldLen = 128
+
+// BridgeQuarantinedReceipt is a receipt the feeder delivered but this node will
+// never submit, because its content can never pass MsgBridgeExchange.ValidateBasic.
+type BridgeQuarantinedReceipt struct {
+	ChainId         string `json:"chainId"`
+	BlockNumber     string `json:"blockNumber"`
+	ReceiptIndex    string `json:"receiptIndex"`
+	ContractAddress string `json:"contractAddress"`
+	OwnerPubKey     string `json:"ownerPubKey"`
+	AmountPrefix    string `json:"amountPrefix"`
+	AmountLen       int    `json:"amountLen"`
+	Reason          string `json:"reason"`
+	Error           string `json:"error"`
+	CreatedAt       string `json:"createdAt"`
+}
+
+func truncateBridgeQuarantineField(s string) string {
+	if len(s) > maxBridgeQuarantineFieldLen {
+		return s[:maxBridgeQuarantineFieldLen]
+	}
+	return s
+}
+
+// InsertBridgeQuarantinedReceipt records a quarantined receipt and reports whether
+// a new row was written. Re-delivery of the same receipt is a no-op (first record
+// wins). The full amount is passed separately; only its prefix and length are
+// stored (r.AmountPrefix/AmountLen are ignored).
+func InsertBridgeQuarantinedReceipt(ctx context.Context, db *sql.DB, r BridgeQuarantinedReceipt, amount string) (bool, error) {
+	if db == nil {
+		return false, errors.New("db is nil")
+	}
+	res, err := db.ExecContext(ctx, `
+INSERT OR IGNORE INTO bridge_quarantined_receipts (
+  chain_id, block_number, receipt_index, contract_address, owner_pub_key,
+  amount_prefix, amount_len, reason, error
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`,
+		truncateBridgeQuarantineField(r.ChainId),
+		truncateBridgeQuarantineField(r.BlockNumber),
+		truncateBridgeQuarantineField(r.ReceiptIndex),
+		truncateBridgeQuarantineField(r.ContractAddress),
+		truncateBridgeQuarantineField(r.OwnerPubKey),
+		truncateBridgeQuarantineField(amount),
+		len(amount),
+		r.Reason,
+		truncateBridgeQuarantineField(r.Error),
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// ListBridgeQuarantinedReceipts returns quarantined receipts for a chain, newest first.
+func ListBridgeQuarantinedReceipts(ctx context.Context, db *sql.DB, chain string, limit int) ([]BridgeQuarantinedReceipt, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	rows, err := db.QueryContext(ctx, `
+SELECT chain_id, block_number, receipt_index, contract_address, owner_pub_key,
+       amount_prefix, amount_len, reason, error, created_at
+FROM bridge_quarantined_receipts
+WHERE chain_id = ?
+ORDER BY created_at DESC
+LIMIT ?
+`, chain, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make([]BridgeQuarantinedReceipt, 0)
+	for rows.Next() {
+		var r BridgeQuarantinedReceipt
+		if err := rows.Scan(&r.ChainId, &r.BlockNumber, &r.ReceiptIndex, &r.ContractAddress, &r.OwnerPubKey,
+			&r.AmountPrefix, &r.AmountLen, &r.Reason, &r.Error, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		res = append(res, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// CountBridgeQuarantinedReceipts returns the number of quarantined receipts across all chains.
+func CountBridgeQuarantinedReceipts(ctx context.Context, db *sql.DB) (int, error) {
+	if db == nil {
+		return 0, errors.New("db is nil")
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM bridge_quarantined_receipts").Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // LoadAllBridgeLatestBlocks retrieves the latest block numbers for all chains as a map.
