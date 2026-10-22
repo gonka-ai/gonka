@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,10 @@ workload:
     model: model-a
     messages:
       - {role: user, content: "base prompt"}
+diagnostics:
+  export: true
+  logs:
+    tail: all
 `
 
 // loadtestKey is the prompt key the mock logs for a generator request with this prompt.
@@ -407,4 +412,244 @@ func TestCheckLoadtestRunDeclaresARunNotValidWhenTheExportLostWhatTheChecksRead(
 	rep, err = CheckLoadtestRun(dir, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"the mock log is incomplete and holds no record: no execution can be judged"}, rep.Invalid)
+}
+
+func writeMetrics(t *testing.T, dir string, lines ...string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "metrics.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644))
+}
+
+// Test flow:
+//  1. metrics.jsonl holds gateway scrapes of two processes (a restart between them), an escrow line
+//     and a host scrape.
+//  2. Read the gateway heap.
+//  3. Check only the gateway's samples are read, each process kept apart, and the heap check grows
+//     within the first process, not peak minus the restarted heap.
+func TestReadLoadtestGatewayHeapKeepsProcessesApart(t *testing.T) {
+	line := func(at string, heap, start float64) string {
+		return fmt.Sprintf(`{"at":%q,"phase":"workload","target":"gateway","values":{"go_memstats_heap_inuse_bytes":%v,"process_start_time_seconds":%v}}`, at, heap, start)
+	}
+	dir := t.TempDir()
+	writeMetrics(t, dir,
+		`{"at":"2026-10-18T19:03:43Z","phase":"baseline","target":"escrow","escrow_id":"1","state":{"diffs":0}}`,
+		line("2026-10-18T19:03:44Z", 1000, 1792350207.33),
+		line("2026-10-18T19:04:44Z", 5000, 1792350207.33),
+		line("2026-10-18T19:05:44Z", 800, 1792350400),
+		line("2026-10-18T19:06:44Z", 2800, 1792350400),
+		`{"at":"2026-10-18T19:06:45Z","phase":"workload","target":"versiond-0","values":{"go_memstats_heap_inuse_bytes":99999999}}`,
+	)
+	samples, err := ReadLoadtestGatewayHeap(dir)
+	require.NoError(t, err)
+	require.Len(t, samples, 4)
+	require.Equal(t, uint64(5000), samples[1].HeapInuse)
+	require.NotEqual(t, samples[0].Process, samples[2].Process)
+	require.Equal(t, time.Unix(1792350224, 0).UnixMilli(), samples[0].AtUnixMs)
+
+	in := PromiseInput{Requests: []ClientRequest{served(1, 200), served(2, 200)}, GatewayHeap: samples}
+	rep := CheckPromises(in)
+	require.False(t, rep.Checked[GatewayHeapBounded].Measured, "no k: no verdict")
+	require.Contains(t, rep.Checked[GatewayHeapBounded].Note, "first 1000 B, peak 5000 B, 2000 B per request over 2 requests",
+		"growth is 4000 B within the first process, not peak minus the restarted heap")
+	require.Contains(t, rep.Checked[GatewayHeapBounded].Note, "one of 2 gateway processes")
+}
+
+// Test flow:
+//  1. metrics.jsonl holds the gateway's runtime metrics through the runner's phases: baseline, two
+//     workload scrapes, drain and the final snapshot.
+//  2. Read the gateway heap and check the live heap against an allowance.
+//  3. Check the last reading of each phase is named, the live heap is within the allowance, and a
+//     restart before the last reading is not judged.
+func TestReadLoadtestGatewayHeapNamesTheLiveHeapReadings(t *testing.T) {
+	line := func(at, phase string, nextGC, numGC, start float64) string {
+		return fmt.Sprintf(`{"at":%q,"phase":%q,"target":"gateway","values":{"go_memstats_heap_inuse_bytes":1,"go_memstats_next_gc_bytes":%v,"go_gc_duration_seconds_count":%v,"go_memstats_stack_inuse_bytes":200000,"process_start_time_seconds":%v}}`, at, phase, nextGC, numGC, start)
+	}
+	dir := t.TempDir()
+	writeMetrics(t, dir,
+		line("2026-10-18T19:03:43Z", "baseline", 2_200_000, 4, 1792350207),
+		line("2026-10-18T19:04:43Z", "workload", 12_000_000, 9, 1792350207),
+		line("2026-10-18T19:05:43Z", "workload", 12_000_000, 10, 1792350207),
+		line("2026-10-18T19:06:43Z", "drain", 3_000_000, 11, 1792350207),
+		line("2026-10-18T19:07:43Z", "final", 2_600_000, 12, 1792350207),
+	)
+	samples, err := ReadLoadtestGatewayHeap(dir)
+	require.NoError(t, err)
+	var phases []string
+	for _, s := range samples {
+		phases = append(phases, s.Phase)
+	}
+	require.Equal(t, []string{"before", "", "load_end", "", "after"}, phases, "the last reading of each runner phase; the final snapshot closes the drain")
+	require.Equal(t, uint64(1_000_000), samples[0].LiveHeap())
+	require.Equal(t, uint64(10), samples[2].NumGC)
+
+	in := PromiseInput{Requests: []ClientRequest{served(1, 200)}, GatewayHeap: samples, LiveHeapAllowance: 200_000}
+	require.Empty(t, violations(CheckPromises(in), GatewayLiveHeapReturns), "1200000 B after the drain against 1000000 B before plus 200000 B")
+	require.True(t, CheckPromises(in).Checked[GatewayLiveHeapReturns].Measured)
+
+	samples[4].Process = "restarted"
+	in.GatewayHeap = samples
+	require.Contains(t, CheckPromises(in).Checked[GatewayLiveHeapReturns].Note, "the gateway restarted", "a new process starts a new heap")
+}
+
+// Test flow:
+//  1. A run as the runner leaves it, plus a mock-dapi lock never released, a gateway quarantine of a
+//     host the runner did not pause, and the gateway's heap growing past its allowance after the drain.
+//  2. Check the run with the allowances set.
+//  3. Check each of those reaches the report from the run directory alone, and the same run checked
+//     without allowances judges the live heap without a verdict.
+func TestCheckLoadtestRunWithinReadsTheRunLayers(t *testing.T) {
+	const participant = "gonka1qzwyhs83g7rwpwhfveajtszgayp0c95sck5r4l"
+	dir := writeCheckedRun(t, 64, &mockopenai.RequestRecord{Phase: mockopenai.PhaseExecute, Model: "model-a",
+		Node: "mock-openai-3", Seed: intPtr(1), Status: 200, Outcome: "ok", TokensOut: 64, UsageCompletion: 64})
+	f, err := os.OpenFile(filepath.Join(dir, "compose.log"), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(t, err)
+	_, err = f.WriteString(strings.Join([]string{
+		`mock-dapi-1  | {"time":"2026-10-19T07:58:00Z","msg":"mlnode_acquire","outcome":"acquired","lock_id":"a","node_id":"n4","request_id":"req-1"}`,
+		`mock-dapi-1  | {"time":"2026-10-19T08:05:00Z","msg":"mlnode_acquire","outcome":"acquired","lock_id":"b","node_id":"n4","request_id":"req-2"}`,
+		`mock-dapi-1  | {"time":"2026-10-19T08:05:01Z","msg":"mlnode_release","outcome":"SUCCESS","lock_id":"b","node_id":"n4"}`,
+		`versiond-3-1  | {"time":"2026-10-19T07:50:00Z","level":"INFO","msg":"devshardd: validation lease identity","instance_address":"` + participant + `"}`,
+		`devshardctl-1 | {"time":"2026-10-19T07:59:18Z","level":"INFO","msg":"participant_limit_stalled_winner_quarantine participant_key=` + participant + `"}`,
+	}, "\n") + "\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	writeMetrics(t, dir,
+		`{"at":"2026-10-19T07:55:00Z","phase":"baseline","target":"gateway","values":{"go_memstats_heap_inuse_bytes":1,"go_memstats_next_gc_bytes":2000000,"go_gc_duration_seconds_count":4}}`,
+		`{"at":"2026-10-19T08:00:00Z","phase":"workload","target":"gateway","values":{"go_memstats_heap_inuse_bytes":1,"go_memstats_next_gc_bytes":12000000,"go_gc_duration_seconds_count":10}}`,
+		`{"at":"2026-10-19T08:06:00Z","phase":"final","target":"gateway","values":{"go_memstats_heap_inuse_bytes":1,"go_memstats_next_gc_bytes":3000000,"go_gc_duration_seconds_count":12}}`,
+	)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "host-faults.json"), []byte(`[]`), 0o644))
+
+	rep, err := CheckLoadtestRunWithin(dir, PromiseInput{LockGrace: time.Minute, LiveHeapAllowance: 100_000})
+	require.NoError(t, err)
+	require.Len(t, violations(rep, NodeLocksReleased), 1, "%+v", rep)
+	require.Len(t, violations(rep, QuarantineOnlyWhenFaulted), 1)
+	require.Contains(t, violations(rep, QuarantineOnlyWhenFaulted)[0].Detail, "shadow quarantine (stalled_winner_quarantine)")
+	require.Len(t, violations(rep, GatewayLiveHeapReturns), 1, "500000 B kept against 100000 B allowed")
+	require.Contains(t, strings.Join(rep.Observations, "\n"), "escrow balances not replayed", "the export holds no session to replay from")
+
+	rep, err = CheckLoadtestRun(dir, nil)
+	require.NoError(t, err)
+	require.False(t, rep.Checked[GatewayLiveHeapReturns].Measured, "no allowance, no verdict")
+	require.Empty(t, violations(rep, GatewayLiveHeapReturns))
+}
+
+// Test flow:
+//  1. A run whose scenario kept only the last 5000 lines of each container's log, with a lock
+//     journal and a gateway line in compose.log; the same run with the scenario's log tail left out
+//     (the runner's default is 5000 lines).
+//  2. Check each run.
+//  3. Check the checks that read the log layers do not judge a log cut to its tail.
+func TestCheckLoadtestRunDoesNotJudgeTheLayersOfACutComposeLog(t *testing.T) {
+	for _, runYAML := range []string{
+		strings.Replace(loadtestRunYAMLFixture, "tail: all", `tail: "5000"`, 1),
+		strings.Replace(loadtestRunYAMLFixture, "  logs:\n    tail: all\n", "", 1),
+	} {
+		dir := writeCheckedRun(t, 64, &mockopenai.RequestRecord{Phase: mockopenai.PhaseExecute, Model: "model-a",
+			Node: "mock-openai-3", Seed: intPtr(1), Status: 200, Outcome: "ok", TokensOut: 64, UsageCompletion: 64})
+		require.NotEqual(t, loadtestRunYAMLFixture, runYAML)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "run.yaml"), []byte(runYAML), 0o644))
+		f, err := os.OpenFile(filepath.Join(dir, "compose.log"), os.O_APPEND|os.O_WRONLY, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString(strings.Join([]string{
+			`mock-dapi-1  | {"time":"2026-10-19T08:00:01Z","msg":"mlnode_acquire","outcome":"acquired","lock_id":"b","node_id":"n4","request_id":"req-2"}`,
+			`mock-dapi-1  | {"time":"2026-10-19T08:00:02Z","msg":"mlnode_release","outcome":"SUCCESS","lock_id":"b","node_id":"n4"}`,
+			`devshardctl-1 | {"time":"2026-10-19T08:00:03Z","level":"INFO","msg":"gateway_ready","host":"abcdefgh"}`,
+		}, "\n") + "\n")
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+		rep, err := CheckLoadtestRunWithin(dir, PromiseInput{BurnAllowance: 1})
+		require.NoError(t, err)
+		for _, name := range []string{NodeLocksReleased, QuarantineOnlyWhenFaulted, OneNoncePerRequest} {
+			require.False(t, rep.Checked[name].Measured, "%s judged on a compose.log cut to its tail: %s", name, rep.Checked[name].Note)
+			require.Contains(t, rep.Checked[name].Note, "compose.log keeps only the last 5000 lines")
+		}
+	}
+}
+
+// Test flow:
+//  1. A run whose metrics.jsonl ends in a line the collector was still writing.
+//  2. Check the run.
+//  3. Check the torn line is left out and the report is written.
+func TestCheckLoadtestRunReadsAMetricsFileCutMidLine(t *testing.T) {
+	dir := writeCheckedRun(t, 64, &mockopenai.RequestRecord{Phase: mockopenai.PhaseExecute, Model: "model-a",
+		Node: "mock-openai-3", Seed: intPtr(1), Status: 200, Outcome: "ok", TokensOut: 64, UsageCompletion: 64})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "metrics.jsonl"), []byte(
+		`{"at":"2026-10-19T07:55:00Z","phase":"baseline","target":"gateway","values":{"go_memstats_heap_inuse_bytes":1}}`+"\n"+
+			`{"at":"2026-10-19T08:06:00Z","phase":"drain","target":"gateway","values":{"go_memstats_heap_in`), 0o644))
+	rep, err := CheckLoadtestRun(dir, nil)
+	require.NoError(t, err, "a torn last line must not fail the whole report")
+	require.Empty(t, violations(rep, PaidOutputWithinProduced))
+	samples, err := ReadLoadtestGatewayHeap(dir)
+	require.NoError(t, err)
+	require.Len(t, samples, 1)
+}
+
+// Test flow:
+//  1. A run whose client log records the bytes of each answer, and whose gateway heap grew 400000 B
+//     over the load.
+//  2. Check it with a k of 2 per response byte.
+//  3. Check gateway_heap_bounded gives a verdict from the run directory alone.
+func TestCheckLoadtestRunWithinJudgesTheHeapCeilingWhenAskedTo(t *testing.T) {
+	dir := writeCheckedRun(t, 64, &mockopenai.RequestRecord{Phase: mockopenai.PhaseExecute, Model: "model-a",
+		Node: "mock-openai-3", Seed: intPtr(1), Status: 200, Outcome: "ok", TokensOut: 64, UsageCompletion: 64})
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "requests.jsonl"),
+		[]byte(`{"request_id":"r-1","status":200,"outcome":"completed","response_bytes":1000}`+"\n"), 0o644))
+	writeMetrics(t, dir,
+		`{"at":"2026-10-19T07:55:00Z","phase":"workload","target":"gateway","values":{"go_memstats_heap_inuse_bytes":1000}}`,
+		`{"at":"2026-10-19T08:00:00Z","phase":"workload","target":"gateway","values":{"go_memstats_heap_inuse_bytes":401000}}`)
+	rep, err := CheckLoadtestRunWithin(dir, PromiseInput{HeapPerResponseByte: 2})
+	require.NoError(t, err)
+	require.True(t, rep.Checked[GatewayHeapBounded].Measured, rep.Checked[GatewayHeapBounded].Note)
+	require.Len(t, violations(rep, GatewayHeapBounded), 1, "400000 B per request against 2 x 1000 B of answer")
+}
+
+// Test flow:
+//  1. metrics.jsonl holds the gateway's scrapes of one process whose start time moved with a clock
+//     sync; the pid and the start ticks stay.
+//  2. Read the gateway heap and check the live heap.
+//  3. Check the readings are one process, so the live heap is judged.
+func TestReadLoadtestGatewayHeapKeepsOneProcessAcrossAClockShift(t *testing.T) {
+	line := func(at, phase string, nextGC, numGC, start float64) string {
+		return fmt.Sprintf(`{"at":%q,"phase":%q,"target":"gateway","values":{"go_memstats_heap_inuse_bytes":1,"go_memstats_next_gc_bytes":%v,"go_gc_duration_seconds_count":%v,"process_start_time_seconds":%v,"loadtest_process_pid":1,"loadtest_process_start_ticks":310605149}}`, at, phase, nextGC, numGC, start)
+	}
+	dir := t.TempDir()
+	writeMetrics(t, dir,
+		line("2026-10-18T19:03:43Z", "baseline", 2_000_000, 4, 1792350207),
+		line("2026-10-18T19:05:43Z", "workload", 12_000_000, 10, 1792350207),
+		line("2026-10-18T19:07:43Z", "final", 2_200_000, 12, 1792350214))
+	samples, err := ReadLoadtestGatewayHeap(dir)
+	require.NoError(t, err)
+	rep := CheckPromises(PromiseInput{Requests: []ClientRequest{served(1, 200)}, GatewayHeap: samples, LiveHeapAllowance: 200_000})
+	require.True(t, rep.Checked[GatewayLiveHeapReturns].Measured, rep.Checked[GatewayLiveHeapReturns].Note)
+}
+
+// Test flow:
+//  1. A run with a gateway quarantine outside any fault window and no mock log in its export; the
+//     same run with a mock log the export could not take whole.
+//  2. Check each run.
+//  3. Check the quarantine check does not judge them: the ML node's faults are not known.
+func TestCheckLoadtestRunDoesNotJudgeQuarantinesWithoutTheMockLog(t *testing.T) {
+	quarantine := `devshardctl-1 | {"time":"2026-10-19T07:59:18Z","level":"INFO","msg":"participant_limit_activated participant_key=gonka1qzwyhs83g7rwpwhfveajtszgayp0c95sck5r4l status=503 path_kind=chat"}` + "\n"
+	appendLog := func(dir string) {
+		f, err := os.OpenFile(filepath.Join(dir, "compose.log"), os.O_APPEND|os.O_WRONLY, 0)
+		require.NoError(t, err)
+		_, err = f.WriteString(quarantine)
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
+	}
+	dir := writeCheckedRun(t, 64, nil)
+	appendLog(dir)
+	rep, err := CheckLoadtestRun(dir, nil)
+	require.NoError(t, err)
+	require.False(t, rep.Checked[QuarantineOnlyWhenFaulted].Measured, rep.Checked[QuarantineOnlyWhenFaulted].Note)
+	require.Empty(t, violations(rep, QuarantineOnlyWhenFaulted))
+
+	dir = writeCheckedRun(t, 64, &mockopenai.RequestRecord{Phase: mockopenai.PhaseExecute, Model: "model-a",
+		Node: "mock-openai-3", Seed: intPtr(1), Status: 200, Outcome: "ok", TokensOut: 64, UsageCompletion: 64})
+	appendLog(dir)
+	raw, err := os.ReadFile(filepath.Join(dir, "export", "mock-log.json"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "export", "mock-log.json"), []byte(strings.Replace(string(raw), `"complete":true`, `"complete":false`, 1)), 0o644))
+	rep, err = CheckLoadtestRun(dir, nil)
+	require.NoError(t, err)
+	require.False(t, rep.Checked[QuarantineOnlyWhenFaulted].Measured, rep.Checked[QuarantineOnlyWhenFaulted].Note)
 }

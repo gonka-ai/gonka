@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -20,8 +21,16 @@ var PromiseCatalog = []struct {
 }{
 	{InferenceClosesInTime, PromiseDescription{"Every started inference reaches Finish, Timeout or ErrorMiss before its deadline plus slack", "each host's diff chain, export time"}},
 	{ServedRequestFinished, PromiseDescription{"A request the client got 200 for has a Finish on every exported host's chain", "client request log, each host's diff chain"}},
-	{PaidOutputWithinProduced, PromiseDescription{"Finish.OutputTokens equals the tokens the ML execution produced and never exceeds max_tokens", "MsgStartInference, MsgFinishInference, mock ML log"}},
-	{ChargeOnlyTheGuilty, PromiseDescription{"An honest executor is not charged Missed or Invalid, and an answer with forged logprobs is not voted valid", "mock ML log against Missed/Invalid/valid votes in the diffs"}},
+	{PaidOutputWithinProduced, PromiseDescription{"A paid Finish.OutputTokens equals the tokens the ML execution produced and never exceeds max_tokens. A Finish whose inference was invalidated paid nothing: its overclaim is caught and counted apart", "MsgStartInference, MsgFinishInference, the votes and usage challenges of both phases in the diffs, mock ML log"}},
+	{EscrowMoneyConserved, PromiseDescription{"The escrow balance adds up: deposited = spent + reserved + left + fees, replayed through the real state machine", "each host's diff chain"}},
+	{GatewayHeapBounded, PromiseDescription{"Gateway heap growth per request stays within k times the answer the client read", "gateway heap samples, answer sizes in the client request log"}},
+	{GatewayLiveHeapReturns, PromiseDescription{"Gateway live heap after the drain returns to its level before the load, within the allowance", "gateway Go runtime metrics (next_gc, stack_inuse) at the phase boundaries"}},
+	{ClientErrorAnswered4xx, PromiseDescription{"A client error gets a 4xx, not a 5xx", "mock ML log (what the engine answered) against the status the client got"}},
+	{ChargeOnlyTheGuilty, PromiseDescription{"An honest executor is not charged Missed or Invalid, and an answer with forged logprobs is not voted valid. An honest executor that answered in full, whose host a fault of the runner kept from serving its payload with the logprobs when a validator came for it, is voted invalid and loses the payment by design (#1647, #2002); a miss of an honest executor whose host such a fault stopped between the inference's start and its timeout deadline is the protocol's too; those are counted apart", "mock ML log against misses, invalidations and the votes of both phases in the diffs; the runner's host faults that stop a host serving its payload (a pause) and the validators' payload misses in compose.log"}},
+	{HostsConverge, PromiseDescription{"All hosts of an escrow converge to one nonce and one post-state root", "each host's diff chain"}},
+	{NodeLocksReleased, PromiseDescription{"Every ML-node lock a host takes is released", "mock-dapi acquire/release journal in compose.log"}},
+	{OneNoncePerRequest, PromiseDescription{"A request spends one escrow nonce: nonces burned without sending, per host and minute, against requests", "gateway log in compose.log, client request log"}},
+	{QuarantineOnlyWhenFaulted, PromiseDescription{"An honest participant is not quarantined outside its fault windows", "gateway quarantine lines and attempt log in compose.log, host fault windows"}},
 }
 
 // promiseExamples is how many violations of one check the report shows.
@@ -105,6 +114,34 @@ func WritePromiseReport(w io.Writer, title string, rep PromiseReport) error {
 	if !listed {
 		b.WriteString("\nNone.\n")
 	}
+	if len(rep.ChargedWhileStopped) > 0 {
+		fmt.Fprintf(&b, "\n## Invalidated after an honest execution: the executor was stopped before validation\n\n%d inferences an honest executor answered in full; "+
+			"when the validators came for its payload (the prompt and the response with its logprobs), a fault of the runner kept its host from serving it "+
+			"(a pause). The validators that could not fetch it voted the result invalid, "+
+			"and the executor lost the payment. "+
+			"The protocol does this by design (#1647, #2002: a validator votes false when the executor withholds the payload "+
+			"or its payload Attach never completes); %s counts them apart, not as violations.\n\n", len(rep.ChargedWhileStopped), ChargeOnlyTheGuilty)
+		for _, v := range rep.ChargedWhileStopped {
+			fmt.Fprintf(&b, "- %s%s\n", violationPlace(v), mdLine(v.Detail))
+		}
+	}
+	if len(rep.MissedWhileStopped) > 0 {
+		fmt.Fprintf(&b, "\n## Missed because a fault of the runner stopped the executor's host before it could finish\n\n%d inferences an honest executor took; "+
+			"between the inference's start and its timeout deadline a fault of the runner stopped its host from serving, "+
+			"so it could not finish the stream in time. The gateway timed the inference out and the votes charged the miss, "+
+			"as the protocol does with any executor that does not finish in time; %s counts them apart, not as violations.\n\n", len(rep.MissedWhileStopped), ChargeOnlyTheGuilty)
+		for _, v := range rep.MissedWhileStopped {
+			fmt.Fprintf(&b, "- %s%s\n", violationPlace(v), mdLine(v.Detail))
+		}
+	}
+	if len(rep.CaughtOverclaims) > 0 {
+		fmt.Fprintf(&b, "\n## Overclaims caught: invalidated, not paid\n\n%d inferences whose Finish claimed other than the ML produced, "+
+			"or more than the Start's max_tokens, and which the validators' votes or a usage challenge then invalidated: "+
+			"the invalidation took the pay back to the escrow. %s counts them apart, not as violations.\n\n", len(rep.CaughtOverclaims), PaidOutputWithinProduced)
+		for _, v := range rep.CaughtOverclaims {
+			fmt.Fprintf(&b, "- %s%s\n", violationPlace(v), mdLine(v.Detail))
+		}
+	}
 	if w := rep.Wave; w != nil {
 		b.WriteString("\n## Challenge wave\n\nWhat the gateway logged of the usage challenges.\n\n")
 		fmt.Fprintf(&b, "| Outcome | Challenges |\n|---|---|\n%s", countRows(w.Outcomes))
@@ -140,10 +177,66 @@ func WritePromiseReport(w io.Writer, title string, rep PromiseReport) error {
 	return err
 }
 
+// NamedPromiseReport is one run's report under the name the summary shows.
+type NamedPromiseReport struct {
+	Name   string
+	Report PromiseReport
+}
+
+// WritePromiseSummary writes one table over several runs: a row per run in name order, a column per
+// check. A run that is not valid judged nothing: its row says so and shows no verdict.
+func WritePromiseSummary(w io.Writer, runs []NamedPromiseReport) error {
+	runs = slices.Clone(runs)
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].Name < runs[j].Name })
+	var b strings.Builder
+	b.WriteString("# System promise checks over the runs\n\n")
+	b.WriteString("A cell is the number of violations, `ok` when the check held, `obs` when it was counted without an allowance, `—` when the run could not measure it or is not valid.\n\n")
+	b.WriteString("| Run |")
+	for _, c := range PromiseCatalog {
+		fmt.Fprintf(&b, " %s |", c.Name)
+	}
+	b.WriteString("\n|---|")
+	for range PromiseCatalog {
+		b.WriteString("---|")
+	}
+	b.WriteString("\n")
+	for _, r := range runs {
+		valid := len(r.Report.Invalid) == 0
+		name := mdCell(r.Name)
+		if !valid {
+			name += " (not valid)"
+		}
+		fmt.Fprintf(&b, "| %s |", name)
+		for _, c := range PromiseCatalog {
+			cell := "—"
+			switch result := PromiseResult(r.Report, c.Name); {
+			case !valid:
+			case result == "VIOLATED":
+				cell = fmt.Sprintf("**%d**", countViolations(r.Report, c.Name))
+			case result == "held":
+				cell = "ok"
+			case result == "observed":
+				cell = "obs"
+			}
+			fmt.Fprintf(&b, " %s |", cell)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n| Check | Promise |\n|---|---|\n")
+	for _, c := range PromiseCatalog {
+		fmt.Fprintf(&b, "| %s | %s |\n", c.Name, c.Promise)
+	}
+	_, err := io.WriteString(w, b.String())
+	return err
+}
+
 func violationPlace(v PromiseViolation) string {
 	var parts []string
 	if v.Host != "" {
 		parts = append(parts, "host "+v.Host)
+	}
+	if v.Node != "" {
+		parts = append(parts, "ML node "+v.Node)
 	}
 	if v.Inference != nil {
 		parts = append(parts, fmt.Sprintf("escrow %s inference %d", v.Inference.Escrow, v.Inference.Inference))

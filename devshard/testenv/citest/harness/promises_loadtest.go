@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -58,14 +59,45 @@ type loadtestRunYAML struct {
 			Messages []mockopenai.ChatMessage `yaml:"messages"`
 		} `yaml:"request"`
 	} `yaml:"workload"`
+	Diagnostics struct {
+		Logs struct {
+			Tail string `yaml:"tail"`
+		} `yaml:"logs"`
+	} `yaml:"diagnostics"`
+}
+
+// loadtestDefaultLogTail is the runner's log tail when the scenario sets none (testenv/loadtest
+// Diagnostics.LogTail).
+const loadtestDefaultLogTail = "5000"
+
+// composeLogCut says why the run's compose.log does not hold the whole run, or "" when it does: the
+// runner keeps only the last lines of each container unless the scenario asks for all of them.
+func composeLogCut(runDir string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(runDir, "run.yaml"))
+	if err != nil {
+		return "", err
+	}
+	var scenario loadtestRunYAML
+	if err := yaml.Unmarshal(raw, &scenario); err != nil {
+		return "", fmt.Errorf("run.yaml: %w", err)
+	}
+	tail := scenario.Diagnostics.Logs.Tail
+	if tail == "" {
+		tail = loadtestDefaultLogTail
+	}
+	if tail == "all" {
+		return "", nil
+	}
+	return fmt.Sprintf("compose.log keeps only the last %s lines of each container (diagnostics.logs.tail), not the whole run", tail), nil
 }
 
 // loadtestRequestLine is one line of requests.jsonl (RequestResult in testenv/loadtest/generator.go).
 type loadtestRequestLine struct {
-	RequestID   string `json:"request_id"`
-	SampleIndex *int   `json:"sample_index"`
-	Status      int    `json:"status"`
-	Outcome     string `json:"outcome"`
+	RequestID     string `json:"request_id"`
+	SampleIndex   *int   `json:"sample_index"`
+	Status        int    `json:"status"`
+	Outcome       string `json:"outcome"`
+	ResponseBytes int64  `json:"response_bytes"`
 }
 
 // IsLoadtestRun says whether a run directory was written by the load-test runner: it keeps the
@@ -146,7 +178,7 @@ func ReadLoadtestRequests(runDir string, mock []mockopenai.RequestRecord, diffs 
 		// The generator records "error" for a 200 it did not accept as an answer, and the scenario's
 		// terminal outcome for one it did.
 		cr := ClientRequest{RequestID: r.RequestID, HTTPStatus: r.Status,
-			Incomplete: r.Status == 200 && r.Outcome == "error"}
+			Incomplete: r.Status == 200 && r.Outcome == "error", ResponseBytes: r.ResponseBytes}
 		if r.SampleIndex != nil {
 			rep.Replayed = true
 			out = append(out, cr)
@@ -325,12 +357,89 @@ func nearestStart(hits []InferenceRef, startedAt map[InferenceRef]int64, execMs 
 	return sorted[0], true
 }
 
-// CheckLoadtestRun holds a finished load-test run to the checks: the runner's requests.jsonl and
-// run.yaml and compose.log in runDir, and the export the runner took under runDir/export. An error
-// means the export could not be read.
+// ReadLoadtestGatewayHeap takes the gateway's heap samples from the metrics.jsonl of a load-test
+// run (go_memstats_heap_inuse_bytes of every gateway scrape). A restarted gateway is a new process;
+// Process keeps the samples of each apart, by pid and start ticks as the runner tells them (the
+// start time in seconds moves with the clock), or by the start time when those are missing. A last
+// line that does not parse is one the collector was still writing and is left out.
+func ReadLoadtestGatewayHeap(runDir string) ([]HeapSample, error) {
+	var out []HeapSample
+	marker := []byte(`"target":"gateway"`)
+	var torn error
+	err := readJSONLines(filepath.Join(runDir, "metrics.jsonl"), func(line []byte) error {
+		if torn != nil {
+			return torn
+		}
+		if !bytes.Contains(line, marker) {
+			return nil
+		}
+		var rec struct {
+			At     time.Time          `json:"at"`
+			Target string             `json:"target"`
+			Phase  string             `json:"phase"`
+			Values map[string]float64 `json:"values"`
+		}
+		if err := json.Unmarshal(line, &rec); err != nil {
+			torn = err
+			return nil
+		}
+		heap, ok := rec.Values["go_memstats_heap_inuse_bytes"]
+		if rec.Target != "gateway" || !ok {
+			return nil
+		}
+		s := HeapSample{AtUnixMs: rec.At.UnixMilli(), HeapInuse: uint64(heap), Phase: rec.Phase,
+			NextGC: uint64(rec.Values["go_memstats_next_gc_bytes"]), NumGC: uint64(rec.Values["go_gc_duration_seconds_count"]),
+			StackInuse: uint64(rec.Values["go_memstats_stack_inuse_bytes"])}
+		pid, okPid := rec.Values["loadtest_process_pid"]
+		ticks, okTicks := rec.Values["loadtest_process_start_ticks"]
+		if start, ok := rec.Values["process_start_time_seconds"]; okPid && okTicks {
+			s.Process = strconv.FormatFloat(pid, 'f', -1, 64) + "/" + strconv.FormatFloat(ticks, 'f', -1, 64)
+		} else if ok {
+			s.Process = strconv.FormatFloat(start, 'f', -1, 64)
+		}
+		out = append(out, s)
+		return nil
+	})
+	markLoadtestHeapPhases(out)
+	return out, err
+}
+
+// markLoadtestHeapPhases names the readings gateway_live_heap_returns compares from the runner's
+// collection phases: the last baseline reading is "before" the load, the last workload one its
+// "load_end", and the last of the drain and the final snapshot "after"; the others are left unnamed.
+func markLoadtestHeapPhases(samples []HeapSample) {
+	last := map[string]int{}
+	for i, s := range samples {
+		switch s.Phase {
+		case "baseline":
+			last["before"] = i
+		case "workload":
+			last["load_end"] = i
+		case "drain", "final":
+			last["after"] = i
+		}
+	}
+	for i := range samples {
+		samples[i].Phase = ""
+	}
+	for phase, i := range last {
+		samples[i].Phase = phase
+	}
+}
+
+// CheckLoadtestRun holds a finished load-test run to the checks: the runner's requests.jsonl,
+// run.yaml, compose.log, metrics.jsonl and host-faults.json in runDir, and the export the runner
+// took under runDir/export. An error means the export could not be read.
 func CheckLoadtestRun(runDir string, known []KnownViolation) (PromiseReport, error) {
+	return CheckLoadtestRunWithin(runDir, PromiseInput{Known: known})
+}
+
+// CheckLoadtestRunWithin is CheckLoadtestRun with the known violations and the allowances of the
+// checks (LiveHeapAllowance, LockGrace, BurnAllowance and the like) taken from bounds; what the run
+// directory holds replaces the rest of it.
+func CheckLoadtestRunWithin(runDir string, bounds PromiseInput) (PromiseReport, error) {
 	exportDir := filepath.Join(runDir, "export")
-	in := PromiseInput{Known: known}
+	in := bounds
 	var err error
 	if in.Diffs, err = ReadExportDiffs(exportDir); err != nil {
 		return PromiseReport{}, err
@@ -370,9 +479,36 @@ func CheckLoadtestRun(runDir string, known []KnownViolation) (PromiseReport, err
 		return PromiseReport{}, err
 	}
 	in.Slack = DeadlineSlack
+	if in.Balances, err = ReplayBalances(exportDir); err != nil {
+		observations = append(observations, "escrow balances not replayed: "+err.Error())
+	}
+	if in.Layers, err = ReadLoadtestLayers(runDir); err != nil && !os.IsNotExist(err) {
+		return PromiseReport{}, err
+	}
+	if in.Layers != nil {
+		if in.Layers.LogCut, err = composeLogCut(runDir); err != nil {
+			return PromiseReport{}, err
+		}
+		switch {
+		case !mockRead:
+			in.Layers.MLUnknown = "the export has no mock log: the ML nodes' faults are not known"
+		case !complete:
+			in.Layers.MLUnknown = "the mock log is incomplete: the ML nodes' faults are not all known"
+		}
+		in.Layers.GraceFaultWindows(in.Timeouts)
+	}
+	if in.GatewayHeap, err = ReadLoadtestGatewayHeap(runDir); err != nil && !os.IsNotExist(err) {
+		observations = append(observations, "gateway heap not read: "+err.Error())
+		in.GatewayHeap = nil
+	}
 	var link LoadtestLinkReport
 	if in.Requests, link, err = ReadLoadtestRequests(runDir, in.Mock, in.Diffs, executors); err != nil {
 		return PromiseReport{}, err
+	}
+	if in.ResponseBytes == 0 {
+		for _, r := range in.Requests {
+			in.ResponseBytes += r.ResponseBytes
+		}
 	}
 	rep := CheckPromises(in)
 	// A lost chain or mock log reads as rows that never happened: the checks cannot tell it from a
