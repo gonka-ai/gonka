@@ -2525,6 +2525,10 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			streamBytes = inf.resp.StreamBytesRead
 		}
 		if inf.err != nil {
+			// The event the cut landed in is still in the classifier: counted
+			// before the stream is closed, or a cut inside a content event
+			// would be challenged as an empty stream.
+			rw.flushClassify()
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed",
 				append([]any{
 					"host", inf.hostID,
