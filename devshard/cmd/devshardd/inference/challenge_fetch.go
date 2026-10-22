@@ -22,10 +22,17 @@ func (v *Validator) FetchChallengePayload(ctx context.Context, req devshardpkg.V
 	_, response, err := v.fetchPayloadsFor(ctx, req, inferenceID, epochID)
 	fetch := classifyChallengeFetch(ctx, v.phase, epochID, response, err)
 	if !v.voteFalseOnFetchFailure {
-		// The same switch replay reads: with it off, a fetch the executor
-		// failed is left unchecked at the deadline instead of voted
+		// The same switch replay reads: with it off, replay casts no vote on
+		// a payload the executor failed to keep, to hand over, or to sign
+		// over the body it finished with. The voter does the same: a fetch
+		// that would settle a fault here is left unchecked, and one the
+		// executor failed is left unchecked at the deadline instead of voted
 		// PAYLOAD_UNAVAILABLE.
 		fetch.ExecutorSide = false
+		switch fetch.Outcome {
+		case devshardpkg.ChallengeFetchMismatch, devshardpkg.ChallengeFetchUnavailable:
+			fetch = devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchLocal, Cause: fetch.Cause}
+		}
 	}
 	return fetch
 }
