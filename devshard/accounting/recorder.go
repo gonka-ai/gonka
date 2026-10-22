@@ -15,8 +15,11 @@ type DiffObserverTarget interface {
 
 // ProtocolView is the protocol state accounting reads. The per-diff path uses
 // only Phase and HostStatsFor; the snapshot is for attach and lifecycle sync.
+// LookupSealedInference reads a record the auto-seal took out of the live
+// map: a verdict's own diff can seal the record it decides.
 type ProtocolView interface {
 	GetInference(uint64) (types.InferenceRecord, bool)
+	LookupSealedInference(uint64) (types.InferenceRecord, bool)
 	Phase() types.SessionPhase
 	HostStatsFor(slot uint32) (types.HostStats, bool)
 	SnapshotStateNoInferences() types.EscrowState
@@ -137,6 +140,11 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		}
 		seen[inferenceID] = struct{}{}
 		record, ok := state.GetInference(inferenceID)
+		if !ok {
+			// A terminal record whose nonce gate had cleared is sealed in
+			// the same apply as the verdict that made it terminal.
+			record, ok = state.LookupSealedInference(inferenceID)
+		}
 		if !ok {
 			hostStats = r.appendHostStatsFor(escrowID, inferenceID, state, hostStats)
 			continue
