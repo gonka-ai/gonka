@@ -693,8 +693,19 @@ With `promises: true` the runner checks the run after the export and writes
 | --- | --- |
 | `inference_closes_in_time` | Every started inference leaves Pending and Started through Finish, a timeout or an error miss by its deadline: the escrow's refusal timeout from Start while Pending, its execution timeout from ConfirmStart while Started, plus the grace and the period of the Gateway's timeout sweep and a minute for the votes to reach a diff. |
 | `served_request_finished` | A request the client got a 200 for has a Finish on every exported host's chain. |
-| `paid_output_within_produced` | A host's Finish claims no more output tokens than its Start allowed, nor a count other than the ML node produced for that execution. |
-| `charge_only_the_guilty` | An executor the ML log shows answering in full is not charged a miss, an invalid or an invalidation by a usage challenge whose fault votes outweigh the session's vote threshold, a request the client spoiled charges no host, and an answer with forged logprobs is not voted valid. |
+| `paid_output_within_produced` | A Finish the executor was paid for claims no more output tokens than its Start allowed, nor a count other than the ML node produced for that execution. A Finish whose inference the validators' votes or a usage challenge invalidated was not paid: the invalidation took its pay back to the escrow, and the report counts such an overclaim apart as caught, not as a violation. A host only behind the longest chain of an escrow is judged on that chain. Whether an honest Finish was wrongly invalidated is for `charge_only_the_guilty` to judge. |
+| `charge_only_the_guilty` | An executor the ML log shows answering in full is not charged a miss, nor an invalidation: the validators' invalid votes of both phases, or the fault votes of a usage challenge, weighing more than the session's vote threshold. A request the client spoiled charges no host, and an answer with forged logprobs is not voted valid. An honest executor that answered in full and was then stopped is, once picked for validation, voted invalid and loses the payment by design: it cannot serve its payload (the prompt and the response with its logprobs), and a validator that cannot fetch the payload votes false (#1647, #2002). The report counts such inferences apart, not as violations, each with the fault, the validators' payload misses and the loss. A stop counts when a validator wrote that it voted false for want of the executor's payload (`validation voting false: executor payload unavailable` in `compose.log`, the vote's reason `executor_payload_unavailable`) while a fault of the runner kept the executor's host from serving it: a pause of the host (`workload.host_faults`). The invalidation is the stop's when the invalid weight of the other validators is not above the vote threshold. A timeout miss of an honest executor is likewise counted apart when such a fault stopped its host between the inference's start and its timeout deadline (the escrow's refusal timeout from the Start, or its execution timeout from the ConfirmStart, plus the gateway's 5 s skew): the host could not finish the stream, and the protocol charges any executor that does not finish in time. Without a stopping fault of the executor's host in that window, or with the escrow's timeouts unknown, the miss stays a violation. Invalid votes on an escrow whose session row no host holds cannot be weighed, and the check then gives no verdict. An invalid vote that did not invalidate an executor that answered in full and kept running is an observation. |
+| `escrow_money_conserved` | The escrow balance adds up: deposited equals spent plus reserved plus left plus fees, with each host's chain replayed through the state machine. |
+| `gateway_heap_bounded` | The Gateway heap grows per request by no more than k times the bytes of the answer the client read (`promisecheck -heap-per-response-byte`; without k it is reported without a verdict). |
+| `gateway_live_heap_returns` | The Gateway live heap after the drain returns to its level before the load, within the allowance. |
+| `client_error_answered_4xx` | A request the ML node refused as malformed gets a 4xx to the client, not a 5xx. |
+| `hosts_converge` | All hosts of a settled escrow reach one nonce and one post-state root. |
+| `ml_node_locks_released` | Every ML node lock a host takes is released. |
+| `one_nonce_per_request` | A request spends one escrow nonce: nonces burned without sending, per host and minute, are counted against the requests; burns inside a host's fault windows are the fault's (`promisecheck -burn-allowance`; without one it is reported without a verdict). |
+| `quarantine_only_when_faulted` | An honest participant is not quarantined outside its fault windows plus the run's timeouts and the Gateway's sweep; a burst of one quarantine's lines is one quarantine. A run whose ML nodes failed or lied, or whose mock log is missing or not whole, gets no verdict. |
+
+The last three read `compose.log` and give no verdict when it holds only the
+tail of each container's log.
 
 Both deadline checks judge each host's chain on its own, except a host whose
 chain of an escrow is a matching, shorter prefix of the longest one: the Gateway
@@ -711,7 +722,8 @@ largest protocol timeout plus 4 min 5 s after the load ends (a scenario without
 property: what it promises, held, violated or not measured, the number of
 violations and what was judged. The first five violations of each property follow,
 each naming the hosts, the escrow, the inference and the numbers; `report.json`
-holds them all. Observations come last: what was not judged and why, how many
+holds them all. The inferences invalidated after an honest execution because the executor was
+stopped before validation follow in a section of their own. Observations come last: what was not judged and why, how many
 client requests were tied to inferences (through the prompt each host stores
 with the request tag, or by model, seed and start time where no prompt was
 exported), and what the Gateway logged of the usage challenges (outcomes,
