@@ -1,0 +1,84 @@
+schema_version: v1
+scenario: usage-challenge-wave
+seed: 1515
+
+# The cost of the usage challenge under load. One of six ML nodes answers every execution with a
+# role delta and no content, so each win it serves is a signed receipt for an empty stream: the
+# gateway challenges it (EMPTY_STREAM) and asks the other hosts to vote on the stored body. The hosts
+# share the nodes, so the empty streams land on every host. The gateway's empty-stream quarantine is
+# cut to 1 s so the hosts keep winning their share and the wave is as large as the race allows. The
+# report counts the challenges by outcome and reason, the voters' answers (late, still busy at the
+# deadline) and the time from a challenge's start to its outcome. usage-challenge-wave-honest is the
+# same run with every node honest.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 5
+  chain:
+    escrow_amount: 5000000000
+    max_nonce: 100000
+    escrows: 4
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: empty-stream
+      - name: mock-openai-4
+        profile: fast
+      - name: mock-openai-5
+        profile: fast
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  max_in_flight: 256
+  duration: 10m
+  report_interval: 30s
+  traffic:
+    type: stages
+    stages:
+      - duration: 1m
+        rps: 8
+      - duration: 5m
+        rps: 32
+      - duration: 4m
+        rps: 8
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 128
+    messages:
+      - role: user
+        content: "usage challenge wave request"
+
+gateway:
+  participant_throttle:
+    empty_stream_quarantine: 1s
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 3m

@@ -1,0 +1,63 @@
+schema_version: v1
+scenario: dishonest-executor-honest
+seed: 42
+
+# The control of dishonest-executor-overclaim and dishonest-executor-wrong-answer: the same stack, load and
+# checks with every ML node honest. A violation those runs report and this one does not is the dishonest node's.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+    escrows: 4
+    # mainnet's bar; the testenv default 0.50 can't fail any logprob mismatch
+    validation_threshold:
+      value: 958
+      exponent: -3
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+workload:
+  max_in_flight: 32
+  duration: 2m
+  traffic:
+    type: constant
+    rps: 8
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "dishonest executor request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 60s
