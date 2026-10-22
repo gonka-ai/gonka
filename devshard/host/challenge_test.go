@@ -26,6 +26,9 @@ type scriptedChallengeFetcher struct {
 	calls   atomic.Int32
 	gate    chan struct{}
 	lastReq devshard.ValidateRequest
+	// onCut is what a gated fetch reports when its context ends first, as
+	// the real fetcher classifies the call the cut landed on.
+	onCut *devshard.ChallengeFetch
 }
 
 func (f *scriptedChallengeFetcher) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
@@ -37,6 +40,9 @@ func (f *scriptedChallengeFetcher) FetchChallengePayload(ctx context.Context, re
 		select {
 		case <-f.gate:
 		case <-ctx.Done():
+			if f.onCut != nil {
+				return *f.onCut
+			}
 			return devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchLocal, Cause: "closed"}
 		}
 	}
@@ -549,6 +555,37 @@ func TestVerifyChallenge_AFetchPastTheWindowIsCut(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond, "the vote settles without the fetch returning")
 	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, kept.Fault, "an attempt the executor left unanswered inside the window")
 	requireVoteSignedBy(t, f.hosts[0], kept)
+	close(fetcher.gate)
+}
+
+// A fetch the window cuts while this host's own lookup is still running (the
+// executor's keys from this host's chain node, after the body arrived) is
+// this host's failure, not the executor's. The fetcher reports the side the
+// cut landed on, and the voter leaves the vote unchecked.
+func TestVerifyChallenge_ACutOnThisHostsSideLeavesTheVoteUnchecked(t *testing.T) {
+	withChallengeTiming(t, time.Millisecond, 50*time.Millisecond)
+	savedGrace := challengeFetchGrace
+	challengeFetchGrace = 200 * time.Millisecond
+	t.Cleanup(func() { challengeFetchGrace = savedGrace })
+
+	f := newChallengeFixture(t)
+	fetcher := &scriptedChallengeFetcher{
+		script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}},
+		gate:   make(chan struct{}),
+		onCut:  &devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchLocal, Cause: "resolve executor pubkeys: context deadline exceeded"},
+	}
+	h := f.voter(t, 0, fetcher, 1)
+	answer, err := h.VerifyChallenge(context.Background(), 1)
+	require.NoError(t, err)
+	require.True(t, answer.Pending)
+
+	var kept ChallengeAnswer
+	require.Eventually(t, func() bool {
+		kept, err = h.VerifyChallenge(context.Background(), 1)
+		return err == nil && !kept.Pending
+	}, 3*time.Second, 20*time.Millisecond, "the answer settles once the fetch is cut")
+	require.Equal(t, ChallengeRejectUnchecked, kept.RejectCause, "a cut on this host's side is no vote against the executor")
+	require.Empty(t, kept.Signature)
 	close(fetcher.gate)
 }
 
