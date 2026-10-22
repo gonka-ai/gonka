@@ -155,7 +155,7 @@ func TestPromiseNothingMeasuredOnEmptyInput(t *testing.T) {
 	for name := range rep.Checked {
 		names = append(names, name)
 	}
-	require.ElementsMatch(t, []string{PaidOutputWithinProduced, ChargeOnlyTheGuilty}, names,
+	require.ElementsMatch(t, []string{InferenceClosesInTime, ServedRequestFinished, PaidOutputWithinProduced, ChargeOnlyTheGuilty}, names,
 		"every check reports, measured or not")
 }
 

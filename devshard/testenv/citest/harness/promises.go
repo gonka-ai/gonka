@@ -3,9 +3,17 @@ package harness
 // Checks of properties the system has to hold whatever its code does today, read from a finished
 // run's export instead of from the code under test. Each check names the property it holds the run
 // to; a violation carries the facts it was found from. Every check runs on each host's diff chain on
-// its own: merging the chains would let one host's Finish hide another host's stuck inference. A
-// check that could not fire on this run says so (not measured) instead of passing.
+// its own: merging the chains would let one host's Finish hide another host's stuck inference. The
+// deadline checks make one exception: a host whose chain of an escrow is a matching, shorter prefix of
+// the longest one is only behind (the gateway sends each diff to one host), and the inference is
+// judged on the longest chain instead. A check that could not fire on this run says so (not measured)
+// instead of passing.
 //
+//   inference_closes_in_time  every started inference leaves Pending/Started through Finish or a
+//        timeout within its deadline (refusal_timeout from Start while Pending, execution_timeout from
+//        ConfirmStart while Started) plus the grace the timeout path takes to reach a diff.
+//   served_request_finished  a request the client got a 200 for has MsgFinishInference on every
+//        host's chain for at least one of its inferences.
 //   paid_output_within_produced  a Finish never reports more output tokens than its Start allowed,
 //        nor a count other than the ML produced for that execution.
 //   charge_only_the_guilty  a host the ML log shows answering in time and correctly is not charged a
@@ -38,6 +46,9 @@ import (
 const (
 	PaidOutputWithinProduced = "paid_output_within_produced"
 	ChargeOnlyTheGuilty      = "charge_only_the_guilty"
+
+	InferenceClosesInTime = "inference_closes_in_time"
+	ServedRequestFinished = "served_request_finished"
 )
 
 // ClientErrorStatuses are the ML answers that mean the request itself was wrong.
@@ -219,15 +230,7 @@ func readSQLiteChains(exportDir string) ([]HostChain, error) {
 		chain := HostChain{Host: "devshardd_" + strings.ReplaceAll(svc, "-", "_"), File: dir,
 			Inferences: map[InferenceRef]*InferenceFacts{}, Roots: map[string]map[uint64]string{}, Status: map[string]string{},
 			Voting: map[string]SessionVoting{}}
-		var files []string
-		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && (strings.HasSuffix(p, ".db") || strings.HasSuffix(p, ".sqlite") || strings.HasSuffix(p, ".sqlite3")) {
-				files = append(files, p)
-			}
-			return nil
-		})
-		sort.Strings(files)
-		for _, p := range files {
+		for _, p := range sqliteFilesIn(dir) {
 			db, err := sql.Open("sqlite", "file:"+p+"?mode=ro")
 			if err != nil {
 				return out, fmt.Errorf("%s: %w", p, err)
@@ -279,6 +282,29 @@ func readSQLiteChains(exportDir string) ([]HostChain, error) {
 		}
 	}
 	return out, nil
+}
+
+// sqliteFilesIn lists the SQLite files under dir, sorted.
+func sqliteFilesIn(dir string) []string {
+	var files []string
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && (strings.HasSuffix(p, ".db") || strings.HasSuffix(p, ".sqlite") || strings.HasSuffix(p, ".sqlite3")) {
+			files = append(files, p)
+		}
+		return nil
+	})
+	sort.Strings(files)
+	return files
+}
+
+// sqliteFiles lists the SQLite files of every SQLite host in an export (sqlite/<service>/...).
+func sqliteFiles(exportDir string) []string {
+	services, _ := filepath.Glob(filepath.Join(exportDir, "sqlite", "*"))
+	var out []string
+	for _, dir := range services {
+		out = append(out, sqliteFilesIn(dir)...)
+	}
+	return out
 }
 
 func (c *HostChain) apply(escrow string, nonce uint64, dc *types.DiffContent) {
@@ -395,6 +421,10 @@ type PromiseInput struct {
 	Requests []ClientRequest
 	Mock     []mockopenai.RequestRecord
 	Known    []KnownViolation
+
+	Timeouts      map[string]EscrowTimeouts
+	ObservedUntil time.Time     // when the export was taken; zero leaves the deadline checks not measured
+	Slack         time.Duration // added to every deadline for the timeout votes to reach a diff
 }
 
 // PromiseViolation is one broken property with the facts it was found from.
@@ -424,6 +454,9 @@ type PromiseReport struct {
 	Invalid []string `json:"invalid,omitempty"`
 	// Wave is what the gateway logged of the usage challenges; nil when it logged none.
 	Wave *ChallengeWave `json:"challenge_wave,omitempty"`
+	// Open lists inferences still Pending/Started at the export whose deadline had not passed: allowed
+	// by the property, reported so a short run does not hide them.
+	Open []HostInference `json:"open_within_deadline,omitempty"`
 }
 
 func measured(judged int, format string, args ...any) Measure {
@@ -438,8 +471,11 @@ func notMeasured(why string) Measure { return Measure{Note: "not measured: " + w
 // CheckPromises holds the run to every check of PromiseCatalog.
 func CheckPromises(in PromiseInput) PromiseReport {
 	rep := PromiseReport{Checked: map[string]Measure{}}
+	checkTerminal(in, &rep)
+	checkServedFinish(in, &rep)
 	checkTokens(in, &rep)
 	checkAttribution(in, &rep)
+	rep.Observations = append(rep.Observations, lagObservations(in.Diffs.Hosts, behindTip(in.Diffs.Hosts))...)
 	for i := range rep.Violations {
 		v := &rep.Violations[i]
 		for _, k := range in.Known {

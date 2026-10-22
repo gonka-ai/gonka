@@ -18,6 +18,8 @@ var PromiseCatalog = []struct {
 	Name string
 	PromiseDescription
 }{
+	{InferenceClosesInTime, PromiseDescription{"Every started inference reaches Finish, Timeout or ErrorMiss before its deadline plus slack", "each host's diff chain, export time"}},
+	{ServedRequestFinished, PromiseDescription{"A request the client got 200 for has a Finish on every exported host's chain", "client request log, each host's diff chain"}},
 	{PaidOutputWithinProduced, PromiseDescription{"Finish.OutputTokens equals the tokens the ML execution produced and never exceeds max_tokens", "MsgStartInference, MsgFinishInference, mock ML log"}},
 	{ChargeOnlyTheGuilty, PromiseDescription{"An honest executor is not charged Missed or Invalid, and an answer with forged logprobs is not voted valid", "mock ML log against Missed/Invalid/valid votes in the diffs"}},
 }
@@ -126,6 +128,12 @@ func WritePromiseReport(w io.Writer, title string, rep PromiseReport) error {
 		b.WriteString("\n## Observations\n\nReported without a verdict.\n\n")
 		for _, o := range rep.Observations {
 			fmt.Fprintf(&b, "- %s\n", mdLine(o))
+		}
+	}
+	if len(rep.Open) > 0 {
+		fmt.Fprintf(&b, "\n## Open at the export\n\n%d inferences were still Pending or Started with their deadline not yet passed; allowed, listed so a short run does not hide them (all of them in report.json).\n\n", len(rep.Open))
+		for _, o := range rep.Open[:min(len(rep.Open), promiseExamples)] {
+			fmt.Fprintf(&b, "- %s: escrow %s, inference %d\n", mdLine(o.Host), mdLine(o.Escrow), o.Inference)
 		}
 	}
 	_, err := io.WriteString(w, b.String())

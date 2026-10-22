@@ -169,6 +169,40 @@ func TestReadLoadtestRequestsTiesAnExecutionThroughTheStoredPrompt(t *testing.T)
 	require.Equal(t, InferenceRef{Escrow: "3", Inference: 7}, got[0].Executions[0].InferenceRef)
 }
 
+// Test flow:
+//  1. Escrow 4 holds inference 150, whose prompt a host stored with r-1's tag; the mock ran r-1's
+//     execution with seed 150, and a second earlier, at capacity, refused one of r-2 with seed 150
+//     too, for an inference of another escrow that no exported host holds.
+//  2. Read the requests.
+//  3. Check r-1's execution is tied to escrow 4's inference 150, and r-2's refusal is not tied to it
+//     by model, seed and time: the stored prompt says the inference is r-1's.
+func TestReadLoadtestRequestsDoesNotTieAnotherRequestToAStoredInference(t *testing.T) {
+	const at = int64(1_792_350_000)
+	kA := loadtestKey(t, "model-a", "r-1", mockopenai.ChatMessage{Role: "user", Content: "base prompt"})
+	kB := loadtestKey(t, "model-a", "r-2", mockopenai.ChatMessage{Role: "user", Content: "base prompt"})
+	mock := []mockopenai.RequestRecord{
+		{Phase: mockopenai.PhaseExecute, PromptKey: kB, Model: "model-a", Seed: intPtr(150), StartUnixMs: at*1000 - 1100, Status: 503, Outcome: "capacity_exhausted"},
+		{Phase: mockopenai.PhaseExecute, PromptKey: kA, Model: "model-a", Seed: intPtr(150), StartUnixMs: at*1000 + 25, Status: 200, Outcome: "ok"},
+	}
+	chain := HostChain{Host: "primary", Inferences: map[InferenceRef]*InferenceFacts{
+		{Escrow: "4", Inference: 150}: {Started: true, Model: "model-a", StartedAt: at},
+	}}
+	dir := writeLoadtestRun(t, []map[string]any{
+		{"request_id": "r-1", "status": 200, "outcome": "completed"},
+		{"request_id": "r-2", "status": 502, "outcome": "error"},
+	})
+	payloads := filepath.Join(dir, "export", "db-postgres-versiond-1", "postgres", "public.payload_storage.csv")
+	require.NoError(t, os.MkdirAll(filepath.Dir(payloads), 0o755))
+	prompt := `\x` + hex.EncodeToString([]byte(`{"messages":[{"content":"base prompt [load-request:r-1]","role":"user"}],"model":"model-a"}`))
+	require.NoError(t, os.WriteFile(payloads, []byte("escrow_id,inference_id,epoch_id,prompt_payload,response_payload\n4,150,1,"+prompt+",\\x00\n"), 0o644))
+
+	got, rep, err := ReadLoadtestRequests(dir, mock, ExportDiffs{Hosts: []HostChain{chain}}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []InferenceRef{{Escrow: "4", Inference: 150}}, got[0].Inferences())
+	require.Empty(t, got[1].Executions, "the stored prompt names r-1, not r-2")
+	require.Equal(t, 1, rep.NoInference)
+}
+
 func TestReadLoadtestRequestsTiesAnExecutionToAClearlyCloserStart(t *testing.T) {
 	const at = int64(1_792_350_000)
 	k := loadtestKey(t, "model-a", "r-1", mockopenai.ChatMessage{Role: "user", Content: "base prompt"})
