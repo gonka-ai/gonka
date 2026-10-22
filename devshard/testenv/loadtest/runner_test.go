@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -181,7 +182,7 @@ func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testin
 	}))
 	defer server.Close()
 
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.5, map[string]struct{}{"2": {}}, time.Second)
+	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.5, &leftOutSlots{ghosts: escrowNonces{"1": {"2": {}}}}, time.Second)
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Finished)
 	require.Zero(t, summary.Orphaned)
@@ -193,7 +194,7 @@ func TestWaitForNoOrphanedWork_RejectsGhostRateAboveThreshold(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.25, map[string]struct{}{"2": {}}, time.Second)
+	_, err := waitForNoOrphanedWork(context.Background(), server.URL, "", 0.25, &leftOutSlots{ghosts: escrowNonces{"1": {"2": {}}}}, time.Second)
 	require.ErrorContains(t, err, "ghost inference rate 0.5000")
 }
 
@@ -236,9 +237,9 @@ func TestReadGhostInferenceIDs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compose.log")
 	require.NoError(t, os.WriteFile(path, []byte("devshardctl | request=r1 stage=ghost_probe_skipped escrow=1 nonce=9 reason=no_compatible_request_after_stale\n"), 0o644))
 
-	ghosts, err := readGhostInferenceIDs(path)
+	slots, err := readLeftOutSlots(path)
 	require.NoError(t, err)
-	require.Equal(t, map[string]struct{}{"9": {}}, ghosts)
+	require.Equal(t, escrowNonces{"1": {"9": {}}}, slots.ghosts)
 }
 
 func TestReadGhostInferenceIDsJSONLogs(t *testing.T) {
@@ -247,9 +248,75 @@ func TestReadGhostInferenceIDsJSONLogs(t *testing.T) {
 		`devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
 
-	ghosts, err := readGhostInferenceIDs(path)
+	slots, err := readLeftOutSlots(path)
 	require.NoError(t, err)
-	require.Equal(t, map[string]struct{}{"271": {}}, ghosts)
+	require.Equal(t, escrowNonces{"1": {"271": {}}}, slots.ghosts)
+}
+
+// Test flow:
+//  1. A gateway holds escrows 1 and 2, and both list an inference with nonce 3: a ghost slot on
+//     escrow 1, a finished inference on escrow 2.
+//  2. The gateway trace logs the ghost slot of escrow 1 only.
+//  3. Check the orphan check leaves out the ghost of escrow 1 and still counts the inference of escrow 2.
+func TestOrphanCheckKeysGhostSlotsByEscrow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.log")
+	log := `devshardctl-1 | {"time":"2026-10-22T19:50:13Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"1","nonce":3,"reason":"no_compatible_request_after_stale"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
+	slots, err := readLeftOutSlots(path)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(escrowDebugMux(t, map[string]string{
+		"1": `{"inferences":{"3":{"status":"pending"}}}`,
+		"2": `{"inferences":{"3":{"status":"finished"}}}`,
+	}))
+	defer server.Close()
+
+	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "admin-key", 0.5, slots, time.Second, true)
+	require.NoError(t, err)
+	require.Equal(t, 1, summary.Ghost)
+	require.Equal(t, 1, summary.Finished)
+	require.Equal(t, 2, summary.Total)
+}
+
+// Test flow:
+//  1. A gateway holds escrows 1 and 2, and on both the warm-up probe, nonce 1, is still pending.
+//  2. The gateway trace logs the probe of escrow 2 served by a host and the probe of escrow 1 refused.
+//  3. Check the served probe is left to settlement, since its receipt and Finish wait for the escrow's
+//     next diff, while the refused one, which the gateway resolves by a timeout, still counts as orphaned.
+func TestOrphanCheckLeavesAServedWarmUpProbeToSettlement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "compose.log")
+	log := `devshardctl-1 | {"time":"2026-10-22T19:21:40Z","level":"INFO","msg":"escrow_warmup_completed escrow=2 model=\"test-model\" nonce=1 slot=1 served=true catch_up_error=<nil>"}` + "\n" +
+		`devshardctl-1 | {"time":"2026-10-22T19:21:40Z","level":"INFO","msg":"escrow_warmup_completed escrow=1 model=\"test-model\" nonce=1 slot=0 served=false catch_up_error=<nil>"}` + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
+	slots, err := readLeftOutSlots(path)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(escrowDebugMux(t, map[string]string{
+		"1": `{"inferences":{"1":{"status":"pending"}}}`,
+		"2": `{"inferences":{"1":{"status":"pending"}}}`,
+	}))
+	defer server.Close()
+
+	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "admin-key", 0, slots, 10*time.Millisecond, true)
+	require.ErrorContains(t, err, "orphaned=1")
+	require.Equal(t, 1, summary.Orphaned)
+	require.Equal(t, 1, summary.Settling)
+}
+
+// escrowDebugMux serves a gateway with one runtime per escrow, each listing the given inferences.
+func escrowDebugMux(t *testing.T, inferences map[string]string) *http.ServeMux {
+	g := &fakeAdminGateway{}
+	for id := range inferences {
+		g.ids = append(g.ids, id)
+	}
+	mux := http.NewServeMux()
+	mux.Handle("/v1/admin/", g.handler(t))
+	for id, body := range inferences {
+		mux.HandleFunc("/devshard/"+id+"/v1/debug/inferences", func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprint(w, body)
+		})
+	}
+	return mux
 }
 
 func TestFetchGatewayStateSizes(t *testing.T) {
@@ -426,7 +493,7 @@ func TestValidateRefusesAValidationThresholdNoSimilarityCanPass(t *testing.T) {
 
 // Test flow:
 //  1. Load the scenarios that bind every mock ML node to a host, so they pass the binding checks.
-//  2. Write the runner config of each usage-challenge scenario.
+//  2. Write the runner config of each usage-challenge and stream-shape scenario.
 //  3. Check each node keeps its host and cap, and each bound host is a versiond container of the config.
 //  4. Check every container owns exactly one node, so no host draws from another's, and the dishonest
 //     node is versiond-3's alone.
@@ -438,7 +505,8 @@ func TestWriteRunnerConfigBindsMockMLNodesToHosts(t *testing.T) {
 			require.NotEmpty(t, node.Host, "%s: %s", name, node.Name)
 		}
 	}
-	for _, name := range []string{"dishonest-executor-honest", "dishonest-executor-overclaim", "dishonest-executor-wrong-answer", "usage-challenge-wave", "usage-challenge-wave-honest"} {
+	for _, name := range []string{"dishonest-executor-honest", "dishonest-executor-overclaim", "dishonest-executor-wrong-answer", "usage-challenge-wave", "usage-challenge-wave-honest",
+		"chunk-shapes", "phase-faults", "drain", "shared-endpoint"} {
 		scenario, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
 		require.NoError(t, err, name)
 		profiles := make(map[string]Profile)
@@ -473,4 +541,33 @@ func TestWriteRunnerConfigBindsMockMLNodesToHosts(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Test flow:
+//  1. Serve mock-dapi's host stats: a host refused a node three times, and a caller it maps to no host
+//     given one.
+//  2. Fetch them as the runner does after the load and write host-stats.json.
+//  3. Check the file keeps every row as served, which the promises check reads back.
+func TestFetchHostStatsWritesTheMockDapiRows(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/testenv/host-stats" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = fmt.Fprint(w, `{"versiond-2":{"challenged":false,"nodes":["mock-openai-2"],"allocations":5,`+
+			`"node_allocations":{"mock-openai-2":5},"challenge_rejections":0,"acquire_errors":3},`+
+			`"unmapped":{"challenged":false,"allocations":1,"challenge_rejections":0,"acquire_errors":0}}`)
+	}))
+	defer server.Close()
+
+	stats, err := fetchHostStats(context.Background(), server.Listener.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, writeHostStats(dir, stats))
+	read, err := readHostStats(dir)
+	require.NoError(t, err)
+	require.Equal(t, map[string]DapiHostStats{
+		"versiond-2":     {Nodes: []string{"mock-openai-2"}, Allocations: 5, NodeAllocations: map[string]uint64{"mock-openai-2": 5}, AcquireErrors: 3},
+		unmappedDapiHost: {Allocations: 1},
+	}, read)
 }

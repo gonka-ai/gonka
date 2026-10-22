@@ -33,6 +33,12 @@ topology:
         profile: fast
         host: versiond-3
 
+# Short deadlines: the runner holds the export until the last inference is past its deadline, so the
+# deadline checks judge every inference of the run.
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 30s
+
 workload:
   max_in_flight: 32
   duration: 2m

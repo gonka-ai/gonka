@@ -114,7 +114,7 @@ func TestValidateBoundsTheEscrowCount(t *testing.T) {
 // The gateway on the network holds several escrows of a model and spreads the requests over them, so
 // every scenario of the promise checks runs that way.
 func TestPromiseScenariosRunSeveralEscrows(t *testing.T) {
-	for _, name := range []string{"dishonest-executor-honest", "dishonest-executor-overclaim", "dishonest-executor-wrong-answer", "usage-challenge-wave", "usage-challenge-wave-honest"} {
+	for _, name := range []string{"dishonest-executor-honest", "dishonest-executor-overclaim", "dishonest-executor-wrong-answer", "usage-challenge-wave", "usage-challenge-wave-honest", "chunk-shapes", "phase-faults", "drain", "shared-endpoint"} {
 		s, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
 		require.NoError(t, err, name)
 		require.Equal(t, 4, s.Topology.Chain.Escrows, name)

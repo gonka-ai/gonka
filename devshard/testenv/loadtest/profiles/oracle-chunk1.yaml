@@ -1,0 +1,16 @@
+schema_version: v1
+profile: oracle-chunk1
+
+# An honest ML node in oracle mode: a replay is answered from the enforced tokens it carries and
+# usage counts the tokens sent. It streams 1 token(s) per chunk on a fixed schedule (first content at
+# 50 ms, the last chunk at 400 ms) so the one- and four-token groupings arrive the same way.
+ttft: 0s
+token_interval: 0s
+workers: 128
+queue: 0
+failures: []
+oracle: true
+chunk_tokens: 1
+first_content_ms: 50
+exec_ms: 400
+replay_ms: 1000

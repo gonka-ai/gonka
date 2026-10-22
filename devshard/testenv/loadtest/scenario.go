@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -141,6 +142,9 @@ type ChainDecimal struct {
 type MockMLTopology struct {
 	Allocator string       `yaml:"allocator"`
 	Nodes     []MockMLNode `yaml:"nodes"`
+	// Rules are fault rules every node of the scenario runs after its profile's own, so a rule fires
+	// whichever node the pool hands the request it selects.
+	Rules []mockopenai.FaultRule `yaml:"rules"`
 }
 
 type MockMLNode struct {
@@ -212,6 +216,10 @@ type Assertions struct {
 	} `yaml:"devshard"`
 	MockML struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
+		// RequireFullNode makes a promises run not valid when no ML node was ever full (none queued a
+		// request for a worker or refused one at capacity): the run did not load its nodes the way it
+		// was meant to.
+		RequireFullNode bool `yaml:"require_full_node"`
 	} `yaml:"mock_ml"`
 	Accounting AccountingAssertions `yaml:"accounting"`
 	// Promises holds the exported run to the system properties of citest/harness (CheckLoadtestRun)
@@ -241,12 +249,37 @@ type Profile struct {
 	// weights (mockopenai chaos actions, e.g. wrong_answer, odd_usage). A validator's replay is
 	// always answered honestly, so a shape other than ok is one the protocol should catch.
 	Chaos *ProfileChaos `yaml:"chaos"`
+	// Oracle answers a validator's replay from the enforced tokens it carries, and reports usage as the
+	// tokens emitted. ChunkTokens is how many tokens one streamed chunk carries. FirstContentMs and
+	// ExecMs schedule a streamed execution from the request start; ReplayMs delays replays only.
+	Oracle         bool `yaml:"oracle"`
+	ChunkTokens    int  `yaml:"chunk_tokens"`
+	FirstContentMs int  `yaml:"first_content_ms"`
+	ExecMs         int  `yaml:"exec_ms"`
+	ReplayMs       int  `yaml:"replay_ms"`
+	// Rules inject a fault into the requests they select by phase, seed or prompt text; the generator
+	// tags every prompt with "[load-request:<id>]".
+	Rules []mockopenai.FaultRule `yaml:"rules"`
 }
 
 // ProfileChaos is the chaos part of an ML node profile.
 type ProfileChaos struct {
 	Seed    int64          `yaml:"seed"`
 	Weights map[string]int `yaml:"weights"`
+}
+
+// rulesJSON is the mock's MOCK_OPENAI_RULES_JSON for a node of the profile: the profile's rules, then
+// the ones the scenario gives every node; empty when there are none.
+func (p Profile) rulesJSON(scenarioRules ...mockopenai.FaultRule) (string, error) {
+	rules := append(slices.Clone(p.Rules), scenarioRules...)
+	if len(rules) == 0 {
+		return "", nil
+	}
+	if err := mockopenai.ValidateRules(rules); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(rules)
+	return string(raw), err
 }
 
 // chaosJSON is the mock's MOCK_OPENAI_CHAOS_JSON for the profile, empty when it has no chaos.
@@ -294,6 +327,15 @@ func LoadProfile(dir, name string) (Profile, error) {
 	if _, err := profile.chaosJSON(); err != nil {
 		return Profile{}, fmt.Errorf("profile %s chaos: %w", path, err)
 	}
+	if _, err := profile.rulesJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s rules: %w", path, err)
+	}
+	if profile.ChunkTokens < 0 || profile.FirstContentMs < 0 || profile.ExecMs < 0 || profile.ReplayMs < 0 {
+		return Profile{}, fmt.Errorf("profile %s chunk_tokens, first_content_ms, exec_ms and replay_ms must be non-negative", path)
+	}
+	if profile.ExecMs > 0 && profile.ExecMs < profile.FirstContentMs {
+		return Profile{}, fmt.Errorf("profile %s exec_ms (the last chunk) must not come before first_content_ms", path)
+	}
 	if profile.Workers <= 0 || profile.Queue < 0 {
 		return Profile{}, fmt.Errorf("profile %s workers must be positive and queue non-negative", path)
 	}
@@ -336,6 +378,9 @@ func (s Scenario) Validate() error {
 	}
 	if s.Topology.Chain.Escrows < 0 || s.Topology.Chain.Escrows > maxScenarioEscrows {
 		return fmt.Errorf("topology.chain.escrows must be between 0 and %d", maxScenarioEscrows)
+	}
+	if err := mockopenai.ValidateRules(s.Topology.MockML.Rules); err != nil {
+		return fmt.Errorf("topology.mock_ml.rules: %w", err)
 	}
 	if s.Topology.MockML.Allocator != "round_robin" {
 		return fmt.Errorf("mock DAPI scenarios require mock_ml allocator round_robin")
