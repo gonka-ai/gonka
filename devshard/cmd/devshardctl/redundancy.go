@@ -938,6 +938,14 @@ type inflight struct {
 
 	usageComplTokens atomic.Int64
 
+	// clientWriteNanos is the time the relay has stood in writes to the
+	// gateway's client; clientWriteSince is the start of the write in
+	// progress, 0 outside one. The session takes this time out of the grace
+	// it gives a stream still open after its Finish: the client drives it,
+	// not the executor.
+	clientWriteNanos atomic.Int64
+	clientWriteSince atomic.Int64
+
 	// A host emits one token format for the whole answer, so the first chunk carrying logprobs settles
 	// it and the rest are not parsed.
 	logprobsDecoded bool
@@ -1857,7 +1865,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// bytes (role chunk, etc.) before the current write so SSE event
 		// ordering is preserved end-to-end.
 		if !hadContentBefore && len(rw.inf.pendingBuf) > 0 && rw.group.w != nil {
-			if _, err := rw.group.w.Write(rw.inf.pendingBuf); err != nil {
+			if err := rw.inf.clientWrite(func() error { _, err := rw.group.w.Write(rw.inf.pendingBuf); return err }); err != nil {
 				rw.inf.releasePendingBuf()
 				return 0, err
 			}
@@ -1866,7 +1874,9 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		if rw.group.w == nil {
 			return len(p), nil
 		}
-		return rw.group.w.Write(p)
+		var n int
+		err := rw.inf.clientWrite(func() (err error) { n, err = rw.group.w.Write(p); return err })
+		return n, err
 
 	case winnerNonce != 0:
 		// Another attempt has already won; suppress this attempt's stream
@@ -2208,8 +2218,29 @@ func (rw *raceWriter) Flush() {
 		return
 	}
 	if f, ok := rw.group.w.(http.Flusher); ok {
-		f.Flush()
+		_ = rw.inf.clientWrite(func() error { f.Flush(); return nil })
 	}
+}
+
+// clientWrite runs a write to the gateway's client and adds its duration to
+// the attempt's client wait.
+func (inf *inflight) clientWrite(write func() error) error {
+	start := time.Now().UnixNano()
+	inf.clientWriteSince.Store(start)
+	err := write()
+	inf.clientWriteSince.Store(0)
+	inf.clientWriteNanos.Add(time.Now().UnixNano() - start)
+	return err
+}
+
+// clientWait is how long this attempt's relay has stood in writes to the
+// gateway's client, the write in progress included.
+func (inf *inflight) clientWait() time.Duration {
+	waited := inf.clientWriteNanos.Load()
+	if since := inf.clientWriteSince.Load(); since != 0 {
+		waited += time.Now().UnixNano() - since
+	}
+	return time.Duration(waited)
 }
 
 // RunInference prepares and sends an inference, optionally racing a secondary.
@@ -2463,7 +2494,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		if e.session != nil {
-			e.session.StreamOpened(inf.nonce, nil)
+			e.session.StreamOpened(inf.nonce, inf.clientWait)
 		}
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		// Read before the deferred cancel: a cancelled attempt context means
