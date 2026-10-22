@@ -381,6 +381,21 @@ func chunkHasToken(t *testing.T, raw json.RawMessage) bool {
 	return false
 }
 
+// chunkPromptFields returns the top-level prompt fields the chunk carries; vLLM sets them on the
+// first chunk of a stream only.
+func chunkPromptFields(t *testing.T, raw json.RawMessage) []string {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	var present []string
+	for _, name := range []string{"prompt_text", "prompt_token_ids", "prompt_logprobs"} {
+		if _, ok := fields[name]; ok {
+			present = append(present, name)
+		}
+	}
+	return present
+}
+
 func chunkFinishes(t *testing.T, raw json.RawMessage) bool {
 	t.Helper()
 	var chunk struct {
@@ -629,10 +644,12 @@ func TestRecordedReplay_UsageKnobsOverstateExecutionOnly(t *testing.T) {
 	require.Equal(t, honest.CompletionTokens, recordedUsage(t, servedChunks(t, replayResponse)).CompletionTokens)
 }
 
-// Padding adds lines but no text, no positions and no usage: the claim the executor signs and
-// the content a client assembles stay the recording's.
+// Padding adds lines but no text, no positions, no usage and no prompt fields: the claim the
+// executor signs and the content a client assembles stay the recording's, and the pads look like
+// the chunks vLLM streams after the first, which alone reports the prompt.
 func TestRecordedReplay_PadEmptyChunksAddsLinesOnly(t *testing.T) {
 	sample := firstRecordedWithTokens(t, 4)
+	require.NotEmpty(t, chunkPromptFields(t, sample.Recorded.Stream[0]), "the recording reports the prompt on its first chunk")
 	srv := newRecordedServer(t, primaryRecordedFile, mockopenai.FaultConfig{PadEmptyChunks: 50})
 
 	_, raw := postChat(t, srv.URL, sample.Request)
@@ -650,6 +667,7 @@ func TestRecordedReplay_PadEmptyChunksAddsLinesOnly(t *testing.T) {
 	for i := final; i < final+50; i++ {
 		require.False(t, chunkHasToken(t, served[i]))
 		require.False(t, chunkFinishes(t, served[i]))
+		require.Empty(t, chunkPromptFields(t, served[i]), "pad chunk %d repeats the prompt fields of the first chunk", i)
 	}
 	require.Equal(t, string(sample.Recorded.Stream[final]), string(served[final+50]))
 
