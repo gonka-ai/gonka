@@ -1,6 +1,8 @@
 package keeper
 
 import (
+	"context"
+
 	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -20,6 +22,10 @@ func CheckPoCV2StoreCommitRecheckOverlapForTesting(k Keeper, ctx sdk.Context, ms
 
 func (k *Keeper) SetLoggerForTesting(logger log.Logger) {
 	k.logger = logger
+}
+
+func SetRawStoreBytesForTesting(k Keeper, ctx context.Context, key, bz []byte) error {
+	return k.storeService.OpenKVStore(ctx).Set(key, bz)
 }
 
 func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeight int64, addr sdk.AccAddress, modelID string, bz []byte) error {
