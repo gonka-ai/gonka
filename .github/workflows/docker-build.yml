@@ -1,9 +1,9 @@
 # Build and push Docker images to this repo's GHCR (ghcr.io/<owner>/…).
-# Tag push of release/vX.Y.Z-devshard-vA.B.C builds versiond, versiond-router,
-# proxy, and proxy-router as <chain>-devshard-<leftover-major>
-# (e.g. 0.2.15-devshard-v5). If that tag already exists on GHCR, skip the
-# rebuild. Tag runs also upsert the same GitHub Release as the host zip
-# (Devshard Release vX.Y.Z).
+# Tag push of release/vX.Y.Z-devshard-vA.B.C[-rcN] builds versiond,
+# versiond-router, proxy, and proxy-router as <chain>-devshard-<leftover-major>[-rcN]
+# (e.g. 0.2.15-devshard-v5, 0.2.16-devshard-v6-rc1). -rcN is release candidate N.
+# If that tag already exists on GHCR, skip the rebuild. Tag runs also upsert
+# the same GitHub Release as the host zip (Devshard Release vX.Y.Z[-rcN]).
 #
 # workflow_dispatch can select any subset of decentralized-api, inference-chain,
 # versiond, versiond-router, proxy, and proxy-router.
