@@ -145,6 +145,34 @@ func TestEvents_ReachTheFeedThroughACommittedDiff(t *testing.T) {
 	require.Equal(t, "req-committed", events[0].RequestID)
 }
 
+// The challenge's own diff can seal the record it invalidates: the auto-seal
+// takes a terminal record whose nonce gate has cleared in the same apply, so
+// by the time the diff observer runs the record is no longer live. The
+// verdict is then read from the sealed record, as the gateway reads it, or
+// the gateway's count of invalids falls one behind the chain's for good.
+func TestEvents_AChallengeThatSealsItsRecordIsStillAVerdict(t *testing.T) {
+	challengeDiff := types.Diff{Nonce: 2, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Challenge{Challenge: &types.MsgChallenge{InferenceId: 1}},
+	}}}
+	tracker := newTestTracker(t)
+	registerEscrow(t, tracker, "e1", 33, "m")
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	state := &fakeProtocolView{
+		phase:     types.PhaseActive,
+		sealed:    map[uint64]types.InferenceRecord{1: {ExecutorSlot: 1, Status: types.StatusInvalidated, UsageChallenged: true}},
+		hostStats: map[uint32]types.HostStats{1: {Invalid: 1}},
+	}
+	recorder := NewRecorder(tracker, nil)
+
+	recorder.committedDiff("e1", challengeDiff, state)
+
+	events := tracker.Events(QueryFilter{EpochIndex: 33})
+	require.Len(t, events, 1, "a verdict on a record the same diff sealed")
+	require.Equal(t, ProtocolInvalidated, events[0].Kind)
+	require.Equal(t, uint64(1), events[0].Nonce)
+	require.Equal(t, uint32(1), events[0].SlotID)
+}
+
 // A challenge whose fault votes pass the threshold invalidates the record,
 // and the executor's HostStats.Invalid moves with it; the accounting reads it
 // as a verdict like a replay's, or the gateway's count of invalids falls
