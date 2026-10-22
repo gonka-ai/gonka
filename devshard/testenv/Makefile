@@ -294,13 +294,17 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, Connect over HTTP/1.1, no prox
 
 # Rollout gate for the usage challenge: this tree's gateway while every host
 # still runs the previous release line's devshardd, which has no
-# VerifyChallenge. The child is built from USAGE_CHALLENGE_BASELINE_BRANCH.
+# VerifyChallenge. The child is built from USAGE_CHALLENGE_BASELINE_REF, the
+# last commit of that line before the procedure: the line itself moves on and
+# soon carries it, so its tip is not an old host.
 USAGE_CHALLENGE_BASELINE_BRANCH ?= devshard-0.2.x-v6
+USAGE_CHALLENGE_BASELINE_REF ?= 67230e4dc
 USAGE_CHALLENGE_BASELINE_CHILD := $(CURDIR)/baselines/devshardd-$(USAGE_CHALLENGE_BASELINE_BRANCH)
 citest-usage-challenge-old-hosts: ## Usage challenge on a fleet whose hosts have no VerifyChallenge yet.
 	$(MAKE) build-devshardd
 	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
 	BASELINE_BRANCH=$(USAGE_CHALLENGE_BASELINE_BRANCH) \
+		BASELINE_REF=$(USAGE_CHALLENGE_BASELINE_REF) \
 		BASELINE_VERSIOND_IMAGE=devshard-versiond:$(USAGE_CHALLENGE_BASELINE_BRANCH) \
 		BASELINE_VERSIOND_ROUTER_IMAGE=devshard-versiond-router:$(USAGE_CHALLENGE_BASELINE_BRANCH) \
 		BASELINE_DEVSHARDD_BUILDER_IMAGE=devshardd-builder:$(USAGE_CHALLENGE_BASELINE_BRANCH) \

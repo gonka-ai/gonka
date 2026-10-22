@@ -3,6 +3,7 @@
 package citest
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/replay"
+	"devshard/transport/rpcpb/rpcpbconnect"
 
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +39,11 @@ func TestUsageChallengeOnOldHosts(t *testing.T) {
 	require.NotEmpty(t, childBinary, "%s must point to a devshardd without VerifyChallenge", mixedChildBinaryEnv)
 	childBytes, err := os.ReadFile(childBinary)
 	require.NoError(t, err)
+	// The previous line's devshardd does not serve the procedure; a child
+	// built from a tip that already carries it would make this test pass
+	// through the challenge instead of around it.
+	require.False(t, bytes.Contains(childBytes, []byte(rpcpbconnect.SessionServiceVerifyChallengeProcedure)),
+		"%s serves VerifyChallenge, so it is not a devshardd of the previous release line", childBinary)
 	childSum := sha256.Sum256(childBytes)
 	dataset, err := replay.LoadFile(usageScenarioReplayFile)
 	require.NoError(t, err)
@@ -96,5 +103,12 @@ func TestUsageChallengeOnOldHosts(t *testing.T) {
 				"%s: the diff log carries a MsgChallenge for inference %d", host.ID, nonce)
 		}
 	}
+	// The challenge ran and ended with no vote: the test holds through the
+	// challenge, not around it.
+	finished := gatewayChallengesFinished(t, stack, escrowID)
+	require.Contains(t, finished, nonce, "the gateway challenged inference %d", nonce)
+	require.Equal(t, "no_votes", finished[nonce].outcome, "no host of the previous line can vote")
+	require.Zero(t, finished[nonce].votes)
+	require.Positive(t, finished[nonce].unanswered, "every asked host is counted unanswered")
 	require.Zero(t, pending, "the gateway still holds background work for escrow %s %s after the Finish, so it cannot settle", escrowID, oldHostsDrainBound)
 }
