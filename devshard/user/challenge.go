@@ -102,6 +102,9 @@ func (s *Session) MarkChallengeStream(nonce uint64, reason types.ChallengeReason
 	defer s.mu.Unlock()
 	delete(s.streamsOpen, nonce)
 	if _, applied := s.challengeFinishes[nonce]; applied {
+		// The stream ended without binding, so no stream is left to judge
+		// the applied Finish against.
+		delete(s.appliedFinishHashes, nonce)
 		s.startChallengeLocked(nonce, reason)
 		return
 	}
