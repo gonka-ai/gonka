@@ -3735,6 +3735,12 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 	return false
 }
 
+// WaitNonceFinished waits until IsNonceFinished reports nonce, deadline passes or ctx ends, and returns whether the nonce finished.
+func (s *Session) WaitNonceFinished(ctx context.Context, nonce uint64, deadline time.Time) bool {
+	sleepUntilDeadlineWithHeartbeat(ctx, deadline, nil, func() bool { return s.IsNonceFinished(nonce) })
+	return s.IsNonceFinished(nonce)
+}
+
 // HandleTimeout waits for the protocol deadline, then votes. Gateway race
 // cleanup should prefer WaitTimeoutDeadline off the drain barrier and
 // VoteTimeout under a brief barrier hold so finalize is never blocked on sleep.
