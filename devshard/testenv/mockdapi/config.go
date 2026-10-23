@@ -1,6 +1,8 @@
 package mockdapi
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"devshard/chainoracle/params"
@@ -31,6 +33,11 @@ type Config struct {
 	// takes the 15-minute skip. /healthz and /versions remain so versiond
 	// still boots.
 	OmitBlockRoutes bool
+	// MLNodeHosts binds node IDs to host IDs and HostAddrs maps gRPC peer IPs
+	// or DNS names to host IDs. A mapped caller draws only from its host's
+	// nodes; the rest share the unbound nodes. Both empty keeps the global pool.
+	MLNodeHosts map[string]string
+	HostAddrs   map[string]string
 }
 
 // MLNode is one Mock ML endpoint exposed through AcquireMLNode.
@@ -52,4 +59,26 @@ func DefaultConfig() Config {
 			{Name: "v2", Binary: "file:///opt/devshard/devshardd", SHA256: "0000000000000000000000000000000000000000000000000000000000000000"},
 		},
 	}
+}
+
+// ParsePairsEnv parses "key=value,key=value" (MOCK_ML_NODE_HOSTS,
+// MOCK_DAPI_HOST_ADDRS). Empty input yields an empty map.
+func ParsePairsEnv(raw string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(part, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || key == "" || value == "" {
+			return nil, fmt.Errorf("invalid entry %q (want key=value)", part)
+		}
+		if _, dup := out[key]; dup {
+			return nil, fmt.Errorf("duplicate key %q", key)
+		}
+		out[key] = value
+	}
+	return out, nil
 }

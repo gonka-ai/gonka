@@ -69,6 +69,8 @@ services:
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "{{ primaryMLEndpoint . }}"
       MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
+      MOCK_ML_NODE_HOSTS: "{{ mockMLNodeHostsEnv . }}"
+      MOCK_DAPI_HOST_ADDRS: "{{ mockDapiHostAddrsEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
@@ -403,6 +405,8 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost":        legacyVersiondHost,
 		"mockMLNodes":               mockMLNodes,
 		"mockMLNodesEnv":            mockMLNodesEnv,
+		"mockMLNodeHostsEnv":        mockMLNodeHostsEnv,
+		"mockDapiHostAddrsEnv":      mockDapiHostAddrsEnv,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
 		"mlNodeIDs":                 mlNodeIDs,
@@ -461,6 +465,31 @@ func mockMLNodesEnv(cfg *config.File) string {
 	entries := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
+}
+
+// mockMLNodeHostsEnv formats MOCK_ML_NODE_HOSTS ("node=host,...") for nodes
+// bound to one host.
+func mockMLNodeHostsEnv(cfg *config.File) string {
+	var entries []string
+	for _, node := range mockMLNodes(cfg) {
+		if node.Host != "" {
+			entries = append(entries, node.Name+"="+node.Host)
+		}
+	}
+	return strings.Join(entries, ",")
+}
+
+// mockDapiHostAddrsEnv formats MOCK_DAPI_HOST_ADDRS ("name=host,...") so
+// mock-dapi can tell which host an AcquireMLNode call comes from. Keys are
+// service names resolved through Docker DNS: the runner drops static IPs.
+func mockDapiHostAddrsEnv(cfg *config.File) string {
+	var entries []string
+	for _, host := range cfg.Hosts {
+		if host.ID != "" {
+			entries = append(entries, host.ID+"="+host.ID)
+		}
 	}
 	return strings.Join(entries, ",")
 }

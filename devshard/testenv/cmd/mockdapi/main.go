@@ -38,6 +38,16 @@ func main() {
 		}
 		cfg.MLNodes = nodes
 	}
+	for key, dst := range map[string]*map[string]string{
+		"MOCK_ML_NODE_HOSTS":   &cfg.MLNodeHosts,
+		"MOCK_DAPI_HOST_ADDRS": &cfg.HostAddrs,
+	} {
+		pairs, err := mockdapi.ParsePairsEnv(os.Getenv(key))
+		if err != nil {
+			log.Fatalf("mock-dapi: %s: %v", key, err)
+		}
+		*dst = pairs
+	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {

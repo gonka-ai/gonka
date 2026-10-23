@@ -146,6 +146,9 @@ type MockMLTopology struct {
 type MockMLNode struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
+	// Host binds the node to one versiond host in mock-dapi; empty keeps it
+	// in the shared pool.
+	Host string `yaml:"host"`
 }
 
 type Workload struct {
@@ -357,6 +360,9 @@ func (s Scenario) Validate() error {
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
 		return err
 	}
+	if err := s.validateTopologyBindings(); err != nil {
+		return err
+	}
 	protocolTimeouts := map[string]string{
 		"refusal_timeout":   s.Protocol.RefusalTimeout,
 		"execution_timeout": s.Protocol.ExecutionTimeout,
@@ -539,6 +545,18 @@ func loadYAML(path string, out any) error {
 	}
 	if err := yaml.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
+
+func (s Scenario) validateTopologyBindings() error {
+	for i, node := range s.Topology.MockML.Nodes {
+		if node.Host == "" {
+			continue
+		}
+		if s.Topology.Participants == 0 || !validTopologyHost(node.Host, s.Topology.Participants) {
+			return fmt.Errorf("topology.mock_ml.nodes[%d].host must be a versiond host of an explicit topology.participants", i)
+		}
 	}
 	return nil
 }
