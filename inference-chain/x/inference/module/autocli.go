@@ -495,6 +495,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Create a PoC challenge against a target",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "target"}},
 				},
+				{
+					RpcMethod:      "RegisterBridgeKeyLink",
+					Use:            "register-bridge-key-link [eth-pub-key] [gonka-pub-key] [eth-signature] [nonce]",
+					Short:          "Link an Ethereum public key to this Gonka account for bridge credits",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "eth_pub_key"}, {ProtoField: "gonka_pub_key"}, {ProtoField: "eth_signature"}, {ProtoField: "nonce"}},
+				},
 				// this line is used by ignite scaffolding # autocli/tx
 			},
 		},

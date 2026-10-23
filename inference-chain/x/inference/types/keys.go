@@ -148,7 +148,9 @@ var (
 	BridgePendingByEpochPrefix = collections.NewPrefix(117)
 	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
 	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
-	ParamsKey                  = []byte("p_inference")
+	// 114, 115, and 117-119 are taken by v0.2.17.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

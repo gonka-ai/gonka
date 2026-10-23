@@ -95,7 +95,11 @@ type (
 		// right sub-keys. Split off BridgeTransaction.Validators so the Nth
 		// validator's confirmation tx doesn't pay gas proportional to the
 		// first N-1.
-		BridgeTransactionValidators    collections.KeySet[collections.Quad[string, string, string, string]]
+		BridgeTransactionValidators collections.KeySet[collections.Quad[string, string, string, string]]
+		// BridgeKeyLinks maps the address derived from an Ethereum public key
+		// to the Gonka account that should receive that key's bridge credits.
+		// The value includes the nonce of the Ethereum authorization.
+		BridgeKeyLinks                 collections.Map[string, types.BridgeKeyLink]
 		BridgePendingByEpoch           collections.KeySet[collections.Pair[uint64, string]]
 		BridgeRecheckEpochs            collections.Map[uint64, string]
 		BridgeRecheckRestart           collections.KeySet[uint64]
@@ -498,6 +502,13 @@ func NewKeeper(
 			types.BridgeTransactionValidatorsPrefix,
 			"bridge_transaction_validators",
 			collections.QuadKeyCodec(collections.StringKey, collections.StringKey, collections.StringKey, collections.StringKey),
+		),
+		BridgeKeyLinks: collections.NewMap(
+			sb,
+			types.BridgeKeyLinksPrefix,
+			"bridge_key_links",
+			collections.StringKey,
+			codec.CollValue[types.BridgeKeyLink](cdc),
 		),
 		BridgePendingByEpoch: collections.NewKeySet(
 			sb,
