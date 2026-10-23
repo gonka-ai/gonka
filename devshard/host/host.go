@@ -727,6 +727,8 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	h.mu.Unlock()
 
+	h.persistOwnSig(nonce, stateSig)
+
 	if body := h.resolveStoredResponse(ctx, &receiptOutcome); body != nil {
 		cachedBody = body
 	}
@@ -956,8 +958,8 @@ func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
 	return out
 }
 
-// signIfAccepted computes state root, checks acceptance, signs if allowed,
-// stores sig and checks finalization. Caller must hold h.mu.
+// signIfAccepted computes state root, checks acceptance and signs if allowed.
+// The caller persists the signature with persistOwnSig. Caller must hold h.mu.
 func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, err error) {
 	nonce = h.sm.LatestNonce()
 	root, err = h.sm.ComputeStateRoot()
@@ -977,16 +979,22 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 	}
 	stateSig = sig
 
-	if h.store != nil {
-		for slotID := range h.slotIDs {
-			if err := h.store.AddSignature(h.escrowID, nonce, slotID, sig); err != nil {
-				logging.Debug("store own sig failed", "subsystem", "host", "nonce", nonce, "error", err)
-			}
-		}
-		h.checkFinalization(nonce)
-	}
-
 	return stateSig, root, nonce, nil
+}
+
+// persistOwnSig stores this host's state signature for each of its slots and
+// checks finalization. It touches only the store, so HandleRequest calls it
+// after releasing h.mu.
+func (h *Host) persistOwnSig(nonce uint64, sig []byte) {
+	if h.store == nil || sig == nil {
+		return
+	}
+	for slotID := range h.slotIDs {
+		if err := h.store.AddSignature(h.escrowID, nonce, slotID, sig); err != nil {
+			logging.Debug("store own sig failed", "subsystem", "host", "nonce", nonce, "error", err)
+		}
+	}
+	h.checkFinalization(nonce)
 }
 
 // confirmStartLocked returns the executor receipt for a pending inference as a
@@ -2023,6 +2031,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 		if err != nil {
 			return sigs, fmt.Errorf("sign recovered state: %w", err)
 		}
+		h.persistOwnSig(nonce, stateSig)
 
 		if stateSig != nil && h.store != nil {
 			for slotID := range h.slotIDs {
