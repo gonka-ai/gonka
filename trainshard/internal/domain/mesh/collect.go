@@ -17,8 +17,9 @@ type answer struct {
 }
 
 // Collect names a node missing when its host is silent, the first identity the host offers for it
-// does not verify, or it offers a public key another node offers too. It fails only when no host answers or the chain cannot
-// say whether a signer speaks for a host. A host speaks for the nodes the chain places on it and no other
+// does not verify or carries no 32-byte public key, or it offers a public key another node offers
+// too. It fails only when no host answers or the chain cannot say whether a signer speaks for a
+// host. A host speaks for the nodes the chain places on it and no other
 func Collect(
 	ctx context.Context,
 	hosts Hosts,
@@ -34,6 +35,7 @@ func Collect(
 	})
 
 	collected := make(map[vo.NodeRef]Member, len(reserved))
+	keys := make(map[vo.NodeRef][32]byte, len(reserved))
 	answered := 0
 	var silent error
 
@@ -51,6 +53,10 @@ func Collect(
 				continue
 			}
 			checked[node] = true
+			key, ok := keyBytes(identity.Member.PublicKey)
+			if !ok {
+				continue
+			}
 			signer, err := verifier.Recover(IdentityPayload(shardID, identity.Member), identity.Signature)
 			if err != nil {
 				continue
@@ -61,17 +67,17 @@ func Collect(
 				}
 				continue
 			}
-			collected[node] = identity.Member
+			collected[node], keys[node] = identity.Member, key
 		}
 	}
 	if answered == 0 && silent != nil {
 		return nil, nil, silent
 	}
 
-	offered := make(map[string]int, len(collected))
-	for node, member := range collected {
+	offered := make(map[[32]byte]int, len(collected))
+	for node := range collected {
 		if slices.Contains(reserved, node) {
-			offered[member.PublicKey]++
+			offered[keys[node]]++
 		}
 	}
 
@@ -79,7 +85,7 @@ func Collect(
 	missing = make([]vo.NodeRef, 0)
 	for _, node := range reserved {
 		member, found := collected[node]
-		if !found || offered[member.PublicKey] > 1 {
+		if !found || offered[keys[node]] > 1 {
 			missing = append(missing, node)
 			continue
 		}

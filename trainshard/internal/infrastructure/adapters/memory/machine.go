@@ -2,6 +2,8 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -214,13 +216,14 @@ func (n network) Identity(_ context.Context, shardID vo.ShardID, node vo.NodeRef
 	if member, found := m.keys[node]; found {
 		return member, nil
 	}
-	// two machines can hold a node under the same id, so the participant is what tells them apart
+	// two machines can hold a node under the same id, so the participant is what tells them apart;
+	// the key is shaped like a wireguard one, since a mesh takes no other
 	own := fnv.New32a()
 	fmt.Fprintf(own, "%s/%s", node.Participant, node.NodeID)
 	member := mesh.Member{
 		Node:      node,
 		Address:   fmt.Sprintf("10.%d.%d.%d", uint64(shardID)%256, own.Sum32()%256, own.Sum32()>>8%254+1),
-		PublicKey: fmt.Sprintf("memory-key-%s-%s-%s", shardID, node.Participant, node.NodeID),
+		PublicKey: memoryKey(fmt.Sprintf("memory-key-%s-%s-%s", shardID, node.Participant, node.NodeID)),
 	}
 	m.keys[node] = member
 	m.log.Info("created mesh identity", "node_id", node.NodeID)
@@ -285,3 +288,8 @@ func (m *Machine) GPUContainer(context.Context) error { return nil }
 func (m *Machine) FreeDiskBytes(context.Context) (int64, error) { return 1 << 44, nil }
 
 func (m *Machine) MeshPortReachable(context.Context) error { return nil }
+
+func memoryKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}

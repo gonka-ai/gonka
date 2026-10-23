@@ -172,6 +172,64 @@ func TestCollectNamesBothNodesMissingWhenTheyOfferOneKey(t *testing.T) {
 	}
 }
 
+func TestCollectNamesBothNodesMissingWhenTheyOfferOneKeySpelledTwoWays(t *testing.T) {
+	// arrange
+	hosts := newHostsStub()
+	original := identityOf(nodeA)
+	original.Member.PublicKey = "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy0="
+	hosts.identities[hostA] = []mesh.Identity{original}
+	aliased := identityOf(nodeC)
+	aliased.Member.PublicKey = "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy1="
+	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), aliased}
+
+	// act
+	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	// assert
+	if err != nil {
+		t.Fatalf("an aliased key must not sink the mesh: %v", err)
+	}
+	if !slices.Equal(missing, []vo.NodeRef{nodeA, nodeC}) {
+		t.Fatalf("got %v missing, want both nodes that offer the key", missing)
+	}
+	if len(members) != 1 || members[0].Node != nodeB {
+		t.Fatalf("got %+v, want only %s kept", members, nodeB)
+	}
+}
+
+func TestCollectNamesANodeMissingWhenItOffersNoWireguardKey(t *testing.T) {
+	for name, key := range map[string]string{
+		"not base64":   "victim-key",
+		"not 32 bytes": "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRT",
+		"33 bytes":     "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy0A",
+		"unpadded":     "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			hosts := newHostsStub()
+			broken := identityOf(nodeC)
+			broken.Member.PublicKey = key
+			hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), broken}
+
+			// act
+			members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
+				machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+			// assert
+			if err != nil {
+				t.Fatalf("one node's broken key must not sink the mesh: %v", err)
+			}
+			if !slices.Equal(missing, []vo.NodeRef{nodeC}) {
+				t.Fatalf("got %v missing, want only %s", missing, nodeC)
+			}
+			if len(members) != 2 {
+				t.Fatalf("got %+v, want %s and %s kept", members, nodeA, nodeB)
+			}
+		})
+	}
+}
+
 func TestCollectTakesAMemberSignedByTheHostsWarmKey(t *testing.T) {
 	// arrange
 	hosts := newHostsStub()

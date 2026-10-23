@@ -18,7 +18,7 @@ func meshConfig(t *testing.T, nodes ...vo.NodeRef) mesh.Config {
 	t.Helper()
 	members := make([]mesh.Member, 0, len(nodes))
 	for i, node := range nodes {
-		members = append(members, mesh.Member{Node: node, Address: "10.0.0." + string(rune('1'+i)), PublicKey: "public-key-" + string(rune('1'+i))})
+		members = append(members, mesh.Member{Node: node, Address: "10.0.0." + string(rune('1'+i)), PublicKey: wgKey("public-key-" + string(rune('1'+i)))})
 	}
 	config, err := mesh.Order(shardID, members)
 	if err != nil {

@@ -2,6 +2,8 @@ package usecases_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -397,7 +399,7 @@ func (m *meshNetworkStub) Shards(context.Context, vo.NodeRef) ([]vo.ShardID, err
 func (m *meshNetworkStub) Identity(_ context.Context, shardID vo.ShardID, node vo.NodeRef) (mesh.Member, error) {
 	m.rec.record("mesh.identity")
 	m.keys[shardID] = true
-	return mesh.Member{Node: node, Address: "10.0.0.1", PublicKey: "public-key-" + string(node.Participant) + "-" + string(node.NodeID)}, nil
+	return mesh.Member{Node: node, Address: "10.0.0.1", PublicKey: wgKey(string(node.Participant) + "-" + string(node.NodeID))}, nil
 }
 
 func (m *meshNetworkStub) Apply(_ context.Context, _ vo.ShardID, _ vo.NodeRef, peers []mesh.Peer) error {
@@ -615,7 +617,7 @@ func (f *fixture) meshed(ctx context.Context) error {
 	if err := f.prepared(ctx); err != nil {
 		return err
 	}
-	config, err := mesh.Order(shardID, []mesh.Member{{Node: nodeA, Address: "198.51.100.7:51820", PublicKey: "public-key"}})
+	config, err := mesh.Order(shardID, []mesh.Member{{Node: nodeA, Address: "198.51.100.7:51820", PublicKey: wgKey("public-key")}})
 	if err != nil {
 		return err
 	}
@@ -627,4 +629,10 @@ func (f *fixture) meshed(ctx context.Context) error {
 	}
 	f.rec.reset()
 	return nil
+}
+
+// wgKey is a 32-byte key in the base64 form wireguard prints, the only form a mesh takes
+func wgKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
