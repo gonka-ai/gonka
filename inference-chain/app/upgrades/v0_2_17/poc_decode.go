@@ -36,16 +36,32 @@ var decodePoCTemplates = map[string]*types.PocSchemeParams{
 	},
 }
 
+// pinFraudAlpha stores the alpha MLNode has been applying. It reads
+// fraud_threshold and dropped the chain's p_value_threshold, so mainnet
+// validated at 0.01 while the stored value stayed 0.05. v0.2.17 sends that
+// chain field under the name MLNode reads; leaving 0.05 would move the fraud
+// cut at the upgrade. Distances and p_mismatch are left as stored.
+func pinFraudAlpha(stat *types.PoCStatTestParams) *types.PoCStatTestParams {
+	if stat == nil {
+		return nil
+	}
+	out := gogoproto.Clone(stat).(*types.PoCStatTestParams)
+	out.PValueThreshold = types.DecimalFromFloat(0.01)
+	return out
+}
+
 func decodeScheme(modelID string) *types.PocSchemeParams {
 	template, ok := decodePoCTemplates[modelID]
 	if !ok {
-		return types.DefaultDecodeScheme()
+		block := types.DefaultDecodeScheme()
+		block.StatTest = pinFraudAlpha(block.StatTest)
+		return block
 	}
 	block := gogoproto.Clone(template).(*types.PocSchemeParams)
 	block.Scheme = types.PocScheme_POC_SCHEME_DECODE
 	block.SeqLen = 256
 	block.DecodeSteps = 256
 	block.StatTest.PMismatch = types.DecimalFromFloat(0.1)
-	block.StatTest.PValueThreshold = types.DecimalFromFloat(0.05)
+	block.StatTest = pinFraudAlpha(block.StatTest)
 	return block
 }
