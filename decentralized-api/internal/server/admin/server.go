@@ -98,6 +98,7 @@ func NewServer(
 
 	// Bridge
 	g.POST("bridge/block", s.postBridgeBlock)
+	g.GET("bridge/quarantine", s.getBridgeQuarantine)
 
 	// Payload storage for testing (allows testermint to store payloads directly)
 	g.POST("payloads", s.storePayload)
