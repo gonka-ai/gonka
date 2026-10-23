@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	vestingexported "github.com/cosmos/cosmos-sdk/x/auth/vesting/exported"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 
 	"github.com/productscience/inference/x/genesistransfer/types"
@@ -239,6 +241,11 @@ func (k Keeper) createContinuousVestingAccount(ctx context.Context, vestingAcc *
 	originalAmount := vestingAcc.OriginalVesting[0].Amount
 	remainingAmount := originalAmount.MulRaw(remainingDuration).QuoRaw(totalDuration)
 	remainingCoins := sdk.NewCoins(sdk.NewCoin(vestingAcc.OriginalVesting[0].Denom, remainingAmount))
+	// A recipient still vesting to the same end time keeps its own remaining lock:
+	// both schedules are linear to EndTime, so their sum restarts linearly from now.
+	if existing, ok := recipientAccount.(*vestingtypes.ContinuousVestingAccount); ok && mergeableContinuous(vestingAcc, existing, currentTime) {
+		remainingCoins = remainingCoins.Add(existing.GetVestingCoins(sdk.UnwrapSDKContext(ctx).BlockTime())...)
+	}
 
 	// Use existing recipient account to preserve account number and sequence
 	baseAccount := authtypes.NewBaseAccount(
@@ -537,4 +544,39 @@ func (k Keeper) validateTransferCompletion(ctx context.Context, genesisAddr, rec
 	}
 
 	return nil
+}
+
+// checkRecipientSchedule rejects a transfer that would replace a recipient's
+// unfinished vesting schedule. Only a started continuous schedule with the
+// sender's end time and denom can be combined (createContinuousVestingAccount).
+func checkRecipientSchedule(genesisAccount, recipientAccount sdk.AccountI, now int64) error {
+	if !stillVesting(recipientAccount, now) || !stillVesting(genesisAccount, now) {
+		return nil
+	}
+	s, sOK := genesisAccount.(*vestingtypes.ContinuousVestingAccount)
+	r, rOK := recipientAccount.(*vestingtypes.ContinuousVestingAccount)
+	if sOK && rOK && mergeableContinuous(s, r, now) {
+		return nil
+	}
+	return types.ErrInvalidTransfer.Wrapf(
+		"recipient %s has a vesting schedule that cannot be combined with the genesis account's",
+		recipientAccount.GetAddress().String(),
+	)
+}
+
+func stillVesting(acc sdk.AccountI, now int64) bool {
+	switch v := acc.(type) {
+	case vestingexported.VestingAccount:
+		return !v.GetVestingCoins(time.Unix(now, 0)).IsZero()
+	case *vestingtypes.BaseVestingAccount:
+		return now < v.EndTime && !v.OriginalVesting.IsZero()
+	}
+	return false
+}
+
+func mergeableContinuous(s, r *vestingtypes.ContinuousVestingAccount, now int64) bool {
+	return s.EndTime == r.EndTime && s.StartTime <= now && r.StartTime <= now &&
+		len(s.OriginalVesting) == 1 && len(r.OriginalVesting) == 1 &&
+		s.OriginalVesting[0].Denom == r.OriginalVesting[0].Denom &&
+		r.DelegatedVesting.IsZero() && r.DelegatedFree.IsZero()
 }
