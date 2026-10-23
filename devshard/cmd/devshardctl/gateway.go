@@ -66,6 +66,7 @@ type Gateway struct {
 	escrowChecker      *EscrowChecker
 	metrics            *DevshardMetrics
 	capacity           *CapacityState
+	pocCap             *pocHostCap
 	// heightSyncCloser is a test double for closing/routing. Collect must never
 	// call it: arming_predicted is an early warning, not a close decision.
 	heightSyncCloser             func(escrowID, slot string)
@@ -891,6 +892,10 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		settlementInFlight: make(map[string]struct{}),
 		suspiciousHosts:    make(map[string]struct{}),
 	}
+	g.pocCap = newPoCHostCap(g.pocGenerationActive, func(model, participantKey string) float64 {
+		return g.capacity.HostWeightForModel(participantKey, model)
+	})
+	g.syncPoCHostCap()
 	g.participantLimiter.SetMetrics(g.metrics)
 	g.metrics.AttachGateway(g)
 	g.attachCapacityLiveAvailability()
@@ -969,6 +974,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	g.attachEscrowChecker(rt)
 	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
+	g.attachPoCHostCap(rt)
 	if g.capacity != nil {
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
 	}
