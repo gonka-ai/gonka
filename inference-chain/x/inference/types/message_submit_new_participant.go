@@ -40,6 +40,9 @@ func (msg *MsgSubmitNewParticipant) ValidateBasic() error {
 		}
 	}
 	// worker_key is optional; if provided (non-empty after trim) it must be valid ED25519 compressed
+	if msg.WorkerKey != "" && strings.TrimSpace(msg.WorkerKey) == "" {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidPubKey, "invalid worker key: empty or whitespace")
+	}
 	if strings.TrimSpace(msg.WorkerKey) != "" {
 		if _, err := utils.SafeCreateED25519ValidatorKey(msg.WorkerKey); err != nil {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidPubKey, "invalid worker key: %s", err)
