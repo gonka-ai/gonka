@@ -397,14 +397,31 @@ func TestFetchSignedPayloads_RPCRespectsMaxBytes(t *testing.T) {
 
 func TestValidator_PayloadRPCRequiresPayloadEndpoint(t *testing.T) {
 	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
-	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
+	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1", 1))
 
 	signer := testutil.MustGenerateKey(t)
 	v.SetPayloadRPC(signer, transport.ParseRPCEndpoints(transport.EndpointGossip))
-	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
+	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1", 1))
 
 	v.SetPayloadRPC(signer, transport.ParseRPCEndpoints(transport.EndpointPayload))
-	require.Nil(t, v.payloadRPC("", "addr", "escrow-1"))
+	require.Nil(t, v.payloadRPC("", "addr", "escrow-1", 1))
+}
+
+func TestValidator_PayloadRPCClosesClientsTwoEpochsBack(t *testing.T) {
+	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
+	v.SetPayloadRPC(testutil.MustGenerateKey(t), transport.ParseRPCEndpoints(transport.EndpointPayload))
+	t.Cleanup(v.ClosePayloadClients)
+
+	old := v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-5", 5)
+	require.NotNil(t, old)
+	require.Same(t, old, v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-5", 5))
+	require.NotNil(t, v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-6", 6))
+	require.Len(t, v.payloadRPCs, 2, "epoch 5 escrows are still on chain at epoch 6")
+
+	require.NotNil(t, v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-7", 7))
+	require.Len(t, v.payloadRPCs, 2)
+	_, kept := v.payloadRPCs["addr\x00http://127.0.0.1:1\x00escrow-5"]
+	require.False(t, kept, "the chain prunes epoch 5 escrows at epoch 7; their door must go")
 }
 
 func newPayloadRPCClient(t *testing.T, serve rpcserver.GetPayloadFunc) *transport.RPCClient {
