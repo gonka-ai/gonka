@@ -1,0 +1,372 @@
+package usecases_test
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	usecases "trainshard/internal/application/hostd/run/use_cases"
+	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared"
+	"trainshard/internal/domain/shared/vo"
+)
+
+func deployCommand() usecases.DeployCommand {
+	return usecases.DeployCommand{NodesCommand: nodesCommand(), Run: runSpec()}
+}
+
+func TestDeployRefusesANodeWithoutFailingTheRequest(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*fixture, *usecases.DeployCommand)
+		want   string
+	}{
+		{
+			name:   "node the chain did not reserve",
+			mutate: func(_ *fixture, c *usecases.DeployCommand) { c.Nodes = []vo.NodeRef{nodeB} },
+			want:   "NODE_NOT_RESERVED",
+		},
+		{
+			name: "container still running",
+			mutate: func(f *fixture, _ *usecases.DeployCommand) {
+				f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}
+			},
+			want: "CONTAINER_RUNNING",
+		},
+		{
+			name:   "more gpus than the host allows",
+			mutate: func(_ *fixture, c *usecases.DeployCommand) { c.Run.Resources.GPUs = 16 },
+			want:   "GPUS_EXCEEDED",
+		},
+		{
+			name:   "deadline already passed",
+			mutate: func(_ *fixture, c *usecases.DeployCommand) { c.Deadline = now.Add(-time.Second) },
+			want:   "DEADLINE_PASSED",
+		},
+		{
+			name: "shard past its expiry height",
+			mutate: func(f *fixture, _ *usecases.DeployCommand) {
+				record := activeShard()
+				record.ExpiresAtHeight = height
+				f.chain.shards[shardID] = record
+			},
+			want: "SHARD_CLOSED",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// arrange
+			f := newFixture()
+			cmd := deployCommand()
+			tc.mutate(f, &cmd)
+
+			// act
+			results, err := f.deploy().Execute(context.Background(), cmd)
+
+			// assert
+			if err != nil {
+				t.Fatalf("a refused node must not fail the request: %v", err)
+			}
+			if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != tc.want {
+				t.Fatalf("got %+v, want a single %s failure", results, tc.want)
+			}
+			if len(f.runs.states) != 0 {
+				t.Fatalf("a refused deploy must record nothing, got %v", f.runs.states)
+			}
+		})
+	}
+}
+
+func TestDeployTurnsAStrangerAwayInsteadOfAnsweringPerNode(t *testing.T) {
+	// arrange
+	f := newFixture()
+	cmd := deployCommand()
+	cmd.Actor = shard.Actor{Address: stranger}
+
+	// act
+	_, err := f.deploy().Execute(context.Background(), cmd)
+
+	// assert
+	if !errors.Is(err, shard.ErrNotAuthorized) {
+		t.Fatalf("got %v, want %v", err, shard.ErrNotAuthorized)
+	}
+	if len(f.runs.states) != 0 {
+		t.Fatalf("a refused deploy must record nothing, got %v", f.runs.states)
+	}
+}
+
+func TestDeployReplaysAnAnswerToItsOwnActorOnly(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	cmd := deployCommand()
+	if _, err := f.deploy().Execute(ctx, cmd); err != nil {
+		t.Fatalf("first deploy: %v", err)
+	}
+	cmd.Actor = shard.Actor{Address: stranger}
+
+	// act
+	replayed, err := f.deploy().Execute(ctx, cmd)
+
+	// assert
+	if !errors.Is(err, shard.ErrNotAuthorized) {
+		t.Fatalf("got %v, want a stranger refused the answer to someone else's request", err)
+	}
+	if replayed != nil {
+		t.Fatalf("got %+v, want nothing handed back", replayed)
+	}
+}
+
+func TestDeployRecordsTheRunAndDropsAnEarlierStart(t *testing.T) {
+	// arrange
+	f := newFixture()
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Start: true, Fault: &oldFault}
+
+	// act
+	results, err := f.deploy().Execute(context.Background(), deployCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	if len(results) != 1 || !results[0].OK() {
+		t.Fatalf("got %+v, want one accepted node", results)
+	}
+	state := f.runs.states[nodeA]
+	if state.Spec.Image != runImage || state.Start || state.Fault != nil {
+		t.Fatalf("got %+v, want the new run stopped and the old failure cleared", state)
+	}
+}
+
+func TestDeployAnsweredTwiceActsOnce(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	first, err := f.deploy().Execute(ctx, deployCommand())
+	if err != nil {
+		t.Fatalf("first deploy: %v", err)
+	}
+
+	// act
+	settled := f.rec.sequence()
+	second, err := f.deploy().Execute(ctx, deployCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("second deploy: %v", err)
+	}
+	if len(second) != len(first) || second[0].Node != first[0].Node {
+		t.Fatalf("a repeated request must answer as the first did: %+v then %+v", first, second)
+	}
+	if !slices.Equal(f.rec.sequence(), settled) {
+		t.Fatalf("a repeated request must touch nothing again, got %v after %v", f.rec.sequence(), settled)
+	}
+}
+
+func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
+	cases := map[string]func(*usecases.DeployCommand){
+		"the same image with other parameters": func(c *usecases.DeployCommand) {
+			c.Run.Env = map[string]string{"LEARNING_RATE": "0.2"}
+		},
+		"the same run once more after it finished": func(*usecases.DeployCommand) {},
+	}
+
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			// arrange
+			f := newFixture()
+			ctx := context.Background()
+			if err := f.meshed(ctx); err != nil {
+				t.Fatalf("prepare: %v", err)
+			}
+			if _, err := f.deploy().Execute(ctx, deployCommand()); err != nil {
+				t.Fatalf("first deploy: %v", err)
+			}
+			f.containers.setState(nodeA, vo.ContainerExited)
+			f.rec.reset()
+			cmd := deployCommand()
+			cmd.RequestID = "req-2"
+			change(&cmd)
+
+			// act
+			results, err := f.deploy().Execute(ctx, cmd)
+
+			// assert
+			if err != nil {
+				t.Fatalf("second deploy: %v", err)
+			}
+			if len(results) != 1 || !results[0].OK() {
+				t.Fatalf("got %+v, want one accepted node", results)
+			}
+			if !slices.Contains(f.rec.sequence(), "containers.create") {
+				t.Fatalf("got %v, want the container built again rather than a deploy that changes nothing", f.rec.sequence())
+			}
+		})
+	}
+}
+
+func TestARefusedDeployLeavesTheNodeOnTheRunItHad(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if _, err := f.deploy().Execute(ctx, deployCommand()); err != nil {
+		t.Fatalf("first deploy: %v", err)
+	}
+	had := f.runs.states[nodeA]
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.RequestID = "req-2"
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+	_, reconciled := f.reconcile().Execute(ctx, nodeA)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused", results)
+	}
+	state := f.runs.states[nodeA]
+	if state.Spec.Image != runImage || state.Revision != had.Revision || state.Fault != nil {
+		t.Fatalf("got %+v, want the run the node had before, with no fault to be kicked for", state)
+	}
+	if reconciled != nil {
+		t.Fatalf("got %v, want the loop to find nothing left to fail on", reconciled)
+	}
+}
+
+func TestAForeignImageDeployedBeforeThePeerListIsRefusedAtOnce(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused while the deploy still waits", results)
+	}
+	if state := f.runs.states[nodeA]; !state.Spec.IsZero() || state.Fault != nil {
+		t.Fatalf("got %+v, want no run left behind to fail on once the peer list lands", state)
+	}
+}
+
+func TestAForeignImageDeployedWhileTheDapiStillHoldsTheNodeIsRefusedAtOnce(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+
+	// act
+	results, err := f.deploy().Execute(ctx, cmd)
+
+	// assert
+	if err != nil {
+		t.Fatalf("a refused node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the foreign image refused before the node is drained", results)
+	}
+	if state := f.runs.states[nodeA]; !state.Spec.IsZero() {
+		t.Fatalf("got %+v, want no run left behind for the loop to trip on", state)
+	}
+}
+
+func TestAForeignImageTheLoopFoundAfterTheDeployIsNotKickedFor(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	foreign := vo.ImageDigest("foreign@sha256:" + strings.Repeat("c", 64))
+	f.images.layers[foreign] = vo.ImageLayers{"someone-elses-layer"}
+	cmd := deployCommand()
+	cmd.Run.Image = foreign
+	f.images.pullErr = context.DeadlineExceeded
+	if _, err := f.deploy().Execute(ctx, cmd); err != nil {
+		t.Fatalf("deploy: %v", err)
+	}
+	f.images.pullErr = nil
+
+	// act
+	_, reconciled := f.reconcile().Execute(ctx, nodeA)
+	f.clock.Advance(10 * f.patience)
+	f.reconcile().Execute(ctx, nodeA)
+
+	// assert
+	if shared.CodeOf(reconciled) != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %v, want the loop to refuse the image once it is pulled", reconciled)
+	}
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got %v, want the node kept for the tenant to deploy an image of theirs", f.chain.releases)
+	}
+	if state := f.runs.states[nodeA]; state.Fault == nil || state.Fault.Code != "IMAGE_NOT_DERIVED" {
+		t.Fatalf("got %+v, want the refusal left for status to show", state)
+	}
+}
+
+func TestADeployThatCouldNotPullStaysForTheLoopToFinish(t *testing.T) {
+	// arrange
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.images.pullErr = context.DeadlineExceeded
+
+	// act
+	results, err := f.deploy().Execute(ctx, deployCommand())
+
+	// assert
+	if err != nil {
+		t.Fatalf("a failed node must not fail the request: %v", err)
+	}
+	if len(results) != 1 || results[0].OK() {
+		t.Fatalf("got %+v, want the pull failure reported", results)
+	}
+	if f.runs.states[nodeA].Spec.Image != runImage {
+		t.Fatalf("got %+v, want the run kept so the pull carries on", f.runs.states[nodeA])
+	}
+}
+
+func TestDeployRejectsAShardTheChainDoesNotHave(t *testing.T) {
+	// arrange
+	f := newFixture()
+	delete(f.chain.shards, shardID)
+
+	// act
+	_, err := f.deploy().Execute(context.Background(), deployCommand())
+
+	// assert
+	if !errors.Is(err, shard.ErrShardUnknown) {
+		t.Fatalf("got %v, want %v", err, shard.ErrShardUnknown)
+	}
+}

@@ -156,12 +156,36 @@ func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error) {
+	args := m.Called(participant)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryTrainingNodeReservationsResponse), args.Error(1)
+}
+
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(stageHeight)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(epochIndex)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
 }
 
 type MockRandomSeedManager struct {
@@ -361,7 +385,17 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			},
 		},
 	}, nil)
+	mockChainBridge.On("GetPocStageRecipe", mock.Anything).Return(&types.QueryPocStageRecipeResponse{
+		Found: true,
+		Recipe: &types.PocStageRecipe{
+			Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+			Models: []*types.PoCModelConfig{
+				{ModelId: integrationTestModelID, SeqLen: 256},
+			},
+		},
+	}, nil)
 	mockChainBridge.On("GetPreservedNodesSnapshot", mock.Anything).Return(&types.QueryPreservedNodesSnapshotResponse{Found: false}, nil)
+	mockChainBridge.On("GetTrainingNodeReservations", mock.Anything).Return(&types.QueryTrainingNodeReservationsResponse{}, nil)
 
 	mockQueryClient.On("EpochInfo", mock.Anything, mock.Anything).Return(&types.QueryEpochInfoResponse{
 		Params: types.Params{

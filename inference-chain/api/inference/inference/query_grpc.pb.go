@@ -94,6 +94,7 @@ const (
 	Query_ListRandomSeeds_FullMethodName                           = "/inference.inference.Query/ListRandomSeeds"
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
+	Query_PocStageRecipe_FullMethodName                            = "/inference.inference.Query/PocStageRecipe"
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
 	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
@@ -107,6 +108,10 @@ const (
 	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 	Query_DevshardApprovedVersions_FullMethodName                  = "/inference.inference.Query/DevshardApprovedVersions"
 	Query_OpenPoCChallenges_FullMethodName                         = "/inference.inference.Query/OpenPoCChallenges"
+	Query_Trainshard_FullMethodName                                = "/inference.inference.Query/Trainshard"
+	Query_ActiveTrainshards_FullMethodName                         = "/inference.inference.Query/ActiveTrainshards"
+	Query_TrainshardProposal_FullMethodName                        = "/inference.inference.Query/TrainshardProposal"
+	Query_TrainingNodeReservations_FullMethodName                  = "/inference.inference.Query/TrainingNodeReservations"
 )
 
 // QueryClient is the client API for Query service.
@@ -240,6 +245,9 @@ type QueryClient interface {
 	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
@@ -261,6 +269,10 @@ type QueryClient interface {
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error)
 	OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error)
+	Trainshard(ctx context.Context, in *QueryGetTrainshardRequest, opts ...grpc.CallOption) (*QueryGetTrainshardResponse, error)
+	ActiveTrainshards(ctx context.Context, in *QueryActiveTrainshardsRequest, opts ...grpc.CallOption) (*QueryActiveTrainshardsResponse, error)
+	TrainshardProposal(ctx context.Context, in *QueryGetTrainshardProposalRequest, opts ...grpc.CallOption) (*QueryGetTrainshardProposalResponse, error)
+	TrainingNodeReservations(ctx context.Context, in *QueryTrainingNodeReservationsRequest, opts ...grpc.CallOption) (*QueryTrainingNodeReservationsResponse, error)
 }
 
 type queryClient struct {
@@ -946,6 +958,15 @@ func (c *queryClient) PoCValidationSnapshot(ctx context.Context, in *QueryPoCVal
 	return out, nil
 }
 
+func (c *queryClient) PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error) {
+	out := new(QueryPocStageRecipeResponse)
+	err := c.cc.Invoke(ctx, Query_PocStageRecipe_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error) {
 	out := new(QueryGetDevshardEscrowResponse)
 	err := c.cc.Invoke(ctx, Query_DevshardEscrow_FullMethodName, in, out, opts...)
@@ -1057,6 +1078,42 @@ func (c *queryClient) DevshardApprovedVersions(ctx context.Context, in *QueryDev
 func (c *queryClient) OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error) {
 	out := new(QueryOpenPoCChallengesResponse)
 	err := c.cc.Invoke(ctx, Query_OpenPoCChallenges_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) Trainshard(ctx context.Context, in *QueryGetTrainshardRequest, opts ...grpc.CallOption) (*QueryGetTrainshardResponse, error) {
+	out := new(QueryGetTrainshardResponse)
+	err := c.cc.Invoke(ctx, Query_Trainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ActiveTrainshards(ctx context.Context, in *QueryActiveTrainshardsRequest, opts ...grpc.CallOption) (*QueryActiveTrainshardsResponse, error) {
+	out := new(QueryActiveTrainshardsResponse)
+	err := c.cc.Invoke(ctx, Query_ActiveTrainshards_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainshardProposal(ctx context.Context, in *QueryGetTrainshardProposalRequest, opts ...grpc.CallOption) (*QueryGetTrainshardProposalResponse, error) {
+	out := new(QueryGetTrainshardProposalResponse)
+	err := c.cc.Invoke(ctx, Query_TrainshardProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) TrainingNodeReservations(ctx context.Context, in *QueryTrainingNodeReservationsRequest, opts ...grpc.CallOption) (*QueryTrainingNodeReservationsResponse, error) {
+	out := new(QueryTrainingNodeReservationsResponse)
+	err := c.cc.Invoke(ctx, Query_TrainingNodeReservations_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1194,6 +1251,9 @@ type QueryServer interface {
 	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
@@ -1215,6 +1275,10 @@ type QueryServer interface {
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error)
 	OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error)
+	Trainshard(context.Context, *QueryGetTrainshardRequest) (*QueryGetTrainshardResponse, error)
+	ActiveTrainshards(context.Context, *QueryActiveTrainshardsRequest) (*QueryActiveTrainshardsResponse, error)
+	TrainshardProposal(context.Context, *QueryGetTrainshardProposalRequest) (*QueryGetTrainshardProposalResponse, error)
+	TrainingNodeReservations(context.Context, *QueryTrainingNodeReservationsRequest) (*QueryTrainingNodeReservationsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1447,6 +1511,9 @@ func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *Query
 func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCValidationSnapshot not implemented")
 }
+func (UnimplementedQueryServer) PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PocStageRecipe not implemented")
+}
 func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardEscrow not implemented")
 }
@@ -1485,6 +1552,18 @@ func (UnimplementedQueryServer) DevshardApprovedVersions(context.Context, *Query
 }
 func (UnimplementedQueryServer) OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenPoCChallenges not implemented")
+}
+func (UnimplementedQueryServer) Trainshard(context.Context, *QueryGetTrainshardRequest) (*QueryGetTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Trainshard not implemented")
+}
+func (UnimplementedQueryServer) ActiveTrainshards(context.Context, *QueryActiveTrainshardsRequest) (*QueryActiveTrainshardsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActiveTrainshards not implemented")
+}
+func (UnimplementedQueryServer) TrainshardProposal(context.Context, *QueryGetTrainshardProposalRequest) (*QueryGetTrainshardProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainshardProposal not implemented")
+}
+func (UnimplementedQueryServer) TrainingNodeReservations(context.Context, *QueryTrainingNodeReservationsRequest) (*QueryTrainingNodeReservationsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TrainingNodeReservations not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -2849,6 +2928,24 @@ func _Query_PoCValidationSnapshot_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_PocStageRecipe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPocStageRecipeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PocStageRecipe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PocStageRecipe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PocStageRecipe(ctx, req.(*QueryPocStageRecipeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_DevshardEscrow_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryGetDevshardEscrowRequest)
 	if err := dec(in); err != nil {
@@ -3079,6 +3176,78 @@ func _Query_OpenPoCChallenges_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).OpenPoCChallenges(ctx, req.(*QueryOpenPoCChallengesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_Trainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTrainshardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).Trainshard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_Trainshard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).Trainshard(ctx, req.(*QueryGetTrainshardRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ActiveTrainshards_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryActiveTrainshardsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ActiveTrainshards(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ActiveTrainshards_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ActiveTrainshards(ctx, req.(*QueryActiveTrainshardsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainshardProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetTrainshardProposalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainshardProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainshardProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainshardProposal(ctx, req.(*QueryGetTrainshardProposalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_TrainingNodeReservations_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryTrainingNodeReservationsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).TrainingNodeReservations(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_TrainingNodeReservations_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).TrainingNodeReservations(ctx, req.(*QueryTrainingNodeReservationsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3391,6 +3560,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_PoCValidationSnapshot_Handler,
 		},
 		{
+			MethodName: "PocStageRecipe",
+			Handler:    _Query_PocStageRecipe_Handler,
+		},
+		{
 			MethodName: "DevshardEscrow",
 			Handler:    _Query_DevshardEscrow_Handler,
 		},
@@ -3441,6 +3614,22 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "OpenPoCChallenges",
 			Handler:    _Query_OpenPoCChallenges_Handler,
+		},
+		{
+			MethodName: "Trainshard",
+			Handler:    _Query_Trainshard_Handler,
+		},
+		{
+			MethodName: "ActiveTrainshards",
+			Handler:    _Query_ActiveTrainshards_Handler,
+		},
+		{
+			MethodName: "TrainshardProposal",
+			Handler:    _Query_TrainshardProposal_Handler,
+		},
+		{
+			MethodName: "TrainingNodeReservations",
+			Handler:    _Query_TrainingNodeReservations_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

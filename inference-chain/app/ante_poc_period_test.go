@@ -7,6 +7,7 @@ import (
 	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -149,14 +150,119 @@ func TestPocPeriodValidationDecorator_RejectsNonParticipant(t *testing.T) {
 	}
 }
 
-func TestPocPeriodValidationDecorator_AllowsRegisteredParticipant(t *testing.T) {
-	k, ctx, decorator := setupPocPeriodAnte(t)
-
-	signer := testutil.Creator
+func seedLiveValidationShape(t *testing.T, k inferencemodulekeeper.Keeper, ctx sdk.Context, signer string) {
+	t.Helper()
 	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
 		Index:   signer,
 		Address: signer,
 	}))
+	k.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(testutil.Executor), inferencetypes.Participant{
+		Index:   testutil.Executor,
+		Address: testutil.Executor,
+	}))
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Count:                    100,
+		RootHash:                 make([]byte, 32),
+		ModelId:                  "test-model",
+	}))
+}
+
+func TestPocPeriodValidationDecorator_RawBoundsBeforeParticipantCheck(t *testing.T) {
+	_, ctx, decorator := setupPocPeriodAnte(t)
+	// Executor is not registered. Raw bounds run before the participant lookup.
+	msg := overRawWeightDistribution(testutil.Executor)
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, msg)
+	require.ErrorIs(t, err, sdkerrors.ErrInvalidRequest)
+	require.NotErrorIs(t, err, inferencetypes.ErrParticipantNotFound)
+	require.False(t, nextCalled)
+
+	inner, packErr := codectypes.NewAnyWithValue(msg)
+	require.NoError(t, packErr)
+	execMsg := &authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{inner},
+	}
+	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, execMsg)
+	require.ErrorIs(t, err, sdkerrors.ErrInvalidRequest)
+	require.NotErrorIs(t, err, inferencetypes.ErrParticipantNotFound)
+	require.False(t, nextCalled)
+}
+
+func overRawWeightDistribution(creator string) *inferencetypes.MsgMLNodeWeightDistribution {
+	weights := make([]*inferencetypes.MLNodeWeight, inferencetypes.MaxMLNodeWeightRawRowsPerEntry+1)
+	for i := range weights {
+		weights[i] = &inferencetypes.MLNodeWeight{}
+	}
+	return &inferencetypes.MsgMLNodeWeightDistribution{
+		Creator:                  creator,
+		PocStageStartBlockHeight: 100,
+		Entries: []*inferencetypes.MLNodeDistributionEntry{{
+			ModelId: "test-model",
+			Weights: weights,
+		}},
+	}
+}
+
+func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndReachedCap(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
+
+	empty := pocValidationsMsg(signer)
+	empty.Validations = nil
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, empty)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = inferencetypes.DefaultEpochValidationParams()
+	}
+	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetPocValidationV2(ctx, inferencetypes.PoCValidationV2{
+		ParticipantAddress:          testutil.Executor,
+		ValidatorParticipantAddress: signer,
+		PocStageStartBlockHeight:    100,
+		ModelId:                     "test-model",
+		ValidatedWeight:             1,
+	}))
+
+	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(signer))
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_RejectsTooManyValidations(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
+
+	msg := pocValidationsMsg(signer)
+	msg.Validations = make([]*inferencetypes.PoCValidationEntryV2, inferencetypes.MaxValidationsPerMessage+1)
+	for i := range msg.Validations {
+		msg.Validations[i] = &inferencetypes.PoCValidationEntryV2{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            "test-model",
+			ValidatedWeight:    1,
+		}
+	}
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, msg)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_AllowsRegisteredParticipant(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
 
 	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(signer))
 	require.NoError(t, err)
@@ -175,10 +281,7 @@ func TestPocPeriodValidationDecorator_AllowsRegisteredParticipantInsideMsgExec(t
 	k, ctx, decorator := setupPocPeriodAnte(t)
 
 	signer := testutil.Creator
-	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
-		Index:   signer,
-		Address: signer,
-	}))
+	seedLiveValidationShape(t, k, ctx, signer)
 
 	inner, err := codectypes.NewAnyWithValue(pocValidationsMsg(signer))
 	require.NoError(t, err)
@@ -196,10 +299,7 @@ func TestPocPeriodValidationDecorator_GranteeEqualsGranter_NoGrantRequired(t *te
 	k, ctx, decorator := setupPocPeriodAnte(t)
 
 	signer := testutil.Creator
-	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
-		Index:   signer,
-		Address: signer,
-	}))
+	seedLiveValidationShape(t, k, ctx, signer)
 
 	inner, err := codectypes.NewAnyWithValue(pocValidationsMsg(signer))
 	require.NoError(t, err)

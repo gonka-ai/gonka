@@ -16,6 +16,7 @@ class PoCChallengeRotateIsolationTests : TestermintTest() {
             expectedConfirmationsPerEpoch = 0,
             pocStageDuration = 5,
             alphaThreshold = 0.01,
+            minPunishableSegmentBlocks = 1,
         )
         val genesis = env.genesis
         val join1 = env.join1

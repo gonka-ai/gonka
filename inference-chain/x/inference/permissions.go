@@ -37,7 +37,9 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgBridgeExchange{},
 	&types.MsgSubmitNewUnfundedParticipant{},
 	&types.MsgSubmitHardwareDiff{},
-	&types.MsgDeclarePoCIntent{}, // bootstrap-model intent; miners submit via warm key
+	&types.MsgDeclarePoCIntent{},         // bootstrap-model intent; miners submit via warm key
+	&types.MsgRefreshTrainingNodeOptIn{}, // the training daemon offers the host's nodes
+	&types.MsgAutokickTrainshardNode{},   // and hands one back when its run fails
 	&blstypes.MsgSubmitDealerPart{},
 	&blstypes.MsgSubmitVerificationVector{},
 	&blstypes.MsgRespondDealerComplaints{},

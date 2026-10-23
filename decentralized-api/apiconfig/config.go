@@ -291,23 +291,28 @@ type BandwidthParamsCache struct {
 	MaxInferencesPerBlock     uint64  `koanf:"max_inferences_per_block" json:"max_inferences_per_block"`
 }
 type PoCModelConfigCache struct {
-	ModelId string `koanf:"model_id" json:"model_id"`
-	SeqLen  int64  `koanf:"seq_len" json:"seq_len"`
+	ModelId     string `koanf:"model_id" json:"model_id"`
+	SeqLen      int64  `koanf:"seq_len" json:"seq_len"`
+	DecodeSteps int64  `koanf:"decode_steps" json:"decode_steps,omitempty"`
 }
 
 type PoCParamsCache struct {
 	Models []PoCModelConfigCache `koanf:"models" json:"models"`
 }
 
-func NewPoCParamsCache(modelConfigs []*types.PoCModelConfig) PoCParamsCache {
+func NewPoCParamsCache(pocParams *types.PocParams) PoCParamsCache {
+	scheme := pocParams.GetPocScheme()
+	modelConfigs := pocParams.GetModelConfigs()
 	models := make([]PoCModelConfigCache, 0, len(modelConfigs))
 	for _, modelConfig := range modelConfigs {
 		if modelConfig == nil || modelConfig.ModelId == "" {
 			continue
 		}
+		block, _ := modelConfig.SchemeParams(scheme)
 		models = append(models, PoCModelConfigCache{
-			ModelId: modelConfig.ModelId,
-			SeqLen:  modelConfig.SeqLen,
+			ModelId:     modelConfig.ModelId,
+			SeqLen:      block.GetSeqLen(),
+			DecodeSteps: types.DecodeStepsForStage(scheme, block.GetDecodeSteps()),
 		})
 	}
 	return PoCParamsCache{Models: models}

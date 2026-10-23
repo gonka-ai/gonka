@@ -164,6 +164,12 @@ class VLLMRunner(IVLLMRunner):
             self.additional_args.extend(
                 ["--worker-extension-cls", self.WORKER_EXTENSION_CLASS]
             )
+        # PoC requests run at priority -1, which only the priority policy honours.
+        if not any(
+            arg == "--scheduling-policy" or arg.startswith("--scheduling-policy=")
+            for arg in self.additional_args
+        ):
+            self.additional_args.extend(["--scheduling-policy", "priority"])
         self.processes: List[subprocess.Popen] = []
         self._hb = {}
         self._hb_lock = threading.Lock()

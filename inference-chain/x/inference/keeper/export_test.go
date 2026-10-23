@@ -1,7 +1,11 @@
 package keeper
 
 import (
+	"context"
+
 	"cosmossdk.io/collections"
+	"cosmossdk.io/store/prefix"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -30,6 +34,37 @@ func SetPoCV2StoreCommitRawBytesForTesting(k Keeper, ctx sdk.Context, startHeigh
 	return k.storeService.OpenKVStore(ctx).Set(keyBz, bz)
 }
 
+func CollectModelFreeWeightsForTesting(k Keeper, ctx sdk.Context, epochId uint64, modelId string) map[string]int64 {
+	return k.collectModelFreeWeights(ctx, epochId, modelId)
+}
+
+// SetConfirmationCleanupFailAfterForTest fails the Nth confirmation-prefix
+// removal. The hook clears itself when it fires.
+func SetConfirmationCleanupFailAfterForTest(n int) {
+	confirmationCleanupFailAfter = n
+}
+
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
+}
+
+func SetRawStoreBytesForTesting(k Keeper, ctx sdk.Context, key, value []byte) error {
+	return k.storeService.OpenKVStore(ctx).Set(key, value)
+}
+
+func HasRawStoreKeyForTesting(k Keeper, ctx sdk.Context, key []byte) (bool, error) {
+	return k.storeService.OpenKVStore(ctx).Has(key)
+}
+
+// PlantActiveParticipantsForTest writes an active-participant record without
+// the cache address check, so a test can store a legacy invalid index.
+func PlantActiveParticipantsForTest(k Keeper, ctx context.Context, record types.ActiveParticipants) error {
+	storeAdapter := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	store := prefix.NewStore(storeAdapter, []byte{})
+	bz, err := k.cdc.Marshal(&record)
+	if err != nil {
+		return err
+	}
+	store.Set(types.ActiveParticipantsFullKey(record.EpochId), bz)
+	return nil
 }

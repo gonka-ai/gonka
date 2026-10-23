@@ -18,6 +18,10 @@ func (k msgServer) WithdrawCollateral(goCtx context.Context, msg *types.MsgWithd
 		return nil, err
 	}
 
+	if k.HasActiveTrainReservation(goCtx, msg.Participant) {
+		return nil, types.ErrActiveTrainReservation
+	}
+
 	// Ensure only base denomination is accepted
 	if msg.Amount.Denom != inferencetypes.BaseCoin {
 		return nil, types.ErrInvalidDenom.Wrapf("only %s denomination is accepted for collateral, got %s",
