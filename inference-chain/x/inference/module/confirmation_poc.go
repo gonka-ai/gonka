@@ -359,7 +359,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up validation snapshot
+			// Clean up validation snapshot. Validation rows, commits,
+			// distributions, and signer counters stay until the bounded
+			// confirmation cleanup walks this trigger.
 			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
@@ -467,14 +469,14 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 
-	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
-	measured := weightByParticipant(confirmationParticipants, presentScales)
-
 	participants, found := am.keeper.GetActiveParticipants(ctx, event.EpochIndex)
 	if !found {
 		return fmt.Errorf("evaluateConfirmation: active participants not found for epoch %d", event.EpochIndex)
 	}
 	activeParticipants := participants.Participants
+
+	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
+	measured := weightByParticipant(restrictToEpochModels(confirmationParticipants, activeParticipants), presentScales)
 
 	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
@@ -583,24 +585,20 @@ func (am AppModule) updateConfirmationWeightsV2(
 		return nil
 	}
 
-	// Get weight distributions for per-node weights
-	weightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, event.TriggerHeight)
-	if err != nil {
-		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
-		// Continue without distributions
-	}
-
 	validationsV2, err := am.keeper.GetPoCValidationsV2ByStage(ctx, event.TriggerHeight)
 	if err != nil {
 		am.LogError("updateConfirmationWeightsV2: failed to get PoC v2 validations for confirmation", types.PoC, "error", err)
 		return nil
 	}
 
-	// Collect participants and seeds
+	// Collect participants and seeds. This path has no allowlist check.
+	// Distributions are loaded only for keys that have both, because a missing
+	// participant or seed already produces no confirmation weight.
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
+	admittedKeys := make([]types.PoCParticipantModelKey, 0, len(storeCommits))
 
-	for key := range storeCommits {
+	for _, key := range sortedStoreCommitKeys(storeCommits) {
 		participantAddress := key.ParticipantAddress
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
@@ -612,9 +610,17 @@ func (am AppModule) updateConfirmationWeightsV2(
 		participants[participantAddress] = participant
 
 		seed, found := am.keeper.GetRandomSeed(ctx, event.EpochIndex, participantAddress)
-		if found {
-			seeds[participantAddress] = seed
+		if !found {
+			continue
 		}
+		seeds[participantAddress] = seed
+		admittedKeys = append(admittedKeys, key)
+	}
+
+	weightDistributions, err := am.distributionsForAdmittedKeys(ctx, event.TriggerHeight, admittedKeys)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
+		weightDistributions = nil
 	}
 
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
@@ -764,4 +770,40 @@ func preservedWeightByParticipant(
 		preserved[p.Index] = types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 	}
 	return preserved
+}
+
+func restrictToEpochModels(
+	measured []*types.ActiveParticipant,
+	epochParticipants []*types.ActiveParticipant,
+) []*types.ActiveParticipant {
+	epochModels := make(map[string]map[string]bool, len(epochParticipants))
+	for _, p := range epochParticipants {
+		if p == nil {
+			continue
+		}
+		models := make(map[string]bool, len(p.Models))
+		for _, modelID := range p.Models {
+			if modelID != "" {
+				models[modelID] = true
+			}
+		}
+		epochModels[p.Index] = models
+	}
+	out := make([]*types.ActiveParticipant, 0, len(measured))
+	for _, p := range measured {
+		if p == nil {
+			continue
+		}
+		allowed := epochModels[p.Index]
+		filtered := &types.ActiveParticipant{Index: p.Index}
+		for i, modelID := range p.Models {
+			if !allowed[modelID] || i >= len(p.MlNodes) {
+				continue
+			}
+			filtered.Models = append(filtered.Models, modelID)
+			filtered.MlNodes = append(filtered.MlNodes, p.MlNodes[i])
+		}
+		out = append(out, filtered)
+	}
+	return out
 }

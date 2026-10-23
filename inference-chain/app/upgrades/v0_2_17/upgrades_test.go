@@ -12,6 +12,27 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.17", UpgradeName)
 }
 
+func TestMigrateEpochValidationParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochValidationParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultEpochValidationParams(), got.EpochValidationParams)
+
+	got.EpochValidationParams.MaxValidationsPerMessage = 64
+	require.NoError(t, k.SetParams(ctx, got))
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+	again, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint32(64), again.EpochValidationParams.MaxValidationsPerMessage)
+}
+
 // A post-v0.2.16 model keeps seq_len and stat_test, stores the controller on
 // the model, and has a cleared weight_scale_factor. v0.2.17 moves both onto
 // one PREFILL block and leaves the scheme selector alone.

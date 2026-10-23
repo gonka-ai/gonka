@@ -134,7 +134,15 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	ParamsKey                      = []byte("p_inference")
+	// PoCValidationV2CountPrefix is (stage, validator) -> stored vote count.
+	// The validation key ends with the validator, so a count cannot be a prefix
+	// walk of PoCValidationsV2.
+	PoCValidationV2CountPrefix = collections.NewPrefix(114)
+	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
+	// bounded confirmation-prefix cleanup. It is not one of the regular
+	// pruner epoch fields.
+	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	ParamsKey                  = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {
