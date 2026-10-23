@@ -5,6 +5,7 @@ Only the failure trigger is injected. Container replacement, healthchecks,
 configuration hashes, saved specifications and restoration use real Docker.
 """
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -226,6 +227,41 @@ fi
         self.assertIn("Recovering the previous service specifications", retry.stdout)
         self.assert_restored("proxy")
         self.assertFalse((self.root / "state/pending").exists())
+
+
+# Answers like dockerd with the containerd image store: a client that closes
+# stdin before the reply half-closes the connection and cancels the request.
+FAKE_DIAL_STDIO = r"""#!/usr/bin/env python3
+import os, select, sys
+fd = sys.stdin.fileno()
+data = b""
+while b"\r\n\r\n" not in data:
+    data += os.read(fd, 65536)
+head, body = data.split(b"\r\n\r\n", 1)
+length = int(next(line.split(b":")[1] for line in head.split(b"\r\n")
+                  if line.lower().startswith(b"content-length:")))
+while len(body) < length:
+    body += os.read(fd, 65536)
+if select.select([fd], [], [], 0.5)[0] and not os.read(fd, 1):
+    reply = b"HTTP/1.1 499 status code 499\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+else:
+    payload = b'{"Id":"restored","Warnings":[]}'
+    reply = b"HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % (len(payload), payload)
+sys.stdout.buffer.write(reply)
+"""
+
+
+class DialStdioTest(unittest.TestCase):
+    def test_create_keeps_the_connection_open_until_docker_replies(self):
+        with tempfile.TemporaryDirectory(prefix="gonka-dial-stdio-") as temp:
+            fake = Path(temp) / "docker"
+            fake.write_text(FAKE_DIAL_STDIO)
+            fake.chmod(0o755)
+            spec = importlib.util.spec_from_file_location("container_state", SOURCE / "updater-container-state.py")
+            state = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(state)
+            state.DOCKER = str(fake)
+            self.assertEqual(state.create({"Image": "busybox"}, "proxy"), "restored")
 
 
 if __name__ == "__main__":

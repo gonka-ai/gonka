@@ -21,6 +21,7 @@ import shutil
 import uuid
 import posixpath
 import tempfile
+import threading
 
 DOCKER = os.environ.get("DOCKER_BIN", "docker")
 WAIT = int(os.environ.get("UPDATE_WAIT_TIMEOUT_SECONDS", "2100"))
@@ -45,8 +46,24 @@ def create(config, name):
     request = (f"POST /containers/create?name={urllib.parse.quote(name, safe='')} HTTP/1.1\r\n"
                f"Host: docker\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
                "Connection: close\r\n\r\n").encode() + body
-    reply = subprocess.run([DOCKER, "system", "dial-stdio"], input=request,
-                           capture_output=True, check=True, timeout=60).stdout
+    # Keep stdin open until the reply: EOF half-closes the connection, and
+    # Docker cancels the create (containerd image store, an empty 499 on 29).
+    args = [DOCKER, "system", "dial-stdio"]
+    expired = threading.Event()
+    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL) as process:
+        timer = threading.Timer(60, lambda: (expired.set(), process.kill()))
+        timer.start()
+        try:
+            process.stdin.write(request)
+            process.stdin.flush()
+            reply = process.stdout.read()  # Connection: close ends the stream
+        finally:
+            timer.cancel()
+    if expired.is_set():
+        raise subprocess.TimeoutExpired(args, 60)
+    if process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, args)
 
     class Socket:
         def makefile(self, *_args):
