@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"common/completionapi"
 	"devshard/user"
 
 	"github.com/stretchr/testify/require"
@@ -105,19 +104,19 @@ func TestAFailedCatchUpDoesNotAbortTheWarmup(t *testing.T) {
 
 // Test flow:
 // 1. Warm the escrow hosts with a fake probe sender.
-// 2. The probe declares MinTokensFloor max_tokens, and the signed probe prompt carries the same value.
+// 2. The probe declares the PoC probe's max_tokens, and the signed probe prompt carries the same value.
 func TestWarmupProbeDeclaresItsTokenBudget(t *testing.T) {
 	sender := &fakeProbeSender{groupSize: 16}
 
 	warmEscrowHosts(context.Background(), warmupTestDeps(sender, nil), 0)
 
-	require.Equal(t, []uint64{completionapi.MinTokensFloor}, sender.maxTokens,
+	require.Equal(t, []uint64{pocProbeMaxTokens}, sender.maxTokens,
 		"the probe declares the PoC probe budget")
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
 	}
 	require.NoError(t, json.Unmarshal(pocProbePromptBody, &body))
-	require.Equal(t, uint64(completionapi.MinTokensFloor), body.MaxTokens,
+	require.Equal(t, pocProbeMaxTokens, body.MaxTokens,
 		"the prompt the host validates carries the same budget as the declared params")
 }
 

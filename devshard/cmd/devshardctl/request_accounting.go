@@ -482,46 +482,60 @@ func (s *sqlitePerfStore) findAccountingAttempts(ctx context.Context, requestID,
 	return attempts, nil
 }
 
-// RecordAccountingRequestStart writes without the request context, so a client that disconnects cannot cancel it.
+// RecordAccountingRequestStart queues the write off the request path; it runs
+// without the request context, so a client that disconnects cannot cancel it.
 func (t *PerfTracker) RecordAccountingRequestStart(requestID, escrowID, model string, startedAt time.Time) {
 	if t == nil || t.store == nil {
 		return
 	}
-	if err := t.store.UpsertAccountingRequest(context.Background(), requestID, escrowID, model, startedAt); err != nil {
-		log.Printf("perf: persist request accounting start: %v", err)
-	}
+	t.writes.enqueue(func(ctx context.Context) {
+		if err := t.store.UpsertAccountingRequest(ctx, requestID, escrowID, model, startedAt); err != nil {
+			log.Printf("perf: persist request accounting start: %v", err)
+		}
+	})
 }
 
 func (t *PerfTracker) RecordAccountingAttempt(attempt RequestAccountingAttempt) {
 	if t == nil || t.store == nil {
 		return
 	}
-	if err := t.store.UpsertAccountingAttempt(context.Background(), attempt); err != nil {
-		log.Printf("perf: persist request accounting attempt: %v", err)
-	}
+	t.writes.enqueue(func(ctx context.Context) {
+		if err := t.store.UpsertAccountingAttempt(ctx, attempt); err != nil {
+			log.Printf("perf: persist request accounting attempt: %v", err)
+		}
+	})
 }
 
 func (t *PerfTracker) CompleteAccountingRequest(requestID, escrowID string, winnerNonce uint64, decision, outcome string, completedAt time.Time) {
 	if t == nil || t.store == nil {
 		return
 	}
-	if err := t.store.CompleteAccountingRequest(context.Background(), requestID, escrowID, winnerNonce, decision, outcome, completedAt); err != nil {
-		log.Printf("perf: persist request accounting completion: %v", err)
-	}
+	t.writes.enqueue(func(ctx context.Context) {
+		if err := t.store.CompleteAccountingRequest(ctx, requestID, escrowID, winnerNonce, decision, outcome, completedAt); err != nil {
+			log.Printf("perf: persist request accounting completion: %v", err)
+		}
+	})
 }
 
 func (t *PerfTracker) RecordAccountingAlias(requestID, escrowID, sourceRequestID, sourceEscrowID, reason string, createdAt time.Time) {
 	if t == nil || t.store == nil {
 		return
 	}
-	if err := t.store.UpsertAccountingAlias(context.Background(), requestID, escrowID, sourceRequestID, sourceEscrowID, reason, createdAt); err != nil {
-		log.Printf("perf: persist request accounting alias: %v", err)
-	}
+	t.writes.enqueue(func(ctx context.Context) {
+		if err := t.store.UpsertAccountingAlias(ctx, requestID, escrowID, sourceRequestID, sourceEscrowID, reason, createdAt); err != nil {
+			log.Printf("perf: persist request accounting alias: %v", err)
+		}
+	})
 }
 
+// FindAccountingRequest first waits for the writes queued before it, so a
+// caller reads what it recorded.
 func (t *PerfTracker) FindAccountingRequest(ctx context.Context, requestID, escrowID string) (RequestAccountingRecord, bool, error) {
 	if t == nil || t.store == nil {
 		return RequestAccountingRecord{}, false, nil
+	}
+	if err := t.writes.flush(ctx); err != nil {
+		return RequestAccountingRecord{}, false, err
 	}
 	return t.store.FindAccountingRequest(ctx, requestID, escrowID)
 }

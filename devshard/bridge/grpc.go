@@ -91,7 +91,7 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(ctx,
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if status.Code(err) == codes.NotFound {
-		return nil, fmt.Errorf("Participant %s: %w", address, ErrParticipantNotFound)
+		return nil, fmt.Errorf("participant %s: %w", address, ErrParticipantNotFound)
 	}
 	if err != nil {
 		return nil, ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
