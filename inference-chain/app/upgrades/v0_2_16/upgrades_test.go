@@ -30,10 +30,10 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	require.NoError(t, err)
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{
-		{ModelId: "model-c", WeightScaleFactor: inferencetypes.DecimalFromFloat(3)},
-		{ModelId: "model-a", WeightScaleFactor: inferencetypes.DecimalFromFloat(1)},
-		{ModelId: "model-b", WeightScaleFactor: inferencetypes.DecimalFromFloat(2)},
-		{ModelId: "disabled", WeightScaleFactor: &inferencetypes.Decimal{Value: 0, Exponent: 0}},
+		{ModelId: "model-c", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(3)},
+		{ModelId: "model-a", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(1)},
+		{ModelId: "model-b", SeqLen: 1024, WeightScaleFactor: inferencetypes.DecimalFromFloat(2)},
+		{ModelId: "disabled", SeqLen: 1024, WeightScaleFactor: &inferencetypes.Decimal{Value: 0, Exponent: 0}},
 	}
 	params.DelegationParams.InitialModelId = "model-b"
 	require.NoError(t, k.SetParams(ctx, params))
@@ -53,6 +53,7 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	}
 	for _, model := range got.PocParams.Models {
 		require.Nil(t, model.WeightScaleFactor)
+		require.Empty(t, model.Schemes)
 		if model.ModelId == "disabled" {
 			require.Nil(t, model.DynamicCoefficient)
 			continue
@@ -71,7 +72,7 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
 	require.True(t, found)
 	require.Len(t, seeded.ConfirmationWeightScales, 3)
-	frozen, err := coefficient.Freeze(got.PocParams)
+	frozen, err := coefficient.Freeze(got.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"model-a": 100, "model-b": 100, "model-c": 100}
 	result, err := coefficient.Calculate(frozen.Params, frozen.Scales, seeded.ConfirmationWeightScales, totals, totals, nil, true)
@@ -104,6 +105,7 @@ func TestMigrateDynamicCoefficientParamsPreservesLegacyPrecision(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: &inferencetypes.Decimal{Value: 1234567890123, Exponent: -13},
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
@@ -166,7 +168,7 @@ func TestMigrateDynamicCoefficientParamsMeasuredModels(t *testing.T) {
 	// Seeded bases, rather than the lower bounds, drive the first epoch's adjustment.
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
 	require.True(t, found)
-	frozen, err := coefficient.Freeze(got.PocParams)
+	frozen, err := coefficient.Freeze(got.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"MiniMaxAI/MiniMax-M2.7": 1000}
 	result, err := coefficient.Calculate(frozen.Params, frozen.Scales, seeded.ConfirmationWeightScales, totals, totals, nil, true)
@@ -241,6 +243,7 @@ func TestFreezeUpcomingCoefficientConfigDuringUpgrade(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: inferencetypes.DecimalFromFloat(2),
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
@@ -392,6 +395,7 @@ func TestLeftoverApprovedVersionsDoNotBlockCoefficientMigrate(t *testing.T) {
 	params.PocParams.DynamicCoefficientParams = nil
 	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
 		ModelId:           "model-a",
+		SeqLen:            1024,
 		WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
 	}}
 	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
@@ -581,7 +585,7 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 	params, err = k.GetParams(ctx)
 	require.NoError(t, err)
 
-	frozen, err := coefficient.Freeze(params.PocParams)
+	frozen, err := coefficient.Freeze(params.PocParams, nil)
 	require.NoError(t, err)
 	totals := map[string]int64{"MiniMaxAI/MiniMax-M2.7": 100, "zai-org/GLM-5.3-Flash": 100}
 	seeded, found := k.GetEpochGroupData(ctx, 1, "")
@@ -614,6 +618,13 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 		CoeffMax:           &inferencetypes.Decimal{Value: 8, Exponent: -1},
 		RelativeDifficulty: &inferencetypes.Decimal{Value: 3, Exponent: 0}, TargetShareBps: 6000,
 	}
+	// The current governance handler requires the v0.2.17 recipe format.
+	for _, model := range params.PocParams.Models {
+		model.Schemes = []*inferencetypes.PocSchemeParams{
+			{Scheme: inferencetypes.PocScheme_POC_SCHEME_PREFILL, SeqLen: 1024, DynamicCoefficient: model.DynamicCoefficient},
+			inferencetypes.DefaultDecodeScheme(),
+		}
+	}
 	ms := keeper.NewMsgServerImpl(k)
 	_, err = ms.UpdateParams(ctx, &inferencetypes.MsgUpdateParams{Authority: k.GetAuthority(), Params: params})
 	require.NoError(t, err)
@@ -634,7 +645,7 @@ func TestGovernanceUpdatesCoefficientsAfterMigration(t *testing.T) {
 	require.NoError(t, err)
 
 	// The next snapshot adopts the proposal and carries the previous base coefficients.
-	next, err := coefficient.Freeze(updated.PocParams)
+	next, err := coefficient.Freeze(updated.PocParams, nil)
 	require.NoError(t, err)
 	require.Equal(t, params.PocParams.DynamicCoefficientParams, next.Params)
 	third, err := coefficient.Calculate(next.Params, next.Scales, second.Scales, totals, totals, nil, true)

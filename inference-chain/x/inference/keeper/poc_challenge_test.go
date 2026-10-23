@@ -50,8 +50,11 @@ func setupChallengeCreate(t *testing.T, height int64) (keeper.Keeper, sdk.Contex
 	params.PocChallengeParams.PaymentRatio = types.DecimalFromFloat(0.1)
 	params.PocParams.PocV2Enabled = true
 	require.NoError(t, k.SetParams(ctx, params))
+	k.SetModel(ctx, &types.Model{Id: challengeTestModel})
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	_, freezeErr := k.FreezePocStageRecipe(ctx, 0)
+	require.NoError(t, freezeErr)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex:   2,
 		EpochGroupId: 7,
@@ -160,6 +163,13 @@ func TestPoCChallengeStoreCommit_FreezesAtFinish(t *testing.T) {
 	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(testutil.Executor), types.Participant{
 		Index:   testutil.Executor,
 		Address: testutil.Executor,
+	}))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 2,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Models: []string{challengeTestModel},
+		}},
 	}))
 	ms := keeper.NewMsgServerImpl(k)
 	msg := &types.MsgPoCChallengeStoreCommit{

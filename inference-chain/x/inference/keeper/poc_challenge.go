@@ -431,6 +431,11 @@ func (k Keeper) CreatePoCChallenge(ctx context.Context, msg *types.MsgCreatePoCC
 	if !found || epoch == nil || params.EpochParams == nil {
 		return nil, types.ErrEffectiveEpochNotFound
 	}
+	if _, found, err := k.GetEpochPocRecipe(ctx, epoch.Index); err != nil {
+		return nil, err
+	} else if !found {
+		return nil, sdkerrors.Wrap(types.ErrPoCChallengeWindow, "epoch has no frozen PoC recipe")
+	}
 	epochContext := types.NewEpochContext(*epoch, *params.EpochParams)
 	if epochContext.GetCurrentPhase(height) != types.InferencePhase {
 		return nil, sdkerrors.Wrap(types.ErrPoCChallengeWindow, "not in inference phase")

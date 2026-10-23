@@ -452,6 +452,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	am.keeper.RecheckPendingBridgeTransactions(sdkCtx)
+
 	err = am.keeper.PruneWithParams(ctx, params, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
@@ -527,6 +529,16 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to set upcoming epoch", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		recipe, freezeErr := am.keeper.FreezePocStageRecipe(ctx, upcomingEpoch.PocStartBlockHeight)
+		if freezeErr != nil {
+			am.LogError("Unable to freeze PoC stage recipe", types.PoC,
+				"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", freezeErr.Error())
+			return freezeErr
+		}
+		am.LogInfo("Froze PoC stage recipe", types.PoC,
+			"pocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"scheme", recipe.Scheme.String(),
+			"tracking", recipe.Tracking)
 
 		am.LogInfo("StartStage:PocStart", types.Stages, "blockHeight", blockHeight)
 		// UNRECOVERABLE: CreateEpochGroup failure means the DKG/BLS group for the new
@@ -548,7 +560,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
 			return err
 		}
-		frozenCoefficients, err := coefficient.Freeze(params.PocParams)
+		frozenCoefficients, err := coefficient.Freeze(params.PocParams, recipe)
 		if err != nil {
 			am.LogError("Unable to freeze dynamic coefficient config", types.PoC, "error", err.Error())
 			return err
@@ -558,7 +570,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.SetEpochGroupData(ctx, *newGroup.GroupData)
 
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
-		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
+		changed, err := am.regularSchemeChanged(ctx, upcomingEpoch.Index, upcomingEpoch.PocStartBlockHeight)
+		if err != nil {
+			return err
+		}
+		preservedSnapshot := types.PreservedNodesSnapshot{EpisodeAnchorHeight: upcomingEpoch.PocStartBlockHeight}
+		if !changed {
+			preservedSnapshot, err = modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
+		}
 		if err != nil {
 			// Downstream readers (broker filter, claim validation) soft-fail on a missing
 			// preserved snapshot, so a transient sampler failure should not halt the chain.
@@ -606,7 +625,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
-		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight, "validatorCount", len(computeResult))
 
 		// Cap governance/validator power at each participant's previous-epoch
 		// confirmed weight before applying temporary guardian enhancement.
@@ -703,6 +722,7 @@ func (am AppModule) runWeightPipeline(
 	participants []*types.ActiveParticipant,
 	params types.Params,
 	upcomingEpoch types.Epoch,
+	measurementHeight int64,
 	previous *previousConfirmedWeights,
 ) (weightPipelineResult, error) {
 	participation, err := am.prepareEpochParticipationState(
@@ -711,6 +731,7 @@ func (am AppModule) runWeightPipeline(
 		params,
 		upcomingEpoch.PocStartBlockHeight,
 		upcomingEpoch.Index,
+		measurementHeight,
 		previous,
 	)
 	if err != nil {
@@ -874,7 +895,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if !usedFallback {
 		pipelinePrevious = zeroFailedMissRateWeights(previous, failedMissRate)
 	}
-	pipeline, err := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+	measurementHeight := upcomingEpoch.PocStartBlockHeight
+	if usedFallback {
+		measurementHeight, err = am.carryFallbackPocConfig(ctx, *upcomingEpoch)
+		if err != nil {
+			return err
+		}
+	}
+	pipeline, err := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, measurementHeight, pipelinePrevious)
 	if err != nil {
 		return fmt.Errorf("run weight pipeline: %w", err)
 	}
@@ -893,7 +921,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			return fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index)
 		}
 		pipelinePrevious = previous
-		pipeline, err = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
+		measurementHeight, err = am.carryFallbackPocConfig(ctx, *upcomingEpoch)
+		if err != nil {
+			return err
+		}
+		pipeline, err = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, measurementHeight, pipelinePrevious)
 		if err != nil {
 			return fmt.Errorf("run fallback weight pipeline: %w", err)
 		}
@@ -948,7 +980,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		Participants:        activeParticipants,
 		EpochGroupId:        upcomingEpoch.Index,
 		EpochId:             upcomingEpoch.Index,
-		PocStartBlockHeight: upcomingEpoch.PocStartBlockHeight,
+		PocStartBlockHeight: measurementHeight,
 		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
 		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
@@ -1843,12 +1875,17 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
-		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogError("Participant secp256k1 public key is invalid for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID, "error", err)
+			continue
+		}
+		primaryPubKey := append([]byte(nil), pubKeyBytes...)
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, primaryPubKey, maxAdditionalKeys)
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
 			Address:                    ap.Index,
 			PercentageWeight:           math.LegacyZeroDec(),
-			Secp256k1PublicKey:         pubKeyBytes,
+			Secp256k1PublicKey:         primaryPubKey,
 			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
@@ -1933,18 +1970,11 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 				"error", err)
 			continue
 		}
-		if len(pubKeyBytes) != 33 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key length for BLS snapshot", types.EpochGroup,
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key for BLS snapshot", types.EpochGroup,
 				"participant", participantAddress,
 				"grantee", grantee.Address,
-				"length", len(pubKeyBytes))
-			continue
-		}
-		if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key prefix for BLS snapshot", types.EpochGroup,
-				"participant", participantAddress,
-				"grantee", grantee.Address,
-				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+				"error", err)
 			continue
 		}
 		if bytes.Equal(pubKeyBytes, primaryPubKey) {

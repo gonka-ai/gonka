@@ -74,6 +74,20 @@ func setupMsgExecCheckTx(t *testing.T, registerParticipant bool) msgExecCheckTxF
 			Address: granter.String(),
 		}))
 	}
+	// The validation row targets the grantee. CheckTx admits it only when that
+	// target is a participant, the model is registered, and a store commit exists.
+	testApp.InferenceKeeper.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+	require.NoError(t, testApp.InferenceKeeper.Participants.Set(ctx, grantee, inferencetypes.Participant{
+		Index:   grantee.String(),
+		Address: grantee.String(),
+	}))
+	require.NoError(t, testApp.InferenceKeeper.SetPoCV2StoreCommit(ctx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       grantee.String(),
+		PocStageStartBlockHeight: 1,
+		ModelId:                  "test-model",
+		Count:                    100,
+		RootHash:                 make([]byte, 32),
+	}))
 
 	_, err = testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
 		Height: testApp.LastBlockHeight() + 1,

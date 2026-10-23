@@ -70,6 +70,18 @@ message BridgePendingWithdrawalRefund {
   string contractAddress = 7;
 }
 
+// BridgeKeyLink maps a receipt owner address to the Gonka account that
+// receives that receipt's bridge credit. Both addresses are Gonka bech32.
+// owner_address is the address derived from the external compressed public
+// key, the same value MsgBridgeExchange stores as ownerAddress.
+message BridgeKeyLink {
+  string owner_address = 1;
+  string recipient_address = 2;
+  // nonce is the Ethereum authorization count for owner_address.
+  // The next registration must present a greater nonce inside the signed text.
+  uint64 nonce = 3;
+}
+
 // Bridge groups all bridge-related entities under a single parent structure
 message Bridge {
   repeated BridgeContractAddress      contract_addresses      = 1;
@@ -77,4 +89,5 @@ message Bridge {
   repeated BridgeTokenReference       trade_approved_tokens   = 3;
   repeated BridgePendingMintRefund    pending_mint_refunds    = 4;
   repeated BridgePendingWithdrawalRefund pending_withdrawal_refunds = 5;
+  repeated BridgeKeyLink              key_links               = 6;
 }

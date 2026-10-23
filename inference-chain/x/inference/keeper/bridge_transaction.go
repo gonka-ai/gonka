@@ -286,6 +286,9 @@ func (k Keeper) removeBridgeTransactionByID(ctx context.Context, id string) erro
 	if len(parts) != 3 {
 		return fmt.Errorf("invalid bridge transaction id: %s", id)
 	}
+	if tx, found := k.getBridgeTransactionByID(ctx, id); found {
+		k.removeBridgePending(ctx, tx.EpochIndex, id)
+	}
 	// Clear any per-validator confirmation sub-keys before removing the
 	// base transaction so the split-out records don't linger in state.
 	rng := collections.NewSuperPrefixedQuadRange3[string, string, string, string](parts[0], parts[1], parts[2])

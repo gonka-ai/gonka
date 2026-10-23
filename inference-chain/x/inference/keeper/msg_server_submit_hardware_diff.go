@@ -107,7 +107,8 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 		return nil, err
 	}
 
-	k.LogInfo("Updating hardware nodes", types.Nodes, "nodes", updatedNodes)
+	k.LogInfo("Updating hardware nodes", types.Nodes,
+		"participant", msg.Creator, "nodeCount", len(updatedNodes.HardwareNodes))
 	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", types.Nodes, "err", err)
 		return nil, err
