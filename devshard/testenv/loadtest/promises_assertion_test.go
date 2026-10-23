@@ -321,7 +321,7 @@ func TestPhaseFaultsGivesEveryNodeItsRules(t *testing.T) {
 		profiles[node.Profile], err = LoadProfile("profiles", node.Profile)
 		require.NoError(t, err)
 	}
-	require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, s, profiles, false, nil))
+	require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, s, profiles, false, nil, nil))
 	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
 	require.NoError(t, err)
 	for _, node := range cfg.MockOpenAI.Nodes {

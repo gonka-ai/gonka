@@ -9,6 +9,7 @@ import (
 
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
+	"devshard/testenv/gatewayphase"
 )
 
 // Config wires mock-dapi listeners and upstream mock-chain.
@@ -27,7 +28,8 @@ type Config struct {
 	BinaryDir         string
 	// BlockSeed seeds the mock block observer (deterministic headers).
 	BlockSeed int64
-	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
+	// GatewayBlockHeight / GatewayEpochIndex pin the devshardctl public-API
+	// stubs; both zero makes them follow mock-chain block height and epoch.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64
 	// OmitBlockRoutes emulates 0.2.15 / pre-#1738 dapi: no HTTP /block/* and
@@ -40,6 +42,9 @@ type Config struct {
 	// nodes; the rest share the unbound nodes. Both empty keeps the global pool.
 	MLNodeHosts map[string]string
 	HostAddrs   map[string]string
+	// PhaseSchedule is the gateway phase timeline from mock-dapi start;
+	// POST /testenv/phase replaces it at runtime.
+	PhaseSchedule []gatewayphase.Step
 }
 
 // MLNode is one Mock ML endpoint exposed through AcquireMLNode.

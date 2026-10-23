@@ -12,6 +12,7 @@ import (
 	cosrv "devshard/chainoracle/server"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
+	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockdapi"
 )
 
@@ -50,6 +51,13 @@ func main() {
 	}
 	if err := mockdapi.ApplyMaxConcurrentEnv(cfg.MLNodes, os.Getenv("MOCK_ML_NODE_MAX_CONCURRENT")); err != nil {
 		log.Fatalf("mock-dapi: MOCK_ML_NODE_MAX_CONCURRENT: %v", err)
+	}
+	if raw := os.Getenv("MOCK_DAPI_PHASE_SCHEDULE"); raw != "" {
+		steps, err := gatewayphase.ParseSteps(raw)
+		if err != nil {
+			log.Fatalf("mock-dapi: MOCK_DAPI_PHASE_SCHEDULE: %v", err)
+		}
+		cfg.PhaseSchedule = steps
 	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")

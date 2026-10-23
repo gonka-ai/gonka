@@ -54,7 +54,7 @@ func TestOracleProfileKnobsReachTheirMockNode(t *testing.T) {
 	scenario.Topology.MockML.Nodes[0].Profile = "oracle-x"
 
 	workDir := t.TempDir()
-	require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, scenario, profiles, false, nil))
+	require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, scenario, profiles, false, nil, nil))
 	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
 	require.NoError(t, err)
 

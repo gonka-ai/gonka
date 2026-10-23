@@ -296,6 +296,47 @@ func TestFaultWindowsComeFromHostFaults(t *testing.T) {
 }
 
 // Test flow:
+//  1. events.json and no host-faults.json: a trip file on versiond-2 for a minute, a PoC challenge on
+//     versiond-3 that never ended, a pause that never started, an ML node fault and a gateway restart;
+//     compose.log names the participants of versiond-2 and versiond-3, and the gateway quarantines
+//     versiond-2's during the trip file and 3m03s after it.
+//  2. Read the layers and check them.
+//  3. Check the windows are the two host events that started, the open one without an end, and the
+//     quarantine during the trip file is the fault's while the one past the grace is a violation.
+func TestFaultWindowsComeFromEventsWithoutHostFaults(t *testing.T) {
+	const faulted = "gonka1khwza4jkftj0qyhyw4fhd6ev4584hy9ph0es38"
+	quarantine := func(at string) string {
+		return gatewayLine(at, "participant_limit_transport_failure participant_key="+faulted+` path_kind=chat error=\"EOF\"`)
+	}
+	dir := writeLayersRun(t, map[string][]string{
+		"compose.log": {
+			hostIdentity("versiond-2-1", faulted),
+			hostIdentity("versiond-3-1", "gonka1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+			quarantine("2026-10-19T08:43:47Z"),
+			quarantine("2026-10-19T08:47:30Z"),
+		},
+		"events.json": {`[` +
+			`{"id":"public-down","action":"tripfile","target":"versiond-2","started_at":"2026-10-19T08:43:27Z","ended_at":"2026-10-19T08:44:27Z"},` +
+			`{"id":"poc","action":"dapi_challenge","target":"versiond-3","started_at":"2026-10-19T08:45:00Z","ended_at":null},` +
+			`{"id":"late","action":"pause","target":"versiond-4","started_at":null,"ended_at":null},` +
+			`{"id":"hang","action":"ml_fault","target":"mock-openai-2","started_at":"2026-10-19T08:43:00Z","ended_at":"2026-10-19T08:44:00Z"},` +
+			`{"id":"restart","action":"gateway_restart","target":"devshardctl","started_at":"2026-10-19T08:46:00Z","ended_at":"2026-10-19T08:46:10Z"}]`},
+	})
+	layers, err := ReadLoadtestLayers(dir)
+	require.NoError(t, err)
+	require.Len(t, layers.FaultWindows, 2)
+	require.Equal(t, FaultWindow{Event: "public-down tripfile", Host: "versiond-2", Participant: faulted,
+		From: time.Date(2026, 10, 19, 8, 43, 27, 0, time.UTC), To: time.Date(2026, 10, 19, 8, 44, 27, 0, time.UTC),
+		GracedTo: time.Date(2026, 10, 19, 8, 44, 27, 0, time.UTC).Add(faultGrace)}, layers.FaultWindows[0])
+	require.Equal(t, "versiond-3", layers.FaultWindows[1].Host)
+	require.True(t, layers.FaultWindows[1].To.IsZero(), "an event that never ended stays open")
+
+	got := violations(CheckPromises(PromiseInput{Layers: layers}), QuarantineOnlyWhenFaulted)
+	require.Len(t, got, 1, "the quarantine during the trip file is the fault's; the one 3m03s after it ends is not")
+	require.Contains(t, got[0].Detail, "at 2026-10-19T08:47:30Z")
+}
+
+// Test flow:
 //  1. A gateway quarantine outside any fault window in a run whose ML node answered with chaos.
 //  2. Check the quarantine check does not judge the run: the dishonest answers may have caused it.
 //  3. Check the same run with every answer honest judges the quarantine and breaks.
@@ -521,4 +562,53 @@ func TestQuarantineOfAnHAPairDuringThePauseOfOne(t *testing.T) {
 	layers, err := ReadLoadtestLayers(dir)
 	require.NoError(t, err)
 	require.Empty(t, violations(CheckPromises(PromiseInput{Layers: layers}), QuarantineOnlyWhenFaulted))
+}
+
+// Test flow:
+//  1. events.json from the runner of #2089 shapes: a pause, a container kill, the public port taken
+//     down and the payload dropped by trip file, a throttle, a PoC challenge, a marker and a chain
+//     participant mode, each on its own host. compose.log holds a validator's payload miss written
+//     before that validator's identity line.
+//  2. Read the layers.
+//  3. Check only the pause, the kill and the public port down stop a host serving its payload, and
+//     the miss is read with its time, inference, cause and the validator's address.
+func TestFaultWindowsSayWhichStopTheHostServingItsPayload(t *testing.T) {
+	const validator = "gonka1validatorqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+	event := func(id, action, target, params string) string {
+		return `{"id":"` + id + `","action":"` + action + `","target":"` + target + `","params":` + params +
+			`,"started_at":"2026-10-23T12:33:59Z","ended_at":"2026-10-23T12:34:44Z"}`
+	}
+	dir := writeLayersRun(t, map[string][]string{
+		"compose.log": {
+			`versiond-0-1                    | {"time":"2026-10-23T12:34:24.858755553Z","level":"WARN","msg":"validation voting false: executor payload unavailable",` +
+				`"escrow_id":"12","stage":"validation_finished","reason":"payload_fetch_err","inference_id":417,"executor_address":"gonka1executor",` +
+				`"cause":"executor payload fault: get payload: unavailable: HTTP status 503 Service Unavailable"}`,
+			hostIdentity("versiond-0-1", validator),
+		},
+		"events.json": {`[` + strings.Join([]string{
+			event("paused", "pause", "versiond-1", "null"),
+			event("killed", "container_kill", "versiond-2", "null"),
+			event("port-down", "tripfile", "versiond-3", `{"file":"devshard-fault-public-down"}`),
+			event("withheld", "tripfile", "versiond-4", `{"file":"devshard-fault-drop-payload"}`),
+			event("slow", "throttle", "versiond-5", `{"cpus":0.1}`),
+			event("poc", "dapi_challenge", "versiond-6", "null"),
+			event("budget", "marker", "versiond-7", `{"background":true}`),
+			event("absent", "chain_participant", "versiond-8", `{"mode":"absent"}`),
+		}, ",") + `]`},
+	})
+	layers, err := ReadLoadtestLayers(dir)
+	require.NoError(t, err)
+	stops := map[string]bool{}
+	for _, w := range layers.FaultWindows {
+		stops[w.Event] = w.StopsPayload
+	}
+	require.Equal(t, map[string]bool{
+		"paused pause": true, "killed container_kill": true, "port-down tripfile": true, "withheld tripfile": false,
+		"slow throttle": false, "poc dapi_challenge": false, "budget marker": false, "absent chain_participant": false,
+	}, stops)
+	require.Equal(t, []PayloadMiss{{
+		At: time.Date(2026, 10, 23, 12, 34, 24, 858755553, time.UTC), Escrow: "12", Inference: 417,
+		ValidatorHost: "versiond-0", Validator: validator, Executor: "gonka1executor",
+		Cause: "executor payload fault: get payload: unavailable: HTTP status 503 Service Unavailable",
+	}}, layers.PayloadMisses)
 }

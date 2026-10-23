@@ -35,6 +35,10 @@ type MetricsSample struct {
 	Nonce     *uint64             `json:"nonce,omitempty"`
 	State     *GatewayStateSizes  `json:"state,omitempty"`
 	BuildInfo []map[string]string `json:"build_info,omitempty"`
+	// Domain keeps the domainMetricPrefixes series, keyed name{label="v",...}.
+	Domain map[string]float64 `json:"domain,omitempty"`
+	// ChainPhase is the escrow's /v1/status chain_phase as the gateway sees it.
+	ChainPhase string `json:"chain_phase,omitempty"`
 }
 
 type ProcessMetricsSummary struct {
@@ -147,6 +151,62 @@ func parseRuntimeMetrics(body string) (map[string]float64, []map[string]string, 
 	return values, builds, nil
 }
 
+// domainMetricPrefixes are the series the invariants read; other series stay
+// out of metrics.jsonl. The gateway /metrics registry does not serve the
+// peer_rpc_budget series, so those come from devshardd (host-to-host GetDiffs).
+var domainMetricPrefixes = []string{"devshard_gateway_", "devshard_diff_fork_detected_total", "devshard_request_terminal_total", "devshard_peer_rpc_budget_"}
+
+// parseDomainMetrics flattens counters, gauges and the _count/_sum of
+// histograms and summaries. A body that does not parse yields nil.
+func parseDomainMetrics(body string) map[string]float64 {
+	parser := expfmt.NewTextParser(model.LegacyValidation)
+	families, err := parser.TextToMetricFamilies(strings.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	values := map[string]float64{}
+	for name, family := range families {
+		keep := false
+		for _, prefix := range domainMetricPrefixes {
+			keep = keep || strings.HasPrefix(name, prefix)
+		}
+		if !keep {
+			continue
+		}
+		for _, metric := range family.Metric {
+			labels := make([]string, 0, len(metric.Label))
+			for _, label := range metric.Label {
+				labels = append(labels, fmt.Sprintf("%s=%q", label.GetName(), label.GetValue()))
+			}
+			sort.Strings(labels)
+			key := name + "{" + strings.Join(labels, ",") + "}"
+			switch {
+			case metric.Counter != nil:
+				values[key] = metric.Counter.GetValue()
+			case metric.Gauge != nil:
+				values[key] = metric.Gauge.GetValue()
+			case metric.Untyped != nil:
+				values[key] = metric.Untyped.GetValue()
+			case metric.Histogram != nil:
+				values[name+"_count{"+strings.Join(labels, ",")+"}"] = float64(metric.Histogram.GetSampleCount())
+				values[name+"_sum{"+strings.Join(labels, ",")+"}"] = metric.Histogram.GetSampleSum()
+			case metric.Summary != nil:
+				values[name+"_count{"+strings.Join(labels, ",")+"}"] = float64(metric.Summary.GetSampleCount())
+				values[name+"_sum{"+strings.Join(labels, ",")+"}"] = metric.Summary.GetSampleSum()
+			}
+		}
+	}
+	for key, value := range values {
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			delete(values, key)
+		}
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	return values
+}
+
 // Read only the executable name and memory counters. Do not expose cmdline/env.
 const processProbe = `found=0
 for p in /proc/[0-9]*; do
@@ -242,6 +302,7 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 				if err != nil {
 					sample.Errors = append(sample.Errors, err.Error())
 				}
+				sample.Domain = parseDomainMetrics(body)
 				for _, name := range append(append([]string{}, runtimeMetricNames...), "go_gc_duration_seconds_count", "go_gc_duration_seconds_sum", "loadtest_process_pid", "loadtest_process_start_ticks", "loadtest_process_rss_hwm_bytes") {
 					if _, ok := sample.Values[name]; !ok {
 						sample.Errors = append(sample.Errors, "missing "+name)
@@ -278,12 +339,13 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 					sample.Errors = append(sample.Errors, err.Error())
 				} else {
 					var status struct {
-						Nonce *uint64 `json:"nonce"`
+						Nonce      *uint64 `json:"nonce"`
+						ChainPhase string  `json:"chain_phase"`
 					}
 					if err := json.Unmarshal([]byte(statusBody), &status); err != nil {
 						sample.Errors = append(sample.Errors, err.Error())
 					} else {
-						sample.Nonce = status.Nonce
+						sample.Nonce, sample.ChainPhase = status.Nonce, status.ChainPhase
 					}
 				}
 				add(sample)

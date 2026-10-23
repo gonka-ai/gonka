@@ -26,9 +26,6 @@ import (
 	"devshard/testenv/mockopenai"
 )
 
-// versiondDataDir is where a host keeps its SQLite files inside its container.
-const versiondDataDir = "/opt/versiond/data"
-
 // stackAccess is how the export reads a stack.
 type stackAccess struct {
 	psql        func(service, database string) harness.PSQL
@@ -294,8 +291,23 @@ func (s Scenario) orphanWait() time.Duration {
 	return max(wait, promisesHold(refusal, execution))
 }
 
-// promisesAssertion holds an exported run to the system properties and writes report.json and
-// report.md next to it. It fails when a property is broken, the run cannot be read, or the run is
+// appendAssertionFailure adds a failed check to the run's assertion failures.
+func appendAssertionFailure(existing error, check AssertionResult) error {
+	if check.Passed {
+		return existing
+	}
+	if existing == nil {
+		return &assertionFailures{Checks: []AssertionResult{check}}
+	}
+	if failures, ok := existing.(*assertionFailures); ok {
+		failures.Checks = append(failures.Checks, check)
+		return failures
+	}
+	return existing
+}
+
+// promisesAssertion holds an exported run to the system properties and writes promises.json and
+// promises.md next to it. It fails when a property is broken, the run cannot be read, or the run is
 // not valid: a node with a dishonest profile that never answered dishonestly, a fault rule that never
 // fired, a deadline check that judged nothing, or (when the scenario asks for it) no node ever full
 // leaves the checks nothing to catch, and a node bound to a host that mock-dapi
@@ -364,12 +376,12 @@ func promisesAssertion(outputDir string, scenario Scenario, profiles map[string]
 	}
 	body, err := json.MarshalIndent(rep, "", "  ")
 	if err == nil {
-		err = os.WriteFile(filepath.Join(outputDir, "report.json"), append(body, '\n'), 0o644)
+		err = os.WriteFile(filepath.Join(outputDir, "promises.json"), append(body, '\n'), 0o644)
 	}
 	if err == nil {
 		var md strings.Builder
 		if err = harness.WritePromiseReport(&md, "System promise checks: "+filepath.Base(filepath.Clean(outputDir)), rep); err == nil {
-			err = os.WriteFile(filepath.Join(outputDir, "report.md"), []byte(md.String()), 0o644)
+			err = os.WriteFile(filepath.Join(outputDir, "promises.md"), []byte(md.String()), 0o644)
 		}
 	}
 	if err != nil {
@@ -378,7 +390,7 @@ func promisesAssertion(outputDir string, scenario Scenario, profiles map[string]
 	}
 	check.Passed = rep.Unknown() == 0 && len(rep.Invalid) == 0
 	check.Actual = fmt.Sprintf("%d violations", len(rep.Violations))
-	check.Details = "report.md"
+	check.Details = "promises.md"
 	if len(rep.Invalid) > 0 {
 		check.Actual, check.Details = "run not valid", strings.Join(rep.Invalid, "; ")
 	}

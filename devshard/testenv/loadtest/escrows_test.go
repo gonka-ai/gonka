@@ -46,11 +46,16 @@ func (g *fakeAdminGateway) handler(t *testing.T) http.Handler {
 	mux.HandleFunc("/v1/admin/devshards", func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		defer g.mu.Unlock()
-		var out adminDevshardsResponse
+		// A live escrow is listed active, as the gateway lists it.
+		type devshard struct {
+			ID     string `json:"id"`
+			Active bool   `json:"active"`
+		}
+		var out struct {
+			Devshards []devshard `json:"devshards"`
+		}
 		for _, id := range g.ids {
-			out.Devshards = append(out.Devshards, struct {
-				ID string `json:"id"`
-			}{ID: id})
+			out.Devshards = append(out.Devshards, devshard{ID: id, Active: true})
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	})
@@ -144,7 +149,7 @@ func TestOrphanCheckReadsEveryEscrowOfARunWithSeveral(t *testing.T) {
 	scenario := testScenario()
 	scenario.Topology.Chain.Escrows = 4
 	require.True(t, scenario.severalRuntimes())
-	summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "admin-key", 0, nil, time.Second, scenario.severalRuntimes())
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "admin-key", orphanJudge{Timeout: time.Second}, scenario.severalRuntimes())
 	require.NoError(t, err)
 	require.Equal(t, 2, summary.Finished)
 	require.Zero(t, summary.Orphaned)
