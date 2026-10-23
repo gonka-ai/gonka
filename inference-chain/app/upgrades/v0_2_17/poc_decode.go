@@ -43,7 +43,7 @@ var decodePoCTemplates = map[string]*types.PocSchemeParams{
 // cut at the upgrade. Distances and p_mismatch are left as stored.
 func pinFraudAlpha(stat *types.PoCStatTestParams) *types.PoCStatTestParams {
 	if stat == nil {
-		return nil
+		return &types.PoCStatTestParams{PValueThreshold: types.DecimalFromFloat(0.01)}
 	}
 	out := gogoproto.Clone(stat).(*types.PoCStatTestParams)
 	out.PValueThreshold = types.DecimalFromFloat(0.01)
