@@ -84,5 +84,13 @@ func (msg *MsgRegisterBridgeKeyLink) GetSignersStrings() []string {
 func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgCancelMaintenance) GetSignersStrings() []string   { return []string{msg.Creator} }
 
+// Trainshard messages
+func (msg *MsgCreateTrainshardProposal) GetSignersStrings() []string { return []string{msg.Authority} }
+func (msg *MsgAssembleTrainshard) GetSignersStrings() []string       { return []string{msg.Creator} }
+func (msg *MsgSettleTrainshard) GetSignersStrings() []string         { return []string{msg.Creator} }
+func (msg *MsgAutokickTrainshardNode) GetSignersStrings() []string   { return []string{msg.Creator} }
+func (msg *MsgSetTrainingNodeOptIn) GetSignersStrings() []string     { return []string{msg.Creator} }
+func (msg *MsgRefreshTrainingNodeOptIn) GetSignersStrings() []string { return []string{msg.Creator} }
+
 // And one validator signed message?
 func (msg *MsgBridgeExchange) GetSignersStrings() []string { return []string{msg.Validator} }

@@ -505,21 +505,25 @@ data class ApplicationCLI(
         return cosmosJson.fromJson(output, typeToken.type)
     }
 
-    fun registerNewParticipant(nodeUrl: String, accountPubKey: String, consensusKey: String, nodeAddress: String) =
-        wrapLog("registerNewParticipant", false) {
-            exec(
-                listOf(
-                    config.execName,
-                    "register-new-participant",
-                    nodeUrl,
-                    accountPubKey,
-                    "--consensus-key",
-                    consensusKey,
-                    "--node-address",
-                    nodeAddress
-                )
+    fun submitNewParticipant(url: String, validatorKey: String): TxResponse = wrapLog("submitNewParticipant", true) {
+        val response = sendTransactionDirectly(
+            listOf(
+                "inference",
+                "submit-new-participant",
+                url,
+                "--validator-key",
+                validatorKey,
             )
+        )
+        if (response.code != 0) {
+            throw IllegalStateException("submit-new-participant failed: ${response.rawLog}")
         }
+        val included = waitForTxProcessed(response.txhash)
+        if (included.code != 0) {
+            throw IllegalStateException("submit-new-participant failed in block: ${included.rawLog}")
+        }
+        included
+    }
 
     fun grantMlOpsPermissionsToWarmAccount(retries:Int = 3): Unit = wrapLog("grantMlOpsPermissions", false) {
         val coldAccountName = this.getColdAccountName()

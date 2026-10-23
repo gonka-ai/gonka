@@ -134,8 +134,41 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	BridgeKeyLinksPrefix           = collections.NewPrefix(114)
-	ParamsKey                      = []byte("p_inference")
+	// PoCValidationV2CountPrefix is (stage, validator) -> stored vote count.
+	// The validation key ends with the validator, so a count cannot be a prefix
+	// walk of PoCValidationsV2.
+	PoCValidationV2CountPrefix = collections.NewPrefix(114)
+	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
+	// bounded confirmation-prefix cleanup. It is not one of the regular
+	// pruner epoch fields.
+	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	// 114 and 115 are the v0.2.17 admission counters. Proven challenges sit
+	// just after them so they do not share a prefix with those counters.
+	PoCChallengeProvenPrefix = collections.NewPrefix(116)
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114-116 are taken above. Not 115: 's' is the
+	// first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
+	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey.
+	// Prefix 141 is retired and cleared by the v0.2.17 upgrade.
+	TrainshardsPrefix               = collections.NewPrefix(130)
+	TrainshardCounterPrefix         = collections.NewPrefix(131)
+	TrainshardActiveIndexPrefix     = collections.NewPrefix(132)
+	TrainshardExpiryIndexPrefix     = collections.NewPrefix(133)
+	TrainshardClosedIndexPrefix     = collections.NewPrefix(134)
+	TrainshardReservationsPrefix    = collections.NewPrefix(135)
+	TrainingNodeOptInsPrefix        = collections.NewPrefix(136)
+	TrainshardProposalsPrefix       = collections.NewPrefix(137)
+	TrainshardProposalCounterPrefix = collections.NewPrefix(138)
+	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
+	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
+	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
+	TrainshardWeightEpochPrefix     = collections.NewPrefix(143)
+	// 114-119 and 130-143 are taken by v0.2.17. 141 is retired.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

@@ -42,9 +42,11 @@ type (
 		PoCBatches     collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCBatch]
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// PoC v2 collections
-		PoCValidationsV2          collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
-		PoCV2StoreCommits         collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
-		MLNodeWeightDistributions collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
+		PoCValidationsV2             collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
+		PoCValidationV2Counts        collections.Map[collections.Pair[int64, sdk.AccAddress], uint64]
+		ConfirmationPoCCleanupCursor collections.Item[confirmationCleanupCursor]
+		PoCV2StoreCommits            collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
+		MLNodeWeightDistributions    collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
 		// Dynamic pricing collections
 		ModelCurrentPriceMap                collections.Map[string, uint64]
 		ModelCapacityMap                    collections.Map[string, uint64]
@@ -98,6 +100,9 @@ type (
 		// to the Gonka account that should receive that key's bridge credits.
 		// The value includes the nonce of the Ethereum authorization.
 		BridgeKeyLinks                 collections.Map[string, types.BridgeKeyLink]
+		BridgePendingByEpoch           collections.KeySet[collections.Pair[uint64, string]]
+		BridgeRecheckEpochs            collections.Map[uint64, string]
+		BridgeRecheckRestart           collections.KeySet[uint64]
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
 		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
@@ -148,10 +153,24 @@ type (
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch  collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenges           collections.Map[sdk.AccAddress, types.PoCChallenge]
-		PoCChallengeCommits     collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
-		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		ClaimRecipientsByEpoch    collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges             collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits       collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		PoCChallengeValidations   collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		PoCChallengeProven        collections.KeySet[sdk.AccAddress]
+		Trainshards               collections.Map[uint64, types.Trainshard]
+		TrainshardCounter         collections.Item[uint64]
+		TrainshardActiveIndex     collections.KeySet[uint64]
+		TrainshardExpiryIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardClosedIndex     collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardReservations    collections.Map[collections.Pair[string, string], uint64]
+		TrainshardReleaseIndex    collections.KeySet[collections.Triple[int64, string, string]]
+		TrainshardWeightEpoch     collections.Map[uint64, uint64]
+		TrainingNodeOptIns        collections.Map[collections.Pair[string, string], int64]
+		TrainingNodeEndpoints     collections.Map[collections.Pair[string, string], string]
+		TrainshardProposals       collections.Map[uint64, types.TrainshardProposal]
+		TrainshardProposalCounter collections.Item[uint64]
+		TrainshardCreatorCooldown collections.Map[string, int64]
 	}
 )
 
@@ -239,6 +258,19 @@ func NewKeeper(
 			"poc_validation_v2",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.PairKeyCodec(collections.StringKey, sdk.AccAddressKey)),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		PoCValidationV2Counts: collections.NewMap(
+			sb,
+			types.PoCValidationV2CountPrefix,
+			"poc_validation_v2_count",
+			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
+			collections.Uint64Value,
+		),
+		ConfirmationPoCCleanupCursor: collections.NewItem(
+			sb,
+			types.ConfirmationPoCCleanupCursorPrefix,
+			"confirmation_poc_cleanup_cursor",
+			confirmationCleanupCursorCodec{},
 		),
 		PoCV2StoreCommits: collections.NewMap(
 			sb,
@@ -492,6 +524,25 @@ func NewKeeper(
 			collections.StringKey,
 			codec.CollValue[types.BridgeKeyLink](cdc),
 		),
+		BridgePendingByEpoch: collections.NewKeySet(
+			sb,
+			types.BridgePendingByEpochPrefix,
+			"bridge_pending_by_epoch",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+		),
+		BridgeRecheckEpochs: collections.NewMap(
+			sb,
+			types.BridgeRecheckEpochsPrefix,
+			"bridge_recheck_epochs",
+			collections.Uint64Key,
+			collections.StringValue,
+		),
+		BridgeRecheckRestart: collections.NewKeySet(
+			sb,
+			types.BridgeRecheckRestartPrefix,
+			"bridge_recheck_restart",
+			collections.Uint64Key,
+		),
 		BridgeMintRefundsMap: collections.NewMap(
 			sb,
 			types.BridgeMintRefundsPrefix,
@@ -732,6 +783,97 @@ func NewKeeper(
 			"poc_challenge_validation",
 			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		PoCChallengeProven: collections.NewKeySet(
+			sb,
+			types.PoCChallengeProvenPrefix,
+			"poc_challenge_proven",
+			sdk.AccAddressKey,
+		),
+		Trainshards: collections.NewMap(
+			sb,
+			types.TrainshardsPrefix,
+			"trainshards",
+			collections.Uint64Key,
+			codec.CollValue[types.Trainshard](cdc),
+		),
+		TrainshardCounter: collections.NewItem(
+			sb,
+			types.TrainshardCounterPrefix,
+			"trainshard_counter",
+			collections.Uint64Value,
+		),
+		TrainshardActiveIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardActiveIndexPrefix,
+			"trainshard_active_index",
+			collections.Uint64Key,
+		),
+		TrainshardExpiryIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardExpiryIndexPrefix,
+			"trainshard_expiry_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardClosedIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardClosedIndexPrefix,
+			"trainshard_closed_index",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+		),
+		TrainshardReservations: collections.NewMap(
+			sb,
+			types.TrainshardReservationsPrefix,
+			"trainshard_reservations",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Uint64Value,
+		),
+		TrainshardReleaseIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardReleaseIndexPrefix,
+			"trainshard_release_index",
+			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.StringKey),
+		),
+		TrainingNodeOptIns: collections.NewMap(
+			sb,
+			types.TrainingNodeOptInsPrefix,
+			"training_node_opt_ins",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Int64Value,
+		),
+		TrainingNodeEndpoints: collections.NewMap(
+			sb,
+			types.TrainingNodeEndpointsPrefix,
+			"training_node_endpoints",
+			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.StringValue,
+		),
+		TrainshardWeightEpoch: collections.NewMap(
+			sb,
+			types.TrainshardWeightEpochPrefix,
+			"trainshard_weight_epoch",
+			collections.Uint64Key,
+			collections.Uint64Value,
+		),
+		TrainshardProposals: collections.NewMap(
+			sb,
+			types.TrainshardProposalsPrefix,
+			"trainshard_proposals",
+			collections.Uint64Key,
+			codec.CollValue[types.TrainshardProposal](cdc),
+		),
+		TrainshardProposalCounter: collections.NewItem(
+			sb,
+			types.TrainshardProposalCounterPrefix,
+			"trainshard_proposal_counter",
+			collections.Uint64Value,
+		),
+		TrainshardCreatorCooldown: collections.NewMap(
+			sb,
+			types.TrainshardCreatorCooldownPrefix,
+			"trainshard_creator_cooldown",
+			collections.StringKey,
+			collections.Int64Value,
 		),
 	}
 

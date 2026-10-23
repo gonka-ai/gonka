@@ -4,6 +4,7 @@ package inference.inference;
 import "amino/amino.proto";
 import "gogoproto/gogo.proto";
 import "cosmos_proto/cosmos.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -34,6 +35,29 @@ message Params {
   DelegationParams delegation_params = 16;
   MaintenanceParams maintenance_params = 17;
   PoCChallengeParams poc_challenge_params = 18;
+  // epoch_validation_params holds the per-participant admission caps.
+  // Governance changes them with MsgUpdateParams. The v0.2.17 upgrade
+  // writes the initial values onto chains that do not have this field yet.
+  EpochValidationParams epoch_validation_params = 19;
+  // training_params is 20. Field 18 is poc_challenge_params on mainnet, and
+  // field 19 is epoch_validation_params on this upgrade.
+  TrainingParams training_params = 20;
+}
+
+// EpochValidationParams defines governance-controlled admission caps.
+// Each value is a per-participant limit, not a chain total. There is no
+// hardware-inventory cap here.
+message EpochValidationParams {
+  option (gogoproto.equal) = true;
+
+  // max_positive_distribution_rows caps positive weight rows stored for one
+  // participant and one model.
+  uint32 max_positive_distribution_rows = 1;
+  // max_validations_per_message rejects one fee-exempt validation batch.
+  uint32 max_validations_per_message = 2;
+  // max_validations_per_signer_per_stage stops further stores once this
+  // signer already has this many rows for the stage.
+  uint32 max_validations_per_signer_per_stage = 3;
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.

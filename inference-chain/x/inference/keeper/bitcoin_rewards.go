@@ -34,6 +34,7 @@ func GetBitcoinSettleAmounts(
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservations *EpochReservations,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	return GetBitcoinSettleAmountsWithTransfers(
@@ -43,6 +44,7 @@ func GetBitcoinSettleAmounts(
 		validationParams,
 		settleParams,
 		participantMLNodes,
+		reservations,
 		nil,
 		nil,
 		logger,
@@ -56,6 +58,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservations *EpochReservations,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
 	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,
@@ -86,6 +89,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
+		reservations,
 		delegationRewardTransfers,
 		delegationRewardPenalties,
 		logger,
@@ -331,6 +335,113 @@ func CoefficientAdjustedWeight(modelNodes map[string][]*types.MLNodeInfo, coeffi
 		total += coeff.MulInt64(rawModel).TruncateInt64()
 	}
 	return total
+}
+
+func weightedModelNodeTotal(modelNodes map[string][]*types.MLNodeInfo, coefficients map[string]mathsdk.LegacyDec) int64 {
+	if len(modelNodes) == 0 {
+		return 0
+	}
+	if len(coefficients) == 0 {
+		total := int64(0)
+		for _, nodes := range modelNodes {
+			for _, node := range nodes {
+				if node != nil {
+					total += node.PocWeight
+				}
+			}
+		}
+		return total
+	}
+	return types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
+}
+
+// takeTrainingReservedShare takes each host's reserved nodes out of its reward weight and returns
+// the share they earn by the weight the epoch holds for them, for the part of the epoch they were
+// leased. The caller gives it back after the downtime check: a leased node gets no requests and
+// cannot miss any.
+//
+// A node is one physical node whatever models its reservation lists, so it is found by id across
+// every model of the epoch. A cPoC cut stays with the free nodes: the confirmation reading always
+// counts the reserved weight, so the share is the reserved part of the host's full weight, scaled
+// like the rest by the power cap. A reserved node the epoch does not count earns nothing: its frozen
+// weight only joins the denominator, so it cannot pay weight the epoch never had
+func takeTrainingReservedShare(
+	participantWeights map[string]uint64,
+	fullWeights map[string]uint64,
+	effectiveWeights map[string]int64,
+	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservations *EpochReservations,
+	coefficients map[string]mathsdk.LegacyDec,
+) (map[string]uint64, uint64) {
+	if reservations == nil {
+		return map[string]uint64{}, 0
+	}
+	reservedShare := make(map[string]uint64, len(reservations.Nodes))
+	extraDenominator := uint64(0)
+	for host, reserved := range reservations.Nodes {
+		frozen := make(map[string]*types.TrainshardReservedNode)
+		for _, node := range reserved {
+			if node == nil || node.ModelId == "" || node.NodeId == "" {
+				continue
+			}
+			if current, ok := frozen[node.NodeId]; !ok || node.PocWeight > current.PocWeight ||
+				(node.PocWeight == current.PocWeight && node.ModelId < current.ModelId) {
+				frozen[node.NodeId] = node
+			}
+		}
+		if len(frozen) == 0 {
+			continue
+		}
+
+		hostModelNodes := participantMLNodes[host]
+		reservedInEpochModelNodes := make(map[string][]*types.MLNodeInfo)
+		present := make(map[string]bool)
+		for modelID, nodes := range hostModelNodes {
+			for _, epochNode := range nodes {
+				if epochNode == nil || frozen[epochNode.NodeId] == nil {
+					continue
+				}
+				reservedInEpochModelNodes[modelID] = append(reservedInEpochModelNodes[modelID], &types.MLNodeInfo{
+					NodeId: epochNode.NodeId,
+					PocWeight: reservations.leasedPart(host, epochNode.NodeId,
+						min(epochNode.PocWeight, frozen[epochNode.NodeId].PocWeight)),
+				})
+				present[epochNode.NodeId] = true
+			}
+		}
+		reservedMissingModelNodes := make(map[string][]*types.MLNodeInfo)
+		for nodeID, node := range frozen {
+			if !present[nodeID] && node.PocWeight > 0 {
+				reservedMissingModelNodes[node.ModelId] = append(reservedMissingModelNodes[node.ModelId], &types.MLNodeInfo{
+					NodeId:    nodeID,
+					PocWeight: node.PocWeight,
+				})
+			}
+		}
+		if missing := weightedModelNodeTotal(reservedMissingModelNodes, coefficients); missing > 0 {
+			extraDenominator = addUint64Saturating(extraDenominator, uint64(missing))
+		}
+
+		totalHost := weightedModelNodeTotal(hostModelNodes, coefficients)
+		reservedInEpoch := min(weightedModelNodeTotal(reservedInEpochModelNodes, coefficients), totalHost)
+		capped := participantWeights[host]
+		effective := effectiveWeights[host]
+		if reservedInEpoch <= 0 || capped == 0 || effective <= 0 {
+			continue
+		}
+		// full * capped / effective is the host's weight had cPoC cut nothing, after the power cap
+		share := new(big.Int).SetUint64(fullWeights[host])
+		share.Mul(share, new(big.Int).SetUint64(capped))
+		share.Mul(share, big.NewInt(reservedInEpoch))
+		share.Div(share, new(big.Int).Mul(big.NewInt(totalHost), big.NewInt(effective)))
+		taken := capped
+		if share.IsUint64() && share.Uint64() < capped {
+			taken = share.Uint64()
+		}
+		reservedShare[host] = taken
+		participantWeights[host] = capped - taken
+	}
+	return reservedShare, extraDenominator
 }
 
 // GetParticipantPoCWeight retrieves and calculates final PoC weight for reward distribution
@@ -723,6 +834,7 @@ func CalculateParticipantBitcoinRewards(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservations *EpochReservations,
 	logger log.Logger,
 ) ([]*SettleResult, BitcoinResult, error) {
 	return CalculateParticipantBitcoinRewardsWithTransfers(
@@ -731,6 +843,7 @@ func CalculateParticipantBitcoinRewards(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
+		reservations,
 		nil,
 		nil,
 		logger,
@@ -743,6 +856,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservations *EpochReservations,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
 	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,
@@ -881,7 +995,25 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		"totalActualWeight", totalPoCWeight,
 		"weightDifference", totalFullWeight-totalPoCWeight)
 
-	// 4. Check and punish for downtime
+	// 4. Training reservations: reserved nodes earn by their frozen weight, set aside from the downtime check
+	// for the part of the epoch they were leased
+	confirmationWeightCoefficients := types.ConfirmationWeightCoefficients(epochGroupData.ConfirmationWeightScales)
+	effectiveByAddress := make(map[string]int64, len(effectiveWeights))
+	for _, p := range effectiveWeights {
+		effectiveByAddress[p.Index] = p.Weight
+	}
+	reservedShare, extraDenominator := takeTrainingReservedShare(participantWeights, participantFullWeights,
+		effectiveByAddress, participantMLNodes, reservations, confirmationWeightCoefficients)
+	totalPoCWeightBeforeDowntime += extraDenominator
+	if reservations != nil && len(reservations.Nodes) > 0 {
+		logger.Info("Bitcoin Rewards: set training reservations aside",
+			"reservedHosts", len(reservations.Nodes),
+			"reservedShare", reservedShare,
+			"denominatorAddend", extraDenominator,
+			"totalDenominator", totalPoCWeightBeforeDowntime)
+	}
+
+	// 5. Check and punish for downtime, then give the reserved share back
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
 	p0, skipPunishment := getDynamicP0(participants, validationParams, currentEpoch, logger)
 	var failedMissRate map[string]struct{}
@@ -890,6 +1022,11 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	} else {
 		logger.Info("Bitcoin Rewards: Skipping downtime punishment (outage circuit breaker)", "epoch", currentEpoch)
 	}
+	for host, share := range reservedShare {
+		if _, ok := participantWeights[host]; ok {
+			participantWeights[host] = addUint64Saturating(participantWeights[host], share)
+		}
+	}
 	logger.Info("Bitcoin Rewards: weights after downtime check", "participants", participantWeights)
 	applyDelegationRewardPenalties(participantWeights, delegationRewardPenalties, logger)
 	applyDelegationRewardTransfers(participantWeights, delegationRewardTransfers, logger)
@@ -897,7 +1034,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	// IMPORTANT: We intentionally DO NOT renormalize totalPoCWeightBeforeDowntime after downtime punishment,
 	// invalidation, or CPoC reductions. Any "missed" share becomes undistributed and transferred to governance.
 
-	// 5. Create settle results for each participant
+	// 6. Create settle results for each participant
 	settleResults := make([]*SettleResult, 0, len(participants))
 	var totalDistributed uint64 = 0
 
@@ -974,7 +1111,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		})
 	}
 
-	// 6. Any remainder is undistributed and should be transferred to governance.
+	// 7. Any remainder is undistributed and should be transferred to governance.
 	// Remainder includes: invalidated participants' shares, CPoC weight reductions,
 	// downtime punishments, and integer division truncation.
 	remainder := fixedEpochReward - totalDistributed
@@ -985,7 +1122,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		remainder = math.MaxInt64
 	}
 
-	// 7. Create BitcoinResult (similar to SubsidyResult)
+	// 8. Create BitcoinResult (similar to SubsidyResult)
 	bitcoinResult := BitcoinResult{
 		Amount:           int64(fixedEpochReward),
 		EpochNumber:      currentEpoch,

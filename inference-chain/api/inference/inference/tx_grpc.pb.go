@@ -62,6 +62,12 @@ const (
 	Msg_CreatePoCChallenge_FullMethodName               = "/inference.inference.Msg/CreatePoCChallenge"
 	Msg_PoCChallengeStoreCommit_FullMethodName          = "/inference.inference.Msg/PoCChallengeStoreCommit"
 	Msg_SubmitPoCChallengeValidations_FullMethodName    = "/inference.inference.Msg/SubmitPoCChallengeValidations"
+	Msg_CreateTrainshardProposal_FullMethodName         = "/inference.inference.Msg/CreateTrainshardProposal"
+	Msg_AssembleTrainshard_FullMethodName               = "/inference.inference.Msg/AssembleTrainshard"
+	Msg_SettleTrainshard_FullMethodName                 = "/inference.inference.Msg/SettleTrainshard"
+	Msg_AutokickTrainshardNode_FullMethodName           = "/inference.inference.Msg/AutokickTrainshardNode"
+	Msg_SetTrainingNodeOptIn_FullMethodName             = "/inference.inference.Msg/SetTrainingNodeOptIn"
+	Msg_RefreshTrainingNodeOptIn_FullMethodName         = "/inference.inference.Msg/RefreshTrainingNodeOptIn"
 	Msg_RegisterBridgeKeyLink_FullMethodName            = "/inference.inference.Msg/RegisterBridgeKeyLink"
 )
 
@@ -116,6 +122,12 @@ type MsgClient interface {
 	CreatePoCChallenge(ctx context.Context, in *MsgCreatePoCChallenge, opts ...grpc.CallOption) (*MsgCreatePoCChallengeResponse, error)
 	PoCChallengeStoreCommit(ctx context.Context, in *MsgPoCChallengeStoreCommit, opts ...grpc.CallOption) (*MsgPoCChallengeStoreCommitResponse, error)
 	SubmitPoCChallengeValidations(ctx context.Context, in *MsgSubmitPoCChallengeValidations, opts ...grpc.CallOption) (*MsgSubmitPoCChallengeValidationsResponse, error)
+	CreateTrainshardProposal(ctx context.Context, in *MsgCreateTrainshardProposal, opts ...grpc.CallOption) (*MsgCreateTrainshardProposalResponse, error)
+	AssembleTrainshard(ctx context.Context, in *MsgAssembleTrainshard, opts ...grpc.CallOption) (*MsgAssembleTrainshardResponse, error)
+	SettleTrainshard(ctx context.Context, in *MsgSettleTrainshard, opts ...grpc.CallOption) (*MsgSettleTrainshardResponse, error)
+	AutokickTrainshardNode(ctx context.Context, in *MsgAutokickTrainshardNode, opts ...grpc.CallOption) (*MsgAutokickTrainshardNodeResponse, error)
+	SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error)
+	RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefreshTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgRefreshTrainingNodeOptInResponse, error)
 	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
 	// Bridge settlement then credits that Gonka account when a receipt's owner address
 	// was derived from the Ethereum key.
@@ -517,6 +529,60 @@ func (c *msgClient) SubmitPoCChallengeValidations(ctx context.Context, in *MsgSu
 	return out, nil
 }
 
+func (c *msgClient) CreateTrainshardProposal(ctx context.Context, in *MsgCreateTrainshardProposal, opts ...grpc.CallOption) (*MsgCreateTrainshardProposalResponse, error) {
+	out := new(MsgCreateTrainshardProposalResponse)
+	err := c.cc.Invoke(ctx, Msg_CreateTrainshardProposal_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) AssembleTrainshard(ctx context.Context, in *MsgAssembleTrainshard, opts ...grpc.CallOption) (*MsgAssembleTrainshardResponse, error) {
+	out := new(MsgAssembleTrainshardResponse)
+	err := c.cc.Invoke(ctx, Msg_AssembleTrainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SettleTrainshard(ctx context.Context, in *MsgSettleTrainshard, opts ...grpc.CallOption) (*MsgSettleTrainshardResponse, error) {
+	out := new(MsgSettleTrainshardResponse)
+	err := c.cc.Invoke(ctx, Msg_SettleTrainshard_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) AutokickTrainshardNode(ctx context.Context, in *MsgAutokickTrainshardNode, opts ...grpc.CallOption) (*MsgAutokickTrainshardNodeResponse, error) {
+	out := new(MsgAutokickTrainshardNodeResponse)
+	err := c.cc.Invoke(ctx, Msg_AutokickTrainshardNode_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error) {
+	out := new(MsgSetTrainingNodeOptInResponse)
+	err := c.cc.Invoke(ctx, Msg_SetTrainingNodeOptIn_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefreshTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgRefreshTrainingNodeOptInResponse, error) {
+	out := new(MsgRefreshTrainingNodeOptInResponse)
+	err := c.cc.Invoke(ctx, Msg_RefreshTrainingNodeOptIn_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) RegisterBridgeKeyLink(ctx context.Context, in *MsgRegisterBridgeKeyLink, opts ...grpc.CallOption) (*MsgRegisterBridgeKeyLinkResponse, error) {
 	out := new(MsgRegisterBridgeKeyLinkResponse)
 	err := c.cc.Invoke(ctx, Msg_RegisterBridgeKeyLink_FullMethodName, in, out, opts...)
@@ -577,6 +643,12 @@ type MsgServer interface {
 	CreatePoCChallenge(context.Context, *MsgCreatePoCChallenge) (*MsgCreatePoCChallengeResponse, error)
 	PoCChallengeStoreCommit(context.Context, *MsgPoCChallengeStoreCommit) (*MsgPoCChallengeStoreCommitResponse, error)
 	SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error)
+	CreateTrainshardProposal(context.Context, *MsgCreateTrainshardProposal) (*MsgCreateTrainshardProposalResponse, error)
+	AssembleTrainshard(context.Context, *MsgAssembleTrainshard) (*MsgAssembleTrainshardResponse, error)
+	SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error)
+	AutokickTrainshardNode(context.Context, *MsgAutokickTrainshardNode) (*MsgAutokickTrainshardNodeResponse, error)
+	SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error)
+	RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error)
 	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
 	// Bridge settlement then credits that Gonka account when a receipt's owner address
 	// was derived from the Ethereum key.
@@ -716,6 +788,24 @@ func (UnimplementedMsgServer) PoCChallengeStoreCommit(context.Context, *MsgPoCCh
 }
 func (UnimplementedMsgServer) SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoCChallengeValidations not implemented")
+}
+func (UnimplementedMsgServer) CreateTrainshardProposal(context.Context, *MsgCreateTrainshardProposal) (*MsgCreateTrainshardProposalResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreateTrainshardProposal not implemented")
+}
+func (UnimplementedMsgServer) AssembleTrainshard(context.Context, *MsgAssembleTrainshard) (*MsgAssembleTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AssembleTrainshard not implemented")
+}
+func (UnimplementedMsgServer) SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SettleTrainshard not implemented")
+}
+func (UnimplementedMsgServer) AutokickTrainshardNode(context.Context, *MsgAutokickTrainshardNode) (*MsgAutokickTrainshardNodeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AutokickTrainshardNode not implemented")
+}
+func (UnimplementedMsgServer) SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingNodeOptIn not implemented")
+}
+func (UnimplementedMsgServer) RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshTrainingNodeOptIn not implemented")
 }
 func (UnimplementedMsgServer) RegisterBridgeKeyLink(context.Context, *MsgRegisterBridgeKeyLink) (*MsgRegisterBridgeKeyLinkResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterBridgeKeyLink not implemented")
@@ -1507,6 +1597,114 @@ func _Msg_SubmitPoCChallengeValidations_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_CreateTrainshardProposal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCreateTrainshardProposal)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CreateTrainshardProposal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CreateTrainshardProposal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CreateTrainshardProposal(ctx, req.(*MsgCreateTrainshardProposal))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_AssembleTrainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAssembleTrainshard)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AssembleTrainshard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AssembleTrainshard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AssembleTrainshard(ctx, req.(*MsgAssembleTrainshard))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SettleTrainshard_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSettleTrainshard)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SettleTrainshard(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SettleTrainshard_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SettleTrainshard(ctx, req.(*MsgSettleTrainshard))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_AutokickTrainshardNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAutokickTrainshardNode)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AutokickTrainshardNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AutokickTrainshardNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AutokickTrainshardNode(ctx, req.(*MsgAutokickTrainshardNode))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetTrainingNodeOptIn)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetTrainingNodeOptIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetTrainingNodeOptIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetTrainingNodeOptIn(ctx, req.(*MsgSetTrainingNodeOptIn))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RefreshTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRefreshTrainingNodeOptIn)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RefreshTrainingNodeOptIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RefreshTrainingNodeOptIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RefreshTrainingNodeOptIn(ctx, req.(*MsgRefreshTrainingNodeOptIn))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_RegisterBridgeKeyLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgRegisterBridgeKeyLink)
 	if err := dec(in); err != nil {
@@ -1703,6 +1901,30 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPoCChallengeValidations",
 			Handler:    _Msg_SubmitPoCChallengeValidations_Handler,
+		},
+		{
+			MethodName: "CreateTrainshardProposal",
+			Handler:    _Msg_CreateTrainshardProposal_Handler,
+		},
+		{
+			MethodName: "AssembleTrainshard",
+			Handler:    _Msg_AssembleTrainshard_Handler,
+		},
+		{
+			MethodName: "SettleTrainshard",
+			Handler:    _Msg_SettleTrainshard_Handler,
+		},
+		{
+			MethodName: "AutokickTrainshardNode",
+			Handler:    _Msg_AutokickTrainshardNode_Handler,
+		},
+		{
+			MethodName: "SetTrainingNodeOptIn",
+			Handler:    _Msg_SetTrainingNodeOptIn_Handler,
+		},
+		{
+			MethodName: "RefreshTrainingNodeOptIn",
+			Handler:    _Msg_RefreshTrainingNodeOptIn_Handler,
 		},
 		{
 			MethodName: "RegisterBridgeKeyLink",

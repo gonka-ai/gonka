@@ -452,10 +452,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	am.keeper.RecheckPendingBridgeTransactions(sdkCtx)
+
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
+
+	am.keeper.ProcessTrainshardEndBlock(ctx)
 
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
@@ -608,7 +612,7 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to get compute results", types.EpochGroup, "error", err.Error())
 			return nil
 		}
-		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
+		am.LogInfo("EpochGroupChanged", types.EpochGroup, "blockHeight", blockHeight, "validatorCount", len(computeResult))
 
 		// Cap governance/validator power at each participant's previous-epoch
 		// confirmed weight before applying temporary guardian enhancement.
@@ -1211,6 +1215,10 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		liveMemberSet[m.Member.Address] = true
 	}
 
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotalsAtHeight(ctx, epochIndex, height, keeper.ReservationScopeShield)
+	rawPocByHost := am.keeper.CollectEpochRawPocWeights(ctx, epochIndex)
+
 	rootGroupData := currentGroup.GroupData
 	trustWeights := map[string]int64{}
 	if activeParticipants, found := am.keeper.GetActiveParticipants(ctx, epochIndex); found {
@@ -1227,6 +1235,7 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		if trustWeight, ok := trustWeights[vw.MemberAddress]; ok {
 			weight = trustWeight
 		}
+		weight = keeper.FreeShareOfWeight(weight, reservedByHost[vw.MemberAddress], rawPocByHost[vw.MemberAddress])
 		consensusWeights[vw.MemberAddress] = weight
 		totalWeight += weight
 		participants = append(participants, &types.ActiveParticipant{
@@ -1253,11 +1262,13 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 			if vw == nil || !liveSubSet[vw.MemberAddress] {
 				continue
 			}
-			if vw.VotingPower > 0 {
+			// a subgroup weight is the host's raw PoC sum for the model
+			votingPower := keeper.FreeShareOfWeight(vw.VotingPower, reservedByModelHost[modelID][vw.MemberAddress], vw.Weight)
+			if votingPower > 0 {
 				if modelVPMap[modelID] == nil {
 					modelVPMap[modelID] = make(map[string]int64)
 				}
-				modelVPMap[modelID][vw.MemberAddress] = vw.VotingPower
+				modelVPMap[modelID][vw.MemberAddress] = votingPower
 			}
 		}
 	}
@@ -1874,12 +1885,17 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
-		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogError("Participant secp256k1 public key is invalid for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID, "error", err)
+			continue
+		}
+		primaryPubKey := append([]byte(nil), pubKeyBytes...)
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, primaryPubKey, maxAdditionalKeys)
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
 			Address:                    ap.Index,
 			PercentageWeight:           math.LegacyZeroDec(),
-			Secp256k1PublicKey:         pubKeyBytes,
+			Secp256k1PublicKey:         primaryPubKey,
 			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
@@ -1964,18 +1980,11 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 				"error", err)
 			continue
 		}
-		if len(pubKeyBytes) != 33 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key length for BLS snapshot", types.EpochGroup,
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key for BLS snapshot", types.EpochGroup,
 				"participant", participantAddress,
 				"grantee", grantee.Address,
-				"length", len(pubKeyBytes))
-			continue
-		}
-		if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key prefix for BLS snapshot", types.EpochGroup,
-				"participant", participantAddress,
-				"grantee", grantee.Address,
-				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+				"error", err)
 			continue
 		}
 		if bytes.Equal(pubKeyBytes, primaryPubKey) {

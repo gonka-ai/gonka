@@ -6,139 +6,64 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-func TestMsgServer_SubmitNewUnfundedParticipant(t *testing.T) {
+func TestMsgServer_SubmitNewUnfundedParticipant_Deprecated(t *testing.T) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 
-	// Create a test address and public key
 	privKey := secp256k1.GenPrivKey()
 	pubKey := privKey.PubKey()
-	pubKeyBytes := pubKey.Bytes()
-	encodedPubKey := base64.StdEncoding.EncodeToString(pubKeyBytes)
+	encodedPubKey := base64.StdEncoding.EncodeToString(pubKey.Bytes())
 	testAddress := sdk.AccAddress(pubKey.Address()).String()
 
-	// Setup expectations for account keeper
-	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(false).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
-			// Return a BaseAccount that can handle SetPubKey
-			return &authtypes.BaseAccount{Address: addr.String()}
-		}).AnyTimes()
-	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).AnyTimes()
+	// Neither account nor participant state may be written now that MsgSubmitNewUnfundedParticipant is suspended.
+	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).Times(0)
+	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).Times(0)
 
-	// Setup expectations for bank keeper (for funding)
-	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-
-	// Call the function under test
-	_, err := ms.SubmitNewUnfundedParticipant(ctx, &types.MsgSubmitNewUnfundedParticipant{
-		Creator: testutil.Creator,
-		Address: testAddress,
-		PubKey:  encodedPubKey,
-		Url:     "", // Consumer only
-	})
-	require.NoError(t, err)
-
-	// Verify participant was created
-	savedParticipant, found := k.GetParticipant(ctx, testAddress)
-	require.True(t, found)
-	ctx2 := sdk.UnwrapSDKContext(ctx)
-	require.Equal(t, types.Participant{
-		Index:             testAddress,
-		Address:           testAddress,
-		Weight:            -1,
-		JoinTime:          ctx2.BlockTime().UnixMilli(),
-		JoinHeight:        ctx2.BlockHeight(),
-		LastInferenceTime: 0,
-		InferenceUrl:      "",
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}, savedParticipant)
-}
-
-func TestMsgServer_SubmitNewUnfundedParticipant_AccountAlreadyExists(t *testing.T) {
-	_, ms, ctx, mocks := setupKeeperWithMocks(t)
-
-	// Create a test address and public key
-	testAddress := testutil.Requester
-	privKey := secp256k1.GenPrivKey()
-	pubKey := privKey.PubKey()
-	pubKeyBytes := pubKey.Bytes()
-	encodedPubKey := base64.StdEncoding.EncodeToString(pubKeyBytes)
-
-	// Setup expectations for account keeper - account already exists
-	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(true).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
-			// Return a non-nil value to simulate an existing account
-			// The actual value doesn't matter as the function only checks if it's nil
-			return &authtypes.BaseAccount{}
-		}).AnyTimes()
-
-	// Call the function under test
-	_, err := ms.SubmitNewUnfundedParticipant(ctx, &types.MsgSubmitNewUnfundedParticipant{
-		Creator: testutil.Creator,
-		Address: testAddress,
-		PubKey:  encodedPubKey,
-		Url:     "url",
-	})
-
-	// Verify error is returned
-	require.Error(t, err)
-	require.Equal(t, types.ErrAccountAlreadyExists, err)
-}
-
-func TestMsgServer_SubmitNewUnfundedParticipant_WithInferenceUrl(t *testing.T) {
-	k, ms, ctx, mocks := setupKeeperWithMocks(t)
-
-	// Create a test address and public key
-	privKey := secp256k1.GenPrivKey()
-	pubKey := privKey.PubKey()
-	pubKeyBytes := pubKey.Bytes()
-	encodedPubKey := base64.StdEncoding.EncodeToString(pubKeyBytes)
-	testAddress := sdk.AccAddress(pubKey.Address()).String()
-
-	// Setup expectations for account keeper
-	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(false).AnyTimes()
-	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx sdk.Context, addr sdk.AccAddress) sdk.AccountI {
-			// Return a BaseAccount that can handle SetPubKey
-			return &authtypes.BaseAccount{Address: addr.String()}
-		}).AnyTimes()
-	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).AnyTimes()
-
-	// No funding expected for participants with inference URL
-
-	// Call the function under test
 	_, err := ms.SubmitNewUnfundedParticipant(ctx, &types.MsgSubmitNewUnfundedParticipant{
 		Creator: testutil.Creator,
 		Address: testAddress,
 		PubKey:  encodedPubKey,
 		Url:     "inference-url",
 	})
-	require.NoError(t, err)
+	require.ErrorIs(t, err, types.ErrDeprecated)
 
-	// Verify participant was created
-	savedParticipant, found := k.GetParticipant(ctx, testAddress)
-	require.True(t, found)
-	ctx2 := sdk.UnwrapSDKContext(ctx)
-	require.Equal(t, types.Participant{
-		Index:             testAddress,
-		Address:           testAddress,
-		Weight:            -1,
-		JoinTime:          ctx2.BlockTime().UnixMilli(),
-		JoinHeight:        ctx2.BlockHeight(),
-		LastInferenceTime: 0,
-		InferenceUrl:      "inference-url",
-		Status:            types.ParticipantStatus_ACTIVE,
-		CurrentEpochStats: types.NewCurrentEpochStats(),
-	}, savedParticipant)
+	_, found := k.GetParticipant(ctx, testAddress)
+	require.False(t, found, "participant must not be created when MsgSubmitNewUnfundedParticipant is deprecated")
 }
+
+func TestMsgServer_SubmitNewUnfundedParticipant_RejectsOffCurvePubKeyWithoutStateWrites(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+
+	// Report vector: 02 || 31*00 || 05 (33 bytes, 0x02 prefix, off-curve)
+	offCurveBytes := make([]byte, 33)
+	offCurveBytes[0] = 0x02
+	offCurveBytes[32] = 0x05
+	offCurvePubKey := secp256k1.PubKey{Key: offCurveBytes}
+	derivedAddress := sdk.AccAddress(offCurvePubKey.Address()).String()
+	encodedOffCurve := base64.StdEncoding.EncodeToString(offCurveBytes)
+
+	// Neither NewAccountWithAddress nor SetAccount should be called.
+	mocks.AccountKeeper.EXPECT().NewAccountWithAddress(gomock.Any(), gomock.Any()).Times(0)
+	mocks.AccountKeeper.EXPECT().SetAccount(gomock.Any(), gomock.Any()).Times(0)
+
+	msg := &types.MsgSubmitNewUnfundedParticipant{
+		Creator: testutil.Creator,
+		Address: derivedAddress,
+		PubKey:  encodedOffCurve,
+		Url:     "https://inference.example.com",
+	}
+	require.ErrorContains(t, msg.ValidateBasic(), "not a valid curve point")
+
+	_, err := ms.SubmitNewUnfundedParticipant(ctx, msg)
+	require.ErrorIs(t, err, types.ErrDeprecated)
+
+	_, found := k.GetParticipant(ctx, derivedAddress)
+	require.False(t, found, "participant must not be created for an off-curve public key")
+}
+
+

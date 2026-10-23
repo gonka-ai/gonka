@@ -16,6 +16,7 @@ import "inference/inference/maintenance.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
 import "inference/inference/poc_challenge.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -70,6 +71,12 @@ service Msg {
   rpc CreatePoCChallenge               (MsgCreatePoCChallenge) returns (MsgCreatePoCChallengeResponse);
   rpc PoCChallengeStoreCommit          (MsgPoCChallengeStoreCommit) returns (MsgPoCChallengeStoreCommitResponse);
   rpc SubmitPoCChallengeValidations    (MsgSubmitPoCChallengeValidations) returns (MsgSubmitPoCChallengeValidationsResponse);
+  rpc CreateTrainshardProposal         (MsgCreateTrainshardProposal) returns (MsgCreateTrainshardProposalResponse);
+  rpc AssembleTrainshard               (MsgAssembleTrainshard) returns (MsgAssembleTrainshardResponse);
+  rpc SettleTrainshard                 (MsgSettleTrainshard) returns (MsgSettleTrainshardResponse);
+  rpc AutokickTrainshardNode           (MsgAutokickTrainshardNode) returns (MsgAutokickTrainshardNodeResponse);
+  rpc SetTrainingNodeOptIn             (MsgSetTrainingNodeOptIn) returns (MsgSetTrainingNodeOptInResponse);
+  rpc RefreshTrainingNodeOptIn         (MsgRefreshTrainingNodeOptIn) returns (MsgRefreshTrainingNodeOptInResponse);
   // RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
   // Bridge settlement then credits that Gonka account when a receipt's owner address
   // was derived from the Ethereum key.
@@ -520,6 +527,73 @@ message MsgSubmitPoCChallengeValidations {
 }
 
 message MsgSubmitPoCChallengeValidationsResponse {}
+
+message MsgCreateTrainshardProposal {
+  option (cosmos.msg.v1.signer) = "authority";
+  string authority = 1;
+  string creator = 2;
+  string gpu_profile_id = 3;
+  uint32 node_count = 4;
+  int64 max_duration_blocks = 5;
+  string base_image = 6;
+  string run_key = 7;
+}
+
+message MsgCreateTrainshardProposalResponse {
+  uint64 proposal_id = 1;
+}
+
+message MsgAssembleTrainshard {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 proposal_id = 2;
+}
+
+message MsgAssembleTrainshardResponse {
+  uint64 trainshard_id = 1;
+}
+
+message MsgSettleTrainshard {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 trainshard_id = 2;
+}
+
+message MsgSettleTrainshardResponse {}
+
+message MsgAutokickTrainshardNode {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 trainshard_id = 2;
+  string participant = 3;
+  string node_id = 4;
+  string reason = 5;
+  string request_id = 6;
+}
+
+message MsgAutokickTrainshardNodeResponse {}
+
+message MsgSetTrainingNodeOptIn {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string node_id = 2;
+  bool opt_in = 3;
+}
+
+message MsgSetTrainingNodeOptInResponse {}
+
+message MsgRefreshTrainingNodeOptIn {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  repeated string node_ids = 2;
+  // endpoint is where the daemon serving these nodes answers a coordinator;
+  // empty withdraws a published one
+  string endpoint = 3;
+}
+
+message MsgRefreshTrainingNodeOptInResponse {
+  int64 expires_at_height = 1;
+}
 
 // MsgRegisterBridgeKeyLink links the Ethereum public key recovered from a bridge
 // transfer to the Gonka account that should receive the bridged tokens.

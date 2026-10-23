@@ -120,6 +120,76 @@ const (
 	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
+// Epoch-validation admission defaults. Each number is a per-participant cap,
+// not a chain total. Live values are EpochValidationParams, set by genesis
+// and by the v0.2.17 upgrade, then changed with MsgUpdateParams.
+const (
+	// DefaultMaxPositiveDistributionRows caps positive weight rows stored
+	// for one participant and one model. Epoch 427's largest stored
+	// distribution had 39 such rows.
+	DefaultMaxPositiveDistributionRows = 256
+	// MaxValidationsPerMessage rejects one fee-exempt validation batch.
+	// One observed signer stored at most 40 votes in an epoch.
+	MaxValidationsPerMessage = 128
+	// MaxValidationsPerSignerPerStage stops further stores once this signer
+	// already has this many rows for the stage.
+	MaxValidationsPerSignerPerStage = 256
+)
+
+// DefaultEpochValidationParams is the governance value written at genesis
+// and by the v0.2.17 upgrade.
+func DefaultEpochValidationParams() *EpochValidationParams {
+	return &EpochValidationParams{
+		MaxPositiveDistributionRows:     DefaultMaxPositiveDistributionRows,
+		MaxValidationsPerMessage:        MaxValidationsPerMessage,
+		MaxValidationsPerSignerPerStage: MaxValidationsPerSignerPerStage,
+	}
+}
+
+// PositiveDistributionRowLimit is the governed cap on stored positive
+// distribution rows for one participant and one model. A missing or zero
+// value uses the default so stored params from before the field existed
+// keep the same cap.
+func (p *EpochValidationParams) PositiveDistributionRowLimit() int {
+	if p == nil || p.MaxPositiveDistributionRows == 0 {
+		return DefaultMaxPositiveDistributionRows
+	}
+	return int(p.MaxPositiveDistributionRows)
+}
+
+// ValidationsPerMessageLimit is the governed cap on one validation batch.
+func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
+	if p == nil || p.MaxValidationsPerMessage == 0 {
+		return MaxValidationsPerMessage
+	}
+	return int(p.MaxValidationsPerMessage)
+}
+
+// ValidationsPerSignerPerStageLimit is the governed cap on rows stored for
+// one signer in one stage.
+func (p *EpochValidationParams) ValidationsPerSignerPerStageLimit() int {
+	if p == nil || p.MaxValidationsPerSignerPerStage == 0 {
+		return MaxValidationsPerSignerPerStage
+	}
+	return int(p.MaxValidationsPerSignerPerStage)
+}
+
+func (p *EpochValidationParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaxPositiveDistributionRows == 0 {
+		return fmt.Errorf("epoch_validation_params.max_positive_distribution_rows must be greater than 0")
+	}
+	if p.MaxValidationsPerMessage == 0 {
+		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
+	}
+	if p.MaxValidationsPerSignerPerStage == 0 {
+		return fmt.Errorf("epoch_validation_params.max_validations_per_signer_per_stage must be greater than 0")
+	}
+	return nil
+}
+
 // DefaultMinPunishableSegmentBlocks is the voted-segment floor. A clipped
 // challenge window shorter than this rotates without evaluate.
 // Same-block / minimum clipped duration is max(cutoff,1)+stage+exchange-1.
@@ -216,11 +286,13 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-		DevshardEscrowParams: DefaultDevshardEscrowParams(),
-		MaintenanceParams:    DefaultMaintenanceParams(),
-		DelegationParams:     DefaultDelegationParams(),
-		FeeParams:            DefaultFeeParams(),
-		PocChallengeParams:   DefaultPoCChallengeParams(),
+		DevshardEscrowParams:  DefaultDevshardEscrowParams(),
+		MaintenanceParams:     DefaultMaintenanceParams(),
+		DelegationParams:      DefaultDelegationParams(),
+		TrainingParams:        DefaultTrainingParams(),
+		FeeParams:             DefaultFeeParams(),
+		PocChallengeParams:    DefaultPoCChallengeParams(),
+		EpochValidationParams: DefaultEpochValidationParams(),
 	}
 }
 
@@ -461,6 +533,128 @@ func DefaultMaintenanceParams() *MaintenanceParams {
 		MaintenanceCreditCapBlocks:                    DefaultMaintenanceCreditCapBlocks,
 		MaintenanceCreditEarnPerSuccessfulEpochBlocks: DefaultMaintenanceCreditEarnPerEpochBlocks,
 	}
+}
+
+const (
+	DefaultTrainingEnabled                     = false
+	DefaultTrainingMaxNodesPerShard     uint32 = 64
+	DefaultTrainingMaxActiveShards      uint32 = 16
+	DefaultTrainingMinDurationBlocks    int64  = 40
+	DefaultTrainingMaxDurationBlocks    int64  = 17_280
+	DefaultTrainingMaxActivePerCreator  uint32 = 4
+	DefaultTrainingCreatorCooldown      int64  = 0
+	DefaultTrainingMaxTotalReserved     uint32 = 256
+	DefaultTrainingMaxModelShareBps     uint32 = 5000
+	DefaultTrainingMaxProfileShareBps   uint32 = 5000
+	DefaultTrainingMaxExpirationsPerBlk uint32 = 32
+	DefaultTrainingRetentionBlocks      int64  = 100
+	DefaultTrainingOptInTtlBlocks       int64  = 200
+	DefaultTrainingReleaseBufferBlocks  int64  = 20
+	DefaultTrainingNodeWeightTolerance  uint32 = 3000
+	DefaultTrainingMinRateParticipants  uint32 = 3
+)
+
+func DefaultTrainingParams() *TrainingParams {
+	return &TrainingParams{
+		TrainingEnabled:               DefaultTrainingEnabled,
+		MaxNodesPerShard:              DefaultTrainingMaxNodesPerShard,
+		MaxActiveShards:               DefaultTrainingMaxActiveShards,
+		MinDurationBlocks:             DefaultTrainingMinDurationBlocks,
+		MaxDurationBlocks:             DefaultTrainingMaxDurationBlocks,
+		AllowedGpuProfileIds:          nil,
+		MaxActiveShardsPerCreator:     DefaultTrainingMaxActivePerCreator,
+		CreatorCooldownBlocks:         DefaultTrainingCreatorCooldown,
+		MaxTotalReservedNodes:         DefaultTrainingMaxTotalReserved,
+		MaxReservedSharePerModelBps:   DefaultTrainingMaxModelShareBps,
+		MaxReservedSharePerProfileBps: DefaultTrainingMaxProfileShareBps,
+		MaxExpirationsPerBlock:        DefaultTrainingMaxExpirationsPerBlk,
+		SettledShardRetentionBlocks:   DefaultTrainingRetentionBlocks,
+		OptInTtlBlocks:                DefaultTrainingOptInTtlBlocks,
+		ReleaseBufferBlocks:           DefaultTrainingReleaseBufferBlocks,
+		NodeWeightToleranceBps:        DefaultTrainingNodeWeightTolerance,
+		MinWeightRateParticipants:     DefaultTrainingMinRateParticipants,
+	}
+}
+
+// maxTrainingBlocksParam keeps *Blocks height math within int64
+const maxTrainingBlocksParam = int64(1e15)
+
+func (p *TrainingParams) Validate(epochParams *EpochParams) error {
+	if p == nil {
+		return nil
+	}
+	// a zero cap is not "unlimited" anywhere in the trainshard code, it is a hard
+	// stop that would leave training switched on but unable to reserve anything
+	if p.MaxNodesPerShard == 0 {
+		return fmt.Errorf("training max_nodes_per_shard must be positive")
+	}
+	if p.MaxActiveShards == 0 {
+		return fmt.Errorf("training max_active_shards must be positive")
+	}
+	if p.MaxActiveShardsPerCreator == 0 {
+		return fmt.Errorf("training max_active_shards_per_creator must be positive")
+	}
+	if p.MaxTotalReservedNodes == 0 {
+		return fmt.Errorf("training max_total_reserved_nodes must be positive")
+	}
+	if p.MinDurationBlocks <= 0 {
+		return fmt.Errorf("training min_duration_blocks must be positive")
+	}
+	if p.MaxDurationBlocks < p.MinDurationBlocks {
+		return fmt.Errorf("training max_duration_blocks (%d) must be >= min_duration_blocks (%d)", p.MaxDurationBlocks, p.MinDurationBlocks)
+	}
+	if p.MaxDurationBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training max_duration_blocks (%d) exceeds safe upper bound %d", p.MaxDurationBlocks, maxTrainingBlocksParam)
+	}
+	if p.CreatorCooldownBlocks < 0 {
+		return fmt.Errorf("training creator_cooldown_blocks must not be negative")
+	}
+	if p.CreatorCooldownBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training creator_cooldown_blocks (%d) exceeds safe upper bound %d", p.CreatorCooldownBlocks, maxTrainingBlocksParam)
+	}
+	if p.MaxReservedSharePerModelBps > 10000 {
+		return fmt.Errorf("training max_reserved_share_per_model_bps cannot exceed 10000")
+	}
+	if p.MaxReservedSharePerProfileBps > 10000 {
+		return fmt.Errorf("training max_reserved_share_per_profile_bps cannot exceed 10000")
+	}
+	if p.MaxExpirationsPerBlock == 0 {
+		return fmt.Errorf("training max_expirations_per_block must be positive")
+	}
+	if p.SettledShardRetentionBlocks < 0 {
+		return fmt.Errorf("training settled_shard_retention_blocks must not be negative")
+	}
+	if p.SettledShardRetentionBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training settled_shard_retention_blocks (%d) exceeds safe upper bound %d", p.SettledShardRetentionBlocks, maxTrainingBlocksParam)
+	}
+	if p.OptInTtlBlocks <= 0 {
+		return fmt.Errorf("training opt_in_ttl_blocks must be positive")
+	}
+	if p.OptInTtlBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training opt_in_ttl_blocks (%d) exceeds safe upper bound %d", p.OptInTtlBlocks, maxTrainingBlocksParam)
+	}
+	if p.ReleaseBufferBlocks < 0 {
+		return fmt.Errorf("training release_buffer_blocks must not be negative")
+	}
+	if p.ReleaseBufferBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training release_buffer_blocks (%d) exceeds safe upper bound %d", p.ReleaseBufferBlocks, maxTrainingBlocksParam)
+	}
+	if p.NodeWeightToleranceBps > 10000 {
+		return fmt.Errorf("training node_weight_tolerance_bps cannot exceed 10000")
+	}
+	if p.MinWeightRateParticipants == 0 {
+		return fmt.Errorf("training min_weight_rate_participants must be positive")
+	}
+	// epoch-relative limits bind only while training runs, so the defaults stay
+	// valid on chains of any epoch length until governance enables training
+	if p.TrainingEnabled && epochParams != nil && epochParams.EpochLength > 0 {
+		// retention must outlive the buffer so next-epoch reads still see released nodes
+		minRetention := 2*epochParams.EpochLength + p.ReleaseBufferBlocks
+		if p.SettledShardRetentionBlocks < minRetention {
+			return fmt.Errorf("training settled_shard_retention_blocks (%d) must be at least two epoch lengths plus release_buffer_blocks (%d)", p.SettledShardRetentionBlocks, minRetention)
+		}
+	}
+	return nil
 }
 
 // maxMaintenanceBlocksParam bounds every governance-controlled *Blocks field.
@@ -964,6 +1158,18 @@ func (p Params) Validate() error {
 
 	if p.PocChallengeParams != nil {
 		if err := p.PocChallengeParams.Validate(); err != nil {
+			return err
+		}
+	}
+
+	if p.TrainingParams != nil {
+		if err := p.TrainingParams.Validate(p.EpochParams); err != nil {
+			return err
+		}
+	}
+
+	if p.EpochValidationParams != nil {
+		if err := p.EpochValidationParams.Validate(); err != nil {
 			return err
 		}
 	}

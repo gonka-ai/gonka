@@ -17,6 +17,7 @@ decentralized-api/build/
 decentralized-api/dist/
 decentralized-api/responses/
 devshard/build/
+trainshard/build/
 inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api

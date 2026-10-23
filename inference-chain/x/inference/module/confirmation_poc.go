@@ -359,7 +359,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up validation snapshot
+			// Clean up validation snapshot. Validation rows, commits,
+			// distributions, and signer counters stay until the bounded
+			// confirmation cleanup walks this trigger.
 			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)
@@ -467,14 +469,14 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 
-	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
-	measured := weightByParticipant(confirmationParticipants, presentScales)
-
 	participants, found := am.keeper.GetActiveParticipants(ctx, event.EpochIndex)
 	if !found {
 		return fmt.Errorf("evaluateConfirmation: active participants not found for epoch %d", event.EpochIndex)
 	}
 	activeParticipants := participants.Participants
+
+	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
+	measured := weightByParticipant(restrictToEpochModels(confirmationParticipants, activeParticipants), presentScales)
 
 	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
@@ -488,6 +490,26 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
+	// a node reserved at any point before generation ends cannot be held to the event, so the ratio
+	// judges the host's free nodes alone: reserved nodes leave both the expected weight and the
+	// preserved reading. Their weight still counts toward the ConfirmationWeight, since settlement
+	// pays a reserved node by its frozen weight
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("evaluateConfirmation: failed to get params: %w", err)
+	}
+	reserved := am.keeper.CollectEpochReservedNodeWeightsBetween(ctx, event.EpochIndex,
+		event.TriggerHeight, event.GetGenerationEnd(params.EpochParams), keeper.ReservationScopeShield)
+	shielded, sampled := reservedConfirmationWeights(reserved, &preservedSnapshot, types.ConfirmationWeightCoefficients(presentScales))
+	for host, w := range shielded {
+		if totalExpected[host] -= w; totalExpected[host] < 0 {
+			totalExpected[host] = 0
+		}
+		if preserved[host] -= sampled[host]; preserved[host] < 0 {
+			preserved[host] = 0
+		}
+	}
+
 	// Maintenance-covered participants are expected to be offline: skip both the
 	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
 	// punished via rewards or INACTIVE status. Any same-epoch challenge record
@@ -500,17 +522,32 @@ func (am AppModule) evaluateConfirmation(
 		skipAddrs[addr] = struct{}{}
 	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, shielded, totalExpected, skipAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
 			"triggerHeight", event.TriggerHeight)
 	}
 
+	// Skip CPoC ratio assignment for maintenance-covered participants — they
+	// are expected to be offline and must not be marked INACTIVE due to
+	// maintenance-covered absence from CPoC duties.
+	reservedView := am.keeper.BuildEpochReservationView(ctx, event.EpochIndex)
+
 	for _, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
 		ratio, ok := ratios[addr]
 		if !ok {
+			continue
+		}
+		if _, inMaint := skipAddrs[addr]; inMaint {
+			am.LogDebug("Skipping CPoC ratio for maintenance-covered participant", types.PoC,
+				"address", addr)
+			continue
+		}
+		if reservedView.FullyReservedAt(addr, event.TriggerHeight) {
+			am.LogDebug("Skipping CPoC ratio for host fully reserved at trigger height", types.PoC,
+				"address", addr, "triggerHeight", event.TriggerHeight)
 			continue
 		}
 		participant, found := am.keeper.GetParticipant(ctx, addr)
@@ -532,14 +569,41 @@ func (am AppModule) evaluateConfirmation(
 	return nil
 }
 
+// reservedConfirmationWeights returns, per host, the confirmation weight of its reserved
+// nodes and the part of it the preserved sample counted as preserved.
+func reservedConfirmationWeights(
+	reserved map[string][]*types.TrainshardReservedNode,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+	coefficients map[string]mathsdk.LegacyDec,
+) (all, sampled map[string]int64) {
+	all = make(map[string]int64, len(reserved))
+	sampled = make(map[string]int64, len(reserved))
+	for host, nodes := range reserved {
+		allNodes := make(map[string][]*types.MLNodeInfo)
+		sampledNodes := make(map[string][]*types.MLNodeInfo)
+		for _, n := range nodes {
+			node := &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight}
+			allNodes[n.ModelId] = append(allNodes[n.ModelId], node)
+			if keeper.IsPreservedNode(keeper.PreservedNodeSetByModel(preservedSnapshot, n.ModelId), host, n.NodeId) {
+				sampledNodes[n.ModelId] = append(sampledNodes[n.ModelId], node)
+			}
+		}
+		all[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(allNodes, coefficients)
+		sampled[host] = types.ConfirmationWeightOfModelNodesWithCoefficients(sampledNodes, coefficients)
+	}
+	return all, sampled
+}
+
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
+// Shielded weight (the host's reserved nodes) counts toward the ConfirmationWeight
+// reading only, never toward the ratio; preserved must not include it.
 // Participants in skipAddrs (e.g. active maintenance) are left untouched: no
 // ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
-	measured, preserved, totalExpected map[string]int64,
+	measured, preserved, shielded, totalExpected map[string]int64,
 	skipAddrs map[string]struct{},
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
@@ -552,8 +616,8 @@ func foldEventReadings(
 		if totalExpected[addr] == 0 {
 			continue
 		}
-		if reading < vw.ConfirmationWeight {
-			epochGroupData.ValidationWeights[i].ConfirmationWeight = reading
+		if full := reading + shielded[addr]; full < vw.ConfirmationWeight {
+			epochGroupData.ValidationWeights[i].ConfirmationWeight = full
 			updated = true
 		}
 
@@ -583,24 +647,20 @@ func (am AppModule) updateConfirmationWeightsV2(
 		return nil
 	}
 
-	// Get weight distributions for per-node weights
-	weightDistributions, err := am.keeper.GetAllMLNodeWeightDistributionsForStage(ctx, event.TriggerHeight)
-	if err != nil {
-		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
-		// Continue without distributions
-	}
-
 	validationsV2, err := am.keeper.GetPoCValidationsV2ByStage(ctx, event.TriggerHeight)
 	if err != nil {
 		am.LogError("updateConfirmationWeightsV2: failed to get PoC v2 validations for confirmation", types.PoC, "error", err)
 		return nil
 	}
 
-	// Collect participants and seeds
+	// Collect participants and seeds. This path has no allowlist check.
+	// Distributions are loaded only for keys that have both, because a missing
+	// participant or seed already produces no confirmation weight.
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
+	admittedKeys := make([]types.PoCParticipantModelKey, 0, len(storeCommits))
 
-	for key := range storeCommits {
+	for _, key := range sortedStoreCommitKeys(storeCommits) {
 		participantAddress := key.ParticipantAddress
 		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
 		if !ok {
@@ -612,9 +672,17 @@ func (am AppModule) updateConfirmationWeightsV2(
 		participants[participantAddress] = participant
 
 		seed, found := am.keeper.GetRandomSeed(ctx, event.EpochIndex, participantAddress)
-		if found {
-			seeds[participantAddress] = seed
+		if !found {
+			continue
 		}
+		seeds[participantAddress] = seed
+		admittedKeys = append(admittedKeys, key)
+	}
+
+	weightDistributions, err := am.distributionsForAdmittedKeys(ctx, event.TriggerHeight, admittedKeys)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get weight distributions for confirmation", types.PoC, "error", err)
+		weightDistributions = nil
 	}
 
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
@@ -764,4 +832,40 @@ func preservedWeightByParticipant(
 		preserved[p.Index] = types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 	}
 	return preserved
+}
+
+func restrictToEpochModels(
+	measured []*types.ActiveParticipant,
+	epochParticipants []*types.ActiveParticipant,
+) []*types.ActiveParticipant {
+	epochModels := make(map[string]map[string]bool, len(epochParticipants))
+	for _, p := range epochParticipants {
+		if p == nil {
+			continue
+		}
+		models := make(map[string]bool, len(p.Models))
+		for _, modelID := range p.Models {
+			if modelID != "" {
+				models[modelID] = true
+			}
+		}
+		epochModels[p.Index] = models
+	}
+	out := make([]*types.ActiveParticipant, 0, len(measured))
+	for _, p := range measured {
+		if p == nil {
+			continue
+		}
+		allowed := epochModels[p.Index]
+		filtered := &types.ActiveParticipant{Index: p.Index}
+		for i, modelID := range p.Models {
+			if !allowed[modelID] || i >= len(p.MlNodes) {
+				continue
+			}
+			filtered.Models = append(filtered.Models, modelID)
+			filtered.MlNodes = append(filtered.MlNodes, p.MlNodes[i])
+		}
+		out = append(out, filtered)
+	}
+	return out
 }

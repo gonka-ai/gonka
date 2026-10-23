@@ -72,6 +72,14 @@ func (m *MockBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserv
 	return args.Get(0).(*types.QueryPreservedNodesSnapshotResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetTrainingNodeReservations(participant string) (*types.QueryTrainingNodeReservationsResponse, error) {
+	args := m.Called(participant)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryTrainingNodeReservationsResponse), args.Error(1)
+}
+
 func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
@@ -153,7 +161,12 @@ func NewTestBroker() *Broker {
 	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model1").Return(model1EpochData, nil)
 
 	mockConfigManager := &apiconfig.ConfigManager{}
-	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
+	return withReservationsRead(NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager))
+}
+
+func withReservationsRead(b *Broker) *Broker {
+	b.awaitingReservations.Store(false)
+	return b
 }
 
 func newTestBrokerWithChainBridge(mockChainBridge *MockBrokerChainBridge) *Broker {
@@ -173,7 +186,7 @@ func newTestBrokerWithParticipantAddress(mockChainBridge *MockBrokerChainBridge,
 		true,
 		nil,
 	)
-	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{})
+	return withReservationsRead(NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{}))
 }
 
 func TestResolvePoCModelForNode_PrefersEpochMLNodes(t *testing.T) {
@@ -328,6 +341,61 @@ func TestResolveSupportedNodeModelID_NoRegressionWhenAllModelsSupported(t *testi
 	})
 	require.True(t, ok)
 	assert.Equal(t, "model-a", modelID)
+}
+
+func TestGetCommandForState_StopWaitsForInFlightInference(t *testing.T) {
+	broker := NewTestBroker()
+	held := AdminState{Stopped: true}
+	busy := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 1, AdminState: held}
+	idle := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 0, AdminState: held}
+	started := &NodeState{IntendedStatus: types.HardwareNodeStatus_STOPPED, LockCount: 0}
+
+	assert.Nil(t, broker.getCommandForState("node-1", busy, nil, nil, nil, 1, nil))
+	_, ok := broker.getCommandForState("node-1", idle, nil, nil, nil, 1, nil).(StopNodeCommand)
+	assert.True(t, ok)
+	assert.Nil(t, broker.getCommandForState("node-1", started, nil, nil, nil, 1, nil),
+		"a STOPPED intent left behind by a start is stale and must not stop the node")
+}
+
+func TestReleaseNode_WakesTheReconcilerWhenAStopWasWaitingOnIt(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.pinStopped()
+	node.State.AdminState.Stopped = true
+	node.State.LockCount = 1
+	broker := &Broker{
+		nodes:            map[string]*NodeWithState{"node-1": node},
+		reconcileTrigger: make(chan struct{}, 1),
+	}
+
+	response := make(chan bool, 1)
+	broker.releaseNode(ReleaseNode{NodeId: "node-1", Outcome: InferenceSuccess{}, Response: response})
+
+	require.True(t, <-response)
+	select {
+	case <-broker.reconcileTrigger:
+	default:
+		t.Fatal("the last release must wake the reconciler so the deferred stop is not left to the ticker")
+	}
+}
+
+func TestReleaseNode_LeavesTheReconcilerAloneWhenTheStopWasLifted(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.pinStopped()
+	node.State.LockCount = 1
+	broker := &Broker{
+		nodes:            map[string]*NodeWithState{"node-1": node},
+		reconcileTrigger: make(chan struct{}, 1),
+	}
+
+	response := make(chan bool, 1)
+	broker.releaseNode(ReleaseNode{NodeId: "node-1", Outcome: InferenceSuccess{}, Response: response})
+
+	require.True(t, <-response)
+	select {
+	case <-broker.reconcileTrigger:
+		t.Fatal("a start before the last release lifts the hold; nothing is left to wake the reconciler for")
+	default:
+	}
 }
 
 func TestGetCommandForState_UsesConfiguredFallbackForGeneration(t *testing.T) {

@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 
+	sdkerrors "cosmossdk.io/errors"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -232,23 +233,39 @@ func (k Keeper) IsNewParticipantRegistrationClosed(ctx context.Context, height i
 	return height < start
 }
 
-// IsPoCParticipantBlocked returns true if the address is blocked from participating in PoC.
-// Uses a map for O(1) membership checks (map build is O(n) per call).
+// decodePoCCreator decodes a message creator before any blocklist comparison.
+// AccAddressFromBech32 accepts an all-uppercase spelling of the same account.
+func decodePoCCreator(creator string) (sdk.AccAddress, error) {
+	addr, err := sdk.AccAddressFromBech32(creator)
+	if err != nil {
+		return nil, sdkerrors.Wrapf(types.ErrInvalidAddress, "invalid creator address: %v", err)
+	}
+	return addr, nil
+}
+
+// IsPoCParticipantBlocked reports whether address is the same account as a
+// configured blocklist entry. Membership is the decoded account bytes, so an
+// uppercase spelling of a listed account is still blocked. Entries that do
+// not decode are ignored.
 func (k Keeper) IsPoCParticipantBlocked(ctx context.Context, address string) bool {
+	subject, err := sdk.AccAddressFromBech32(address)
+	if err != nil {
+		return false
+	}
 	p := k.GetParticipantAccessParams(ctx)
 	if p == nil {
 		return false
 	}
-	list := p.BlockedParticipantAddresses
-	if len(list) == 0 {
-		return false
+	for _, entry := range p.BlockedParticipantAddresses {
+		blocked, err := sdk.AccAddressFromBech32(entry)
+		if err != nil {
+			continue
+		}
+		if subject.Equals(blocked) {
+			return true
+		}
 	}
-	blocked := make(map[string]struct{}, len(list))
-	for _, a := range list {
-		blocked[a] = struct{}{}
-	}
-	_, ok := blocked[address]
-	return ok
+	return false
 }
 
 func (k Keeper) GetTransferAgentAccessParams(ctx context.Context) *types.TransferAgentAccessParams {
@@ -322,4 +339,16 @@ func (k Keeper) GetMaintenanceParams(ctx context.Context) *types.MaintenancePara
 		return types.DefaultMaintenanceParams()
 	}
 	return p.MaintenanceParams
+}
+
+func (k Keeper) GetTrainingParams(ctx context.Context) *types.TrainingParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetTrainingParams", types.System, "error", err)
+		return types.DefaultTrainingParams()
+	}
+	if p.TrainingParams == nil {
+		return types.DefaultTrainingParams()
+	}
+	return p.TrainingParams
 }
