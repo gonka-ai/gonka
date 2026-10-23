@@ -35,10 +35,10 @@ func Order(shardID vo.ShardID, members []Member) (Config, error) {
 		if i > 0 && ordered[i-1].Node == m.Node {
 			return Config{}, ErrDuplicateNode
 		}
-		if keys[m.PublicKey] {
+		if keys[sameKey(m.PublicKey)] {
 			return Config{}, ErrDuplicateKey
 		}
-		keys[m.PublicKey] = true
+		keys[sameKey(m.PublicKey)] = true
 		peers = append(peers, Peer{Rank: i, Node: m.Node, Address: m.Address, PublicKey: m.PublicKey})
 	}
 	return Config{Shard: shardID, Peers: peers}, nil

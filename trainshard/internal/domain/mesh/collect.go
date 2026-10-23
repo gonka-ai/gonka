@@ -71,7 +71,7 @@ func Collect(
 	offered := make(map[string]int, len(collected))
 	for node, member := range collected {
 		if slices.Contains(reserved, node) {
-			offered[member.PublicKey]++
+			offered[sameKey(member.PublicKey)]++
 		}
 	}
 
@@ -79,7 +79,7 @@ func Collect(
 	missing = make([]vo.NodeRef, 0)
 	for _, node := range reserved {
 		member, found := collected[node]
-		if !found || offered[member.PublicKey] > 1 {
+		if !found || offered[sameKey(member.PublicKey)] > 1 {
 			missing = append(missing, node)
 			continue
 		}

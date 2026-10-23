@@ -79,6 +79,15 @@ func TestOrderRejectsUnusableMembers(t *testing.T) {
 			wantErr: mesh.ErrDuplicateKey,
 		},
 		{
+			// the last character's low bits are padding: ...Twy10= and ...Twy11= are one key
+			name: "two nodes publishing one key spelled two ways",
+			members: []mesh.Member{
+				{Node: nodeA, Address: "10.0.0.1", PublicKey: "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy0="},
+				{Node: nodeB, Address: "10.0.0.2", PublicKey: "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy1="},
+			},
+			wantErr: mesh.ErrDuplicateKey,
+		},
+		{
 			name:    "member without an address",
 			members: []mesh.Member{{Node: nodeA, PublicKey: "key"}},
 			wantErr: mesh.ErrIncompleteMember,

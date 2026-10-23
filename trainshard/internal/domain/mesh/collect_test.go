@@ -172,6 +172,32 @@ func TestCollectNamesBothNodesMissingWhenTheyOfferOneKey(t *testing.T) {
 	}
 }
 
+func TestCollectNamesBothNodesMissingWhenTheyOfferOneKeySpelledTwoWays(t *testing.T) {
+	// arrange
+	hosts := newHostsStub()
+	original := identityOf(nodeA)
+	original.Member.PublicKey = "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy0="
+	hosts.identities[hostA] = []mesh.Identity{original}
+	aliased := identityOf(nodeC)
+	aliased.Member.PublicKey = "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy1="
+	hosts.identities[hostB] = []mesh.Identity{identityOf(nodeB), aliased}
+
+	// act
+	members, missing, err := mesh.Collect(context.Background(), hosts, &verifierStub{}, &delegationStub{}, shardID,
+		machines, []vo.NodeRef{nodeA, nodeB, nodeC})
+
+	// assert
+	if err != nil {
+		t.Fatalf("an aliased key must not sink the mesh: %v", err)
+	}
+	if !slices.Equal(missing, []vo.NodeRef{nodeA, nodeC}) {
+		t.Fatalf("got %v missing, want both nodes that offer the key", missing)
+	}
+	if len(members) != 1 || members[0].Node != nodeB {
+		t.Fatalf("got %+v, want only %s kept", members, nodeB)
+	}
+}
+
 func TestCollectTakesAMemberSignedByTheHostsWarmKey(t *testing.T) {
 	// arrange
 	hosts := newHostsStub()
