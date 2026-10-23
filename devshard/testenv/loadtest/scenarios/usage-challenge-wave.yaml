@@ -4,12 +4,12 @@ seed: 1515
 
 # The cost of the usage challenge under load. One of six ML nodes answers every execution with a
 # role delta and no content, so each win it serves is a signed receipt for an empty stream: the
-# gateway challenges it (EMPTY_STREAM) and asks the other hosts to vote on the stored body. The hosts
-# share the nodes, so the empty streams land on every host. The gateway's empty-stream quarantine is
-# cut to 1 s so the hosts keep winning their share and the wave is as large as the race allows. The
-# report counts the challenges by outcome and reason, the voters' answers (late, still busy at the
-# deadline) and the time from a challenge's start to its outcome. usage-challenge-wave-honest is the
-# same run with every node honest.
+# gateway challenges it (EMPTY_STREAM) and asks the other hosts to vote on the stored body. Each host
+# draws only from its own node, mock-openai-N on versiond-N, so the empty streams are versiond-3's, a
+# solo participant. The gateway's empty-stream quarantine is cut to 1 s so versiond-3 keeps winning its
+# share and the wave is as large as the race allows. The report counts the challenges by outcome and
+# reason, the voters' answers (late, still busy at the deadline) and the time from a challenge's start
+# to its outcome. usage-challenge-wave-honest is the same run with every node honest.
 topology:
   versiond_mode: multi
   storage: per_participant
@@ -23,16 +23,22 @@ topology:
     nodes:
       - name: mock-openai-0
         profile: fast
+        host: versiond-0
       - name: mock-openai-1
         profile: fast
+        host: versiond-1
       - name: mock-openai-2
         profile: fast
+        host: versiond-2
       - name: mock-openai-3
         profile: empty-stream
+        host: versiond-3
       - name: mock-openai-4
         profile: fast
+        host: versiond-4
       - name: mock-openai-5
         profile: fast
+        host: versiond-5
 
 protocol:
   refusal_timeout: 5s

@@ -2,6 +2,8 @@ package mockdapi
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,4 +83,27 @@ func ParsePairsEnv(raw string) (map[string]string, error) {
 		out[key] = value
 	}
 	return out, nil
+}
+
+// ApplyMaxConcurrentEnv sets MaxConcurrent on the nodes named in raw
+// (MOCK_ML_NODE_MAX_CONCURRENT, "node=n,..."). Like the dapi broker, a node
+// holding n locks is skipped until one is released; unnamed nodes stay
+// unlimited.
+func ApplyMaxConcurrentEnv(nodes []MLNode, raw string) error {
+	pairs, err := ParsePairsEnv(raw)
+	if err != nil {
+		return err
+	}
+	for id, value := range pairs {
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("node %q: max concurrent %q must be a positive integer", id, value)
+		}
+		i := slices.IndexFunc(nodes, func(node MLNode) bool { return node.ID == id })
+		if i < 0 {
+			return fmt.Errorf("node %q is not in the ML node pool", id)
+		}
+		nodes[i].MaxConcurrent = n
+	}
+	return nil
 }

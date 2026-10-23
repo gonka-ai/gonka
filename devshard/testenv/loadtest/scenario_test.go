@@ -209,3 +209,36 @@ func TestLoadProfile_Timeout(t *testing.T) {
 	require.Equal(t, "timeout", profile.Profile)
 	require.True(t, profile.Hang)
 }
+
+// Test flow:
+// 1. Bind both nodes of a three-participant scenario to versiond hosts and cap one of them.
+// 2. Check it validates.
+// 3. Break the binding or the cap one at a time and expect the named validation error.
+func TestScenario_MockMLNodeHostAndMaxConcurrent(t *testing.T) {
+	valid := func() Scenario {
+		s := testScenario()
+		s.Topology.Participants = 3
+		s.Topology.MockML.Nodes[0].Host = "versiond-0"
+		s.Topology.MockML.Nodes[1].Host = "versiond-3"
+		s.Topology.MockML.Nodes[1].MaxConcurrent = 2
+		return s
+	}
+	base := valid()
+	require.NoError(t, base.Validate())
+	for _, tc := range []struct {
+		name   string
+		change func(*Scenario)
+		want   string
+	}{
+		{"host outside topology", func(s *Scenario) { s.Topology.MockML.Nodes[1].Host = "versiond-4" }, "mock_ml.nodes[1].host"},
+		{"not a versiond host", func(s *Scenario) { s.Topology.MockML.Nodes[0].Host = "mock-chain" }, "mock_ml.nodes[0].host"},
+		{"host without participants", func(s *Scenario) { s.Topology.Participants = 0 }, "mock_ml.nodes[0].host"},
+		{"negative cap", func(s *Scenario) { s.Topology.MockML.Nodes[1].MaxConcurrent = -1 }, "max_concurrent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := valid()
+			tc.change(&s)
+			require.ErrorContains(t, s.Validate(), tc.want)
+		})
+	}
+}

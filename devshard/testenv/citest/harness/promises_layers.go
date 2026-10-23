@@ -15,9 +15,9 @@ import (
 // ReadExecutors names the host that executed each inference of a load-test run, from the
 // compose.log the runner keeps. A host writes one "devshard request terminal" line for every
 // inference it executed (observability.recordTerminal), carrying the escrow and the inference id;
-// validators do not write it. The ML nodes are one pool every host draws from, so the executor is
-// known per inference, not per node. A line without an inference id (a receipt the host never
-// signed) names no execution.
+// validators do not write it. Unless a scenario binds each ML node to one host, the nodes are one
+// pool every host draws from, so the executor is known per inference, not per node. A line without
+// an inference id (a receipt the host never signed) names no execution.
 func ReadExecutors(composeLog string) (map[InferenceRef]string, error) {
 	f, err := os.Open(composeLog)
 	if err != nil {

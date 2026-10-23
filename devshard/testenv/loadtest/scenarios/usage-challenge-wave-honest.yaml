@@ -3,7 +3,8 @@ scenario: usage-challenge-wave-honest
 seed: 1515
 
 # The control of usage-challenge-wave: the same stack and load with every ML node honest, so the
-# gateway challenges nothing. What the wave run costs above this one is the challenge's.
+# gateway challenges nothing. What the wave run costs above this one is the challenge's. Each host draws
+# only from its own node, mock-openai-N on versiond-N, as in that run.
 topology:
   versiond_mode: multi
   storage: per_participant
@@ -17,16 +18,22 @@ topology:
     nodes:
       - name: mock-openai-0
         profile: fast
+        host: versiond-0
       - name: mock-openai-1
         profile: fast
+        host: versiond-1
       - name: mock-openai-2
         profile: fast
+        host: versiond-2
       - name: mock-openai-3
         profile: fast
+        host: versiond-3
       - name: mock-openai-4
         profile: fast
+        host: versiond-4
       - name: mock-openai-5
         profile: fast
+        host: versiond-5
 
 protocol:
   refusal_timeout: 5s

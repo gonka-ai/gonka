@@ -501,6 +501,25 @@ mock_ml:
       profile: realistic
 ```
 
+A node may also set `host` and `max_concurrent`:
+
+```yaml
+    - name: mock-openai-3
+      profile: overclaim
+      host: versiond-3
+      max_concurrent: 4
+```
+
+`host` binds the node to one versiond container, as a participant's dapi owns
+its nodes: mock-dapi hands that container only its own nodes, and the other
+containers share the unbound ones (or every node, if all are bound). It must be
+a `versiond-N` of an explicit `topology.participants`. Bind a node to every
+container that executes, or that container draws from the others' nodes.
+
+`max_concurrent` caps the AcquireMLNode locks mock-dapi hands out on the node
+at once, as the dapi broker refuses a node holding its `MaxConcurrent` locks; a
+release frees a slot. 0 (the default) is unlimited.
+
 ## Captured request datasets
 
 The optional `-load-dataset` flag accepts a JSONL capture containing both the
