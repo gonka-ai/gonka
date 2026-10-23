@@ -149,6 +149,9 @@ type MockMLNode struct {
 	// Host binds the node to one versiond host in mock-dapi; empty keeps it
 	// in the shared pool.
 	Host string `yaml:"host"`
+	// MaxConcurrent caps the AcquireMLNode locks mock-dapi hands out on the
+	// node at once, as the dapi broker caps a node; 0 is unlimited.
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 type Workload struct {
@@ -347,6 +350,9 @@ func (s Scenario) Validate() error {
 		}
 		if _, exists := seen[node.Name]; exists {
 			return fmt.Errorf("duplicate mock_ml node %q", node.Name)
+		}
+		if node.MaxConcurrent < 0 {
+			return fmt.Errorf("mock_ml node %q max_concurrent must be non-negative", node.Name)
 		}
 		seen[node.Name] = struct{}{}
 	}

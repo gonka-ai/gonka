@@ -48,6 +48,9 @@ func main() {
 		}
 		*dst = pairs
 	}
+	if err := mockdapi.ApplyMaxConcurrentEnv(cfg.MLNodes, os.Getenv("MOCK_ML_NODE_MAX_CONCURRENT")); err != nil {
+		log.Fatalf("mock-dapi: MOCK_ML_NODE_MAX_CONCURRENT: %v", err)
+	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {

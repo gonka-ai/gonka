@@ -71,6 +71,7 @@ services:
       MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       MOCK_ML_NODE_HOSTS: "{{ mockMLNodeHostsEnv . }}"
       MOCK_DAPI_HOST_ADDRS: "{{ mockDapiHostAddrsEnv . }}"
+      MOCK_ML_NODE_MAX_CONCURRENT: "{{ mlNodeMaxConcurrentEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
@@ -407,6 +408,7 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"mockMLNodesEnv":            mockMLNodesEnv,
 		"mockMLNodeHostsEnv":        mockMLNodeHostsEnv,
 		"mockDapiHostAddrsEnv":      mockDapiHostAddrsEnv,
+		"mlNodeMaxConcurrentEnv":    mlNodeMaxConcurrentEnv,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
 		"mlNodeIDs":                 mlNodeIDs,
@@ -489,6 +491,18 @@ func mockDapiHostAddrsEnv(cfg *config.File) string {
 	for _, host := range cfg.Hosts {
 		if host.ID != "" {
 			entries = append(entries, host.ID+"="+host.ID)
+		}
+	}
+	return strings.Join(entries, ",")
+}
+
+// mlNodeMaxConcurrentEnv formats MOCK_ML_NODE_MAX_CONCURRENT ("node=n,...")
+// for nodes with a lock cap.
+func mlNodeMaxConcurrentEnv(cfg *config.File) string {
+	var entries []string
+	for _, node := range mockMLNodes(cfg) {
+		if node.MaxConcurrent > 0 {
+			entries = append(entries, fmt.Sprintf("%s=%d", node.Name, node.MaxConcurrent))
 		}
 	}
 	return strings.Join(entries, ",")

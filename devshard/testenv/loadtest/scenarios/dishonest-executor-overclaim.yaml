@@ -2,9 +2,10 @@ schema_version: v1
 scenario: dishonest-executor-overclaim
 seed: 42
 
-# One of the four ML nodes reports usage of 3n+7 tokens on one execution in five. The hosts share the nodes, so executions
-# on it land on every host; each host's log names the inferences it executed. dishonest-executor-honest is
-# the same run with every node honest.
+# One of the four ML nodes reports usage of 3n+7 tokens on one execution in five. Each host draws only from its own
+# node, mock-openai-N on versiond-N, as a participant's dapi owns its nodes on the network, so every execution
+# on it is versiond-3's, a solo participant; each host's log names the inferences it executed.
+# dishonest-executor-honest is the same run with every node honest.
 topology:
   versiond_mode: multi
   storage: per_participant
@@ -22,12 +23,16 @@ topology:
     nodes:
       - name: mock-openai-0
         profile: fast
+        host: versiond-0
       - name: mock-openai-1
         profile: fast
+        host: versiond-1
       - name: mock-openai-2
         profile: fast
+        host: versiond-2
       - name: mock-openai-3
         profile: overclaim
+        host: versiond-3
 
 workload:
   max_in_flight: 32

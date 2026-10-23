@@ -4,6 +4,7 @@ seed: 42
 
 # The control of dishonest-executor-overclaim and dishonest-executor-wrong-answer: the same stack, load and
 # checks with every ML node honest. A violation those runs report and this one does not is the dishonest node's.
+# Each host draws only from its own node, mock-openai-N on versiond-N, as in those runs.
 topology:
   versiond_mode: multi
   storage: per_participant
@@ -21,12 +22,16 @@ topology:
     nodes:
       - name: mock-openai-0
         profile: fast
+        host: versiond-0
       - name: mock-openai-1
         profile: fast
+        host: versiond-1
       - name: mock-openai-2
         profile: fast
+        host: versiond-2
       - name: mock-openai-3
         profile: fast
+        host: versiond-3
 
 workload:
   max_in_flight: 32

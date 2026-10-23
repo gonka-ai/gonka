@@ -141,6 +141,9 @@ type MockOpenAINodeCfg struct {
 	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
 	// that host acquires it. Empty keeps the node in the shared pool.
 	Host string `yaml:"host,omitempty"`
+	// MaxConcurrent caps the AcquireMLNode locks mock-dapi hands out on this
+	// node at once, as the dapi broker caps a node; 0 is unlimited.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -768,6 +771,9 @@ func (c *File) Validate() error {
 		}
 		if node.Host != "" && !hostIDs[node.Host] {
 			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
+		}
+		if node.MaxConcurrent < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d].max_concurrent must be non-negative", i)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

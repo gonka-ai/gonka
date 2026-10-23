@@ -423,3 +423,54 @@ func TestValidateRefusesAValidationThresholdNoSimilarityCanPass(t *testing.T) {
 	s.Topology.Chain.ValidationThreshold = &ChainDecimal{Value: 958, Exponent: -3}
 	require.NoError(t, s.Validate())
 }
+
+// Test flow:
+//  1. Load the scenarios that bind every mock ML node to a host, so they pass the binding checks.
+//  2. Write the runner config of each usage-challenge scenario.
+//  3. Check each node keeps its host and cap, and each bound host is a versiond container of the config.
+//  4. Check every container owns exactly one node, so no host draws from another's, and the dishonest
+//     node is versiond-3's alone.
+func TestWriteRunnerConfigBindsMockMLNodesToHosts(t *testing.T) {
+	for _, name := range []string{"epoch-change", "faults-gateway-restart", "faults-host", "faults-ml-node", "load-ladder"} {
+		scenario, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
+		require.NoError(t, err, name)
+		for _, node := range scenario.Topology.MockML.Nodes {
+			require.NotEmpty(t, node.Host, "%s: %s", name, node.Name)
+		}
+	}
+	for _, name := range []string{"dishonest-executor-honest", "dishonest-executor-overclaim", "dishonest-executor-wrong-answer", "usage-challenge-wave", "usage-challenge-wave-honest"} {
+		scenario, err := LoadScenario(filepath.Join("scenarios", name+".yaml"))
+		require.NoError(t, err, name)
+		profiles := make(map[string]Profile)
+		for _, node := range scenario.Topology.MockML.Nodes {
+			profile, err := LoadProfile("profiles", node.Profile)
+			require.NoError(t, err, name)
+			profiles[node.Profile] = profile
+		}
+		workDir := t.TempDir()
+		require.NoError(t, writeRunnerConfig(testenvWithBaseConfig(t), workDir, scenario, profiles, false, nil), name)
+		cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
+		require.NoError(t, err, name)
+		hosts := map[string]int{}
+		for _, host := range cfg.Hosts {
+			hosts[host.ID] = 0
+		}
+		require.Len(t, cfg.MockOpenAI.Nodes, len(scenario.Topology.MockML.Nodes), name)
+		for i, node := range cfg.MockOpenAI.Nodes {
+			want := scenario.Topology.MockML.Nodes[i]
+			require.Equal(t, want.Host, node.Host, name)
+			require.Equal(t, want.MaxConcurrent, node.MaxConcurrent, name)
+			_, ok := hosts[node.Host]
+			require.True(t, ok, "%s: %s is bound to %s, not a configured host", name, node.Name, node.Host)
+			hosts[node.Host]++
+		}
+		for host, nodes := range hosts {
+			require.Equal(t, 1, nodes, "%s: %s owns %d nodes", name, host, nodes)
+		}
+		for _, node := range scenario.Topology.MockML.Nodes {
+			if profiles[node.Profile].Chaos != nil {
+				require.Equal(t, "versiond-3", node.Host, "%s: dishonest node %s", name, node.Name)
+			}
+		}
+	}
+}
