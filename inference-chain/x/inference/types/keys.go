@@ -166,7 +166,9 @@ var (
 	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
 	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
 	TrainshardWeightEpochPrefix     = collections.NewPrefix(143)
-	ParamsKey                       = []byte("p_inference")
+	// 114-119 and 130-143 are taken by v0.2.17. 141 is retired.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

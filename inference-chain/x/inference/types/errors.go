@@ -103,6 +103,7 @@ var (
 	ErrPoCChallengeAlreadyOpen               = sdkerrors.Register(ModuleName, 1201, "target already has an open PoC challenge")
 	ErrPoCChallengeCapExceeded               = sdkerrors.Register(ModuleName, 1202, "network PoC challenge cap exceeded")
 	ErrPoCChallengeWindow                    = sdkerrors.Register(ModuleName, 1204, "PoC challenge cannot be created in this window")
+	ErrInvalidBridgeKeyLink                  = sdkerrors.Register(ModuleName, 1205, "invalid bridge key link")
 	ErrTrainingDisabled                      = sdkerrors.Register(ModuleName, 1300, "training feature is disabled")
 	ErrTrainshardProposalNotFound            = sdkerrors.Register(ModuleName, 1301, "training proposal not found")
 	ErrTrainshardProposalNotOpen             = sdkerrors.Register(ModuleName, 1302, "training proposal is not open")
