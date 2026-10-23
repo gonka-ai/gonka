@@ -719,6 +719,8 @@ data class LocalInferencePair(
                 "Join validators (join1/join2) not yet on chain; " +
                     "waiting past SET_NEW_VALIDATORS before inference routing"
             )
+            // SetComputeValidators runs the block after the stage, and its CometBFT
+            // validator update is emitted one block after that (stage + 2).
             return waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         }
 
