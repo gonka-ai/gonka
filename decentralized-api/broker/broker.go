@@ -45,6 +45,8 @@ type BrokerChainBridge interface {
 	GetEpochGroupDataByModelId(pocHeight uint64, modelId string) (*types.QueryGetEpochGroupDataResponse, error)
 	GetPreservedNodesSnapshot() (*types.QueryPreservedNodesSnapshotResponse, error)
 	GetParams() (*types.QueryParamsResponse, error)
+	GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error)
+	GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error)
 }
 
 type BrokerChainBridgeImpl struct {
@@ -122,6 +124,15 @@ func (b *BrokerChainBridgeImpl) GetParams() (*types.QueryParamsResponse, error) 
 	return queryClient.Params(b.client.GetContext(), &types.QueryParamsRequest{})
 }
 
+func (b *BrokerChainBridgeImpl) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	queryClient := b.client.NewInferenceQueryClient()
+	return queryClient.PocStageRecipe(b.client.GetContext(), &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_StageHeight{StageHeight: stageHeight}})
+}
+
+func (b *BrokerChainBridgeImpl) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	return b.client.NewInferenceQueryClient().PocStageRecipe(b.client.GetContext(), &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_EpochIndex{EpochIndex: epochIndex}})
+}
+
 type Broker struct {
 	highPriorityCommands chan Command
 	lowPriorityCommands  chan Command
@@ -144,6 +155,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	ownEpochModels       map[string]bool
 }
 
 type lockEntry struct {
@@ -159,8 +171,6 @@ func (b *Broker) GetParticipantAddress() string {
 	}
 	return b.participantInfo.GetAddress()
 }
-
-const PoCBatchesBasePathV2 = "/v2/poc-batches"
 
 func hexEncodeSeed(seed []byte) string {
 	if len(seed) == 0 {
@@ -186,10 +196,6 @@ func challengeGenerateNeedsDispatch(node *NodeWithState, epochState chainphase.E
 		return true
 	}
 	return overlayInCommitLead(&epochState)
-}
-
-func GetPoCCallbackBaseURLV2(callbackUrl string) string {
-	return fmt.Sprintf("%s%s", callbackUrl, PoCBatchesBasePathV2)
 }
 
 type ModelArgs struct {
@@ -412,6 +418,43 @@ func (b *Broker) GetChainBridge() BrokerChainBridge {
 
 func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
 	return b.phaseTracker
+}
+
+func (b *Broker) EpochRecipe(epochIndex uint64) (*types.PocStageRecipe, error) {
+	if b.chainBridge == nil {
+		return nil, fmt.Errorf("missing PoC recipe for epoch %d", epochIndex)
+	}
+	resp, err := b.chainBridge.GetEpochPocRecipe(epochIndex)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("missing PoC recipe for epoch %d", epochIndex)
+	}
+	return resp.Recipe, nil
+}
+
+func (b *Broker) StageRecipe(stageHeight int64) (*types.PocStageRecipe, error) {
+	var event *types.ConfirmationPoCEvent
+	if b.phaseTracker != nil {
+		if st := b.phaseTracker.GetCurrentEpochState(); st != nil {
+			event = st.ActiveConfirmationPoCEvent
+		}
+	}
+	if event != nil && event.Recipe != nil && event.TriggerHeight == stageHeight {
+		return event.Recipe, nil
+	}
+	if b.chainBridge == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	resp, err := b.chainBridge.GetPocStageRecipe(stageHeight)
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("missing PocStageRecipe for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
@@ -912,6 +955,8 @@ type pocParams struct {
 	startPoCBlockHash   string
 	models              map[string]apiconfig.PoCModelConfigCache
 	pocStrongerRng      bool
+	scheme              types.PocScheme
+	epochModelsOnly     bool
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1223,8 +1268,13 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 			params := &pocParams{
 				startPoCBlockHeight: ch.StartHeight(),
 				startPoCBlockHash:   hexEncodeSeed(ch.Seed()),
+				epochModelsOnly:     true,
 			}
-			b.loadPoCModels(params)
+			recipe, err := b.EpochRecipe(ch.Challenge.EpochIndex)
+			if err != nil {
+				return nil, err
+			}
+			applyStageRecipe(params, recipe)
 			return params, nil
 		}
 
@@ -1234,8 +1284,12 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 			params := &pocParams{
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
+				epochModelsOnly:     true,
 			}
-			b.loadPoCModels(params)
+			if err := b.applyFrozenRecipe(params); err != nil {
+				logging.Error("Failed to load frozen confirmation PoC recipe", types.PoC, "error", err, "height", event.TriggerHeight)
+				return nil, err
+			}
 			return params, nil
 		}
 
@@ -1250,30 +1304,6 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 	}
 }
 
-// loadPoCModels fetches current PoC model configs into params.models.
-func (b *Broker) loadPoCModels(params *pocParams) {
-	paramsResp, err := b.chainBridge.GetParams()
-	if err != nil {
-		logging.Warn("Failed to query chain params", types.Nodes, "error", err)
-		return
-	}
-
-	if paramsResp.Params.PocParams != nil {
-		cachedParams := apiconfig.NewPoCParamsCache(paramsResp.Params.PocParams.GetModelConfigs())
-		params.models = make(map[string]apiconfig.PoCModelConfigCache, len(cachedParams.Models))
-		for _, modelConfig := range cachedParams.Models {
-			params.models[modelConfig.ModelId] = modelConfig
-		}
-		if b.configManager != nil {
-			_ = b.configManager.SetPoCParams(cachedParams)
-		}
-		params.pocStrongerRng = paramsResp.Params.PocParams.PocStrongerRngEnabled
-		logging.Info("Using PoC params", types.PoC,
-			"models_count", len(cachedParams.Models),
-			"poc_stronger_rng", params.pocStrongerRng)
-	}
-}
-
 func (b *Broker) resolvePoCModelForNode(
 	nodeState *NodeState,
 	nodeModels map[string]ModelArgs,
@@ -1282,9 +1312,13 @@ func (b *Broker) resolvePoCModelForNode(
 	if nodeState == nil || params == nil || len(params.models) == 0 {
 		return apiconfig.PoCModelConfigCache{}, false
 	}
+	allowed := b.pocModelFilter(params)
 
 	if len(nodeState.EpochMLNodes) == 1 {
 		for modelID := range nodeState.EpochMLNodes {
+			if allowed != nil && !allowed[modelID] {
+				return apiconfig.PoCModelConfigCache{}, false
+			}
 			modelConfig, ok := params.models[modelID]
 			if ok {
 				return modelConfig, true
@@ -1296,6 +1330,9 @@ func (b *Broker) resolvePoCModelForNode(
 	if len(nodeState.EpochMLNodes) > 1 {
 		return apiconfig.PoCModelConfigCache{}, false
 	}
+	if params.epochModelsOnly && allowed == nil {
+		return apiconfig.PoCModelConfigCache{}, false
+	}
 
 	modelIDs := make([]string, 0, len(nodeModels))
 	for modelID := range nodeModels {
@@ -1303,12 +1340,24 @@ func (b *Broker) resolvePoCModelForNode(
 	}
 	slices.Sort(modelIDs)
 	for _, modelID := range modelIDs {
+		if allowed != nil && !allowed[modelID] {
+			continue
+		}
 		modelConfig, ok := params.models[modelID]
 		if ok {
 			return modelConfig, true
 		}
 	}
 	return apiconfig.PoCModelConfigCache{}, false
+}
+
+func (b *Broker) pocModelFilter(params *pocParams) map[string]bool {
+	if !params.epochModelsOnly {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.ownEpochModels
 }
 
 func filterNodeModelsByPoCParams(nodeModels map[string]ModelArgs, pocParams apiconfig.PoCParamsCache) map[string]ModelArgs {
@@ -1394,11 +1443,13 @@ func (b *Broker) getCommandForState(
 					BlockHeight:          pocGenParams.startPoCBlockHeight,
 					BlockHash:            pocGenParams.startPoCBlockHash,
 					PubKey:               b.participantInfo.GetPubKey(),
-					CallbackUrl:          GetPoCCallbackBaseURLV2(b.callbackUrl),
+					CallbackUrl:          mlnodeclient.PoCCallbackBase(b.callbackUrl, pocGenParams.scheme),
 					TotalNodes:           totalNodes,
 					Model:                modelConfig.ModelId,
 					SeqLen:               modelConfig.SeqLen,
 					PocStrongerRng:       pocGenParams.pocStrongerRng,
+					DecodeSteps:          modelConfig.DecodeSteps,
+					Scheme:               pocGenParams.scheme,
 					WindDown:             windDown,
 					LastPocV2BlockHeight: nodeState.LastPocV2BlockHeight,
 					LastPocV2BlockHash:   nodeState.LastPocV2BlockHash,
@@ -1431,9 +1482,49 @@ func (b *Broker) queryCurrentPoCParams(epochPoCStartHeight int64) (*pocParams, e
 		startPoCBlockHeight: epochPoCStartHeight,
 		startPoCBlockHash:   hash,
 	}
-
-	b.loadPoCModels(params)
+	if err := b.applyFrozenRecipe(params); err != nil {
+		return nil, err
+	}
 	return params, nil
+}
+
+func stagePromptAndSteps(model *types.PoCModelConfig, scheme types.PocScheme) (int64, int64) {
+	if block, ok := model.SchemeParams(scheme); ok && block != nil {
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			return block.SeqLen, block.DecodeSteps
+		}
+		return block.SeqLen, 0
+	}
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		return 0, 0
+	}
+	return model.SeqLen, 0
+}
+
+func applyStageRecipe(params *pocParams, recipe *types.PocStageRecipe) {
+	params.scheme = recipe.Scheme
+	params.pocStrongerRng = recipe.PocStrongerRngEnabled
+	params.models = make(map[string]apiconfig.PoCModelConfigCache, len(recipe.Models))
+	for _, modelConfig := range recipe.Models {
+		if modelConfig == nil {
+			continue
+		}
+		seqLen, decodeSteps := stagePromptAndSteps(modelConfig, recipe.Scheme)
+		params.models[modelConfig.ModelId] = apiconfig.PoCModelConfigCache{
+			ModelId:     modelConfig.ModelId,
+			SeqLen:      seqLen,
+			DecodeSteps: decodeSteps,
+		}
+	}
+}
+
+func (b *Broker) applyFrozenRecipe(params *pocParams) error {
+	recipe, err := b.StageRecipe(params.startPoCBlockHeight)
+	if err != nil {
+		return err
+	}
+	applyStageRecipe(params, recipe)
+	return nil
 }
 
 func nodeStatusQueryWorker(broker *Broker) {
@@ -1663,29 +1754,35 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	// 2. Track which nodes are found in epoch data
 	nodesInEpoch := make(map[string]bool)
+	ownModels := make(map[string]bool)
+	ownModelsComplete := true
 
 	// 3. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
 		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
 			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
+			ownModelsComplete = false
 			continue
 		}
 		if subgroupResp == nil {
 			logging.Warn("Subgroup epoch data response is nil", types.Nodes, "model_id", modelId)
+			ownModelsComplete = false
 			continue
 		}
 
 		subgroup := subgroupResp.EpochGroupData
 		if subgroup.ModelSnapshot == nil {
 			logging.Error("ModelSnapshot is nil in subgroup", types.Nodes, "model_id", modelId)
+			ownModelsComplete = false
 			continue
 		}
 
 		// 4. Iterate through participants in the subgroup
 		for _, weightInfo := range subgroup.ValidationWeights {
 			// Check if the participant is the one this broker is managing
-			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+			if strings.EqualFold(weightInfo.MemberAddress, b.participantInfo.GetAddress()) {
+				ownModels[modelId] = true
 				// 5. Iterate through the ML nodes for this participant in the epoch data
 				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
 				// Mark these nodes as found in epoch
@@ -1694,6 +1791,12 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 				}
 			}
 		}
+	}
+
+	if ownModelsComplete {
+		b.mu.Lock()
+		b.ownEpochModels = ownModels
+		b.mu.Unlock()
 	}
 
 	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
@@ -1712,8 +1815,10 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		}
 	}
 
-	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
-	b.lastEpochPhase = epochState.CurrentPhase
+	if ownModelsComplete {
+		b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+		b.lastEpochPhase = epochState.CurrentPhase
+	}
 	b.mu.RLock()
 	allNodeIDs := make([]string, 0, len(b.nodes))
 	for nodeID := range b.nodes {
@@ -1732,6 +1837,7 @@ func (b *Broker) clearNodeEpochData() {
 	defer b.mu.Unlock()
 
 	logging.Info("Clearing node epoch data", types.Nodes)
+	b.ownEpochModels = nil
 	for _, node := range b.nodes {
 		node.State.EpochModels = make(map[string]types.Model)
 		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)

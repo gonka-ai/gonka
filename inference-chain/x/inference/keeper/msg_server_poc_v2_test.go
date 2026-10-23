@@ -23,6 +23,19 @@ func registerPoCParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr
 	}))
 }
 
+func seedPocValidationAdmission(t *testing.T, k keeper.Keeper, ctx sdk.Context, participant, modelID string, stage int64) {
+	t.Helper()
+	k.SetModel(ctx, &types.Model{Id: modelID})
+	registerPoCParticipant(t, k, ctx, participant)
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+		ParticipantAddress:       participant,
+		PocStageStartBlockHeight: stage,
+		Count:                    1,
+		RootHash:                 make([]byte, 32),
+		ModelId:                  modelID,
+	}))
+}
+
 // Test SetPocValidationV2 error handling (no panic)
 func TestSetPocValidationV2_InvalidAddress(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
@@ -113,6 +126,7 @@ func TestSubmitPocValidationsV2_DuplicateSkipped(t *testing.T) {
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
 	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor, testPoCModelID, 100)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
@@ -166,6 +180,8 @@ func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
 	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor, testPoCModelID, 100)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor2, testPoCModelID, 100)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 

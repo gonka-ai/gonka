@@ -422,3 +422,36 @@ func (am AppModule) wasExcludedInEpoch(ctx context.Context, epochIndex uint64, a
 	}
 	return has
 }
+
+// carryFallbackPocConfig retains the units/configuration of carried raw weights.
+// The failed round's recipe is immutable. ActiveParticipants records the original
+// measurement height, so confirmations and challenges still use that recipe and
+// the next regular PoC retries the requested scheme without preserving old units.
+func (am AppModule) carryFallbackPocConfig(ctx context.Context, upcoming types.Epoch) (int64, error) {
+	previous, found := am.keeper.GetEpoch(ctx, upcoming.Index-1)
+	if !found || previous == nil {
+		return 0, fmt.Errorf("missing fallback epoch")
+	}
+	source := previous.PocStartBlockHeight
+	if participants, ok := am.keeper.GetActiveParticipants(ctx, previous.Index); ok {
+		source = participants.PocStartBlockHeight
+	}
+	oldRoot, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previous.Index, "")
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, fmt.Errorf("missing fallback coefficient config")
+	}
+	root, found, err := am.keeper.GetEpochGroupDataWithError(ctx, upcoming.Index, "")
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, fmt.Errorf("missing upcoming coefficient config")
+	}
+	root.DynamicCoefficientParams = oldRoot.DynamicCoefficientParams
+	root.ConfirmationWeightScales = oldRoot.ConfirmationWeightScales
+	am.keeper.SetEpochGroupData(ctx, root)
+	return source, nil
+}

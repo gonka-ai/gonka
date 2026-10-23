@@ -25,6 +25,8 @@ func challengeApp(t *testing.T) (AppModule, keeper.Keeper, sdk.Context) {
 	require.NoError(t, k.PrecomputeSPRTValues(ctx))
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 2))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 2, PocStartBlockHeight: 0}))
+	_, freezeErr := k.FreezePocStageRecipe(ctx, 0)
+	require.NoError(t, freezeErr)
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 2000}))
 	return NewAppModule(nil, k, nil, nil, nil, nil), k, ctx
 }

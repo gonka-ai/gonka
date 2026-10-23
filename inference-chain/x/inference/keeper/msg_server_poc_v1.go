@@ -13,11 +13,15 @@ import (
 func (k msgServer) submitPocBatchV1(goCtx context.Context, msg *types.MsgSubmitPocBatch) (*types.MsgSubmitPocBatchResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Participant access gating: blocklisted accounts cannot participate in PoC.
-	if k.IsPoCParticipantBlocked(ctx, msg.Creator) {
-		k.LogError(PocFailureTag+"[SubmitPocBatch] participant is blocked from PoC", types.PoC, "participant", msg.Creator)
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	creatorAddr, err := decodePoCCreator(msg.Creator)
+	if err != nil {
+		return nil, err
 	}
+	if k.IsPoCParticipantBlocked(ctx, creatorAddr.String()) {
+		k.LogError(PocFailureTag+"[SubmitPocBatch] participant is blocked from PoC", types.PoC, "participant", creatorAddr.String())
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, creatorAddr.String())
+	}
+	creator := creatorAddr.String()
 
 	if msg.NodeId == "" {
 		k.LogError(PocFailureTag+"[SubmitPocBatch] NodeId is empty", types.PoC,
@@ -68,7 +72,7 @@ func (k msgServer) submitPocBatchV1(goCtx context.Context, msg *types.MsgSubmitP
 
 		// Store batch using trigger_height as key
 		storedBatch := types.PoCBatch{
-			ParticipantAddress:       msg.Creator,
+			ParticipantAddress:       creator,
 			PocStageStartBlockHeight: activeEvent.TriggerHeight, // Use trigger_height as key
 			ReceivedAtBlockHeight:    currentBlockHeight,
 			Nonces:                   msg.Nonces,
@@ -126,7 +130,7 @@ func (k msgServer) submitPocBatchV1(goCtx context.Context, msg *types.MsgSubmitP
 	}
 
 	storedBatch := types.PoCBatch{
-		ParticipantAddress:       msg.Creator,
+		ParticipantAddress:       creator,
 		PocStageStartBlockHeight: startBlockHeight,
 		ReceivedAtBlockHeight:    currentBlockHeight,
 		Nonces:                   msg.Nonces,
