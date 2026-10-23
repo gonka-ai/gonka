@@ -151,6 +151,7 @@ func (k Keeper) planPoCDelegations(ctx context.Context, plan *delegationCanonica
 		if err != nil {
 			return err
 		}
+		value = restoredPoCDelegation(key, value)
 		if value.ModelId != key.K1() {
 			return sdkerrors.Wrap(types.ErrIllegalState, "poc delegation model does not match store key")
 		}

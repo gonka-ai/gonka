@@ -34,6 +34,7 @@ func setupPocValidationsV2Test(t *testing.T) (keeper.Keeper, sdk.Context, types.
 	k.SetEffectiveEpochIndex(sdkCtx, 0)
 	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
 	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	k.SetModel(sdkCtx, &types.Model{Id: mainnetPoCModelID})
 	return k, sdkCtx, keeper.NewMsgServerImpl(k)
 }
 
@@ -47,8 +48,11 @@ func pocTargets(n int) []string {
 	return out
 }
 
-func submitPocValidations(t *testing.T, ctx sdk.Context, ms types.MsgServer, targets []string) storetypes.Gas {
+func submitPocValidations(t *testing.T, k keeper.Keeper, ctx sdk.Context, ms types.MsgServer, targets []string) storetypes.Gas {
 	t.Helper()
+	for _, addr := range targets {
+		seedPocValidationAdmission(t, k, ctx, addr, mainnetPoCModelID, 100)
+	}
 	msg := &types.MsgSubmitPocValidationsV2{Creator: testutil.Validator, PocStageStartBlockHeight: 100}
 	for i, addr := range targets {
 		msg.Validations = append(msg.Validations, &types.PoCValidationEntryV2{
@@ -67,7 +71,7 @@ func submitPocValidations(t *testing.T, ctx sdk.Context, ms types.MsgServer, tar
 func TestSubmitPocValidationsV2_ValueHoldsOnlyWeight(t *testing.T) {
 	k, ctx, ms := setupPocValidationsV2Test(t)
 	targets := pocTargets(3)
-	gas := submitPocValidations(t, ctx, ms, targets)
+	gas := submitPocValidations(t, k, ctx, ms, targets)
 	t.Logf("SubmitPocValidationsV2 gas, 3 entries: %d", gas)
 
 	byStage, err := k.GetPoCValidationsV2ByStage(ctx, 100)
@@ -89,7 +93,7 @@ func TestSubmitPocValidationsV2_ValueHoldsOnlyWeight(t *testing.T) {
 	}
 
 	// The trimmed value still counts as present: a repeat vote is skipped.
-	submitPocValidations(t, ctx, ms, targets[:1])
+	submitPocValidations(t, k, ctx, ms, targets[:1])
 	byStage, err = k.GetPoCValidationsV2ByStage(ctx, 100)
 	require.NoError(t, err)
 	require.Len(t, byStage[types.PoCParticipantModelKey{ParticipantAddress: targets[0], ModelID: mainnetPoCModelID}], 1)
@@ -158,25 +162,20 @@ func TestSetPocValidationV2_StageKeptOnlyForZeroWeight(t *testing.T) {
 	}
 }
 
-// Upper-case bech32 is accepted; such a record keeps every field and reads back as submitted.
+// The message path rejects an upper-case target; a keeper write with a non-canonical
+// address keeps every field and reads back as written.
 func TestSubmitPocValidationsV2_NonCanonicalAddressKeepsFields(t *testing.T) {
 	k, ctx, ms := setupPocValidationsV2Test(t)
-	up := strings.ToUpper(testutil.Executor)
+	seedPocValidationAdmission(t, k, ctx, testutil.Executor, mainnetPoCModelID, 100)
 	_, err := ms.SubmitPocValidationsV2(ctx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
 		PocStageStartBlockHeight: 100,
-		Validations:              []*types.PoCValidationEntryV2{{ParticipantAddress: up, ModelId: mainnetPoCModelID, ValidatedWeight: 5}},
+		Validations:              []*types.PoCValidationEntryV2{{ParticipantAddress: strings.ToUpper(testutil.Executor), ModelId: mainnetPoCModelID, ValidatedWeight: 5}},
 	})
 	require.NoError(t, err)
 	byStage, err := k.GetPoCValidationsV2ByStage(ctx, 100)
 	require.NoError(t, err)
-	require.Equal(t, []types.PoCValidationV2{{
-		ParticipantAddress:          up,
-		ValidatorParticipantAddress: testutil.Validator,
-		PocStageStartBlockHeight:    100,
-		ModelId:                     mainnetPoCModelID,
-		ValidatedWeight:             5,
-	}}, byStage[types.PoCParticipantModelKey{ParticipantAddress: up, ModelID: mainnetPoCModelID}])
+	require.Empty(t, byStage)
 
 	upSigner := types.PoCValidationV2{
 		ParticipantAddress:          testutil.Executor2,
@@ -191,15 +190,16 @@ func TestSubmitPocValidationsV2_NonCanonicalAddressKeepsFields(t *testing.T) {
 	require.Equal(t, []types.PoCValidationV2{upSigner}, byStage[types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor2, ModelID: mainnetPoCModelID}])
 }
 
-// Write gas per entry at mainnet address and model-id lengths.
+// Gas per entry at mainnet address and model-id lengths, admission reads included:
+// 18,340 with the full value, 14,320 trimmed.
 func TestSubmitPocValidationsV2_GasPerEntry(t *testing.T) {
-	_, ctx1, ms1 := setupPocValidationsV2Test(t)
-	one := submitPocValidations(t, ctx1, ms1, pocTargets(1))
-	_, ctx10, ms10 := setupPocValidationsV2Test(t)
-	ten := submitPocValidations(t, ctx10, ms10, pocTargets(10))
+	k1, ctx1, ms1 := setupPocValidationsV2Test(t)
+	one := submitPocValidations(t, k1, ctx1, ms1, pocTargets(1))
+	k10, ctx10, ms10 := setupPocValidationsV2Test(t)
+	ten := submitPocValidations(t, k10, ctx10, ms10, pocTargets(10))
 	perEntry := (ten - one) / 9
 	t.Logf("SubmitPocValidationsV2 gas: 1 entry %d, 10 entries %d, per entry %d", one, ten, perEntry)
-	require.Less(t, perEntry, uint64(6500), fmt.Sprintf("per-entry gas %d", perEntry))
+	require.Less(t, perEntry, uint64(15500), fmt.Sprintf("per-entry gas %d", perEntry))
 }
 
 func collectionsKey(participant, validator string) collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]] {

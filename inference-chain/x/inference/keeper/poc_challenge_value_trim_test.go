@@ -27,10 +27,21 @@ func challengeCommitMsg() *types.MsgPoCChallengeStoreCommit {
 	}
 }
 
+// seedChallengeCommitter makes the target an epoch-2 member serving the mainnet model,
+// which CheckEpochModelCommit requires of a challenge commit.
+func seedChallengeCommitter(t *testing.T, k keeper.Keeper, ctx sdk.Context) {
+	t.Helper()
+	k.SetModel(ctx, &types.Model{Id: mainnetPoCModelID})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      2,
+		Participants: []*types.ActiveParticipant{{Index: testutil.Executor, Models: []string{mainnetPoCModelID}}},
+	}))
+}
+
 func TestPoCChallengeStoreCommit_ValueOmitsKeyFields(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 100)
 	seedOpenChallenge(t, k, ctx, 50)
-	k.SetModel(ctx, &types.Model{Id: mainnetPoCModelID})
+	seedChallengeCommitter(t, k, ctx)
 	ms := keeper.NewMsgServerImpl(k)
 
 	gctx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
@@ -89,6 +100,7 @@ func challengeVoteCtx(t *testing.T, k keeper.Keeper, ctx sdk.Context) sdk.Contex
 		Index:   testutil.Validator,
 		Address: testutil.Validator,
 	}))
+	k.SetModel(ctx, &types.Model{Id: mainnetPoCModelID})
 	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
 		EpochIndex:            2,
 		GenerationStartHeight: 80,
@@ -141,24 +153,22 @@ func TestSubmitPoCChallengeValidations_ValueOmitsKeyFields(t *testing.T) {
 	}}, vals)
 }
 
-func TestSubmitPoCChallengeValidations_NonCanonicalAddressKeepsFields(t *testing.T) {
+// An upper-case target is not a canonical address: the vote is skipped, not stored.
+func TestSubmitPoCChallengeValidations_NonCanonicalTargetIsSkipped(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 100)
 	seedOpenChallenge(t, k, ctx, 50)
 	voteCtx := challengeVoteCtx(t, k, ctx)
-	upper := strings.ToUpper(testutil.Executor)
-	submitChallengeVote(t, k, voteCtx, upper)
+	submitChallengeVote(t, k, voteCtx, strings.ToUpper(testutil.Executor))
 
 	vals, err := k.ListChallengeValidations(ctx, testutil.Executor)
 	require.NoError(t, err)
-	require.Len(t, vals, 1)
-	require.Equal(t, upper, vals[0].ParticipantAddress)
-	require.Equal(t, mainnetPoCModelID, vals[0].ModelId)
+	require.Empty(t, vals)
 }
 
 func TestPoCChallengeStoreCommit_NonCanonicalAddressKeepsFields(t *testing.T) {
 	k, ctx, _ := setupChallengeCreate(t, 100)
 	seedOpenChallenge(t, k, ctx, 50)
-	k.SetModel(ctx, &types.Model{Id: mainnetPoCModelID})
+	seedChallengeCommitter(t, k, ctx)
 	upper := strings.ToUpper(testutil.Executor)
 	msg := challengeCommitMsg()
 	msg.Creator = upper

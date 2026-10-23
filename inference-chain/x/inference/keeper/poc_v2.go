@@ -323,7 +323,12 @@ func (k Keeper) GetMLNodeWeightDistribution(ctx context.Context, pocStageStartBl
 	if err != nil {
 		return types.MLNodeWeightDistribution{}, err
 	}
-	return k.MLNodeWeightDistributions.Get(ctx, pocV2StoreCommitKey(pocStageStartBlockHeight, addr, modelID))
+	key := pocV2StoreCommitKey(pocStageStartBlockHeight, addr, modelID)
+	d, err := k.MLNodeWeightDistributions.Get(ctx, key)
+	if err != nil {
+		return d, err
+	}
+	return restoredMLNodeWeightDistribution(key, d), nil
 }
 
 // SetPoCV2StoreCommit stores a PoCV2StoreCommit (for testing). Returns error on invalid address or storage failure.
