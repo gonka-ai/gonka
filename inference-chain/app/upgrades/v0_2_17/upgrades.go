@@ -1,15 +1,17 @@
-// Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes
-// and writes the epoch-validation admission caps.
+// Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes,
+// writes the epoch-validation admission caps, and enables the wasm fee group.
 //
 // Moves flat recipes and dynamic coefficients into PREFILL blocks, adds DECODE
 // templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
 // on the model. Admission defaults are written when stored params do not have
-// them yet, then retained accounts and weights are repaired.
+// them yet, then retained accounts and weights are repaired. After migrations,
+// the wasm fee group is enabled.
 package v0_2_17
 
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
@@ -17,6 +19,9 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// wasmMinGasPriceNgonka matches the cosmos group rate installed by v0.2.16.
+const wasmMinGasPriceNgonka uint64 = 1
 
 func CreateUpgradeHandler(
 	mm *module.Manager,
@@ -58,14 +63,57 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 
+		// This binary ships wasmd v0.54.11 and wasmvm v2.2.10, which also selects
+		// ibc-go v8.8.0. Wasm ConsensusVersion stays 4 and ibc stays 6, so
+		// RunMigrations does not touch that state. Reply call-depth limiting,
+		// pin/unpin gas, and stricter ICA ProtoJSON checks take effect here.
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
+			return toVM, err
+		}
+
+		// After migrations, so a fee-params migration cannot drop the wasm group.
+		if err := enableWasmFeeGroup(ctx, k); err != nil {
 			return toVM, err
 		}
 
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+// enableWasmFeeGroup turns on the compiled wasm fee group at the cosmos rate.
+// Epoch and cosmos groups already on the chain are left in place. A wasm
+// price governance already set above zero is kept. Liquidity-pool execute
+// bypass stays a separate ante decorator and is not changed here.
+func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.FeeParams == nil {
+		params.FeeParams = types.DefaultFeeParams()
+	}
+	fp := params.FeeParams
+
+	group := fp.GroupByName(types.FeeGroupWasm)
+	if group == nil {
+		group = &types.FeeGroup{Name: types.FeeGroupWasm, MinGasPrice: wasmMinGasPriceNgonka}
+		fp.Groups = append(fp.Groups, group)
+	} else if group.MinGasPrice == 0 {
+		group.MinGasPrice = wasmMinGasPriceNgonka
+	}
+	if !slices.Contains(fp.EnabledFeeGroups, types.FeeGroupWasm) {
+		fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupWasm)
+	}
+	if err := fp.Validate(); err != nil {
+		return err
+	}
+
+	k.LogInfo("enabled wasm fee group", types.Upgrades,
+		"min_gas_price", group.MinGasPrice,
+		"enabled_fee_groups", fp.EnabledFeeGroups)
+	return k.SetParams(ctx, params)
 }
 
 // migrateEpochValidationParams writes the admission caps when the stored
