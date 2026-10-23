@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"devshard/user"
 )
 
 type GatewaySettings struct {
@@ -330,6 +332,8 @@ type GatewayStore interface {
 	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
 	DeleteParticipantThrottle(ctx context.Context, key string) error
 	LoadParticipantThrottles(ctx context.Context) ([]ParticipantThrottleRow, error)
+	user.InferenceCompletionStore
+	HasInferenceCompletion(escrowID string, nonce uint64) (bool, error)
 }
 
 type GatewayRotationStatus struct {

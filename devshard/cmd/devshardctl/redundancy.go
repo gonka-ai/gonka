@@ -58,7 +58,7 @@ var (
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
-const longResponseFailureExemption = 280 * time.Second
+const longResponsePerfExemption = 280 * time.Second
 
 var (
 	InterChunkStallLogThreshold = 30 * time.Second
@@ -4091,6 +4091,9 @@ func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, error
 	if errorMiss {
 		return true
 	}
+	if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok {
+		return !canonical.IsNonceCanonicalFinished(inf.nonce)
+	}
 	return !session.IsNonceFinished(inf.nonce)
 }
 
@@ -4233,6 +4236,9 @@ func errorMissRunnable(inf *inflight, session *user.Session) bool {
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {
 	if session != nil && isEmptyStreamAttempt(inf) && session.IsNonceFinished(inf.nonce) {
+		if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok && !canonical.IsNonceCanonicalFinished(inf.nonce) {
+			return "", false
+		}
 		return "empty_stream_without_non_empty_winner", true
 	}
 	return "", false
@@ -4245,7 +4251,7 @@ func skipEmptyStreamTimeout(inf *inflight, session nonceFinishedChecker, errorMi
 	return emptyStreamWithoutWinnerTimeoutSkipReason(inf, session)
 }
 
-func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
+func longResponsePerfExempt(inf *inflight, session *user.Session) bool {
 	if inf == nil || session == nil || inf.probe || inf.sendTime.IsZero() {
 		return false
 	}
@@ -4255,14 +4261,14 @@ func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
 	if inf.contentSource == "" {
 		return false
 	}
-	return time.Since(inf.sendTime) >= longResponseFailureExemption
+	return time.Since(inf.sendTime) >= longResponsePerfExemption
 }
 
-func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
+func (e *Redundancy) longResponsePerfExempt(inf *inflight) bool {
 	if e == nil {
 		return false
 	}
-	return longResponseFailureExempt(inf, e.session)
+	return longResponsePerfExempt(inf, e.session)
 }
 
 func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool {
@@ -4504,7 +4510,7 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		errors.Is(inf.processErr, user.ErrLocalRootUnavailable)) {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	if inf != nil && inf.preludePressure.Load() {
@@ -4735,7 +4741,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		// sample for an OpenAI-style error stream.
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
@@ -4772,7 +4778,7 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 	if inf.contentChunks.Load() == 0 {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	if !inf.hasRecordedStall() && (inf.err != nil || inf.processErr != nil) {
@@ -4922,7 +4928,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		// The list is what the protocol still owes a vote, not what the request failed on: a winner whose
 		// answer reached the caller can still leave its nonce open, and an open nonce is owed one either way.
-		if !ok || !e.session.IsNonceFinished(inf.nonce) {
+		if !ok || !e.session.IsNonceCanonicalFinished(inf.nonce) {
 			failed = append(failed, inf)
 		} else {
 			inf.endAttemptSpan()
@@ -5077,17 +5083,6 @@ func (e *Redundancy) voteTimeoutForFailedInflight(ctx context.Context, inf *infl
 	}
 	if failStage == "timeout_failed" && deliveredWholeAnswer(inf) {
 		logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
-	}
-	if e.longResponseFailureExempt(inf) {
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-			"host", inf.hostID,
-			"reason", "long_response_after_content",
-			"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
-			"content_chunks", inf.contentChunks.Load(),
-			"output_bytes", inf.outputBytes.Load(),
-		)
-		e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
-		return
 	}
 	callerOwnsCleanup = e.runOrScheduleHandleTimeout(ctx, inf, params, errorMiss, failStage)
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"common/chainoracle/blocks"
 	"context"
 	"crypto/sha256"
+	"devshard/heightsync"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -625,6 +627,7 @@ type testProxyEnv struct {
 	verifiers   []*verifierClient
 	group       []types.SlotAssignment
 	hostSigners []*signing.Secp256k1Signer
+	chain       *testChain
 }
 
 func zeroReceiptTimeout(t *testing.T) {
@@ -710,6 +713,94 @@ func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.In
 
 func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64) *testProxyEnv {
 	t.Helper()
+	return setupTestProxyFloor(t, numHosts, engines, verifierAccept, balance, feePerNonce, nil)
+}
+
+func setupLiveFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
+	t.Helper()
+	env := setupSeededFloorProxy(t, numHosts, engines, verifierAccept, &testChain{live: true, start: time.Now()})
+	env.session.StartHeartbeatLoop()
+	return env
+}
+
+func setupManualFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
+	t.Helper()
+	chain := &testChain{start: time.Now()}
+	chain.manual.Store(100)
+	chain.clock.Store(time.Now().UnixNano())
+	return setupSeededFloorProxy(t, numHosts, engines, verifierAccept, chain)
+}
+
+func setupSeededFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, chain *testChain) *testProxyEnv {
+	t.Helper()
+	env := setupTestProxyFloor(t, numHosts, engines, verifierAccept, 1_000_000, 0, chain)
+	_, err := env.session.SendInference(context.Background(), defaultParams())
+	require.NoError(t, err)
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
+	f, _, _ := env.sm.HeightSyncFloorAsOf(env.session.Nonce() + 1)
+	require.NotZero(t, f, "the bootstrap inference's finish seeds the floor")
+	return env
+}
+
+func (e *testProxyEnv) raiseFloor(t *testing.T, height uint64) {
+	t.Helper()
+	require.NotNil(t, e.chain)
+	require.False(t, e.chain.live)
+	e.chain.manual.Store(int64(height))
+	for range 8 {
+		e.chain.clock.Add(int64(time.Hour))
+		_ = e.session.MaybeHeartbeat(context.Background())
+		_ = e.session.SendPendingDiff(context.Background())
+		if f, _, _ := e.sm.HeightSyncFloorAsOf(e.session.Nonce() + 1); f >= height {
+			return
+		}
+	}
+	f, _, _ := e.sm.HeightSyncFloorAsOf(e.session.Nonce() + 1)
+	require.GreaterOrEqual(t, f, height)
+}
+
+func (e *testProxyEnv) floorReceipt(t *testing.T, nonce uint64, confirmedAt int64) *host.HostResponse {
+	t.Helper()
+	record, tracked := e.sm.GetInference(nonce)
+	require.True(t, tracked)
+	stamp := testutil.ReceiptStamp{}
+	if record.StartedAtHeight > 0 {
+		stamp = testutil.ReceiptStamp{Height: record.StartedAtHeight, Hash: []byte{0xaa}}
+	}
+	sig := testutil.SignExecutorReceipt(t, e.verifiers[record.ExecutorSlot].signer, "escrow-proxy", nonce,
+		record.PromptHash, record.Model, record.InputLength, record.MaxTokens, stamp)
+	return &host.HostResponse{Nonce: nonce, Receipt: sig, ConfirmedAt: confirmedAt, ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}
+}
+
+type testChain struct {
+	live   bool
+	start  time.Time
+	manual atomic.Int64
+	clock  atomic.Int64
+}
+
+func (c *testChain) height() int64 {
+	if c.live {
+		return 100 + int64(time.Since(c.start)/(10*time.Millisecond))
+	}
+	return c.manual.Load()
+}
+
+func (c *testChain) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(c.height(), time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+}
+func (c *testChain) At(ctx context.Context, _ int64) (*blocks.Header, error) { return c.Latest(ctx) }
+func (c *testChain) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+func (c *testChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
+
+func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64, chain *testChain) *testProxyEnv {
+	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
 		hostSigners[i] = testutil.MustGenerateKey(t)
@@ -736,7 +827,11 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 		} else {
 			engine = stub.NewInferenceEngine()
 		}
-		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, host.WithGrace(100))
+		hostOpts := []host.HostOption{host.WithGrace(100)}
+		if chain != nil {
+			hostOpts = append(hostOpts, host.WithChainOracle(chain))
+		}
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, hostOpts...)
 		require.NoError(t, err)
 		kc := &killableClient{inner: &user.InProcessClient{Host: h}}
 		killables[i] = kc
@@ -751,7 +846,19 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 	}
 
 	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier)
-	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier)
+	var sessionOpts []user.SessionOption
+	if chain != nil {
+		sessionOpts = append(sessionOpts,
+			user.WithHeightSyncCadence(10, uint64(numHosts)),
+			user.WithObservedHeight(func() (uint64, []byte, bool) { return uint64(chain.height()), []byte{0xaa}, true }),
+		)
+		if chain.live {
+			sessionOpts = append(sessionOpts, user.WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: 20 * time.Millisecond}))
+		} else {
+			sessionOpts = append(sessionOpts, user.WithHeartbeatClock(func() time.Time { return time.Unix(0, chain.clock.Load()) }))
+		}
+	}
+	session, err := user.NewSession(userSM, userKey, "escrow-proxy", group, clients, verifier, sessionOpts...)
 	require.NoError(t, err)
 
 	perf := NewPerfTracker(nil)
@@ -779,6 +886,7 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 		verifiers:   verifiers,
 		group:       group,
 		hostSigners: hostSigners,
+		chain:       chain,
 	}
 }
 
@@ -856,7 +964,7 @@ func applicableResponse(t *testing.T, env *testProxyEnv, inferenceID uint64) *ho
 	return &host.HostResponse{
 		Nonce: inferenceID,
 		Receipt: testutil.SignExecutorReceipt(t, env.hostSigners[idx], "escrow-proxy", inferenceID,
-			rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt),
+			rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens),
 		ConfirmedAt: confirmedAt,
 		Mempool:     []*types.DevshardTx{applicableFinishTx(t, env, inferenceID)},
 	}
@@ -1387,10 +1495,10 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
-			sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
+			sendTime: time.Now().Add(-(longResponsePerfExemption + time.Second)),
 		}
-		inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
-		inf.setFirstTokenAt(time.Now().Add(-(longResponseFailureExemption + 800*time.Millisecond)))
+		inf.setReceiptAt(time.Now().Add(-(longResponsePerfExemption + 900*time.Millisecond)))
+		inf.setFirstTokenAt(time.Now().Add(-(longResponsePerfExemption + 800*time.Millisecond)))
 		inf.contentChunks.Store(1)
 		inf.outputChunks.Store(1)
 		inf.contentSource = "delta.content"
@@ -1625,9 +1733,10 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 }
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	env := setupTestProxy(t, 1, nil, true)
 	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
 
 	inf := &inflight{
 		nonce: prepared.Nonce(),
@@ -1644,13 +1753,19 @@ func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) 
 	require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), inf.resp, prepared.Nonce()))
 
 	reason, skip = emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
+	require.False(t, skip, "a queued finish has not landed yet")
+	require.Empty(t, reason)
+
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
+
+	reason, skip = emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
 
 	require.True(t, skip)
 	require.Equal(t, "empty_stream_without_non_empty_winner", reason)
 }
 
 func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	voteGate := make(chan struct{})
 	releaseVote := sync.OnceFunc(func() { close(voteGate) })
 	t.Cleanup(releaseVote)
@@ -1816,8 +1931,9 @@ func TestRunInference_ACallerSeesTheContextLengthRejectionThatEndedTheRequest(t 
 func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	shortRefusalWindow(t)
-	env := setupTestProxy(t, 3, nil, true)
-	env.killables[1].inner = &errorStreamWithoutFinishClient{errorEvent: contextLengthErrorEvent}
+	env := setupManualFloorProxy(t, 3, nil, true)
+	rejecting := int((env.session.Nonce() + 1) % 3)
+	env.killables[rejecting].inner = &errorStreamWithoutFinishClient{errorEvent: contextLengthErrorEvent}
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 
 	var buf bytes.Buffer
@@ -1826,9 +1942,10 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	var hostErr *hostApplicationError
 	require.ErrorAs(t, err, &hostErr)
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
+	env.raiseFloor(t, 200)
 	// Not-yet-due timeout votes sleep off the drain barrier and apply at the
 	// protocol deadline, so Missed can land after the outer cleanup Done.
-	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) >= 1 }, 3*time.Second, 20*time.Millisecond,
+	require.Eventually(t, func() bool { return missesForSlot(t, env, rejecting) >= 1 }, 3*time.Second, 20*time.Millisecond,
 		"the host that rejected the prompt still owes its nonce a timeout vote")
 }
 
@@ -1924,13 +2041,13 @@ func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	require.NoError(t, err)
 
 	start := &types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	}
 	_, err = sm.ApplyLocal(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: start}}})
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}})
 	require.NoError(t, err)
 	finish := &types.MsgFinishInference{
@@ -2499,11 +2616,13 @@ func seedFirstTokenFallbackDelay(t *testing.T, perf *PerfTracker, model string, 
 	}
 }
 
-type receiptThenHangClient struct{}
+type receiptThenHangClient struct {
+	receipt func(nonce uint64) *host.HostResponse
+}
 
-func (receiptThenHangClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+func (c *receiptThenHangClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	if receiptHandler != nil {
-		receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+		receiptHandler(c.receipt(req.Nonce))
 	}
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -2528,11 +2647,13 @@ func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
 func TestRunInference_AllHostsHangAfterReceiptFailsClosed(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
-	env := setupTestProxyWithClients(t, []user.HostClient{
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-		receiptThenHangClient{},
-	})
+	hang := &receiptThenHangClient{}
+	env := setupTestProxyWithClients(t, []user.HostClient{hang, hang, hang})
+	hang.receipt = func(nonce uint64) *host.HostResponse {
+		resp := applicableResponse(t, env, nonce)
+		resp.Mempool = nil
+		return resp
+	}
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
 
@@ -2588,9 +2709,9 @@ func TestRunInference_OneHostHangAfterReceiptFailovers(t *testing.T) {
 func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 
-	held := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second))}
+	held := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-(longResponsePerfExemption + time.Second))}
 
-	require.False(t, longResponseFailureExempt(held, env.session),
+	require.False(t, longResponsePerfExempt(held, env.session),
 		"holding the stream open without a single content chunk must not buy an exemption")
 }
 
@@ -2598,7 +2719,7 @@ func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {
 // stream open used to earn the same exemption as one that was still generating.
 func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	longAgo := time.Now().Add(-(longResponseFailureExemption + time.Second))
+	longAgo := time.Now().Add(-(longResponsePerfExemption + time.Second))
 
 	generating := &inflight{hostIdx: 0, nonce: 1, sendTime: longAgo, contentSource: "delta.content"}
 	generating.contentChunks.Store(1)
@@ -2606,9 +2727,9 @@ func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	erroring := &inflight{hostIdx: 0, nonce: 2, sendTime: longAgo}
 	erroring.contentChunks.Store(1)
 
-	require.True(t, longResponseFailureExempt(generating, env.session),
-		"a host still producing content must not be voted against for being slow")
-	require.False(t, longResponseFailureExempt(erroring, env.session),
+	require.True(t, longResponsePerfExempt(generating, env.session),
+		"long content may avoid a performance strike for being slow")
+	require.False(t, longResponsePerfExempt(erroring, env.session),
 		"one error event is not content, and holding the stream after it must not buy an exemption")
 }
 
@@ -2616,7 +2737,7 @@ func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 // answers for the open nonce. A winner that delivered is not a failed request, so the vote has to reach
 // it through the settled path rather than by calling the request a failure.
 func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
 	prepared, err := env.session.PrepareInference(context.Background(), params)

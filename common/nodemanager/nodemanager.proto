@@ -195,6 +195,7 @@ message ListNodeCapacityResponse {
 // GetBlockHeaderRequest looks up a committed header. Height 0 means Latest().
 message GetBlockHeaderRequest {
   int64 height = 1;
+  int64 wait_ms = 2;
 }
 
 message GetBlockHeaderResponse {

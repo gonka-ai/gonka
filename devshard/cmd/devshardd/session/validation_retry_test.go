@@ -1324,9 +1324,9 @@ func newFinishedRetryFixtureWithHosts(t *testing.T, escrowID string, hostCount i
 	group := testutil.MakeGroup(hosts)
 	engine := stub.NewInferenceEngine()
 	diff1 := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  1,

@@ -68,7 +68,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	if payload == nil {
 		return nil, 0, nil, nil
 	}
-	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return nil, 0, nil, nil
 	}
 
@@ -81,7 +81,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	if err != nil {
 		return nil, 0, nil, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
+	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
 
 	if _, dup := h.executing[inferenceID]; dup {
 		return sig, confirmedAt, nil, nil

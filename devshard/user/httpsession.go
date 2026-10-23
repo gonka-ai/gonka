@@ -48,6 +48,8 @@ type HTTPSessionConfig struct {
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
 	Heartbeat *heightsync.HeartbeatConfig
+
+	HeaderTimes state.HeaderTimeSource
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
@@ -126,6 +128,7 @@ type LocalSessionConfig struct {
 	PrivateKeyHex string
 	EscrowID      string
 	StoragePath   string
+	HeaderTimes   state.HeaderTimeSource
 }
 
 // NewLocalSession rehydrates a Session from local SQLite storage without
@@ -160,7 +163,11 @@ func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, err
 	// No host clients: read-only sessions never dispatch inferences. The
 	// slice length must match the group so NewSession's invariant holds.
 	clients := make([]HostClient, len(meta.Group))
-	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, "", meta.Group, clients)
+	var smOpts []state.SMOption
+	if cfg.HeaderTimes != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(cfg.HeaderTimes))
+	}
+	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, "", meta.Group, clients, smOpts...)
 	if err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("recover session: %w", err)
@@ -410,6 +417,9 @@ func hostClientsFromCache(cache map[string]HostClient) []HostClient {
 func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.SMOption {
 	if cfg.Heartbeat != nil {
 		extra = append(extra, state.WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	if cfg.HeaderTimes != nil {
+		extra = append(extra, state.WithHeaderTimes(cfg.HeaderTimes))
 	}
 	return extra
 }
