@@ -105,6 +105,11 @@ func TestConfirmationPoCTriggerReadsUpgradeStateOnlyAfterDraw(t *testing.T) {
 			epoch := types.Epoch{Index: 5, PocStartBlockHeight: 10000}
 			ec := types.NewEpochContext(epoch, *ep)
 			height := ec.SetNewValidators() + 1
+			// the trigger needs the epoch's frozen regular PoC recipe
+			require.NoError(t, k.SetEpoch(ctx, &epoch))
+			require.NoError(t, k.LatestPocStageRecipe.Set(ctx, types.PocStageRecipe{
+				StageHeight: epoch.PocStartBlockHeight, Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+			}))
 			windowEnd := ec.NextEpochContext().PocStartBlockHeight - ep.InferenceValidationCutoff -
 				(ep.PocStageDuration + ep.PocExchangeDuration + ep.PocValidationDelay + ep.PocValidationDuration +
 					ep.SetNewValidatorsDelay + ep.ConfirmationPocSafetyWindow)

@@ -69,7 +69,7 @@ func (k Keeper) PruneWithParams(ctx context.Context, params types.Params, curren
 	if err != nil {
 		return err
 	}
-	return k.PruneConfirmationPoC(ctx, currentEpochIndex)
+	return k.pruneConfirmationPoCWithParams(ctx, params, currentEpochIndex)
 }
 
 func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2] {
