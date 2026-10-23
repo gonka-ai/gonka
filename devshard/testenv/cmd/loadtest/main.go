@@ -24,11 +24,12 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
-	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m, plus the promises hold")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
 	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
-	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
+	promises := flag.Bool("promises", false, "turn on diagnostics.export, complete logs and assertions.promises for this run, whatever the scenario says, and hold the run to the system promises")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and, for a run held to the promises, promises.json and promises.md, and print the report, without a stack")
 	flag.Parse()
 	if *recheckDir != "" {
 		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
@@ -59,7 +60,11 @@ func main() {
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
-	scenario, err := loadtest.LoadScenario(*scenarioPath)
+	load := loadtest.LoadScenario
+	if *promises {
+		load = loadtest.LoadScenarioWithPromises
+	}
+	scenario, err := load(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,7 +78,7 @@ func main() {
 		log.Fatal("timeout must be positive")
 	}
 	if *runTimeout == 0 {
-		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute)
+		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute) + scenario.PromisesWait()
 	}
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
@@ -102,6 +107,7 @@ func main() {
 		MetricsInterval: *metricsInterval,
 		StrictXFail:     *strictXFail,
 		Build:           build,
+		Promises:        *promises,
 	})
 	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)

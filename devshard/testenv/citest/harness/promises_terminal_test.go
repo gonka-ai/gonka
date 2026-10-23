@@ -36,7 +36,7 @@ func TestPromiseDeadlineJudgedPerHost(t *testing.T) {
 	in.ObservedUntil = t0.Add(200 * time.Second)
 	rep := CheckPromises(in)
 	require.Empty(t, violations(rep, InferenceClosesInTime), "within the deadline is allowed")
-	require.False(t, rep.Checked[InferenceClosesInTime].Measured, "no deadline passed: the check could not fire")
+	require.Equal(t, 1, rep.Checked[InferenceClosesInTime].Judged, "host a's Finish is final; host b is still within its deadline")
 	require.Len(t, rep.Open, 1)
 
 	in.ObservedUntil = t0.Add(300 * time.Second)
@@ -98,7 +98,7 @@ func TestPromiseServedFinishOnEveryHost(t *testing.T) {
 	in.ObservedUntil = t0.Add(time.Minute)
 	rep := CheckPromises(in)
 	require.Empty(t, violations(rep, ServedRequestFinished), "a Finish still within the deadline may be in flight")
-	require.False(t, rep.Checked[ServedRequestFinished].Measured)
+	require.Equal(t, 1, rep.Checked[ServedRequestFinished].Judged, "request 1 has its Finish on both hosts; request 2 still lacks one on b")
 
 	in.ObservedUntil = t0.Add(time.Hour)
 	rep = CheckPromises(in)
@@ -210,6 +210,35 @@ func writeOpenStart(t *testing.T, dir string) {
 	require.NoError(t, os.WriteFile(diffs, []byte("escrow_id,nonce,txs_proto,post_state_root\n"+
 		"4,1,"+diff(1, start, heightAck(3, 101))+",\\xaa\n4,2,"+diff(2, confirmStart(1, 100))+",\\xbb\n"), 0o644))
 	writeChainHeaders(t, filepath.Join(dir, "export"), map[uint64]time.Time{100: time.Unix(at, 0), 101: time.Unix(at+1, 0)})
+}
+
+// Test flow:
+//  1. Two hosts hold a served inference, finished on both, on an escrow with the chain's default
+//     timeouts (60 s and 32 min); the export comes a minute after the start, within its deadline.
+//  2. Check the run.
+//  3. Check both deadline checks judge it: a Finish on the chain is final, so the inference left
+//     Started in time on each host and the request has its Finish on every host, whatever the
+//     deadline, and nothing is listed as open.
+func TestPromiseDeadlineChecksJudgeWhatClosedBeforeTheExport(t *testing.T) {
+	finished := func() *InferenceFacts {
+		return &InferenceFacts{Started: true, StartedAt: t0.Unix(), Confirmed: true, ConfirmedAt: t0.Unix(), Finished: true}
+	}
+	in := PromiseInput{
+		Diffs: ExportDiffs{Hosts: []HostChain{
+			hostChain("a", map[uint64]*InferenceFacts{1: finished()}, nil),
+			hostChain("b", map[uint64]*InferenceFacts{1: finished()}, nil),
+		}},
+		Requests:      []ClientRequest{served(1, 200)},
+		Timeouts:      map[string]EscrowTimeouts{"2": {Refusal: 60, Execution: 1920}},
+		ObservedUntil: t0.Add(time.Minute),
+		Slack:         DeadlineSlack,
+	}
+	rep := CheckPromises(in)
+	require.Empty(t, violations(rep, InferenceClosesInTime))
+	require.Empty(t, violations(rep, ServedRequestFinished))
+	require.Equal(t, 2, rep.Checked[InferenceClosesInTime].Judged, "%+v", rep.Checked[InferenceClosesInTime])
+	require.Equal(t, 1, rep.Checked[ServedRequestFinished].Judged, "%+v", rep.Checked[ServedRequestFinished])
+	require.Empty(t, rep.Open)
 }
 
 // Test flow:
@@ -363,4 +392,42 @@ func TestExportTimeIsWhenTheExportStarted(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, at.Equal(m.StartedAt), "deadlines are judged against the start of the export")
 	require.WithinDuration(t, started, at, time.Second)
+}
+
+// Test flow:
+//  1. Three hosts hold escrow 2. Inference 1 is finished on every host; inference 2 is finished on
+//     host a and still Started on host b; inference 3 is Pending on host a only; inference 4 is a
+//     burned nonce; host c is only behind on the escrow. Refusal 60 s, execution 1920 s.
+//  2. Ask, a minute after the start, which inferences a later export could judge otherwise, then
+//     again once their deadlines passed.
+//  3. Check inferences 2 and 3 are named with their latest deadline on any host, the finished, the
+//     burned and the lagging host's are not, and nothing is named past the deadlines.
+func TestPromiseDeadlinesAheadNameWhatALaterExportCouldJudgeOtherwise(t *testing.T) {
+	facts := func(confirmed, finished bool) *InferenceFacts {
+		f := &InferenceFacts{Started: true, StartedAt: t0.Unix(), Finished: finished}
+		if confirmed {
+			f.ConfirmedAt, f.Confirmed = t0.Unix()+1, true
+		}
+		return f
+	}
+	ghost := &InferenceFacts{Started: true, StartedAt: t0.Unix(), PromptHash: ghostProbePromptHash}
+	in := PromiseInput{
+		Diffs: ExportDiffs{Hosts: []HostChain{
+			hostChain("a", map[uint64]*InferenceFacts{1: facts(true, true), 2: facts(true, true), 3: facts(false, false), 4: ghost},
+				map[uint64]string{1: "aa", 2: "bb", 3: "cc"}),
+			hostChain("b", map[uint64]*InferenceFacts{1: facts(true, true), 2: facts(true, false)}, map[uint64]string{1: "aa", 2: "bb", 3: "cc"}),
+			hostChain("c", map[uint64]*InferenceFacts{1: facts(true, false), 5: facts(true, false)}, map[uint64]string{1: "aa"}),
+		}},
+		Timeouts:      map[string]EscrowTimeouts{"2": {Refusal: 60, Execution: 1920}},
+		ObservedUntil: t0.Add(time.Minute),
+		Slack:         DeadlineSlack,
+	}
+	grace := TimeoutSkew + TimeoutVoteWindow + TimeoutSweepPeriod + DeadlineSlack
+	require.Equal(t, []InferenceDue{
+		{InferenceRef: ref(2), Due: t0.Add(time.Second + 1920*time.Second + grace)},
+		{InferenceRef: ref(3), Due: t0.Add(60*time.Second + grace)},
+	}, DeadlinesAhead(in))
+
+	in.ObservedUntil = t0.Add(time.Hour)
+	require.Empty(t, DeadlinesAhead(in))
 }

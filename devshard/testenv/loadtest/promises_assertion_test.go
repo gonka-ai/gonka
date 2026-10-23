@@ -75,8 +75,9 @@ func honestExecution(node string) mockopenai.RequestRecord {
 }
 
 // Test flow:
-//  1. A run whose checks judge every inference, beside the same run exported before any deadline
-//     passed.
+//  1. A run whose checks judge every inference, beside the same run exported a minute after the
+//     start with its inference still Started on the chain: within its deadline, so neither deadline
+//     check can judge it.
 //  2. Hold each to the promises.
 //  3. Check the first passes, and the second is not valid: the deadline checks judged nothing.
 func TestPromisesAssertionRefusesARunWhoseDeadlineChecksJudgedNothing(t *testing.T) {
@@ -87,6 +88,12 @@ func TestPromisesAssertionRefusesARunWhoseDeadlineChecksJudgedNothing(t *testing
 	require.True(t, check.Passed, "%+v", check)
 
 	dir = writePromisesRun(t, honestExecution("mock-openai-0"))
+	diffs := filepath.Join(dir, "export", "postgres", "public.devshard_diffs.csv")
+	raw, err := os.ReadFile(diffs)
+	require.NoError(t, err)
+	lines := strings.SplitAfter(string(raw), "\n")
+	require.Len(t, lines, 5, "header, Start, ConfirmStart, Finish")
+	require.NoError(t, os.WriteFile(diffs, []byte(strings.Join(lines[:3], "")), 0o644))
 	manifest, err := json.Marshal(harness.ExportManifest{ExportedAt: time.Unix(1_792_350_000, 0).Add(time.Minute), Complete: true})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "export", "EXPORT-MANIFEST.json"), manifest, 0o644))
@@ -203,8 +210,8 @@ func TestPromisesAssertionRefusesARunWhoseNodeBindingDidNotHold(t *testing.T) {
 // Test flow:
 //  1. Load each scenario that holds a run to the promises.
 //  2. Compute, as the deadline checks do, when an inference confirmed at the end of the load is due.
-//  3. Check the export the runner holds for the promises comes after it, so the deadline checks judge
-//     every inference of the run, and the hold stays within a few minutes.
+//  3. Check the longest the runner may hold the export for the promises comes after it, so the deadline
+//     checks can judge every inference of the run, and stays within a few minutes.
 func TestPromiseScenariosHoldTheExportUntilTheLastInferenceIsDue(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join("scenarios", "*.yaml"))
 	require.NoError(t, err)
@@ -219,7 +226,7 @@ func TestPromiseScenariosHoldTheExportUntilTheLastInferenceIsDue(t *testing.T) {
 		require.NoError(t, err, path)
 		require.True(t, s.Assertions.Promises, path)
 		held++
-		require.NotEmpty(t, s.Protocol.ExecutionTimeout, "%s: the default execution timeout (32 min) leaves the deadline checks nothing to judge", path)
+		require.NotEmpty(t, s.Protocol.ExecutionTimeout, "%s: the default execution timeout (32 min) lets one open inference hold the export for 36 min", path)
 		refusal, err := protocolTimeoutSeconds(s.Protocol.RefusalTimeout)
 		require.NoError(t, err)
 		execution, err := protocolTimeoutSeconds(s.Protocol.ExecutionTimeout)

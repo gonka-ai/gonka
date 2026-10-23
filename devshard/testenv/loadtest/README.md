@@ -32,6 +32,50 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+`-promises` holds any scenario to the system promises (see
+[Assertions](#assertions)) without editing it: the run turns on
+`diagnostics.export`, complete logs and `assertions.promises`, and its
+`run.yaml` records the scenario as it ran.
+
+### Baseline before and after a change
+
+A baseline runs every scenario with `-promises`, one at a time, and keeps going
+past a run that fails:
+
+```bash
+make -C devshard/testenv loadtest-baseline OUT=loadtest/results/baseline-before
+```
+
+`SCENARIOS="drain faults-host"` runs a subset; `OUT` defaults to
+`loadtest/results/baseline-<timestamp>`. No config is needed beforehand: a
+clean checkout starts from the gencompose defaults. Each scenario leaves its run
+directory, its console log (`<scenario>.log`) and its exit code
+(`<scenario>/exit-code`) in `OUT`, and the target ends with `OUT/summary.md`: a
+row per scenario with the runner's exit code, the requests and failed requests,
+the runner's own failed checks and the promise verdict (`held` when every check
+held, `held 3, not measured 9` and the like when some gave no verdict, the
+violated checks, `not valid; ` before either when the run is not valid, or
+`no report` when the run never got to the checks), then
+the promise table over the runs. `go run ./cmd/promisecheck -summarize OUT`
+prints it again.
+
+Run a second baseline on the change into another directory, then compare:
+
+```bash
+make -C devshard/testenv loadtest-baseline OUT=loadtest/results/baseline-after
+make -C devshard/testenv loadtest-baseline-compare \
+  BEFORE=loadtest/results/baseline-before AFTER=loadtest/results/baseline-after
+```
+
+The comparison has a row per scenario of either baseline. A cell that changed
+is bold, `before → after`: an exit code, the runner's failed checks, the promise
+verdict or one check (`ok`, a violation count, `obs`, `—`). On a run that is not
+valid a check keeps its verdict, marked `(run not valid)`, so a violation it
+measured still shows and still counts as a change. Requests and failed requests
+are shown as `before / after` without a mark, since they move a little from run
+to run. A scenario missing on one side reads `absent`. The last line counts the
+changed cells; zero means the change moved no verdict, of a run or of a check.
+
 ## Catch-up scenario
 
 `catch-up` runs three participants at 16 RPS for five minutes. At 90 seconds
@@ -950,12 +994,29 @@ Both deadline checks judge each host's chain on its own, except a host whose
 chain of an escrow is a matching, shorter prefix of the longest one: the Gateway
 sends each diff to one host and the others catch up on their next request, so
 such a host is only behind and the inference is judged on the longest chain (an
-observation names it). An inference still within its deadline at the export is
-listed as open, not judged; the export time is when the export started. So that
-every inference is judged, a run with `promises: true` holds the export until an
-inference confirmed at the end of the load is past its deadline: the scenario's
-largest protocol timeout plus 4 min 5 s after the load ends (a scenario without
-`protocol` timeouts is not held, and its deadline checks judge nothing).
+observation names it). An inference closed by the export is judged, whatever its
+deadline, and so is a request the client got a 200 for once its Finish is on every
+host; one still open within its deadline at the export is listed as open, not
+judged; the export time is when the export started. So that every inference is
+judged, a run with `promises: true` holds the export while the Gateway still
+holds an inference Pending or Started within its deadline (the timeout of the
+escrow's session config, the Gateway's grace and sweep, and the checks' minute of
+slack), or while an inference not Finished on every host's chain is within its
+deadline on one of them, as both checks judge the chains (a host only behind is
+left to the longest chain). It reads the Gateway every 5 s and the chains every
+30 s: the diffs, sessions and escrow cache of every Postgres database, after the
+first read only the diffs it does not hold yet, and the SQLite files of a host on
+SQLite, laid out as in the export. Burned nonces and served warm-up probes are
+left to settlement. The hold ends, on a fresh read of both, when nothing is open
+within its deadline (an open inference of a settled escrow holds the export until
+its deadline, and the check reports the escrow settled with it live), or at the
+latest an inference confirmed at the end of the load is due: the largest timeout
+plus 4 min 5 s after the load ends. A read that fails holds the export to that
+limit. A scenario without `protocol` timeouts runs on the
+chain's defaults, which the mock-chain seed puts in place of `refusal_timeout`
+and `execution_timeout` 0 in `config.yaml`: 60 s and 32 min
+(`DefaultDevshardRefusalTimeout` and `DefaultDevshardExecutionTimeout` of
+`x/inference/types`), so its hold lasts at most 36 min 5 s.
 
 `promises.md` opens with a one-line verdict, then a table with one row per
 property: what it promises, held, violated or not measured, the number of
@@ -1061,7 +1122,7 @@ Every run ends with `report.md` in its directory, also printed to the console, b
 
 `go run ./cmd/loadtest -report <run directory>` rebuilds the report of an earlier run without starting a stack.
 
-`go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there; copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
+`go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there (a run held to the promises is held to them again, last, as the live run is, and `promises.json` and `promises.md` are rewritten too; the Mock ML profiles come from `loadtest/profiles`, so run it from the testenv directory); copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
 
 #### Old codes
 

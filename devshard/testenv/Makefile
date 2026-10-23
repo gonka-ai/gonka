@@ -47,6 +47,30 @@ endif
 loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min).
 	go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-15m.yaml
 
+# A baseline runs every scenario under the promise checks, one at a time, and keeps going past a
+# failed one. Run it before a change and after it, then compare the two directories. OUT defaults to
+# loadtest/results/baseline-<UTC timestamp>.
+SCENARIOS ?= $(sort $(basename $(notdir $(wildcard loadtest/scenarios/*.yaml))))
+
+.PHONY: loadtest-baseline loadtest-baseline-compare
+# The baseline recipes are POSIX sh, so they run where bash is not installed.
+loadtest-baseline loadtest-baseline-compare: SHELL := /bin/sh
+loadtest-baseline: build-devshardd ## Run SCENARIOS (default: all) with -promises into OUT, one at a time, and write OUT/summary.md.
+	@out="$(OUT)"; [ -n "$$out" ] || out=loadtest/results/baseline-$$(date -u +%Y%m%dT%H%M%SZ); \
+	mkdir -p "$$out" || exit 2; \
+	for s in $(SCENARIOS); do \
+		echo "loadtest-baseline: $$s -> $$out/$$s"; \
+		mkdir -p "$$out/$$s"; \
+		go run ./cmd/loadtest -promises -scenario loadtest/scenarios/$$s.yaml -output "$$out/$$s" > "$$out/$$s.log" 2>&1; \
+		rc=$$?; echo $$rc > "$$out/$$s/exit-code"; echo "loadtest-baseline: $$s exit $$rc"; \
+	done; \
+	go run ./cmd/promisecheck -summarize "$$out" > "$$out/summary.md" || exit 2; \
+	echo "loadtest-baseline: summary in $$out/summary.md"
+
+loadtest-baseline-compare: ## Compare two baselines: BEFORE=dir AFTER=dir.
+	@test -n "$(BEFORE)" -a -n "$(AFTER)" || { echo "BEFORE and AFTER are required, for example: make loadtest-baseline-compare BEFORE=loadtest/results/baseline-a AFTER=loadtest/results/baseline-b"; exit 2; }
+	go run ./cmd/promisecheck -compare $(BEFORE) $(AFTER)
+
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
 

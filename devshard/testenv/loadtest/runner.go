@@ -34,6 +34,9 @@ type RunnerConfig struct {
 	StrictXFail bool
 	// Build runs prebuilt artifacts instead of building them from the checkout.
 	Build *Build
+	// Promises turns on diagnostics.export, complete logs and assertions.promises whatever the
+	// scenario says; run.yaml records the scenario as it ran.
+	Promises bool
 }
 
 type RunResult struct {
@@ -181,6 +184,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := copyFile(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
 		return RunResult{}, err
 	}
+	if opts.Promises {
+		if scenario, err = promisesRunFile(filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
+			return RunResult{}, err
+		}
+	}
 	profilesDir := opts.ProfilesDir
 	if profilesDir == "" {
 		profilesDir = filepath.Join(opts.TestenvDir, "loadtest", "profiles")
@@ -284,6 +292,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
+	headers := newHeaderClock(chainRPCURL(cfg))
 	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
 	stateGatewayURL := result.GatewayURL
 	if replaySelector != nil || len(scenario.RequestModels()) > 1 {
@@ -418,7 +427,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
-		poll, terminal, _ := waitForNoOrphanedWork(ctx, debugGatewayURL, apiKey, orphanJudgeFor(scenario, inputs, result.Events), scenario.severalRuntimes())
+		poll, terminal, _ := waitForNoOrphanedWork(ctx, debugGatewayURL, apiKey, orphanJudgeFor(scenario, inputs, result.Events).datedBy(headers), scenario.severalRuntimes())
 		inputs.Orphans, result.Terminal = &poll, terminal
 	}
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -455,7 +464,10 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		assertionErr = faultErr
 	}
 	if scenario.Assertions.Promises {
-		if err := holdForPromises(ctx, scenario, workloadEnd); err != nil {
+		probe := &chainProbe{cfg: cfg, stack: composeStackAccess(ctx, project, composePath, cfg), dir: filepath.Join(opts.OutputDir, "promises-hold-chains"), headers: headers}
+		err := holdForPromises(ctx, scenario, workloadEnd, debugGatewayURL, apiKey, orphanJudgeFor(scenario, inputs, result.Events).datedBy(headers), probe.read, promisesHoldPoll, promisesChainPoll)
+		_ = os.RemoveAll(probe.dir)
+		if err != nil {
 			return RunResult{}, err
 		}
 	}
@@ -637,36 +649,6 @@ func rotationModelIDs(cfg *config.File, replayModels []string, scenario Scenario
 		add(modelID)
 	}
 	return models
-}
-
-// holdForPromises waits, before the logs and the export are taken, until every inference the load
-// started is due (promisesHold from the end of the load), so the deadline checks judge them all. A
-// scenario without protocol timeouts runs on the chain's defaults, too long to wait for: it is not
-// held, and the promises assertion reports the deadline checks as having judged nothing.
-func holdForPromises(ctx context.Context, scenario Scenario, workloadEnd time.Time) error {
-	if scenario.Protocol.ExecutionTimeout == "" {
-		log.Printf("loadtest: stage=promises_hold skipped: no protocol timeouts")
-		return nil
-	}
-	refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
-	if err != nil {
-		return err
-	}
-	execution, err := protocolTimeoutSeconds(scenario.Protocol.ExecutionTimeout)
-	if err != nil {
-		return err
-	}
-	wait := time.Until(workloadEnd.Add(promisesHold(refusal, execution)))
-	if wait <= 0 {
-		return nil
-	}
-	log.Printf("loadtest: stage=promises_hold wait=%s", wait.Round(time.Second))
-	select {
-	case <-time.After(wait):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 // baseRunnerConfig loads config/config.yaml. That file is generated and git-ignored,
@@ -1274,9 +1256,14 @@ func formatTerminalSummary(summary TerminalSummary) string {
 	return fmt.Sprintf("finished=%d orphaned=%d sealed=%d in_flight=%d ghost=%d ghost_excluded=%d total=%d ghost_rate=%.2f%% statuses=%s settling=%d", summary.Finished, summary.Orphaned, summary.Sealed, summary.InFlight, summary.Ghost, summary.GhostExcluded, summary.Total, summary.GhostRate*100, statusCounts, summary.Settling)
 }
 
+// debugInference is a /v1/debug/inferences record: its timeouts' anchor heights, and their header
+// times in unix seconds, dated by the reader.
 type debugInference struct {
-	Status    string `json:"status"`
-	StartedAt int64  `json:"started_at"`
+	Status          string `json:"status"`
+	StartedAt       int64  `json:"started_at"`
+	ConfirmedAt     int64  `json:"confirmed_at,omitempty"`
+	StartedHeight   uint64 `json:"started_at_height,omitempty"`
+	ConfirmedHeight uint64 `json:"confirmed_at_height,omitempty"`
 }
 
 type debugInferencesResponse struct {
@@ -1291,6 +1278,15 @@ type orphanJudge struct {
 	Ghosts        ghostSet
 	// WarmUps are the warm-up probes a host served, by escrow; open, they are left to settlement.
 	WarmUps escrowNonces
+	// Headers dates the debug reads' anchor heights; a read keeps the times, so a recorded poll is
+	// judged without it.
+	Headers *headerClock
+}
+
+// datedBy returns the judge dating its reads by headers.
+func (j orphanJudge) datedBy(headers *headerClock) orphanJudge {
+	j.Headers = headers
+	return j
 }
 
 // orphanRuntime is one runtime's /v1/debug/inferences; EscrowID is empty for a runtime read
@@ -1327,7 +1323,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, judge
 	client := &http.Client{Timeout: 5 * time.Second}
 	var poll orphanPoll
 	for {
-		snapshot, err := fetchOrphanSnapshot(ctx, client, gatewayURL, apiKey, aggregate)
+		snapshot, err := fetchOrphanSnapshot(ctx, client, gatewayURL, apiKey, aggregate, judge.Headers)
 		if err == nil {
 			poll.Last, poll.ReadError = &snapshot, ""
 		} else {
@@ -1399,7 +1395,7 @@ func judgeOrphans(poll orphanPoll, judge orphanJudge) (TerminalSummary, bool, er
 	return state, true, fmt.Errorf("DevShard still has orphaned inference work after %s (%s)", judge.Timeout, details)
 }
 
-func fetchOrphanSnapshot(ctx context.Context, client *http.Client, gatewayURL, apiKey string, aggregate bool) (orphanSnapshot, error) {
+func fetchOrphanSnapshot(ctx context.Context, client *http.Client, gatewayURL, apiKey string, aggregate bool, headers *headerClock) (orphanSnapshot, error) {
 	runtimes := []debugRuntime{{url: gatewayURL, active: true}}
 	if aggregate {
 		var err error
@@ -1432,6 +1428,15 @@ func fetchOrphanSnapshot(ctx context.Context, client *http.Client, gatewayURL, a
 		}
 		if decodeErr != nil {
 			return orphanSnapshot{}, fmt.Errorf("decode /v1/debug/inferences: %w", decodeErr)
+		}
+		for id, inference := range body.Inferences {
+			var errStarted, errConfirmed error
+			inference.StartedAt, errStarted = headers.unix(ctx, inference.StartedHeight)
+			inference.ConfirmedAt, errConfirmed = headers.unix(ctx, inference.ConfirmedHeight)
+			if err := errors.Join(errStarted, errConfirmed); err != nil {
+				return orphanSnapshot{}, fmt.Errorf("date inference %s: %w", id, err)
+			}
+			body.Inferences[id] = inference
 		}
 		snapshot.Runtimes = append(snapshot.Runtimes, orphanRuntime{EscrowID: runtime.escrowID, Active: runtime.active, Inferences: body.Inferences})
 	}

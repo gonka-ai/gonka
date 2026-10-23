@@ -264,9 +264,10 @@ func readChainHeaders(client *http.Client, rpcURL string) ([]harness.ChainHeader
 // promisesHoldMargin is added to the hold so the export comes strictly after the last deadline.
 const promisesHoldMargin = 30 * time.Second
 
-// promisesHold is how long after the load the runner waits before it exports a run held to the
+// promisesHold is the longest the runner waits after the load before it exports a run held to the
 // promises: until an inference started or confirmed at the end of the load is due, so the deadline
-// checks judge every inference of the run instead of listing it as open.
+// checks judge every inference of the run instead of listing it as open (holdForPromises ends
+// earlier once the Gateway holds none open within its deadline).
 func promisesHold(refusal, execution int64) time.Duration {
 	return time.Duration(max(refusal, execution))*time.Second + harness.TimeoutSkew + harness.TimeoutVoteWindow +
 		harness.TimeoutSweepPeriod + harness.DeadlineSlack + promisesHoldMargin

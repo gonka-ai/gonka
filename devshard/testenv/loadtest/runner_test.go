@@ -293,7 +293,7 @@ func TestWaitForNoOrphanedWorkLeavesDeactivatedEscrowsToTheSettleCheck(t *testin
 }
 
 // Test flow:
-// 1. Serve an active escrow with a pending record younger than the pending-age bound, then one older.
+// 1. Serve an active escrow with a pending record anchored at a block younger than the bound, then older.
 // 2. Require the young record to count as in flight and the old one as orphaned.
 func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
 	cases := []struct {
@@ -309,11 +309,12 @@ func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			startedAt := time.Now().Add(-testCase.age).Unix()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"pending","started_at":%d}}}`, startedAt)
+				_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"pending","started_at_height":%d}}}`, startedAt)
 			}))
 			defer server.Close()
+			headers := newHeaderClock(newUnixChain(t, 1, time.Now().Unix()).URL)
 
-			_, summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: time.Minute})
+			_, summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: time.Minute, Headers: headers})
 
 			require.Equal(t, testCase.orphaned, summary.Orphaned)
 			require.Equal(t, testCase.inFlight, summary.InFlight)
