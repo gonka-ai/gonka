@@ -185,6 +185,43 @@ func TestRecheckJudgesARunSavedWithoutItsInputs(t *testing.T) {
 	}
 }
 
+// Test flow:
+//  1. Save the passing fixture as a run held to the promises (run.yaml rewritten as -promises does),
+//     with no export in its directory.
+//  2. Judge it with EvaluateSavedRun, as -recheck does.
+//  3. Require the promises check in assertions.json, failed as the live run fails it on a run whose
+//     export cannot be read, and the run recorded as failed.
+func TestRecheckHoldsARunToThePromisesAgain(t *testing.T) {
+	saved := recheckProfilesDir
+	recheckProfilesDir = "profiles"
+	t.Cleanup(func() { recheckProfilesDir = saved })
+	in, inputs := savedRunFixture(t)
+	dir := t.TempDir()
+	writeSavedRun(t, dir, in, inputs)
+	edited, err := withPromises([]byte(recheckScenario))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "run.yaml"), edited, 0o644))
+
+	passed, _, err := EvaluateSavedRun(dir, false)
+
+	require.NoError(t, err)
+	var result struct {
+		Passed bool              `json:"passed"`
+		Checks []AssertionResult `json:"checks"`
+	}
+	require.NoError(t, readReportArtifact(dir, "assertions.json", true, &result))
+	byName := map[string]AssertionResult{}
+	for _, check := range result.Checks {
+		byName[check.Name] = check
+	}
+	promises, ok := byName["promises"]
+	require.True(t, ok, "recheck left the promises check out: %s", strings.Join(failedNames(result.Checks), ", "))
+	require.False(t, promises.Passed)
+	require.Equal(t, "run not read", promises.Actual)
+	require.False(t, passed)
+	require.False(t, result.Passed)
+}
+
 func failedNames(checks []AssertionResult) []string {
 	var names []string
 	for _, check := range failedChecks(checks) {

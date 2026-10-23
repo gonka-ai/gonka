@@ -291,8 +291,9 @@ func checkTerminal(in PromiseInput, rep *PromiseReport) {
 		rep.Checked[InferenceClosesInTime] = notMeasured("export time unknown")
 		return
 	}
-	// The check can fire only for an inference whose deadline passed before the export: those are
-	// the judged ones, closed or not. A host only behind the longest chain is judged on that chain.
+	// An inference closed by the export kept the promise, and one still open past its deadline broke
+	// it: those are the judged ones. One still open within its deadline is listed as open, not judged.
+	// A host only behind the longest chain is judged on that chain.
 	lag := behindTip(in.Diffs.Hosts)
 	judged, open, late, ghosts, unknown := 0, 0, 0, 0, 0
 	for i, chain := range in.Diffs.Hosts {
@@ -312,11 +313,9 @@ func checkTerminal(in PromiseInput, rep *PromiseReport) {
 				continue
 			}
 			state, from, limit, due := deadline(f, t, in.Slack)
-			if !in.ObservedUntil.After(due) {
-				if !closed {
-					open++
-					rep.Open = append(rep.Open, HostInference{Host: chain.Host, InferenceRef: ref})
-				}
+			if !closed && !in.ObservedUntil.After(due) {
+				open++
+				rep.Open = append(rep.Open, HostInference{Host: chain.Host, InferenceRef: ref})
 				continue
 			}
 			judged++
@@ -336,8 +335,57 @@ func checkTerminal(in PromiseInput, rep *PromiseReport) {
 			})
 		}
 	}
-	rep.Checked[InferenceClosesInTime] = measured(judged, "%d inferences past their deadline at the export, counted once per host, %d of them still open; %d open within it; %d without known timeouts, not judged; %d burned nonces (gateway probes not confirmed on the chain) left to settlement",
+	rep.Checked[InferenceClosesInTime] = measured(judged, "%d inferences closed by the export or past their deadline at it, counted once per host, %d of them still open; %d open within it; %d without known timeouts, not judged; %d burned nonces (gateway probes not confirmed on the chain) left to settlement",
 		judged, late, open, unknown, ghosts)
+}
+
+// InferenceDue is an inference and its deadline.
+type InferenceDue struct {
+	InferenceRef
+	Due time.Time
+}
+
+// DeadlinesAhead names, for chains read at in.ObservedUntil, the inferences an export taken later
+// could judge otherwise than one taken now, sorted: an inference not Finished on every host's chain
+// whose deadline on some host is still ahead. Each comes with the latest of its deadlines, judged on
+// the chains as both deadline checks judge them: a host only behind the longest chain of an escrow
+// is left to that chain, a burned nonce is left to settlement, and an escrow whose timeouts are not
+// known is not judged by either check.
+func DeadlinesAhead(in PromiseInput) []InferenceDue {
+	lag := behindTip(in.Diffs.Hosts)
+	refs := map[InferenceRef]*InferenceFacts{}
+	for i, chain := range in.Diffs.Hosts {
+		for ref, f := range chain.Inferences {
+			if f.Started && lag[i][ref.Escrow] == 0 {
+				refs[ref] = f
+			}
+		}
+	}
+	var out []InferenceDue
+	for _, ref := range sortedRefs(refs) {
+		t, ok := in.Timeouts[ref.Escrow]
+		if !ok {
+			continue
+		}
+		finished, latest := true, time.Time{}
+		for i, chain := range in.Diffs.Hosts {
+			if lag[i][ref.Escrow] > 0 {
+				continue
+			}
+			f := chain.Inferences[ref]
+			finished = finished && f != nil && f.Finished
+			if f == nil || !f.Started || (isGhost(f) && !(f.Finished || f.TimedOut || f.ErrorMiss)) {
+				continue
+			}
+			if _, _, _, due := deadline(f, t, in.Slack); due.After(latest) {
+				latest = due
+			}
+		}
+		if !finished && !latest.IsZero() && !in.ObservedUntil.After(latest) {
+			out = append(out, InferenceDue{InferenceRef: ref, Due: latest})
+		}
+	}
+	return out
 }
 
 func checkServedFinish(in PromiseInput, rep *PromiseReport) {
@@ -364,15 +412,12 @@ func checkServedFinish(in PromiseInput, rep *PromiseReport) {
 			unlinked++
 			continue
 		}
-		switch settled, known := settledBy(in, lag, refs); {
-		case !known:
+		settled, known := settledBy(in, lag, refs)
+		if !known {
 			unknown++
 			continue
-		case !settled:
-			recent++
-			continue
 		}
-		judged++
+		var missing []string
 		for i, chain := range in.Diffs.Hosts {
 			finished, behind := false, true
 			for _, ref := range refs {
@@ -386,13 +431,22 @@ func checkServedFinish(in PromiseInput, rep *PromiseReport) {
 				}
 			}
 			if !finished && !behind {
-				rep.Violations = append(rep.Violations, PromiseViolation{
-					Promise: ServedRequestFinished, Host: chain.Host, RequestID: r.RequestID,
-					Detail: fmt.Sprintf("client got 200, no Finish on this host for any of %v", refs),
-				})
+				missing = append(missing, chain.Host)
 			}
 		}
+		// A Finish on every host's chain is final; a missing one is judged once the inferences are due.
+		if !settled && len(missing) > 0 {
+			recent++
+			continue
+		}
+		judged++
+		for _, host := range missing {
+			rep.Violations = append(rep.Violations, PromiseViolation{
+				Promise: ServedRequestFinished, Host: host, RequestID: r.RequestID,
+				Detail: fmt.Sprintf("client got 200, no Finish on this host for any of %v", refs),
+			})
+		}
 	}
-	rep.Checked[ServedRequestFinished] = measured(judged, "%d requests with 200 judged, each on every host's chain (%d hosts); %d still within their deadline, %d without known timeouts, %d without a linked inference, %d with an answer cut short",
+	rep.Checked[ServedRequestFinished] = measured(judged, "%d requests with 200 judged, each on every host's chain (%d hosts), finished on every host or due by the export; %d still within their deadline, %d without known timeouts, %d without a linked inference, %d with an answer cut short",
 		judged, len(in.Diffs.Hosts), recent, unknown, unlinked, incomplete)
 }

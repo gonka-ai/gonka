@@ -10,7 +10,9 @@
 // does not tell, so for such a run this exits 0 where the runner fails.
 //
 // -render prints the Markdown report of a saved JSON report; -summarize prints one table over
-// several saved reports. Neither reads a run, and neither goes with -loadtest or with the other.
+// several saved reports, or, given one directory, the baseline make loadtest-baseline wrote there;
+// -compare prints two such baselines side by side. None of them reads a run, and none goes with
+// -loadtest or with another.
 package main
 
 import (
@@ -42,12 +44,17 @@ func main() {
 	lockGrace := flag.Duration("lock-grace", 3*time.Minute, "a lock taken this close to the end of the mock-dapi journal may still be released; 0 also means 3m")
 	burnAllowance := flag.Float64("burn-allowance", 0, "nonces burned without sending per request one minute may reach on a host; 0 reports without a verdict")
 	heapPerByte := flag.Float64("heap-per-response-byte", 0, "the gateway heap growth per request gateway_heap_bounded allows, in bytes per byte of the answer; 0 reports without a verdict")
-	summarize := flag.Bool("summarize", false, "read the JSON reports named as arguments (name=path or path) and print one Markdown table over them; no -loadtest")
+	summarize := flag.Bool("summarize", false, "read the JSON reports named as arguments (name=path or path) and print one Markdown table over them, or, given one directory, the baseline of make loadtest-baseline in it; no -loadtest")
+	compare := flag.Bool("compare", false, "read two baseline directories of make loadtest-baseline, before then after, and print them side by side with the changed cells marked; no -loadtest")
 	render := flag.String("render", "", "print the Markdown report of a saved JSON report and exit; no -loadtest")
 	flag.Parse()
 	switch {
 	case *render != "" && *summarize:
 		fail("-render and -summarize do not go together")
+	case *compare && (*render != "" || *summarize || *runDir != ""):
+		fail("-compare reads two baselines: drop -render, -summarize and -loadtest")
+	case *compare && flag.NArg() != 2:
+		fail("-compare needs two baseline directories, before then after")
 	case (*render != "" || *summarize) && *runDir != "":
 		fail("-render and -summarize read saved reports, not a run: drop -loadtest")
 	case *summarize && flag.NArg() == 0:
@@ -68,6 +75,32 @@ func main() {
 			fail(err.Error())
 		}
 		return
+	}
+	if *compare {
+		before, err := readBaseline(flag.Arg(0))
+		if err != nil {
+			fail(err.Error())
+		}
+		after, err := readBaseline(flag.Arg(1))
+		if err != nil {
+			fail(err.Error())
+		}
+		if err := writeComparison(os.Stdout, flag.Arg(0), flag.Arg(1), before, after); err != nil {
+			fail(err.Error())
+		}
+		return
+	}
+	if *summarize && flag.NArg() == 1 {
+		if info, err := os.Stat(flag.Arg(0)); err == nil && info.IsDir() {
+			runs, err := readBaseline(flag.Arg(0))
+			if err != nil {
+				fail(err.Error())
+			}
+			if err := writeBaseline(os.Stdout, flag.Arg(0), runs); err != nil {
+				fail(err.Error())
+			}
+			return
+		}
 	}
 	if *summarize {
 		if err := writeSummary(flag.Args()); err != nil {

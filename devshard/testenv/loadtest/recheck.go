@@ -68,19 +68,50 @@ func writeRunInputs(dir string, inputs RunInputs) error {
 	return os.WriteFile(filepath.Join(dir, runInputsFile), append(body, '\n'), 0o644)
 }
 
+// recheckProfilesDir is where EvaluateSavedRun reads the Mock ML profiles of a run held to the
+// promises: a run directory keeps no copy of them, and -recheck runs from the testenv directory, as
+// the runner does.
+var recheckProfilesDir = filepath.Join("loadtest", "profiles")
+
 // EvaluateSavedRun judges every check of a saved run again from its directory, without a stack,
-// and rewrites its assertions.json and invariants.json. A run without run-inputs.json is judged
-// from what its other files hold; the notes name what could not be recomputed.
+// and rewrites its assertions.json and invariants.json. A run held to the promises (assertions.promises
+// in its run.yaml, which -promises writes there) is held to them again last, as the live run is, and
+// its promises.json and promises.md are rewritten. A run without run-inputs.json is judged from what
+// its other files hold; the notes name what could not be recomputed.
 func EvaluateSavedRun(dir string, strictXFail bool) (bool, []string, error) {
 	checks, notes, err := recheckRun(dir, strictXFail)
 	if err != nil {
 		return false, notes, err
+	}
+	if check, held := recheckPromises(dir); held {
+		checks = append(checks, check)
 	}
 	var verdict error
 	if failures := failedChecks(checks); len(failures) > 0 {
 		verdict = &assertionFailures{Checks: failures}
 	}
 	return verdict == nil, notes, writeAssertions(dir, checks, verdict)
+}
+
+// recheckPromises holds a saved run to the promises when its run.yaml asks for it, as RunScenario does
+// after the export. A profile that cannot be read fails the check instead of leaving it out.
+func recheckPromises(dir string) (AssertionResult, bool) {
+	scenario, err := LoadScenario(filepath.Join(dir, "run.yaml"))
+	if err != nil || !scenario.Assertions.Promises {
+		return AssertionResult{}, false
+	}
+	profiles := make(map[string]Profile, len(scenario.Topology.MockML.Nodes))
+	for _, node := range scenario.Topology.MockML.Nodes {
+		if _, ok := profiles[node.Profile]; ok {
+			continue
+		}
+		profile, err := LoadProfile(recheckProfilesDir, node.Profile)
+		if err != nil {
+			return AssertionResult{Name: "promises", Expected: "no violation of the system properties", Actual: "profiles not read", Details: err.Error()}, true
+		}
+		profiles[node.Profile] = profile
+	}
+	return promisesAssertion(dir, scenario, profiles), true
 }
 
 // recheckRun is the one evaluation both the live run and EvaluateSavedRun use: it reads the

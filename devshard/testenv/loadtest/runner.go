@@ -34,6 +34,9 @@ type RunnerConfig struct {
 	StrictXFail bool
 	// Build runs prebuilt artifacts instead of building them from the checkout.
 	Build *Build
+	// Promises turns on diagnostics.export, complete logs and assertions.promises whatever the
+	// scenario says; run.yaml records the scenario as it ran.
+	Promises bool
 }
 
 type RunResult struct {
@@ -180,6 +183,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}()
 	if err := copyFile(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
 		return RunResult{}, err
+	}
+	if opts.Promises {
+		if scenario, err = promisesRunFile(filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
+			return RunResult{}, err
+		}
 	}
 	profilesDir := opts.ProfilesDir
 	if profilesDir == "" {
@@ -455,7 +463,10 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		assertionErr = faultErr
 	}
 	if scenario.Assertions.Promises {
-		if err := holdForPromises(ctx, scenario, workloadEnd); err != nil {
+		probe := &chainProbe{cfg: cfg, stack: composeStackAccess(ctx, project, composePath, cfg), dir: filepath.Join(opts.OutputDir, "promises-hold-chains")}
+		err := holdForPromises(ctx, scenario, workloadEnd, debugGatewayURL, apiKey, orphanJudgeFor(scenario, inputs, result.Events), probe.read, promisesHoldPoll, promisesChainPoll)
+		_ = os.RemoveAll(probe.dir)
+		if err != nil {
 			return RunResult{}, err
 		}
 	}
@@ -637,36 +648,6 @@ func rotationModelIDs(cfg *config.File, replayModels []string, scenario Scenario
 		add(modelID)
 	}
 	return models
-}
-
-// holdForPromises waits, before the logs and the export are taken, until every inference the load
-// started is due (promisesHold from the end of the load), so the deadline checks judge them all. A
-// scenario without protocol timeouts runs on the chain's defaults, too long to wait for: it is not
-// held, and the promises assertion reports the deadline checks as having judged nothing.
-func holdForPromises(ctx context.Context, scenario Scenario, workloadEnd time.Time) error {
-	if scenario.Protocol.ExecutionTimeout == "" {
-		log.Printf("loadtest: stage=promises_hold skipped: no protocol timeouts")
-		return nil
-	}
-	refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
-	if err != nil {
-		return err
-	}
-	execution, err := protocolTimeoutSeconds(scenario.Protocol.ExecutionTimeout)
-	if err != nil {
-		return err
-	}
-	wait := time.Until(workloadEnd.Add(promisesHold(refusal, execution)))
-	if wait <= 0 {
-		return nil
-	}
-	log.Printf("loadtest: stage=promises_hold wait=%s", wait.Round(time.Second))
-	select {
-	case <-time.After(wait):
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
 }
 
 // baseRunnerConfig loads config/config.yaml. That file is generated and git-ignored,
@@ -1275,8 +1256,9 @@ func formatTerminalSummary(summary TerminalSummary) string {
 }
 
 type debugInference struct {
-	Status    string `json:"status"`
-	StartedAt int64  `json:"started_at"`
+	Status      string `json:"status"`
+	StartedAt   int64  `json:"started_at"`
+	ConfirmedAt int64  `json:"confirmed_at,omitempty"`
 }
 
 type debugInferencesResponse struct {
