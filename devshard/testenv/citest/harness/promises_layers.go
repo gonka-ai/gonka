@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -197,7 +198,7 @@ func (w *ChallengeWave) gatewayLine(line []byte, triggered map[string]time.Time)
 // LoadtestLayers is what the lock, nonce and quarantine checks read from a load-test run: the
 // ML-node lock journal of mock-dapi, the nonces the gateway burned without sending, the gateway's
 // per-host failure events, its quarantines and the runner's host fault windows. All of it comes from
-// files the runner already writes: compose.log, requests.jsonl and host-faults.json.
+// files the runner already writes: compose.log, requests.jsonl and host-faults.json (or events.json).
 type LoadtestLayers struct {
 	Locks map[string]*NodeLock // by lock id
 	// LockLogEnd is the last mock-dapi line: locks taken within LockGrace of it may still be released.
@@ -266,7 +267,7 @@ type QuarantineTransition struct {
 
 // FaultWindow is a runner fault aimed at one participant, with the grace given after it. A window
 // with no end stays open. StopsPayload says the fault keeps the host from serving its payload to a
-// validator: a pause of its container.
+// validator: a pause, a kill or restart of its container, or its public port taken down.
 type FaultWindow struct {
 	Event        string    `json:"event"`
 	Host         string    `json:"host"`
@@ -295,6 +296,16 @@ type PayloadMiss struct {
 // payload.
 const payloadMissMsg = "validation voting false: executor payload unavailable"
 
+// publicDownTripFile is the trip file that takes a host's public port down (PublicFaultDownFile,
+// cmd/devshardd/public_fault_testenv.go): every public route, the payload one among them, answers 503.
+const publicDownTripFile = "devshard-fault-public-down"
+
+// payloadStoppingActions are the runner event actions that stop a host serving its payload; a
+// tripfile does when it is publicDownTripFile. A throttle slows the host, a PoC challenge takes its
+// ML nodes, a marker or a chain participant mode changes what the chain or the gateway think of it:
+// none of them keeps a validator from its payload.
+var payloadStoppingActions = map[string]bool{"pause": true, "container_kill": true, "container_restart": true}
+
 var strikeStages = map[string]bool{
 	"empty_stream": true, "stream_suppressed": true, "attempt_failed": true,
 	"suspicious_winner_deferred": true, "escalation_skipped": true,
@@ -318,7 +329,7 @@ var quarantineLines = map[string][2]string{
 const hostIdentityMsg = "devshardd: validation lease identity"
 
 // ReadLoadtestLayers reads compose.log, requests.jsonl and host-faults.json of a runner output
-// directory. A run without compose.log has no layers.
+// directory, or events.json when there is no host-faults.json. A run without compose.log has no layers.
 func ReadLoadtestLayers(dir string) (*LoadtestLayers, error) {
 	l := &LoadtestLayers{Locks: map[string]*NodeLock{}, RequestsPerMinute: map[time.Time]int{}}
 	participants := map[string]string{}
@@ -348,8 +359,58 @@ func ReadLoadtestLayers(dir string) (*LoadtestLayers, error) {
 	if l.FaultWindows, err = faultWindowsFromHostFaults(dir, participants); err != nil {
 		return nil, err
 	}
+	if _, statErr := os.Stat(filepath.Join(dir, "host-faults.json")); os.IsNotExist(statErr) {
+		if l.FaultWindows, err = faultWindowsFromEvents(dir, participants); err != nil {
+			return nil, err
+		}
+	}
 	return l, nil
 }
+
+// faultWindowsFromEvents builds the fault windows from events.json, the record a runner with an
+// event timeline (workload.events, host_faults among them as pause events) keeps of the faults it
+// ran. Every event aimed at a host service opens a window from its start to its end: a pause, a
+// throttle, a restart or kill, a trip file, a chain participant mode, a PoC challenge or a marker.
+// Events aimed at an ML node or the whole stack name no host. An event that never started opens no
+// window; one that started and never ended stays open to the end of the run.
+func faultWindowsFromEvents(dir string, participants map[string]string) ([]FaultWindow, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "events.json"))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var events []struct {
+		ID        string     `json:"id"`
+		Action    string     `json:"action"`
+		Target    string     `json:"target"`
+		StartedAt *time.Time `json:"started_at"`
+		EndedAt   *time.Time `json:"ended_at"`
+		Params    struct {
+			File string `json:"file"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal(raw, &events); err != nil {
+		return nil, fmt.Errorf("events.json: %w", err)
+	}
+	var out []FaultWindow
+	for _, e := range events {
+		if e.StartedAt == nil || !hostEventTargets.MatchString(e.Target) {
+			continue
+		}
+		w := FaultWindow{Event: e.ID + " " + e.Action, Host: e.Target, Participant: participants[e.Target], From: *e.StartedAt,
+			StopsPayload: payloadStoppingActions[e.Action] || e.Action == "tripfile" && filepath.Base(e.Params.File) == publicDownTripFile}
+		if e.EndedAt != nil {
+			w.To, w.GracedTo = *e.EndedAt, e.EndedAt.Add(faultGrace)
+		}
+		out = append(out, w)
+	}
+	return out, nil
+}
+
+// hostEventTargets are the host services an event can aim at.
+var hostEventTargets = regexp.MustCompile(`^versiond-[0-9]+$`)
 
 // faultGrace is how long after a host fault ends its participant is still taken as faulted, before
 // the run's timeouts are added (GraceFaultWindows): a host that just came back still holds the

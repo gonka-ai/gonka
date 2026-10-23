@@ -25,13 +25,49 @@ func main() {
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
+	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
+	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
 	flag.Parse()
+	if *recheckDir != "" {
+		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, note := range notes {
+			log.Printf("loadtest: recheck: %s", note)
+		}
+		report, err := loadtest.WriteReport(*recheckDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		if !passed {
+			os.Exit(1)
+		}
+		return
+	}
+	if *reportDir != "" {
+		report, err := loadtest.WriteReport(*reportDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		return
+	}
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
 	scenario, err := loadtest.LoadScenario(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	var build *loadtest.Build
+	if *buildPath != "" {
+		if build, err = loadtest.LoadBuild(*buildPath); err != nil {
+			log.Fatal(err)
+		}
 	}
 	if *runTimeout < 0 {
 		log.Fatal("timeout must be positive")
@@ -64,7 +100,14 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
+		StrictXFail:     *strictXFail,
+		Build:           build,
 	})
+	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
+		log.Printf("loadtest: no report: %v", reportErr)
+	} else {
+		fmt.Println(report)
+	}
 	if err != nil {
 		if result.Summary.Requests > 0 {
 			printSummary(result, false)
@@ -98,6 +141,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  failed:          %d\n", summary.Failed)
 	fmt.Fprintf(os.Stdout, "  dropped:         %d\n", summary.Dropped)
 	fmt.Fprintf(os.Stdout, "  error rate:      %.2f%%\n", summary.ErrorRate*100)
+	fmt.Fprintf(os.Stdout, "  dropped rate:    %.2f%%\n", summary.DroppedRate*100)
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "Latency")
@@ -122,6 +166,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
 		fmt.Fprintf(os.Stdout, "  settling:         %d\n", terminal.Settling)
+		fmt.Fprintf(os.Stdout, "  ghost excluded:   %d\n", terminal.GhostExcluded)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
 		statuses := formatIntCounts(terminal.Statuses)

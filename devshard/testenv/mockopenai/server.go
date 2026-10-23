@@ -293,6 +293,9 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 	// the faults in force when its turn comes, not by those of its arrival.
 	f, streamGate := s.streamFaults()
 	if f.Hang {
+		// net/http notices a caller that hung up only once the body is read; unread, a held
+		// request outlives the caller's deadline and keeps its capacity slot after the hang lifts.
+		_, _ = io.Copy(io.Discard, c.Request().Body)
 		<-ctx.Done()
 		s.stats.timeouts.Add(1)
 		rec.Outcome = "fault_hang"
@@ -453,7 +456,7 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 		} else {
 			err = s.streamCompletion(c, req, text, body, f, streamGate, start, &rec, prelude)
 		}
-		if err != nil || f.PartialStream || f.DropFirstChunk {
+		if err != nil || f.PartialStream || f.DropFirstChunk || f.EmptyStream {
 			// A stream the fault cut is not a full answer, even though it ended cleanly.
 			if err == nil && (rec.Outcome == "ok" || rec.Outcome == "prelude") {
 				switch {
@@ -461,6 +464,8 @@ func (s *Server) handleChatCompletions(c echo.Context) (retErr error) {
 					rec.Outcome = "fault_partial_stream"
 				case f.DropFirstChunk:
 					rec.Outcome = "fault_drop_first_chunk"
+				case f.EmptyStream:
+					rec.Outcome = "fault_empty_stream"
 				}
 			}
 			s.recordFailure(ctx)
@@ -674,8 +679,9 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 }
 
 func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}, start time.Time, rec *RequestRecord, prelude preludeSpec) error {
+	jitter := f.NewStreamJitter(body)
 	if f.FirstContentDelay <= 0 && f.ExecDuration <= 0 {
-		if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
+		if err := waitForLatency(c.Request().Context(), jitter.FirstToken()); err != nil {
 			return err
 		}
 	}
@@ -712,8 +718,25 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if !scheduled && f.StreamChunkDelay > 0 {
-			time.Sleep(f.StreamChunkDelay)
+		if !scheduled {
+			if d := jitter.Chunk(); d > 0 {
+				time.Sleep(d)
+			}
+		}
+		return nil
+	}
+
+	if f.EmptyStream {
+		stop := "stop"
+		if err := writeChunk(map[string]any{"role": "assistant"}, nil, nil); err != nil {
+			return err
+		}
+		if err := writeChunk(map[string]any{}, &stop, nil); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
 		}
 		return nil
 	}

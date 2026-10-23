@@ -107,7 +107,7 @@ func TestPromisesAssertionWritesTheReport(t *testing.T) {
 	check = promisesAssertion(dir, testScenario(), nil)
 	require.True(t, check.Passed, "%+v", check)
 	require.Equal(t, "promises", check.Name)
-	for _, name := range []string{"report.json", "report.md"} {
+	for _, name := range []string{"promises.json", "promises.md"} {
 		_, err := os.Stat(filepath.Join(dir, name))
 		require.NoError(t, err, name)
 	}
@@ -182,7 +182,7 @@ func TestPromisesAssertionRefusesARunWhoseDishonestNodeNeverLied(t *testing.T) {
 	check := promisesAssertion(dir, scenario, profiles)
 	require.False(t, check.Passed)
 	require.Contains(t, check.Details, "mock-openai-1 (profile overclaim) gave no dishonest answer")
-	raw, err := os.ReadFile(filepath.Join(dir, "report.md"))
+	raw, err := os.ReadFile(filepath.Join(dir, "promises.md"))
 	require.NoError(t, err)
 	require.Contains(t, string(raw), "**Run not valid:** mock-openai-1 (profile overclaim) gave no dishonest answer")
 
