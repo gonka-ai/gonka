@@ -145,6 +145,12 @@ var (
 	// 114 and 115 are the v0.2.17 admission counters. Proven challenges sit
 	// just after them so they do not share a prefix with those counters.
 	PoCChallengeProvenPrefix = collections.NewPrefix(116)
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114-116 are taken above. Not 115: 's' is the
+	// first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
 	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey.
 	// Prefix 141 is retired and cleared by the v0.2.17 upgrade.
 	TrainshardsPrefix               = collections.NewPrefix(130)
