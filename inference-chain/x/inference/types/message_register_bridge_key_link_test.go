@@ -11,8 +11,8 @@ import (
 )
 
 func TestBridgeKeyLinkSignText(t *testing.T) {
-	got := BridgeKeyLinkSignText("gonka-test", "gonka1abc", "0x02aa")
-	require.Equal(t, "Link Ethereum key to Gonka account\nchain-id: gonka-test\ngonka-address: gonka1abc\neth-pubkey: 0x02aa", got)
+	got := BridgeKeyLinkSignText("gonka-test", "gonka1abc", "0x02aa", 1)
+	require.Equal(t, "Link Ethereum key to Gonka account\nchain-id: gonka-test\ngonka-address: gonka1abc\neth-pubkey: 0x02aa\nnonce: 1", got)
 }
 
 func TestMsgRegisterBridgeKeyLink_ValidateBasic(t *testing.T) {
@@ -24,39 +24,44 @@ func TestMsgRegisterBridgeKeyLink_ValidateBasic(t *testing.T) {
 	sig := make([]byte, 65)
 
 	t.Run("valid", func(t *testing.T) {
-		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, gonkaPub, sig)
+		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, gonkaPub, sig, 1)
 		require.NoError(t, msg.ValidateBasic())
 	})
 
 	t.Run("bad creator", func(t *testing.T) {
-		msg := NewMsgRegisterBridgeKeyLink("not-an-address", ethPub, gonkaPub, sig)
+		msg := NewMsgRegisterBridgeKeyLink("not-an-address", ethPub, gonkaPub, sig, 1)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidAddress)
 	})
 
 	t.Run("uppercase creator", func(t *testing.T) {
-		msg := NewMsgRegisterBridgeKeyLink(strings.ToUpper(creator), ethPub, gonkaPub, sig)
+		msg := NewMsgRegisterBridgeKeyLink(strings.ToUpper(creator), ethPub, gonkaPub, sig, 1)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidAddress)
 	})
 
 	t.Run("overlong public key", func(t *testing.T) {
-		msg := NewMsgRegisterBridgeKeyLink(creator, strings.Repeat("A", maxPubKeyEncodingLen+1), gonkaPub, sig)
+		msg := NewMsgRegisterBridgeKeyLink(creator, strings.Repeat("A", maxPubKeyEncodingLen+1), gonkaPub, sig, 1)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidPubKey)
 	})
 
 	t.Run("gonka key does not match creator", func(t *testing.T) {
 		other := secp256k1.GenPrivKey()
-		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, CanonicalSecp256k1PubKeyHex(other.PubKey().Bytes()), sig)
+		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, CanonicalSecp256k1PubKeyHex(other.PubKey().Bytes()), sig, 1)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidPubKey)
 	})
 
 	t.Run("uncompressed eth key", func(t *testing.T) {
 		uncompressed := "04" + strings.Repeat("11", 64)
-		msg := NewMsgRegisterBridgeKeyLink(creator, uncompressed, gonkaPub, sig)
+		msg := NewMsgRegisterBridgeKeyLink(creator, uncompressed, gonkaPub, sig, 1)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidPubKey)
 	})
 
 	t.Run("short signature", func(t *testing.T) {
-		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, gonkaPub, []byte{1, 2, 3})
+		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, gonkaPub, []byte{1, 2, 3}, 1)
+		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidRequest)
+	})
+
+	t.Run("zero nonce", func(t *testing.T) {
+		msg := NewMsgRegisterBridgeKeyLink(creator, ethPub, gonkaPub, sig, 0)
 		require.ErrorIs(t, msg.ValidateBasic(), sdkerrors.ErrInvalidRequest)
 	})
 }

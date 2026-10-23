@@ -8,12 +8,13 @@ import (
 
 var _ sdk.Msg = &MsgRegisterBridgeKeyLink{}
 
-func NewMsgRegisterBridgeKeyLink(creator, ethPubKey, gonkaPubKey string, ethSignature []byte) *MsgRegisterBridgeKeyLink {
+func NewMsgRegisterBridgeKeyLink(creator, ethPubKey, gonkaPubKey string, ethSignature []byte, nonce uint64) *MsgRegisterBridgeKeyLink {
 	return &MsgRegisterBridgeKeyLink{
 		Creator:      creator,
 		EthPubKey:    ethPubKey,
 		GonkaPubKey:  gonkaPubKey,
 		EthSignature: ethSignature,
+		Nonce:        nonce,
 	}
 }
 
@@ -42,6 +43,9 @@ func (msg *MsgRegisterBridgeKeyLink) ValidateBasic() error {
 	}
 	if len(msg.EthSignature) != 65 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "eth_signature must be 65 bytes (r || s || v)")
+	}
+	if msg.Nonce == 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "nonce must be greater than zero")
 	}
 	// ethPub is checked for length above; reference it so a future edit that
 	// drops the parse is a compile failure if the variable becomes unused.

@@ -50,7 +50,7 @@ func (k msgServer) RegisterBridgeKeyLink(goCtx context.Context, msg *types.MsgRe
 	}
 
 	canonicalEth := types.CanonicalSecp256k1PubKeyHex(ethPub)
-	payload := []byte(types.BridgeKeyLinkSignText(chainID, creator.String(), canonicalEth))
+	payload := []byte(types.BridgeKeyLinkSignText(chainID, creator.String(), canonicalEth, msg.Nonce))
 	recovered, err := recoverEthereumPersonalPubKey(payload, msg.EthSignature)
 	if err != nil || !bytes.Equal(recovered, ethPub) {
 		return nil, errorsmod.Wrap(types.ErrInvalidBridgeKeyLink, "ethereum signature does not recover to eth_pub_key")
@@ -63,22 +63,36 @@ func (k msgServer) RegisterBridgeKeyLink(goCtx context.Context, msg *types.MsgRe
 	linkKey := ethDerived.String()
 	gonkaAddress := creator.String()
 
+	var currentNonce uint64
 	previous, err := k.BridgeKeyLinks.Get(ctx, linkKey)
 	if err != nil && !errorsIsNotFound(err) {
 		return nil, err
 	}
-	if err := k.BridgeKeyLinks.Set(ctx, linkKey, gonkaAddress); err != nil {
+	if err == nil {
+		currentNonce = previous.Nonce
+	}
+	if msg.Nonce <= currentNonce {
+		return nil, errorsmod.Wrapf(types.ErrInvalidBridgeKeyLink, "nonce %d must be greater than current nonce %d", msg.Nonce, currentNonce)
+	}
+
+	if err := k.BridgeKeyLinks.Set(ctx, linkKey, types.BridgeKeyLink{
+		OwnerAddress:     linkKey,
+		RecipientAddress: gonkaAddress,
+		Nonce:            msg.Nonce,
+	}); err != nil {
 		return nil, err
 	}
 
 	k.LogInfo("Bridge key link registered", types.Messages,
 		"ownerAddress", linkKey,
 		"recipientAddress", gonkaAddress,
-		"previous", previous,
+		"nonce", msg.Nonce,
+		"previous", previous.RecipientAddress,
 		"chainId", chainID)
 
 	return &types.MsgRegisterBridgeKeyLinkResponse{
 		OwnerAddress:     linkKey,
 		RecipientAddress: gonkaAddress,
+		Nonce:            msg.Nonce,
 	}, nil
 }

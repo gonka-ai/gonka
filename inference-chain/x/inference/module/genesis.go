@@ -164,8 +164,16 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 				//nolint:forbidigo // genesis code
 				panic(fmt.Sprintf("duplicate bridge key link for %s", elem.OwnerAddress))
 			}
+			if elem.Nonce == 0 {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has nonce 0", i))
+			}
 			seenKeyLinks[elem.OwnerAddress] = struct{}{}
-			if err := k.BridgeKeyLinks.Set(ctx, elem.OwnerAddress, elem.RecipientAddress); err != nil {
+			if err := k.BridgeKeyLinks.Set(ctx, elem.OwnerAddress, types.BridgeKeyLink{
+				OwnerAddress:     owner.String(),
+				RecipientAddress: recipient.String(),
+				Nonce:            elem.Nonce,
+			}); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}

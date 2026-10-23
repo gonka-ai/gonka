@@ -77,6 +77,9 @@ message BridgePendingWithdrawalRefund {
 message BridgeKeyLink {
   string owner_address = 1;
   string recipient_address = 2;
+  // nonce is the Ethereum authorization count for owner_address.
+  // The next registration must present a greater nonce inside the signed text.
+  uint64 nonce = 3;
 }
 
 // Bridge groups all bridge-related entities under a single parent structure

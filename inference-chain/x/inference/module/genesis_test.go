@@ -111,8 +111,8 @@ func TestGenesis_BridgeKeyLinksRoundTrip(t *testing.T) {
 	genesisState := mocks.StubGenesisState()
 	genesisState.Bridge = &types.Bridge{
 		KeyLinks: []*types.BridgeKeyLink{
-			{OwnerAddress: testutil.Requester, RecipientAddress: testutil.Executor},
-			{OwnerAddress: testutil.Creator, RecipientAddress: testutil.Validator},
+			{OwnerAddress: testutil.Requester, RecipientAddress: testutil.Executor, Nonce: 4},
+			{OwnerAddress: testutil.Creator, RecipientAddress: testutil.Validator, Nonce: 2},
 		},
 	}
 
@@ -125,8 +125,10 @@ func TestGenesis_BridgeKeyLinksRoundTrip(t *testing.T) {
 	require.Len(t, exported.Bridge.KeyLinks, 2)
 	require.Equal(t, testutil.Creator, exported.Bridge.KeyLinks[0].OwnerAddress)
 	require.Equal(t, testutil.Validator, exported.Bridge.KeyLinks[0].RecipientAddress)
+	require.Equal(t, uint64(2), exported.Bridge.KeyLinks[0].Nonce)
 	require.Equal(t, testutil.Requester, exported.Bridge.KeyLinks[1].OwnerAddress)
 	require.Equal(t, testutil.Executor, exported.Bridge.KeyLinks[1].RecipientAddress)
+	require.Equal(t, uint64(4), exported.Bridge.KeyLinks[1].Nonce)
 
 	k2, ctx2, mocks2 := keepertest.InferenceKeeperReturningMocks(t)
 	mocks2.StubForInitGenesis(ctx2)
@@ -136,8 +138,10 @@ func TestGenesis_BridgeKeyLinksRoundTrip(t *testing.T) {
 	again := inference.ExportGenesis(ctx2, k2)
 	require.Equal(t, exported.Bridge.KeyLinks[0].OwnerAddress, again.Bridge.KeyLinks[0].OwnerAddress)
 	require.Equal(t, exported.Bridge.KeyLinks[0].RecipientAddress, again.Bridge.KeyLinks[0].RecipientAddress)
+	require.Equal(t, exported.Bridge.KeyLinks[0].Nonce, again.Bridge.KeyLinks[0].Nonce)
 	require.Equal(t, exported.Bridge.KeyLinks[1].OwnerAddress, again.Bridge.KeyLinks[1].OwnerAddress)
 	require.Equal(t, exported.Bridge.KeyLinks[1].RecipientAddress, again.Bridge.KeyLinks[1].RecipientAddress)
+	require.Equal(t, exported.Bridge.KeyLinks[1].Nonce, again.Bridge.KeyLinks[1].Nonce)
 }
 
 func TestGenesis_ApprovedVersionsRoundTrip(t *testing.T) {

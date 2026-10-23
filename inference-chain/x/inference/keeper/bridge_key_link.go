@@ -23,20 +23,18 @@ func (k Keeper) ResolveBridgeRecipient(ctx context.Context, ownerAddress string)
 		}
 		return "", err
 	}
-	if _, err := sdk.AccAddressFromBech32(linked); err != nil {
-		return "", fmt.Errorf("invalid linked bridge recipient %s: %w", linked, err)
+	if _, err := sdk.AccAddressFromBech32(linked.RecipientAddress); err != nil {
+		return "", fmt.Errorf("invalid linked bridge recipient %s: %w", linked.RecipientAddress, err)
 	}
-	return linked, nil
+	return linked.RecipientAddress, nil
 }
 
 // GetAllBridgeKeyLinks returns every link in owner-address order.
 func (k Keeper) GetAllBridgeKeyLinks(ctx context.Context) ([]types.BridgeKeyLink, error) {
 	var links []types.BridgeKeyLink
-	err := k.BridgeKeyLinks.Walk(ctx, nil, func(owner, recipient string) (bool, error) {
-		links = append(links, types.BridgeKeyLink{
-			OwnerAddress:     owner,
-			RecipientAddress: recipient,
-		})
+	err := k.BridgeKeyLinks.Walk(ctx, nil, func(owner string, link types.BridgeKeyLink) (bool, error) {
+		link.OwnerAddress = owner
+		links = append(links, link)
 		return false, nil
 	})
 	if err != nil {

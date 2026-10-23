@@ -524,17 +524,21 @@ message MsgSubmitPoCChallengeValidationsResponse {}
 // MsgRegisterBridgeKeyLink links the Ethereum public key recovered from a bridge
 // transfer to the Gonka account that should receive the bridged tokens.
 // The transaction signer is the Gonka account. eth_signature is an Ethereum
-// personal_sign over BridgeKeyLinkSignBytes, which binds this chain id, the
-// Gonka address, and the canonical Ethereum public key.
+// personal_sign over BridgeKeyLinkSignText, which binds this chain id, the
+// Gonka address, the canonical Ethereum public key, and nonce.
+// nonce is per Ethereum key. A later registration must use a greater nonce.
+// An older signature cannot replace the current link.
 message MsgRegisterBridgeKeyLink {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
   string eth_pub_key = 2;
   string gonka_pub_key = 3;
   bytes eth_signature = 4;
+  uint64 nonce = 5;
 }
 
 message MsgRegisterBridgeKeyLinkResponse {
   string owner_address = 1;
   string recipient_address = 2;
+  uint64 nonce = 3;
 }

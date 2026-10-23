@@ -15,13 +15,16 @@ import (
 
 // BridgeKeyLinkSignText is the exact UTF-8 text an Ethereum wallet must
 // personal_sign. chainID is the Gonka chain id. ethPubKeyCanonical is the
-// compressed secp256k1 key as 0x-prefixed lowercase hex.
-func BridgeKeyLinkSignText(chainID, gonkaAddress, ethPubKeyCanonical string) string {
+// compressed secp256k1 key as 0x-prefixed lowercase hex. nonce is decimal,
+// with no leading zeros, and must increase for each new authorization of
+// that Ethereum key.
+func BridgeKeyLinkSignText(chainID, gonkaAddress, ethPubKeyCanonical string, nonce uint64) string {
 	return fmt.Sprintf(
-		"Link Ethereum key to Gonka account\nchain-id: %s\ngonka-address: %s\neth-pubkey: %s",
+		"Link Ethereum key to Gonka account\nchain-id: %s\ngonka-address: %s\neth-pubkey: %s\nnonce: %d",
 		chainID,
 		gonkaAddress,
 		ethPubKeyCanonical,
+		nonce,
 	)
 }
 

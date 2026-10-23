@@ -13,9 +13,9 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	dcrec "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
-	"go.uber.org/mock/gomock"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/sha3"
 )
 
@@ -31,13 +31,14 @@ func TestMsgServer_RegisterBridgeKeyLink(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creator).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creator).Return(account).AnyTimes()
 
-	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv)
+	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv, 1)
 	resp, err := ms.RegisterBridgeKeyLink(ctx, msg)
 	require.NoError(t, err)
 
 	ethDerived := sdk.AccAddress(ethPriv.PubKey().Address()).String()
 	require.Equal(t, ethDerived, resp.OwnerAddress)
 	require.Equal(t, creator.String(), resp.RecipientAddress)
+	require.Equal(t, uint64(1), resp.Nonce)
 
 	linked, err := k.ResolveBridgeRecipient(ctx, ethDerived)
 	require.NoError(t, err)
@@ -59,7 +60,7 @@ func TestMsgServer_RegisterBridgeKeyLink_RejectsBadSignature(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creator).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creator).Return(account).AnyTimes()
 
-	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv)
+	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv, 1)
 	msg.EthSignature[0] ^= 0xff
 	_, err := ms.RegisterBridgeKeyLink(ctx, msg)
 	require.ErrorIs(t, err, types.ErrInvalidBridgeKeyLink)
@@ -77,7 +78,7 @@ func TestMsgServer_RegisterBridgeKeyLink_RejectsAccountKeyMismatch(t *testing.T)
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creator).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creator).Return(account).AnyTimes()
 
-	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv)
+	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv, 1)
 	_, err := ms.RegisterBridgeKeyLink(ctx, msg)
 	require.ErrorIs(t, err, types.ErrPubKeyDoesNotMatchAddress)
 }
@@ -96,9 +97,9 @@ func TestMsgServer_RegisterBridgeKeyLink_ReplacesLink(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), firstAddr).Return(authtypes.NewBaseAccount(firstAddr, first.PubKey(), 1, 0)).AnyTimes()
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), secondAddr).Return(authtypes.NewBaseAccount(secondAddr, second.PubKey(), 1, 0)).AnyTimes()
 
-	_, err := ms.RegisterBridgeKeyLink(ctx, bridgeKeyLinkMsg(t, ctx.ChainID(), first, ethPriv))
+	_, err := ms.RegisterBridgeKeyLink(ctx, bridgeKeyLinkMsg(t, ctx.ChainID(), first, ethPriv, 1))
 	require.NoError(t, err)
-	_, err = ms.RegisterBridgeKeyLink(ctx, bridgeKeyLinkMsg(t, ctx.ChainID(), second, ethPriv))
+	_, err = ms.RegisterBridgeKeyLink(ctx, bridgeKeyLinkMsg(t, ctx.ChainID(), second, ethPriv, 2))
 	require.NoError(t, err)
 
 	linked, err := k.ResolveBridgeRecipient(ctx, sdk.AccAddress(ethPriv.PubKey().Address()).String())
@@ -115,8 +116,8 @@ func TestHandleNativeTokenRelease_UsesKeyLinkOnce(t *testing.T) {
 	owner := sdk.AccAddress(ownerPriv.PubKey().Address())
 	linked := sdk.AccAddress(linkedPriv.PubKey().Address())
 	further := sdk.AccAddress(furtherPriv.PubKey().Address())
-	require.NoError(t, k.BridgeKeyLinks.Set(ctx, owner.String(), linked.String()))
-	require.NoError(t, k.BridgeKeyLinks.Set(ctx, linked.String(), further.String()))
+	require.NoError(t, k.BridgeKeyLinks.Set(ctx, owner.String(), types.BridgeKeyLink{OwnerAddress: owner.String(), RecipientAddress: linked.String(), Nonce: 1}))
+	require.NoError(t, k.BridgeKeyLinks.Set(ctx, linked.String(), types.BridgeKeyLink{OwnerAddress: linked.String(), RecipientAddress: further.String(), Nonce: 1}))
 
 	recipient, err := k.ResolveBridgeRecipient(ctx, owner.String())
 	require.NoError(t, err)
@@ -150,22 +151,55 @@ func TestMsgServer_RegisterBridgeKeyLink_RejectsUppercaseCreator(t *testing.T) {
 	ethPriv := secp256k1.GenPrivKey()
 	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(true).AnyTimes()
 
-	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv)
+	msg := bridgeKeyLinkMsg(t, ctx.ChainID(), gonkaPriv, ethPriv, 1)
 	msg.Creator = strings.ToUpper(msg.Creator)
 	_, err := ms.RegisterBridgeKeyLink(ctx, msg)
 	require.ErrorIs(t, err, sdkerrors.ErrInvalidAddress)
 }
 
-func bridgeKeyLinkMsg(t *testing.T, chainID string, gonkaPriv, ethPriv *secp256k1.PrivKey) *types.MsgRegisterBridgeKeyLink {
+func TestMsgServer_RegisterBridgeKeyLink_RejectsReplay(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	ctx = ctx.WithChainID("gonka-test")
+
+	ethPriv := secp256k1.GenPrivKey()
+	accountA := secp256k1.GenPrivKey()
+	accountB := secp256k1.GenPrivKey()
+	addrA := sdk.AccAddress(accountA.PubKey().Address())
+	addrB := sdk.AccAddress(accountB.PubKey().Address())
+	owner := sdk.AccAddress(ethPriv.PubKey().Address()).String()
+
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), gomock.Any()).Return(true).AnyTimes()
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addrA).Return(authtypes.NewBaseAccount(addrA, accountA.PubKey(), 1, 0)).AnyTimes()
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), addrB).Return(authtypes.NewBaseAccount(addrB, accountB.PubKey(), 1, 0)).AnyTimes()
+
+	first := bridgeKeyLinkMsg(t, ctx.ChainID(), accountA, ethPriv, 1)
+	_, err := ms.RegisterBridgeKeyLink(ctx, first)
+	require.NoError(t, err)
+	_, err = ms.RegisterBridgeKeyLink(ctx, bridgeKeyLinkMsg(t, ctx.ChainID(), accountB, ethPriv, 2))
+	require.NoError(t, err)
+
+	_, err = ms.RegisterBridgeKeyLink(ctx, first)
+	require.ErrorIs(t, err, types.ErrInvalidBridgeKeyLink)
+
+	linked, err := k.ResolveBridgeRecipient(ctx, owner)
+	require.NoError(t, err)
+	require.Equal(t, addrB.String(), linked)
+	stored, err := k.BridgeKeyLinks.Get(ctx, owner)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), stored.Nonce)
+}
+
+func bridgeKeyLinkMsg(t *testing.T, chainID string, gonkaPriv, ethPriv *secp256k1.PrivKey, nonce uint64) *types.MsgRegisterBridgeKeyLink {
 	t.Helper()
 	creator := sdk.AccAddress(gonkaPriv.PubKey().Address()).String()
 	ethPub := types.CanonicalSecp256k1PubKeyHex(ethPriv.PubKey().Bytes())
-	text := types.BridgeKeyLinkSignText(chainID, creator, ethPub)
+	text := types.BridgeKeyLinkSignText(chainID, creator, ethPub, nonce)
 	return types.NewMsgRegisterBridgeKeyLink(
 		creator,
 		ethPub,
 		types.CanonicalSecp256k1PubKeyHex(gonkaPriv.PubKey().Bytes()),
 		ethereumPersonalSign(t, ethPriv, text),
+		nonce,
 	)
 }
 

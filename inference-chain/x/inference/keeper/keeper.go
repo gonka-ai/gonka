@@ -96,7 +96,8 @@ type (
 		BridgeTransactionValidators collections.KeySet[collections.Quad[string, string, string, string]]
 		// BridgeKeyLinks maps the address derived from an Ethereum public key
 		// to the Gonka account that should receive that key's bridge credits.
-		BridgeKeyLinks                 collections.Map[string, string]
+		// The value includes the nonce of the Ethereum authorization.
+		BridgeKeyLinks                 collections.Map[string, types.BridgeKeyLink]
 		BridgeMintRefundsMap           collections.Map[string, types.MsgRequestBridgeMint]
 		BridgeWithdrawalRefundsMap     collections.Map[string, types.MsgRequestBridgeWithdrawal]
 		BridgeWithdrawalTokenRefsMap   collections.Map[string, types.BridgeTokenReference]
@@ -489,7 +490,7 @@ func NewKeeper(
 			types.BridgeKeyLinksPrefix,
 			"bridge_key_links",
 			collections.StringKey,
-			collections.StringValue,
+			codec.CollValue[types.BridgeKeyLink](cdc),
 		),
 		BridgeMintRefundsMap: collections.NewMap(
 			sb,
