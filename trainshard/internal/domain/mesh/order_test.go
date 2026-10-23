@@ -17,7 +17,7 @@ var (
 )
 
 func member(node vo.NodeRef, address string) mesh.Member {
-	return mesh.Member{Node: node, Address: address, PublicKey: "key-" + address}
+	return mesh.Member{Node: node, Address: address, PublicKey: wgKey(address)}
 }
 
 func members(n int) []mesh.Member {
@@ -73,8 +73,8 @@ func TestOrderRejectsUnusableMembers(t *testing.T) {
 		{
 			name: "two nodes publishing the same public key",
 			members: []mesh.Member{
-				{Node: nodeA, Address: "10.0.0.1", PublicKey: "victim-key"},
-				{Node: nodeB, Address: "10.0.0.2", PublicKey: "victim-key"},
+				{Node: nodeA, Address: "10.0.0.1", PublicKey: wgKey("victim")},
+				{Node: nodeB, Address: "10.0.0.2", PublicKey: wgKey("victim")},
 			},
 			wantErr: mesh.ErrDuplicateKey,
 		},
@@ -86,6 +86,16 @@ func TestOrderRejectsUnusableMembers(t *testing.T) {
 				{Node: nodeB, Address: "10.0.0.2", PublicKey: "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRTwy1="},
 			},
 			wantErr: mesh.ErrDuplicateKey,
+		},
+		{
+			name:    "member whose public key is not base64",
+			members: []mesh.Member{{Node: nodeA, Address: "10.0.0.1", PublicKey: "victim-key"}},
+			wantErr: mesh.ErrInvalidKey,
+		},
+		{
+			name:    "member whose public key is not 32 bytes",
+			members: []mesh.Member{{Node: nodeA, Address: "10.0.0.1", PublicKey: "LJbqQbbQnNjJmpaBNCiu3X/Ia1/8U2pPHRVCbzRT"}},
+			wantErr: mesh.ErrInvalidKey,
 		},
 		{
 			name:    "member without an address",

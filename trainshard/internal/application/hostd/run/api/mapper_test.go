@@ -270,8 +270,8 @@ func meshRequest() contract.MeshRequest {
 	return contract.MeshRequest{
 		Command: command(),
 		Peers: []contract.Peer{
-			{Rank: 0, Participant: string(participant), NodeID: "node-a", Address: "10.0.0.1", PublicKey: "key-a"},
-			{Rank: 1, Participant: otherHost, NodeID: "node-b", Address: "10.0.0.2", PublicKey: "key-b"},
+			{Rank: 0, Participant: string(participant), NodeID: "node-a", Address: "10.0.0.1", PublicKey: "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE="},
+			{Rank: 1, Participant: otherHost, NodeID: "node-b", Address: "10.0.0.2", PublicKey: "YmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmI="},
 		},
 	}
 }

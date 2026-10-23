@@ -2,6 +2,8 @@ package mesh_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"strings"
 
@@ -23,12 +25,18 @@ var (
 	}
 )
 
+// wgKey is a 32-byte key in the base64 form wireguard prints, the only form a mesh takes
+func wgKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
 func identityOf(node vo.NodeRef) mesh.Identity {
 	return mesh.Identity{
 		Member: mesh.Member{
 			Node:      node,
 			Address:   "10.0.0.1",
-			PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID),
+			PublicKey: wgKey(string(node.Participant) + "-" + string(node.NodeID)),
 		},
 
 		Signature: []byte(node.Participant),
@@ -105,7 +113,7 @@ func (d *delegationStub) Speaks(_ context.Context, participant vo.Participant, s
 func configOf(nodes ...vo.NodeRef) mesh.Config {
 	peers := make([]mesh.Peer, 0, len(nodes))
 	for rank, node := range nodes {
-		peers = append(peers, mesh.Peer{Rank: rank, Node: node, Address: "10.0.0.1", PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID)})
+		peers = append(peers, mesh.Peer{Rank: rank, Node: node, Address: "10.0.0.1", PublicKey: wgKey(string(node.Participant) + "-" + string(node.NodeID))})
 	}
 	return mesh.Config{Shard: shardID, Peers: peers}
 }

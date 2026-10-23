@@ -7,6 +7,7 @@ var (
 	ErrDuplicateNode     = shared.New("MESH_DUPLICATE_NODE", shared.ErrValidation, "mesh has a duplicate node")
 	ErrDuplicateKey      = shared.New("MESH_DUPLICATE_KEY", shared.ErrValidation, "two mesh members share a public key")
 	ErrIncompleteMember  = shared.New("MESH_INCOMPLETE_MEMBER", shared.ErrValidation, "mesh member is missing an address or a public key")
+	ErrInvalidKey        = shared.New("MESH_INVALID_KEY", shared.ErrValidation, "mesh member's public key is not a 32-byte base64 key")
 	ErrNodeNotInMesh     = shared.New("MESH_NODE_NOT_IN_MESH", shared.ErrValidation, "node is not part of the mesh")
 	ErrRankOffMesh       = shared.New("MESH_RANK_OFF_MESH", shared.ErrValidation, "rank has no address on the mesh")
 	ErrForeignIdentity   = shared.New("MESH_FOREIGN_IDENTITY", shared.ErrForbidden, "mesh member is not signed by the host that holds the node or a key it granted")

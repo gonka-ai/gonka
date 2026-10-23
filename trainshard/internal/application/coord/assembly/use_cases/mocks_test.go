@@ -2,6 +2,8 @@ package usecases_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"slices"
 	"strings"
@@ -45,7 +47,7 @@ func identityOf(node vo.NodeRef) mesh.Identity {
 		Member: mesh.Member{
 			Node:      node,
 			Address:   "10.0.0." + string(node.NodeID[len(node.NodeID)-1]),
-			PublicKey: "key-" + string(node.Participant) + "-" + string(node.NodeID),
+			PublicKey: wgKey(string(node.Participant) + "-" + string(node.NodeID)),
 		},
 
 		Signature: []byte(node.Participant),
@@ -189,4 +191,10 @@ func (v *verifierStub) Recover(_, signature []byte) (vo.Address, error) {
 		return "", v.err
 	}
 	return vo.Address(strings.TrimSpace(string(signature))), nil
+}
+
+// wgKey is a 32-byte key in the base64 form wireguard prints, the only form a mesh takes
+func wgKey(seed string) string {
+	sum := sha256.Sum256([]byte(seed))
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
