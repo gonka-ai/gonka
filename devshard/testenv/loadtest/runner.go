@@ -606,6 +606,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 			FailureRate:   profile.FailureRate,
 			HTTPStatus:    profile.HTTPStatus,
 			ChaosJSON:     chaos,
+			Host:          node.Host,
 		})
 	}
 	if err := randomizeTestenv(cfg); err != nil {

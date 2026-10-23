@@ -138,6 +138,9 @@ type MockOpenAINodeCfg struct {
 	// ChaosJSON is the mock's chaos config (the chaos object of POST /testenv/fault) the node runs
 	// with from the start; empty answers every execution honestly.
 	ChaosJSON string `yaml:"chaos_json,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -742,6 +745,10 @@ func (c *File) Validate() error {
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
 	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
+	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
 		if strings.TrimSpace(node.Name) == "" {
@@ -758,6 +765,9 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

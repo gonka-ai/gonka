@@ -37,6 +37,15 @@ func validateHostFaults(topology Topology, faults []HostFault, workload time.Dur
 	return nil
 }
 
+func validTopologyHost(host string, participants int) bool {
+	for index := 0; index <= participants; index++ {
+		if host == fmt.Sprintf("versiond-%d", index) {
+			return true
+		}
+	}
+	return false
+}
+
 type HostFaultResult struct {
 	HostFault
 	PausedAt  time.Time `json:"paused_at,omitempty"`
