@@ -144,6 +144,33 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 			}
 		}
 
+		seenKeyLinks := make(map[string]struct{}, len(genState.Bridge.KeyLinks))
+		for i, elem := range genState.Bridge.KeyLinks {
+			if elem == nil {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d is nil", i))
+			}
+			owner, err := sdk.AccAddressFromBech32(elem.OwnerAddress)
+			if err != nil || elem.OwnerAddress != owner.String() {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has a non-canonical owner address", i))
+			}
+			recipient, err := sdk.AccAddressFromBech32(elem.RecipientAddress)
+			if err != nil || elem.RecipientAddress != recipient.String() {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has a non-canonical recipient address", i))
+			}
+			if _, exists := seenKeyLinks[elem.OwnerAddress]; exists {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("duplicate bridge key link for %s", elem.OwnerAddress))
+			}
+			seenKeyLinks[elem.OwnerAddress] = struct{}{}
+			if err := k.BridgeKeyLinks.Set(ctx, elem.OwnerAddress, elem.RecipientAddress); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+		}
+
 		for _, elem := range genState.Bridge.PendingWithdrawalRefunds {
 			if elem == nil {
 				continue
@@ -376,12 +403,23 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		pendingWithdrawalRefundPtrs[i] = &pendingWithdrawalRefunds[i]
 	}
 
+	keyLinks, err := k.GetAllBridgeKeyLinks(ctx)
+	if err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	keyLinkPtrs := make([]*types.BridgeKeyLink, len(keyLinks))
+	for i := range keyLinks {
+		keyLinkPtrs[i] = &keyLinks[i]
+	}
+
 	genesis.Bridge = &types.Bridge{
 		ContractAddresses:        contractAddressPtrs,
 		TokenMetadata:            tokenMetadataPtrs,
 		TradeApprovedTokens:      tradeApprovedTokenPtrs,
 		PendingMintRefunds:       pendingMintRefundPtrs,
 		PendingWithdrawalRefunds: pendingWithdrawalRefundPtrs,
+		KeyLinks:                 keyLinkPtrs,
 	}
 	// this line is used by starport scaffolding # genesis/module/export
 
