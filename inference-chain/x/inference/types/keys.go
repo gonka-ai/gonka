@@ -142,7 +142,25 @@ var (
 	// bounded confirmation-prefix cleanup. It is not one of the regular
 	// pruner epoch fields.
 	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
-	ParamsKey                  = []byte("p_inference")
+	// 114 and 115 are the v0.2.17 admission counters. Proven challenges sit
+	// just after them so they do not share a prefix with those counters.
+	PoCChallengeProvenPrefix = collections.NewPrefix(116)
+	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey.
+	// Prefix 141 is retired and cleared by the v0.2.17 upgrade.
+	TrainshardsPrefix               = collections.NewPrefix(130)
+	TrainshardCounterPrefix         = collections.NewPrefix(131)
+	TrainshardActiveIndexPrefix     = collections.NewPrefix(132)
+	TrainshardExpiryIndexPrefix     = collections.NewPrefix(133)
+	TrainshardClosedIndexPrefix     = collections.NewPrefix(134)
+	TrainshardReservationsPrefix    = collections.NewPrefix(135)
+	TrainingNodeOptInsPrefix        = collections.NewPrefix(136)
+	TrainshardProposalsPrefix       = collections.NewPrefix(137)
+	TrainshardProposalCounterPrefix = collections.NewPrefix(138)
+	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
+	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
+	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
+	TrainshardWeightEpochPrefix     = collections.NewPrefix(143)
+	ParamsKey                       = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

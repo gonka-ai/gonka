@@ -41,7 +41,7 @@ func TestUpgradeFreezesActiveEpochRecipe(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, found)
 
-			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k)
+			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k, &trainingAuthzKeeper{})
 			_, err = handler(ctx, upgradetypes.Plan{Name: UpgradeName}, module.VersionMap{"capability": 1})
 			require.NoError(t, err)
 			recipe, found, err := k.GetEpochPocRecipe(ctx, 5)

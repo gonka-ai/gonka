@@ -1,20 +1,25 @@
 // Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes,
-// writes the epoch-validation admission caps, and enables the wasm fee group.
+// writes the epoch-validation admission caps, repairs trainshard state, and
+// enables the wasm fee group.
 //
 // Moves flat recipes and dynamic coefficients into PREFILL blocks, adds DECODE
 // templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
 // on the model. Admission defaults are written when stored params do not have
-// them yet, then retained accounts and weights are repaired. After module
-// migrations run, the wasm fee group is enabled.
+// them yet, then retained accounts and weights are repaired. Trainshard
+// backfills run before module migrations. After migrations, the wasm fee group
+// is enabled.
 package v0_2_17
 
 import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -23,10 +28,17 @@ import (
 // wasmMinGasPriceNgonka matches the cosmos group rate installed by v0.2.16.
 const wasmMinGasPriceNgonka uint64 = 1
 
+type AuthzMigrationKeeper interface {
+	IterateGrants(ctx context.Context, handler func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool)
+	GetAuthorization(ctx context.Context, grantee, granter sdk.AccAddress, msgType string) (authz.Authorization, *time.Time)
+	SaveGrant(ctx context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
+	authzKeeper AuthzMigrationKeeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -60,6 +72,28 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 		if err := freezeActiveEpochRecipe(ctx, k); err != nil {
+			return fromVM, err
+		}
+
+		if err := backfillTrainingParamDefaults(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := backfillTrainshardNodeStatuses(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := repairTrainshardReservations(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := backfillTrainshardWeightEpochs(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := clearTrainshardAutokickRequests(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := clearStaleTrainingOptIns(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := grantTrainingWarmKeyAuthz(ctx, authzKeeper, k); err != nil {
 			return fromVM, err
 		}
 

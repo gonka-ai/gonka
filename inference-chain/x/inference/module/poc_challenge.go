@@ -57,13 +57,6 @@ func (am AppModule) decideCurrentChallengeSegments(ctx context.Context, epochInd
 			}
 			continue
 		}
-		if !rotate {
-			if err := am.keeper.MarkChallengePassed(cacheCtx, ch.Target); err != nil {
-				am.LogError("decideCurrentChallengeSegments: failed to mark passed", types.PoC,
-					"target", ch.Target, "error", err)
-				continue
-			}
-		}
 		writeFn()
 	}
 	return nil
@@ -76,63 +69,55 @@ func (am AppModule) decideCurrentChallengeSegment(
 	snapshotHeight int64,
 	rotate bool,
 ) error {
-	if finish <= ch.StartHeight {
-		return nil
+	if !rotate && am.keeper.BuildEpochReservationView(ctx, ch.EpochIndex).FullyReservedAt(ch.Target, finish-1) {
+		return am.keeper.MarkChallengeAborted(ctx, ch.Target, "fully_reserved_by_training")
 	}
-	duration := finish - ch.StartHeight
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	if duration < types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams) {
-		return am.advanceAfterDecision(ctx, ch, rotate)
+	minSegment := types.EffectiveMinPunishableSegmentBlocks(params.PocChallengeParams)
+	if finish-ch.StartHeight >= minSegment {
+		if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
+			return err
+		}
+		updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return nil
+		}
+		if updated.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+			return am.keeper.DeleteChallengeSegmentData(ctx, ch.Target)
+		}
+		ch = updated
 	}
-
-	if err := am.evaluatePunishableChallengeSegment(ctx, ch, finish, snapshotHeight); err != nil {
-		return err
-	}
-	updated, found, err := am.keeper.GetPoCChallenge(ctx, ch.Target)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return nil
-	}
-	if updated.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
-		return am.keeper.DeleteChallengeSegmentData(ctx, ch.Target)
-	}
-	return am.advanceAfterDecision(ctx, updated, rotate)
+	return am.advanceAfterDecision(ctx, ch, minSegment, rotate)
 }
 
-func (am AppModule) canRotateChallenge(ctx context.Context, ch types.PoCChallenge) bool {
-	safety, err := am.keeper.ChallengeSafetyFinish(ctx, ch)
-	if err != nil {
-		return false
-	}
-	return sdk.UnwrapSDKContext(ctx).BlockHeight() < safety
-}
-
-func (am AppModule) advanceAfterDecision(ctx context.Context, ch types.PoCChallenge, rotate bool) error {
+func (am AppModule) advanceAfterDecision(ctx context.Context, ch types.PoCChallenge, minSegment int64, rotate bool) error {
 	if err := am.keeper.DeleteChallengeSegmentData(ctx, ch.Target); err != nil {
 		return err
 	}
-	if !rotate {
-		return nil
+	if rotate {
+		safety, err := am.keeper.ChallengeSafetyFinish(ctx, ch)
+		if err != nil {
+			return err
+		}
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		if safety-sdkCtx.BlockHeight() >= minSegment {
+			return am.keeper.RotateChallengeSegment(ctx, ch.Target, sdkCtx.BlockHeight(), sdkCtx.HeaderInfo().Hash)
+		}
 	}
-	if am.canRotateChallenge(ctx, ch) {
-		return am.writeNextChallengeSegment(ctx, ch)
-	}
-	safety, err := am.keeper.ChallengeSafetyFinish(ctx, ch)
+	proven, err := am.keeper.ChallengeProven(ctx, ch.Target)
 	if err != nil {
 		return err
 	}
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	return am.keeper.RotateChallengeSegment(ctx, ch.Target, safety, sdkCtx.HeaderInfo().Hash)
-}
-
-func (am AppModule) writeNextChallengeSegment(ctx context.Context, ch types.PoCChallenge) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	return am.keeper.RotateChallengeSegment(ctx, ch.Target, sdkCtx.BlockHeight(), sdkCtx.HeaderInfo().Hash)
+	if proven {
+		return am.keeper.MarkChallengePassed(ctx, ch.Target)
+	}
+	return am.keeper.MarkChallengeAborted(ctx, ch.Target, "no_punishable_segment")
 }
 
 func (am AppModule) evaluatePunishableChallengeSegment(
@@ -196,9 +181,19 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 		measured[ch.Target] = fullMeasured[ch.Target]
 	}
 	fullExpected := weightByParticipant(participants.Participants, presentScales)
-	totalExpected := map[string]int64{ch.Target: fullExpected[ch.Target]}
+	reserved := am.keeper.CollectEpochReservedNodeWeightsBetween(ctx, ch.EpochIndex, ch.StartHeight, finish-1, keeper.ReservationScopeShield)
+	shielded, _ := reservedConfirmationWeights(
+		map[string][]*types.TrainshardReservedNode{ch.Target: reserved[ch.Target]},
+		&types.PreservedNodesSnapshot{},
+		types.ConfirmationWeightCoefficients(presentScales),
+	)
+	expected := fullExpected[ch.Target] - shielded[ch.Target]
+	if shielded[ch.Target] > 0 && expected <= 0 {
+		return nil
+	}
+	totalExpected := map[string]int64{ch.Target: expected}
 
-	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil)
+	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, shielded, totalExpected, nil)
 	if updated {
 		am.keeper.SetEpochGroupData(ctx, epochGroupData)
 	}
@@ -206,11 +201,16 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	if participant.CurrentEpochStats == nil {
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
 	}
-	if ratio, ok := ratios[ch.Target]; ok {
+	ratio, read := ratios[ch.Target]
+	if read {
 		participant.CurrentEpochStats.ConfirmationPoCRatio = ratio
 	}
 	if calculations.ConfirmationPoCStatus(participant.CurrentEpochStats, params.ConfirmationPocParams) == calculations.Fail {
 		if err := am.keeper.MarkChallengeFailed(ctx, ch.Target); err != nil {
+			return err
+		}
+	} else if read {
+		if err := am.keeper.MarkChallengeProven(ctx, ch.Target); err != nil {
 			return err
 		}
 	}

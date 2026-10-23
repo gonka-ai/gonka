@@ -55,11 +55,13 @@ fun bootPoCChallengeCluster(
     expectedConfirmationsPerEpoch: Long,
     pocStageDuration: Long,
     alphaThreshold: Double,
+    minPunishableSegmentBlocks: Long = 8L,
 ): PoCChallengeCluster {
     val spec = createPoCChallengeSpec(
         expectedConfirmationsPerEpoch = expectedConfirmationsPerEpoch,
         pocStageDuration = pocStageDuration,
         alphaThreshold = alphaThreshold,
+        minPunishableSegmentBlocks = minPunishableSegmentBlocks,
     )
     val (cluster, genesis) = initCluster(
         joinCount = 2,

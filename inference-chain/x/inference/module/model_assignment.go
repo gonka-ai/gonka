@@ -352,6 +352,7 @@ type KeeperForModelAssigner interface {
 	GetGenesisGuardianAddresses(ctx context.Context) []string
 	GetRootGroupDataWithLiveMembers(ctx context.Context) (types.EpochGroupData, map[string]bool, error)
 	GetLiveSubGroupsForCurrentEpoch(ctx context.Context) (map[string]types.EpochGroupData, map[string]map[string]bool, error)
+	CollectReservedNodeIdsAt(ctx context.Context, height int64) map[string]map[string]struct{}
 }
 
 func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[string]bool, trustWeights map[string]int64) int64 {
@@ -652,6 +653,8 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		ma.LogWarn("SamplePreservedForEpisode: unable to fetch live subgroups for current epoch",
 			types.Allocation, "error", subErr)
 	}
+	// assembly is closed through PoC and cPoC, so no node becomes reserved while the episode runs
+	reserved := ma.keeper.CollectReservedNodeIdsAt(ctx, anchorHeight)
 
 	for _, modelId := range sortedModelIds {
 		currentSubData := subGroupDataByModel[modelId]
@@ -672,7 +675,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 					"participant", vw.MemberAddress,
 					"epoch_index", epoch.Index,
 				)
-				currentEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
+				currentEpochData.Set(modelId, vw.MemberAddress, withoutReserved(dedupedNodes, reserved[vw.MemberAddress]))
 				if vw.VotingPower > 0 {
 					if participantVotingPowers[modelId] == nil {
 						participantVotingPowers[modelId] = make(map[string]int64)
@@ -738,6 +741,22 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		EpisodeAnchorHeight: anchorHeight,
 		ModelPreservedNodes: modelPreservedNodes,
 	}, nil
+}
+
+// withoutReserved drops the nodes held by training, reserved or returning: they train through
+// the episode and cannot serve inference in its slot. Dropped before the thresholds, a host whose
+// free nodes are all sampled counts against the non-voting cap
+func withoutReserved(nodes []*types.MLNodeInfo, reserved map[string]struct{}) []*types.MLNodeInfo {
+	if len(reserved) == 0 {
+		return nodes
+	}
+	return slices.DeleteFunc(slices.Clone(nodes), func(n *types.MLNodeInfo) bool {
+		if n == nil {
+			return false
+		}
+		_, held := reserved[n.NodeId]
+		return held
+	})
 }
 
 // thresholdSet holds the calculated thresholds for participant and node weight filtering

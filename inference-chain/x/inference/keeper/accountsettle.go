@@ -212,6 +212,9 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
 	var bitcoinResult BitcoinResult
+	// a reserved node earns by its frozen weight and carries no duty for the part
+	// of the epoch it was leased
+	reservations := k.CollectEpochReservations(ctx, currentEpochIndex)
 	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
 		allParticipants,
 		&data,
@@ -219,6 +222,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		inputs.ValidationParams,
 		settleParameters,
 		inputs.ParticipantMLNodes,
+		reservations,
 		inputs.RewardTransfers,
 		inputs.RewardPenalties,
 		k.Logger(),
