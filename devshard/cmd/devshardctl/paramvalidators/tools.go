@@ -21,10 +21,10 @@ var (
 // declare `type: "function"` and `function.name`; `function.parameters` is bounded via
 // SchemaBounds. Also handles tool_choice defaulting: drops tool_choice and parallel_tool_calls
 // when tools is absent or [], writes DefaultToolChoice when tool_choice is absent.
-// tool_choice == "required" is coerced to DefaultToolChoice (network policy: "required" is
-// temporarily disabled -- restore here when re-enabling). Per-model overrides (e.g. Kimi
-// K2.6 → "none") are wired in the catalog via ModelScopedParameterHandler, not here, so this
-// validator stays model-agnostic.
+// tool_choice == "required" is coerced to DefaultToolChoice and drops min_tokens, as for any
+// grammar-constrained request (network policy: "required" is temporarily disabled -- restore
+// here when re-enabling). Per-model overrides (e.g. Kimi K2.6 → "none") are wired in the
+// catalog via ModelScopedParameterHandler, not here, so this validator stays model-agnostic.
 type ToolsValidator struct {
 	MaxDepth      int
 	MaxSize       int
@@ -55,6 +55,8 @@ func (v ToolsValidator) Validate(vctx ValidatorContext) error {
 	// matches the no-tool_choice case rather than 400-ing the client.
 	if vctx.Document["tool_choice"] == "required" {
 		vctx.Document["tool_choice"] = v.DefaultToolChoice
+		// A forced tool call carries no min_tokens; past the call vLLM would pad the arguments.
+		delete(vctx.Document, "min_tokens")
 	}
 	if _, hasChoice := vctx.Document["tool_choice"]; !hasChoice {
 		if v.DefaultToolChoice != "" {
