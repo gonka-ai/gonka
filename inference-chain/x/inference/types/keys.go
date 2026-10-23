@@ -142,6 +142,12 @@ var (
 	// bounded confirmation-prefix cleanup. It is not one of the regular
 	// pruner epoch fields.
 	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114 and 115 are taken above. Not 115: 's' is the
+	// first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
 	ParamsKey                  = []byte("p_inference")
 )
 

@@ -63,6 +63,13 @@ func CreateUpgradeHandler(
 			return fromVM, err
 		}
 
+		// Index records left pending before the recheck existed; EndBlock re-evaluates them.
+		if n, err := k.BackfillBridgePendingIndex(ctx); err != nil {
+			k.LogError("bridge pending backfill failed", types.Upgrades, "error", err)
+		} else {
+			k.LogInfo("bridge pending backfill", types.Upgrades, "records", n)
+		}
+
 		// This binary ships wasmd v0.54.11 and wasmvm v2.2.10, which also selects
 		// ibc-go v8.8.0. Wasm ConsensusVersion stays 4 and ibc stays 6, so
 		// RunMigrations does not touch that state. Reply call-depth limiting,
