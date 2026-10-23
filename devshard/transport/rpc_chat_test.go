@@ -374,6 +374,6 @@ func TestRPCClient_SendWaitReadyDoesNotTakeBudget(t *testing.T) {
 
 func TestParseChatStream_ZeroFramesTruncated(t *testing.T) {
 	c := &RPCClient{HTTPClient: &HTTPClient{config: DefaultClientConfig()}}
-	_, err := c.parseChatStream(context.Background(), nil, io.Discard, nil)
+	_, err := c.parseChatStream(context.Background(), nil, io.Discard, nil, nil)
 	require.ErrorIs(t, err, ErrSSEStreamTruncated)
 }
