@@ -45,37 +45,49 @@ func TestAHostWithNoChatBudgetIsThrottled(t *testing.T) {
 
 type oneHostDownBridge struct {
 	stubMainnetBridge
-	down string
+	down      string
+	lookupErr error
 }
 
 func (b *oneHostDownBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	if address == b.down {
-		return nil, fmt.Errorf("Participant %s: %w", address, bridge.ErrChainUnavailable)
+		return nil, fmt.Errorf("Participant %s: %w", address, b.lookupErr)
 	}
 	return &bridge.HostInfo{Address: address, URL: "http://127.0.0.1:1"}, nil
 }
 
 // Test flow:
-//  1. Open a session whose second host's URL lookup fails on the chain.
+//  1. Open a session whose second host's URL lookup fails on the chain, or finds no such participant.
 //  2. Build the chat throttle from the session's clients.
 //  3. Assert the session opened and only the unresolved host is blocked, so no start is signed for a host the gateway cannot reach.
 func TestAHostWhoseURLIsUnresolvedIsThrottled(t *testing.T) {
-	const hostA, hostB = "host-budget-a", "host-budget-b"
-	session, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex: "0000000000000000000000000000000000000000000000000000000000000001",
-		EscrowID:      "9801",
-		Bridge:        &oneHostDownBridge{down: hostB},
-		Escrow: &bridge.EscrowInfo{
-			EscrowID: "9801", Amount: 1_000_000, CreatorAddress: "creator",
-			Slots: []string{hostA, hostB}, TokenPrice: 1, EpochID: 7,
-		},
-		StoragePath: filepath.Join(t.TempDir(), "session"),
-		RoutePrefix: "/devshard/dev",
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = session.Close() })
+	cases := []struct {
+		name      string
+		lookupErr error
+	}{
+		{name: "chain unavailable", lookupErr: bridge.ErrChainUnavailable},
+		{name: "participant absent from the chain", lookupErr: bridge.ErrParticipantNotFound},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			const hostA, hostB = "host-budget-a", "host-budget-b"
+			session, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
+				PrivateKeyHex: "0000000000000000000000000000000000000000000000000000000000000001",
+				EscrowID:      "9801",
+				Bridge:        &oneHostDownBridge{down: hostB, lookupErr: testCase.lookupErr},
+				Escrow: &bridge.EscrowInfo{
+					EscrowID: "9801", Amount: 1_000_000, CreatorAddress: "creator",
+					Slots: []string{hostA, hostB}, TokenPrice: 1, EpochID: 7,
+				},
+				StoragePath: filepath.Join(t.TempDir(), "session"),
+				RoutePrefix: "/devshard/dev",
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = session.Close() })
 
-	blocked := throttledOrOutOfChatBudget(session.Clients(), session.HostParticipantKeyList(), nil)
-	require.False(t, blocked(hostA))
-	require.True(t, blocked(hostB))
+			blocked := throttledOrOutOfChatBudget(session.Clients(), session.HostParticipantKeyList(), nil)
+			require.False(t, blocked(hostA))
+			require.True(t, blocked(hostB))
+		})
+	}
 }

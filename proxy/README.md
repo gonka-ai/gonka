@@ -94,7 +94,7 @@ Key runtime environment variables:
 | `GLOBAL_RATE_LIMIT_RPS` | 1000 | Global "safety net" rate limit (default: 1000). |
 | `GLOBAL_RATE_UNIT` | s | Unit for global limit (`s` or `m`). |
 | `GLOBAL_BURST` | 5000 | Burst for global limit. |
-| `GONKA_API_RATE_LIMIT_RPS` | 10 | Base rate for `/api/`. Combined with high burst for "Punisher" strategy. |
+| `GONKA_API_RATE_LIMIT_RPM` | 10 | Base rate for `/api/`, per `GONKA_API_RATE_UNIT` (minute by default). Combined with high burst for "Punisher" strategy. |
 | `GONKA_API_RATE_UNIT` | m | Rate unit (`s` or `m`). Default `m` for slow recovery. |
 | `GONKA_API_BURST` | 600 | High burst capacity allows spikes but penalizes sustained spam. |
 | `GONKA_API_EXEMPT_ROUTES` | `chat inference training` | List of route prefixes to exempt. Matches prefix (e.g. `chat` matches `/chat`, `/chat/`, `/chat/123`). |
