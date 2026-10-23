@@ -48,11 +48,10 @@ func newDropStallPeer(t *testing.T, realIP bool, floor int) *dropStallPeer {
 			return m.allowFn(ctx, e)
 		}
 		if m.stallNext.CompareAndSwap(true, false) {
-			select {
-			case <-time.After(m.stallFor):
-			case <-ctx.Done():
-				return false, ctx.Err()
-			}
+			// Hold past the client's Attach deadline regardless of ctx: a
+			// ctx.Err() here maps to "escrow is not open" and races the
+			// client's own deadline into a dead door.
+			time.Sleep(m.stallFor)
 			return true, nil
 		}
 		if m.refuseNext.CompareAndSwap(true, false) {
