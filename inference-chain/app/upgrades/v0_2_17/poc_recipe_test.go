@@ -52,7 +52,11 @@ func TestUpgradeFreezesActiveEpochRecipe(t *testing.T) {
 			require.Len(t, recipe.Models, 1)
 			gotPrefill, ok := recipe.Models[0].SchemeParams(types.PocScheme_POC_SCHEME_PREFILL)
 			require.True(t, ok)
-			require.Equal(t, prefill, gotPrefill)
+			require.Equal(t, prefill.SeqLen, gotPrefill.SeqLen)
+			require.Equal(t, prefill.DynamicCoefficient, gotPrefill.DynamicCoefficient)
+			require.Equal(t, prefill.StatTest.DistThreshold, gotPrefill.StatTest.DistThreshold)
+			require.Equal(t, prefill.StatTest.PMismatch, gotPrefill.StatTest.PMismatch)
+			require.Equal(t, "0.010000000000000000", decimalString(t, gotPrefill.StatTest.PValueThreshold))
 			for sequence := uint64(0); sequence < 2; sequence++ {
 				confirmation, err := recipe.ConfirmationRecipe(&types.ConfirmationPoCEvent{
 					TriggerHeight: 150 + int64(sequence), EventSequence: sequence,

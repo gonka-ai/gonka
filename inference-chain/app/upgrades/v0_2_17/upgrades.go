@@ -171,7 +171,7 @@ func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
 			{
 				Scheme:             types.PocScheme_POC_SCHEME_PREFILL,
 				SeqLen:             model.SeqLen,
-				StatTest:           model.StatTest,
+				StatTest:           pinFraudAlpha(model.StatTest),
 				DynamicCoefficient: model.DynamicCoefficient,
 			},
 			decodeScheme(model.ModelId),

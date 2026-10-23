@@ -146,7 +146,8 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, block.Scheme)
 	require.Equal(t, int64(128), block.SeqLen)
 	require.Equal(t, int64(0), block.DecodeSteps)
-	require.Equal(t, stat, block.StatTest)
+	require.Equal(t, stat.DistThreshold, block.StatTest.DistThreshold)
+	require.Equal(t, "0.010000000000000000", decimalString(t, block.StatTest.PValueThreshold))
 	require.Equal(t, coefficient, block.DynamicCoefficient)
 	require.NoError(t, got.Validate())
 }
@@ -268,7 +269,9 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		prefill, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_PREFILL)
 		require.True(t, ok)
 		require.Equal(t, params.PocParams.Models[i].DynamicCoefficient, prefill.DynamicCoefficient)
-		require.Equal(t, params.PocParams.Models[i].StatTest, prefill.StatTest)
+		require.Equal(t, params.PocParams.Models[i].StatTest.DistThreshold, prefill.StatTest.DistThreshold)
+		require.Equal(t, params.PocParams.Models[i].StatTest.PMismatch, prefill.StatTest.PMismatch)
+		require.Equal(t, "0.010000000000000000", decimalString(t, prefill.StatTest.PValueThreshold))
 		decode, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_DECODE)
 		require.True(t, ok)
 		require.Equal(t, int64(256), decode.SeqLen)
@@ -279,7 +282,7 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		}{
 			{decode.StatTest.DistThreshold, tc.tau},
 			{decode.StatTest.PMismatch, "0.100000000000000000"},
-			{decode.StatTest.PValueThreshold, "0.050000000000000000"},
+			{decode.StatTest.PValueThreshold, "0.010000000000000000"},
 			{decode.DynamicCoefficient.CoeffMin, tc.minimum},
 			{decode.DynamicCoefficient.CoeffMax, tc.maximum},
 			{decode.DynamicCoefficient.RelativeDifficulty, tc.difficulty},
@@ -290,4 +293,11 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		}
 		require.Equal(t, tc.share, decode.DynamicCoefficient.TargetShareBps)
 	}
+}
+
+func decimalString(t *testing.T, value *types.Decimal) string {
+	t.Helper()
+	actual, err := value.ToLegacyDec()
+	require.NoError(t, err)
+	return actual.String()
 }
