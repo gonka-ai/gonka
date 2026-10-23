@@ -81,7 +81,7 @@ The `x/inference` module will introduce new governance parameters to control the
 *   `CollateralPerWeightUnit`: The amount of collateral (in the native token) required to activate one unit of `Collateral-Eligible Weight`.
 *   `SlashFractionInvalid`: The percentage of a participant's total collateral to be slashed when they are marked as `INVALID`. Proposed default: `0.20` (20%).
 *   `SlashFractionDowntime`: The percentage of a participant's total collateral to be slashed for failing to meet participation requirements in an epoch. Proposed default: `0.10` (10%).
-*   `DowntimeMissedPercentageThreshold`: The epoch performance threshold that triggers a downtime slash. If a participant's missed request percentage for an epoch exceeds this value, their collateral will be slashed. Proposed default: `0.05` (5%).
+*   `DowntimeMissedPercentageThreshold`: **[DEPRECATED - NO EFFECT]** This parameter is declared but never consumed. Downtime slashing is instead triggered by INACTIVE status transitions, which use SPRT-based downtime detection (`DowntimeGoodPercentage`, `DowntimeBadPercentage`, `DowntimeHThreshold`) or confirmation PoC failures. The fixed threshold design described in this proposal was superseded by the sequential probability ratio test implementation. Originally proposed default: `0.05` (5%).
 
 #### 2.3.1. Malicious Behavior (Marked as `INVALID`)
 
@@ -173,6 +173,6 @@ The module will provide CLI commands for:
 Activating the collateral system requires a coordinated network upgrade. The upgrade process will be managed by the `x/upgrade` module and will perform two critical functions:
 
 1.  **Create New `x/collateral` Module Store**: The upgrade will be configured to add a new store to the blockchain's state for the `x/collateral` module. This is where all collateral balances and unbonding queues will be stored.
-2.  **Migrate `x/inference` Parameters**: The upgrade handler will execute a one-time migration of the `x/inference` module's parameters. It will read the existing parameters from the store, add the new `BaseWeightRatio`, `CollateralPerWeightUnit`, `SlashFractionInvalid`, `SlashFractionDowntime`, and `DowntimeMissedPercentageThreshold` parameters with their defined default values, and save the updated parameter structure back to the store.
+2.  **Migrate `x/inference` Parameters**: The upgrade handler will execute a one-time migration of the `x/inference` module's parameters. It will read the existing parameters from the store, add the new `BaseWeightRatio`, `CollateralPerWeightUnit`, `SlashFractionInvalid`, `SlashFractionDowntime`, and `DowntimeMissedPercentageThreshold` (deprecated, no effect) parameters with their defined default values, and save the updated parameter structure back to the store.
 
 This ensures that upon upgrade, the new module is ready and all existing modules have the necessary parameters to support the collateral and slashing features. 
