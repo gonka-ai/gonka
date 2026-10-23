@@ -103,16 +103,18 @@ func TestApplyDealerComplaintOutcomes_ValidResponseRemovesComplainer(t *testing.
 		},
 		DealerParts: []*types.DealerPartStorage{
 			{
-				DealerAddress: "p0",
-				Commitments:   [][]byte{commitmentForShare},
+				DealerAddress:   "p0",
+				Commitments:     [][]byte{commitmentForShare},
+				ConstantTermPok: admittedPoK(),
 				ParticipantShares: []*types.EncryptedSharesForParticipant{
 					{EncryptedShares: [][]byte{}},
 					{EncryptedShares: [][]byte{ciphertext}},
 				},
 			},
 			{
-				DealerAddress: "p1",
-				Commitments:   [][]byte{mustMakeG2CommitmentForScalar(t, 7)},
+				DealerAddress:   "p1",
+				Commitments:     [][]byte{mustMakeG2CommitmentForScalar(t, 7)},
+				ConstantTermPok: admittedPoK(),
 				ParticipantShares: []*types.EncryptedSharesForParticipant{
 					{EncryptedShares: [][]byte{}},
 					{EncryptedShares: [][]byte{}},
@@ -191,8 +193,9 @@ func TestAdjudicateComplaints_RecomputeCandidatesAfterFalseComplainerExclusion(t
 		},
 		DealerParts: []*types.DealerPartStorage{
 			{
-				DealerAddress: "p0",
-				Commitments:   [][]byte{mustMakeG2CommitmentForScalar(t, 5)},
+				DealerAddress:   "p0",
+				Commitments:     [][]byte{mustMakeG2CommitmentForScalar(t, 5)},
+				ConstantTermPok: admittedPoK(),
 				ParticipantShares: []*types.EncryptedSharesForParticipant{
 					{EncryptedShares: [][]byte{}},
 					{EncryptedShares: sharesForComplainer},
@@ -200,12 +203,14 @@ func TestAdjudicateComplaints_RecomputeCandidatesAfterFalseComplainerExclusion(t
 				},
 			},
 			{
-				DealerAddress: "p1",
-				Commitments:   [][]byte{mustMakeG2CommitmentForScalar(t, 7)},
+				DealerAddress:   "p1",
+				Commitments:     [][]byte{mustMakeG2CommitmentForScalar(t, 7)},
+				ConstantTermPok: admittedPoK(),
 			},
 			{
-				DealerAddress: "p2",
-				Commitments:   [][]byte{},
+				DealerAddress:   "p2",
+				Commitments:     [][]byte{},
+				ConstantTermPok: admittedPoK(),
 			},
 		},
 		VerificationSubmissions: []*types.VerificationVectorSubmission{
@@ -260,10 +265,10 @@ func TestDetermineValidDealersWithConsensus_ExcludedVerifiersAreDealerScoped(t *
 			{Address: "p3", SlotStartIndex: 80, SlotEndIndex: 99},
 		},
 		DealerParts: []*types.DealerPartStorage{
-			{DealerAddress: "p0", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 5)}},
-			{DealerAddress: "p1", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 7)}},
-			{DealerAddress: "p2", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 9)}},
-			{DealerAddress: "p3", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 11)}},
+			{DealerAddress: "p0", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 5)}, ConstantTermPok: admittedPoK()},
+			{DealerAddress: "p1", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 7)}, ConstantTermPok: admittedPoK()},
+			{DealerAddress: "p2", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 9)}, ConstantTermPok: admittedPoK()},
+			{DealerAddress: "p3", Commitments: [][]byte{mustMakeG2CommitmentForScalar(t, 11)}, ConstantTermPok: admittedPoK()},
 		},
 		VerificationSubmissions: []*types.VerificationVectorSubmission{
 			{DealerValidity: []bool{true, false, false, false}},

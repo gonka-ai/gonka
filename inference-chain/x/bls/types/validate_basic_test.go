@@ -74,12 +74,25 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
 				EncryptedShares: [][]byte{validShare},
 			}},
+			ConstantTermPok: make([]byte, DealerConstantTermPoKLen),
 		}
 	}
 
 	t.Run("valid", func(t *testing.T) {
 		msg := mkValidMsg()
 		require.NoError(t, msg.ValidateBasic())
+	})
+
+	t.Run("missing constant term pok", func(t *testing.T) {
+		msg := mkValidMsg()
+		msg.ConstantTermPok = nil
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("wrong constant term pok length", func(t *testing.T) {
+		msg := mkValidMsg()
+		msg.ConstantTermPok = make([]byte, DealerConstantTermPoKLen+1)
+		require.Error(t, msg.ValidateBasic())
 	})
 
 	t.Run("invalid creator", func(t *testing.T) {
