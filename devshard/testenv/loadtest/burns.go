@@ -15,10 +15,10 @@ const ghostStage = "ghost_probe_skipped"
 // faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host.
 var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true}
 
-// budgetBurnReasons are the burns of a host that refuses Chats over its peer budget: the gateway
-// throttles it, and it falls behind on state it never got. Such a fault is often a background marker
-// that lasts the whole run, so its burns are left out in background windows too.
-var budgetBurnReasons = map[string]bool{"participant_throttled_no_send": true, "participant_catching_up_no_send": true}
+// recoveryBurnReasons are burns while a host is throttled or catching up on state it missed.
+// A paused host or one refusing Chats over its peer budget can cause both. Peer-budget faults
+// can be background markers lasting the whole run, so their burns are left out there too.
+var recoveryBurnReasons = map[string]bool{"participant_throttled_no_send": true, "participant_catching_up_no_send": true}
 
 // gatewayBurn is one nonce the gateway committed and never sent (a ghost), from its log.
 type gatewayBurn struct {
@@ -113,8 +113,8 @@ func (g ghostSet) escrow(id string) map[string]bool {
 }
 
 // burnExcuse reports whether the ghost rate leaves a burn out: the gateway ejected or cut off the
-// slot's host inside one of its graced fault windows, or throttled it inside a peer-budget fault
-// window, so the fault caused it.
+// slot's host inside one of its graced fault windows, or throttled it or caught it up inside a
+// pause's recovery window or a graced peer-budget window, so the fault caused it.
 func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 	c := newInvariantContext(in)
 	return func(burn gatewayBurn) bool {
@@ -128,8 +128,30 @@ func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 			if faultBurnReasons[burn.Reason] && c.inForegroundWindow(participant, burn.At, burn.At) {
 				return true
 			}
-			for _, w := range c.faultyDuring(participant, burn.At, burn.At) {
-				if budgetBurnReasons[burn.Reason] && w.Event.Params["observe"] == "host_rate_limited" {
+			if !recoveryBurnReasons[burn.Reason] {
+				continue
+			}
+			for _, w := range c.windows {
+				if w.Participant != participant {
+					continue
+				}
+				span := w.Graced
+				switch {
+				case w.Event.Action == "pause":
+					recovery, err := parsePauseRecovery(w.Event.Recovery)
+					if err != nil {
+						continue
+					}
+					span = w.Span
+					if w.Event.EndedAt != nil {
+						span.To = span.To.Add(recovery)
+					}
+				case w.Event.Params["observe"] == "host_rate_limited":
+					// Peer-budget faults keep the existing graced window.
+				default:
+					continue
+				}
+				if span.overlapsAfter(burn.At, burn.At) {
 					return true
 				}
 			}

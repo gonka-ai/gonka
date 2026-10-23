@@ -30,28 +30,31 @@ type HostFault struct {
 	Mode       string `yaml:"mode" json:"mode"`
 	StartAfter string `yaml:"start_after" json:"start_after"`
 	Duration   string `yaml:"duration" json:"duration"`
+	Recovery   string `yaml:"recovery,omitempty" json:"recovery,omitempty"`
 }
 
 // Event is one entry of workload.events. At and Until are offsets from the
 // workload start; Until is the planned revert time for windowed actions.
 type Event struct {
-	ID     string         `yaml:"id"`
-	Case   string         `yaml:"case"`
-	Action string         `yaml:"action"`
-	Target string         `yaml:"target"`
-	At     string         `yaml:"at"`
-	Until  string         `yaml:"until"`
-	Params map[string]any `yaml:"params"`
+	ID       string         `yaml:"id"`
+	Case     string         `yaml:"case"`
+	Action   string         `yaml:"action"`
+	Target   string         `yaml:"target"`
+	At       string         `yaml:"at"`
+	Until    string         `yaml:"until"`
+	Recovery string         `yaml:"recovery,omitempty"`
+	Params   map[string]any `yaml:"params"`
 }
 
 // EventRecord is one events.json entry. The schema is shared with the
-// invariant evaluators, so every key is always present.
+// invariant evaluators. Recovery is optional for compatibility with older run artifacts.
 type EventRecord struct {
 	ID           string         `json:"id"`
 	Case         string         `json:"case"`
 	Action       string         `json:"action"`
 	Target       string         `json:"target"`
 	Params       map[string]any `json:"params"`
+	Recovery     string         `json:"recovery,omitempty"`
 	PlannedStart time.Time      `json:"planned_start"`
 	PlannedEnd   time.Time      `json:"planned_end"`
 	StartedAt    *time.Time     `json:"started_at"`
@@ -103,6 +106,7 @@ func (s Scenario) TimelineEvents() []Event {
 	events := make([]Event, 0, len(s.Workload.HostFaults)+len(s.Workload.Events))
 	for i, fault := range s.Workload.HostFaults {
 		event := Event{ID: fmt.Sprintf("host_faults-%d", i+1), Action: "pause", Target: fault.Host, At: fault.StartAfter, Until: fault.Duration}
+		event.Recovery = fault.Recovery
 		start, e1 := time.ParseDuration(fault.StartAfter)
 		duration, e2 := time.ParseDuration(fault.Duration)
 		if e1 == nil && e2 == nil {
@@ -267,11 +271,32 @@ func isBackground(params map[string]any) bool {
 // markerObservations are the faults-fired-and-ml-nodes-bound signals a marker can name in params.observe.
 var markerObservations = map[string]bool{"host_rate_limited": true}
 
+// defaultPauseRecovery bounds expected catch-up burns after unpause independently of timeout
+// sweeping. It matches user.catchUpChunkTimeout; scenarios can choose a different bound.
+const defaultPauseRecovery = 60 * time.Second
+
+func parsePauseRecovery(raw string) (time.Duration, error) {
+	if raw == "" {
+		return defaultPauseRecovery, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("recovery must be a non-negative duration")
+	}
+	return d, nil
+}
+
 func validateEventParams(event Event) error {
+	if event.Recovery != "" && event.Action != "pause" {
+		return fmt.Errorf("recovery is only for pause events")
+	}
 	if isBackground(event.Params) && event.Action != "marker" {
 		return fmt.Errorf("params.background is only for marker events")
 	}
 	switch event.Action {
+	case "pause":
+		_, err := parsePauseRecovery(event.Recovery)
+		return err
 	case "marker":
 		if raw, ok := event.Params["observe"]; ok {
 			if observe, _ := raw.(string); !markerObservations[observe] {
@@ -497,6 +522,7 @@ func logEventError(event plannedEvent, step string, began time.Time, err error) 
 func executeEvent(ctx context.Context, started time.Time, event plannedEvent, ops eventOps, mocks mockControl) (record EventRecord) {
 	record = EventRecord{
 		ID: event.ID, Case: event.Case, Action: event.Action, Target: event.Target, Params: event.Params,
+		Recovery:     event.Recovery,
 		PlannedStart: started.Add(event.window.start).UTC(), PlannedEnd: started.Add(event.window.end).UTC(),
 	}
 	var runErr error

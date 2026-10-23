@@ -66,6 +66,13 @@ must be ordered and not overlap; different hosts run independently.
 
 `host_faults` is an alias for `pause` entries of `workload.events` (see
 [Event timeline](#event-timeline)); entry N becomes event `host_faults-N`.
+Both forms accept an optional `recovery` duration, default `60s`, which bounds
+the exclusion of throttled/catching-up burns after the actual unpause time.
+Use `recovery: 0s` to count those burns immediately after resume. Invalid or
+negative durations are rejected. This bound is independent of protocol sweep
+grace and does not extend other invariant windows. Keep workload time after
+recovery so a participant that stays behind can exceed the ghost-rate limit;
+`missrate-catch-up` uses `recovery: 30s` to leave a 20s observation tail.
 Each event produces an `events.<id>.<action>.<target>.applied` assertion
 checking that the action and its revert succeeded. Host catch-up validation is
 separate from fault injection and is not performed here.
@@ -113,7 +120,7 @@ workload:
 
 | Action | Target | Apply / revert |
 | --- | --- | --- |
-| `pause` | versiond host | `docker compose pause` / `unpause`; `until` required |
+| `pause` | versiond host | `docker compose pause` / `unpause`; `until` required; optional `recovery` bounds expected catch-up burns after resume (default `60s`) |
 | `throttle` | versiond host | read the container's `HostConfig.NanoCpus`, then `docker update --cpus <params.cpus>` / `docker update --cpus` back to the read limit, or to the Docker host's `NCPU` if it had none, since `docker update --cpus 0` leaves the limit unchanged and Docker offers no update that removes it; `until` required |
 | `container_restart` | versiond host | `docker compose restart` / `start`; no `until` |
 | `container_kill` | versiond host | `docker compose kill -s <params.signal, default KILL>` / `start` at `until` (or at once) |
@@ -129,7 +136,7 @@ Events on one host must not overlap; an `ml_fault` on a node bound to
 a host (`topology.mock_ml.nodes[].host`) counts as that host. `gateway_restart`
 and `epoch_advance` are global and must not overlap each other.
 
-`events.json` holds one record per event: `id, case, action, target, params, planned_start, planned_end, started_at, ended_at, error`. Times are RFC 3339; `started_at`/`ended_at` are null when the step did not happen. `started_at` is when the apply step began, because the fault takes effect somewhere inside it (a `docker compose kill` of the gateway cuts connections up to two seconds before the command returns); `ended_at` is when the revert step returned.
+`events.json` holds one record per event: `id, case, action, target, params, planned_start, planned_end, started_at, ended_at, error`, plus optional `recovery` when configured. Times are RFC 3339; `started_at`/`ended_at` are null when the step did not happen. `started_at` is when the apply step began, because the fault takes effect somewhere inside it (a `docker compose kill` of the gateway cuts connections up to two seconds before the command returns); `ended_at` is when the revert step returned. Saved-run rechecks use the recorded `recovery`, or the `60s` default for older pause records.
 
 Checks whose `case` has `known_bug` set are reported as `XFAIL` when they fail
 and do not fail the run. A passing one is `XPASS` and logged as a warning;
@@ -794,7 +801,13 @@ finalization and settlement. This keeps the test aligned with the same
 
 When `assertions.devshard.no_orphaned_work` is enabled, the runner polls `/v1/debug/inferences` until every non-ghost record of an active escrow has a terminal status (`finished`, `validated`, `invalidated`, or `timed_out`). With escrow rotation it reads every runtime the gateway lists: an unfinished record of a deactivated escrow counts as `sealed`, because settlement closes it as it stands and `escrow-accounting-reconciles` judges that settlement, including escrows whose model has settlement off. With invariants enabled, an unfinished record of an active escrow younger than the pending-age bound of `no-nonce-left-pending` counts as `in_flight`: the timeout sweep has not reached it yet. The check fails only on `orphaned` records, those past that bound or, without invariants, any unfinished one at the drain deadline. The DevShard record count does not have to equal the number of client requests: cache hits, speculative attempts, and ghost probes can make those counts different. An empty successful debug snapshot is also considered clean.
 
-A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records. A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host. A burn with reason `participant_throttled_no_send` or `participant_catching_up_no_send` is left out while its host is inside a window of a fault that observes `host_rate_limited`, background windows included: a host over its peer Chat budget refuses Chats, so the gateway throttles it and it falls behind (in `prod-like-steady` that is P4 for the whole run). Burns outside those windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
+A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records.
+
+A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host.
+
+A burn with reason `participant_throttled_no_send` or `participant_catching_up_no_send` is left out during its host's pause and until `recovery` after the actual resume (default `60s`, including the `host_faults` alias). The interval ends exclusively: a burn exactly at resume plus recovery already counts. This uses its own recovery bound, not the protocol sweep grace. A host still catching up after that bound contributes to the ghost rate and can fail the check even if redundancy keeps all client requests successful.
+
+Those two reasons are also left out in a window of a fault that observes `host_rate_limited`, with the existing sweep grace and background windows included: a host over its peer Chat budget refuses Chats, so the gateway throttles it and it falls behind (in `prod-like-steady` that is P4 for the whole run). Burns outside those windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
 
 ## Assertions
 
