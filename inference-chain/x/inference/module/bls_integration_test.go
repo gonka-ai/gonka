@@ -1094,6 +1094,7 @@ func setupSnapshotValidationBenchmarkFixture(tb testing.TB, numParticipants, war
 	require.NoError(tb, err)
 
 	grantsByGranter := make(map[string][]*authztypes.GrantAuthorization, numParticipants)
+	accountsByAddr := make(map[string]sdk.AccountI, numParticipants*(1+warmKeysPerParticipant))
 	activeParticipants := make([]*types.ActiveParticipant, numParticipants)
 
 	for i := 0; i < numParticipants; i++ {
@@ -1102,14 +1103,14 @@ func setupSnapshotValidationBenchmarkFixture(tb testing.TB, numParticipants, war
 		primaryAddrStr := primaryAddr.String()
 
 		primaryAcc := authtypes.NewBaseAccount(primaryAddr, primaryKey.PubKey(), uint64(i+1), 0)
-		mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), primaryAddr).Return(primaryAcc).AnyTimes()
+		accountsByAddr[string(primaryAddr)] = primaryAcc
 
 		grants := make([]*authztypes.GrantAuthorization, warmKeysPerParticipant)
 		for w := 0; w < warmKeysPerParticipant; w++ {
 			warmKey := secp256k1.GenPrivKey()
 			warmAddr := sdk.AccAddress(warmKey.PubKey().Address())
 			warmAcc := authtypes.NewBaseAccount(warmAddr, warmKey.PubKey(), uint64(10000+i*100+w), 0)
-			mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), warmAddr).Return(warmAcc).AnyTimes()
+			accountsByAddr[string(warmAddr)] = warmAcc
 			grants[w] = &authztypes.GrantAuthorization{
 				Granter:       primaryAddrStr,
 				Grantee:       warmAddr.String(),
@@ -1130,6 +1131,13 @@ func setupSnapshotValidationBenchmarkFixture(tb testing.TB, numParticipants, war
 			CapWeight: 10,
 		}
 	}
+
+	mocks.AccountKeeper.EXPECT().
+		GetAccount(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ interface{}, addr sdk.AccAddress) sdk.AccountI {
+			return accountsByAddr[string(addr)]
+		}).
+		AnyTimes()
 
 	mocks.AuthzKeeper.EXPECT().
 		GranterGrants(gomock.Any(), gomock.Any()).
