@@ -28,7 +28,7 @@ func carryParticipant(addr string, modelNodes carryModelNodes) *types.ActivePart
 	return p
 }
 
-func nodesOf(weights ...int64) []*types.MLNodeInfo {
+func carryNodesOf(weights ...int64) []*types.MLNodeInfo {
 	nodes := make([]*types.MLNodeInfo, len(weights))
 	for i, w := range weights {
 		nodes[i] = &types.MLNodeInfo{NodeId: "n" + string(rune('1'+i)), PocWeight: w}
@@ -37,7 +37,7 @@ func nodesOf(weights ...int64) []*types.MLNodeInfo {
 }
 
 func freeNodesOf(weights ...int64) []*types.MLNodeInfo {
-	nodes := nodesOf(append([]int64{0}, weights...)...)
+	nodes := carryNodesOf(append([]int64{0}, weights...)...)
 	return nodes[1:]
 }
 
@@ -127,64 +127,64 @@ func TestTrainingCarryBudget(t *testing.T) {
 	}{
 		{
 			name:    "an honest host keeps its frozen weight",
-			current: carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)}, record: 100,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)}, record: 100,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(100), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 100, wantWeight: 400,
 		},
 		{
 			name:    "a node declared 30% heavy gains nothing",
-			current: carryModelNodes{"model-a": nodesOf(130, 90, 90, 90)}, record: 130,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(130), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(130, 90, 90, 90)}, record: 130,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(130), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 100, wantWeight: 400,
 		},
 		{
 			name:    "a 400/0/0/0 split gains nothing",
-			current: carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)}, record: 130,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(130), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)}, record: 130,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(130), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 100, wantWeight: 400,
 		},
 		{
 			name:    "sending the other nodes home leaves only the capped record",
-			current: carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)}, record: 130,
-			upcoming:  carryModelNodes{"model-a": nodesOf(130)},
+			current: carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)}, record: 130,
+			upcoming:  carryModelNodes{"model-a": carryNodesOf(130)},
 			wantCarry: 130, wantWeight: 130,
 		},
 		{
 			name:         "a cPoC cut shrinks the budget",
-			current:      carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)},
+			current:      carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)},
 			confirmation: 200, scales: coefficientScales(map[string]float64{"model-a": 1}), record: 100,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(100), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 0, wantWeight: 300,
 		},
 		{
 			name:    "a fallback carry of the epoch weights is held to the record",
-			current: carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)}, record: 130,
-			upcoming:  carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)},
+			current: carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)}, record: 130,
+			upcoming:  carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)},
 			wantCarry: 130, wantWeight: 130,
 		},
 		{
 			name:    "a second PoC of the lease carries no more than the first did",
-			current: carryModelNodes{"model-a": nodesOf(60, 100, 100, 100)}, record: 130,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(130), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(60, 100, 100, 100)}, record: 130,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(130), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 60, wantWeight: 360,
 		},
 		{
 			name:         "moving free nodes to another model is weighed by its coefficient",
-			current:      carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)},
+			current:      carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)},
 			confirmation: 400, scales: coefficientScales(map[string]float64{"model-a": 1, "model-b": 2}), record: 130,
-			upcoming:  carryModelNodes{"model-a": nodesOf(130), "model-b": freeNodesOf(50, 50, 50)},
+			upcoming:  carryModelNodes{"model-a": carryNodesOf(130), "model-b": freeNodesOf(50, 50, 50)},
 			wantCarry: 100, wantWeight: 250,
 		},
 		{
 			name:    "a host the current epoch does not hold carries nothing",
-			current: carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)}, record: 100, notInRoot: true,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)}, record: 100, notInRoot: true,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(100), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 0, wantWeight: 300,
 		},
 		{
 			name:    "a lease without a weight epoch carries nothing",
-			current: carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)}, record: 100, unanchored: true,
-			upcoming:  carryModelNodes{"model-a": append(nodesOf(100), freeNodesOf(100, 100, 100)...)},
+			current: carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)}, record: 100, unanchored: true,
+			upcoming:  carryModelNodes{"model-a": append(carryNodesOf(100), freeNodesOf(100, 100, 100)...)},
 			wantCarry: 0, wantWeight: 300,
 		},
 	}
@@ -210,7 +210,7 @@ func TestTrainingCarryBudget(t *testing.T) {
 
 func TestTrainingCarryBudget_MergedCarryStartsFromTheRecord(t *testing.T) {
 	am, ctx := setupTrainingCarry(t, carrySetup{
-		current: carryParticipant(testutil.Executor, carryModelNodes{"model-a": nodesOf(60, 100)}),
+		current: carryParticipant(testutil.Executor, carryModelNodes{"model-a": carryNodesOf(60, 100)}),
 		record:  130,
 		inRoot:  true,
 	})
@@ -228,7 +228,7 @@ func TestSeatAndGuard_DropsAHostWhoseOnlyWeightIsAnUnbackedCarry(t *testing.T) {
 	cheater := testutil.Executor
 	honest := testutil.Executor2
 	am, ctx := setupTrainingCarry(t, carrySetup{
-		current:      carryParticipant(cheater, carryModelNodes{"model-a": nodesOf(400, 0, 0, 0)}),
+		current:      carryParticipant(cheater, carryModelNodes{"model-a": carryNodesOf(400, 0, 0, 0)}),
 		confirmation: 0,
 		scales:       coefficientScales(map[string]float64{"model-a": 1}),
 		record:       130,
@@ -238,7 +238,7 @@ func TestSeatAndGuard_DropsAHostWhoseOnlyWeightIsAnUnbackedCarry(t *testing.T) {
 
 	fresh := []*types.ActiveParticipant{
 		carryParticipant(honest, carryModelNodes{"model-a": []*types.MLNodeInfo{{NodeId: "h1", PocWeight: 100}}}),
-		carryParticipant(cheater, carryModelNodes{"model-a": nodesOf(130)}),
+		carryParticipant(cheater, carryModelNodes{"model-a": carryNodesOf(130)}),
 	}
 	result, usedFallback := am.seatAndGuardParticipants(ctx, carryUpcomingEpoch, fresh, participantNodeIDs(fresh[:1]))
 
@@ -251,7 +251,7 @@ func TestTrainingCarryBudget_FreeNodeNoiseDoesNotWearDownTheHost(t *testing.T) {
 	host := testutil.Executor
 	scales := coefficientScales(map[string]float64{"model-a": 1})
 	am, ctx := setupTrainingCarry(t, carrySetup{
-		current:      carryParticipant(host, carryModelNodes{"model-a": nodesOf(8946, 7154)}),
+		current:      carryParticipant(host, carryModelNodes{"model-a": carryNodesOf(8946, 7154)}),
 		confirmation: 16100,
 		scales:       scales,
 		record:       8946,
@@ -265,7 +265,7 @@ func TestTrainingCarryBudget_FreeNodeNoiseDoesNotWearDownTheHost(t *testing.T) {
 			PocStartBlockHeight: carryUpcomingEpoch.PocStartBlockHeight + int64(i)*100,
 		}
 		require.NoError(t, am.keeper.SetEpoch(ctx, &epoch))
-		upcoming := carryParticipant(host, carryModelNodes{"model-a": nodesOf(carried, free)})
+		upcoming := carryParticipant(host, carryModelNodes{"model-a": carryNodesOf(carried, free)})
 
 		am.buildTrainingCarryBudget(ctx, epoch).apply([]*types.ActiveParticipant{upcoming})
 
@@ -290,11 +290,11 @@ func TestTrainingCarryBudget_FreeNodeNoiseDoesNotWearDownTheHost(t *testing.T) {
 func TestTrainingCarryBudget_OverlappingLeasesKeepTheEarliestAnchor(t *testing.T) {
 	host := testutil.Executor
 	am, ctx := setupTrainingCarry(t, carrySetup{
-		current: carryParticipant(host, carryModelNodes{"model-a": nodesOf(60, 100, 100, 100)}),
+		current: carryParticipant(host, carryModelNodes{"model-a": carryNodesOf(60, 100, 100, 100)}),
 		record:  100,
 		inRoot:  true,
 	})
-	before := carryParticipant(host, carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)})
+	before := carryParticipant(host, carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)})
 	require.NoError(t, am.keeper.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 300}))
 	require.NoError(t, am.keeper.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId:      3,
@@ -318,7 +318,7 @@ func TestTrainingCarryBudget_OverlappingLeasesKeepTheEarliestAnchor(t *testing.T
 		}},
 	}))
 	require.NoError(t, am.keeper.TrainshardWeightEpoch.Set(ctx, 2, 3))
-	upcoming := carryParticipant(host, carryModelNodes{"model-a": nodesOf(100, 100, 100, 100)})
+	upcoming := carryParticipant(host, carryModelNodes{"model-a": carryNodesOf(100, 100, 100, 100)})
 
 	am.buildTrainingCarryBudget(ctx, carryUpcomingEpoch).apply([]*types.ActiveParticipant{upcoming})
 

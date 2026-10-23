@@ -13,17 +13,19 @@ var (
 )
 
 func (msg *MsgSetPoCDelegation) ValidateBasic() error {
-	if _, err := sdk.AccAddressFromBech32(msg.Sender); err != nil {
+	sender, err := CanonicalAccAddress(msg.Sender)
+	if err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address (%s)", err)
 	}
 	if msg.ModelId == "" {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "model_id required")
 	}
 	if msg.DelegateTo != "" {
-		if _, err := sdk.AccAddressFromBech32(msg.DelegateTo); err != nil {
+		delegate, err := CanonicalAccAddress(msg.DelegateTo)
+		if err != nil {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid delegate_to address (%s)", err)
 		}
-		if msg.Sender == msg.DelegateTo {
+		if sender.Equals(delegate) {
 			return errorsmod.Wrap(ErrSelfDelegation, "sender cannot delegate to self")
 		}
 	}
@@ -31,7 +33,7 @@ func (msg *MsgSetPoCDelegation) ValidateBasic() error {
 }
 
 func (msg *MsgRefusePoCDelegation) ValidateBasic() error {
-	if _, err := sdk.AccAddressFromBech32(msg.Sender); err != nil {
+	if _, err := CanonicalAccAddress(msg.Sender); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address (%s)", err)
 	}
 	if msg.ModelId == "" {
@@ -41,7 +43,7 @@ func (msg *MsgRefusePoCDelegation) ValidateBasic() error {
 }
 
 func (msg *MsgDeclarePoCIntent) ValidateBasic() error {
-	if _, err := sdk.AccAddressFromBech32(msg.Sender); err != nil {
+	if _, err := CanonicalAccAddress(msg.Sender); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid sender address (%s)", err)
 	}
 	if msg.ModelId == "" {

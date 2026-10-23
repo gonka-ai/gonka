@@ -16,6 +16,9 @@ Reads an artifact JSON (model + pre-computed honest PoC vectors), then:
      `validation.artifacts` set, so the server recomputes the same nonces and
      compares vectors against the artifact under the configured
      `dist_threshold`. Returns `{n_total, n_mismatch, p_value, fraud_detected}`.
+     A decode reference sends each nonce's point trajectory instead; the
+     server teacher-forces it and counts the nonces whose claimed margin
+     exceeds `dist_threshold` (the decode tau).
   6. Writes a JSON + text report.
 
 The script depends only on the Python standard library and `requests`; no
@@ -39,14 +42,22 @@ Artifact format:
   "source": "<provenance string>"
 }
 
+A decode-scheme reference adds `"scheme": "decode"` and `"max_tokens"`, and
+each entry carries the point chosen at every step (257 for seq_len 256 and
+max_tokens 256: the prefill step, then one per decode step) as one hex digit
+per step, the codebook index 0-15:
+    {"nonce": 0, "k_points": "3f0a..."}
+
 Required inputs (no defaults):
   --mlnode-url   base URL of the MLNode under test
   --model        target model id (e.g. Qwen/Qwen3-235B-A22B-Instruct-2507-FP8).
-                 The script looks up artifacts/<sanitized model>.json. If
-                 missing, it errors out and prints the make_artifact.py
-                 invocation needed to bake one.
+                 The script looks up artifacts/<sanitized model>.json
+                 (artifacts/<sanitized model>-decode.json with --scheme
+                 decode). If missing, it errors out and prints the
+                 make_artifact.py invocation needed to bake one.
 
 Optional:
+  --scheme       prefill (default) or decode.
   --artifact     explicit artifact path; overrides the model-based lookup.
   --threshold    L2 dist threshold (else artifact.dist_threshold else 0.2).
   --dtype, --tp-size, --max-model-len, --extra-arg
@@ -119,12 +130,41 @@ def model_to_safe_id(model: str) -> str:
     return safe
 
 
-def model_to_artifact_filename(model: str) -> str:
-    return f"{model_to_safe_id(model)}.json"
+def model_to_artifact_filename(model: str, scheme: str = "prefill") -> str:
+    suffix = "-decode" if scheme == "decode" else ""
+    return f"{model_to_safe_id(model)}{suffix}.json"
 
 
-def resolve_reference_path(model: str) -> Path:
-    return REFERENCES_DIR / model_to_artifact_filename(model)
+def resolve_reference_path(model: str, scheme: str = "prefill") -> Path:
+    return REFERENCES_DIR / model_to_artifact_filename(model, scheme)
+
+
+def artifact_scheme(artifact: Dict[str, Any]) -> str:
+    return artifact.get("scheme", "prefill")
+
+
+def poc_params(artifact: Dict[str, Any]) -> Dict[str, Any]:
+    """The `params` block of a PoC request for this reference's scheme."""
+    params: Dict[str, Any] = {
+        "model": artifact["model"],
+        "seq_len": int(artifact["seq_len"]),
+        "k_dim": int(artifact["k_dim"]),
+    }
+    if artifact_scheme(artifact) == "decode":
+        params["decode"] = True
+        params["max_tokens"] = int(artifact["max_tokens"])
+    return params
+
+
+def validation_pieces(artifact: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The reference entries as `validation.artifacts` of the request."""
+    if artifact_scheme(artifact) == "decode":
+        return [
+            {"nonce": int(a["nonce"]), "vector_b64": "",
+             "k_points_steps": [int(c, 16) for c in a["k_points"]]}
+            for a in artifact["artifacts"]
+        ]
+    return artifact["artifacts"]
 
 
 # ---------------------------------------------------------------------------
@@ -303,11 +343,7 @@ def init_generate(
         "public_key": artifact["public_key"],
         "node_id": int(artifact.get("node_id", 0)),
         "node_count": int(artifact.get("node_count", 1)),
-        "params": {
-            "model": artifact["model"],
-            "seq_len": int(artifact["seq_len"]),
-            "k_dim": int(artifact["k_dim"]),
-        },
+        "params": poc_params(artifact),
     }
     if batch_size is not None:
         payload["batch_size"] = int(batch_size)
@@ -416,7 +452,7 @@ def validate_vectors(
     Response: {status, n_total, n_mismatch, mismatch_nonces, p_value,
     fraud_detected}.
     """
-    pieces = artifact["artifacts"]
+    pieces = validation_pieces(artifact)
     nonces = [int(a["nonce"]) for a in pieces]
     payload = {
         "block_hash": artifact["block_hash"],
@@ -425,11 +461,7 @@ def validate_vectors(
         "node_id": int(artifact.get("node_id", 0)),
         "node_count": int(artifact.get("node_count", 1)),
         "nonces": nonces,
-        "params": {
-            "model": artifact["model"],
-            "seq_len": int(artifact["seq_len"]),
-            "k_dim": int(artifact["k_dim"]),
-        },
+        "params": poc_params(artifact),
         "wait": True,
         "validation": {"artifacts": pieces},
         "stat_test": dict(stat_test),
@@ -472,9 +504,22 @@ def load_artifact(path: Path) -> Dict[str, Any]:
         raise ValueError(f"artifact missing required fields: {missing}")
     if not isinstance(data["artifacts"], list) or not data["artifacts"]:
         raise ValueError("artifact 'artifacts' must be a non-empty list")
-    for a in data["artifacts"]:
-        if "nonce" not in a or "vector_b64" not in a:
-            raise ValueError("each entry in 'artifacts' must have nonce and vector_b64")
+    if artifact_scheme(data) == "decode":
+        if "max_tokens" not in data:
+            raise ValueError("decode artifact missing required field: max_tokens")
+        steps = int(data["max_tokens"]) + 1  # the prefill step, then one per decode step
+        for a in data["artifacts"]:
+            points = a.get("k_points")
+            if "nonce" not in a or not isinstance(points, str) or len(points) != steps:
+                raise ValueError(f"each decode entry in 'artifacts' must have nonce and k_points "
+                                 f"({steps} hex digits)")
+            int(points, 16)
+    elif artifact_scheme(data) == "prefill":
+        for a in data["artifacts"]:
+            if "nonce" not in a or "vector_b64" not in a:
+                raise ValueError("each entry in 'artifacts' must have nonce and vector_b64")
+    else:
+        raise ValueError(f"unknown artifact scheme: {artifact_scheme(data)!r}")
     return data
 
 
@@ -525,6 +570,8 @@ def write_report(
         "reference": {
             "path": str(reference_path),
             "model": artifact["model"],
+            "scheme": artifact_scheme(artifact),
+            "max_tokens": artifact.get("max_tokens"),
             "seq_len": artifact["seq_len"],
             "k_dim": artifact["k_dim"],
             "block_hash": artifact["block_hash"],
@@ -599,8 +646,10 @@ def write_report(
     lines.append(f"experiment:   {exp_dir}")
     lines.append("")
     lines.append("PoC params (from reference unless noted):")
+    decode_part = f"  max_tokens={artifact['max_tokens']}" if artifact_scheme(artifact) == "decode" else ""
     lines.append(
-        f"  seq_len={artifact['seq_len']}  k_dim={artifact['k_dim']}  "
+        f"  scheme={artifact_scheme(artifact)}{decode_part}  "
+        f"seq_len={artifact['seq_len']}  k_dim={artifact['k_dim']}  "
         f"block_hash={artifact['block_hash']!r}  public_key={artifact['public_key']!r}"
     )
     def _bs(v: Optional[int]) -> str:
@@ -697,13 +746,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     p.add_argument("--model", required=True,
                    help="Target model id to deploy and validate (required, e.g. Qwen/Qwen3-235B-A22B-Instruct-2507-FP8). "
                         "Looked up under artifacts/<sanitized>.json unless --artifact is given.")
+    p.add_argument("--scheme", choices=("prefill", "decode"), default="prefill",
+                   help="PoC scheme to validate (default: prefill). decode looks up "
+                        "artifacts/<sanitized>-decode.json; the reference's scheme must match.")
     p.add_argument("--reference", "--artifact", dest="reference", default=None,
                    help="Optional explicit path to the golden reference JSON; overrides the model-based "
                         "lookup. The reference's 'model' field must match --model. "
                         "(Legacy alias: --artifact.)")
     p.add_argument("--threshold", type=float, default=None,
-                   help="L2 dist threshold for the per-nonce mismatch test (default: "
-                        "artifact.dist_threshold or 0.2)")
+                   help="Per-nonce mismatch threshold: the L2 dist threshold for prefill, the claimed-margin "
+                        "tau for decode (default: artifact.dist_threshold or 0.2)")
     p.add_argument("--p-mismatch", type=float, default=None,
                    help="Per-nonce probability of a benign mismatch under honest computation "
                         "(default: artifact.stat_test.p_mismatch or server default)")
@@ -797,18 +849,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.reference:
         reference_path = Path(args.reference).resolve()
     else:
-        reference_path = resolve_reference_path(args.model)
+        reference_path = resolve_reference_path(args.model, args.scheme)
 
     if not reference_path.exists():
+        scheme_args = "--scheme decode --num-nonces 200" if args.scheme == "decode" else "--num-nonces 32 --batch-size 32"
         sys.stderr.write(
-            f"ERROR: no golden reference found for model {args.model!r}\n"
+            f"ERROR: no golden {args.scheme} reference found for model {args.model!r}\n"
             f"  expected:  {reference_path}\n"
             f"  available: {sorted(p.name for p in REFERENCES_DIR.glob('*.json')) if REFERENCES_DIR.exists() else []}\n\n"
             f"  Bake one against a trusted MLNode that already serves this model:\n"
             f"    python3 {Path(__file__).parent / 'make_artifact.py'} \\\n"
             f"        --mlnode-url <trusted_mlnode_url> \\\n"
             f"        --model {args.model!r} \\\n"
-            f"        --num-nonces 32 --batch-size 32 \\\n"
+            f"        {scheme_args} \\\n"
             f"        --out {reference_path}\n"
         )
         return 1
@@ -820,6 +873,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             f"  --model:         {args.model}\n"
             f"  reference.model: {artifact['model']}\n"
             f"  reference path:  {reference_path}\n"
+        )
+        return 1
+    if artifact_scheme(artifact) != args.scheme:
+        sys.stderr.write(
+            f"ERROR: reference scheme mismatch\n"
+            f"  --scheme:         {args.scheme}\n"
+            f"  reference.scheme: {artifact_scheme(artifact)}\n"
+            f"  reference path:   {reference_path}\n"
         )
         return 1
 
@@ -863,7 +924,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  source:         {artifact.get('source') or 'unknown'}")
     print(f"  vectors:        {len(artifact['artifacts'])} pre-computed nonces")
     print(f"Experiment dir:   {exp_dir}")
-    print(f"PoC params:       seq_len={artifact['seq_len']}  k_dim={artifact['k_dim']}  "
+    print(f"PoC params:       scheme={artifact_scheme(artifact)}  "
+          f"seq_len={artifact['seq_len']}  k_dim={artifact['k_dim']}  "
           f"block_hash={artifact['block_hash']!r}  public_key={artifact['public_key']!r}  "
           f"node_id={artifact.get('node_id', 0)}  node_count={artifact.get('node_count', 1)}")
     print(f"Deploy config:    dtype={args.dtype}  additional_args={effective_additional_args}")

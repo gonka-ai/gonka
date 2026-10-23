@@ -103,6 +103,8 @@ var (
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
+	LatestPocStageRecipePrefix        = collections.NewPrefix(66)
+	RetainedPocStageRecipePrefix      = collections.NewPrefix(67)
 	// Maintenance window collections. Prefixes start at 100 to (a) leave room
 	// for upstream's BridgeTransactionValidators (64) and PreservedNodesSnapshot (65)
 	// which shipped first on gm/microrelease, and (b) avoid colliding with
@@ -132,8 +134,19 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	PoCChallengeProvenPrefix       = collections.NewPrefix(114)
-	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
+	// PoCValidationV2CountPrefix is (stage, validator) -> stored vote count.
+	// The validation key ends with the validator, so a count cannot be a prefix
+	// walk of PoCValidationsV2.
+	PoCValidationV2CountPrefix = collections.NewPrefix(114)
+	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
+	// bounded confirmation-prefix cleanup. It is not one of the regular
+	// pruner epoch fields.
+	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	// 114 and 115 are the v0.2.17 admission counters. Proven challenges sit
+	// just after them so they do not share a prefix with those counters.
+	PoCChallengeProvenPrefix = collections.NewPrefix(116)
+	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey.
+	// Prefix 141 is retired and cleared by the v0.2.17 upgrade.
 	TrainshardsPrefix               = collections.NewPrefix(130)
 	TrainshardCounterPrefix         = collections.NewPrefix(131)
 	TrainshardActiveIndexPrefix     = collections.NewPrefix(132)

@@ -47,11 +47,11 @@ func (k msgServer) SubmitNewUnfundedParticipant(goCtx context.Context, msg *type
 	k.AccountKeeper.SetAccount(ctx, newAccount)
 	newParticipant := createNewParticipant(ctx,
 		&types.MsgSubmitNewParticipant{
-			Creator:      msg.GetAddress(),
+			Creator:      addr.String(),
 			Url:          msg.GetUrl(),
 			ValidatorKey: msg.GetValidatorKey(),
 			WorkerKey:    msg.GetWorkerKey(),
-		})
+		}, addr)
 	k.LogDebug("Adding new participant", types.Participants, "participant", newParticipant)
 	err = k.SetParticipant(ctx, newParticipant)
 	if err != nil {

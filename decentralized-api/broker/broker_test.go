@@ -88,6 +88,22 @@ func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) 
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *MockBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(stageHeight)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
+func (m *MockBrokerChainBridge) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	args := m.Called(epochIndex)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryPocStageRecipeResponse), args.Error(1)
+}
+
 func NewTestBroker() *Broker {
 	participantInfo := participant.CosmosInfo{
 		Address: "cosmos1dummyaddress",
@@ -132,6 +148,7 @@ func NewTestBroker() *Broker {
 	}
 
 	mockChainBridge.On("GetCurrentEpochGroupData").Return(parentEpochData, nil)
+	mockChainBridge.On("GetPocStageRecipe", mock.Anything).Return(&types.QueryPocStageRecipeResponse{}, nil).Maybe()
 	// Mock for parent group query (empty modelId) - returns SubGroupModels list
 	parentGroupResp := &types.QueryGetEpochGroupDataResponse{
 		EpochGroupData: types.EpochGroupData{
@@ -170,29 +187,6 @@ func newTestBrokerWithParticipantAddress(mockChainBridge *MockBrokerChainBridge,
 		nil,
 	)
 	return withReservationsRead(NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), &apiconfig.ConfigManager{}))
-}
-
-func TestEnrichWithPocParams_CachesAllModels(t *testing.T) {
-	mockChainBridge := &MockBrokerChainBridge{}
-	mockChainBridge.On("GetParams").Return(&types.QueryParamsResponse{
-		Params: types.Params{
-			PocParams: &types.PocParams{
-				Models: []*types.PoCModelConfig{
-					{ModelId: "model-a", SeqLen: 128},
-					{ModelId: "model-b", SeqLen: 256},
-				},
-			},
-		},
-	}, nil)
-
-	broker := newTestBrokerWithChainBridge(mockChainBridge)
-	params := &pocParams{}
-	broker.loadPoCModels(params)
-
-	require.Len(t, params.models, 2)
-	assert.Equal(t, int64(128), params.models["model-a"].SeqLen)
-	assert.Equal(t, int64(256), params.models["model-b"].SeqLen)
-	assert.Len(t, broker.configManager.GetPoCParams().Models, 2)
 }
 
 func TestResolvePoCModelForNode_PrefersEpochMLNodes(t *testing.T) {
