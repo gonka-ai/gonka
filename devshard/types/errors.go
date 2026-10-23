@@ -19,6 +19,7 @@ var (
 	ErrInferenceSealed                 = errors.New("inference sealed: late validation not accepted")
 	ErrInvalidTransition               = errors.New("invalid status transition")
 	ErrSelfValidation                  = errors.New("validator cannot be the executor")
+	ErrChallengeLimit                  = errors.New("too many open challenges for this address")
 	ErrWrongExecutorSlot               = errors.New("executor_slot does not match assigned executor")
 	ErrActualCostExceedsMax            = errors.New("actual cost exceeds reserved cost")
 	ErrInsufficientVotes               = errors.New("insufficient votes for timeout")

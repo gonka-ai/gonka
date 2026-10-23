@@ -176,6 +176,7 @@ func (sm *StateMachine) rebuildCommittedEntriesLocked() {
 	sm.liveEntrySum = sumLivePointsFromEntries(next)
 	sm.committedEntries = next
 	sm.rebuildOwedLocked()
+	sm.rebuildOpenChallengesLocked()
 }
 
 func (sm *StateMachine) hydrateCommittedInferenceLocked(id uint64) (*types.InferenceRecord, error) {
