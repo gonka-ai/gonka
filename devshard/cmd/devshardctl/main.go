@@ -230,6 +230,7 @@ func mustLoadRuntimeOptions(flags cliFlags) runtimeOptions {
 	}
 	configureRequestCaptureStore(opts.baseStorageDir)
 	configureClassifyCapsFromEnv()
+	configureChatFramesFromEnv()
 	configureAggregateResponseFromEnv(opts.baseStorageDir)
 	return opts
 }

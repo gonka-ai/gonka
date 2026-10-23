@@ -59,6 +59,24 @@ type HostRequest struct {
 	LogprobsOptimizationOverride *bool
 	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
 	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
+	// ChatFrames is how the executor cuts and signs the Chat stream. Nil is
+	// the executor's default.
+	ChatFrames *ChatFrameSchedule
+	// PromptHash and FrameSignerAllowed let the gateway check the executor's
+	// Chat frame signatures. Neither is serialized.
+	PromptHash         []byte
+	FrameSignerAllowed func(address string) bool
+}
+
+// ChatFrameSchedule is the gateway's request for how Chat frames are cut and
+// signed. The zero value is the executor's default.
+type ChatFrameSchedule struct {
+	// Every is how many finished events after the first output share one
+	// signature, and in the joined schedule one flush. Zero is the default.
+	Every uint32 `json:"every,omitempty"`
+	// Separate keeps one flush per event, so the gateway sees each token as
+	// it is produced, and signs every Every events.
+	Separate bool `json:"separate,omitempty"`
 }
 
 // HostResponse carries the host's reply back to the user.
@@ -80,11 +98,25 @@ type HostResponse struct {
 	CachedResponseBody []byte                   // non-nil when reconnecting to a response already stored
 	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
-	ReceiptExpected    bool
-	ReceiptReason      observability.Reason
-	ExecutionExpected  bool
+	// PromptHash is the started record's prompt hash for InferenceID. The
+	// executor's Chat frame signatures start from it.
+	PromptHash        []byte
+	ReceiptExpected   bool
+	ReceiptReason     observability.Reason
+	ExecutionExpected bool
 
 	ReceivedResponseHashes [][32]byte
+	// ChatFrames is what the gateway saw of the executor's frame signatures.
+	ChatFrames ChatFrameCheck
+}
+
+// ChatFrameCheck is the gateway's view of one Chat stream's frame signatures.
+type ChatFrameCheck struct {
+	Frames uint64 // frames read
+	Signed uint64 // frames whose signature verified
+	// Invalid is the first failure: a signature that does not verify, or one
+	// from a key that is not the executor's. Empty when every signature held.
+	Invalid string
 }
 
 type receiptOutcome struct {
@@ -94,6 +126,7 @@ type receiptOutcome struct {
 	executionExpected bool
 	observedHeight    uint64
 	observedHash      []byte
+	promptHash        []byte
 	// lookupStored means the inference already ran here and the caller loads
 	// its stored body outside the host lock. No execution claim is held.
 	lookupStored bool
@@ -763,6 +796,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
 		InferenceID:        receiptOutcome.inferenceID,
+		PromptHash:         receiptOutcome.promptHash,
 		ReceiptExpected:    receiptOutcome.receiptExpected,
 		ReceiptReason:      receiptOutcome.reason,
 		ExecutionExpected:  receiptOutcome.executionExpected,
@@ -1090,6 +1124,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
 		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
 	}
+	outcome.promptHash = append([]byte(nil), rec.PromptHash...)
 
 	_, alreadyExecuting := h.executing[inferenceID]
 	// ConfirmStart applies only while the inference is pending. Returning a

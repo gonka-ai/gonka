@@ -100,7 +100,11 @@ func startLiveChatRPCPartsObserved(t *testing.T, cfg transport.ClientConfig, obs
 
 func startLiveChatRPCPartsObservedCfg(t *testing.T, cfg transport.ClientConfig, obs *wireObserver, connCfg transport.PeerConnConfig, h2c bool, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
 	t.Helper()
-	hostSigner := testutil.MustGenerateKey(t)
+	return startLiveChatRPCWithHost(t, testutil.MustGenerateKey(t), cfg, obs, connCfg, h2c, opts...)
+}
+
+func startLiveChatRPCWithHost(t *testing.T, hostSigner *signing.Secp256k1Signer, cfg transport.ClientConfig, obs *wireObserver, connCfg transport.PeerConnConfig, h2c bool, opts ...transport.ServerOption) (*transport.RPCClient, *signing.Secp256k1Signer, *transport.PeerConn) {
+	t.Helper()
 	userSigner := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
 	config := testutil.DefaultConfig(1)
@@ -201,6 +205,52 @@ func TestRPCClient_SendRoundTrip(t *testing.T) {
 	require.Contains(t, out, "stub")
 	require.True(t, strings.Contains(out, "[DONE]") || strings.Contains(out, "stub"),
 		"token stream should carry the stub completion")
+}
+
+func TestRPCClient_SendVerifiesSignedFrames(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	for _, tc := range []struct {
+		name     string
+		schedule *host.ChatFrameSchedule
+	}{
+		{name: "joined default"},
+		{name: "separate every 2", schedule: &host.ChatFrameSchedule{Every: 2, Separate: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rpc, user, pc := startLiveChatRPCWithHost(t, hostSigner, transport.DefaultClientConfig(), nil, transport.PeerConnConfig{}, false)
+			pc.Start()
+			waitPeerReady(t, pc)
+
+			req := chatHostRequest(t, user)
+			req.ChatFrames = tc.schedule
+			req.PromptHash = testutil.TestPromptHash[:]
+			req.FrameSignerAllowed = func(addr string) bool { return addr == hostSigner.Address() }
+			var stream bytes.Buffer
+			resp, err := rpc.Send(context.Background(), req, &stream, nil)
+			require.NoError(t, err)
+			require.Contains(t, stream.String(), "stub")
+			check := resp.ChatFrames
+			require.Empty(t, check.Invalid)
+			require.NotZero(t, check.Signed, "the executor signs its frames")
+			require.GreaterOrEqual(t, check.Frames, check.Signed)
+		})
+	}
+}
+
+func TestRPCClient_SendReportsFramesFromAnotherKey(t *testing.T) {
+	rpc, user, pc := startLiveChatRPCWithHost(t, testutil.MustGenerateKey(t), transport.DefaultClientConfig(), nil, transport.PeerConnConfig{}, false)
+	pc.Start()
+	waitPeerReady(t, pc)
+
+	req := chatHostRequest(t, user)
+	req.PromptHash = testutil.TestPromptHash[:]
+	someoneElse := testutil.MustGenerateKey(t)
+	req.FrameSignerAllowed = func(addr string) bool { return addr == someoneElse.Address() }
+	var stream bytes.Buffer
+	resp, err := rpc.Send(context.Background(), req, &stream, nil)
+	require.NoError(t, err, "a bad signature is reported, not a failed stream")
+	require.Contains(t, stream.String(), "stub")
+	require.Contains(t, resp.ChatFrames.Invalid, "not the executor")
 }
 
 func TestRPCClient_SendRoundTripGRPCOnH2(t *testing.T) {

@@ -76,6 +76,50 @@ func (v *Secp256k1Verifier) RecoverAddress(message []byte, sig []byte) (string, 
 	return addressFromUncompressedPubkey(pubkey)
 }
 
+// CompactSignatureSize is the R||S form of a Sign result, without the
+// recovery id.
+const CompactSignatureSize = 64
+
+// CompactSignature drops the recovery id from a 65-byte Sign result.
+func CompactSignature(sig []byte) ([]byte, error) {
+	if len(sig) != 65 && len(sig) != CompactSignatureSize {
+		return nil, fmt.Errorf("invalid signature length: %d", len(sig))
+	}
+	return sig[:CompactSignatureSize], nil
+}
+
+// RecoverCompactPubKeys returns the uncompressed public keys a compact
+// signature over message recovers to, one per recovery id that succeeds. The
+// signature verifies against each of them, so a caller that does not already
+// know the key keeps every candidate until a second signature, or the expected
+// address, tells them apart.
+func RecoverCompactPubKeys(message, sig []byte) [][]byte {
+	if len(sig) != CompactSignatureSize {
+		return nil
+	}
+	hash := sha256.Sum256(message)
+	withID := make([]byte, 65)
+	copy(withID, sig)
+	var keys [][]byte
+	for id := byte(0); id < 2; id++ {
+		withID[64] = id
+		if pubkey, err := crypto.Ecrecover(hash[:], withID); err == nil {
+			keys = append(keys, pubkey)
+		}
+	}
+	return keys
+}
+
+// VerifyCompact reports whether sig is pubkey's compact signature over
+// message. It rejects a high-S signature, which Sign never produces.
+func VerifyCompact(pubkey, message, sig []byte) bool {
+	if len(sig) != CompactSignatureSize {
+		return false
+	}
+	hash := sha256.Sum256(message)
+	return crypto.VerifySignature(pubkey, hash[:], sig)
+}
+
 func (s *Secp256k1Signer) PublicKeyBytes() []byte {
 	return crypto.FromECDSAPub(&s.key.PublicKey)
 }

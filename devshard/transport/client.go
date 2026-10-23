@@ -927,13 +927,17 @@ func writeSSELine(w io.Writer, line string) error {
 }
 
 type countingReader struct {
-	r io.Reader
-	n int64
+	r      io.Reader
+	n      int64
+	frames *ChatFrameVerifier
 }
 
 func (cr *countingReader) Read(p []byte) (int, error) {
 	n, err := cr.r.Read(p)
 	cr.n += int64(n)
+	if cr.frames != nil && n > 0 {
+		cr.frames.Write(p[:n])
+	}
 	return n, err
 }
 
