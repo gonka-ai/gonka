@@ -10,20 +10,27 @@ This is a design note only. It does not change code by itself.
 
 ## Goal
 
-A height stamp is `(height, block hash)`. Block time for that pair comes from the block-change feed the process already receives. Start, ConfirmStart, and Finish carry the stamp and return immediately. Header time is consulted only when deciding to trigger or answer a timeout challenge, and that decision is local and asynchronous.
+A height stamp is `(height, block hash)`. Block time for that pair comes from a block-change feed: the dapi block long-poll, or the process's own Comet subscription. Start, ConfirmStart, and Finish carry the stamp and return immediately. Header time is consulted only when deciding to trigger or answer a timeout challenge, and that decision is local and asynchronous.
 
 ---
 
-## Where height, hash, and time already arrive
+## Where height, hash, and time arrive
 
-Comet `NewBlock` already delivers one event per committed block. Each event carries the height, the block hash, and the header time.
+Comet `NewBlock` delivers one event per committed block. Each event carries the height, the block hash, and the header time.
 
-- dapi's event listener subscribes to `tm.event='NewBlock'` and stores `BlockInfo{Height, Hash, Time, ChainID}`.
-- A host's chain listener parses the same event into `NewBlockEvent{BlockHeight, BlockHash, Time, ChainID}` and records it on the height-sync tip cache.
+Today:
 
-That feed is the source of the local map. Learning `time(height, hash)` does not send another `GetBlockHeader`.
+- dapi's event listener subscribes to `tm.event='NewBlock'` and keeps `BlockInfo{Height, Hash, Time, ChainID}` inside the dapi process.
+- A host's own chain listener parses the same event into `NewBlockEvent{BlockHeight, BlockHash, Time, ChainID}` and records it on the height-sync tip cache.
+- dapi's NodeManager long-poll (`GetHostEvents`) carries escrow and maintenance events. It does not carry blocks.
 
-`GetBlockHeader` with `wait_ms`, the light client (`light.Verify`), and the SQLite `height → (hash, time)` store are a separate lookup path. They are not required for this clock.
+### dapi block long-poll
+
+dapi provides a long-poll for new blocks. Each item carries `(height, block hash, header time)` from its `NewBlock` listener. A caller passes the last height it has, and the call returns every newer block dapi holds, or waits until the next one is committed.
+
+`devshardd` and the gateway subscribe to it and fill their local map from it. A process's own Comet `NewBlock` subscription is the fallback when dapi is unreachable.
+
+Learning `time(height, hash)` this way does not send a per-height `GetBlockHeader`. `GetBlockHeader` with `wait_ms`, the light client (`light.Verify`), and the SQLite `height → (hash, time)` store are a separate lookup path. They are not required for this clock.
 
 ---
 
@@ -35,9 +42,9 @@ Every gateway and every host keeps
 (height, block hash) → header time
 ```
 
-filled only by those block-change events (dapi NewBlock, or the process's own Comet subscription).
+filled by the dapi block long-poll, or by the process's own Comet subscription as fallback.
 
-A lookup reads the map. It does not call out, and it does not wait for a later block. A missing entry means "this process has not seen that block yet."
+A lookup reads the map. It does not call out. A missing entry means "this process has not seen that block yet."
 
 ---
 
@@ -47,7 +54,7 @@ The diff contains no header time. `started_at` and `confirmed_at` stay as they a
 
 ### Gateway, `MsgStartInference`
 
-The gateway writes the current floor into the start stamp: the height and hash of `F` at that nonce. It does this from the floor index it already has. It does not look up `time(F)` and it does not delay the diff until that time exists.
+The gateway writes the current floor into the start stamp: the height and hash of `F` at that nonce. It does this from the floor index it already has. It does not look up `time(F)` and it does not delay the diff until that time exists. Heartbeats keep `F` close to the chain tip in a quiet session.
 
 `started_at` is the gateway's wall clock at send.
 
@@ -76,20 +83,27 @@ Header time is used in two local decisions: the gateway deciding to open a timeo
 
 ### Gateway trigger
 
-The gateway opens a challenge when the map has a time for `event_height` and
+**Refusal.** The gateway created the `MsgStartInference`, so it already knows when it sent it. It opens the refusal challenge on its own wall clock:
 
 ```text
-gateway_wallclock - time(event_height) > timeout_interval
+gateway_wallclock - started_at > RefusalTimeout
 ```
 
-The legacy wall clock on the message is the other signal. Each start still has `started_at` and each confirm still has `confirmed_at`. When that wall clock says the interval has already elapsed:
+It does not need the map for this trigger.
+
+**Execution.** The confirm stamp was written by the executor. The gateway opens the challenge when the map has a time for the confirm stamp and
 
 ```text
-gateway_wallclock - started_at  > timeout_interval    (refusal)
-gateway_wallclock - confirmed_at > timeout_interval   (execution)
+gateway_wallclock - time(confirm stamp) > ExecutionTimeout
 ```
 
-and the map has no time for `event_height`, the gateway does not open the challenge. It logs that fact. The log means the gateway's block feed is behind the chain by more than the timeout: the wall clock of the message is already due, and the block that would prove it has not been seen.
+When the legacy wall clock already says the interval has elapsed,
+
+```text
+gateway_wallclock - confirmed_at > ExecutionTimeout
+```
+
+and the map has no time for the confirm stamp, the gateway does not open the challenge. It logs that fact. The log means the gateway's block feed is behind the chain by more than the timeout: the wall clock of the message is already due, and the block that would prove it has not been seen.
 
 ### Verifier, answering a challenge
 
@@ -108,10 +122,13 @@ verifier_wallclock - time(event_height) > timeout_interval
 
   - `delta < 60s`: schedule the same check once, after `delta`, then answer.
   - `delta >= 60s`: ignore this challenge message. Do not sign a vote and do not hold the request open.
+- The map has no entry for `event_height`. Wait up to 60 seconds for the map to catch up from the block feed, without calling `GetBlockHeader` and without blocking other work. When the entry arrives, apply the two rules above. When it still has not arrived after 60 seconds, do not sign on this round, and log that this verifier's block feed is behind the chain.
 
-A verifier with no map entry for `event_height` does not call `GetBlockHeader` and does not block the reply. It applies the same behind-chain log when the message wall clock is already past `timeout_interval`, and it does not sign on this round.
+The 60 second bounds are these waits only. They are not a period during which an executor can suppress the vote by answering `header_pending`.
 
-The 60 second bound is this schedule only. It is not a period during which an executor can suppress the vote by answering `header_pending`.
+### Why a stamp cannot point past the chain
+
+A stamp that names a height no process will ever see would leave the map empty forever. Height sync is optimistic, but it has disputes: a floor is raised only by host-signed stamps, and a raise whose `(height, hash)` does not exist on chain is disputed and attributed to the signer that set it. A floor therefore cannot sit in the far future without proof that the claimed height exists on chain. A stamp beyond what the chain has produced is a dispute, not a deadline that never arrives.
 
 ---
 
