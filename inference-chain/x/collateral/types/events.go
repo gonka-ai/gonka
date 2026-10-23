@@ -6,6 +6,7 @@ const (
 	EventTypeWithdrawCollateral = "withdraw_collateral"
 	EventTypeSlashCollateral    = "slash_collateral"
 	EventTypeProcessWithdrawal  = "process_withdrawal"
+	EventTypeDeferWithdrawal    = "defer_withdrawal"
 )
 
 // Event attribute keys

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
@@ -279,6 +280,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		initial,
 		map[string]int64{addr: 1},  // measured from node-B
 		map[string]int64{addr: 10}, // preservedHere
+		nil,
 		map[string]int64{addr: 11}, // formation-time expected
 		nil,
 	)
@@ -292,6 +294,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		initial,
 		map[string]int64{addr: 10},
 		map[string]int64{addr: 1},
+		nil,
 		map[string]int64{addr: 11},
 		nil,
 	)
@@ -305,6 +308,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		initial,
 		map[string]int64{addr: 4},
 		map[string]int64{addr: 1},
+		nil,
 		map[string]int64{addr: 11},
 		nil,
 	)
@@ -333,6 +337,7 @@ func TestFoldEventReadings_AllPreservedZeroMeasuredIsNotPenalized(t *testing.T) 
 		ege,
 		map[string]int64{addr: 0},   // participant submitted nothing for this event
 		map[string]int64{addr: 100}, // every one of their nodes was preserved this event
+		nil,
 		map[string]int64{addr: 100},
 		nil,
 	)
@@ -358,6 +363,7 @@ func TestFoldEventReadings_EmptyEventKeepsRatioAtOne(t *testing.T) {
 		ege,
 		map[string]int64{},
 		map[string]int64{},
+		nil,
 		map[string]int64{},
 		nil,
 	)
@@ -384,6 +390,7 @@ func TestFoldEventReadings_MaintenanceExemptSkipsWeightAndRatio(t *testing.T) {
 		ege,
 		map[string]int64{maint: 0, other: 10},
 		map[string]int64{maint: 0, other: 0},
+		nil,
 		map[string]int64{maint: 100, other: 50},
 		map[string]struct{}{maint: {}},
 	)
@@ -393,6 +400,90 @@ func TestFoldEventReadings_MaintenanceExemptSkipsWeightAndRatio(t *testing.T) {
 	require.Equal(t, int64(10), ege.ValidationWeights[1].ConfirmationWeight, "online host weight lowered")
 	require.NotContains(t, ratios, maint)
 	require.Contains(t, ratios, other)
+}
+
+// A host with one free and one reserved node: the reserved node sits out the
+// event and was not sampled as preserved. Its weight is shielded, so the
+// ConfirmationWeight keeps it and settlement strips it only once; the ratio
+// still judges the free node alone.
+func TestFoldEventReadings_ReservedNodeDoesNotLowerConfirmationWeight(t *testing.T) {
+	addr := "host"
+	ege := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: 200, ConfirmationWeight: 200},
+		},
+	}
+
+	updated, ratios := foldEventReadings(
+		ege,
+		map[string]int64{addr: 100}, // free node measured in full
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 100}, // reserved node, not preserved
+		map[string]int64{addr: 100}, // expected without the reserved node
+		nil,
+	)
+	require.False(t, updated)
+	require.Equal(t, int64(200), ege.ValidationWeights[0].ConfirmationWeight)
+	requireRatioEqual(t, ratios[addr], 1, 1)
+
+	// the free node cheats: the cut follows the free node only
+	updated, ratios = foldEventReadings(
+		ege,
+		map[string]int64{addr: 40},
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 100},
+		map[string]int64{addr: 100},
+		nil,
+	)
+	require.True(t, updated)
+	require.Equal(t, int64(140), ege.ValidationWeights[0].ConfirmationWeight)
+	require.True(t, ratios[addr].ToDecimal().LessThan(decimal.NewFromFloat(0.5)), "ratio judges the free node alone")
+}
+
+func TestReservedConfirmationWeights_SplitsTheSampledReservedNodes(t *testing.T) {
+	reserved := map[string][]*types.TrainshardReservedNode{
+		"host": {
+			{Participant: "host", ModelId: "m", NodeId: "sampled", PocWeight: 30},
+			{Participant: "host", ModelId: "m", NodeId: "unsampled", PocWeight: 70},
+		},
+	}
+	snapshot := &types.PreservedNodesSnapshot{
+		ModelPreservedNodes: []*types.ModelPreservedNodes{{
+			ModelId:      "m",
+			Participants: []*types.ParticipantPreservedNodes{{ParticipantId: "host", NodeIds: []string{"sampled"}}},
+		}},
+	}
+
+	all, sampled := reservedConfirmationWeights(reserved, snapshot, map[string]mathsdk.LegacyDec{"m": mathsdk.LegacyOneDec()})
+	require.Equal(t, int64(100), all["host"])
+	require.Equal(t, int64(30), sampled["host"])
+}
+
+// A reserved node sampled as preserved leaves the preserved reading: counted there,
+// it would let the free nodes cheat up to its weight without lowering the ratio.
+func TestFoldEventReadings_SampledReservedNodeDoesNotCoverACheatingFreeNode(t *testing.T) {
+	addr := "host"
+	ege := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: 200, ConfirmationWeight: 200},
+		},
+	}
+
+	// free node (100) delivers nothing; reserved node (100) was sampled, and evaluateConfirmation
+	// has already taken it out of the preserved reading
+	updated, ratios := foldEventReadings(
+		ege,
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 0},
+		map[string]int64{addr: 100},
+		map[string]int64{addr: 100},
+		nil,
+	)
+	require.True(t, updated)
+	require.Equal(t, int64(100), ege.ValidationWeights[0].ConfirmationWeight)
+	require.True(t, ratios[addr].ToDecimal().IsZero())
 }
 
 func TestConfirmationScalesInSnapshot(t *testing.T) {

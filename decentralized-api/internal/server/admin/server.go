@@ -70,6 +70,8 @@ func NewServer(
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)
 	g.POST("nodes/:id/disable", s.disableNode)
+	g.POST("nodes/:id/stop", s.stopNode)
+	g.POST("nodes/:id/start", s.startNode)
 
 	g.POST("unit-of-compute-price-proposal", s.postUnitOfComputePriceProposal)
 	g.GET("unit-of-compute-price-proposal", s.getUnitOfComputePriceProposal)
