@@ -538,6 +538,28 @@ func (am AppModule) getCurrentValidatorWeights(ctx context.Context) (map[string]
 // corresponding ActiveParticipant records. Used by ComputeNewWeights to carry preserved
 // weight into the next epoch.
 func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, upcomingEpoch types.Epoch) []*types.ActiveParticipant {
+	return am.preservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch, am.loadPreservedSnapshot(ctx, upcomingEpoch), nil)
+}
+
+// loadPreservedSnapshot returns the preserved-nodes snapshot, or nil for the first epoch or when it is absent.
+func (am AppModule) loadPreservedSnapshot(ctx context.Context, upcomingEpoch types.Epoch) *types.PreservedNodesSnapshot {
+	if upcomingEpoch.Index <= 1 {
+		return nil
+	}
+	snapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
+	if err != nil {
+		am.LogError("loadPreservedSnapshot: Error getting preserved nodes snapshot", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index, "error", err)
+		return nil
+	}
+	if !found {
+		return nil
+	}
+	return &snapshot
+}
+
+// preservedParticipantsFromCurrentEpoch also records each participant it reads into records, if non-nil.
+func (am AppModule) preservedParticipantsFromCurrentEpoch(ctx context.Context, upcomingEpoch types.Epoch, preservedSnapshot *types.PreservedNodesSnapshot, records map[string]types.Participant) []*types.ActiveParticipant {
 	preservedParticipants := make(map[string]*types.ActiveParticipant)
 
 	// Skip for first epoch or if we can't get current epoch (which is about to end)
@@ -567,20 +589,13 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 		"pocStartBlockHeight", currentEpochGroup.GroupData.PocStartBlockHeight,
 		"len(validationWeight)", len(currentEpochGroup.GroupData.ValidationWeights))
 
-	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
-	if err != nil {
-		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes snapshot", types.PoC,
-			"epochIndex", currentEpochGroup.GroupData.EpochIndex,
-			"error", err)
-		return nil
-	}
-	if !found {
+	if preservedSnapshot == nil {
 		am.LogWarn("PreservedParticipantsFromCurrentEpoch: Preserved nodes snapshot not found", types.PoC,
 			"epochIndex", currentEpochGroup.GroupData.EpochIndex)
 		return nil
 	}
 
-	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, &preservedSnapshot)
+	preservedNodesByParticipant, err := am.GetPreservedNodesByParticipant(ctx, currentEpochGroup.GroupData.EpochIndex, preservedSnapshot)
 	if err != nil {
 		am.LogError("PreservedParticipantsFromCurrentEpoch: Error getting preserved nodes by participant", types.PoC, "error", err)
 		return nil
@@ -600,6 +615,9 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 			am.LogError("PreservedParticipantsFromCurrentEpoch: Participant not found", types.PoC,
 				"participantAddress", participantAddress)
 			continue
+		}
+		if records != nil {
+			records[participantAddress] = participant
 		}
 
 		// Build per-model MlNodes arrays with Models populated
@@ -827,19 +845,10 @@ func mergeMLNodeArrays(preservedMLNodes, pocMLNodes []*types.ModelMLNodes) []*ty
 // getInferenceServingNodeIds returns preserved node IDs for the current episode snapshot,
 // keyed by participant_id -> node_id set. HardwareNode.LocalId is unique per
 // participant only, so callers must consult by (participantAddress, nodeId).
-func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoch types.Epoch) map[string]map[string]struct{} {
+func (am AppModule) getInferenceServingNodeIds(upcomingEpoch types.Epoch, preservedSnapshot *types.PreservedNodesSnapshot) map[string]map[string]struct{} {
 	inferenceServingNodeIds := make(map[string]map[string]struct{})
 
-	if upcomingEpoch.Index <= 1 {
-		return inferenceServingNodeIds
-	}
-
-	preservedSnapshot, found, err := am.keeper.GetPreservedNodesSnapshot(ctx)
-	if err != nil {
-		am.LogError("getInferenceServingNodeIds: Unable to get preserved nodes snapshot", types.PoC, "error", err.Error())
-		return inferenceServingNodeIds
-	}
-	if !found {
+	if upcomingEpoch.Index <= 1 || preservedSnapshot == nil {
 		return inferenceServingNodeIds
 	}
 
@@ -911,7 +920,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
 
 	// Get preserved weights from inference-serving MLNodes
-	preservedParticipants := am.PreservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
+	preservedRecords := make(map[string]types.Participant)
+	// One snapshot read serves both the preserved participants and the node filter below.
+	preservedSnapshot := am.loadPreservedSnapshot(ctx, upcomingEpoch)
+	preservedParticipants := am.preservedParticipantsFromCurrentEpoch(ctx, upcomingEpoch, preservedSnapshot, preservedRecords)
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
 		"numPreservedParticipants", len(preservedParticipants))
 
@@ -926,7 +938,7 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	}
 
 	// Build inference-serving node IDs for filtering
-	inferenceServingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
+	inferenceServingNodeIds := am.getInferenceServingNodeIds(upcomingEpoch, preservedSnapshot)
 	servingNodeCount := 0
 	for _, nodes := range inferenceServingNodeIds {
 		servingNodeCount += len(nodes)
@@ -940,10 +952,18 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	participants := make(map[string]types.Participant)
 	seeds := make(map[string]types.RandomSeed)
 	admittedCommits := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit)
+	allowedByAddress := make(map[string]bool)
 
 	for _, commitKey := range sortedStoreCommitKeys(allStoreCommits) {
 		participantAddress := commitKey.ParticipantAddress
-		if !am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress) {
+		// A participant with several models has one commit per model; read its state once.
+		allowed, checked := allowedByAddress[participantAddress]
+		if !checked {
+			allowed = am.keeper.IsParticipantAllowed(ctx, epochStartBlockHeight, participantAddress)
+			allowedByAddress[participantAddress] = allowed
+		}
+		// Check participant allowlist
+		if !allowed {
 			am.LogInfo("ComputeNewWeights: Participant not in allowlist, skipping", types.PoC,
 				"address", participantAddress,
 				"modelId", commitKey.ModelID,
@@ -952,7 +972,13 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 			continue
 		}
 
-		participant, ok := am.keeper.GetParticipant(ctx, participantAddress)
+		participant, ok := participants[participantAddress]
+		if !ok {
+			participant, ok = preservedRecords[participantAddress]
+		}
+		if !ok {
+			participant, ok = am.keeper.GetParticipant(ctx, participantAddress)
+		}
 		if !ok {
 			am.LogError("ComputeNewWeights: Error getting participant", types.PoC,
 				"address", participantAddress,
@@ -963,7 +989,10 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		}
 		participants[participantAddress] = participant
 
-		seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		seed, found := seeds[participantAddress]
+		if !found {
+			seed, found = am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		}
 		if !found {
 			am.LogError("ComputeNewWeights: Participant didn't submit the seed for the upcoming epoch", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -1015,7 +1044,11 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	// Add seeds for preserved participants
 	for _, preservedParticipant := range preservedParticipants {
 		participantAddress := preservedParticipant.Index
-		if seed, found := am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress); found {
+		seed, found := seeds[participantAddress]
+		if !found {
+			seed, found = am.keeper.GetRandomSeed(ctx, upcomingEpoch.Index, participantAddress)
+		}
+		if found {
 			preservedParticipant.Seed = &seed
 			seeds[participantAddress] = seed
 			am.LogInfo("ComputeNewWeights: Added seed for preserved participant", types.PoC,
