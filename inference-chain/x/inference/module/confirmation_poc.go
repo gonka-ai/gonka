@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 
+	"cosmossdk.io/collections"
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -160,18 +162,32 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	windowBlocks := decimal.NewFromInt(triggerWindowLength)
 	triggerProbability := expectedConfirmations.Div(windowBlocks)
 
-	// Use block hash at H-1 as randomness source
-	prevBlockHash := sdkCtx.HeaderInfo().Hash
-	if len(prevBlockHash) < 8 {
-		return fmt.Errorf("block hash too short: %d bytes", len(prevBlockHash))
+	// Randomness is the hash of the current block, which its proposer can re-roll;
+	// the per-proposer quota below bounds what re-rolling buys.
+	blockHash := sdkCtx.HeaderInfo().Hash
+	if len(blockHash) < 8 {
+		return fmt.Errorf("block hash too short: %d bytes", len(blockHash))
 	}
 
-	blockHashSeed := int64(binary.BigEndian.Uint64(prevBlockHash[:8]))
+	blockHashSeed := int64(binary.BigEndian.Uint64(blockHash[:8]))
 	randFloat := calculations.DeterministicFloat(blockHashSeed, fmt.Sprintf("confirmation_poc_trigger_%d", blockHeight))
 
 	shouldTrigger := randFloat.LessThan(triggerProbability)
 
 	if !shouldTrigger {
+		return nil
+	}
+
+	proposer := sdkCtx.BlockHeader().ProposerAddress
+	withinQuota, err := am.proposerWithinTriggerQuota(ctx, epochContext.EpochIndex, proposer, confirmationParams.ExpectedConfirmationsPerEpoch)
+	if err != nil {
+		return fmt.Errorf("failed to check proposer trigger quota: %w", err)
+	}
+	if !withinQuota {
+		am.LogInfo("Skipping confirmation PoC trigger: proposer reached its epoch quota", types.PoC,
+			"blockHeight", blockHeight,
+			"epochIndex", epochContext.EpochIndex,
+			"proposer", sdk.ConsAddress(proposer).String())
 		return nil
 	}
 
@@ -218,6 +234,17 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		return fmt.Errorf("failed to set active confirmation PoC event: %w", err)
 	}
 
+	if len(proposer) > 0 {
+		key := collections.Join(epochContext.EpochIndex, []byte(proposer))
+		count, err := am.keeper.ConfirmationPoCProposerTriggers.Get(ctx, key)
+		if err != nil && !errors.Is(err, collections.ErrNotFound) {
+			return fmt.Errorf("failed to read proposer trigger count: %w", err)
+		}
+		if err := am.keeper.ConfirmationPoCProposerTriggers.Set(ctx, key, count+1); err != nil {
+			return fmt.Errorf("failed to store proposer trigger count: %w", err)
+		}
+	}
+
 	am.LogInfo("Created confirmation PoC event", types.PoC,
 		"epochIndex", event.EpochIndex,
 		"eventSequence", event.EventSequence,
@@ -226,6 +253,36 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		"validationEndHeight", event.GetValidationEnd(epochParams))
 
 	return nil
+}
+
+// cpocProposerQuotaFactor sets a proposer's per-epoch trigger quota:
+// floor(factor * ExpectedConfirmationsPerEpoch * proposer power share) + 2.
+const cpocProposerQuotaFactor = 3
+
+// proposerWithinTriggerQuota reports whether this block's proposer may trigger one more
+// confirmation PoC event this epoch. An unknown proposer or power keeps the trigger.
+func (am AppModule) proposerWithinTriggerQuota(ctx context.Context, epochIndex uint64, proposer []byte, expected uint64) (bool, error) {
+	if len(proposer) == 0 || am.keeper.Staking == nil {
+		return true, nil
+	}
+	count, err := am.keeper.ConfirmationPoCProposerTriggers.Get(ctx, collections.Join(epochIndex, proposer))
+	if errors.Is(err, collections.ErrNotFound) {
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	validator, err := am.keeper.Staking.GetValidatorByConsAddr(ctx, sdk.ConsAddress(proposer))
+	if err != nil {
+		return true, nil
+	}
+	totalPower, err := am.keeper.Staking.GetLastTotalPower(ctx)
+	if err != nil || !totalPower.IsPositive() {
+		return true, nil
+	}
+	power := mathsdk.NewInt(sdk.TokensToConsensusPower(validator.Tokens, sdk.DefaultPowerReduction))
+	quota := power.MulRaw(int64(cpocProposerQuotaFactor*expected)).Quo(totalPower).Uint64() + 2
+	return uint64(count) < quota, nil
 }
 
 // handleConfirmationPoCPhaseTransitions manages phase transitions for active confirmation PoC events
