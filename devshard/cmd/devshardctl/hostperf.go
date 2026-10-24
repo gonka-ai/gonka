@@ -276,6 +276,7 @@ type PerfTracker struct {
 	contextRefusals   map[servedModel]uint64
 	pairwise          *PairwiseTracker
 	store             PerfStore
+	writes            *perfWriteQueue
 }
 
 type servedModel struct {
@@ -302,6 +303,7 @@ func NewPerfTracker(store PerfStore) *PerfTracker {
 		store:             store,
 	}
 	if store != nil {
+		pt.writes = newPerfWriteQueue(perfWriteQueueCapacity)
 		pt.loadFromStore()
 	}
 	return pt
@@ -402,9 +404,11 @@ func (t *PerfTracker) Record(s RequestSample) {
 	t.mu.Unlock()
 
 	if t.store != nil {
-		if err := t.store.InsertSample(context.Background(), s); err != nil {
-			log.Printf("perf: persist sample: %v", err)
-		}
+		t.writes.enqueue(func(ctx context.Context) {
+			if err := t.store.InsertSample(ctx, s); err != nil {
+				log.Printf("perf: persist sample: %v", err)
+			}
+		})
 	}
 }
 
@@ -484,9 +488,11 @@ func (t *PerfTracker) RecordRequest(rec RequestRecord) {
 	}
 
 	if t.store != nil {
-		if err := t.store.InsertRequest(context.Background(), rec); err != nil {
-			log.Printf("perf: persist request: %v", err)
-		}
+		t.writes.enqueue(func(ctx context.Context) {
+			if err := t.store.InsertRequest(ctx, rec); err != nil {
+				log.Printf("perf: persist request: %v", err)
+			}
+		})
 	}
 }
 
@@ -760,4 +766,12 @@ func participantPerfWindowOffset(participantKey string) time.Duration {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(participantKey))
 	return time.Duration(int64(h.Sum64() % uint64(windowNanos)))
+}
+
+// Close applies the queued writes; later writes are dropped. Call it before closing the store.
+func (t *PerfTracker) Close() {
+	if t == nil || t.writes == nil {
+		return
+	}
+	t.writes.close()
 }

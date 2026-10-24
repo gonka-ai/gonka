@@ -21,9 +21,6 @@ type ModifiedRequest struct {
 	AsksForLogprobs bool
 }
 
-// MinTokensFloor is the output budget of the gateway PoC probe.
-const MinTokensFloor = 64
-
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
 	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
 }

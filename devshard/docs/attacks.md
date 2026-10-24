@@ -60,3 +60,9 @@ Enforce to use previously used warm key.
 A malicious group member gossips an invalid tx (e.g. MsgFinishInference with a bad signature). OnTxsReceived adds it with ProposedAt=0. HasStaleEntry evaluates 0+grace < currentNonce -- immediately stale. The host withholds its state signature. The invalid tx never gets applied (state machine rejects it), so RemoveIncluded never removes it. The session stalls.
 
 Gossip is restricted to group members (not any external node). A malicious member can already withhold their own signature, so this amplifies the damage -- one bad host causes all others to withhold too.
+
+## Slots withhold the final state signature
+
+Six of the sixteen slots can refuse to sign the final state. Settlement needs eleven signatures, so the escrow stays unsettled. When that epoch is pruned, the whole amount is split equally across the slots.
+
+That payout is a temporary choice while devshard is experimental. It is not the target design. [Unsettled escrow distribution](./unsettled-escrow-distribution.md).
