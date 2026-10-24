@@ -12,6 +12,7 @@ Config-driven via `config/config.yaml` and `cmd/gencompose`.
 - **Phase 12 index:** [`docs/phase12-followup.md`](docs/phase12-followup.md)
 - **Operator runbook:** [`../docs/testenv-v2.md`](../docs/testenv-v2.md)
 - **Design plan:** [`docs/testenv-v2-plan.md`](docs/testenv-v2-plan.md)
+- **Load testing:** [`loadtest/README.md`](loadtest/README.md). Run `make loadtest SCENARIO=normal-load` from this directory.
 
 ## Development
 
@@ -228,6 +229,21 @@ make citest-versiond-host-evacuation
 # or: ./scripts/run-stack-citest.sh
 ```
 
+Peer-RPC Phase 6 keeps **this** gateway and `devshardd` and swaps only
+`versiond` / `versiond-router`. Previous participant images (HTTP/1.1) come from
+branch `devshard-0.2.15-v5`. **Existing `citest-*` stay without `proxy`.**
+
+```bash
+make build-baseline-infra
+make citest-stack \
+  TESTENV_VERSIOND_IMAGE=devshard-versiond:0.2.15-v5 \
+  TESTENV_VERSIOND_ROUTER_IMAGE=devshard-versiond-router:0.2.15-v5
+```
+
+Join-parity (HTTP/2, native gRPC, hop rate limits) is a later **proxy overlay** and
+`citest-peerrpc-parity`. Checklist:
+[`../docs/grpc-transport-phase6-plan.md`](../docs/grpc-transport-phase6-plan.md).
+
 `TestRouterStickiness` checks that repeated requests to
 `/<version>/sessions/<id>/…` land on the same versiond upstream.
 
@@ -253,42 +269,67 @@ converges.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees, A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
-### Phase 10 observability overlay (optional)
+### Public-proxy overlay (optional)
 
-Jaeger, Loki, Promtail, Prometheus, and Grafana — adapted from `deploy/join/observability/`.
-Host ports are offset from join defaults: Grafana **13000**, Loki **13101**, Prometheus **19099**, Jaeger UI **11686**.
+Adds a `proxy` service on in-network **`proxy:8080`**, a one-port stand-in for join's `proxy-router`. Peer RPC (HTTP/2 preface) and JSON share that port, as they share join's `:80`/`:443`: the preface is handed to an HAProxy frontend with the production path zones, which dials `versiond-router:8081` with `proto h2` as join's proxy-router does; everything else passes through to `versiond-router:8080`. With `TESTENV_PROXY_OVERLAY=1`, gencompose makes `http://proxy:8080` the pooled InferenceUrl, so the gateway and the hosts dial the proxy. Default `make up` / `make citest-stack` / `make citest-images` **do not** start `proxy`.
 
-**Backend roadmap (Tempo, Alloy, profile selection):** [docs/observability-plan.md](docs/observability-plan.md)  
-When Alloy is enabled, OTLP goes to **`http://alloy:4317`** (Alloy forwards to Jaeger or Tempo). Baseline River config is ported from branch **`devshard-testenv`**.
+```bash
+cd devshard/testenv
+TESTENV_PROXY_OVERLAY=1 make gen-compose
+docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+```
+
+There is no dial override: a peer tries prior-knowledge HTTP/2 on its peer's InferenceUrl and drops to Connect over HTTP/1.1 on the same port when that origin does not answer it (`DEVSHARD_RPC_H2_UPGRADE=false` forces HTTP/1.1). `TestPeerRPCOverlayHop` covers both: the HTTP/2 hop, then the same stack with the proxy resetting the preface (`harness.RejectProxyH2`).
+
+### Phase 10 / T2 observability overlay (optional)
+
+Default profile is **`tempo-alloy`**: Alloy receives OTLP + docker logs; Tempo stores traces; Loki/Prometheus/Grafana stay shared.
+Legacy **`jaeger-promtail`** remains available for C7 regression.
+
+Host ports (offset from join defaults): Grafana **13000**, Loki **13101**, Prometheus **19099**, Tempo **13200**, Alloy UI **12345**, Jaeger UI **11686** (legacy profile only).
+
+**Profiles** (`TESTENV_OBS_PROFILE` / `OBS_PROFILE` for Make):
+
+| Profile | OTLP endpoint | Trace store | Logs → Loki |
+|---------|---------------|-------------|-------------|
+| `tempo-alloy` (default) | `http://alloy:4317` | Tempo | Alloy |
+| `jaeger-promtail` | `http://jaeger:4317` | Jaeger | Promtail |
+| `tempo-promtail` | `http://tempo:4317` | Tempo | Promtail |
+| `jaeger-alloy` | `http://alloy:4317` | Jaeger | Alloy |
+
+Roadmap: [docs/observability-plan.md](docs/observability-plan.md) · forensics: [../docs/gateway-tracing.md](../docs/gateway-tracing.md)
 
 **Manual (after `gen-compose` + `build-devshardd`):**
 
 ```bash
 cd devshard/testenv
-make obs-up          # enables TESTENV_OTEL_* and starts overlay
-make up              # if stack was not already up — obs-up starts both
+make obs-up                              # default tempo-alloy
+# OBS_PROFILE=jaeger-promtail make obs-up  # legacy
 ```
 
 Send traffic, then explore:
 
 | UI | URL | What to look for |
 |----|-----|------------------|
-| Jaeger | http://127.0.0.1:11686/jaeger/ | Service `devshardd` → spans `devshardd.request`, `devshardd.inference` (child of request on chat) |
-| Grafana | http://127.0.0.1:13000/ (admin/admin1) | Dashboard **Devshard details**; Explore → Loki `{compose_service=~"versiond.*"} \| logfmt \| stage="terminal"` |
-| Prometheus | http://127.0.0.1:19099/targets | Jobs `devshardd` (`/v2/metrics` via versiond) and `devshardctl` |
-| Loki API | http://127.0.0.1:13101/ | Log lines with `stage=terminal`, `where=…`, `request_id=…` from devshardd inside versiond logs |
+| Tempo | http://127.0.0.1:13200/ | Ready; Grafana Explore → Tempo datasource |
+| Alloy | http://127.0.0.1:12345/ | Pipeline UI (OTLP + docker logs) |
+| Grafana | http://127.0.0.1:13000/ (admin/admin1) | Explore → Tempo / Loki `{compose_service=~"versiond.*"}` |
+| Prometheus | http://127.0.0.1:19099/targets | Jobs `devshardd`, `devshardctl`; Tempo span metrics remote_write |
+| Jaeger | http://127.0.0.1:11686/jaeger/ | Legacy profile only |
 
-Quick probe after gateway chat:
+Quick probe after gateway chat (tempo-alloy):
 
 ```bash
-curl -s 'http://127.0.0.1:11686/jaeger/api/traces?service=devshardd&operation=devshardd.inference&limit=5' | jq '.data | length'
+curl -sf http://127.0.0.1:13200/ready
+curl -sG 'http://127.0.0.1:13200/api/search' --data-urlencode 'tags=service.name=devshardd' | jq .
 curl -sG 'http://127.0.0.1:13101/loki/api/v1/query_range' \
   --data-urlencode 'query={compose_service=~"versiond.*"} |~ "devshard request terminal"' \
   --data-urlencode 'limit=5' | jq '.data.result | length'
 curl -sf http://127.0.0.1:18080/v2/metrics | grep devshardd_request_duration_seconds | head
 ```
 
-**Automated O1 citest** uses a **copy** of this overlay in the stack workdir:
+**Automated citest** (O1 + TraceLogCorrelation on tempo-alloy, plus jaeger-promtail C7)
+uses a **copy** of this overlay in the stack workdir:
 bind-mounted empty `./data/{jaeger,loki,…}` (not the named `testenv_*_data`
 volumes), random host ports (discovered with `docker compose port`), Promtail
 kept to this compose project, Loki queried with `{compose_project=…}`, and
@@ -298,12 +339,21 @@ Sticky `GET {router}/{version}/metrics` can land on the idle replica and omit
 
 ```bash
 make citest-observability
-# or: TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -v
+# or: TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
+#   -run 'TestObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -v
 ```
+
+Compose images are reused by default (Makefile runs `citest-images` first). For local gateway-image iteration without a separate `make citest-images`, set `TESTENV_CITEST_BUILD=1` so `docker compose up` passes `--build`.
+
+Debugging tips:
+
+- Set `TESTENV_CITEST_KEEP_STACK=1` to keep the generated compose stack/workdir after the test, and `TESTENV_CITEST_DUMP_LOGS=1` to dump compose logs during test cleanup.
+- When running Go tests from a Docker-based runner, set `TESTENV_HOST_ADDR=host.docker.internal` so probes from inside the runner can reach host-published compose ports.
+- On Docker Desktop for macOS, mount this repository into the runner at the same absolute host path. Synthetic paths such as `/work` can make generated bind mounts fail because the host daemon does not have that path shared.
 
 Stop overlay: `make obs-down`.
 
-Requires rebuilding **devshardd** after pulling observability init changes (`make build-devshardd`).
+Requires rebuilding **devshardd** after pulling observability init changes (`make build-devshardd`). Gateway changes need a runtime image rebuild (`make citest-images` or `TESTENV_CITEST_BUILD=1`).
 
 ### Phase 7 gateway smoke (Docker)
 
@@ -312,7 +362,7 @@ Full path: `devshardctl` → `versiond-router` → `devshardd` → `mock-openai`
 ```bash
 cd devshard/testenv
 make gen-compose && make build-devshardd
-TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewayPhase7_Smoke -count=1 -v
+TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewaySingleHostSmoke -count=1 -v
 ```
 
 Quick gateway checks after `make up`:

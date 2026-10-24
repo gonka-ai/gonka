@@ -5,9 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 
 	"github.com/cosmos/btcutil/bech32"
 	"github.com/ethereum/go-ethereum/crypto"
+	"golang.org/x/crypto/hkdf"
 	"golang.org/x/crypto/ripemd160"
 )
 
@@ -36,6 +38,23 @@ func (s *Secp256k1Signer) Sign(message []byte) ([]byte, error) {
 
 func (s *Secp256k1Signer) Address() string {
 	return s.address
+}
+
+// DerivePeerSessionKey is the HMAC key for peer RPC session tokens.
+// The label keeps this output from being a signature the host key could
+// produce for any other message. keyID is the emergency rotation: a new id
+// derives a different key, so tokens issued under the old id stop verifying.
+func (s *Secp256k1Signer) DerivePeerSessionKey(host, version string, keyID byte) ([]byte, error) {
+	if s == nil || s.key == nil {
+		return nil, fmt.Errorf("peer session key: signer is required")
+	}
+	info := fmt.Sprintf("devshard/peer-rpc-session/v1|%s|%s|%d", host, version, keyID)
+	r := hkdf.New(sha256.New, crypto.FromECDSA(s.key), nil, []byte(info))
+	out := make([]byte, 32)
+	if _, err := io.ReadFull(r, out); err != nil {
+		return nil, fmt.Errorf("peer session key: %w", err)
+	}
+	return out, nil
 }
 
 // Secp256k1Verifier recovers addresses from secp256k1 signatures.
