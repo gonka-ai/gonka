@@ -17,6 +17,8 @@ import (
 	"common/chain"
 	"common/httpguard"
 	commonvalidation "common/validation"
+	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/internal/testutil"
 	"devshard/observability"
 	"devshard/signing"
@@ -395,16 +397,100 @@ func TestFetchSignedPayloads_RPCRespectsMaxBytes(t *testing.T) {
 	})
 }
 
+func payloadRPCClient(v *Validator, url, addr, escrow string, epoch uint64) *transport.RPCClient {
+	rpc, _ := v.payloadRPC(url, addr, escrow, epoch)
+	return rpc
+}
+
 func TestValidator_PayloadRPCRequiresPayloadEndpoint(t *testing.T) {
 	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
-	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
+	require.Nil(t, payloadRPCClient(v, "http://example", "addr", "escrow-1", 1))
 
 	signer := testutil.MustGenerateKey(t)
 	v.SetPayloadRPC(signer, transport.ParseRPCEndpoints(transport.EndpointGossip))
-	require.Nil(t, v.payloadRPC("http://example", "addr", "escrow-1"))
+	require.Nil(t, payloadRPCClient(v, "http://example", "addr", "escrow-1", 1))
 
 	v.SetPayloadRPC(signer, transport.ParseRPCEndpoints(transport.EndpointPayload))
-	require.Nil(t, v.payloadRPC("", "addr", "escrow-1"))
+	require.Nil(t, payloadRPCClient(v, "", "addr", "escrow-1", 1))
+}
+
+func TestValidator_PayloadRPCClosesClientsTwoEpochsBack(t *testing.T) {
+	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
+	v.SetPayloadRPC(testutil.MustGenerateKey(t), transport.ParseRPCEndpoints(transport.EndpointPayload))
+	t.Cleanup(v.ClosePayloadClients)
+
+	old := payloadRPCClient(v, "http://127.0.0.1:1", "addr", "escrow-5", 5)
+	require.NotNil(t, old)
+	require.Same(t, old, payloadRPCClient(v, "http://127.0.0.1:1", "addr", "escrow-5", 5))
+	require.NotNil(t, payloadRPCClient(v, "http://127.0.0.1:1", "addr", "escrow-6", 6))
+	require.Len(t, v.payloadRPCs, 2, "epoch 5 escrows are still on chain at epoch 6")
+
+	require.NotNil(t, payloadRPCClient(v, "http://127.0.0.1:1", "addr", "escrow-7", 7))
+	require.Len(t, v.payloadRPCs, 2)
+	_, kept := v.payloadRPCs["addr\x00http://127.0.0.1:1\x00escrow-5"]
+	require.False(t, kept, "the chain prunes epoch 5 escrows at epoch 7; their door must go")
+}
+
+func TestValidator_PayloadRPCDoesNotCachePrunedEscrowAfterSweep(t *testing.T) {
+	v := NewValidator(nil, nil, nil, nil, "v1", nil, nil, nil, false)
+	v.SetPayloadRPC(testutil.MustGenerateKey(t), transport.ParseRPCEndpoints(transport.EndpointPayload))
+	t.Cleanup(v.ClosePayloadClients)
+
+	_, cached := v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-7", 7)
+	require.True(t, cached)
+
+	late, cached := v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-5", 5)
+	require.NotNil(t, late, "the executor may still hold the session, so the fetch still runs")
+	require.False(t, cached, "epoch 5 is pruned at epoch 7: its door must not outlive this fetch")
+	late.Close()
+
+	require.Len(t, v.payloadRPCs, 1)
+	_, kept := v.payloadRPCs["addr\x00http://127.0.0.1:1\x00escrow-5"]
+	require.False(t, kept)
+	_, cached = v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-6", 6)
+	require.True(t, cached, "epoch 6 is still in the window at epoch 7")
+}
+
+type hostInfoBridge struct {
+	bridge.MainnetBridge
+	url string
+}
+
+func (b hostInfoBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	return &bridge.HostInfo{Address: address, URL: b.url}, nil
+}
+
+type failingSignRecorder struct{ PayloadAuthClient }
+
+func (failingSignRecorder) GetAccountAddress() string { return "validator" }
+func (failingSignRecorder) SignBytes([]byte) (string, error) {
+	return "", errors.New("sign failed")
+}
+
+func TestValidator_FetchPayloadsForClosesUncachedClient(t *testing.T) {
+	v := NewValidator(hostInfoBridge{url: "http://127.0.0.1:1"}, failingSignRecorder{}, nil, nil, "v1", nil, nil, nil, false)
+	v.SetPayloadRPC(testutil.MustGenerateKey(t), transport.ParseRPCEndpoints(transport.EndpointPayload))
+	t.Cleanup(v.ClosePayloadClients)
+	var closed []*transport.RPCClient
+	v.closeUncachedRPC = func(rpc *transport.RPCClient) {
+		closed = append(closed, rpc)
+		rpc.Close()
+	}
+
+	_, cached := v.payloadRPC("http://127.0.0.1:1", "addr", "escrow-7", 7)
+	require.True(t, cached)
+
+	req := devshardpkg.ValidateRequest{EscrowID: "escrow-5", ExecutorAddress: "addr"}
+	_, _, err := v.fetchPayloadsFor(context.Background(), req, "1", 5)
+	require.Error(t, err)
+	require.Len(t, closed, 1, "the pruned escrow's client is closed after its fetch")
+	require.Len(t, v.payloadRPCs, 1)
+
+	req.EscrowID = "escrow-6"
+	_, _, err = v.fetchPayloadsFor(context.Background(), req, "1", 6)
+	require.Error(t, err)
+	require.Len(t, closed, 1, "a cached client stays open")
+	require.Len(t, v.payloadRPCs, 2)
 }
 
 func newPayloadRPCClient(t *testing.T, serve rpcserver.GetPayloadFunc) *transport.RPCClient {
