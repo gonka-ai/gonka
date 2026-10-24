@@ -318,6 +318,7 @@ func buildHostManager(
 		cfg.VoteFalseOnFetchFailure,
 	)
 	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
+	validator.SetContextLimits(inference.NewChainContextLimits(chainBridge))
 	closers.Add(validator.ClosePayloadClients)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
