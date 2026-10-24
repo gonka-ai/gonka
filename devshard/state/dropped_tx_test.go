@@ -92,7 +92,7 @@ func TestBestEffort_WarnsWhenItDiscardsAConfirmStart(t *testing.T) {
 	captured := captureLogs(t)
 
 	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
-		txConfirm(&types.MsgConfirmStart{InferenceId: 77, ExecutorSig: []byte("not-a-signature"), ConfirmedAt: 5}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 77, ExecutorSig: []byte("not-a-signature")}),
 	})
 
 	require.NoError(t, err, "a dropped confirm must not abort the diff")
@@ -117,7 +117,7 @@ func TestBestEffort_CarriesTheReasonTheConfirmWasDiscarded(t *testing.T) {
 	captured := captureLogs(t)
 
 	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
-		txConfirm(&types.MsgConfirmStart{InferenceId: 404, ExecutorSig: []byte("x"), ConfirmedAt: 1}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 404, ExecutorSig: []byte("x")}),
 	})
 	require.NoError(t, err)
 
@@ -163,7 +163,6 @@ func TestBestEffort_KeepsQuietWhenNothingIsDiscarded(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   testutil.TestMaxTokens,
-			StartedAt:   1000,
 		}),
 	})
 	require.NoError(t, err)

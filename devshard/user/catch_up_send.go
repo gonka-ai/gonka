@@ -179,7 +179,7 @@ func (s *Session) sendCatchUpChunk(ctx context.Context, hostIdx int, client Host
 		logging.Info("sendCatchUp chunk resend", "subsystem", "finalize", "escrow", s.escrowID,
 			"host", s.HostLabel(hostIdx), "host_idx", hostIdx,
 			"chunk_first_nonce", chunk[0].Nonce, "chunk_last_nonce", chunkNonce,
-			"attempt", attempt, "storage_busy", transport.IsStorageBusy(err), "error", err)
+			"attempt", attempt, "storage_busy", transport.IsStorageBusy(err), "header_pending", transport.IsHeaderPending(err), "error", err)
 		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -203,7 +203,7 @@ func catchUpChunkRetryable(err error) bool {
 		errors.Is(err, storage.ErrDiffFork) {
 		return false
 	}
-	if transport.IsStorageBusy(err) {
+	if transport.IsStorageBusy(err) || transport.IsHeaderPending(err) {
 		return true
 	}
 	var status *transport.UpstreamStatusError

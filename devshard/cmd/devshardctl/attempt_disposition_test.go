@@ -243,7 +243,7 @@ func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	env.killables[1].Kill()
 	rec := withAttemptSpanRecorder(t)
 

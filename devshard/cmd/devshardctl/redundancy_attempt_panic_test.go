@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"sync/atomic"
 	"testing"
@@ -21,7 +22,10 @@ type panicsMidStreamClient struct {
 	calls atomic.Int32
 }
 
-func (c *panicsMidStreamClient) Send(_ context.Context, _ host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+func (c *panicsMidStreamClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if req.Payload == nil {
+		return nil, errors.New("host unavailable")
+	}
 	c.calls.Add(1)
 	if receiptHandler != nil {
 		receiptHandler(&host.HostResponse{})
@@ -55,9 +59,10 @@ func TestRunInference_APanickingAttemptFailsTheRequestInsteadOfTheProcess(t *tes
 func TestRunInference_APanickingHostFailsOverToAHealthyOne(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	shortRefusalWindow(t)
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
+	target := int((env.session.Nonce() + 1) % 3)
 	panicking := &panicsMidStreamClient{}
-	env.killables[1].inner = panicking
+	env.killables[target].inner = panicking
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 
 	var buf bytes.Buffer
@@ -67,16 +72,18 @@ func TestRunInference_APanickingHostFailsOverToAHealthyOne(t *testing.T) {
 	require.Equal(t, int32(1), panicking.calls.Load(), "the panicking host must have been tried")
 	require.NotEmpty(t, buf.String(), "a healthy host must serve the request")
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) == 1 }, testWaitLimit, 20*time.Millisecond,
+	env.raiseFloor(t, 200)
+	require.Eventually(t, func() bool { return missesForSlot(t, env, target) == 1 }, testWaitLimit, 20*time.Millisecond,
 		"the host whose attempt panicked still owes its nonce a timeout vote")
 }
 
 func TestRunInference_AWinnerThatPanicsMidStreamEndsTheRequest(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	shortRefusalWindow(t)
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
+	target := int((env.session.Nonce() + 1) % 3)
 	panicking := &panicsMidStreamClient{event: `data: {"choices":[{"delta":{"content":"partial"}}]}` + "\n\n"}
-	env.killables[1].inner = panicking
+	env.killables[target].inner = panicking
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)
 
 	var buf bytes.Buffer
@@ -88,6 +95,7 @@ func TestRunInference_AWinnerThatPanicsMidStreamEndsTheRequest(t *testing.T) {
 	require.Contains(t, buf.String(), "partial", "content streamed before the panic has already reached the caller")
 	require.Equal(t, int32(1), panicking.calls.Load())
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
-	require.Eventually(t, func() bool { return missesForSlot(t, env, 1) == 1 }, testWaitLimit, 20*time.Millisecond,
+	env.raiseFloor(t, 200)
+	require.Eventually(t, func() bool { return missesForSlot(t, env, target) == 1 }, testWaitLimit, 20*time.Millisecond,
 		"the winner that panicked still owes its nonce a timeout vote")
 }

@@ -52,6 +52,9 @@ type unboundSigner struct {
 }
 
 func (sm *StateMachine) checkEvidence(rec *types.InferenceRecord, txs []*types.DevshardTx, resolve bool) error {
+	if resolve {
+		sm.awaitRaiseHeaders(txs)
+	}
 	unbound, err := sm.checkEvidenceState(rec, txs, resolve)
 	if err != nil {
 		return err
@@ -133,6 +136,11 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 	// before the start, so every replica computes the same verdict.
 	if _, err := sm.logPlaneErrLocked(sm.state.LatestNonce+1, txs); err != nil {
 		return nil, err
+	}
+	for _, tx := range txs {
+		if err := sm.checkRaiseResolvableLocked(sm.state.LatestNonce+1, tx); err != nil {
+			return nil, err
+		}
 	}
 	return unbound, nil
 }

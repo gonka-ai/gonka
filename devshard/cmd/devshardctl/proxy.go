@@ -720,6 +720,11 @@ func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := p.session.Finalize(r.Context()); err != nil {
+		if errors.Is(err, user.ErrInferenceCompletionPending) {
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -952,23 +957,23 @@ type requestAccountingCostResponse struct {
 }
 
 type requestAccountingAttemptResponse struct {
-	Nonce          uint64 `json:"nonce"`
-	HostIdx        int    `json:"host_idx"`
-	ParticipantKey string `json:"participant_key,omitempty"`
-	Probe          bool   `json:"probe"`
-	Winner         bool   `json:"winner"`
-	Status         string `json:"status"`
-	Model          string `json:"model,omitempty"`
-	ExecutorSlot   uint32 `json:"executor_slot,omitempty"`
-	InputLength    uint64 `json:"input_length,omitempty"`
-	MaxTokens      uint64 `json:"max_tokens,omitempty"`
-	InputTokens    uint64 `json:"input_tokens,omitempty"`
-	OutputTokens   uint64 `json:"output_tokens,omitempty"`
-	ReservedCost   uint64 `json:"reserved_cost,omitempty"`
-	ActualCost     uint64 `json:"actual_cost,omitempty"`
-	StartedAt      int64  `json:"started_at,omitempty"`
-	ConfirmedAt    int64  `json:"confirmed_at,omitempty"`
-	CreatedAt      string `json:"created_at,omitempty"`
+	Nonce           uint64 `json:"nonce"`
+	HostIdx         int    `json:"host_idx"`
+	ParticipantKey  string `json:"participant_key,omitempty"`
+	Probe           bool   `json:"probe"`
+	Winner          bool   `json:"winner"`
+	Status          string `json:"status"`
+	Model           string `json:"model,omitempty"`
+	ExecutorSlot    uint32 `json:"executor_slot,omitempty"`
+	InputLength     uint64 `json:"input_length,omitempty"`
+	MaxTokens       uint64 `json:"max_tokens,omitempty"`
+	InputTokens     uint64 `json:"input_tokens,omitempty"`
+	OutputTokens    uint64 `json:"output_tokens,omitempty"`
+	ReservedCost    uint64 `json:"reserved_cost,omitempty"`
+	ActualCost      uint64 `json:"actual_cost,omitempty"`
+	StartedHeight   uint64 `json:"started_at_height,omitempty"`
+	ConfirmedHeight uint64 `json:"confirmed_at_height,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
 }
 
 type requestAccountingResponse struct {
@@ -1056,8 +1061,8 @@ func (p *Proxy) handleRequestAccounting(w http.ResponseWriter, r *http.Request) 
 			view.OutputTokens = inf.OutputTokens
 			view.ReservedCost = inf.ReservedCost
 			view.ActualCost = inf.ActualCost
-			view.StartedAt = inf.StartedAt
-			view.ConfirmedAt = inf.ConfirmedAt
+			view.StartedHeight = inf.StartedAtHeight
+			view.ConfirmedHeight = inf.ConfirmedAtHeight
 			if view.Winner {
 				resp.Cost.WinnerActualCost += inf.ActualCost
 			} else {
@@ -1266,22 +1271,22 @@ func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
 		}
 		inferences[fmt.Sprintf("%d", id)] = map[string]any{
-			"status":        name,
-			"executor_slot": rec.ExecutorSlot,
-			"model":         rec.Model,
-			"prompt_hash":   hex.EncodeToString(rec.PromptHash),
-			"response_hash": hex.EncodeToString(rec.ResponseHash),
-			"input_length":  rec.InputLength,
-			"max_tokens":    rec.MaxTokens,
-			"input_tokens":  rec.InputTokens,
-			"output_tokens": rec.OutputTokens,
-			"reserved_cost": rec.ReservedCost,
-			"actual_cost":   rec.ActualCost,
-			"started_at":    rec.StartedAt,
-			"confirmed_at":  rec.ConfirmedAt,
-			"votes_valid":   rec.VotesValid,
-			"votes_invalid": rec.VotesInvalid,
-			"validated_by":  rec.ValidatedBy.SetBits(),
+			"status":              name,
+			"executor_slot":       rec.ExecutorSlot,
+			"model":               rec.Model,
+			"prompt_hash":         hex.EncodeToString(rec.PromptHash),
+			"response_hash":       hex.EncodeToString(rec.ResponseHash),
+			"input_length":        rec.InputLength,
+			"max_tokens":          rec.MaxTokens,
+			"input_tokens":        rec.InputTokens,
+			"output_tokens":       rec.OutputTokens,
+			"reserved_cost":       rec.ReservedCost,
+			"actual_cost":         rec.ActualCost,
+			"started_at_height":   rec.StartedAtHeight,
+			"confirmed_at_height": rec.ConfirmedAtHeight,
+			"votes_valid":         rec.VotesValid,
+			"votes_invalid":       rec.VotesInvalid,
+			"validated_by":        rec.ValidatedBy.SetBits(),
 		}
 	}
 

@@ -469,6 +469,9 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
 		log.Fatalf("height sync oracle: %v", err)
 	}
+	if gatewayHeaderTimes() == nil {
+		log.Printf("header_times_unwired: no chain source for block times; inferences cannot start once hosts stamp a height-sync floor")
+	}
 
 	perfStore, err := NewPerfStore(ctx, baseStorageDir)
 	if err != nil {

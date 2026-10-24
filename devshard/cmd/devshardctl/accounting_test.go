@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -52,7 +51,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
 	t.Run("insufficient votes", func(t *testing.T) {
-		env := setupTestProxy(t, 3, nil, false)
+		env := setupLiveFloorProxy(t, 3, nil, false)
 		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
@@ -66,12 +65,10 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	})
 
 	t.Run("verifier errors", func(t *testing.T) {
-		clients := []user.HostClient{
-			timeoutErrorClient{},
-			timeoutErrorClient{},
-			timeoutErrorClient{},
+		env := setupLiveFloorProxy(t, 3, nil, false)
+		for _, v := range env.verifiers {
+			v.failWith = errors.New("verifier unavailable")
 		}
-		env := setupTestProxyWithClients(t, clients)
 		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
@@ -85,7 +82,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 	})
 
 	t.Run("canceled wait", func(t *testing.T) {
-		env := setupTestProxy(t, 3, nil, false)
+		env := setupManualFloorProxy(t, 3, nil, false)
 		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -102,37 +99,6 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 		require.Empty(t, result.Reason,
 			"the deadline was never reached, so this must not count as an inference timeout")
 	})
-}
-
-type timeoutErrorClient struct{}
-
-func (timeoutErrorClient) Send(
-	context.Context,
-	host.HostRequest,
-	io.Writer,
-	func(*host.HostResponse),
-) (*host.HostResponse, error) {
-	return nil, errors.New("send not expected")
-}
-
-func (timeoutErrorClient) VerifyTimeout(
-	context.Context,
-	uint64,
-	types.TimeoutReason,
-	*host.InferencePayload,
-	[]types.Diff,
-	host.TimeoutArtifacts,
-) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	return false, nil, 0, nil, "", errors.New("verifier unavailable")
-}
-
-func (timeoutErrorClient) VerifyErrorMiss(
-	context.Context,
-	uint64,
-	[]types.Diff,
-	host.TimeoutArtifacts,
-) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	return false, nil, 0, nil, "", errors.New("verifier unavailable")
 }
 
 func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
@@ -163,7 +129,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 }
 
 func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
@@ -440,7 +406,6 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	apply(1, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: start}})
 	executorSlot := uint32(1)
@@ -455,10 +420,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 			start.Model,
 			start.InputLength,
 			start.MaxTokens,
-			start.StartedAt,
-			1000,
 		),
-		ConfirmedAt: 1000,
 	}
 	apply(2, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
 	finish := &types.MsgFinishInference{

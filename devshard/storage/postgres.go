@@ -1633,7 +1633,7 @@ func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer,
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAt, row.SealedConfirmedAt,
+		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -1782,7 +1782,7 @@ func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, row
 				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
 				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
 				int64(r.SealedReservedCost), int64(r.SealedActualCost),
-				r.SealedStartedAt, r.SealedConfirmedAt,
+				r.SealedStartedAtHeight, r.SealedConfirmedAtHeight,
 			}, nil
 		}),
 	)
@@ -1845,8 +1845,8 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 		outputTokens[i] = int64(row.SealedOutputTokens)
 		reservedCosts[i] = int64(row.SealedReservedCost)
 		actualCosts[i] = int64(row.SealedActualCost)
-		startedAt[i] = row.SealedStartedAt
-		confirmedAt[i] = row.SealedConfirmedAt
+		startedAt[i] = row.SealedStartedAtHeight
+		confirmedAt[i] = row.SealedConfirmedAtHeight
 	}
 
 	ctx, cancel := s.opCtx()
@@ -1889,7 +1889,7 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAt, &out.SealedConfirmedAt,
+		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil

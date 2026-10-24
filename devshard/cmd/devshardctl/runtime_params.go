@@ -83,12 +83,13 @@ func mustInitGatewayRuntimeParams(ctx context.Context, chainClient *chain.Client
 }
 
 type runtimeBuildDeps struct {
-	bridge       bridge.MainnetBridge
-	chainClient  *chain.Client
-	defaultModel string
-	perf         *PerfTracker
-	params       runtimeparams.Provider
-	metrics      *DevshardMetrics
+	completionStore GatewayStore
+	bridge          bridge.MainnetBridge
+	chainClient     *chain.Client
+	defaultModel    string
+	perf            *PerfTracker
+	params          runtimeparams.Provider
+	metrics         *DevshardMetrics
 }
 
 func (d runtimeBuildDeps) validate() error {

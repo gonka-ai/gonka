@@ -52,10 +52,10 @@ func TestApplyConfirmStart_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 	require.Equal(t, uint32(1), rec.ExecutorSlot)
 
 	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.NoError(t, err)
@@ -80,10 +80,10 @@ func TestApplyConfirmStart_BoundSlotRejectsSiblingWarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
@@ -101,10 +101,10 @@ func TestApplyConfirmStart_ColdKeyActsForBoundSlot(t *testing.T) {
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, cold, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.NoError(t, err)

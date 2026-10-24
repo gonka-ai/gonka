@@ -39,7 +39,6 @@ func TestReservedCostIsWhatStartInferenceTakesOffTheBalance(t *testing.T) {
 		Model:       "llama",
 		InputLength: inputLength,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})}))
 	require.NoError(t, err)
 

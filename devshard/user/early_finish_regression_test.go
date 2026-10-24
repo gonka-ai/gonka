@@ -40,6 +40,9 @@ type earlyFinishFixture struct {
 	rec     *types.InferenceRecord
 	execIdx int
 	payload *host.InferencePayload
+	rig     *floorRig
+	base    uint64
+	stats   types.HostStats
 }
 
 func newEarlyFinishFixture(t *testing.T, numHosts int) *earlyFinishFixture {
@@ -48,7 +51,8 @@ func newEarlyFinishFixture(t *testing.T, numHosts int) *earlyFinishFixture {
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = prev })
 
-	session, signers, _ := setupSession(t, numHosts, earlyFinishBalance, 100)
+	session, signers, _, rig := setupArmedSession(t, numHosts, earlyFinishBalance, 100)
+	before := session.StateMachine().SnapshotState()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -59,7 +63,14 @@ func newEarlyFinishFixture(t *testing.T, numHosts int) *earlyFinishFixture {
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 	require.Greater(t, rec.ReservedCost, uint64(earlyFinishActualCost))
+	var stats types.HostStats
+	if hs := before.HostStats[rec.ExecutorSlot]; hs != nil {
+		stats = *hs
+	}
 	return &earlyFinishFixture{
+		rig:     rig,
+		base:    before.Balance,
+		stats:   stats,
 		session: session,
 		signers: signers,
 		nonce:   nonce,
@@ -80,16 +91,30 @@ func (f *earlyFinishFixture) confirm(t *testing.T, confirmedAt int64) *types.Dev
 	return confirmTxFor(t, f.signers[f.execIdx], f.nonce, f.rec, confirmedAt)
 }
 
+func (f *earlyFinishFixture) receipt(t *testing.T, mempool ...*types.DevshardTx) *host.HostResponse {
+	cs := f.confirm(t, 1).GetConfirmStart()
+	return &host.HostResponse{
+		Receipt:           cs.ExecutorSig,
+		ConfirmedAt:       1,
+		ObservedHeight:    cs.ObservedHeight,
+		ObservedBlockHash: cs.ObservedBlockHash,
+		Mempool:           mempool,
+	}
+}
+
 func (f *earlyFinishFixture) record() types.InferenceRecord {
 	return *f.session.StateMachine().SnapshotState().Inferences[f.nonce]
 }
 
 func (f *earlyFinishFixture) executorStats() types.HostStats {
 	st := f.session.StateMachine().SnapshotState()
+	var out types.HostStats
 	if hs := st.HostStats[f.rec.ExecutorSlot]; hs != nil {
-		return *hs
+		out = *hs
 	}
-	return types.HostStats{}
+	out.Cost -= f.stats.Cost
+	out.Missed -= f.stats.Missed
+	return out
 }
 
 func (f *earlyFinishFixture) balance() uint64 {
@@ -136,6 +161,7 @@ func (f *earlyFinishFixture) voters(reject map[int][]*types.DevshardTx) *atomic.
 
 func (f *earlyFinishFixture) handleTimeout(t *testing.T) (TimeoutResult, error) {
 	t.Helper()
+	f.rig.raise(t, f.session, 100_000)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	return f.session.HandleTimeout(ctx, f.nonce, time.Unix(0, 0), f.payload)
@@ -143,7 +169,7 @@ func (f *earlyFinishFixture) handleTimeout(t *testing.T) (TimeoutResult, error) 
 
 func TestEarlyFinishWithoutReceiptRefundsReservation(t *testing.T) {
 	f := newEarlyFinishFixture(t, 3)
-	require.Equal(t, earlyFinishBalance-f.rec.ReservedCost, f.balance())
+	require.Equal(t, f.base-f.rec.ReservedCost, f.balance())
 
 	f.sendEarlyFinish(t)
 
@@ -154,7 +180,7 @@ func TestEarlyFinishWithoutReceiptRefundsReservation(t *testing.T) {
 	require.True(t, result.Applied, "%+v", result)
 
 	require.Equal(t, types.StatusTimedOut, f.record().Status)
-	require.Equal(t, uint64(earlyFinishBalance), f.balance())
+	require.Equal(t, f.base, f.balance())
 	stats := f.executorStats()
 	require.Zero(t, stats.Cost)
 	require.Equal(t, uint32(1), stats.Missed)
@@ -167,11 +193,7 @@ func TestEarlyFinishThenReceiptPaysActualCost(t *testing.T) {
 	var diffs []types.Diff
 	f.session.SetDiffObserver(func(d types.Diff) { diffs = append(diffs, d) })
 
-	require.NoError(t, f.session.ProcessResponse(f.execIdx, &host.HostResponse{
-		Receipt:     f.confirm(t, 1).GetConfirmStart().ExecutorSig,
-		ConfirmedAt: 1,
-		Mempool:     []*types.DevshardTx{f.finish(t)},
-	}, f.nonce))
+	require.NoError(t, f.session.ProcessResponse(f.execIdx, f.receipt(t, f.finish(t)), f.nonce))
 	require.True(t, f.session.IsNonceFinished(f.nonce))
 	require.NoError(t, f.session.SendPendingDiff(context.Background()))
 
@@ -184,11 +206,11 @@ func TestEarlyFinishThenReceiptPaysActualCost(t *testing.T) {
 	require.Equal(t, types.StatusFinished, rec.Status)
 	require.Equal(t, uint64(earlyFinishActualCost), rec.ActualCost)
 	require.Equal(t, uint64(earlyFinishActualCost), f.executorStats().Cost)
-	require.Equal(t, uint64(earlyFinishBalance-earlyFinishActualCost), f.balance())
+	require.Equal(t, f.base-earlyFinishActualCost, f.balance())
 
 	require.NoError(t, f.session.Finalize(context.Background()))
 	require.Equal(t, uint64(earlyFinishActualCost), f.executorStats().Cost)
-	require.Equal(t, uint64(earlyFinishBalance-earlyFinishActualCost), f.balance())
+	require.Equal(t, f.base-earlyFinishActualCost, f.balance())
 }
 
 func TestChallengeRecoveredFinishIsSequencedAtActualCost(t *testing.T) {
@@ -206,10 +228,7 @@ func TestChallengeRecoveredFinishIsSequencedAtActualCost(t *testing.T) {
 
 			recovery := []*types.DevshardTx{f.finish(t)}
 			if tc.started {
-				require.NoError(t, f.session.ProcessResponse(f.execIdx, &host.HostResponse{
-					Receipt:     f.confirm(t, 1).GetConfirmStart().ExecutorSig,
-					ConfirmedAt: 1,
-				}, f.nonce))
+				require.NoError(t, f.session.ProcessResponse(f.execIdx, f.receipt(t), f.nonce))
 				require.NoError(t, f.session.SendPendingDiff(context.Background()))
 				require.Equal(t, types.StatusStarted, f.record().Status)
 				require.False(t, f.session.IsNonceFinished(f.nonce))
@@ -234,7 +253,7 @@ func TestChallengeRecoveredFinishIsSequencedAtActualCost(t *testing.T) {
 			stats := f.executorStats()
 			require.Equal(t, uint64(earlyFinishActualCost), stats.Cost)
 			require.Zero(t, stats.Missed)
-			require.Equal(t, uint64(earlyFinishBalance-earlyFinishActualCost), f.balance())
+			require.Equal(t, f.base-earlyFinishActualCost, f.balance())
 		})
 	}
 }
@@ -259,10 +278,7 @@ func TestChallengeRecoveredUnapplicableFinishDoesNotVeto(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newEarlyFinishFixture(t, 3)
-			require.NoError(t, f.session.ProcessResponse(f.execIdx, &host.HostResponse{
-				Receipt:     f.confirm(t, 1).GetConfirmStart().ExecutorSig,
-				ConfirmedAt: 1,
-			}, f.nonce))
+			require.NoError(t, f.session.ProcessResponse(f.execIdx, f.receipt(t), f.nonce))
 			require.NoError(t, f.session.SendPendingDiff(context.Background()))
 			require.Equal(t, types.StatusStarted, f.record().Status)
 
@@ -309,7 +325,7 @@ func TestChallengeRecoveredUnapplicableFinishDoesNotVeto(t *testing.T) {
 			stats := f.executorStats()
 			require.Zero(t, stats.Cost)
 			require.Equal(t, uint32(1), stats.Missed)
-			require.Equal(t, uint64(earlyFinishBalance), f.balance())
+			require.Equal(t, f.base, f.balance())
 		})
 	}
 }

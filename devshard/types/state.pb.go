@@ -166,29 +166,30 @@ func (x *HostStatsMapProto) GetEntries() []*HostStatsProto {
 }
 
 type InferenceRecordProto struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Status            uint32                 `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
-	ExecutorSlot      uint32                 `protobuf:"varint,3,opt,name=executor_slot,json=executorSlot,proto3" json:"executor_slot,omitempty"`
-	Model             string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
-	PromptHash        []byte                 `protobuf:"bytes,5,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
-	ResponseHash      []byte                 `protobuf:"bytes,6,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
-	InputLength       uint64                 `protobuf:"varint,7,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
-	MaxTokens         uint64                 `protobuf:"varint,8,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	InputTokens       uint64                 `protobuf:"varint,9,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
-	OutputTokens      uint64                 `protobuf:"varint,10,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
-	ReservedCost      uint64                 `protobuf:"varint,11,opt,name=reserved_cost,json=reservedCost,proto3" json:"reserved_cost,omitempty"`
-	ActualCost        uint64                 `protobuf:"varint,12,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
-	StartedAt         int64                  `protobuf:"varint,13,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
-	ConfirmedAt       int64                  `protobuf:"varint,14,opt,name=confirmed_at,json=confirmedAt,proto3" json:"confirmed_at,omitempty"`
-	VotesValid        uint32                 `protobuf:"varint,15,opt,name=votes_valid,json=votesValid,proto3" json:"votes_valid,omitempty"`
-	VotesInvalid      uint32                 `protobuf:"varint,16,opt,name=votes_invalid,json=votesInvalid,proto3" json:"votes_invalid,omitempty"`
-	ValidatedBy       []byte                 `protobuf:"bytes,17,opt,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
-	StartedAtHeight   uint64                 `protobuf:"varint,18,opt,name=started_at_height,json=startedAtHeight,proto3" json:"started_at_height,omitempty"`
-	ConfirmedAtHeight uint64                 `protobuf:"varint,19,opt,name=confirmed_at_height,json=confirmedAtHeight,proto3" json:"confirmed_at_height,omitempty"`
-	ServedHash        []byte                 `protobuf:"bytes,20,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId        uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Status             uint32                 `protobuf:"varint,2,opt,name=status,proto3" json:"status,omitempty"`
+	ExecutorSlot       uint32                 `protobuf:"varint,3,opt,name=executor_slot,json=executorSlot,proto3" json:"executor_slot,omitempty"`
+	Model              string                 `protobuf:"bytes,4,opt,name=model,proto3" json:"model,omitempty"`
+	PromptHash         []byte                 `protobuf:"bytes,5,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	ResponseHash       []byte                 `protobuf:"bytes,6,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	InputLength        uint64                 `protobuf:"varint,7,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
+	MaxTokens          uint64                 `protobuf:"varint,8,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	InputTokens        uint64                 `protobuf:"varint,9,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
+	OutputTokens       uint64                 `protobuf:"varint,10,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	ReservedCost       uint64                 `protobuf:"varint,11,opt,name=reserved_cost,json=reservedCost,proto3" json:"reserved_cost,omitempty"`
+	ActualCost         uint64                 `protobuf:"varint,12,opt,name=actual_cost,json=actualCost,proto3" json:"actual_cost,omitempty"`
+	VotesValid         uint32                 `protobuf:"varint,15,opt,name=votes_valid,json=votesValid,proto3" json:"votes_valid,omitempty"`
+	VotesInvalid       uint32                 `protobuf:"varint,16,opt,name=votes_invalid,json=votesInvalid,proto3" json:"votes_invalid,omitempty"`
+	ValidatedBy        []byte                 `protobuf:"bytes,17,opt,name=validated_by,json=validatedBy,proto3" json:"validated_by,omitempty"`
+	StartedAtHeight    uint64                 `protobuf:"varint,18,opt,name=started_at_height,json=startedAtHeight,proto3" json:"started_at_height,omitempty"`
+	ConfirmedAtHeight  uint64                 `protobuf:"varint,19,opt,name=confirmed_at_height,json=confirmedAtHeight,proto3" json:"confirmed_at_height,omitempty"`
+	ServedHash         []byte                 `protobuf:"bytes,20,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
+	StartedAtBlockHash []byte                 `protobuf:"bytes,21,opt,name=started_at_block_hash,json=startedAtBlockHash,proto3" json:"started_at_block_hash,omitempty"`
+	StartedAtTimeMs    int64                  `protobuf:"varint,22,opt,name=started_at_time_ms,json=startedAtTimeMs,proto3" json:"started_at_time_ms,omitempty"`
+	ConfirmedAtTimeMs  int64                  `protobuf:"varint,23,opt,name=confirmed_at_time_ms,json=confirmedAtTimeMs,proto3" json:"confirmed_at_time_ms,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *InferenceRecordProto) Reset() {
@@ -305,20 +306,6 @@ func (x *InferenceRecordProto) GetActualCost() uint64 {
 	return 0
 }
 
-func (x *InferenceRecordProto) GetStartedAt() int64 {
-	if x != nil {
-		return x.StartedAt
-	}
-	return 0
-}
-
-func (x *InferenceRecordProto) GetConfirmedAt() int64 {
-	if x != nil {
-		return x.ConfirmedAt
-	}
-	return 0
-}
-
 func (x *InferenceRecordProto) GetVotesValid() uint32 {
 	if x != nil {
 		return x.VotesValid
@@ -359,6 +346,27 @@ func (x *InferenceRecordProto) GetServedHash() []byte {
 		return x.ServedHash
 	}
 	return nil
+}
+
+func (x *InferenceRecordProto) GetStartedAtBlockHash() []byte {
+	if x != nil {
+		return x.StartedAtBlockHash
+	}
+	return nil
+}
+
+func (x *InferenceRecordProto) GetStartedAtTimeMs() int64 {
+	if x != nil {
+		return x.StartedAtTimeMs
+	}
+	return 0
+}
+
+func (x *InferenceRecordProto) GetConfirmedAtTimeMs() int64 {
+	if x != nil {
+		return x.ConfirmedAtTimeMs
+	}
+	return 0
 }
 
 type InferencesMapProto struct {
@@ -420,7 +428,7 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\tvalidated\x18\a \x01(\rR\tvalidated\x12\x1a\n" +
 	"\bfinished\x18\b \x01(\rR\bfinished\"J\n" +
 	"\x11HostStatsMapProto\x125\n" +
-	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xca\x05\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xbf\x06\n" +
 	"\x14InferenceRecordProto\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\rR\x06status\x12#\n" +
@@ -437,10 +445,7 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	" \x01(\x04R\foutputTokens\x12#\n" +
 	"\rreserved_cost\x18\v \x01(\x04R\freservedCost\x12\x1f\n" +
 	"\vactual_cost\x18\f \x01(\x04R\n" +
-	"actualCost\x12\x1d\n" +
-	"\n" +
-	"started_at\x18\r \x01(\x03R\tstartedAt\x12!\n" +
-	"\fconfirmed_at\x18\x0e \x01(\x03R\vconfirmedAt\x12\x1f\n" +
+	"actualCost\x12\x1f\n" +
 	"\vvotes_valid\x18\x0f \x01(\rR\n" +
 	"votesValid\x12#\n" +
 	"\rvotes_invalid\x18\x10 \x01(\rR\fvotesInvalid\x12!\n" +
@@ -448,7 +453,11 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\x11started_at_height\x18\x12 \x01(\x04R\x0fstartedAtHeight\x12.\n" +
 	"\x13confirmed_at_height\x18\x13 \x01(\x04R\x11confirmedAtHeight\x12\x1f\n" +
 	"\vserved_hash\x18\x14 \x01(\fR\n" +
-	"servedHash\"Q\n" +
+	"servedHash\x121\n" +
+	"\x15started_at_block_hash\x18\x15 \x01(\fR\x12startedAtBlockHash\x12+\n" +
+	"\x12started_at_time_ms\x18\x16 \x01(\x03R\x0fstartedAtTimeMs\x12/\n" +
+	"\x14confirmed_at_time_ms\x18\x17 \x01(\x03R\x11confirmedAtTimeMsJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fR\n" +
+	"started_atR\fconfirmed_at\"Q\n" +
 	"\x12InferencesMapProto\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.devshard.v1.InferenceRecordProtoR\aentriesB\x10Z\x0edevshard/typesb\x06proto3"
 
