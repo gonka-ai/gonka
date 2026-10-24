@@ -57,9 +57,18 @@ type Validator struct {
 	payloadSigner           signing.Signer
 	rpcEndpoints            transport.EndpointSet
 	payloadRPCMu            sync.Mutex
-	payloadRPCs             map[string]*transport.RPCClient
+	payloadRPCs             map[string]payloadRPCEntry
+	payloadRPCSwept         uint64
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
+	closeUncachedRPC        func(*transport.RPCClient)
+}
+
+// payloadRPCEntry is a cached executor client and its escrow's epoch. The
+// client keeps an Attach door for that escrow on the shared PeerConn.
+type payloadRPCEntry struct {
+	rpc   *transport.RPCClient
+	epoch uint64
 }
 
 type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
@@ -174,11 +183,28 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 	if v.fetchPayloads != nil {
 		return v.fetchPayloads(ctx, req, inferenceID, epochID)
 	}
+	var uncached *transport.RPCClient
+	defer func() {
+		if uncached == nil {
+			return
+		}
+		closeRPC := (*transport.RPCClient).Close
+		if v.closeUncachedRPC != nil {
+			closeRPC = v.closeUncachedRPC
+		}
+		closeRPC(uncached)
+	}()
 	return fetchPayloadsFromExecutor(
 		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.payloadHTTPClient,
-		v.payloadRPC,
+		func(executorURL, executorAddr, escrowID string) *transport.RPCClient {
+			rpc, cached := v.payloadRPC(executorURL, executorAddr, escrowID, epochID)
+			if !cached {
+				uncached = rpc
+			}
+			return rpc
+		},
 	)
 }
 
@@ -199,27 +225,52 @@ func (v *Validator) ClosePayloadClients() {
 	}
 	v.payloadRPCMu.Lock()
 	defer v.payloadRPCMu.Unlock()
-	for k, c := range v.payloadRPCs {
-		c.Close()
+	for k, e := range v.payloadRPCs {
+		e.rpc.Close()
 		delete(v.payloadRPCs, k)
 	}
 }
 
-func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string) *transport.RPCClient {
+// sweepPayloadRPCsLocked closes clients of escrows two epochs behind: the
+// chain prunes them, and a kept door makes a re-Attach hit escrow_not_found,
+// which versiond counts against this host's IP.
+func (v *Validator) sweepPayloadRPCsLocked(epochID uint64) {
+	current := epochID
+	if v.phase != nil {
+		current = max(current, v.phase.EpochID())
+	}
+	if current <= v.payloadRPCSwept {
+		return
+	}
+	v.payloadRPCSwept = current
+	for k, e := range v.payloadRPCs {
+		if e.epoch+2 <= current {
+			e.rpc.Close()
+			delete(v.payloadRPCs, k)
+		}
+	}
+}
+
+// payloadRPC returns the executor client for escrowID and whether it is
+// cached. An escrow the sweep counts as pruned gets a client that is not
+// cached, so the caller closes it after the fetch: the executor may still
+// hold the session, but a cached door would stay until the next sweep.
+func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string, epochID uint64) (*transport.RPCClient, bool) {
 	if v == nil || v.payloadSigner == nil || !v.rpcEndpoints.Has(transport.EndpointPayload) {
-		return nil
+		return nil, false
 	}
 	executorURL = strings.TrimSpace(executorURL)
 	executorAddr = strings.TrimSpace(executorAddr)
 	escrowID = strings.TrimSpace(escrowID)
 	if executorURL == "" || executorAddr == "" || escrowID == "" {
-		return nil
+		return nil, false
 	}
 	key := executorAddr + "\x00" + executorURL + "\x00" + escrowID
 	v.payloadRPCMu.Lock()
 	defer v.payloadRPCMu.Unlock()
-	if c := v.payloadRPCs[key]; c != nil {
-		return c
+	v.sweepPayloadRPCsLocked(epochID)
+	if e, ok := v.payloadRPCs[key]; ok {
+		return e.rpc, true
 	}
 	cfg := transport.DefaultClientConfig()
 	cfg.RoutePrefix = devshardpkg.VersionedRoutePrefix(v.boundVersion)
@@ -228,13 +279,16 @@ func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string) *tran
 	selected := transport.SelectTransport(httpClient, executorAddr, v.rpcEndpoints, nil)
 	rpc, ok := selected.(*transport.RPCClient)
 	if !ok || rpc == nil || !rpc.Uses(transport.EndpointPayload) {
-		return nil
+		return nil, false
+	}
+	if epochID+2 <= v.payloadRPCSwept {
+		return rpc, false
 	}
 	if v.payloadRPCs == nil {
-		v.payloadRPCs = make(map[string]*transport.RPCClient)
+		v.payloadRPCs = make(map[string]payloadRPCEntry)
 	}
-	v.payloadRPCs[key] = rpc
-	return rpc
+	v.payloadRPCs[key] = payloadRPCEntry{rpc: rpc, epoch: epochID}
+	return rpc, true
 }
 
 const executorPayloadUnavailableReason = "executor_payload_unavailable"
