@@ -530,12 +530,13 @@ func (c *killableClient) LastRequest() *host.HostRequest {
 // This allows session.TimeoutVerifiers() to discover it.
 type verifierClient struct {
 	*killableClient
-	accept   bool
-	signer   *signing.Secp256k1Signer
-	group    []types.SlotAssignment
-	slotIdx  int
-	voteGate <-chan struct{}
-	failWith error
+	accept         bool
+	signer         *signing.Secp256k1Signer
+	group          []types.SlotAssignment
+	slotIdx        int
+	voteGate       <-chan struct{}
+	failWith       error
+	errorMissProof atomic.Uint64
 }
 
 type delayedResultClient struct {
@@ -591,6 +592,7 @@ func (c *verifierClient) VerifyTimeout(ctx context.Context, inferenceID uint64, 
 }
 
 func (c *verifierClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	c.errorMissProof.Store(artifacts.SiblingInferenceID)
 	if !c.accept {
 		return false, nil, 0, nil, "", nil
 	}
@@ -1725,7 +1727,7 @@ func TestRunInference_ErrorStreamRetriesInsteadOfWinning(t *testing.T) {
 	require.True(t, env.session.IsNonceFinished(2))
 }
 
-func TestRunInference_OnlyADeterministicRejectionStaysOnOneHost(t *testing.T) {
+func TestRunInference_ADeterministicRejectionStopsOnceASecondHostAgrees(t *testing.T) {
 	cases := []struct {
 		name            string
 		errorEvent      string
@@ -1733,8 +1735,8 @@ func TestRunInference_OnlyADeterministicRejectionStaysOnOneHost(t *testing.T) {
 		wantHostCalls   int32
 		wantNoncesSpent int
 	}{
-		{name: "context length rejection stays on one host", errorEvent: contextLengthErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 1, wantNoncesSpent: 1},
-		{name: "malformed request stays on one host", errorEvent: malformedJSONErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 1, wantNoncesSpent: 1},
+		{name: "context length rejection stops at the second host", errorEvent: contextLengthErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 2, wantNoncesSpent: 2},
+		{name: "malformed request stops at the second host", errorEvent: malformedJSONErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 2, wantNoncesSpent: 2},
 		{name: "bad request naming a model the host lacks moves to every host", errorEvent: unservedModelBadRequestErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 3, wantNoncesSpent: 3},
 		{name: "server error moves to every host", errorEvent: serverErrorEvent, wantStatus: http.StatusInternalServerError, wantHostCalls: 3, wantNoncesSpent: 3},
 		{name: "tool choice rejection moves to every host", errorEvent: toolChoiceErrorEvent, wantStatus: http.StatusBadRequest, wantHostCalls: 3, wantNoncesSpent: 3},
@@ -1762,8 +1764,9 @@ func TestRunInference_OnlyADeterministicRejectionStaysOnOneHost(t *testing.T) {
 	}
 }
 
-func TestRunInference_ContextLengthRejectionStopsEscalationForTheWholeRequest(t *testing.T) {
+func TestRunInference_OneContextLengthRejectionStillTriesAnotherHost(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	setSpeculativeTiming(t, 500*time.Millisecond, FirstTokenTimeoutCap, PerInputTokenFirstTokenLag, SecondaryWaitAfterWinner)
 	shortRefusalWindow(t)
 	hedgeStarted := make(chan struct{})
@@ -1791,7 +1794,7 @@ func TestRunInference_ContextLengthRejectionStopsEscalationForTheWholeRequest(t 
 	var hostErr *hostApplicationError
 	require.ErrorAs(t, err, &hostErr)
 	require.Equal(t, http.StatusBadRequest, hostErr.statusCode())
-	require.Equal(t, int32(0), hostNeverReached.calls.Load(), "a hedge failing after a context-length rejection must not start another host")
+	require.Equal(t, int32(1), hostNeverReached.calls.Load(), "one host's context-length rejection must not stop the request from reaching another host")
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
 }
 
@@ -1823,8 +1826,8 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 
-	var hostErr *hostApplicationError
-	require.ErrorAs(t, err, &hostErr)
+	require.NoError(t, err, "another host serves a prompt one host rejected")
+	require.Contains(t, buf.String(), `"choices"`)
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
 	// Not-yet-due timeout votes sleep off the drain barrier and apply at the
 	// protocol deadline, so Missed can land after the outer cleanup Done.

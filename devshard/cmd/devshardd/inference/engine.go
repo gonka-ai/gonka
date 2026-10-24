@@ -107,7 +107,7 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 		result, err := executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
 			return e.executeMLRequest(ctx, model, req.EscrowID, body)
 		}, e.chainParams, e.logprobsOptimizationEnabled, func() int {
-			return e.vocabularySize(ctx, req.Model)
+			return e.vocabularySize(ctx, req)
 		})
 		if err == nil && result != nil && !result.PartialResponse {
 			e.earnValidationCredit(ctx, req.Model)
@@ -116,11 +116,11 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	})
 }
 
-func (e *Engine) vocabularySize(ctx context.Context, model string) int {
+func (e *Engine) vocabularySize(ctx context.Context, req devshard.ExecuteRequest) int {
 	if e.vocabularySizes == nil {
 		return 0
 	}
-	return e.vocabularySizes.Resolve(ctx, e.phase.EpochID(), model)
+	return e.vocabularySizes.Resolve(ctx, resolveValidationEpoch(e.phase, req.EpochID), req.Model)
 }
 
 func executeWithRecovery(

@@ -145,8 +145,9 @@ func (details sseErrorDetails) statusCode() int {
 }
 
 type hostApplicationError struct {
-	details sseErrorDetails
-	payload []byte
+	details          sseErrorDetails
+	payload          []byte
+	confirmedByHosts bool
 }
 
 func (e *hostApplicationError) Error() string {
@@ -846,6 +847,7 @@ type inflight struct {
 	prepared                   *user.PreparedInference
 	hostIdx                    int
 	hostID                     string
+	raceNonces                 []uint64
 	nonce                      uint64
 	escrowID                   string
 	model                      string
@@ -910,6 +912,7 @@ type inflight struct {
 	limiterStrikeOnce sync.Once
 	processOnce       sync.Once
 	processErr        error
+	finishPinned      atomic.Bool
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -1266,6 +1269,7 @@ type raceGroup struct {
 	escrow         string
 
 	deterministicallyRejected atomic.Bool
+	rejectedBy                map[string]struct{}
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -1393,8 +1397,19 @@ func (rg *raceGroup) hasDecided() bool {
 	return rg.decided.Load()
 }
 
-func (rg *raceGroup) markDeterministicallyRejected() {
-	if rg != nil {
+const deterministicRejectionQuorum = 2
+
+func (rg *raceGroup) markDeterministicallyRejected(hostID string) {
+	if rg == nil {
+		return
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	if rg.rejectedBy == nil {
+		rg.rejectedBy = make(map[string]struct{}, deterministicRejectionQuorum)
+	}
+	rg.rejectedBy[hostID] = struct{}{}
+	if len(rg.rejectedBy) >= deterministicRejectionQuorum {
 		rg.deterministicallyRejected.Store(true)
 	}
 }
@@ -1564,7 +1579,7 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 			rw.inf.errorMessage = details.Message
 			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
 			if isTrustedDeterministicRejection(rw.inf) {
-				rw.group.markDeterministicallyRejected()
+				rw.group.markDeterministicallyRejected(rw.inf.hostID)
 			}
 		}
 	}
@@ -2140,11 +2155,14 @@ func errorMissArtifacts(inf *inflight, session *user.Session) (finishTx, respons
 	if inf == nil {
 		return nil, nil
 	}
+	var responseMempool []*types.DevshardTx
 	if inf.resp != nil {
-		finishTx = user.MarshalFinishTx(inf.resp.Mempool, inf.nonce)
+		responseMempool = inf.resp.Mempool
 	}
-	if len(finishTx) == 0 && session != nil {
-		finishTx = session.FinishTxFor(inf.nonce)
+	if session != nil {
+		finishTx = session.FinishTxForErrorMiss(inf.nonce, responseMempool)
+	} else {
+		finishTx = user.MarshalFinishTx(responseMempool, inf.nonce)
 	}
 	if len(inf.errorStreamLines) > 0 {
 		responsePayload, _ = json.Marshal(completionapi.SerializedStreamedResponse{Events: inf.errorStreamLines})
@@ -2166,7 +2184,11 @@ func (e *Redundancy) runHandleTimeout(ctx context.Context, inf *inflight, params
 	if errorMiss {
 		finishTx, responsePayload := errorMissArtifacts(inf, e.session)
 		if len(finishTx) > 0 {
-			return e.session.HandleErrorMiss(ctx, inf.nonce, finishTx, responsePayload)
+			var sibling uint64
+			if isUnbilledClientFault(finishTx, responsePayload) {
+				sibling = errorMissSibling(inf, e.session)
+			}
+			return e.session.HandleErrorMissWithSibling(ctx, inf.nonce, finishTx, responsePayload, sibling)
 		}
 	}
 	return e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, e.inferenceTimeoutPayload(params))
@@ -3499,9 +3521,19 @@ func (e *Redundancy) processLateFailedInflights(ctx context.Context, failed []*i
 		if err := e.processInflightOnce(inf); err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "process_response_failed", "host", inf.hostID, "error", err)
 		}
-		if errorMissEnabledFor(inf) {
-			e.session.PinPendingFinish(inf.nonce)
-		}
+		e.pinErrorFinish(inf)
+	}
+}
+
+func (e *Redundancy) pinErrorFinish(inf *inflight) {
+	if errorMissEnabledFor(inf) && inf.finishPinned.CompareAndSwap(false, true) {
+		e.session.PinPendingFinish(inf.nonce)
+	}
+}
+
+func (e *Redundancy) unpinErrorFinish(inf *inflight) {
+	if inf != nil && inf.finishPinned.CompareAndSwap(true, false) {
+		e.session.UnpinPendingFinish(inf.nonce)
 	}
 }
 
@@ -4145,15 +4177,12 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		e.rememberRefusalPayload(inf.nonce, e.inferenceTimeoutPayload(params))
 	}
 
-	unpinFinish := errorMissEnabledFor(inf)
 	e.raceCleanupWG.Add(1)
 	go func() {
 		defer e.raceCleanupWG.Done()
 		defer inf.endAttemptSpan()
 		defer inf.releaseErrorStreamRetention()
-		if unpinFinish {
-			defer e.session.UnpinPendingFinish(inf.nonce)
-		}
+		defer e.unpinErrorFinish(inf)
 
 		waitCtx := e.raceCleanupRoot()
 		for {
@@ -4227,8 +4256,52 @@ func errorMissRunnable(inf *inflight, session *user.Session) bool {
 		// Finish bytes live on resp; do not read them while SendOnly may still write.
 		return false
 	}
-	finishTx, _ := errorMissArtifacts(inf, session)
-	return len(finishTx) > 0
+	finishTx, responsePayload := errorMissArtifacts(inf, session)
+	if len(finishTx) == 0 {
+		return false
+	}
+	return !isUnbilledClientFault(finishTx, responsePayload) || errorMissSibling(inf, session) != 0
+}
+
+func errorMissSkipReason(inf *inflight, session *user.Session) string {
+	if finishTx, responsePayload := errorMissArtifacts(inf, session); isUnbilledClientFault(finishTx, responsePayload) {
+		return "client_fault"
+	}
+	return "no_finish_artifact"
+}
+
+func (e *Redundancy) publishClientFaultSiblings(ctx context.Context, inf *inflight) {
+	if e.session == nil || !errorMissEnabledFor(inf) || errorMissSibling(inf, e.session) != 0 {
+		return
+	}
+	if finishTx, responsePayload := errorMissArtifacts(inf, e.session); !isUnbilledClientFault(finishTx, responsePayload) {
+		return
+	}
+	for _, nonce := range inf.raceNonces {
+		if nonce != inf.nonce && e.session.IsNonceFinished(nonce) {
+			if err := e.session.SendPendingDiff(ctx); err != nil {
+				logInferenceStage(ctx, inf.escrowID, inf.nonce, "client_fault_sibling_publish_failed", "host", inf.hostID, "error", err)
+			}
+			return
+		}
+	}
+}
+
+func errorMissSibling(inf *inflight, session *user.Session) uint64 {
+	if inf == nil || session == nil {
+		return 0
+	}
+	for _, nonce := range inf.raceNonces {
+		if session.ServedSibling(inf.nonce, nonce) {
+			return nonce
+		}
+	}
+	return 0
+}
+
+func isUnbilledClientFault(finishTx, responsePayload []byte) bool {
+	finish := host.DecodeFinishTx(finishTx)
+	return finish != nil && completionapi.IsUnbilledClientFault(responsePayload, finish.InputTokens, finish.OutputTokens)
 }
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {
@@ -4269,7 +4342,8 @@ func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool
 	if inf == nil {
 		return false
 	}
-	return inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce)
+	return inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce) &&
+		!isUnbilledClientFault(errorMissArtifacts(inf, session))
 }
 
 // deliveredWholeAnswer reports an attempt whose answer reached the caller intact: it returned, carried
@@ -4358,6 +4432,16 @@ func contextRefusalIsFinal(message, model string) bool {
 	return !known || contextRefusalBeyondModelLimit(message, modelContextLimit)
 }
 
+func trustedRejectionHosts(attempts []*inflight) int {
+	hosts := make(map[string]struct{}, len(attempts))
+	for _, attempt := range attempts {
+		if isTrustedDeterministicRejection(attempt) {
+			hosts[attempt.hostID] = struct{}{}
+		}
+	}
+	return len(hosts)
+}
+
 func hostApplicationErrorFromInflight(inf *inflight) *hostApplicationError {
 	if inflightStillSending(inf) || !isErrorStreamAttempt(inf) {
 		return nil
@@ -4408,6 +4492,7 @@ func undeclaredVersionErrorFromAttempts(attempts []*inflight) *transport.Upstrea
 // boot-window 503s as a generic 502.
 func clientVisibleAllAttemptsFailedError(attempts []*inflight, winnerNonce uint64) error {
 	if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
+		hostErr.confirmedByHosts = trustedRejectionHosts(attempts) >= deterministicRejectionQuorum
 		return hostErr
 	}
 	if undeclared := undeclaredVersionErrorFromAttempts(attempts); undeclared != nil {
@@ -4802,6 +4887,17 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 // attempt later completes successfully on the protocol layer.
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	defer releasePendingBufs(attempts)
+	raceNonces := make([]uint64, 0, len(attempts))
+	for _, attempt := range attempts {
+		if attempt != nil && !attempt.probe {
+			raceNonces = append(raceNonces, attempt.nonce)
+		}
+	}
+	for _, attempt := range attempts {
+		if attempt != nil {
+			attempt.raceNonces = raceNonces
+		}
+	}
 	// Process all responses first so Session has complete protocol state.
 	// Pin error-stream Finishes immediately: ProcessResponse queues them in
 	// pending, and the quiet settle (or a height-sync heartbeat) can compose
@@ -4817,9 +4913,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.maybeRecordEscrowStateDivergence(ctx, inf, fmt.Errorf("apply diff nonce %d: post_state_root does not match computed state root: %w", inf.nonce, err))
 			}
 		}
-		if errorMissEnabledFor(inf) {
-			e.session.PinPendingFinish(inf.nonce)
-		}
+		e.pinErrorFinish(inf)
 	}
 	// Leave the receipt and Finish queued for the next Start diff, which
 	// already pays FeePerNonce. Arm the quiet settle for the request that
@@ -5035,19 +5129,18 @@ func (e *Redundancy) voteTimeoutForFailedInflight(ctx context.Context, inf *infl
 		}
 		inf.endAttemptSpan()
 		inf.releaseErrorStreamRetention()
-		if errorMissEnabledFor(inf) {
-			e.session.UnpinPendingFinish(inf.nonce)
-		}
+		e.unpinErrorFinish(inf)
 	}()
 	if inf.probe {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
 		return
 	}
+	e.publishClientFaultSiblings(ctx, inf)
 	errorMiss := errorMissRunnable(inf, e.session)
 	kind := timeoutKindForInflight(inf, errorMiss)
 	if errorMissEnabledFor(inf) && !errorMiss {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "error_miss_skipped",
-			"host", inf.hostID, "reason", "no_finish_artifact")
+			"host", inf.hostID, "reason", errorMissSkipReason(inf, e.session))
 	}
 	if inf.phaseTransitionAborted {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",

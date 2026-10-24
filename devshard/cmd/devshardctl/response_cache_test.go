@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,7 +91,6 @@ func TestGatewayChatCacheCaptureAllowsCompleteStreamingResponse(t *testing.T) {
 		"null after finish":    sseContentChunk + sseTerminalChunk + `data: {"choices":[{"index":0,"delta":{},"finish_reason":null}]}` + "\n\n" + sseDone,
 		"multi-line event":     sseContentChunk + `data: {"choices":[{"index":0,` + "\n" + `data: "delta":{},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
 		"non-finite logprob":   sseContentChunk + `data: {"choices":[{"index":0,"delta":{},"logprobs":{"content":[{"token":"x","logprob":-Infinity}]},"finish_reason":"stop"}]}` + "\n\n" + sseDone,
-		"deterministic error":  `data: {"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}` + "\n\n" + sseDone,
 		"two choices finished": `data: {"choices":[{"index":0,"delta":{"content":"a"},"finish_reason":null},{"index":1,"delta":{"content":"b"},"finish_reason":null}]}` + "\n\n" + `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"},{"index":1,"delta":{},"finish_reason":"length"}]}` + "\n\n" + sseDone,
 	}
 	for name, body := range tests {
@@ -137,16 +137,40 @@ func TestGatewayChatCacheCaptureRejectsIncompleteStreamingResponse(t *testing.T)
 	}
 }
 
-func TestGatewayChatCacheCaptureAllowsDeterministicOpenAIStyleBadRequest(t *testing.T) {
-	rec := httptest.NewRecorder()
-	capture := &gatewayChatCacheCapture{ResponseWriter: rec}
-	writeJSONPayload(capture, http.StatusBadRequest, []byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`))
+func TestGatewayChatCacheCaptureCachesAHostRejectionOnlyOnceConfirmed(t *testing.T) {
+	badRequest := []byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`)
+	streamedRejection := []byte("data: {\"error\":{\"message\":\"bad response_format schema\",\"type\":\"BadRequestError\",\"code\":400}}\n\ndata: [DONE]\n\n")
+	for _, tc := range []struct {
+		name      string
+		status    int
+		body      []byte
+		stream    bool
+		confirmed bool
+		want      bool
+	}{
+		{name: "unconfirmed bad request", status: http.StatusBadRequest, body: badRequest},
+		{name: "unconfirmed streamed rejection", status: http.StatusOK, body: streamedRejection, stream: true},
+		{name: "confirmed bad request", status: http.StatusBadRequest, body: badRequest, confirmed: true, want: true},
+		{name: "confirmed streamed rejection", status: http.StatusOK, body: streamedRejection, stream: true, confirmed: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			confirmed := new(atomic.Bool)
+			capture := &gatewayChatCacheCapture{ResponseWriter: httptest.NewRecorder(), rejectionConfirmed: confirmed}
+			writeJSONPayload(capture, tc.status, tc.body)
+			if tc.confirmed {
+				confirmRejection(withRejectionConfirmation(context.Background(), confirmed))
+			}
 
-	entry, reason := capture.cacheEntry("escrow-1", false, "req-source", nil)
+			entry, reason := capture.cacheEntry("escrow-1", tc.stream, "req-source", nil)
 
-	require.Empty(t, reason)
-	require.Equal(t, http.StatusBadRequest, entry.StatusCode)
-	require.JSONEq(t, `{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`, string(entry.Body))
+			if tc.want {
+				require.Empty(t, reason)
+				require.Equal(t, tc.status, entry.StatusCode)
+			} else {
+				require.Equal(t, "unconfirmed_rejection", reason)
+			}
+		})
+	}
 }
 
 func TestGatewayChatCacheCaptureRejectsRuntimeAndCapabilityErrors(t *testing.T) {
