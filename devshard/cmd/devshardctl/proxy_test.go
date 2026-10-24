@@ -2003,6 +2003,20 @@ func TestProxyHandleChatCompletionsRejectsWhenConfirmationPoCActive(t *testing.T
 	require.EqualValues(t, 0, env.proxy.session.Nonce())
 }
 
+func TestProxyHandleChatCompletionsRejectsPaddedModel(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"model":" llama ","messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "unsupported model")
+	require.EqualValues(t, 0, env.proxy.session.Nonce())
+}
+
 func TestProxyHandleChatCompletionsRejectsWhenRegularPoCActive(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.phaseGate = &ChainPhaseGate{}
