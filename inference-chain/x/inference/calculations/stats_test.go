@@ -102,28 +102,32 @@ func TestMissedStatTestBasicBehavior(t *testing.T) {
 func TestMissedStatTestFindsCriticalValues(t *testing.T) {
 	// Find and verify critical values for p0=0.10, alpha=0.05
 	// The critical value is the highest k where the test still passes
+	accepted := acceptedTableDeviation[100]
 	testTotals := []int{10, 20, 50, 100}
 
 	for _, total := range testTotals {
-		var criticalValue int = -1
+		criticalValue := -1
 		for k := 0; k <= total; k++ {
 			passed, err := MissedStatTest(k, total, defaultP0)
 			if err != nil {
-				t.Errorf("MissedStatTest(%d, %d) error: %v", k, total, err)
+				t.Fatalf("MissedStatTest(%d, %d) error: %v", k, total, err)
+			}
+			if !passed {
 				break
 			}
-			if passed {
-				criticalValue = k
-			} else {
-				break
-			}
+			criticalValue = k
 		}
 
-		// Verify the critical value makes sense (should be roughly 10% of total or slightly below)
-		expectedMin := int(float64(total) * 0.05)
-		expectedMax := int(float64(total) * 0.15)
-		if criticalValue < expectedMin || criticalValue > expectedMax {
-			t.Logf("Total=%d: critical value=%d (expected between %d and %d)", total, criticalValue, expectedMin, expectedMax)
+		if tableK := tableCriticalMisses(t, total, 100); criticalValue != tableK {
+			t.Errorf("total=%d: MissedStatTest critical value=%d, lookup table=%d", total, criticalValue, tableK)
+		}
+
+		tails, scale := binomialUpperTails(total, 100)
+		exactK := exactCriticalMisses(tails, scale)
+		diff := exactK - criticalValue
+		inLenientRange := accepted.lenientFrom <= total && total <= accepted.lenientTo
+		if diff > accepted.maxStricter || (diff < 0 && (!inLenientRange || -diff > accepted.maxLenient)) {
+			t.Errorf("total=%d: critical value=%d, exact=%d, outside the accepted deviation", total, criticalValue, exactK)
 		}
 
 		// Verify boundary behavior
@@ -138,6 +142,24 @@ func TestMissedStatTestFindsCriticalValues(t *testing.T) {
 			if passed {
 				t.Errorf("Critical value+1 (%d) should fail for total=%d", criticalValue+1, total)
 			}
+		}
+	}
+}
+
+func TestMissedStatTestAlphaAndExactPath(t *testing.T) {
+	if !alpha.Equal(decimal.NewFromFloat(0.05)) {
+		t.Fatalf("alpha=%s, expected 0.05", alpha)
+	}
+
+	p0 := decimal.NewFromFloat(0.15)
+	for _, total := range []int{10, 20, 30} {
+		tails, scale := binomialUpperTails(total, 150)
+		exactK := exactCriticalMisses(tails, scale)
+		if passed, err := MissedStatTest(exactK, total, p0); err != nil || !passed {
+			t.Errorf("total=%d: %d misses should pass (err=%v)", total, exactK, err)
+		}
+		if passed, err := MissedStatTest(exactK+1, total, p0); err != nil || passed {
+			t.Errorf("total=%d: %d misses should fail (err=%v)", total, exactK+1, err)
 		}
 	}
 }

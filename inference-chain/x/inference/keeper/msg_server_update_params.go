@@ -18,6 +18,12 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 		return nil, errorsmod.Wrap(err, "invalid params")
 	}
 
+	// Legacy formats remain readable for migrations, but live updates must be
+	// usable by the next regular PoC (including PREFILL's DECODE trial).
+	if _, err := types.SnapshotPocStageRecipe(req.Params.PocParams, 0); err != nil {
+		return nil, errorsmod.Wrap(err, "invalid PoC recipe")
+	}
+
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	if err := k.SetParams(ctx, req.Params); err != nil {
 		return nil, err

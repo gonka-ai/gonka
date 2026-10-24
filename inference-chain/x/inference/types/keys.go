@@ -103,6 +103,8 @@ var (
 	// canonical bech32 address.
 	BridgeTransactionValidatorsPrefix = collections.NewPrefix(64)
 	PreservedNodesSnapshotPrefix      = collections.NewPrefix(65)
+	LatestPocStageRecipePrefix        = collections.NewPrefix(66)
+	RetainedPocStageRecipePrefix      = collections.NewPrefix(67)
 	// Maintenance window collections. Prefixes start at 100 to (a) leave room
 	// for upstream's BridgeTransactionValidators (64) and PreservedNodesSnapshot (65)
 	// which shipped first on gm/microrelease, and (b) avoid colliding with
@@ -132,7 +134,23 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	ParamsKey                      = []byte("p_inference")
+	// PoCValidationV2CountPrefix is (stage, validator) -> stored vote count.
+	// The validation key ends with the validator, so a count cannot be a prefix
+	// walk of PoCValidationsV2.
+	PoCValidationV2CountPrefix = collections.NewPrefix(114)
+	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
+	// bounded confirmation-prefix cleanup. It is not one of the regular
+	// pruner epoch fields.
+	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114 and 115 are taken above. Not 115: 's' is the
+	// first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
+	// 114, 115, and 117-119 are taken by v0.2.17.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

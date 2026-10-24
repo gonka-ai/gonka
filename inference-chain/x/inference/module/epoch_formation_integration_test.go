@@ -24,7 +24,7 @@ func setFrozenCoefficientConfig(
 ) {
 	t.Helper()
 
-	frozen, err := coefficient.Freeze(pocParams)
+	frozen, err := coefficient.Freeze(pocParams, nil)
 	require.NoError(t, err)
 	data, found := k.GetEpochGroupData(ctx, epochIndex, "")
 	if !found {
@@ -348,6 +348,16 @@ func newFormationRecoveryFixture(
 		PocStartBlockHeight: uint64(upcomingEpoch.PocStartBlockHeight),
 		SubGroupModels:      []string{modelID},
 	})
+	setFrozenCoefficientConfig(t, k, ctx, currentEpoch.Index, params.PocParams)
+	currentRoot, _ := k.GetEpochGroupData(ctx, currentEpoch.Index, "")
+	for _, scale := range currentRoot.ConfirmationWeightScales {
+		scale.EffectiveCoefficient = types.DecimalFromFloat(1)
+		scale.WeightScaleFactor = types.DecimalFromFloat(1)
+	}
+	for _, weight := range currentRoot.ValidationWeights {
+		weight.ConfirmationWeight = weight.Weight
+	}
+	k.SetEpochGroupData(ctx, currentRoot)
 	setFrozenCoefficientConfig(t, k, ctx, upcomingEpoch.Index, params.PocParams)
 
 	for _, participant := range []string{veteran, delegator, newcomer} {
@@ -485,6 +495,16 @@ func requireNoFormationOutput(t *testing.T, fixture formationRecoveryFixture) {
 
 func TestOnEndOfPoCValidationStage_RecoversZeroEligibilityWeight(t *testing.T) {
 	fixture := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 1, 2)
+	// The delegator has confirmed prior weight, but cannot join the fallback set.
+	sub, _ := fixture.keeper.GetEpochGroupData(fixture.ctx, 1, fixture.modelID)
+	sub.ValidationWeights = append(sub.ValidationWeights, &types.ValidationWeight{
+		MemberAddress: fixture.delegator, Weight: 49,
+		MlNodes: []*types.MLNodeInfo{{NodeId: "delegator-node", PocWeight: 49}},
+	})
+	fixture.keeper.SetEpochGroupData(fixture.ctx, sub)
+	delegator, _ := fixture.keeper.GetParticipant(fixture.ctx, fixture.delegator)
+	delegator.Status = types.ParticipantStatus_INACTIVE
+	require.NoError(t, fixture.keeper.SetParticipant(fixture.ctx, delegator))
 	fixture.addFreshPoC(t, 100)
 
 	require.NoError(t, fixture.module.onEndOfPoCValidationStage(fixture.ctx, 250, 1_000))
@@ -612,3 +632,34 @@ func TestOnEndOfPoCValidationStage_PreviousWeightReadErrorHalts(t *testing.T) {
 
 var _ types.CollateralKeeper = selectiveCollateralKeeper{}
 var _ types.AccountKeeper = (*formationAccountKeeper)(nil)
+
+func TestFailedDecodeTransitionRetainsProvenanceAndRetries(t *testing.T) {
+	f := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 0, 2)
+	require.NoError(t, f.keeper.RetainedPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_PREFILL}))
+	require.NoError(t, f.keeper.LatestPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 200, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
+	changed, err := f.module.regularSchemeChanged(f.ctx, f.upcomingEpoch.Index, f.upcomingEpoch.PocStartBlockHeight)
+	require.NoError(t, err)
+	require.True(t, changed)
+	oldRoot, _ := f.keeper.GetEpochGroupData(f.ctx, 1, "")
+
+	// No fresh PoC: carry PREFILL weights despite the attempted DECODE round.
+	require.NoError(t, f.module.onEndOfPoCValidationStage(f.ctx, 250, 1_000))
+	stored, found := f.keeper.GetActiveParticipants(f.ctx, 2)
+	require.True(t, found)
+	require.Equal(t, int64(100), stored.PocStartBlockHeight)
+	epoch, found := f.keeper.GetEpoch(f.ctx, 2)
+	require.True(t, found)
+	require.Equal(t, int64(200), epoch.PocStartBlockHeight, "round identity stays separate from carried measurements")
+	recipe, found, err := f.keeper.GetEpochPocRecipe(f.ctx, 2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, recipe.Scheme)
+	root, _ := f.keeper.GetEpochGroupData(f.ctx, 2, "")
+	require.Equal(t, oldRoot.DynamicCoefficientParams, root.DynamicCoefficientParams)
+
+	// The next regular attempt still sees a scheme change and excludes preservation.
+	require.NoError(t, f.keeper.LatestPocStageRecipe.Set(f.ctx, types.PocStageRecipe{StageHeight: 300, Scheme: types.PocScheme_POC_SCHEME_DECODE}))
+	changed, err = f.module.regularSchemeChanged(f.ctx, 3, 300)
+	require.NoError(t, err)
+	require.True(t, changed)
+}
