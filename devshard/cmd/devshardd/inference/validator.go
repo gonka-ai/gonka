@@ -61,6 +61,7 @@ type Validator struct {
 	payloadRPCSwept         uint64
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
+	closeUncachedRPC        func(*transport.RPCClient)
 }
 
 // payloadRPCEntry is a cached executor client and its escrow's epoch. The
@@ -182,12 +183,27 @@ func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.Valida
 	if v.fetchPayloads != nil {
 		return v.fetchPayloads(ctx, req, inferenceID, epochID)
 	}
+	var uncached *transport.RPCClient
+	defer func() {
+		if uncached == nil {
+			return
+		}
+		closeRPC := (*transport.RPCClient).Close
+		if v.closeUncachedRPC != nil {
+			closeRPC = v.closeUncachedRPC
+		}
+		closeRPC(uncached)
+	}()
 	return fetchPayloadsFromExecutor(
 		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
 		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
 		v.payloadHTTPClient,
 		func(executorURL, executorAddr, escrowID string) *transport.RPCClient {
-			return v.payloadRPC(executorURL, executorAddr, escrowID, epochID)
+			rpc, cached := v.payloadRPC(executorURL, executorAddr, escrowID, epochID)
+			if !cached {
+				uncached = rpc
+			}
+			return rpc
 		},
 	)
 }
@@ -235,22 +251,26 @@ func (v *Validator) sweepPayloadRPCsLocked(epochID uint64) {
 	}
 }
 
-func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string, epochID uint64) *transport.RPCClient {
+// payloadRPC returns the executor client for escrowID and whether it is
+// cached. An escrow the sweep counts as pruned gets a client that is not
+// cached, so the caller closes it after the fetch: the executor may still
+// hold the session, but a cached door would stay until the next sweep.
+func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string, epochID uint64) (*transport.RPCClient, bool) {
 	if v == nil || v.payloadSigner == nil || !v.rpcEndpoints.Has(transport.EndpointPayload) {
-		return nil
+		return nil, false
 	}
 	executorURL = strings.TrimSpace(executorURL)
 	executorAddr = strings.TrimSpace(executorAddr)
 	escrowID = strings.TrimSpace(escrowID)
 	if executorURL == "" || executorAddr == "" || escrowID == "" {
-		return nil
+		return nil, false
 	}
 	key := executorAddr + "\x00" + executorURL + "\x00" + escrowID
 	v.payloadRPCMu.Lock()
 	defer v.payloadRPCMu.Unlock()
 	v.sweepPayloadRPCsLocked(epochID)
 	if e, ok := v.payloadRPCs[key]; ok {
-		return e.rpc
+		return e.rpc, true
 	}
 	cfg := transport.DefaultClientConfig()
 	cfg.RoutePrefix = devshardpkg.VersionedRoutePrefix(v.boundVersion)
@@ -259,13 +279,16 @@ func (v *Validator) payloadRPC(executorURL, executorAddr, escrowID string, epoch
 	selected := transport.SelectTransport(httpClient, executorAddr, v.rpcEndpoints, nil)
 	rpc, ok := selected.(*transport.RPCClient)
 	if !ok || rpc == nil || !rpc.Uses(transport.EndpointPayload) {
-		return nil
+		return nil, false
+	}
+	if epochID+2 <= v.payloadRPCSwept {
+		return rpc, false
 	}
 	if v.payloadRPCs == nil {
 		v.payloadRPCs = make(map[string]payloadRPCEntry)
 	}
 	v.payloadRPCs[key] = payloadRPCEntry{rpc: rpc, epoch: epochID}
-	return rpc
+	return rpc, true
 }
 
 const executorPayloadUnavailableReason = "executor_payload_unavailable"
