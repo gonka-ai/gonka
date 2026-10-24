@@ -23,6 +23,14 @@ message DevshardEscrow {
   uint32 vote_threshold_factor = 16;
   int64 refusal_timeout = 17;
   int64 execution_timeout = 18;
+
+  // Storage form set by the keeper: each distinct slot host once as address
+  // bytes, one byte per slot indexing it, creator and app hash as raw bytes.
+  // Reads restore the strings; queries never return these.
+  repeated bytes slot_hosts = 20;
+  bytes slot_index = 21;
+  bytes creator_addr = 22;
+  bytes app_hash_raw = 23;
 }
 
 message DevshardHostEpochStats {

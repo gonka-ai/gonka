@@ -295,6 +295,32 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 	}
 }
 
+func TestMigrateLegacyPruningLimits(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.InferencePruningMax = 0
+	params.EpochParams.PocPruningMax = -1
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateLegacyPruningLimits(ctx, k))
+	migrated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultEpochParams().InferencePruningMax, migrated.EpochParams.InferencePruningMax)
+	require.Equal(t, types.DefaultEpochParams().PocPruningMax, migrated.EpochParams.PocPruningMax)
+	require.NoError(t, migrated.Validate())
+
+	// The migration is idempotent and preserves already-positive limits.
+	migrated.EpochParams.InferencePruningMax = 123
+	migrated.EpochParams.PocPruningMax = 456
+	require.NoError(t, k.SetParams(ctx, migrated))
+	require.NoError(t, migrateLegacyPruningLimits(ctx, k))
+	again, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(123), again.EpochParams.InferencePruningMax)
+	require.Equal(t, int64(456), again.EpochParams.PocPruningMax)
+}
+
 func decimalString(t *testing.T, value *types.Decimal) string {
 	t.Helper()
 	actual, err := value.ToLegacyDec()

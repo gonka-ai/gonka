@@ -38,8 +38,7 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 	}
 
 	// Verify participant exists
-	_, err = k.Participants.Get(goCtx, participantAddr)
-	if err != nil {
+	if found, err := k.Participants.Has(goCtx, participantAddr); err != nil || !found {
 		return nil, types.ErrParticipantNotFound
 	}
 

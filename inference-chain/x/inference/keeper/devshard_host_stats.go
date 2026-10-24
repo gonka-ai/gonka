@@ -12,11 +12,30 @@ import (
 )
 
 func (k Keeper) GetDevshardHostEpochStats(ctx context.Context, epochIndex uint64, participant sdk.AccAddress) (types.DevshardHostEpochStats, bool) {
-	v, err := k.DevshardHostEpochStatsMap.Get(ctx, collections.Join(epochIndex, participant))
+	key := collections.Join(epochIndex, participant)
+	v, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
 	if err != nil {
 		return types.DevshardHostEpochStats{}, false
 	}
-	return v, true
+	return restoredDevshardHostStats(key, v), true
+}
+
+// storedDevshardHostStats drops the epoch and participant the key holds; restoredDevshardHostStats
+// fills them back. A record with no counters is stored whole so the value is never empty.
+func storedDevshardHostStats(s types.DevshardHostEpochStats) types.DevshardHostEpochStats {
+	trimmed := s
+	trimmed.Participant, trimmed.EpochIndex = "", 0
+	if trimmed == (types.DevshardHostEpochStats{}) {
+		return s
+	}
+	return trimmed
+}
+
+func restoredDevshardHostStats(key collections.Pair[uint64, sdk.AccAddress], s types.DevshardHostEpochStats) types.DevshardHostEpochStats {
+	if s.Participant == "" {
+		s.Participant, s.EpochIndex = key.K2().String(), key.K1()
+	}
+	return s
 }
 
 func (k Keeper) AggregateDevshardHostStats(ctx context.Context, epochIndex uint64, participant sdk.AccAddress, slotStats types.DevshardSettlementHostStats) error {
@@ -34,41 +53,70 @@ func (k Keeper) UpdateDevshardHostEpochStats(
 	slotStats types.DevshardSettlementHostStats,
 	incrementEscrowCount bool,
 ) error {
+	var d devshardHostStatsDelta
+	d.add(slotStats)
+	return k.applyDevshardHostStatsDelta(ctx, epochIndex, participant, d, incrementEscrowCount)
+}
+
+// devshardHostStatsDelta sums one host's slots of a settlement, so its epoch stats
+// are read and written once per host instead of once per slot.
+type devshardHostStatsDelta struct {
+	missed, invalid, required, completed uint64
+	cost                                 uint64
+	costOverflow                         bool
+}
+
+func (d *devshardHostStatsDelta) add(s types.DevshardSettlementHostStats) {
+	d.missed += uint64(s.Missed)
+	d.invalid += uint64(s.Invalid)
+	d.required += uint64(s.RequiredValidations)
+	d.completed += uint64(s.CompletedValidations)
+	var carry uint64
+	d.cost, carry = bits.Add64(d.cost, s.Cost, 0)
+	if carry != 0 {
+		d.costOverflow = true
+	}
+}
+
+func (k Keeper) applyDevshardHostStatsDelta(
+	ctx context.Context,
+	epochIndex uint64,
+	participant sdk.AccAddress,
+	d devshardHostStatsDelta,
+	incrementEscrowCount bool,
+) error {
 	key := collections.Join(epochIndex, participant)
 	existing, err := k.DevshardHostEpochStatsMap.Get(ctx, key)
 	if err != nil {
-		existing = types.DevshardHostEpochStats{
-			Participant: participant.String(),
-			EpochIndex:  epochIndex,
-		}
+		existing = types.DevshardHostEpochStats{}
 	}
-	if existing.Missed > math.MaxUint32-slotStats.Missed {
+	if uint64(existing.Missed)+d.missed > math.MaxUint32 {
 		return fmt.Errorf("missed overflow aggregating devshard host stats")
 	}
-	existing.Missed += slotStats.Missed
-	if existing.Invalid > math.MaxUint32-slotStats.Invalid {
+	existing.Missed += uint32(d.missed)
+	if uint64(existing.Invalid)+d.invalid > math.MaxUint32 {
 		return fmt.Errorf("invalid overflow aggregating devshard host stats")
 	}
-	existing.Invalid += slotStats.Invalid
-	if existing.Cost > math.MaxUint64-slotStats.Cost {
+	existing.Invalid += uint32(d.invalid)
+	if d.costOverflow || existing.Cost > math.MaxUint64-d.cost {
 		return fmt.Errorf("cost overflow aggregating devshard host stats")
 	}
-	existing.Cost += slotStats.Cost
-	if existing.RequiredValidations > math.MaxUint32-slotStats.RequiredValidations {
+	existing.Cost += d.cost
+	if uint64(existing.RequiredValidations)+d.required > math.MaxUint32 {
 		return fmt.Errorf("required validations overflow aggregating devshard host stats")
 	}
-	existing.RequiredValidations += slotStats.RequiredValidations
-	if existing.CompletedValidations > math.MaxUint32-slotStats.CompletedValidations {
+	existing.RequiredValidations += uint32(d.required)
+	if uint64(existing.CompletedValidations)+d.completed > math.MaxUint32 {
 		return fmt.Errorf("completed validations overflow aggregating devshard host stats")
 	}
-	existing.CompletedValidations += slotStats.CompletedValidations
+	existing.CompletedValidations += uint32(d.completed)
 	if incrementEscrowCount {
 		if existing.EscrowCount == math.MaxUint32 {
 			return fmt.Errorf("escrow count overflow aggregating devshard host stats")
 		}
 		existing.EscrowCount++
 	}
-	return k.DevshardHostEpochStatsMap.Set(ctx, key, existing)
+	return k.DevshardHostEpochStatsMap.Set(ctx, key, storedDevshardHostStats(restoredDevshardHostStats(key, existing)))
 }
 
 // AggregateDevshardHostStatsIntoCurrentEpochStats merges one slot's devshard

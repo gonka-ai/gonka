@@ -43,6 +43,10 @@ func CreateUpgradeHandler(
 			fromVM["capability"] = mm.Modules["capability"].(module.HasConsensusVersion).ConsensusVersion()
 		}
 
+		if err := migrateLegacyPruningLimits(ctx, k); err != nil {
+			return fromVM, err
+		}
+
 		// Canonical-account validation finishes before any audit write. Distribution
 		// and epoch-group rewrites then run before this block's epoch stage.
 		if err := k.RepairEpochValidationState(ctx); err != nil {
@@ -188,4 +192,39 @@ func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
 	}
 	k.LogInfo("migrated prefill scheme blocks", types.Upgrades, "models", len(params.PocParams.Models))
 	return nil
+}
+
+// migrateLegacyPruningLimits backfills non-positive stored pruning limits with
+// their defaults. DefaultEpochParams originally carried no values for
+// InferencePruningMax / PocPruningMax, so chains could reach v0.2.17 with the
+// values stored as 0 — in which case every pruner is a no-op and pruning never
+// drains. Positive custom values are preserved, so the migration is idempotent.
+//
+// This lived in the v0.2.16 handler while the pruning fix targeted that
+// release. v0.2.16 has since executed, so the step moves here to actually run.
+func migrateLegacyPruningLimits(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+
+	defaults := types.DefaultEpochParams()
+	if params.EpochParams == nil {
+		params.EpochParams = defaults
+		return k.SetParams(ctx, params)
+	}
+
+	changed := false
+	if params.EpochParams.InferencePruningMax <= 0 {
+		params.EpochParams.InferencePruningMax = defaults.InferencePruningMax
+		changed = true
+	}
+	if params.EpochParams.PocPruningMax <= 0 {
+		params.EpochParams.PocPruningMax = defaults.PocPruningMax
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return k.SetParams(ctx, params)
 }

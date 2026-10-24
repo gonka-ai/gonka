@@ -54,7 +54,7 @@ func (k Keeper) auditCanonicalAccounts(ctx context.Context) error {
 	}
 
 	for _, rewrite := range participantRewrites {
-		if err := k.Participants.Set(ctx, rewrite.key, rewrite.value); err != nil {
+		if err := k.Participants.Set(ctx, rewrite.key, storedParticipant(rewrite.value, rewrite.key)); err != nil {
 			return err
 		}
 	}
@@ -106,6 +106,7 @@ func (k Keeper) planParticipantCanonicalRewrites(ctx context.Context) ([]partici
 		if err != nil {
 			return nil, scanned, err
 		}
+		value = restoredParticipant(key, value)
 		if err := accountMatchesStoreKey(value.Index, key); err != nil {
 			return nil, scanned, sdkerrors.Wrap(types.ErrIllegalState, "participant index does not match store key")
 		}
@@ -341,6 +342,7 @@ func (k Keeper) auditEpochGroupMLNodes(ctx context.Context, stats *weightAuditSt
 		if err != nil {
 			return err
 		}
+		group = restoredEpochGroupData(group)
 		groupChanged := false
 		for _, vw := range group.ValidationWeights {
 			if vw == nil {
@@ -369,7 +371,7 @@ func (k Keeper) auditEpochGroupMLNodes(ctx context.Context, stats *weightAuditSt
 		if !groupChanged {
 			continue
 		}
-		if err := k.EpochGroupDataMap.Set(ctx, key, group); err != nil {
+		if err := k.EpochGroupDataMap.Set(ctx, key, storedEpochGroupData(group)); err != nil {
 			return err
 		}
 		stats.epochGroupsRewritten++

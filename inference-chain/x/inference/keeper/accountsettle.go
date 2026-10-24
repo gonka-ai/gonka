@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/bits"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
@@ -73,14 +74,7 @@ func (k *Keeper) loadBitcoinRewardInputs(ctx context.Context, epochIndex uint64)
 	}
 
 	participantMLNodes := k.AggregateMLNodesFromModelSubgroups(ctx, epochIndex, data.ValidationWeights)
-	rewardTransfers, err := k.GetDelegationRewardTransfersForEpoch(ctx, epochIndex)
-	if err != nil {
-		return nil, true, err
-	}
-	rewardPenalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, epochIndex)
-	if err != nil {
-		return nil, true, err
-	}
+	rewardTransfers, rewardPenalties := k.GetDelegationRewardsForEpoch(ctx, epochIndex)
 	validationParams := params.ValidationParams
 	if validationParams == nil {
 		validationParams = types.DefaultValidationParams()
@@ -146,13 +140,20 @@ func CheckAndPunishForDowntime(total, missed, reward uint64, p0 *types.Decimal) 
 // Model identity is preserved so callers can apply per-model coefficients.
 func (k *Keeper) AggregateMLNodesFromModelSubgroups(ctx context.Context, epochIndex uint64, validationWeights []*types.ValidationWeight) map[string]map[string][]*types.MLNodeInfo {
 	participantMLNodes := make(map[string]map[string][]*types.MLNodeInfo)
-	allEpochGroups := k.GetAllEpochGroupData(ctx)
+	// Only this epoch's groups: the map is keyed by (epoch, model) and never pruned.
+	var epochGroups []types.EpochGroupData
+	if iter, err := k.EpochGroupDataMap.Iterate(ctx, collections.NewPrefixedPairRange[uint64, string](epochIndex)); err == nil {
+		epochGroups, _ = iter.Values()
+	}
+	for i := range epochGroups {
+		epochGroups[i] = restoredEpochGroupData(epochGroups[i])
+	}
 
 	for _, vw := range validationWeights {
 		modelNodes := make(map[string][]*types.MLNodeInfo)
-		for _, subgroup := range allEpochGroups {
-			if subgroup.EpochIndex != epochIndex || subgroup.ModelId == "" {
-				continue // Skip wrong epoch or parent group
+		for _, subgroup := range epochGroups {
+			if subgroup.ModelId == "" {
+				continue // Skip parent group
 			}
 			for _, subVw := range subgroup.ValidationWeights {
 				if subVw.MemberAddress == vw.MemberAddress {
@@ -189,6 +190,11 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 		return nil, err
 	}
 	allParticipants := inputs.Participants
+	// Stats as read, so the final SetParticipant does not read each participant again.
+	storedStats := make([]*types.CurrentEpochStats, len(allParticipants))
+	for i, participant := range allParticipants {
+		storedStats[i] = participant.CurrentEpochStats.StoredCopy()
+	}
 
 	k.LogInfo("Block height", types.Settle, "height", blockHeight)
 	k.LogInfo("Got all participants", types.Settle, "participants", len(allParticipants))
@@ -268,6 +274,7 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 	k.LogInfo("Checking downtime for participants", types.Settle, "participants", len(allParticipants))
 
+	settled := make(map[string]struct{}, len(allParticipants))
 	for i, participant := range allParticipants {
 		// amount should have the same order as participants
 		amount := amounts[i]
@@ -295,10 +302,15 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 			return nil, err
 		}
 		participant.CurrentEpochStats = types.NewCurrentEpochStats()
-		err := k.SetParticipant(cacheCtx, participant)
+		if _, dup := settled[participant.Address]; dup {
+			err = k.SetParticipant(cacheCtx, participant)
+		} else {
+			err = k.SetParticipantFromStored(cacheCtx, participant, storedStats[i])
+		}
 		if err != nil {
 			return nil, err
 		}
+		settled[participant.Address] = struct{}{}
 	}
 
 	for _, amount := range amounts {

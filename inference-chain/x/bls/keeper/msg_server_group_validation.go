@@ -42,7 +42,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	previousEpochId := msg.NewEpochId - 1
 
 	// Get the new epoch's BLS data to get the group public key being validated
-	newEpochBLSData, err := ms.GetEpochBLSData(ctx, msg.NewEpochId)
+	newEpochBLSData, err := ms.GetEpochBLSDataBase(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get new epoch BLS data", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get new epoch %d BLS data: %w", msg.NewEpochId, err)
@@ -61,7 +61,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Get the previous epoch's BLS data for slot validation and signature verification
-	previousEpochBLSData, err := ms.GetEpochBLSData(ctx, previousEpochId)
+	previousEpochBLSData, err := ms.GetEpochBLSDataBase(ctx, previousEpochId)
 	if err != nil {
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			// Emit a searchable event and continue using current epoch data as fallback
@@ -105,7 +105,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	}
 
 	// Check or create GroupKeyValidationState
-	validationState, found, err := ms.GetGroupKeyValidationState(ctx, msg.NewEpochId)
+	validationState, found, err := ms.GetGroupKeyValidationStateBase(ctx, msg.NewEpochId)
 	if err != nil {
 		ms.Keeper.LogError("Failed to get validation state", "new_epoch_id", msg.NewEpochId, "error", err.Error())
 		return nil, fmt.Errorf("failed to get validation state: %w", err)
@@ -130,10 +130,15 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		validationState.MessageHash = messageHash
 	}
 
-	// Reject duplicate slots (already covered)
+	// Reject duplicate slots (already covered). Slot ranges of participants
+	// are disjoint, so only this participant's own earlier entry can hold them.
 	seen := make(map[uint32]struct{})
-	for _, ps := range validationState.PartialSignatures {
-		for _, idx := range ps.SlotIndices {
+	prior, err := ms.GetGroupValidationPartialSignature(ctx, msg.NewEpochId, uint32(participantIndex))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get prior partial signature: %w", err)
+	}
+	if prior != nil {
+		for _, idx := range prior.SlotIndices {
 			seen[idx] = struct{}{}
 		}
 	}
@@ -188,9 +193,6 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		return nil, fmt.Errorf("failed to save partial signature: %w", err)
 	}
 
-	// Keep the in-memory view in sync so the threshold check and the
-	// aggregation path below see the newly-added signature.
-	validationState.PartialSignatures = append(validationState.PartialSignatures, *partialSignature)
 	validationState.SlotsCovered += uint32(len(filteredSlots))
 
 	// Check if we have sufficient participation (previous epoch DKG threshold t+1).
@@ -202,7 +204,11 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 	if validationState.SlotsCovered >= requiredSlots {
 		ms.Keeper.LogInfo("Enough signatures collected, validating group key")
 		// Aggregate signatures and finalize validation
-		finalSignature, aggErr := ms.aggregateBLSPartialSignaturesBlst(validationState.PartialSignatures)
+		partials, err := ms.ListGroupValidationPartialSignatures(ctx, msg.NewEpochId)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list partial signatures: %w", err)
+		}
+		finalSignature, aggErr := ms.aggregateBLSPartialSignaturesBlst(partials)
 		if aggErr != nil {
 			ms.Keeper.LogError("Failed to aggregate partial signatures", "error", aggErr.Error())
 			return nil, fmt.Errorf("failed to aggregate partial signatures: %w", aggErr)
@@ -241,9 +247,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 		}
 	}
 
-	// Null PartialSignatures: the new entry is already in its sub-key
-	// (above), and SetGroupValidationPartialSignature's append-merge
-	// would otherwise double every rehydrated entry on every submission.
+	// Partials live in their sub-keys; never re-sync any from the base.
 	validationState.PartialSignatures = nil
 	if err := ms.SetGroupKeyValidationState(ctx, validationState); err != nil {
 		return nil, fmt.Errorf("failed to store validation state: %w", err)

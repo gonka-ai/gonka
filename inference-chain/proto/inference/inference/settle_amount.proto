@@ -10,5 +10,7 @@ message SettleAmount {
   uint64 epoch_index = 4;
   string seed_signature = 5;
   int64 last_claim_attempt = 6;
+  // Storage form of seed_signature (decoded hex); reads restore the string.
+  bytes seed_signature_raw = 7;
 }
 
