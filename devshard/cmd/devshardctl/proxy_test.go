@@ -674,11 +674,36 @@ func setSpeculativeTiming(t *testing.T, receipt time.Duration, firstTokenCap tim
 	})
 }
 
+// setInterChunkStallLogThreshold sets only the observational threshold, leaving
+// the cancel threshold untouched. Use it when a test needs the stall log to fire
+// without aborting the attempt (e.g. a stream that resumes afterwards).
+func setInterChunkStallLogThreshold(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := captureRedundancyTimingSettings()
+	InterChunkStallLogThreshold = d
+	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
+}
+
+// setInterChunkStallTimeout sets only the cancel threshold. Unlike the log
+// threshold it does not have to be paired with anything: the two are independent
+// deadlines on the same anchor, and this helper exists so a test can drive the
+// cancel without also pinning the log. Setting both to the same value (the old
+// behaviour of this helper) masked the bug where the cancel deadline was never
+// consulted at all.
 func setInterChunkStallTimeout(t *testing.T, d time.Duration) {
 	t.Helper()
 	prev := captureRedundancyTimingSettings()
 	InterChunkStallTimeout = d
-	InterChunkStallLogThreshold = d
+	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
+}
+
+// setInterChunkStallTimeouts sets both thresholds in one call, for tests that
+// want the full log-then-cancel sequence with a known gap between them.
+func setInterChunkStallTimeouts(t *testing.T, logThreshold, cancelTimeout time.Duration) {
+	t.Helper()
+	prev := captureRedundancyTimingSettings()
+	InterChunkStallLogThreshold = logThreshold
+	InterChunkStallTimeout = cancelTimeout
 	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
 }
 
@@ -1232,7 +1257,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 	}
 	perf.Record(RequestSample{HostIdx: 0, ParticipantKey: "host:0", Responsive: false})
 
-	lastChunkAt := time.Now().Add(-2 * InterChunkStallLogThreshold)
+	stalledSince := time.Now().Add(-2 * InterChunkStallLogThreshold)
 	inf := &inflight{
 		hostIdx:  0,
 		nonce:    7,
@@ -1240,7 +1265,7 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 		done:     make(chan struct{}), // open: stall recording only runs while SendOnly is live
 	}
 	inf.contentChunks.Store(1)
-	inf.lastChunkAt.Store(lastChunkAt.UnixNano())
+	inf.stallAnchorAt.Store(stalledSince.UnixNano())
 	_, ok := inf.startInterChunkStall(time.Now())
 	require.True(t, ok)
 
@@ -1251,6 +1276,467 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 	require.Equal(t, 2, stats.FailureSamples)
 	require.False(t, limiter.IsBlocked("host:0"))
 	require.True(t, limiter.IsShadowQuarantined("host:0"))
+}
+
+// TestInterChunkStallDeadlineRearmsWithoutContent locks in the gate change that
+// made the cancel reachable for an attempt that forwarded only a role chunk.
+// Gating the deadline on contentChunks left such an attempt with no failure path
+// at all: the first-token escalation timer disarms as soon as hasFirstToken() is
+// true, so a role chunk followed by silence waited for the 30-minute hard
+// timeout. Any forwarded event must start the inter-chunk clock.
+func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+
+	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now(), done: make(chan struct{})}
+	// A role chunk: forwarded as an SSE event, but carrying no content.
+	inf.stallAnchorAt.Store(time.Now().Add(-time.Minute).UnixNano())
+
+	logDeadline, cancelDeadline, ok := interChunkStallDeadline(inf)
+	require.True(t, ok, "a forwarded role chunk must arm the inter-chunk deadline")
+	require.False(t, logDeadline.IsZero())
+	require.False(t, cancelDeadline.IsZero())
+
+	// And the cancel gate agrees, so the deadline cannot fire into a no-op.
+	require.True(t, inf.stallCancelExpired(time.Now()))
+
+	// Before any event at all the attempt is still the receipt / first-token
+	// escalations' business, and nothing is armed here.
+	fresh := &inflight{hostIdx: 0, nonce: 2, sendTime: time.Now(), done: make(chan struct{})}
+	_, _, ok = interChunkStallDeadline(fresh)
+	require.False(t, ok)
+	require.False(t, fresh.stallCancelExpired(time.Now()))
+}
+
+// TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas pins which forwarded
+// events move the inter-chunk stall anchor. The first event of any kind starts
+// it, so a role chunk followed by silence is still cancelled; after that only a
+// content-bearing event moves it, so repeated role-only deltas cannot keep an
+// attempt alive. A role delta must not end an open stall episode either: that
+// would clear stallLogged against an anchor that did not move and re-record the
+// same stall on every wakeup.
+func TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+	roleDelta := []byte(sseRoleDeltaEvent)
+	contentDelta := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
+
+	ctx := context.Background()
+	group := newRaceGroup(ctx, ctx, "escrow-stall-anchor", io.Discard)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-stall-anchor",
+		nonce:        1,
+		sendTime:     time.Now(),
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	t.Cleanup(inf.releasePendingBuf)
+	writer := &raceWriter{group: group, nonce: 1, inf: inf}
+
+	_, err := writer.Write(roleDelta)
+	require.NoError(t, err)
+	require.Positive(t, inf.stallAnchorAt.Load(), "the first forwarded event must start the stall clock")
+
+	// A minute of nothing but role deltas: the cancel is due regardless.
+	silentSince := time.Now().Add(-time.Minute).UnixNano()
+	inf.stallAnchorAt.Store(silentSince)
+	_, err = writer.Write(roleDelta)
+	require.NoError(t, err)
+	require.Equal(t, silentSince, inf.stallAnchorAt.Load(), "a repeated role delta must not move the stall anchor")
+	require.Greater(t, inf.lastChunkAt.Load(), silentSince, "the chunk cadence still sees the role delta")
+	require.True(t, inf.stallCancelExpired(time.Now()))
+
+	_, err = writer.Write(contentDelta)
+	require.NoError(t, err)
+	require.Greater(t, inf.stallAnchorAt.Load(), silentSince, "content must move the stall anchor")
+	require.False(t, inf.stallCancelExpired(time.Now()))
+
+	// Content, then silence past the log threshold: the episode opens once.
+	inf.stallAnchorAt.Store(time.Now().Add(-45 * time.Second).UnixNano())
+	_, ok := inf.startInterChunkStall(time.Now())
+	require.True(t, ok)
+	_, err = writer.Write(roleDelta)
+	require.NoError(t, err)
+	logDeadline, cancelDeadline, ok := interChunkStallDeadline(inf)
+	require.True(t, ok)
+	require.Equal(t, cancelDeadline, logDeadline,
+		"a role delta must not end the open episode and re-arm its log deadline")
+	_, reopened := inf.startInterChunkStall(time.Now())
+	require.False(t, reopened, "the same silence must not be recorded twice")
+	require.EqualValues(t, 1, inf.stallCount())
+
+	// Content ends the episode for real.
+	_, err = writer.Write(contentDelta)
+	require.NoError(t, err)
+	// And a terminator after that content still latches: the meta tail that
+	// follows a delivered answer stays outside the stall deadlines.
+	_, err = writer.Write([]byte("data: [DONE]\n\n"))
+	require.NoError(t, err)
+	require.True(t, inf.streamTerminated.Load(), "a terminator after an answer must still latch")
+	_, _, ok = interChunkStallDeadline(inf)
+	require.False(t, ok, "the meta tail after a delivered answer must not be cancelled as a stall")
+	inf.stallMu.Lock()
+	active := inf.stallActive
+	endTime := inf.stalls[0].EndTime
+	inf.stallMu.Unlock()
+	require.False(t, active)
+	require.False(t, endTime.IsZero())
+}
+
+// TestRaceWriterStallAnchorMovesOnlyOnTheFirstError pins the error half of the
+// anchor rule. The first non-retriable error event moves the anchor, so an error
+// followed by silence is still cancelled a full InterChunkStallTimeout later;
+// repeating it does not, or an error-only attempt -- never crowned, so outside
+// winnerHardTimeoutDeadline -- could be held open indefinitely.
+func TestRaceWriterStallAnchorMovesOnlyOnTheFirstError(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+	errorEvent := []byte(sseServerErrorEvent)
+
+	ctx := context.Background()
+	group := newRaceGroup(ctx, ctx, "escrow-stall-anchor-error", io.Discard)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-stall-anchor-error",
+		nonce:        1,
+		sendTime:     time.Now(),
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	t.Cleanup(inf.releasePendingBuf)
+	t.Cleanup(inf.releaseErrorStreamRetention)
+	writer := &raceWriter{group: group, nonce: 1, inf: inf}
+
+	_, err := writer.Write([]byte(sseRoleDeltaEvent))
+	require.NoError(t, err)
+	beforeError := time.Now().Add(-time.Minute).UnixNano()
+	inf.stallAnchorAt.Store(beforeError)
+
+	_, err = writer.Write(errorEvent)
+	require.NoError(t, err)
+	require.True(t, inf.errorTerminal)
+	firstError := inf.stallAnchorAt.Load()
+	require.Greater(t, firstError, beforeError, "the first terminal error must move the stall anchor")
+
+	silentSince := time.Now().Add(-time.Minute).UnixNano()
+	inf.stallAnchorAt.Store(silentSince)
+	_, err = writer.Write(errorEvent)
+	require.NoError(t, err)
+	require.Equal(t, silentSince, inf.stallAnchorAt.Load(), "a repeated error must not move the stall anchor")
+	require.True(t, inf.stallCancelExpired(time.Now()))
+}
+
+// TestInterChunkStallCanceledAfterDoneMetaTail is the regression guard for the
+// cancel firing during the healthy tail that follows [DONE]. The transport
+// consumes devshard_meta / devshard_receipt without forwarding them, so
+// stallAnchorAt freezes at the terminator; without the streamTerminated latch a
+// 60s inter-chunk deadline would cancel an answer the client already received
+// in full.
+func TestInterChunkStallCanceledAfterDoneMetaTail(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+
+	inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now(), done: make(chan struct{})}
+	inf.stallAnchorAt.Store(time.Now().Add(-time.Minute).UnixNano())
+	inf.streamTerminated.Store(true)
+
+	_, _, ok := interChunkStallDeadline(inf)
+	require.False(t, ok, "[DONE] must disarm the inter-chunk deadline for the meta tail")
+	require.False(t, inf.stallCancelExpired(time.Now()))
+	_, recorded := inf.startInterChunkStall(time.Now())
+	require.False(t, recorded, "no stall may be recorded for a terminated stream")
+}
+
+// roleChunkThenStallClient forwards a role-only SSE event (no content) and then
+// hangs until its attempt context is cancelled. The role event is enough to arm
+// the inter-chunk deadline but not enough to crown a winner, which is exactly
+// the shape that used to have no failure path at all.
+type roleChunkThenStallClient struct{}
+
+func (roleChunkThenStallClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"role":"assistant"}}]}`+"\n\n")
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunInference_PendingStallRetriesAnotherHost covers the retry half of the
+// #1798 contract that the old deadline gate made unreachable: the gate required
+// contentChunks > 0, and the retry branch then required contentChunks == 0, so
+// no stall could ever produce a replacement attempt. A pending attempt that
+// forwarded only a role chunk has nothing on the client's wire, so cancelling it
+// and asking another host is safe.
+func TestRunInference_PendingStallRetriesAnotherHost(t *testing.T) {
+	setInterChunkStallTimeouts(t, 50*time.Millisecond, 100*time.Millisecond)
+	setStreamingAttemptHardTimeout(t, 10*time.Second)
+	previousAttempts := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(3)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previousAttempts) })
+	// The legacy speed policy is what keeps this a single-attempt race: the
+	// pairwise policies start a second attempt immediately, so a replacement
+	// would already be in flight by the time the first host stalls and the
+	// stream_stall_retry path would never be the thing that served the request.
+	previousPolicy := RedundancySpeedPolicy
+	RedundancySpeedPolicy = RedundancySpeedPolicyLegacy
+	t.Cleanup(func() { RedundancySpeedPolicy = previousPolicy })
+
+	env := setupTestProxy(t, 3, nil, true)
+	env.killables[0].inner = roleChunkThenStallClient{}
+	env.killables[1].inner = roleChunkThenStallClient{}
+	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+
+	require.NoError(t, err, "the request should be served once a replacement host answers")
+	require.Contains(t, buf.String(), `"content":"x"`,
+		"the replacement host's content should reach the client")
+	require.NotNil(t, env.killables[2].LastRequest(),
+		"the third host should have been asked after the first stalled")
+}
+
+func closedCh() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}
+
+// delayedRoleChunkThenStallClient emits its role-only SSE event after delay, then
+// hangs. It is the shape that stranded the inter-chunk deadline: the chunk lands
+// while the loop is parked on the first-token escalation timer, and nothing in
+// the awaitRace select observes it.
+type delayedRoleChunkThenStallClient struct{ delay time.Duration }
+
+func (c delayedRoleChunkThenStallClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"role":"assistant"}}]}`+"\n\n")
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunInference_PendingRoleChunkStallCancelledAtDeadline is the regression for
+// the chunk-wake gap that #1917 review caught. A pending attempt (no winner) whose
+// only forwarded event is a role-only delta sets stallAnchorAt, the anchor for
+// the inter-chunk cancel deadline -- but that chunk does not close winnerCh
+// (content only) and the select deliberately does not watch firstTokenCh/receiptCh.
+// Without a chunk wake the loop stays parked until some other timer fires, so the
+// cancel lands wherever that timer's deadline is rather than at
+// stallAnchorAt + InterChunkStallTimeout.
+//
+// The escalation fallback is deliberately set far beyond the cancel threshold
+// (5s vs 100ms) so that the old code cannot cancel early by accident: the only way
+// to land near the threshold is for the chunk itself to wake the loop. The timer
+// that actually rescues the old code is the receipt escalation, not the
+// first-token one -- the role-only delta sets hasFirstToken(), which disarms the
+// first-token trigger, leaving the receipt escalation at ReceiptTimeoutMS as the
+// next wake (the pre-fix run logs decision=receipt_timeout delay_ms=5000, then
+// attempt_stall_canceled with since_last_chunk_ms=4994 because the deadline it
+// re-derives against is already long past).
+func TestRunInference_PendingRoleChunkStallCancelledAtDeadline(t *testing.T) {
+	applyRedundancySettingsForTest(t, RedundancySettings{
+		ReceiptTimeoutMS:              5000,
+		FirstTokenTimeoutFloorMS:      4000,
+		PerInputTokenFirstTokenLagMS:  10,
+		InterChunkStallTimeoutMS:      100,
+		StreamingAttemptHardTimeoutMS: 30000,
+		PerInputTokenResponseLagMS:    100,
+		SecondaryWaitAfterWinnerMS:    5000,
+	})
+	// The observational threshold stays above the cancel threshold here; this test
+	// is about the cancel deadline alone.
+	savedStallLogThreshold := InterChunkStallLogThreshold
+	InterChunkStallLogThreshold = time.Second
+	t.Cleanup(func() { InterChunkStallLogThreshold = savedStallLogThreshold })
+
+	previousAttempts := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(3)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previousAttempts) })
+	previousPolicy := RedundancySpeedPolicy
+	RedundancySpeedPolicy = RedundancySpeedPolicyLegacy
+	t.Cleanup(func() { RedundancySpeedPolicy = previousPolicy })
+
+	env := setupTestProxy(t, 3, nil, true)
+	env.killables[0].inner = delayedRoleChunkThenStallClient{delay: 5 * time.Millisecond}
+	env.killables[1].inner = delayedRoleChunkThenStallClient{delay: 5 * time.Millisecond}
+	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "the request should be served once a replacement host answers")
+	require.Contains(t, buf.String(), `"content":"x"`,
+		"the replacement host's content should reach the client")
+	require.NotNil(t, env.killables[2].LastRequest(),
+		"the third host should have been asked after the first stalled")
+	// 5ms chunk delay + 100ms cancel + a replacement that answers immediately.
+	// Pre-fix this was ~4s (the first-token escalation wake), so the bound is not
+	// tightened to the threshold alone: it has to be far below the escalation
+	// deadline to distinguish the two paths, and far above the nominal 105ms to
+	// absorb scheduling jitter on a loaded CI box.
+	require.Less(t, elapsed, 2*time.Second,
+		"a pending role-only stall must be cancelled at the inter-chunk deadline, not at the escalation wake")
+}
+
+const (
+	sseRoleDeltaEvent   = `data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n"
+	sseServerErrorEvent = `data: {"error":{"type":"server_error","code":500,"message":"internal"}}` + "\n\n"
+)
+
+// eventDripClient forwards the same SSE event every interval until its attempt
+// context is cancelled, and never an answer. Each event is a forwarded chunk, so
+// it sets the first-token clock and would keep re-arming a stall deadline
+// anchored on the latest event of any kind -- the drip shape from the #1917
+// review that held an attempt open until the transport's 30-minute
+// InferenceTimeout, first with role-only deltas and then with a repeated
+// non-retriable error.
+type eventDripClient struct {
+	event    string
+	interval time.Duration
+}
+
+func (c eventDripClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	ticker := time.NewTicker(c.interval)
+	defer ticker.Stop()
+	for {
+		if stream != nil {
+			_, _ = io.WriteString(stream, c.event)
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// TestRunInference_PendingDripCancelledAtDeadline is the regression for a host
+// that repeats an event faster than InterChunkStallTimeout without ever
+// answering: role-only deltas, or the same non-retriable error. Only the first
+// of them may start or move the inter-chunk clock; the rest carry no answer and
+// must not push the cancel deadline out. An error-only attempt is never crowned,
+// so winnerHardTimeoutDeadline does not bound it either. The escalation timers sit far
+// beyond the cancel threshold (5s vs 100ms) so nothing but the stall cancel can
+// move the request on: pre-fix every drip re-armed the deadline, so no timer
+// ever cancelled either dripping host and the request hung with zero content
+// until the client gave up. The client deadline bounds that hang so the
+// pre-fix behaviour fails here instead of stalling the test binary.
+func TestRunInference_PendingDripCancelledAtDeadline(t *testing.T) {
+	for _, testCase := range []struct {
+		name  string
+		event string
+	}{
+		{"role-only deltas", sseRoleDeltaEvent},
+		{"a repeated non-retriable error", sseServerErrorEvent},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runPendingDripCancelledAtDeadline(t, testCase.event)
+		})
+	}
+}
+
+func runPendingDripCancelledAtDeadline(t *testing.T, event string) {
+	// A drip well inside the 100ms cancel threshold, as in the review repro.
+	runPendingHostsCancelledAtDeadline(t, eventDripClient{event: event, interval: 20 * time.Millisecond})
+}
+
+func runPendingHostsCancelledAtDeadline(t *testing.T, pending user.HostClient) {
+	applyRedundancySettingsForTest(t, RedundancySettings{
+		ReceiptTimeoutMS:              5000,
+		FirstTokenTimeoutFloorMS:      4000,
+		PerInputTokenFirstTokenLagMS:  10,
+		InterChunkStallTimeoutMS:      100,
+		StreamingAttemptHardTimeoutMS: 30000,
+		PerInputTokenResponseLagMS:    100,
+		SecondaryWaitAfterWinnerMS:    5000,
+	})
+	savedStallLogThreshold := InterChunkStallLogThreshold
+	InterChunkStallLogThreshold = time.Second
+	t.Cleanup(func() { InterChunkStallLogThreshold = savedStallLogThreshold })
+
+	previousAttempts := CurrentMaxSpeculativeAttempts()
+	SetMaxSpeculativeAttempts(3)
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previousAttempts) })
+	previousPolicy := RedundancySpeedPolicy
+	RedundancySpeedPolicy = RedundancySpeedPolicyLegacy
+	t.Cleanup(func() { RedundancySpeedPolicy = previousPolicy })
+
+	env := setupTestProxy(t, 3, nil, true)
+	env.killables[0].inner = pending
+	env.killables[1].inner = pending
+	env.killables[2].inner = &streamContentThenReleaseClient{releaseCh: closedCh()}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(ctx, defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "the request should be served once a replacement host answers")
+	require.Contains(t, buf.String(), `"content":"x"`,
+		"the replacement host's content should reach the client")
+	require.NotNil(t, env.killables[2].LastRequest(),
+		"the third host should have been asked after the dripping hosts were cancelled")
+	// Two 100ms cancels plus a replacement that answers immediately, against a
+	// 5s escalation: the bound only has to separate the two paths, with room for
+	// a loaded CI box.
+	require.Less(t, elapsed, 2*time.Second,
+		"a repeated empty event must not re-arm the inter-chunk cancel deadline")
+}
+
+// eventsThenHoldClient writes its events once and then holds the connection
+// open without another byte until the context ends.
+type eventsThenHoldClient struct{ events []string }
+
+func (c eventsThenHoldClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{})
+	}
+	if stream != nil {
+		for _, event := range c.events {
+			_, _ = io.WriteString(stream, event)
+		}
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestRunInference_PendingTerminatorWithoutAnswerCancelledAtDeadline covers a
+// [DONE] from an attempt that never forwarded content. The terminator latch
+// exists to protect a delivered answer's meta tail; latched here it disarms the
+// stall cancel, so role + [DONE] + silence, or a repeated [DONE], holds the
+// attempt like the drips above until the transport's 30-minute InferenceTimeout.
+func TestRunInference_PendingTerminatorWithoutAnswerCancelledAtDeadline(t *testing.T) {
+	const sseDoneEvent = "data: [DONE]\n\n"
+	for _, testCase := range []struct {
+		name   string
+		client user.HostClient
+	}{
+		{"role and [DONE] then silence", eventsThenHoldClient{events: []string{sseRoleDeltaEvent, sseDoneEvent}}},
+		{"an error and [DONE] then silence", eventsThenHoldClient{events: []string{sseServerErrorEvent, sseDoneEvent}}},
+		{"a repeated [DONE]", eventDripClient{event: sseDoneEvent, interval: 20 * time.Millisecond}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			runPendingHostsCancelledAtDeadline(t, testCase.client)
+		})
+	}
 }
 
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
@@ -1266,8 +1752,12 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 	elapsed := time.Since(start)
 
 	requireStalledWinnerTimeoutError(t, err)
-	require.GreaterOrEqual(t, elapsed, 100*time.Millisecond,
-		"stalled winner should be allowed to keep running until the hard attempt timeout")
+	// The stream must be torn down by the inter-chunk deadline, not left to hang
+	// until the attempt hard timeout: that gap is issue #1798. Asserting against
+	// the hard timeout (120ms) rather than the stall threshold (50ms) leaves room
+	// for scheduling jitter while still failing if the cancel is not wired.
+	require.Less(t, elapsed, 120*time.Millisecond,
+		"stalled winner should be cancelled at the inter-chunk deadline, before the hard attempt timeout")
 	require.Contains(t, buf.String(), `"content":"x"`,
 		"winner should still forward the first chunk before timing out")
 
@@ -1280,7 +1770,11 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 }
 
 func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
-	setInterChunkStallTimeout(t, 50*time.Millisecond)
+	// Only the observational threshold is short here: the cancel threshold is left
+	// long so the release still lands first. These tests cover the log-then-resume
+	// path, not the cancel; a short cancel would tear the stream down at 50ms and
+	// the late chunk would never be forwarded.
+	setInterChunkStallTimeouts(t, 50*time.Millisecond, 5*time.Second)
 	release := make(chan struct{})
 	client := &streamContentThenReleaseClient{releaseCh: release}
 	env := setupTestProxyWithClients(t, []user.HostClient{client})
@@ -1313,7 +1807,11 @@ func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 }
 
 func TestRunInference_StalledWinnerNaturalErrorAfterClientTimeoutRecordsFailure(t *testing.T) {
-	setInterChunkStallTimeout(t, 50*time.Millisecond)
+	// Same split as the test above: a short log threshold, a long cancel threshold.
+	// The subject here is that a natural transport error arriving after the stall
+	// was logged is recorded as a failure, which requires the stream to survive
+	// past the log.
+	setInterChunkStallTimeouts(t, 50*time.Millisecond, 5*time.Second)
 	release := make(chan struct{})
 	env := setupTestProxyWithClients(t, []user.HostClient{&streamContentThenReleaseClient{
 		releaseCh: release,
@@ -1346,7 +1844,7 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 	participantKey := env.session.HostParticipantKey(0)
 	markStalled := func(inf *inflight) {
 		inf.contentChunks.Store(1)
-		inf.lastChunkAt.Store(time.Now().Add(-2 * InterChunkStallLogThreshold).UnixNano())
+		inf.stallAnchorAt.Store(time.Now().Add(-2 * InterChunkStallLogThreshold).UnixNano())
 		_, ok := inf.startInterChunkStall(time.Now())
 		require.True(t, ok)
 	}
@@ -1544,8 +2042,14 @@ func requireIncompleteWinnerError(t *testing.T, err error) {
 func requireStalledWinnerTimeoutError(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
+	// A stalled winner now surfaces as errStreamStalled: the inter-chunk deadline
+	// cancels the attempt and rewrites the bare context.Canceled into a typed,
+	// retryable failure. context.Canceled is still accepted because a stall that
+	// reaches the attempt hard timeout instead of the inter-chunk deadline (e.g.
+	// a client-side cancel) still unwinds as a plain cancel.
 	require.True(t,
-		errors.Is(err, context.Canceled) ||
+		errors.Is(err, errStreamStalled) ||
+			errors.Is(err, context.Canceled) ||
 			strings.Contains(err.Error(), "no non-probe attempt finished"),
 		"unexpected stalled winner timeout error: %v", err)
 }
