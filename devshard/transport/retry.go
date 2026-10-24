@@ -216,6 +216,8 @@ func connectAdmissionPath(escrowID, procedure string) string {
 		return "/sessions/" + escrowID + "/verify-timeout"
 	case rpcpbconnect.SessionServiceVerifyErrorMissProcedure:
 		return "/sessions/" + escrowID + "/verify-error-miss"
+	case rpcpbconnect.SessionServiceVerifyChallengeProcedure:
+		return "/sessions/" + escrowID + "/verify-challenge"
 	case rpcpbconnect.SessionServiceChallengeReceiptProcedure:
 		return "/sessions/" + escrowID + "/challenge-receipt"
 	case rpcpbconnect.SessionServiceSeedHeightSyncProcedure:

@@ -1147,6 +1147,27 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 					inf.VotesInvalid += weight
 				}
 				resolveFoldedChallenge(inf, threshold)
+			case *types.DevshardTx_Challenge:
+				msg := inner.Challenge
+				if msg == nil {
+					continue
+				}
+				inf := out[msg.InferenceId]
+				if inf == nil || inf.UsageChallenged || inf.Status != types.StatusFinished {
+					continue
+				}
+				// The journal holds only applied txs, so every vote here
+				// passed applyChallenge's checks.
+				var faultWeight uint32
+				for _, vote := range msg.Votes {
+					if vote.Fault != types.ChallengeFault_CHALLENGE_FAULT_NONE {
+						faultWeight += sm.addressToSlotCount[sm.slotToAddress[vote.VoterSlot]]
+					}
+				}
+				inf.UsageChallenged = true
+				if faultWeight > threshold {
+					inf.Status = types.StatusInvalidated
+				}
 			}
 		}
 	}
@@ -1228,6 +1249,9 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 		SealedActualCost:   rec.ActualCost,
 		SealedStartedAt:    rec.StartedAt,
 		SealedConfirmedAt:  rec.ConfirmedAt,
+		// A challenge is part of the record: the seal says it was challenged
+		// as the live record did.
+		SealedChallenged: rec.UsageChallenged,
 	}
 	if len(rec.PromptHash) > 0 {
 		row.SealedPromptHash = append([]byte(nil), rec.PromptHash...)
@@ -1242,7 +1266,7 @@ func inferenceObsRow(id, sealedNonce uint64, rec *types.InferenceRecord) storage
 }
 
 func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
-	return types.InferenceRecord{
+	rec := types.InferenceRecord{
 		Status:       types.InferenceStatus(row.SealedStatus),
 		ExecutorSlot: row.SealedExecutorSlot,
 		Model:        row.SealedModel,
@@ -1260,4 +1284,6 @@ func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
 		VotesInvalid: row.SealedVotesInvalid,
 		ValidatedBy:  types.Bitmap128FromBytes(row.SealedValidatedBy),
 	}
+	rec.UsageChallenged = row.SealedChallenged
+	return rec
 }

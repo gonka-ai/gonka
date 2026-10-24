@@ -1,0 +1,16 @@
+schema_version: v1
+profile: oracle-shared
+
+# The oracle node of oracle-chunk1 with room for 5 requests at once and a queue behind them. A full node
+# queues a request until a worker frees, as vLLM does, so everything slows down and nothing is refused:
+# the queue holds what the node of a solo host in shared-endpoint falls behind over the whole load.
+ttft: 0s
+token_interval: 0s
+workers: 5
+queue: 512
+failures: []
+oracle: true
+chunk_tokens: 1
+first_content_ms: 50
+exec_ms: 400
+replay_ms: 1000

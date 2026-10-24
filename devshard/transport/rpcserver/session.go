@@ -34,7 +34,7 @@ type SessionCore interface {
 // SessionForOwner CreateSession only when addr is the escrow creator (Chat, seed).
 // SessionForStartProof CreateSession when diffs carry a creator-signed
 // MsgStartInference whose protocol_version matches this child
-// (ChallengeReceipt, VerifyTimeout, VerifyErrorMiss).
+// (ChallengeReceipt, VerifyTimeout, VerifyErrorMiss, VerifyChallenge).
 type SessionLookup interface {
 	SessionServerExisting(escrowID string) (SessionCore, error)
 	// SessionForParticipant returns a live session when addr is allowed.
@@ -376,6 +376,46 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 		return nil, mapCoreError(err)
 	}
 	return connect.NewResponse(transport.VerifyErrorMissResponseToProto(resp)), nil
+}
+
+func (h *SessionHandler) VerifyChallenge(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyChallengeResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	peer, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
+	if err != nil {
+		return nil, err
+	}
+	var inner rpcpb.VerifyChallengeRequest
+	if err := unmarshalPayload(payload, &inner); err != nil {
+		return nil, err
+	}
+	jsonReq := transport.VerifyChallengeRequestFromProto(&inner)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	srv, err := h.bindStartProof(ctx, "rpc_verify_challenge", func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
+	if err != nil {
+		return nil, err
+	}
+	// Only the gateway challenges. A group member asking first would fix the
+	// voters' one kept vote on its own terms, and make them fetch at will.
+	if err := requireOwner(srv, peer); err != nil {
+		return nil, err
+	}
+	type challengeCore interface {
+		ServeVerifyChallenge(context.Context, transport.VerifyChallengeRequest) (*transport.VerifyChallengeResponse, error)
+	}
+	core, ok := srv.(challengeCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	resp, err := core.ServeVerifyChallenge(ctx, jsonReq)
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	return connect.NewResponse(transport.VerifyChallengeResponseToProto(resp)), nil
 }
 
 func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error) {

@@ -1,0 +1,15 @@
+schema_version: v1
+profile: oracle-replay-slow
+
+# The oracle node of oracle-chunk1 whose replays take 1.5 s. Executions are untouched, so a slow voter
+# must not turn into a charge of the executor.
+ttft: 0s
+token_interval: 0s
+workers: 128
+queue: 0
+failures: []
+oracle: true
+chunk_tokens: 1
+first_content_ms: 50
+exec_ms: 400
+replay_ms: 1500

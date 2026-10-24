@@ -85,6 +85,9 @@ type HostResponse struct {
 	ExecutionExpected  bool
 
 	ReceivedResponseHashes [][32]byte
+	// ReceivedComplete is set when the stream reached [DONE] or the
+	// devshard_meta tail. A stream that ended before both is cut.
+	ReceivedComplete bool
 }
 
 type receiptOutcome struct {
@@ -205,6 +208,8 @@ type Host struct {
 	// this host applied MsgFinishInference. Used when validation later finds
 	// the live record gone (sealed/drained). Not part of consensus.
 	finishObs map[uint64]inferenceFinishObs
+
+	challenges challengeVoter
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -343,6 +348,7 @@ func (h *Host) Start() {
 // lease while storage is still open. It is safe to call multiple times and
 // safe to call on hosts that were never started.
 func (h *Host) Close() {
+	h.challenges.close()
 	h.validationCloseOnce.Do(func() {
 		h.validationLifecycleMu.Lock()
 		h.validationClosed = true
@@ -778,6 +784,7 @@ func requestBlockedWhenUnavailable(req HostRequest) bool {
 			if tx.GetStartInference() != nil ||
 				tx.GetTimeoutInference() != nil ||
 				tx.GetErrorMiss() != nil ||
+				tx.GetChallenge() != nil ||
 				tx.GetValidation() != nil ||
 				tx.GetValidationVote() != nil {
 				return true

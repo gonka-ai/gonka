@@ -19,16 +19,9 @@ type Config struct {
 	Workers    int
 	Queue      int
 	ReplayFile string
-}
-
-// Stats is the test-only request outcome snapshot exposed by a Mock ML node.
-type Stats struct {
-	RequestsReceived    uint64 `json:"requests_received"`
-	SuccessfulResponses uint64 `json:"successful_responses"`
-	FailedResponses     uint64 `json:"failed_responses"`
-	Timeouts            uint64 `json:"timeouts"`
-	ReplayHits          uint64 `json:"replay_hits"`
-	ReplayMisses        uint64 `json:"replay_misses"`
+	// Chaos picks an answer shape for every execution (chaos.go). It lives here rather than in
+	// FaultConfig, which is compared with == and cannot hold the weights map.
+	Chaos ChaosConfig
 }
 
 // DefaultConfig returns local dev defaults.
@@ -62,6 +55,45 @@ type FaultConfig struct {
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
 	StreamErrorEnvelope bool
+	// UsageCompletionTokens and UsagePromptTokens, when positive, replace the
+	// counts in the usage of a recorded stream (total_tokens follows), as an
+	// engine that overstates its usage would. PadEmptyChunks adds that many
+	// chunks with an empty content delta and no logprobs ahead of the chunk
+	// that finishes the choice. They act on executions only: a validation
+	// replay stands for another host's ML node and gets the recording as is.
+	// DropTokens strips every sampled token (content, logprobs, token_ids)
+	// from the stream and keeps its usage and finish_reason: an answer with
+	// a claim and no generated tokens.
+	UsageCompletionTokens int
+	UsagePromptTokens     int
+	PadEmptyChunks        int
+	DropTokens            bool
+
+	// Oracle makes the mock a replay oracle: a request that carries enforced_tokens is answered
+	// from those tokens exactly as received (their ids, their top alternatives, their count), as SSE
+	// in chunks of ChunkTokens when the replay asks to stream, and usage.completion_tokens is the
+	// number of tokens actually emitted or replayed. The mock never
+	// decides a verdict; whatever the validator receives from it follows from what the caller sent.
+	Oracle bool
+	// HonestUsage reports usage.completion_tokens as the number of tokens the answer actually carried,
+	// as vLLM does, without the rest of the oracle mode. Off, the mock reports len(text)/4 while it
+	// emits one token per rune, and a check that compares a host's Finish against the ML cannot tell
+	// an overclaim from the mock's own estimate.
+	HonestUsage bool
+	// ChunkTokens is how many tokens one streamed chunk carries. 0 and 1 keep one token per chunk.
+	ChunkTokens int
+	// FirstContentDelay and ExecDuration shape a streamed execution: the first content chunk goes out
+	// FirstContentDelay after the request is read, the last one ExecDuration after it. 0 keeps
+	// StreamChunkDelay pacing.
+	FirstContentDelay time.Duration
+	ExecDuration      time.Duration
+	// ReplayDelay is the service time of a request that carries enforced_tokens. 0 falls back to Latency.
+	ReplayDelay time.Duration
+
+	// Set per request by a chaos action, never by a patch.
+	emptyAnswer bool
+	oddUsage    bool
+	wrongAnswer bool
 }
 
 // ShouldFail deterministically selects requests for a configured failure
@@ -91,6 +123,27 @@ type FaultPatch struct {
 	PauseStream         *bool   `json:"pause_stream,omitempty"`
 	StreamErrorEnvelope *bool   `json:"stream_error_envelope,omitempty"`
 	Hang                *bool   `json:"hang,omitempty"`
+	// Zero turns a usage or padding knob off.
+	UsageCompletionTokens *int `json:"usage_completion_tokens,omitempty"`
+	UsagePromptTokens     *int `json:"usage_prompt_tokens,omitempty"`
+	PadEmptyChunks        *int `json:"pad_empty_chunks,omitempty"`
+
+	DropTokens *bool `json:"drop_tokens,omitempty"`
+
+	Oracle            *bool `json:"oracle,omitempty"`
+	ChunkTokens       *int  `json:"chunk_tokens,omitempty"`
+	FirstContentDelay *int  `json:"first_content_delay_ms,omitempty"`
+	ExecDuration      *int  `json:"exec_duration_ms,omitempty"`
+	ReplayDelay       *int  `json:"replay_delay_ms,omitempty"`
+
+	// Seed, when set, scopes the patch's usage, padding and drop_tokens
+	// knobs to the requests that carry this seed, so concurrent requests
+	// can each get their own; the other knobs of such a patch are ignored.
+	// A seed patch with all of them zero removes the seed's knobs.
+	Seed *int `json:"seed,omitempty"`
+
+	// Chaos replaces the chaos config; a seed patch does not scope it.
+	Chaos *ChaosConfig `json:"chaos,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -124,6 +177,33 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	if p.Hang != nil {
 		dst.Hang = *p.Hang
 	}
+	if p.UsageCompletionTokens != nil {
+		dst.UsageCompletionTokens = *p.UsageCompletionTokens
+	}
+	if p.UsagePromptTokens != nil {
+		dst.UsagePromptTokens = *p.UsagePromptTokens
+	}
+	if p.PadEmptyChunks != nil {
+		dst.PadEmptyChunks = *p.PadEmptyChunks
+	}
+	if p.DropTokens != nil {
+		dst.DropTokens = *p.DropTokens
+	}
+	if p.Oracle != nil {
+		dst.Oracle = *p.Oracle
+	}
+	if p.ChunkTokens != nil {
+		dst.ChunkTokens = *p.ChunkTokens
+	}
+	if p.FirstContentDelay != nil {
+		dst.FirstContentDelay = time.Duration(*p.FirstContentDelay) * time.Millisecond
+	}
+	if p.ExecDuration != nil {
+		dst.ExecDuration = time.Duration(*p.ExecDuration) * time.Millisecond
+	}
+	if p.ReplayDelay != nil {
+		dst.ReplayDelay = time.Duration(*p.ReplayDelay) * time.Millisecond
+	}
 }
 
 // OpenAIErrorBody is the nested OpenAI/vLLM error JSON shape.
@@ -155,6 +235,20 @@ type ChatRequest struct {
 	Logprobs    bool            `json:"logprobs,omitempty"`
 	TopLogprobs int             `json:"top_logprobs,omitempty"`
 	Raw         json.RawMessage `json:"-"`
+
+	// EnforcedTokens is set on a validator replay; the token ids are the ones the executor produced.
+	EnforcedTokens *EnforcedTokens `json:"enforced_tokens,omitempty"`
+}
+
+// EnforcedTokens mirrors the wire shape of completionapi.EnforcedTokens. It is declared here on
+// purpose: the mock must not share the production parser it is used to check.
+type EnforcedTokens struct {
+	Tokens []EnforcedToken `json:"tokens"`
+}
+
+type EnforcedToken struct {
+	Token     string   `json:"token"`
+	TopTokens []string `json:"top_tokens"`
 }
 
 type ChatMessage struct {

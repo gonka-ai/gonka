@@ -187,6 +187,7 @@ type InferenceRecordProto struct {
 	StartedAtHeight   uint64                 `protobuf:"varint,18,opt,name=started_at_height,json=startedAtHeight,proto3" json:"started_at_height,omitempty"`
 	ConfirmedAtHeight uint64                 `protobuf:"varint,19,opt,name=confirmed_at_height,json=confirmedAtHeight,proto3" json:"confirmed_at_height,omitempty"`
 	ServedHash        []byte                 `protobuf:"bytes,20,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
+	UsageChallenged   bool                   `protobuf:"varint,21,opt,name=usage_challenged,json=usageChallenged,proto3" json:"usage_challenged,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -361,6 +362,13 @@ func (x *InferenceRecordProto) GetServedHash() []byte {
 	return nil
 }
 
+func (x *InferenceRecordProto) GetUsageChallenged() bool {
+	if x != nil {
+		return x.UsageChallenged
+	}
+	return false
+}
+
 type InferencesMapProto struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Entries       []*InferenceRecordProto `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -420,7 +428,7 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\tvalidated\x18\a \x01(\rR\tvalidated\x12\x1a\n" +
 	"\bfinished\x18\b \x01(\rR\bfinished\"J\n" +
 	"\x11HostStatsMapProto\x125\n" +
-	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xca\x05\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xf5\x05\n" +
 	"\x14InferenceRecordProto\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\rR\x06status\x12#\n" +
@@ -448,7 +456,8 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\x11started_at_height\x18\x12 \x01(\x04R\x0fstartedAtHeight\x12.\n" +
 	"\x13confirmed_at_height\x18\x13 \x01(\x04R\x11confirmedAtHeight\x12\x1f\n" +
 	"\vserved_hash\x18\x14 \x01(\fR\n" +
-	"servedHash\"Q\n" +
+	"servedHash\x12)\n" +
+	"\x10usage_challenged\x18\x15 \x01(\bR\x0fusageChallenged\"Q\n" +
 	"\x12InferencesMapProto\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.devshard.v1.InferenceRecordProtoR\aentriesB\x10Z\x0edevshard/typesb\x06proto3"
 

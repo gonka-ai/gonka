@@ -253,4 +253,8 @@ type InferenceRow struct {
 	SealedActualCost   uint64
 	SealedStartedAt    int64
 	SealedConfirmedAt  int64
+	// SealedChallenged says a challenge was applied to the record before
+	// the seal. Nothing reads it from the seal yet; it is kept so the sealed
+	// snapshot says the same as the live record did.
+	SealedChallenged bool
 }
