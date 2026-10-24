@@ -167,6 +167,7 @@ services:
   proxy:
     environment:
       - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}
+      # JSON and peer RPC (HTTP/2) both go to this router port.
       - VERSIOND_ROUTER_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
       - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}

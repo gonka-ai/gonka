@@ -83,51 +83,31 @@ func TestHeightSync_E2E_WideDivergenceNeverBlocksInferences(t *testing.T) {
 	require.True(t, seen[divergedOracleHeights[0]] && seen[divergedOracleHeights[3]],
 		"both ends of the spread must reach the log for the dispute layer to have a case")
 
-	// Both branches of the producer rule, read off the applied records.
-	//
-	// A **host** always has a branch to take: its own tip when that is above the
-	// floor, the floor itself when it is behind. There is no distance escape any
-	// more, so the most-behind slot in the roster still writes a height.
-	//
-	// The **sequencer** is the one party that can end up with nothing to write:
-	// before any host has stamped, there is no F to carry and the user has no
-	// oracle of its own (§10.3.1). Nonces 1–2 are exactly that window.
 	recs := snap.Inferences
-
-	// Bootstrap. F is empty at nonces 1 and 2, so the start leg goes out
-	// unstamped rather than carrying the courier's cached roster maximum — the
-	// courier is not a height source. Each executor still stamps first-party, so
-	// the spread itself lands in the log and nothing is rejected.
 	for _, id := range []uint64{1, 2} {
 		require.Zerof(t, recs[id].StartedAtHeight,
 			"inference %d predates any host stamp, so the sequencer omits", id)
-		require.Equalf(t, uint64(divergedOracleHeights[hostIdxForNonce(id)]), recs[id].ConfirmedAtHeight,
-			"slot %d stamps its own tip while F is still empty", hostIdxForNonce(id))
 	}
 
-	// One host claim is the whole raise rule. Slot 1's confirm at nonce 1 seeds
-	// F at 998 on its own — no corroborating second signer, no cap on the jump
-	// from 0, because the height was already bounded at envelope admission.
 	floor, _, known := sm.HeightSyncFloorAsOf(3)
 	require.True(t, known)
 	require.Equal(t, uint64(divergedOracleHeights[1]), floor,
-		"a lone host confirm seeds F at any distance")
+		"a lone host claim seeds F at any distance")
 
-	// Nonce 3 is served by slot 3, ~993 blocks under that floor. It **carries**
-	// F rather than omitting: this is the branch W_conf used to divert, and
-	// diverting it is what silenced a lagging host for the rest of a session.
+	for id := uint64(1); id < nonces; id++ {
+		at, _, known := sm.HeightSyncFloorAsOf(id)
+		require.True(t, known)
+		require.Equalf(t, at, recs[id].StartedAtHeight, "inference %d starts at exactly F", id)
+		landed, _, known := sm.HeightSyncFloorAsOf(id + 1)
+		require.True(t, known)
+		require.Equalf(t, landed, recs[id].ConfirmedAtHeight,
+			"inference %d: slot %d confirm anchors at F where it lands", id, hostIdxForNonce(id))
+	}
+
 	require.Equal(t, 3, hostIdxForNonce(3))
 	require.Equal(t, floor, recs[3].ConfirmedAtHeight,
 		"the most-behind slot carries the floor instead of declining to stamp")
-	require.Equal(t, floor, recs[3].StartedAtHeight,
-		"once F exists the sequencer stamps exactly F, never its courier tip")
 
-	// Slot 0's confirm at nonce 4 is the last raise: 1000 is the roster's real
-	// tip, so F settles there and every later stamp on both legs equals it. The
-	// confirm rides a later diff, which is why the floor answers 1000 from nonce
-	// 6 rather than 5 — L0 judges each stamp against the floor at its own
-	// producing nonce, so the pipelining costs nobody a verdict.
-	require.Equal(t, 0, hostIdxForNonce(4))
 	top := uint64(divergedOracleHeights[0])
 	floor, _, known = sm.HeightSyncFloorAsOf(6)
 	require.True(t, known)

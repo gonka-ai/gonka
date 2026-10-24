@@ -15,6 +15,7 @@ import (
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/observability"
 	devshardserver "devshard/server"
 	"devshard/storage"
@@ -22,9 +23,9 @@ import (
 )
 
 const (
-	statsCacheTTL          = 60 * time.Second
-	statsNegativeCacheTTL  = 10 * time.Second
-	statsNegativeCacheMax  = 4096
+	statsCacheTTL         = 60 * time.Second
+	statsNegativeCacheTTL = 10 * time.Second
+	statsNegativeCacheMax = 4096
 )
 
 type statsShardDetailCache struct {
@@ -73,6 +74,8 @@ type statsHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+	Validated            uint32 `json:"validated"`
+	Finished             uint32 `json:"finished"`
 }
 
 // statsValidationTotals aggregates per-slot observability rows; uint64 avoids wrap
@@ -132,6 +135,9 @@ func statsSessionResolutionStatus(err error) (observability.MetricStatus, observ
 	}
 	if errors.Is(err, storage.ErrSessionEpochConflict) {
 		return observability.MetricStatusError, observability.ReasonEpochConflict
+	}
+	if errors.Is(err, bridge.ErrEscrowLookupLimited) {
+		return observability.MetricStatusError, observability.ReasonRateLimited
 	}
 	msg := err.Error()
 	switch {
@@ -368,6 +374,8 @@ func statsHostStatsFromState(src map[uint32]*types.HostStats) map[uint32]statsHo
 			Cost:                 stats.Cost,
 			RequiredValidations:  stats.RequiredValidations,
 			CompletedValidations: stats.CompletedValidations,
+			Validated:            stats.Validated,
+			Finished:             stats.Finished,
 		}
 	}
 	return dst

@@ -456,7 +456,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
 			newParameter("stop_token_ids").
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
+				withRule(RequestFilterStagePreValidation, stopTokenIDsHandler{}),
 			newParameter("reasoning").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},
@@ -495,6 +495,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						MaxSize:  ChatTemplateKwargsMaxSize,
 						MaxNodes: ChatTemplateKwargsMaxNodes,
 					},
+				}).
+				// GLM-5.3-Flash always thinks; a false thinking kwarg only turns vLLM's parser off (vLLM #54744).
+				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
+					Models:  []string{glm53FlashModelID},
+					Handler: DocumentValidatorHandler{Validator: paramvalidators.AlwaysOnThinkingValidator{}},
 				}),
 			newParameter("thinking_token_budget").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
@@ -510,6 +515,9 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						ForceZeroBelowMaxTokens: kimiSmallMaxTokensForceNoThinking,
 					},
 				}),
+			// Before tools: ToolsValidator drops min_tokens on a coerced "required", after it is validated.
+			newParameter("min_tokens").
+				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("tools").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolsValidator{
@@ -526,8 +534,6 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
-			newParameter("min_tokens").
-				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("bad_words").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{
@@ -660,6 +666,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			"stream",
 		}),
 		// The remaining boolean flags are pass-through fields, so validate their type here.
+		// Without tools, the earlier ToolsValidator has already dropped parallel_tool_calls.
 		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),

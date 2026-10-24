@@ -59,13 +59,14 @@ type Postgres struct {
 }
 
 const (
-	// postgresConnectTimeout bounds establishing a new connection.
+	// postgresConnectTimeout bounds establishing a new connection. Longer than
+	// pgtimeouts.DefaultConnectTimeout: session open rebuilds the escrow index
+	// and tolerates a slower dial at boot than gateway/accounting fail-closed opens.
 	postgresConnectTimeout = 5 * time.Second
-	// postgresStatementTimeout aborts any single query server-side. It is the
-	// primary guard against a stalled backend hanging a caller indefinitely.
+	// Server-side per-query bounds for this pool. Gateway and accounting use
+	// common/storage/pgtimeouts; devshard storage stays independently set.
 	postgresStatementTimeout = 5 * time.Second
-	// postgresLockTimeout bounds waits on row/table locks server-side.
-	postgresLockTimeout = 3 * time.Second
+	postgresLockTimeout      = 3 * time.Second
 	// postgresOpTimeout bounds each storage operation Go-side. Unlike
 	// statement_timeout it also covers the time spent acquiring a pooled
 	// connection (pool exhaustion), which the server-side timeout cannot.
@@ -1359,6 +1360,9 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	return &meta, nil
 }
 
+// GetDiffs loads each nonce's txs_proto once, then that nonce's signatures.
+// One repeatable-read transaction keeps the two statements on the same
+// snapshot. A join would repeat and detoast the blob once per signature row.
 func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
@@ -1367,82 +1371,138 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx,
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		 FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := readDiffRecords(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return recs, nil
+	}
+
+	sigRows, err := tx.Query(ctx,
+		`SELECT nonce, slot_id, sig FROM devshard_signatures
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce, slot_id`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = attachDiffSignatureRows(sigRows, recs)
+	sigRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+func (s *Postgres) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	rows, err := s.pool.Query(ctx,
-		`SELECT d.nonce, d.txs_proto, d.user_sig, d.post_state_root, d.state_hash,
-		        d.warm_keys_json, d.created_at, s.slot_id, s.sig
-		 FROM devshard_diffs d
-		 LEFT JOIN devshard_signatures s
-		        ON d.epoch_id = s.epoch_id AND d.escrow_id = s.escrow_id AND d.nonce = s.nonce
-		 WHERE d.epoch_id = $1 AND d.escrow_id = $2 AND d.nonce >= $3 AND d.nonce <= $4
-		 ORDER BY d.nonce, s.slot_id`,
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
 		epochID, escrowID, fromNonce, toNonce,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var result []types.DiffRecord
-	var current *types.DiffRecord
-	var currentNonce uint64
-
+	var out []types.DiffWire
 	for rows.Next() {
-		var nonce uint64
-		var txsProto []byte
-		var userSig, postStateRoot, stateHash []byte
-		var warmJSON *string
-		var createdAt int64
-		var slotID *uint32
-		var sig []byte
-
-		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt, &slotID, &sig); err != nil {
+		var w types.DiffWire
+		// pgx scans bytea into a fresh slice, so the row buffer is not aliased.
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
 			return nil, err
 		}
-
-		if current == nil || nonce != currentNonce {
-			if current != nil {
-				result = append(result, *current)
-			}
-
-			txs, err := unmarshalTxs(txsProto)
-			if err != nil {
-				return nil, err
-			}
-
-			rec := types.DiffRecord{
-				Diff: types.Diff{
-					Nonce:         nonce,
-					Txs:           txs,
-					UserSig:       userSig,
-					PostStateRoot: postStateRoot,
-				},
-				StateHash: stateHash,
-				CreatedAt: createdAt,
-			}
-			if warmJSON != nil {
-				wk := make(map[uint32]string)
-				if err := json.Unmarshal([]byte(*warmJSON), &wk); err != nil {
-					return nil, fmt.Errorf("unmarshal warm keys: %w", err)
-				}
-				rec.WarmKeyDelta = wk
-			}
-			current = &rec
-			currentNonce = nonce
-		}
-
-		if slotID != nil && sig != nil {
-			if current.Signatures == nil {
-				current.Signatures = make(map[uint32][]byte)
-			}
-			current.Signatures[*slotID] = sig
-		}
+		out = append(out, w)
 	}
+	return out, rows.Err()
+}
 
-	if current != nil {
-		result = append(result, *current)
+// DiffStateHash reads one state_hash. Transactions and signatures stay in the table.
+func (s *Postgres) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, false, err
 	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var hash []byte
+	err = s.pool.QueryRow(ctx,
+		`SELECT state_hash FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce = $3`,
+		epochID, escrowID, nonce,
+	).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), hash...), true, nil
+}
 
-	return result, rows.Err()
+// DiffSizes reads octet_length from the TOAST header, so a large txs_proto is
+// not fetched or decompressed.
+func (s *Postgres) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	if fromNonce > toNonce || limit <= 0 {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT nonce, octet_length(txs_proto) FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce LIMIT $5`,
+		epochID, escrowID, fromNonce, toNonce, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DiffSize
+	for rows.Next() {
+		var nonce uint64
+		var size int64
+		if err := rows.Scan(&nonce, &size); err != nil {
+			return nil, err
+		}
+		out = append(out, DiffSize{Nonce: nonce, Bytes: int(size)})
+	}
+	return out, rows.Err()
 }
 
 func (s *Postgres) MarkFinalized(escrowID string, nonce uint64) error {
@@ -1573,7 +1633,7 @@ func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer,
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAt, row.SealedConfirmedAt,
+		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -1722,7 +1782,7 @@ func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, row
 				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
 				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
 				int64(r.SealedReservedCost), int64(r.SealedActualCost),
-				r.SealedStartedAt, r.SealedConfirmedAt,
+				r.SealedStartedAtHeight, r.SealedConfirmedAtHeight,
 			}, nil
 		}),
 	)
@@ -1785,8 +1845,8 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 		outputTokens[i] = int64(row.SealedOutputTokens)
 		reservedCosts[i] = int64(row.SealedReservedCost)
 		actualCosts[i] = int64(row.SealedActualCost)
-		startedAt[i] = row.SealedStartedAt
-		confirmedAt[i] = row.SealedConfirmedAt
+		startedAt[i] = row.SealedStartedAtHeight
+		confirmedAt[i] = row.SealedConfirmedAtHeight
 	}
 
 	ctx, cancel := s.opCtx()
@@ -1829,7 +1889,7 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAt, &out.SealedConfirmedAt,
+		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil
@@ -1905,6 +1965,92 @@ func (s *Postgres) ClearValidationObs(escrowID string) error {
 		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
+}
+
+func (s *Postgres) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE devshard_sessions SET obs_rebuild_pending = $1
+		 WHERE epoch_id = $2 AND escrow_id = $3`,
+		pending, epochID, escrowID,
+	)
+	if err != nil {
+		return fmt.Errorf("set obs rebuild pending: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	return nil
+}
+
+func (s *Postgres) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return false, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var pending bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT obs_rebuild_pending FROM devshard_sessions WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	).Scan(&pending); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, fmt.Errorf("session %s not found", escrowID)
+		}
+		return false, fmt.Errorf("read obs rebuild pending: %w", err)
+	}
+	return pending, nil
+}
+
+// pgValidationObsRebuildLockNamespace is "OBSR" as an int32, distinct from
+// the connection fence namespace.
+const pgValidationObsRebuildLockNamespace int32 = 0x4f425352
+
+// LockValidationObsRebuild holds a session advisory lock on a connection taken
+// out of the pool. Replicas that share the database cannot rebuild the same
+// escrow at once, and a holder that dies drops the lock with its connection.
+// Closing that connection is the unlock.
+func (s *Postgres) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, false, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	pooled, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, fmt.Errorf("acquire obs rebuild lock connection: %w", err)
+	}
+	conn := pooled.Hijack()
+	closeConn := func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer closeCancel()
+		_ = conn.Close(closeCtx)
+	}
+	// The connection idles while the rebuild runs on other connections.
+	if _, err := conn.Exec(ctx, `SET idle_session_timeout = 0`); err != nil {
+		closeConn()
+		return nil, false, fmt.Errorf("disable obs rebuild lock idle timeout: %w", err)
+	}
+	var acquired bool
+	if err := conn.QueryRow(ctx,
+		`SELECT pg_try_advisory_lock($1, hashtext($2))`,
+		pgValidationObsRebuildLockNamespace, fmt.Sprintf("%d/%s", epochID, escrowID),
+	).Scan(&acquired); err != nil {
+		closeConn()
+		return nil, false, fmt.Errorf("try obs rebuild lock: %w", err)
+	}
+	if !acquired {
+		closeConn()
+		return nil, false, nil
+	}
+	return closeConn, true, nil
 }
 
 func (s *Postgres) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {

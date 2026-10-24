@@ -119,7 +119,7 @@ func TestPrepareInference_StartInferenceIsMandatory(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.Error(t, err)
 	require.Nil(t, prepared)
 	require.ErrorContains(t, err, "mandatory start inference")
@@ -326,18 +326,22 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
+	var composed int
+	session.SetDiffObserver(func(types.Diff) { composed++ })
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
-	preFinalize := len(session.Diffs())
+	preFinalize := composed
 
 	err := session.Finalize(ctx)
 	require.NoError(t, err)
 
 	// Finalize adds N (Phase A) + 1 (drain) = N + 1. Phase B sends catch-up only.
+	// sess.diffs drops a prefix every host has applied, so the count is the
+	// composed journal, not the catch-up suffix.
 	expected := preFinalize + numHosts + 1
-	require.Equal(t, expected, len(session.Diffs()),
+	require.Equal(t, expected, composed,
 		"total diffs = pre-finalize(%d) + N+1(%d)", preFinalize, numHosts+1)
 }
 
@@ -368,6 +372,17 @@ func TestUser_PendingTxDedup(t *testing.T) {
 		"duplicate mempool txs should be deduplicated")
 }
 
+func TestStateSizesIncludesAppliedTxKeys(t *testing.T) {
+	session := &Session{
+		appliedTxKeys: map[string]struct{}{
+			"finish:1":     {},
+			"validation:2": {},
+		},
+	}
+
+	require.Equal(t, 2, session.StateSizes().AppliedTxKeys)
+}
+
 func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	session := &Session{
 		pendingTxKeys: make(map[string]struct{}),
@@ -382,7 +397,7 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 		{
 			name: "finish",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+				FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 			}},
 			key: "finish:7",
 		},
@@ -500,7 +515,7 @@ func TestHostMayProposeTx(t *testing.T) {
 	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{}}),
 		"nil inner Finish must not pass the allowlist")
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 1},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 1},
 	}}))
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
 		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1},
@@ -526,7 +541,7 @@ func TestDevshardTxKey_NilInnerDoesNotPanic(t *testing.T) {
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{}}))
 	require.Empty(t, devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{}}))
 	require.Equal(t, "finish:7", devshardTxKey(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 7},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7},
 	}}))
 }
 
@@ -687,7 +702,7 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
@@ -699,7 +714,7 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 		InputLength: params.InputLength,
 		MaxTokens:   params.MaxTokens,
 		StartedAt:   params.StartedAt,
-	}, []types.Diff{prepared.diff})
+	}, session.Diffs())
 	require.NoError(t, err)
 
 	var honestConfirm *types.DevshardTx
@@ -714,21 +729,17 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 	forged := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: nonce,
 		ExecutorSig: []byte("not-a-signature"),
-		ConfirmedAt: 1000,
 	}}}
 
-	// A non-executor host wins the race to confirm:<id>.
+	// A non-executor host wins the race to confirm:<id>. The signature is
+	// checked before the dedup slot is claimed, so the forgery never occupies it.
 	nonExecIdx := (execIdx + 1) % len(session.clients)
 	require.NoError(t, session.ProcessResponse(nonExecIdx, &host.HostResponse{
 		Nonce:   nonce,
 		Mempool: []*types.DevshardTx{forged},
 	}, nonce))
-	require.NotNil(t, findPendingConfirm(session.PendingTxs(), nonce),
-		"fixture must queue the forged ConfirmStart")
-
-	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Nil(t, findPendingConfirm(session.PendingTxs(), nonce),
-		"forged ConfirmStart must be dropped by best-effort apply")
+		"a ConfirmStart the chain would reject must not be queued")
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 	require.NotEqual(t, types.StatusStarted, rec.Status,
@@ -757,7 +768,7 @@ func TestProcessResponse_AppliedConfirmIsNotRequeued(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
@@ -769,7 +780,7 @@ func TestProcessResponse_AppliedConfirmIsNotRequeued(t *testing.T) {
 		InputLength: params.InputLength,
 		MaxTokens:   params.MaxTokens,
 		StartedAt:   params.StartedAt,
-	}, []types.Diff{prepared.diff})
+	}, session.Diffs())
 	require.NoError(t, err)
 
 	var honestConfirm *types.DevshardTx
@@ -807,7 +818,7 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 
@@ -816,7 +827,7 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 		Nonce: nonce,
 		Mempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: unknownID, ExecutorSig: []byte("sig"), ConfirmedAt: 1000,
+				InferenceId: unknownID, ExecutorSig: []byte("sig"),
 			}}},
 			{Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{
 				InferenceId: unknownID, ValidatorSlot: 0, Valid: true,
@@ -875,13 +886,13 @@ func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.group)))
 
 	unsigned := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -905,14 +916,15 @@ func TestProcessResponse_DropsFinishNotSignedByExecutor(t *testing.T) {
 }
 
 func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 	nonce := prepared.diff.Nonce
 	execIdx := int(nonce % uint64(len(session.clients)))
 	execHost := session.clients[execIdx].(*InProcessClient).Host
@@ -924,7 +936,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 		MaxTokens:   params.MaxTokens,
 		StartedAt:   params.StartedAt,
 	}
-	receipt, _, err := execHost.ChallengeReceipt(ctx, nonce, payload, []types.Diff{prepared.diff})
+	receipt, _, err := execHost.ChallengeReceipt(ctx, nonce, payload, session.Diffs())
 	require.NoError(t, err)
 	require.NotEmpty(t, receipt)
 
@@ -938,7 +950,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 	require.NotNil(t, confirmTx)
 
 	unsignedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 			InferenceId: nonce, ExecutorSlot: uint32(execIdx), EscrowId: "escrow-1",
 		},
 	}}
@@ -947,19 +959,21 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: injected}
 	}
 
-	_, err = session.HandleTimeout(ctx, nonce, time.Unix(0, 0), payload)
-	require.NoError(t, err, "valid ConfirmStart recovery must still publish")
-
-	rec, ok := session.StateMachine().SnapshotState().Inferences[nonce]
-	require.True(t, ok)
-	require.Equal(t, types.StatusStarted, rec.Status)
+	// The recovered receipt starts the record, and HandleTimeout goes on to
+	// wait out its execution deadline. The test stops it there.
+	waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(waitCtx, nonce, time.Unix(0, 0), payload)
+	requireRecoveredReceipt(t, session, nonce, result, err)
 	_, hasInjected := session.StateMachine().Inference(2)
 	require.False(t, hasInjected)
 	require.Nil(t, findPendingStart(session.PendingTxs(), 2))
 	requireNoInjectedStartInDiffs(t, session, nonce)
 	for _, d := range session.Diffs() {
 		for _, tx := range d.Txs {
-			require.Nil(t, tx.GetFinishInference(), "unsigned recovery Finish must not land in a Diff")
+			if fi := tx.GetFinishInference(); fi != nil {
+				require.NotEmpty(t, fi.ProposerSig, "unsigned recovery Finish must not land in a Diff")
+			}
 		}
 	}
 }
@@ -1044,7 +1058,7 @@ func signedFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce uint64
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  nonce,
-		ResponseHash: []byte("hash"),
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: uint32(executorSlot),
@@ -1061,10 +1075,23 @@ func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
 	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
 }
 
+// A response without a state hash is not checked against a root, so a nonce
+// the session never composed must not move the host's cursor.
+func TestProcessResponse_NonceAheadOfSessionIsRejected(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, &host.HostResponse{Nonce: session.Nonce() + 1}, 1)
+	require.ErrorIs(t, err, ErrHostNonceAhead)
+
+	session.mu.Lock()
+	cursor := session.hostSyncNonce[0]
+	session.mu.Unlock()
+	require.Zero(t, cursor)
+}
+
 func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
 	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
 	err := session.ProcessResponse(0, &host.HostResponse{
-		Nonce:     99,
+		Nonce:     session.Nonce(),
 		StateHash: []byte{0xde, 0xad},
 	}, 1)
 	require.Error(t, err)
@@ -1160,6 +1187,43 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		"accumulated weight %d should exceed threshold %d", totalWeight, config.VoteThreshold)
 }
 
+func TestCollectTimeoutVotes_ExecutionDropsPrompt(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithVerifierQueue(newVerifierHostQueue()))
+	payload := &host.InferencePayload{
+		Prompt:      []byte("execution-timeout-prompt-must-not-reach-the-verifier"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}
+	// Nonce 1 is hosted by slot 1, so slot 0 is a verifier.
+	verifier := &payloadRecordingVerifier{}
+	verifiers := map[int]TimeoutVerifier{0: verifier}
+
+	_, _, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.Nil(t, verifier.payload)
+
+	verifier.payload = payload
+	_, _, _, err = session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+	require.NoError(t, err)
+	require.NotNil(t, verifier.payload)
+	require.Equal(t, payload.Prompt, verifier.payload.Prompt)
+}
+
+type payloadRecordingVerifier struct {
+	payload *host.InferencePayload
+}
+
+func (v *payloadRecordingVerifier) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, payload *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	v.payload = payload
+	return false, nil, 0, nil, "", nil
+}
+
+func (v *payloadRecordingVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
 type mockTimeoutVerifier struct {
 	accept      bool
 	signer      *signing.Secp256k1Signer
@@ -1193,7 +1257,7 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -1230,7 +1294,7 @@ func (m *mockTimeoutVerifier) VerifyErrorMiss(_ context.Context, inferenceID uin
 		Accept:       true,
 		ResponseHash: hash,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -1293,7 +1357,7 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -1893,11 +1957,11 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	require.True(t, session.HasQuorumAt(session.Nonce()))
 
 	finalNonce := session.Nonce()
-	// Sign over the ORIGINAL final-diff post-state-root (what a real host signed
-	// at finalize time), captured before wiping diffs. Verifying these against
-	// the post-recovery live ComputeStateRoot proves the two roots are equal.
-	diffs := session.Diffs()
-	originalRoot := append([]byte(nil), diffs[len(diffs)-1].PostStateRoot...)
+	// Sign over the final post-state-root. The catch-up suffix may already
+	// have dropped that diff once every host applied it; the state machine
+	// still holds the root the hosts signed.
+	originalRoot, err := session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
 	require.NotEmpty(t, originalRoot)
 
 	// Default in-process test hosts have no signature store (GET fails). Inject
@@ -2015,13 +2079,11 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: []byte("executor-receipt"),
-		ConfirmedAt: 1000,
 	}}}
 
 	other := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 999,
 		ExecutorSig: []byte("other"),
-		ConfirmedAt: 1,
 	}}}
 	empty := &types.DevshardTx{}
 	mixed := []*types.DevshardTx{empty, other, confirm}
@@ -2059,11 +2121,10 @@ func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: []byte("executor-receipt"),
-		ConfirmedAt: 1000,
 	}}}
 	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: []byte("done"),
+		ResponseHash: []byte("done"), ServedHash: testutil.TestServedHash,
 	}}}
 
 	verifiers := map[int]TimeoutVerifier{
@@ -2090,11 +2151,10 @@ func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
 	unrelatedConfirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 99,
 		ExecutorSig: []byte("other-receipt"),
-		ConfirmedAt: 1000,
 	}}}
 	unrelatedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 		InferenceId:  99,
-		ResponseHash: []byte("other"),
+		ResponseHash: []byte("other"), ServedHash: testutil.TestServedHash,
 	}}}
 	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
 		InferenceId: 1,
@@ -2120,14 +2180,15 @@ func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
 }
 
 func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 
 	payload := &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -2139,7 +2200,7 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
 	execHost := session.clients[execIdx].(*InProcessClient).Host
-	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, session.Diffs())
 	require.NoError(t, err)
 	require.NotEmpty(t, receipt)
 
@@ -2156,29 +2217,22 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{confirmTx}}
 	}
 
-	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
-	require.NoError(t, err, "recovery publish must not be treated as a timeout failure")
-
-	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
-	require.True(t, ok)
-	require.Equal(t, types.StatusStarted, rec.Status)
-
-	peerIdx := int((prepared.diff.Nonce + 1) % uint64(len(session.clients)))
-	peerHost := session.clients[peerIdx].(*timeoutRecoveryClient).HostClient.(*InProcessClient).Host
-	peerRec, ok := peerHost.SnapshotState().Inferences[prepared.diff.Nonce]
-	require.True(t, ok)
-	require.Equal(t, types.StatusStarted, peerRec.Status, "peer SM must apply ConfirmStart from the recovery diff")
+	waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(waitCtx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	requireRecoveredReceipt(t, session, prepared.diff.Nonce, result, err)
 }
 
 func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, hosts, _, rig := setupArmedSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 
 	payload := &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -2189,28 +2243,16 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 	}
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
-	execHost := session.clients[execIdx].(*InProcessClient).Host
-	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
-	require.NoError(t, err)
-	require.NotEmpty(t, receipt)
-
-	var confirmTx *types.DevshardTx
-	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
-			confirmTx = tx
-			break
-		}
-	}
-	require.NotNil(t, confirmTx)
+	// TimeoutDeadline counts the execution deadline from the committed record, so the signed receipt itself has to carry a stamp whose deadline is already past.
+	const confirmedAt = int64(1000)
+	_, confirmTx := stampedReceiptResponse(t, session, hosts[execIdx], prepared.diff.Nonce)
 
 	session.mu.Lock()
 	session.addPendingTx(confirmTx)
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 	require.NoError(t, session.SendPendingDiff(ctx), "test setup must publish ConfirmStart before execution timeout")
-
-	session.mu.Lock()
-	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
-	session.mu.Unlock()
+	rig.raise(t, session, 200_000)
 
 	beforeDiffs := len(session.Diffs())
 	for i, c := range session.clients {
@@ -2234,14 +2276,16 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 		TimeoutBuffer = prevTimeoutBuffer
 	})
 
-	session, signers, _ := setupSession(t, 3, 100000, 10)
-	ctx := context.Background()
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 
 	payload := &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -2253,18 +2297,19 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
 	execHost := session.clients[execIdx].(*InProcessClient).Host
-	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	session.clients[execIdx] = noFinishClient{session.clients[execIdx]}
+	liveReceipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, session.Diffs())
 	require.NoError(t, err)
-	require.NotEmpty(t, receipt)
-	confirmTx := findRecoveryConfirmStart(execHost.MempoolTxs(), prepared.diff.Nonce)
-	require.NotNil(t, confirmTx)
+	require.NotEmpty(t, liveReceipt)
 
-	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
-		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
-	}, prepared.diff.Nonce))
+	// The host stamps its own receipt with the wall clock, but TimeoutDeadline counts the execution deadline from the committed record, so the session confirms on a receipt already past its deadline.
+	const confirmedAt = int64(1000)
+	receiptResp, _ := stampedReceiptResponse(t, session, signers[execIdx], prepared.diff.Nonce)
+	receiptResp.ConfirmedAt = confirmedAt
+	require.NoError(t, session.ProcessResponse(execIdx, receiptResp, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+	rig.raise(t, session, 200_000)
 
 	require.Eventually(t, func() bool {
 		return findRecoveryFinish(execHost.MempoolTxs(), prepared.diff.Nonce) != nil
@@ -2277,7 +2322,7 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 	session.mu.Unlock()
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), prepared.diff.Nonce))
 	session.mu.Lock()
-	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 
 	for i, c := range session.clients {
@@ -2294,19 +2339,364 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 
 	result, err := session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), nil)
 	require.NoError(t, err, "pending FinishInference should be published instead of timeout votes")
-	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, "nonce_closed", result.DetailReason)
 	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
 }
 
-func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
+	prevTimeoutBuffer := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() {
+		TimeoutBuffer = prevTimeoutBuffer
+	})
+
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	session.clients[execIdx] = noFinishClient{session.clients[execIdx]}
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, session.Diffs())
+	require.NoError(t, err)
+	confirmTx := findRecoveryConfirmStart(execHost.MempoolTxs(), prepared.diff.Nonce)
+	require.NotNil(t, confirmTx)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Receipt:           receipt,
+		ConfirmedAt:       time.Now().Unix(),
+		ObservedHeight:    confirmTx.GetConfirmStart().ObservedHeight,
+		ObservedBlockHash: confirmTx.GetConfirmStart().ObservedBlockHash,
+	}, prepared.diff.Nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+	rig.raise(t, session, 200_000)
+
+	slot, ok := session.StateMachine().InferenceExecutorSlot(prepared.diff.Nonce)
+	require.True(t, ok)
+	short := &types.MsgFinishInference{
+		InferenceId: prepared.diff.Nonce, EscrowId: "escrow-1", ExecutorSlot: slot,
+		ResponseHash: []byte("short"), ServedHash: testutil.TestServedHash,
+	}
+	short.ProposerSig = testutil.SignProposerTx(t, signers[execIdx], short)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: short}}},
+	}, prepared.diff.Nonce))
+	require.False(t, session.IsNonceFinished(prepared.diff.Nonce))
+	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), prepared.diff.Nonce))
+
+	session.mu.Lock()
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.mu.Unlock()
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutVoteClient{
+			HostClient: c,
+			mockTimeoutVerifier: &mockTimeoutVerifier{
+				accept:  true,
+				signer:  signers[i],
+				group:   session.group,
+				slotIdx: i,
+			},
+		}
+	}
+
+	result, err := session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), nil)
+	require.Error(t, err)
+	require.Equal(t, "execution", result.Reason)
+	require.Positive(t, result.Votes)
+	require.True(t, result.Applied, "a pending finish that cannot apply must not skip the timeout: %+v", result)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+}
+
+// refusedRecoveryClient rejects a refusal with the receipt it was given, and
+// votes on an execution timeout like mockTimeoutVerifier.
+type refusedRecoveryClient struct {
+	HostClient
+	*mockTimeoutVerifier
+	receipt []*types.DevshardTx
+}
+
+func (c *refusedRecoveryClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED {
+		return false, nil, 0, c.receipt, "", nil
+	}
+	return c.mockTimeoutVerifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs, artifacts)
+}
+
+// A receipt recovered through a refusal vote starts the record. The executor
+// then owes a finish, so the execution timeout must still run: settling a
+// started record pays the full reservation.
+func TestHandleTimeout_RecoveredReceiptContinuesToExecutionTimeout(t *testing.T) {
+	prevTimeoutBuffer := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() {
+		TimeoutBuffer = prevTimeoutBuffer
+	})
+
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.diff.Nonce
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	execIdx := int(rec.ExecutorSlot)
+	receipt := []*types.DevshardTx{confirmTxFor(t, signers[execIdx], nonce, rec, 1)}
+
+	for i, c := range session.clients {
+		session.clients[i] = &refusedRecoveryClient{
+			HostClient: c,
+			mockTimeoutVerifier: &mockTimeoutVerifier{
+				accept: true, signer: signers[i], group: session.group, slotIdx: i,
+			},
+			receipt: receipt,
+		}
+	}
+
+	payload := &host.InferencePayload{
+		Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength,
+		MaxTokens: params.MaxTokens, StartedAt: params.StartedAt,
+	}
+	raised := rig.raiseOnceStarted(session, nonce, 200_000)
+	result, err := session.HandleTimeout(context.Background(), nonce, time.Unix(0, 0), payload)
+	<-raised
+	require.Error(t, err)
+	require.Equal(t, "execution", result.Reason)
+	require.True(t, result.Applied, "%+v", result)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+}
+
+// A queued finish that closes the record is published before the deadline
+// wait, and no vote runs.
+func TestHandleTimeout_PendingFinishClosesBeforeDeadline(t *testing.T) {
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.diff.Nonce
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	execIdx := int(rec.ExecutorSlot)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{Mempool: []*types.DevshardTx{
+		confirmTxFor(t, signers[execIdx], nonce, rec, time.Now().Unix()),
+		finishTxFor(t, signers[execIdx], nonce, rec.ExecutorSlot, testutil.TestResponseHash),
+	}}, nonce))
+	require.True(t, session.IsNonceFinished(nonce))
+
+	var verified bool
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutVoteClient{HostClient: c, mockTimeoutVerifier: &mockTimeoutVerifier{
+			accept: true, signer: signers[i], group: session.group, slotIdx: i,
+			onVerify: func() { verified = true },
+		}}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(ctx, nonce, time.Now(), nil)
+	require.NoError(t, err)
+	require.Equal(t, "nonce_closed", result.DetailReason)
+	require.Empty(t, result.Reason, "the deadline was never reached")
+	require.False(t, verified)
+	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+}
+
+// A finish that lands during the execution wait closes the record, and the
+// wait returns then. It does not run out the execution deadline.
+func TestHandleTimeout_WaitStopsWhenRecordCloses(t *testing.T) {
+	prev := timeoutClosePollInterval
+	timeoutClosePollInterval = 20 * time.Millisecond
+	t.Cleanup(func() { timeoutClosePollInterval = prev })
+
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.diff.Nonce
+	rec, ok := session.StateMachine().Inference(nonce)
+	require.True(t, ok)
+	execIdx := int(rec.ExecutorSlot)
+	receiptResp, _ := stampedReceiptResponse(t, session, signers[execIdx], nonce)
+	require.NoError(t, session.ProcessResponse(execIdx, receiptResp, nonce))
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+
+	errCh := make(chan error, 1)
+	resultCh := make(chan TimeoutResult, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), nil)
+		resultCh <- result
+		errCh <- err
+	}()
+
+	// The deadline is the execution window. The wait is still running here.
+	select {
+	case err := <-errCh:
+		t.Fatalf("returned before the finish landed: %v %+v", err, <-resultCh)
+	case <-time.After(150 * time.Millisecond):
+	}
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{Mempool: []*types.DevshardTx{
+		finishTxFor(t, signers[execIdx], nonce, rec.ExecutorSlot, testutil.TestResponseHash),
+	}}, nonce))
+	applied := time.Now()
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+
+	select {
+	case err := <-errCh:
+		result := <-resultCh
+		require.NoError(t, err)
+		require.Equal(t, "nonce_closed", result.DetailReason)
+		require.Empty(t, result.Reason, "the deadline was never reached")
+		require.Less(t, time.Since(applied), time.Second)
+		require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the wait did not stop once the record closed")
+	}
+}
+
+func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
+	previous := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() { TimeoutBuffer = previous })
+	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.Nonce()
+	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
+	execIdx := int(nonce % uint64(len(session.clients)))
+	executor := session.clients[execIdx].(*InProcessClient).Host
+	session.clients[execIdx] = noFinishClient{session.clients[execIdx]}
+	receipt, _, err := executor.ChallengeReceipt(ctx, nonce, payload, session.Diffs())
+	require.NoError(t, err)
+	confirm := findRecoveryConfirmStart(executor.MempoolTxs(), nonce)
+	require.NotNil(t, confirm)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
+		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
+	}, nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	rig.raise(t, session, 200_000)
+	require.Eventually(t, func() bool { return findRecoveryFinish(executor.MempoolTxs(), nonce) != nil }, 5*time.Second, 20*time.Millisecond)
+	finish := findRecoveryFinish(executor.MempoolTxs(), nonce)
+	for i, client := range session.clients {
+		if i != execIdx {
+			session.clients[i] = &timeoutRecoveryClient{HostClient: client, mempool: []*types.DevshardTx{finish}}
+		}
+	}
+	session.mu.Lock()
+	session.nonceStates[nonce].confirmedAt = 1
+	session.mu.Unlock()
+	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), nil)
+	require.NoError(t, err)
+	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+}
+
+func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
+	previous := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() { TimeoutBuffer = previous })
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.Nonce()
+	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
+	execIdx := int(nonce % uint64(len(session.clients)))
+	executor := session.clients[execIdx].(*InProcessClient).Host
+	session.clients[execIdx] = noFinishClient{session.clients[execIdx]}
+	receipt, _, err := executor.ChallengeReceipt(ctx, nonce, payload, session.Diffs())
+	require.NoError(t, err)
+	confirm := findRecoveryConfirmStart(executor.MempoolTxs(), nonce)
+	require.NotNil(t, confirm)
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
+		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
+	}, nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	rig.raise(t, session, 200_000)
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	bad := &types.MsgFinishInference{InferenceId: nonce, EscrowId: "escrow-1", ExecutorSlot: uint32(execIdx), ResponseHash: []byte("short"), ServedHash: testutil.TestServedHash}
+	bad.ProposerSig = testutil.SignProposerTx(t, signers[execIdx], bad)
+	session.mu.Lock()
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: bad}})
+	session.nonceStates[nonce].confirmedAt = 1
+	session.mu.Unlock()
+	for i, client := range session.clients {
+		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
+	}
+	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), nil)
+	require.Error(t, err)
+	require.True(t, result.Applied)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+}
+
+func TestHandleTimeout_DroppedReceiptFallsBackToRefusalVote(t *testing.T) {
+	previous := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() { TimeoutBuffer = previous })
+	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
+	nonce := prepared.Nonce()
+	session.mu.Lock()
+	session.nonceStates[nonce].confirmedAt = 1 // stale receipt observation; no ConfirmStart can land
+	session.mu.Unlock()
+	for i, client := range session.clients {
+		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
+	}
+	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
+	result, err := session.HandleTimeout(context.Background(), nonce, time.Unix(0, 0), payload)
+	require.Error(t, err)
+	require.Equal(t, "refused", result.Reason)
+	require.True(t, result.Applied)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+}
+
+func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
+	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 
 	payload := &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -2319,7 +2709,6 @@ func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 	unrelated := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 999,
 		ExecutorSig: []byte("other"),
-		ConfirmedAt: 1,
 	}}}
 	for i, c := range session.clients {
 		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{unrelated}}
@@ -2352,15 +2741,6 @@ func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
 		}
 	}
 	return count
-}
-
-func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
-	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			return tx
-		}
-	}
-	return nil
 }
 
 func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
@@ -2397,4 +2777,55 @@ func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.De
 		}
 	}
 	return nil
+}
+
+func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+// Test flow:
+//  1. Hold the session lock that guards nonceStates, as PrepareInference and the outcome prune do while writing it.
+//  2. Ask for a timeout deadline from another goroutine: it must wait for the lock instead of reading the map.
+//  3. Release the lock: the deadline is returned.
+func TestSession_TimeoutDeadlineWaitsForTheSessionLock(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	deadlineReturned := make(chan struct{})
+	isDeadlineReturned := func() bool {
+		select {
+		case <-deadlineReturned:
+			return true
+		default:
+			return false
+		}
+	}
+
+	session.mu.Lock()
+	go func() {
+		session.TimeoutDeadline(1, time.Now())
+		close(deadlineReturned)
+	}()
+	require.Never(t, isDeadlineReturned, 100*time.Millisecond, 5*time.Millisecond, "TimeoutDeadline read nonceStates without the session lock")
+	session.mu.Unlock()
+
+	require.Eventually(t, isDeadlineReturned, time.Second, 5*time.Millisecond)
+}
+
+func requireRecoveredReceipt(t *testing.T, session *Session, nonce uint64, result TimeoutResult, err error) {
+	t.Helper()
+	rec, ok := session.StateMachine().SnapshotState().Inferences[nonce]
+	require.True(t, ok)
+	switch rec.Status {
+	case types.StatusStarted:
+		require.ErrorIs(t, err, context.DeadlineExceeded, "the recovered receipt continues into the execution wait")
+		require.Equal(t, "context_canceled", result.DetailReason)
+	case types.StatusFinished:
+		require.NoError(t, err, "the executor's finish closed the recovered record")
+	default:
+		require.Failf(t, "recovered receipt did not start the record", "status %d", rec.Status)
+	}
 }

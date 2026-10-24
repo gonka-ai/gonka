@@ -1,6 +1,7 @@
 package transport_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -77,6 +78,48 @@ func TestMarshalWrappedInferenceRequest_RoundTrip_Anchor(t *testing.T) {
 	want := *hs
 	want.ChainID = ""
 	require.Equal(t, &want, got.HeightSync)
+	require.Equal(t, req, got.Request)
+}
+
+func TestMarshalWrappedInferenceRequest_PromptIsRawBytes(t *testing.T) {
+	prompt := []byte("<<<chat prompt that must not be base64>>>")
+	req := transport.InferenceRequest{
+		Nonce: 9,
+		Payload: &transport.PayloadJSON{
+			Prompt: prompt,
+			Model:  "Qwen/Test",
+		},
+		Stream: true,
+	}
+
+	raw, err := transport.MarshalWrappedInferenceRequest(transport.CurrentInferenceEnvelopeSchemaVersion, nil, req)
+	require.NoError(t, err)
+
+	var env types.InferenceRequestEnvelope
+	require.NoError(t, proto.Unmarshal(raw, &env))
+	require.Equal(t, prompt, env.GetPrompt())
+	require.NotContains(t, string(env.GetInferenceRequestJson()), base64.StdEncoding.EncodeToString(prompt))
+	require.NotContains(t, string(env.GetInferenceRequestJson()), string(prompt))
+
+	got, err := transport.UnwrapInferenceRequestBody(raw)
+	require.NoError(t, err)
+	require.Equal(t, req, got.Request)
+}
+
+func TestUnwrapInferenceRequestBody_LegacyJSONStillDecodesBase64Prompt(t *testing.T) {
+	req := transport.InferenceRequest{
+		Nonce: 1,
+		Payload: &transport.PayloadJSON{
+			Prompt: []byte("legacy"),
+			Model:  "m",
+		},
+	}
+	raw, err := jsonfast.Marshal(req)
+	require.NoError(t, err)
+
+	got, err := transport.UnwrapInferenceRequestBody(raw)
+	require.NoError(t, err)
+	require.True(t, got.WholeBodyJSON)
 	require.Equal(t, req, got.Request)
 }
 

@@ -22,6 +22,10 @@ type GatewaySessionSnapshot struct {
 	Balance        uint64
 	Phase          string
 	LiveInferences int
+	// OpenHolds counts live inferences that still hold a reservation:
+	// pending/started only. Challenged may invalidate+refund later, but that
+	// path is Phase B and must not gate restart settle the same way.
+	OpenHolds int
 }
 
 type gatewayStatusBody struct {
@@ -32,10 +36,11 @@ type gatewayStatusBody struct {
 }
 
 type gatewayDebugStateBody struct {
-	Nonce          uint64 `json:"nonce"`
-	Balance        uint64 `json:"balance"`
-	Phase          string `json:"phase"`
-	LiveInferences int    `json:"live_inferences"`
+	Nonce            uint64         `json:"nonce"`
+	Balance          uint64         `json:"balance"`
+	Phase            string         `json:"phase"`
+	LiveInferences   int            `json:"live_inferences"`
+	LiveStatusCounts map[string]int `json:"live_status_counts"`
 }
 
 // GetGatewaySessionSnapshot reads /v1/status and /v1/debug/state from devshardctl.
@@ -63,7 +68,20 @@ func GetGatewaySessionSnapshot(t *testing.T, client *http.Client, gatewayURL, ad
 		Balance:        status.Balance,
 		Phase:          status.Phase,
 		LiveInferences: debug.LiveInferences,
+		OpenHolds:      gatewaySessionOpenHolds(debug.LiveStatusCounts),
 	}
+}
+
+// gatewaySessionOpenHolds counts statuses that still hold a reservation.
+// Finished/validated/timed_out/invalidated stay live until auto-seal and are
+// ignored. Challenged is ignored too: ActualCost is already charged, and a
+// later invalidation refund must not block WaitGatewaySessionSettled across a
+// host restart while Phase B is still running.
+func gatewaySessionOpenHolds(statusCounts map[string]int) int {
+	if len(statusCounts) == 0 {
+		return 0
+	}
+	return statusCounts["pending"] + statusCounts["started"]
 }
 
 func getGatewayJSON(t *testing.T, client *http.Client, url, adminAPIKey string, dest any) error {
@@ -97,6 +115,8 @@ type GatewayHostStats struct {
 	Cost                 uint64 `json:"cost"`
 	RequiredValidations  uint32 `json:"required_validations"`
 	CompletedValidations uint32 `json:"completed_validations"`
+	Validated            uint32 `json:"validated"`
+	Finished             uint32 `json:"finished"`
 }
 
 type gatewayStateBody struct {
@@ -219,7 +239,7 @@ func ClearGatewayParticipantQuarantines(t *testing.T, client *http.Client, gatew
 		if p.AvailableForCapacity && !p.Quarantined && !p.Blocked {
 			continue
 		}
-		require.NoError(t, postGatewayJSON(client, gatewayURL+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
+		require.NoError(t, PostGatewayJSON(client, gatewayURL+"/v1/admin/participants/unquarantine", adminAPIKey, map[string]string{
 			"participant_key": p.ParticipantKey,
 		}, nil))
 		cleared++
@@ -275,23 +295,29 @@ func WaitVersiondSessionHealthy(t *testing.T, stack *Stack, cfg *config.File, ep
 }
 
 // WaitGatewaySessionSettled waits until the gateway-visible ledger (balance
-// and nonces) is unchanged across consecutive polls. After a versiond
-// restart, timeout-refunds of reserved tokens can still be landing; taking
-// the "before" snapshot for RequireGatewaySessionAdvanced too early makes a
-// later chat look like it increased the balance.
+// and nonces) is unchanged across consecutive polls and no open holds remain.
+// After a versiond restart, timeout-refunds of reserved tokens and late
+// invalidation refunds can still be landing; taking the "before" snapshot for
+// RequireGatewaySessionAdvanced too early makes a later chat look like it
+// increased the balance.
 //
-// Finished inferences stay in the live map until auto-seal (default every 150
-// nonces), so live_inferences is not a settle signal.
+// Finished/validated/timed_out/challenged rows stay in the live map until
+// auto-seal (default every 150 nonces), so live_inferences is not a settle
+// signal. Only pending/started gate settle: those still hold a reservation.
 func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) GatewaySessionSnapshot {
 	t.Helper()
-	const wait = 30 * time.Second
+	// Cover escrow refusal_timeout (60s in testenv) plus vote round-trip after
+	// hosts recover; a stranded reservation cannot look "quiet" forever.
+	const wait = 90 * time.Second
 	const tick = 200 * time.Millisecond
-	const stablePolls = 10 // ~2s of an unchanged ledger
+	const stablePolls = 15 // ~3s of an unchanged ledger with no open holds
 	var prev *GatewaySessionSnapshot
 	stable := 0
 	ok := AssertEventually(t, wait, tick, func() bool {
 		snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
-		if prev != nil && gatewaySessionLedgerQuiet(*prev, snap) {
+		if snap.OpenHolds > 0 {
+			stable = 0
+		} else if prev != nil && gatewaySessionLedgerQuiet(*prev, snap) {
 			stable++
 		} else {
 			stable = 0
@@ -302,15 +328,15 @@ func WaitGatewaySessionSettled(t *testing.T, client *http.Client, gatewayURL, ad
 	})
 	snap := GetGatewaySessionSnapshot(t, client, gatewayURL, adminAPIKey)
 	if !ok {
-		t.Fatalf("session ledger did not settle in %s: live=%d nonce=%d latest=%d balance=%d",
-			wait, snap.LiveInferences, snap.SessionNonce, snap.LatestNonce, snap.Balance)
+		t.Fatalf("session ledger did not settle in %s: live=%d open_holds=%d nonce=%d latest=%d balance=%d",
+			wait, snap.LiveInferences, snap.OpenHolds, snap.SessionNonce, snap.LatestNonce, snap.Balance)
 	}
 	return snap
 }
 
 // gatewaySessionLedgerQuiet reports whether the restart-sensitive ledger is
 // unchanged. Live inference count is ignored: a Finished record remains live
-// until auto-seal.
+// until auto-seal. Open holds are checked separately by WaitGatewaySessionSettled.
 func gatewaySessionLedgerQuiet(prev, cur GatewaySessionSnapshot) bool {
 	return prev.Balance == cur.Balance &&
 		prev.SessionNonce == cur.SessionNonce &&
@@ -327,7 +353,8 @@ func RequireGatewaySessionAdvanced(t *testing.T, before, after GatewaySessionSna
 	require.GreaterOrEqual(t, after.LatestNonce, before.LatestNonce,
 		"latest nonce regressed: before=%d after=%d", before.LatestNonce, after.LatestNonce)
 	require.LessOrEqual(t, after.Balance, before.Balance,
-		"balance increased after chat (before=%d after=%d)", before.Balance, after.Balance)
+		"balance increased after chat (before=%d after=%d open_holds=%d→%d); late reservation/invalidation refund likely interleaved",
+		before.Balance, after.Balance, before.OpenHolds, after.OpenHolds)
 }
 
 // RequireGatewaySessionStable asserts gateway session identity survived a

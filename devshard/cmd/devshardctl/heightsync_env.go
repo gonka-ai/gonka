@@ -13,26 +13,32 @@ import (
 	"common/chain"
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmclient"
+	"common/chainoracle/blocks/observer"
 	"common/nodemanager"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
+	"devshard/state"
 	"devshard/transport"
+	"devshard/user"
 )
 
 const (
-	envHeightSyncK        = "DEVSHARD_HEIGHTSYNC_K"
-	envHeightSyncSlots    = "DEVSHARD_HEIGHTSYNC_SLOTS"
-	envHeightSyncProbe    = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
-	envLogLevel           = "DEVSHARD_LOG_LEVEL"
-	envRequireHeightSeed  = "DEVSHARD_REQUIRE_HEIGHT_SEED"
-	envGatewayChainOracle = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envHeightSyncK         = "DEVSHARD_HEIGHTSYNC_K"
+	envHeightSyncSlots     = "DEVSHARD_HEIGHTSYNC_SLOTS"
+	envHeightSyncProbe     = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
+	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
+	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
+	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envQuietSettleDelay    = "DEVSHARD_QUIET_SETTLE_DELAY"
 )
 
 type heightSyncProcessState struct {
-	oracle blocks.BlockOracle
-	closer func()
+	oracle      blocks.BlockOracle
+	headerTimes *headertime.Source
+	closer      func()
 }
 
 var (
@@ -40,25 +46,6 @@ var (
 	hsSt   *heightSyncProcessState
 	hsErr  error
 )
-
-// initGatewaySlog raises slog when DEVSHARD_LOG_LEVEL is set.
-// Unset leaves the Go default (Info), matching today's gateway logs.
-func initGatewaySlog() {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envLogLevel)))
-	if raw == "" {
-		return
-	}
-	level := slog.LevelInfo
-	switch raw {
-	case "debug":
-		level = slog.LevelDebug
-	case "warn", "warning":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})))
-}
 
 func parseUintEnv(name string) (uint64, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
@@ -91,22 +78,37 @@ func cometRPCForHeightSync(grpcURL string) string {
 	return chain.RPCURLFromGRPCURL(grpcURL)
 }
 
-// initGatewayHeightSync starts the optional chain follower after the chain
-// client exists. No-op unless DEVSHARD_GATEWAY_CHAIN_ORACLE is on. The
+// initGatewayHeightSync starts the chain follower after the chain client
+// exists. Timeouts and the seal clock read block times through it. The
 // protocol scheduler is always PeerTipOracleSource (extraClientConfigFromEnv).
 func initGatewayHeightSync(chainClient *chain.Client, cometRPC string) error {
-	if !gatewayChainOracleFromEnv() {
-		return nil
-	}
 	_, err := loadHeightSyncProcessState(chainClient, cometRPC)
 	return err
 }
 
+func gatewayHeaderTimeSource(cometRPC string, fallback blocks.BlockOracle) *headertime.Source {
+	if cometRPC != "" {
+		verified, err := observer.NewTendermint(observer.TendermintConfig{RPCURL: cometRPC, VerifyCommits: true})
+		if err == nil {
+			slog.Info("header times verified by commit signatures", "comet_rpc", cometRPC)
+			return headertime.New(verified)
+		}
+		slog.Warn("header times: verifying oracle unavailable", "err", err, "comet_rpc", cometRPC)
+	}
+	slog.Warn("header times are not signature-verified: no Comet RPC for the gateway")
+	return headertime.New(fallback)
+}
+
+func gatewayHeaderTimes() state.HeaderTimeSource {
+	st, err := loadHeightSyncProcessState(nil, effectiveChainRPC())
+	if err != nil || st == nil || st.headerTimes == nil {
+		return nil
+	}
+	return st.headerTimes
+}
+
 func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*heightSyncProcessState, error) {
 	hsOnce.Do(func() {
-		if !gatewayChainOracleFromEnv() {
-			return
-		}
 		if _, err := parseUintEnv(envHeightSyncK); err != nil {
 			hsErr = err
 			return
@@ -157,7 +159,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 				nmClose()
 			}
 		}
-		hsSt = &heightSyncProcessState{oracle: fo, closer: closer}
+		hsSt = &heightSyncProcessState{oracle: fo, headerTimes: gatewayHeaderTimeSource(rpc, fo), closer: closer}
 		slog.Info("height sync chain follower enabled",
 			"node_manager", nmOracle != nil, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
@@ -247,11 +249,40 @@ func requireHeightSeedFromEnv() bool {
 	}
 }
 
+// heightSyncHeartbeatFromEnv is the gateway quiet-session cadence. Only
+// true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
+// any other value leave heartbeats off. The height-seed loop is separate.
+func heightSyncHeartbeatFromEnv() bool {
+	return envBoolOptIn(envHeightSyncHeartbeat)
+}
+
+// quietSettleDelayFromEnv is how long leftover receipt/Finish wait for a
+// successor Start before composing on their own nonce. Unset → production
+// default (5m). Testenv sets DEVSHARD_QUIET_SETTLE_DELAY=5s. Invalid or
+// non-positive values fall back to the production default.
+func quietSettleDelayFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv(envQuietSettleDelay))
+	if raw == "" {
+		return user.DefaultQuietSettleDelay
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid quiet settle delay; using default",
+			"env", envQuietSettleDelay, "value", raw, "default", user.DefaultQuietSettleDelay, "error", err)
+		return user.DefaultQuietSettleDelay
+	}
+	return d
+}
+
 // gatewayChainOracleFromEnv is the optional verification follower. Only
 // true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
 // any other value leave the follower unbuilt.
 func gatewayChainOracleFromEnv() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envGatewayChainOracle)))
+	return envBoolOptIn(envGatewayChainOracle)
+}
+
+func envBoolOptIn(name string) bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	switch raw {
 	case "true", "1", "on":
 		return true

@@ -3,6 +3,7 @@ package protocol
 import (
 	"context"
 	"crypto/sha256"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -160,10 +161,29 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 	require.NotEmpty(t, sigs)
 }
 
+// composedDiffs records every diff the session composes. The session drops
+// the prefix every host has applied, so a test that needs the whole journal
+// reads this copy instead of Session.Diffs.
+func composedDiffs(session *user.Session) func() []types.Diff {
+	var mu sync.Mutex
+	var journal []types.Diff
+	session.SetDiffObserver(func(d types.Diff) {
+		mu.Lock()
+		journal = append(journal, d)
+		mu.Unlock()
+	})
+	return func() []types.Diff {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]types.Diff(nil), journal...)
+	}
+}
+
 func TestProtocol_ReceiptPipelining(t *testing.T) {
 	env := setupEnv(t, 3, 100000, 10)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	// Send 3 inferences.
 	for i := 0; i < 3; i++ {
@@ -171,7 +191,7 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	diffs := env.session.Diffs()
+	diffs := journal()
 	require.Len(t, diffs, 3)
 
 	// Diff at nonce 2 should include MsgConfirmStart for inference 1
@@ -307,13 +327,12 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	// Nonce 2: confirm start.
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: 1, PromptHash: testutil.TestPromptHash[:], Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000, EscrowId: "escrow-1",
-		ConfirmedAt: resp.ConfirmedAt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, EscrowId: "escrow-1",
 	}
 	receiptData, _ := proto.Marshal(receiptContent)
 	receiptSig, _ := hostSigners[1].Sign(receiptData)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: receiptSig, ConfirmedAt: resp.ConfirmedAt,
+		InferenceId: 1, ExecutorSig: receiptSig,
 	}}}
 	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
@@ -360,6 +379,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 	verifier := signing.NewSecp256k1Verifier()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < 3; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -370,7 +390,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	replaySM, err := state.NewStateMachine("escrow-1", env.config, env.group, 100000, env.user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", env.user.Address(), env.config, env.group, 100000))
 	require.NoError(t, err)
 	roots := make(map[uint64][]byte)
-	for _, diff := range env.session.Diffs() {
+	for _, diff := range journal() {
 		root, err := replaySM.ApplyDiff(diff)
 		require.NoError(t, err)
 		roots[diff.Nonce] = root
@@ -452,11 +472,15 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Nonce 1: start inference 1. Executor = slot 1%5 = 1.
-	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	// Send to host 1 (round-robin: nonce 1 % 5 = 1).
+	diffs := floorDiffs(t, userSigner, hostSigners[0], 1, 5, 100)
+	for n := uint64(3); n <= 5; n++ {
+		diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", n, nil))
+	}
+	start := testutil.StartTx(6)
+	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = 100, []byte{0xaa}
+	diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", 6, []*types.DevshardTx{start}))
 	resp, err := hosts[1].HandleRequest(ctx, host.HostRequest{
-		Diffs: []types.Diff{diff1}, Nonce: 1,
+		Diffs: diffs, Nonce: 6,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -464,37 +488,38 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.Receipt)
+	diffs = append(diffs, floorDiffs(t, userSigner, hostSigners[0], 7, 5, 100_000)...)
 
 	// Compose timeout: collect votes from non-executor hosts (slots 0, 2, 3).
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
+		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 6, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
 
-	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{
+	diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", 9, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
-			InferenceId: 1,
+			InferenceId: 6,
 			Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 			Votes:       votes,
 		}}},
-	})
+	}))
 
 	// Apply timeout to host 2.
-	resp, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff1, diff2}, Nonce: 2})
+	_, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: 9})
 	require.NoError(t, err)
 
 	// Verify via a fresh state machine.
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
-	_, err = sm.ApplyDiff(diff1)
-	require.NoError(t, err)
-	_, err = sm.ApplyDiff(diff2)
-	require.NoError(t, err)
+	for _, d := range diffs {
+		_, err = sm.ApplyDiff(d)
+		require.NoError(t, err)
+	}
 
 	st := sm.SnapshotState()
-	require.Equal(t, types.StatusTimedOut, st.Inferences[1].Status)
+	require.Equal(t, types.StatusTimedOut, st.Inferences[6].Status)
 	require.Equal(t, uint32(1), st.HostStats[1].Missed)
 	require.Equal(t, uint64(100000), st.Balance, "balance should be fully restored")
 }
@@ -528,18 +553,19 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	defaultHash := sha256.Sum256([]byte("stub"))
 	defaultResult := devshard.ExecuteResult{
 		ResponseHash: defaultHash[:],
+		ServedHash:   defaultHash[:],
 		InputTokens:  80,
 		OutputTokens: 40,
 	}
 
 	// 6 inferences with different engine outputs.
 	overrides := map[uint64]devshard.ExecuteResult{
-		1: {ResponseHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
-		2: {ResponseHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
-		3: {ResponseHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
-		4: {ResponseHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
-		5: {ResponseHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
-		6: {ResponseHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
+		1: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 50, OutputTokens: 20},
+		2: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 90, OutputTokens: 45},
+		3: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 30, OutputTokens: 10},
+		4: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 100, OutputTokens: 50},
+		5: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 60, OutputTokens: 30},
+		6: {ResponseHash: defaultHash[:], ServedHash: defaultHash[:], InputTokens: 40, OutputTokens: 15},
 	}
 
 	// All 3 hosts share the same configurable engine.
@@ -633,6 +659,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 	env := setupEnv(t, numHosts, 1000000, 100)
 	ctx := context.Background()
 	params := defaultParams()
+	journal := composedDiffs(env.session)
 
 	for i := 0; i < numInferences; i++ {
 		_, err := env.session.SendInference(ctx, params)
@@ -644,7 +671,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 
 	// Total diffs = numInferences + N (Phase A) + 1 (drain). Phase B sends catch-up only.
 	expected := numInferences + numHosts + 1
-	require.Equal(t, expected, len(env.session.Diffs()),
+	require.Equal(t, expected, len(journal()),
 		"total diffs = inferences(%d) + N+1(%d)", numInferences, numHosts+1)
 }
 

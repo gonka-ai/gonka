@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -203,7 +204,7 @@ func TestReleaseRuntimeRetiresAfterDrain(t *testing.T) {
 	_, stillRegistered := g.runtimes["12"]
 	require.True(t, stillRegistered, "busy runtime must stay registered")
 
-	g.releaseRuntime(rt, 0)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 0})
 
 	_, stillRegistered = g.runtimes["12"]
 	require.False(t, stillRegistered, "drained runtime must be retired by releaseRuntime")
@@ -218,7 +219,7 @@ func TestReleaseRuntimeRetiresWithOnlyRetirePending(t *testing.T) {
 	rt.retireReason = "balance exhausted"
 	rt.retirePending.Store(true)
 
-	g.releaseRuntime(rt, 0)
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 0})
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "retire branch must fire on drain")
@@ -233,15 +234,15 @@ func TestReleaseRuntimeDefersWhileRequestsRemain(t *testing.T) {
 	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
 	g, _, settled := gatewayTestDepletionGateway(t, rt)
 
-	g.reserveRuntime(rt, 1)
-	g.reserveRuntime(rt, 1)
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
+	g.reserveRuntime(rt, chatRequestCost{promptTokens: 1})
 	rt.settlementReason = "low_balance"
 	rt.settlementPending.Store(true)
 
-	g.releaseRuntime(rt, 1) // remaining == 1 → quiet
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) // remaining == 1 → quiet
 	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
 
-	g.releaseRuntime(rt, 1) // remaining == 0 → settles once
+	g.releaseRuntime(rt, chatRequestCost{promptTokens: 1}) // remaining == 0 → settles once
 	require.Eventually(t, func() bool { return settled.Load() == 1 }, time.Second, 10*time.Millisecond)
 }
 
@@ -252,12 +253,37 @@ func TestRetireRotatedDevshardRetiresWithoutSettlement(t *testing.T) {
 	g, _ := newRetireTestGateway("12")
 	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{SettlementEnabled: false}}
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.False(t, settled)
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "no-settle rotation must retire the runtime")
+}
+
+func TestRetireRotatedDevshardHonorsAModelThatDisablesSettlement(t *testing.T) {
+	// Test flow:
+	// 1. Enable settlement globally but disable it for the rotated escrow's model.
+	// 2. Retire the rotated escrow.
+	// 3. It is retired without a settlement broadcast.
+	g, _ := newRetireTestGateway("12")
+	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{
+		SettlementEnabled: true,
+		Models:            []EscrowRotationModelSettings{{ModelID: "m", SettlementEnabled: boolPtr(false)}},
+	}}
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		t.Fatal("a model that opted out of settlement must not be settled")
+		return nil, nil
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
+
+	require.NoError(t, err)
+	require.False(t, settled)
+	_, stillRegistered := g.runtimes["12"]
+	require.False(t, stillRegistered)
 }
 
 func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
@@ -270,7 +296,7 @@ func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
 	}
 	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.True(t, settled)
 
@@ -294,7 +320,7 @@ func TestRetireRotatedDevshardRetiresAfterSettlement(t *testing.T) {
 	}
 	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
 
-	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "m", "rotated", settings)
 	require.NoError(t, err)
 	require.True(t, settled)
 
@@ -359,11 +385,11 @@ func TestSettleTerminalErrKeepsCauseWhenChainUnreachable(t *testing.T) {
 // The auto-settle terminal branch must persist the deactivation, otherwise the
 // stored row stays Active for an escrow the chain considers finished.
 func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:    "http://node:1317",
 		PublicAPI:    "http://api:9000",
 		DefaultModel: "Qwen/Test",
@@ -383,10 +409,134 @@ func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing
 	g.scheduleAutoSettlement("12", "test")
 
 	require.Eventually(t, func() bool {
-		state, ok, err := store.LoadState()
+		state, ok, err := store.LoadState(context.Background())
 		if err != nil || !ok || len(state.Devshards) == 0 {
 			return false
 		}
 		return !state.Devshards[0].Active
 	}, 5*time.Second, 20*time.Millisecond, "already-settled escrow must be persisted inactive")
+}
+
+func TestRetireRuntimeDropsSlotDecisionSeries(t *testing.T) {
+	m := NewDevshardMetrics()
+	g, _ := newRetireTestGateway("12")
+	g.metrics = m
+	m.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: "participant-1",
+		Model:          "Qwen/Test",
+		EscrowID:       "12",
+		Decision:       "real_send",
+		Reason:         "primary",
+		QuarantineMode: "none",
+	})
+
+	require.True(t, g.retireRuntime("12", "test"))
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "12"})
+}
+
+func writeEpochSessionFiles(t *testing.T, dir string, epochs ...uint64) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "_meta.db"), nil, 0o600))
+	for _, epoch := range epochs {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("epoch_%d.db", epoch)), nil, 0o600))
+	}
+}
+
+// newStorageRetentionTestGateway builds a gateway at epoch 10 (cutoff 8) with devshards in its registry and runtimes registered.
+func newStorageRetentionTestGateway(t *testing.T, baseDir string, devshards []GatewayDevshardState, runtimes ...*devshardRuntime) *Gateway {
+	t.Helper()
+	store, err := NewSQLiteGatewayStore(filepath.Join(baseDir, "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "m"}, devshards))
+
+	g := &Gateway{
+		runtimes:         make(map[string]*devshardRuntime, len(runtimes)),
+		rotationBreakers: make(map[string]*rotationBreaker),
+		phaseGate:        &ChainPhaseGate{},
+		store:            store,
+		baseStorageDir:   baseDir,
+	}
+	for _, runtime := range runtimes {
+		g.runtimes[runtime.id] = runtime
+		g.runtimeOrder = append(g.runtimeOrder, runtime)
+	}
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 10})
+	return g
+}
+
+// Test flow:
+//  1. Register devshards at epochs 6, 7, 7 (its settling runtime still registered), 7 (awaiting settlement), 7+8 and 8, and put a foreign epoch-6 store in the same base directory.
+//  2. Run the retention pass twice at current epoch 10 (cutoff 8).
+//  3. Require only the unregistered, settled directories whose newest epoch is below 8 to be gone, and the second pass to change nothing.
+func TestRetireExpiredEpochEscrowsRemovesExpiredSessionDirs(t *testing.T) {
+	baseDir := t.TempDir()
+	expiredDir := defaultStoragePath(baseDir, "6")
+	lastExpiredDir := filepath.Join(baseDir, "custom-7")
+	registeredDir := defaultStoragePath(baseDir, "registered")
+	awaitingSettlementDir := defaultStoragePath(baseDir, "awaiting-settlement")
+	mixedDir := defaultStoragePath(baseDir, "mixed")
+	retainedDir := defaultStoragePath(baseDir, "8")
+	foreignDir := filepath.Join(baseDir, "devshard-9")
+	writeEpochSessionFiles(t, expiredDir, 6)
+	writeEpochSessionFiles(t, lastExpiredDir, 7)
+	writeEpochSessionFiles(t, registeredDir, 7)
+	writeEpochSessionFiles(t, awaitingSettlementDir, 7)
+	writeEpochSessionFiles(t, mixedDir, 7, 8)
+	writeEpochSessionFiles(t, retainedDir, 8)
+	writeEpochSessionFiles(t, foreignDir, 6)
+
+	settlingRuntime := &devshardRuntime{id: "registered", creationEpoch: 7}
+	settlingRuntime.settlementPending.Store(true)
+	g := newStorageRetentionTestGateway(t, baseDir, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "6", StoragePath: expiredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "7", StoragePath: lastExpiredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "registered", StoragePath: registeredDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "awaiting-settlement", StoragePath: awaitingSettlementDir}, SettlementPending: true},
+		{RuntimeConfig: RuntimeConfig{ID: "mixed", StoragePath: mixedDir}},
+		{RuntimeConfig: RuntimeConfig{ID: "8", StoragePath: retainedDir}},
+	}, settlingRuntime)
+
+	for range 2 {
+		g.retireExpiredEpochEscrows()
+
+		require.NoDirExists(t, expiredDir)
+		require.NoDirExists(t, lastExpiredDir)
+		require.DirExists(t, registeredDir, "a registered runtime still owns its store")
+		require.DirExists(t, awaitingSettlementDir, "an unsettled escrow keeps its store for manual recovery")
+		require.DirExists(t, mixedDir, "epoch 8 is retained")
+		require.DirExists(t, retainedDir)
+		require.DirExists(t, foreignDir, "a store outside the gateway registry is not ours to drop")
+	}
+}
+
+// Test flow:
+//  1. Keep an expired directory alive through a registered settlement-pending runtime and run the retention pass at epoch 10.
+//  2. Retire the runtime, run the pass again at epoch 10, then at epoch 11.
+//  3. Require the directory to survive until the cutoff advances, since each cutoff is pruned once.
+func TestRetireExpiredEpochEscrowsRemovesHeldDirAtNextCutoff(t *testing.T) {
+	baseDir := t.TempDir()
+	settlingDir := defaultStoragePath(baseDir, "settling")
+	writeEpochSessionFiles(t, settlingDir, 7)
+
+	settlingRuntime := &devshardRuntime{id: "settling", creationEpoch: 7}
+	settlingRuntime.settlementPending.Store(true)
+	g := newStorageRetentionTestGateway(t, baseDir, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "settling", StoragePath: settlingDir}},
+	}, settlingRuntime)
+
+	g.retireExpiredEpochEscrows()
+	require.DirExists(t, settlingDir)
+
+	g.retireRuntime(settlingRuntime.id, "settled")
+	g.retireExpiredEpochEscrows()
+	require.DirExists(t, settlingDir, "cutoff 8 was already pruned")
+
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochIndex: 11})
+	g.retireExpiredEpochEscrows()
+	require.NoDirExists(t, settlingDir)
 }

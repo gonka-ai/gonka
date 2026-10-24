@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v5"
+const DevshardStateRootAndProtocolVersion = "v6"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -46,24 +46,26 @@ const (
 
 // InferenceRecord tracks the state of a single inference within a session.
 type InferenceRecord struct {
-	Status            InferenceStatus `json:"status"`
-	ExecutorSlot      uint32          `json:"executor_slot"`
-	Model             string          `json:"model"`
-	PromptHash        []byte          `json:"prompt_hash"`
-	ResponseHash      []byte          `json:"response_hash,omitempty"`
-	InputLength       uint64          `json:"input_length"`
-	MaxTokens         uint64          `json:"max_tokens"`
-	InputTokens       uint64          `json:"input_tokens,omitempty"`
-	OutputTokens      uint64          `json:"output_tokens,omitempty"`
-	ReservedCost      uint64          `json:"reserved_cost"`
-	ActualCost        uint64          `json:"actual_cost,omitempty"`
-	StartedAt         int64           `json:"started_at"`
-	ConfirmedAt       int64           `json:"confirmed_at,omitempty"`
-	StartedAtHeight   uint64          `json:"started_at_height,omitempty"`
-	ConfirmedAtHeight uint64          `json:"confirmed_at_height,omitempty"`
-	VotesValid        uint32          `json:"votes_valid,omitempty"`
-	VotesInvalid      uint32          `json:"votes_invalid,omitempty"`
-	ValidatedBy       Bitmap128       `json:"validated_by,omitempty"`
+	Status             InferenceStatus `json:"status"`
+	ExecutorSlot       uint32          `json:"executor_slot"`
+	Model              string          `json:"model"`
+	PromptHash         []byte          `json:"prompt_hash"`
+	ResponseHash       []byte          `json:"response_hash,omitempty"`
+	ServedHash         []byte          `json:"served_hash,omitempty"`
+	InputLength        uint64          `json:"input_length"`
+	MaxTokens          uint64          `json:"max_tokens"`
+	InputTokens        uint64          `json:"input_tokens,omitempty"`
+	OutputTokens       uint64          `json:"output_tokens,omitempty"`
+	ReservedCost       uint64          `json:"reserved_cost"`
+	ActualCost         uint64          `json:"actual_cost,omitempty"`
+	StartedAtHeight    uint64          `json:"started_at_height,omitempty"`
+	StartedAtBlockHash []byte          `json:"started_at_block_hash,omitempty"`
+	ConfirmedAtHeight  uint64          `json:"confirmed_at_height,omitempty"`
+	StartedAtTimeMs    int64           `json:"started_at_time_ms,omitempty"`
+	ConfirmedAtTimeMs  int64           `json:"confirmed_at_time_ms,omitempty"`
+	VotesValid         uint32          `json:"votes_valid,omitempty"`
+	VotesInvalid       uint32          `json:"votes_invalid,omitempty"`
+	ValidatedBy        Bitmap128       `json:"validated_by,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -73,6 +75,8 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+	Validated            uint32
+	Finished             uint32
 }
 
 // ProtocolVersion identifies the gateway/runtime protocol version for
@@ -86,7 +90,8 @@ const (
 	ProtocolV4             ProtocolVersion = "4"
 	ProtocolV41            ProtocolVersion = "4.1"
 	ProtocolV5             ProtocolVersion = "5"
-	DefaultProtocolVersion                 = ProtocolV5
+	ProtocolV6             ProtocolVersion = "6"
+	DefaultProtocolVersion                 = ProtocolV6
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
@@ -143,9 +148,9 @@ type SessionConfig struct {
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold             uint32
-	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces  uint32
+	VoteThreshold            uint32
+	ValidationRate           uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces uint32
 	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32

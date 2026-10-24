@@ -33,14 +33,14 @@ func errorMissPayload(t *testing.T) []byte {
 
 func startPendingConfirmForErrorMiss(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, params InferenceParams) (nonce uint64, execIdx int) {
 	t.Helper()
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	nonce = prepared.diff.Nonce
 	execIdx = int(nonce % uint64(len(session.clients)))
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: nonce, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: nonce, ExecutorSig: execSig,
 	}}}
 	session.mu.Lock()
 	session.addPendingTx(confirm)
@@ -90,7 +90,7 @@ func (c *applyingErrorMissClient) VerifyErrorMiss(_ context.Context, inferenceID
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
-	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	if err != nil {
 		return false, nil, 0, nil, "", err
 	}
@@ -119,7 +119,7 @@ func signedErrorFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce u
 	hash := sum[:]
 	msg := &types.MsgFinishInference{
 		InferenceId:  nonce,
-		ResponseHash: hash,
+		ResponseHash: hash, ServedHash: testutil.TestServedHash,
 		InputTokens:  0,
 		OutputTokens: 0,
 		ExecutorSlot: uint32(execIdx),
@@ -259,7 +259,7 @@ func TestPinPendingFinish_ConcurrentComposeLeavesFinish(t *testing.T) {
 
 	next := params
 	next.Prompt = bytes.ReplaceAll(testutil.TestPrompt, []byte("xxxxxxxxxxxxxxxxxxxxxxxxx"), []byte("other concurrent prompt xx"))
-	_, err := session.PrepareInference(next)
+	_, err := session.PrepareInference(context.Background(), next)
 	require.NoError(t, err)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce), "pinned Finish must survive PrepareInference")
 }
@@ -287,7 +287,7 @@ func TestPinnedNonce_HoldsTimeoutUntilIncluded(t *testing.T) {
 
 	next := params
 	next.Prompt = bytes.ReplaceAll(testutil.TestPrompt, []byte("xxxxxxxxxxxxxxxxxxxxxxxxx"), []byte("other concurrent prompt xx"))
-	_, err := session.PrepareInference(next)
+	_, err := session.PrepareInference(context.Background(), next)
 	require.NoError(t, err)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce))
 	require.NotNil(t, findPendingErrorMiss(session.PendingTxs(), nonce), "pinned ErrorMiss must survive PrepareInference")
@@ -471,7 +471,7 @@ func TestProcessResponse_TimedOutNonceDoesNotRefinish(t *testing.T) {
 
 func TestMarshalFinishTx(t *testing.T) {
 	require.Nil(t, MarshalFinishTx(nil, 1))
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}}
 	got := MarshalFinishTx([]*types.DevshardTx{nil, tx}, 7)
 	require.NotEmpty(t, got)
 	decoded := &types.DevshardTx{}
@@ -482,7 +482,7 @@ func TestMarshalFinishTx(t *testing.T) {
 
 func TestFinishTxFor_MarshalsUnderLock(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
-	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}}
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}}
 	session.mu.Lock()
 	session.addPendingTx(tx)
 	session.mu.Unlock()
@@ -497,7 +497,7 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 	const n = 8
 	for i := 0; i < n; i++ {
 		session.mu.Lock()
-		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(200 + i)}}})
+		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: uint64(200 + i)}}})
 		session.mu.Unlock()
 	}
 
@@ -513,7 +513,7 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 		defer wg.Done()
 		for i := 0; i < 40; i++ {
 			session.mu.Lock()
-			session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(300 + i)}}})
+			session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: uint64(300 + i)}}})
 			session.mu.Unlock()
 			_ = session.SendPendingDiff(ctx)
 		}
