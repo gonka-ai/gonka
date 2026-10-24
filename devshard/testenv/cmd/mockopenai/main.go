@@ -83,6 +83,22 @@ func faultsFromEnv() mockopenai.FaultConfig {
 			f.StreamChunkDelay = d
 		}
 	}
+	// The *_P99 values switch TTFT and token interval to seeded lognormal draws.
+	if v := os.Getenv("MOCK_OPENAI_TTFT_P99"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.StreamFirstTokenP99 = d
+		}
+	}
+	if v := os.Getenv("MOCK_OPENAI_TOKEN_INTERVAL_P99"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			f.StreamChunkP99 = d
+		}
+	}
+	if v := os.Getenv("MOCK_OPENAI_JITTER_SEED"); v != "" {
+		if seed, err := strconv.ParseUint(v, 10, 64); err == nil {
+			f.JitterSeed = seed
+		}
+	}
 	if envTruthy("MOCK_OPENAI_HANG") {
 		f.Hang = true
 	}
