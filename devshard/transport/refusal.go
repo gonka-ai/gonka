@@ -31,13 +31,10 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	if sh, ok := executor.(host.SessionTip); ok {
 		tip = sh
 	}
-	query, verify := 30*time.Second, host.RefusalVerifyBudget
+	query, verify := 30*time.Second, timeoutVerifyBudget(executor)
 	if budgets, ok := executor.(refusalBudgetClient); ok {
 		if d := budgets.RefusalQueryBudget(); d > 0 && d < query {
 			query = d
-		}
-		if d := budgets.RefusalVerifyBudget(); d > 0 && d < verify {
-			verify = d
 		}
 	}
 	var journal host.RefusalJournal
@@ -46,6 +43,25 @@ func (s *Server) verifyRefusedTimeout(ctx context.Context, st types.EscrowState,
 	}
 	ctx = host.WithColdWalk(ctx, s.coldWalks, executorAddr)
 	return host.VerifyRefusedProgress(ctx, st, inferenceID, rec, payload, mempool, executor, s.host, s.host, tip, journal, query, verify, executorUnreachable)
+}
+
+// timeoutVerifyBudget is RefusalVerifyBudget, or the peer client's shorter one.
+func timeoutVerifyBudget(executor host.ExecutorClient) time.Duration {
+	verify := host.RefusalVerifyBudget
+	if budgets, ok := executor.(refusalBudgetClient); ok {
+		if d := budgets.RefusalVerifyBudget(); d > 0 && d < verify {
+			verify = d
+		}
+	}
+	return verify
+}
+
+// verifyExecutionTimeout bounds the executor challenge like a refused check,
+// so an executor holding it open is unreachable before the gateway's vote deadline.
+func (s *Server) verifyExecutionTimeout(ctx context.Context, st types.EscrowState, inferenceID uint64, rec *types.InferenceRecord, mempool []*types.DevshardTx, executor host.ExecutorClient) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeoutVerifyBudget(executor))
+	defer cancel()
+	return host.VerifyExecutionTimeout(ctx, st, inferenceID, rec, mempool, executor, s.host, s.host)
 }
 
 type refusalJournal struct {
