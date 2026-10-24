@@ -2763,8 +2763,14 @@ func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetI
 func TestRunInference_AHostThatHangsAfterItsReceiptIsStruck(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 20*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+	hang := &receiptThenHangClient{}
 	env := setupTestProxy(t, 2, nil, true)
-	env.killables[0].inner = receiptThenHangClient{}
+	hang.receipt = func(nonce uint64) *host.HostResponse {
+		resp := applicableResponse(t, env, nonce)
+		resp.Mempool = nil
+		return resp
+	}
+	env.killables[0].inner = hang
 	redundancy := env.proxy.redundancy
 	redundancy.participantLimiter = NewParticipantRequestLimiter(100, 100)
 	params := defaultParams()

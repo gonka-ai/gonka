@@ -29,7 +29,7 @@ func TestAnAttemptTheGatewayEndedInsideItsBudgetIsNotChargedToItsHost(t *testing
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			env := setupTestProxyWithClients(t, []user.HostClient{receiptThenHangClient{}, receiptThenHangClient{}})
+			env := setupTestProxyWithClients(t, []user.HostClient{&receiptThenHangClient{}, &receiptThenHangClient{}})
 			redundancy := env.proxy.redundancy
 			redundancy.participantLimiter = NewParticipantRequestLimiter(100, 100)
 			participantKey := redundancy.participantKeyForHost(0)
