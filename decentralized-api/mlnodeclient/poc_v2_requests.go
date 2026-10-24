@@ -11,11 +11,37 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// DecodeSpherePoints is the decode snap codebook size. Packed steps are k ∈ [0, DecodeSpherePoints).
+// Must match the plugin codebook (gonka_poc SPHERE_POINTS). Wire is still one byte.
+const DecodeSpherePoints = 16
+
+// PoCCallbackBase separates permanent DECODE callbacks from transitional PREFILL.
+func PoCCallbackBase(base string, scheme types.PocScheme) string {
+	if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		return base + "/v3/poc-batches"
+	}
+	return base + "/v2/poc-batches"
+}
+
 // PoCParamsV2 contains model-specific parameters for PoC v2 generation/validation.
 type PoCParamsV2 struct {
 	Model  string `json:"model"`
 	SeqLen int64  `json:"seq_len"`
+	// Decode scheme and its step count; absent => prefill scheme, as before.
+	Decode    bool  `json:"decode,omitempty"`
+	MaxTokens int64 `json:"max_tokens,omitempty"`
 	// k_dim is intentionally omitted - MLNode will use its default
+}
+
+// PoCParamsForScheme is the MLNode params for one frozen scheme block.
+// seqLen and decodeSteps are copied from that block. Only Decode is set from the scheme.
+func PoCParamsForScheme(model string, seqLen, decodeSteps int64, scheme types.PocScheme) PoCParamsV2 {
+	return PoCParamsV2{
+		Model:     model,
+		SeqLen:    seqLen,
+		MaxTokens: decodeSteps,
+		Decode:    scheme == types.PocScheme_POC_SCHEME_DECODE,
+	}
 }
 
 // PoCInitGenerateRequestV2 represents the request body for /api/v1/inference/pow/init/generate.
@@ -57,10 +83,12 @@ type ValidationV2 struct {
 }
 
 // StatTestParamsV2 contains optional statistical test parameters for validation.
+// The chain's p_value_threshold goes out as fraud_threshold, the name MLNode reads; under any other
+// name MLNode drops it and tests at its own default of 0.01.
 type StatTestParamsV2 struct {
 	DistThreshold   float64 `json:"dist_threshold,omitempty"`
 	PMismatch       float64 `json:"p_mismatch,omitempty"`
-	PValueThreshold float64 `json:"p_value_threshold,omitempty"`
+	PValueThreshold float64 `json:"fraud_threshold,omitempty"`
 }
 
 // Default stat test parameter values.

@@ -120,6 +120,15 @@ func (e *EpochMLNodeData) ForModel(modelId string) *EpochMLNodeData {
 
 func sortMLNodesByNodeId(nodes []*types.MLNodeInfo) {
 	slices.SortFunc(nodes, func(a, b *types.MLNodeInfo) int {
+		if a == nil || b == nil {
+			if a == b {
+				return 0
+			}
+			if a == nil {
+				return -1
+			}
+			return 1
+		}
 		if a.NodeId < b.NodeId {
 			return -1
 		}
@@ -505,9 +514,9 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		var declaredModelsByNode map[string][]string
 		if found {
 			declaredModelsByNode = supportedModelsByNode(hardwareNodes, governanceModels)
-			for _, nodeId := range sortedKeys(declaredModelsByNode) {
-				ma.LogInfo("Supported models by node", types.Allocation, "flow_context", FlowContext, "step", "supported_models_by_node", "node_id", nodeId, "supported_models", declaredModelsByNode[nodeId])
-			}
+			ma.LogInfo("Supported models by node", types.Allocation,
+				"flow_context", FlowContext, "step", "supported_models_by_node",
+				"participant_index", p.Index, "nodeCount", len(declaredModelsByNode))
 		} else {
 			// Hardware not registered yet (e.g. genesis bootstrap race). The
 			// compatibility filter is skipped, but single assignment below still
@@ -521,12 +530,12 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 		if len(ambiguous) > 0 {
 			ma.LogWarn("Dropping ML nodes with conflicting validated model claims (one ML node serves one model)", types.Allocation,
 				"flow_context", FlowContext, "step", "ambiguous_nodes_drop",
-				"participant_index", p.Index, "node_ids", ambiguous)
+				"participant_index", p.Index, "nodeCount", len(ambiguous))
 		}
 		if len(incompatible) > 0 {
 			ma.LogWarn("Dropping validated claims not declared by the hardware inventory", types.Allocation,
 				"flow_context", FlowContext, "step", "hardware_filter_drop",
-				"participant_index", p.Index, "dropped_claims", incompatible)
+				"participant_index", p.Index, "droppedClaimCount", len(incompatible))
 		}
 
 		keptByModel := make(map[string][]*types.MLNodeInfo, len(validated))
@@ -564,19 +573,27 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 			}
 			supportedModels = append(supportedModels, modelId)
 			newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: modelMLNodes})
-			ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", modelId, "assigned_nodes", modelMLNodes)
+			ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", modelId, "assignedNodeCount", len(modelMLNodes))
 		}
 
 		if len(incompatible) > 0 || len(ambiguous) > 0 {
 			ma.LogWarn("Participant lost validated ML nodes during seating", types.Allocation,
 				"flow_context", FlowContext, "step", "seating_drop_summary",
-				"participant_index", p.Index, "incompatible", incompatible,
-				"ambiguous", ambiguous, "remaining_models", supportedModels)
+				"participant_index", p.Index, "incompatibleCount", len(incompatible),
+				"ambiguousCount", len(ambiguous), "remainingModelCount", len(supportedModels))
 		}
 
 		p.MlNodes = newMLNodeArrays
 		p.Models = supportedModels
-		ma.LogInfo("Participant models and ML nodes updated", types.Allocation, "flow_context", FlowContext, "step", "participant_updated", "participant_index", p.Index, "supported_models", p.Models, "ml_nodes", p.MlNodes)
+		seatedNodeCount := 0
+		for _, bucket := range p.MlNodes {
+			if bucket != nil {
+				seatedNodeCount += len(bucket.MlNodes)
+			}
+		}
+		ma.LogInfo("Participant models and ML nodes updated", types.Allocation,
+			"flow_context", FlowContext, "step", "participant_updated",
+			"participant_index", p.Index, "supportedModelCount", len(p.Models), "mlNodeCount", seatedNodeCount)
 	}
 	ma.LogInfo("Finished model assignment for all participants", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete")
 }
@@ -738,7 +755,9 @@ func (ma *ModelAssigner) calculateThresholds(currentEpochData *EpochMLNodeData, 
 	participantMinNodeWeightThresholds, participantNodeCounts := calculatePerParticipantThreshold(currentEpochData, participantWeightThreshold, participantVotingPowersPerModel)
 	ma.LogInfo("Calculated per-participant node thresholds (25% rule)", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_per_participant_thresholds", "total_participants", len(participantMinNodeWeightThresholds))
 
-	allNodesWeights := currentEpochData.GetAllIndividualNodeWeights()
+	// Quartile input is one median positive node weight per participant.
+	// Per-participant 25% thresholds stay on that participant's own nodes.
+	allNodesWeights := GetParticipantMedianNodeWeights(currentEpochData)
 	globalMaxNodeWeightThreshold := calculateNodeWeightThresholdIQR(allNodesWeights)
 	ma.LogInfo("Calculated node weight threshold (IQR method)", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "calculate_node_threshold", "threshold", globalMaxNodeWeightThreshold, "total_nodes", len(allNodesWeights))
 
@@ -878,12 +897,26 @@ func (ma *ModelAssigner) samplePreservedForModel(
 ) map[string]map[string]struct{} {
 	allocated := make(map[string]map[string]struct{})
 
-	totalWeight := currentEpochData.GetTotalWeightForModel(modelId)
+	totalWeight := positiveModelWeight(currentEpochData, modelId)
 	targetPoCWeight := fraction.ToDecimal().Mul(decimal.NewFromInt(totalWeight)).IntPart()
 
 	eligibleParticipantAddrs := sortedKeys(eligibleNodesData.GetForModel(modelId))
 	if len(eligibleParticipantAddrs) == 0 {
 		return allocated
+	}
+
+	// Clone and sort each participant's positive nodes once. The cursor only
+	// moves forward, so allocation after the sorts is linear in the nodes walked.
+	cursors := make([]preservedNodeCursor, len(eligibleParticipantAddrs))
+	for i, participantAddr := range eligibleParticipantAddrs {
+		nodes := positiveWeightMLNodes(eligibleNodesData.GetForParticipant(modelId, participantAddr))
+		slices.SortFunc(nodes, func(a, b *types.MLNodeInfo) int {
+			return cmp.Or(
+				cmp.Compare(a.PocWeight, b.PocWeight),
+				cmp.Compare(a.NodeId, b.NodeId),
+			)
+		})
+		cursors[i] = preservedNodeCursor{nodes: nodes}
 	}
 
 	var currentWeight int64
@@ -893,9 +926,7 @@ func (ma *ModelAssigner) samplePreservedForModel(
 
 	for currentWeight < targetPoCWeight {
 		participantAddr := eligibleParticipantAddrs[currentParticipantIdx]
-		nodes := eligibleNodesData.GetForParticipant(modelId, participantAddr)
-
-		nextMLNode := getSmallestUnallocatedMLNode(nodes, allocated[participantAddr])
+		nextMLNode := cursors[currentParticipantIdx].next()
 		if nextMLNode == nil {
 			currentParticipantIdx = (currentParticipantIdx + 1) % len(eligibleParticipantAddrs)
 			if currentParticipantIdx == 0 {
@@ -930,6 +961,81 @@ func (ma *ModelAssigner) samplePreservedForModel(
 		"achieved_weight", currentWeight,
 		"num_preserved", totalAllocated)
 	return allocated
+}
+
+type preservedNodeCursor struct {
+	nodes  []*types.MLNodeInfo
+	cursor int
+}
+
+func (c *preservedNodeCursor) next() *types.MLNodeInfo {
+	if c == nil || c.cursor >= len(c.nodes) {
+		return nil
+	}
+	node := c.nodes[c.cursor]
+	c.cursor++
+	return node
+}
+
+// positiveWeightMLNodes returns a new slice of nodes with positive PocWeight.
+// The caller's slice is not modified.
+func positiveWeightMLNodes(nodes []*types.MLNodeInfo) []*types.MLNodeInfo {
+	if len(nodes) == 0 {
+		return nil
+	}
+	out := make([]*types.MLNodeInfo, 0, len(nodes))
+	for _, node := range nodes {
+		if node == nil || node.PocWeight <= 0 {
+			continue
+		}
+		out = append(out, node)
+	}
+	return out
+}
+
+// GetParticipantMedianNodeWeights returns one median positive node weight per
+// participant. Nil and non-positive nodes are ignored. Participants with no
+// positive nodes are omitted. The median of an even count is the lower of the
+// two middle values.
+func GetParticipantMedianNodeWeights(epochData *EpochMLNodeData) []int64 {
+	if epochData == nil {
+		return nil
+	}
+	byParticipant := make(map[string][]int64)
+	for _, modelId := range sortedKeys(epochData.data) {
+		for _, participantAddr := range sortedKeys(epochData.data[modelId]) {
+			for _, node := range positiveWeightMLNodes(epochData.data[modelId][participantAddr]) {
+				byParticipant[participantAddr] = append(byParticipant[participantAddr], node.PocWeight)
+			}
+		}
+	}
+	medians := make([]int64, 0, len(byParticipant))
+	for _, participantAddr := range sortedKeys(byParticipant) {
+		medians = append(medians, medianInt64(byParticipant[participantAddr]))
+	}
+	return medians
+}
+
+func medianInt64(weights []int64) int64 {
+	if len(weights) == 0 {
+		return 0
+	}
+	sorted := append([]int64(nil), weights...)
+	slices.Sort(sorted)
+	return sorted[(len(sorted)-1)/2]
+}
+
+func positiveModelWeight(epochData *EpochMLNodeData, modelId string) int64 {
+	if epochData == nil {
+		return 0
+	}
+	var total int64
+	for _, nodes := range epochData.GetForModel(modelId) {
+		for _, node := range positiveWeightMLNodes(nodes) {
+			total += node.PocWeight
+		}
+	}
+	return total
 }
 
 func getSmallestUnallocatedMLNode(nodes []*types.MLNodeInfo, allocated map[string]struct{}) *types.MLNodeInfo {
@@ -1128,7 +1234,7 @@ func calculatePerParticipantThreshold(epochData *EpochMLNodeData, participantWei
 		for _, modelId := range sortedKeys(epochData.data) {
 			modelData := epochData.data[modelId]
 			if nodes, ok := modelData[participantAddr]; ok {
-				for _, node := range nodes {
+				for _, node := range positiveWeightMLNodes(nodes) {
 					nodeWeights = append(nodeWeights, node.PocWeight)
 				}
 			}
@@ -1189,14 +1295,11 @@ func calculateNodeWeightThresholdIQR(weights []int64) int64 {
 func filterNodesByWeightAndCount(nodes []*types.MLNodeInfo, threshold int64, targetCount int) []*types.MLNodeInfo {
 	filtered := make([]*types.MLNodeInfo, 0, len(nodes))
 
-	// First apply weight filtering
-	if threshold == 0 {
-		filtered = append(filtered, nodes...)
-	} else {
-		for _, node := range nodes {
-			if node.PocWeight <= threshold {
-				filtered = append(filtered, node)
-			}
+	// Nil and non-positive legacy rows are not eligible. threshold=0 still
+	// keeps every positive node.
+	for _, node := range positiveWeightMLNodes(nodes) {
+		if threshold == 0 || node.PocWeight <= threshold {
+			filtered = append(filtered, node)
 		}
 	}
 
