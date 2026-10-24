@@ -5,37 +5,22 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
-	"sync/atomic"
+
+	"devshard/host"
 )
 
-// ChatGzipCoalesceBytes is the aggregation cut: about five vLLM token events
-// (id, object, created, model, delta). BestSpeed keeps its match table from
-// 128 bytes up; this cut is larger so one Huffman tree covers those tokens.
-// The default is per token. SetChatGzipCoalesce(ChatGzipCoalesceBytes) packs
-// later events to this size. The first model token still leaves on its own.
-// chatGzipCoalesceMax bounds a stream that never sends a blank line.
-const (
-	ChatGzipCoalesceBytes = 1024
-	chatGzipCoalesceMax   = 16 << 10
-)
+// chatGzipCoalesceMax bounds pending bytes, so a stream that never sends a
+// blank line still leaves.
+const chatGzipCoalesceMax = 16 << 10
 
-// chatGzipCoalesceMin is the live cut. Zero flushes every finished SSE event.
-var chatGzipCoalesceMin atomic.Int32
+// chatGzipLevel is the lowest level that keeps the 32 KiB window across a sync
+// flush. BestSpeed starts each flushed block with an empty window, so a token
+// can match only within its own frame and a per-event flush pays for the
+// repeated id, object, created and model every time. Flush still ends the
+// block, so a frame is readable the moment it is sent.
+const chatGzipLevel = 2
 
-// SetChatGzipCoalesce sets the uncompressed cut for frames after the first
-// token. Zero is per token. ChatGzipCoalesceBytes packs about five tokens.
-func SetChatGzipCoalesce(n int) {
-	if n < 0 {
-		n = 0
-	}
-	chatGzipCoalesceMin.Store(int32(n))
-}
-
-func chatGzipCut() int {
-	return int(chatGzipCoalesceMin.Load())
-}
-
-// ChatGzipEmitter is one gzip.Writer (BestSpeed). Concatenating chunks
+// ChatGzipEmitter is one gzip.Writer (chatGzipLevel). Concatenating chunks
 // reconstitutes the stream. Close with no Write emits nothing so a handler
 // error before the first event is zero frames, not an empty gzip member.
 type ChatGzipEmitter struct {
@@ -47,7 +32,7 @@ type ChatGzipEmitter struct {
 
 func NewChatGzipEmitter(send func([]byte) error) *ChatGzipEmitter {
 	e := &ChatGzipEmitter{send: send}
-	e.gz, _ = gzip.NewWriterLevel(&e.buf, gzip.BestSpeed)
+	e.gz, _ = gzip.NewWriterLevel(&e.buf, chatGzipLevel)
 	return e
 }
 
@@ -105,35 +90,68 @@ func (e *ChatGzipEmitter) emit() error {
 // The executor still flushes every scanner line, so one token is two writes:
 // the data line, then a blank line. The data-line flush is not a frame. The
 // blank line finishes that same event, and the two lines leave together.
-// With the default cut of zero, that finished event is one gzip frame.
-// SetChatGzipCoalesce raises the cut. Then this sink holds flushes and emits
-// one gzip block when:
-//   - the receipt has already left (FlushNow) and the next finished SSE
-//     event is the first model token: that event leaves immediately, even
-//     under 128 bytes, so the gateway can time it, or
-//   - pending uncompressed bytes reach the cut and end on an SSE event, or
-//   - pending bytes reach chatGzipCoalesceMax, so a missing blank line
-//     cannot stall the stream, or
-//   - Close, which is after [DONE] and devshard_meta. The short tail waits
-//     for that instead of becoming its own block.
+//
+// Until the first event that carries output (content, reasoning, a tool call,
+// an error or [DONE]) every finished event leaves alone, so the gateway can
+// time the first token and pick a winner without waiting for a group. After
+// it the sink counts finished events:
+//   - joined (the default): one flush and one signature per group of events;
+//   - separate: one flush per event, a signature on the last of each group.
+//
+// Pending bytes also leave at chatGzipCoalesceMax, so a stream that never
+// sends a blank line cannot stall. Close sends the short tail with [DONE] and
+// devshard_meta. Once a signer is set, the first frame, the first output,
+// the last frame of each group and the tail carry a signature over the whole
+// uncompressed prefix. No prefix is signed twice.
 type ChatFrameSink struct {
 	header  http.Header
 	status  int
 	gzip    *ChatGzipEmitter
+	send    func(chunk, sig []byte, streamBytes uint64) error
 	sendErr error
 	pending int
 	tail    [2]byte
-	// oweFirstToken is set by FlushNow. The next finished event is the first
-	// model token and must not wait for chatGzipCoalesceMin.
-	oweFirstToken  bool
-	sentFirstToken bool
+	// event holds the bytes of the event being written, until the first
+	// output: only then does the sink need to read an event.
+	event    []byte
+	wrote    bool
+	schedule *host.ChatFrameSchedule
+	signer   *ChatFrameSigner
+	// events counts finished events since the last signed frame.
+	events int
+	// sawOutput is set by the first event that carries output.
+	sawOutput bool
+	signNext  bool
 }
 
+// perEventChatFrames is one frame per finished event, the schedule a stream
+// keeps unless it is told to sign.
+var perEventChatFrames = &host.ChatFrameSchedule{Every: 1, Separate: true}
+
+// NewChatFrameSink emits one unsigned frame per finished event: the wire
+// shape a gateway that predates signed frames reads.
 func NewChatFrameSink(send func([]byte) error) *ChatFrameSink {
-	return &ChatFrameSink{
-		header: make(http.Header),
-		gzip:   NewChatGzipEmitter(send),
+	return NewSignedChatFrameSink(func(chunk, _ []byte, _ uint64) error { return send(chunk) })
+}
+
+// NewSignedChatFrameSink emits one unsigned frame per finished event unless
+// SignFrames sets a schedule and a signer first.
+func NewSignedChatFrameSink(send func(chunk, sig []byte, streamBytes uint64) error) *ChatFrameSink {
+	sink := &ChatFrameSink{header: make(http.Header), send: send, schedule: perEventChatFrames}
+	sink.gzip = NewChatGzipEmitter(sink.emit)
+	return sink
+}
+
+// SignFrames cuts frames on schedule, a nil schedule being the default, and
+// signs them. It must come before the first write: a signature covers the
+// stream from its first byte, so a sink that has already written stays
+// unsigned.
+func (s *ChatFrameSink) SignFrames(schedule *host.ChatFrameSchedule, signer *ChatFrameSigner) {
+	if s == nil || s.wrote || s.signer != nil || signer == nil {
+		return
 	}
+	s.signer = signer
+	s.schedule = schedule
 }
 
 func (s *ChatFrameSink) Header() http.Header {
@@ -153,13 +171,20 @@ func (s *ChatFrameSink) Write(p []byte) (int, error) {
 	}
 	n, err := s.gzip.Write(p)
 	if n > 0 {
+		s.wrote = true
 		s.note(p[:n])
+		if !s.sawOutput && len(s.event) < chatGzipCoalesceMax {
+			s.event = append(s.event, p[:n]...)
+		}
+		if s.signer != nil {
+			s.signer.add(p[:n])
+		}
 	}
 	if err != nil {
 		return n, err
 	}
 	if s.pending >= chatGzipCoalesceMax {
-		if ferr := s.flushGzip(); ferr != nil {
+		if ferr := s.flushGzip(true); ferr != nil {
 			return n, ferr
 		}
 	}
@@ -179,34 +204,19 @@ func (s *ChatFrameSink) note(p []byte) {
 	}
 }
 
+// eventBoundary reports a finished SSE event that this flush has not counted
+// yet. A line flush can land twice on the same blank line.
 func (s *ChatFrameSink) eventBoundary() bool {
 	return s.pending > 0 && s.tail[0] == '\n' && s.tail[1] == '\n'
-}
-
-func (s *ChatFrameSink) eventReady() bool {
-	if !s.eventBoundary() {
-		return false
-	}
-	cut := chatGzipCut()
-	return cut <= 0 || s.pending >= cut
-}
-
-// firstTokenReady is the model event the gateway times. The receipt uses
-// FlushNow and does not count. Size does not matter, including under the
-// 128-byte BestSpeed floor.
-func (s *ChatFrameSink) firstTokenReady() bool {
-	return s.oweFirstToken && !s.sentFirstToken && s.eventBoundary()
 }
 
 func (s *ChatFrameSink) Flush() {
 	_ = s.FlushErr()
 }
 
-// FlushErr emits a ChatFrame on each finished SSE event when the cut is zero.
-// A positive cut holds later events until that many uncompressed bytes, the
-// first model token, or chatGzipCoalesceMax. http.Flusher.Flush cannot
-// return stream.Send errors. The receipt calls FlushNow so a failed frame
-// still returns before execution.
+// FlushErr runs the schedule on each finished SSE event. http.Flusher.Flush
+// cannot return stream.Send errors. The receipt calls FlushNow so a failed
+// frame still returns before execution.
 func (s *ChatFrameSink) FlushErr() error {
 	if s == nil {
 		return io.ErrClosedPipe
@@ -217,19 +227,30 @@ func (s *ChatFrameSink) FlushErr() error {
 	if s.gzip == nil {
 		return io.ErrClosedPipe
 	}
-	if s.firstTokenReady() {
-		s.sentFirstToken = true
-		s.oweFirstToken = false
-		return s.flushGzip()
+	if !s.eventBoundary() {
+		return nil
 	}
-	if s.pending >= chatGzipCoalesceMax || s.eventReady() {
-		return s.flushGzip()
+	s.tail = [2]byte{}
+	s.events++
+	if !s.sawOutput {
+		s.sawOutput = sseEventCarriesOutput(s.event)
+		s.event = s.event[:0]
+		if s.sawOutput {
+			s.event = nil
+		}
+		return s.flushGzip(s.sawOutput || !s.signedAny() || s.events >= chatFrameEvery(s.schedule))
+	}
+	if s.events >= chatFrameEvery(s.schedule) {
+		return s.flushGzip(true)
+	}
+	if !chatFramesJoined(s.schedule) {
+		return s.flushGzip(false)
 	}
 	return nil
 }
 
-// FlushNow sends the held bytes even when they are under the coalesce cut.
-// The receipt uses this so a failed frame returns before RunExecution.
+// FlushNow sends the held bytes with a signature. The receipt uses this so a
+// failed frame returns before RunExecution.
 func (s *ChatFrameSink) FlushNow() error {
 	if s == nil || s.gzip == nil {
 		return io.ErrClosedPipe
@@ -237,27 +258,46 @@ func (s *ChatFrameSink) FlushNow() error {
 	if s.sendErr != nil {
 		return s.sendErr
 	}
-	if err := s.flushGzip(); err != nil {
-		return err
-	}
-	// The receipt has left, or this was a no-op after it already left.
-	// The next finished event is the first token.
-	if !s.sentFirstToken {
-		s.oweFirstToken = true
-	}
-	return nil
+	return s.flushGzip(true)
 }
 
-func (s *ChatFrameSink) flushGzip() error {
+// flushGzip ends the gzip block and sends it, signed when sign is true and a
+// signer is set. A signed frame starts the next group.
+func (s *ChatFrameSink) flushGzip(sign bool) error {
 	if s.pending == 0 {
 		return nil
 	}
+	s.pending = 0
+	s.tail = [2]byte{}
+	s.signNext = sign
 	if err := s.gzip.Flush(); err != nil {
 		s.sendErr = err
 		return err
 	}
-	s.pending = 0
+	if sign {
+		s.events = 0
+	}
 	return nil
+}
+
+func (s *ChatFrameSink) signedAny() bool {
+	return s.signer != nil && s.signer.seq > 0
+}
+
+// emit is the ChatGzipEmitter send hook. It attaches the frame's signature
+// when the frame was meant to be signed and covers bytes no earlier
+// signature did.
+func (s *ChatFrameSink) emit(chunk []byte) error {
+	sign := s.signNext
+	s.signNext = false
+	if !sign || s.signer == nil || !s.signer.hasUnsigned() {
+		return s.send(chunk, nil, 0)
+	}
+	sig, streamBytes, err := s.signer.sign()
+	if err != nil {
+		return err
+	}
+	return s.send(chunk, sig, streamBytes)
 }
 
 func (s *ChatFrameSink) Close() error {
@@ -268,6 +308,8 @@ func (s *ChatFrameSink) Close() error {
 		return s.sendErr
 	}
 	s.pending = 0
+	s.event = nil
+	s.signNext = true
 	err := s.gzip.Close()
 	if s.sendErr != nil {
 		return s.sendErr

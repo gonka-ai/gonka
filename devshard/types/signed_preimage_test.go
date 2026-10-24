@@ -21,6 +21,7 @@ var signedProtoFullNames = map[string]struct{}{
 	"devshard.v1.ExecutorReceiptContent":     {},
 	"devshard.v1.TimeoutVoteContent":         {},
 	"devshard.v1.ErrorMissVoteContent":       {},
+	"devshard.v1.ChatFrameSignatureContent":  {},
 	"devshard.v1.StateSignatureContent":      {},
 	"devshard.v1.MsgFinishInference":         {},
 	"devshard.v1.MsgValidation":              {},

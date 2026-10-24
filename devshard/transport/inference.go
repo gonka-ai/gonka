@@ -10,6 +10,7 @@ import (
 
 	"devshard"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/storage"
@@ -126,6 +127,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	}
 
 	w := call.Sink
+	s.startFrameSigning(w, req, resp)
 	receiptEvent := DevshardReceiptEvent{
 		StateSig:          resp.StateSig,
 		StateHash:         resp.StateHash,
@@ -261,4 +263,23 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	}
 
 	return nil
+}
+
+// frameSigningSink is a sink that can sign the frames it sends.
+type frameSigningSink interface {
+	SignFrames(*host.ChatFrameSchedule, *ChatFrameSigner)
+}
+
+// startFrameSigning signs this stream when this host is the inference's
+// executor: it verified the payload against the started record, so the
+// frames carry its answer, run now or replayed from storage. A catch-up, a
+// finalize or a host that is not the executor keeps unsigned per-event
+// frames. It runs before the receipt is written, so the first signature
+// covers the stream from its first byte.
+func (s *Server) startFrameSigning(w InferenceSink, req host.HostRequest, resp *host.HostResponse) {
+	sink, ok := w.(frameSigningSink)
+	if !ok || resp == nil || len(resp.PromptHash) == 0 {
+		return
+	}
+	sink.SignFrames(req.ChatFrames, NewChatFrameSigner(s.host.Signer(), s.host.EscrowID(), resp.InferenceID, resp.PromptHash))
 }
