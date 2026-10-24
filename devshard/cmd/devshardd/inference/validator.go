@@ -52,6 +52,7 @@ type Validator struct {
 	chainParams             ChainParamsProvider
 	thresholds              ValidationThresholdResolver
 	vocabularySizes         VocabularyResolver
+	contextLimits           ContextLimitResolver
 	voteFalseOnFetchFailure bool
 	payloadHTTPClient       *http.Client
 	payloadSigner           signing.Signer
@@ -60,6 +61,7 @@ type Validator struct {
 	payloadRPCs             map[string]*transport.RPCClient
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
+	tokenizeML              mlExecuteFunc
 }
 
 type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
@@ -190,6 +192,33 @@ func (v *Validator) SetPayloadRPC(signer signing.Signer, endpoints transport.End
 	}
 	v.payloadSigner = signer
 	v.rpcEndpoints = endpoints
+}
+
+// SetContextLimits gives the validator each model's governance --max-model-len, so a context-length
+// refusal at that limit is confirmed even when this host's node runs a larger one.
+func (v *Validator) SetContextLimits(limits ContextLimitResolver) {
+	if v == nil {
+		return
+	}
+	v.contextLimits = limits
+}
+
+// ContextLimitCheck is the check a client-fault validation runs before any replay: the epoch's governance
+// --max-model-len and a tokenize on this host's ML node.
+func (v *Validator) ContextLimitCheck(ctx context.Context, epochID uint64, model, escrowID string) commonvalidation.ContextLimitCheck {
+	return commonvalidation.ContextLimitCheck{
+		Limit: v.contextLimit(ctx, epochID, model),
+		Tokenize: func(ctx context.Context, body []byte) (*http.Response, error) {
+			return v.tokenizeMLRequest(ctx, model, escrowID, body)
+		},
+	}
+}
+
+func (v *Validator) contextLimit(ctx context.Context, epochID uint64, model string) uint64 {
+	if v.contextLimits == nil {
+		return 0
+	}
+	return v.contextLimits.Resolve(ctx, epochID, model)
 }
 
 // ClosePayloadClients releases cached executor PeerConns. Safe if unused.
@@ -350,19 +379,7 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 		return v.executeML(ctx, model, escrowID, body)
 	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
-		url := endpoint + "/v1/chat/completions"
-		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-		// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
-		if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
-			reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
-		}
-		if reqErr != nil {
-			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
-		}
-		httpReq.Header.Set("Content-Type", "application/json")
-		observability.InjectRequestContext(ctx, httpReq.Header)
-		observability.AttachRequestID(httpReq)
-		resp, doErr := v.engine.httpClient.Do(httpReq)
+		resp, doErr := v.postToMLNode(ctx, endpoint, "/v1/chat/completions", body)
 		if doErr != nil || resp.StatusCode != http.StatusOK {
 			return resp, doErr
 		}
@@ -384,6 +401,39 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 		return nil, fmt.Errorf("validate inference: %w", err)
 	}
 	return resp, nil
+}
+
+// tokenizeMLRequest counts a chat request's prompt on the ML node without generating. The node's
+// inference port proxies every path to vLLM, which serves /tokenize at its root.
+func (v *Validator) tokenizeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+	if v.tokenizeML != nil {
+		return v.tokenizeML(ctx, model, escrowID, body)
+	}
+	if v.executeML != nil {
+		return nil, errors.New("tokenize is not wired for this validator")
+	}
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
+		return v.postToMLNode(ctx, endpoint, "/tokenize", body)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tokenize prompt: %w", err)
+	}
+	return resp, nil
+}
+
+func (v *Validator) postToMLNode(ctx context.Context, endpoint, path string, body []byte) (*http.Response, error) {
+	httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+path, bytes.NewReader(body))
+	// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
+	if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
+		reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
+	}
+	if reqErr != nil {
+		return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	observability.InjectRequestContext(ctx, httpReq.Header)
+	observability.AttachRequestID(httpReq)
+	return v.engine.httpClient.Do(httpReq)
 }
 
 var _ devshardpkg.ValidationEngine = (*Validator)(nil)

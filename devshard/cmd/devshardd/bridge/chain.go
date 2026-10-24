@@ -154,6 +154,15 @@ func (b *ChainBridge) GetModelSource(ctx context.Context, epochID uint64, modelI
 	return snapshot.HfRepo, snapshot.HfCommit, nil
 }
 
+// GetModelArgs returns the vLLM arguments the chain pins for the model in the epoch.
+func (b *ChainBridge) GetModelArgs(ctx context.Context, epochID uint64, modelID string) ([]string, error) {
+	snapshot, err := b.modelSnapshot(ctx, epochID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	return snapshot.ModelArgs, nil
+}
+
 func (b *ChainBridge) modelSnapshot(ctx context.Context, epochID uint64, modelID string) (*inferencetypes.Model, error) {
 	resp, err := b.client.InferenceQueryClient().EpochGroupData(ctx,
 		&inferencetypes.QueryGetEpochGroupDataRequest{
