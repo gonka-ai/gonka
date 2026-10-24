@@ -52,4 +52,6 @@ var (
 	ErrFloorNotRestored                = errors.New("height-sync floor not restored")
 	ErrStartProofMissing               = errors.New("gateway start proof required to open session")
 	ErrProtocolVersionMismatch         = errors.New("protocol version mismatch")
+	ErrExecutorVote                    = errors.New("the executor cannot vote on its own inference")
+	ErrUnknownChallengeFault           = errors.New("unknown challenge fault")
 )

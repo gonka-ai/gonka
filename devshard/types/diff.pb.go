@@ -295,6 +295,7 @@ type DevshardTx struct {
 	//	*DevshardTx_Heartbeat
 	//	*DevshardTx_HeightAck
 	//	*DevshardTx_ErrorMiss
+	//	*DevshardTx_Challenge
 	Tx            isDevshardTx_Tx `protobuf_oneof:"tx"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -445,6 +446,15 @@ func (x *DevshardTx) GetErrorMiss() *MsgErrorMiss {
 	return nil
 }
 
+func (x *DevshardTx) GetChallenge() *MsgChallenge {
+	if x != nil {
+		if x, ok := x.Tx.(*DevshardTx_Challenge); ok {
+			return x.Challenge
+		}
+	}
+	return nil
+}
+
 type isDevshardTx_Tx interface {
 	isDevshardTx_Tx()
 }
@@ -498,6 +508,10 @@ type DevshardTx_ErrorMiss struct {
 	ErrorMiss *MsgErrorMiss `protobuf:"bytes,14,opt,name=error_miss,json=errorMiss,proto3,oneof"`
 }
 
+type DevshardTx_Challenge struct {
+	Challenge *MsgChallenge `protobuf:"bytes,15,opt,name=challenge,proto3,oneof"`
+}
+
 func (*DevshardTx_StartInference) isDevshardTx_Tx() {}
 
 func (*DevshardTx_ConfirmStart) isDevshardTx_Tx() {}
@@ -521,6 +535,8 @@ func (*DevshardTx_Heartbeat) isDevshardTx_Tx() {}
 func (*DevshardTx_HeightAck) isDevshardTx_Tx() {}
 
 func (*DevshardTx_ErrorMiss) isDevshardTx_Tx() {}
+
+func (*DevshardTx_Challenge) isDevshardTx_Tx() {}
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
 //
@@ -886,6 +902,8 @@ func (x *ExecutorReceiptContent) GetObservedBlockHash() []byte {
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
+// CanonicalSignedBytes prefixes "devshard.timeoutvote.v1" so this cannot be
+// replayed as ErrorMissVoteContent (proto3 would otherwise omit field 4).
 type TimeoutVoteContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
@@ -955,6 +973,7 @@ func (x *TimeoutVoteContent) GetAccept() bool {
 }
 
 // ErrorMissVoteContent is what a host signs for an ErrorMissVote.
+// CanonicalSignedBytes prefixes "devshard.errormissvote.v1".
 type ErrorMissVoteContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
@@ -1023,6 +1042,94 @@ func (x *ErrorMissVoteContent) GetResponseHash() []byte {
 	return nil
 }
 
+// ChallengeVoteContent is what a host signs for a ChallengeVote.
+// CanonicalSignedBytes prefixes "devshard.challengevote.v1". check and
+// deviation (the claim minus the count) are inside the signature, so the diff
+// log shows on which check and by how much an executor lost a payment.
+type ChallengeVoteContent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	InferenceId   uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Fault         ChallengeFault         `protobuf:"varint,3,opt,name=fault,proto3,enum=devshard.v1.ChallengeFault" json:"fault,omitempty"`
+	Check         ChallengeCheck         `protobuf:"varint,4,opt,name=check,proto3,enum=devshard.v1.ChallengeCheck" json:"check,omitempty"`
+	Deviation     int64                  `protobuf:"varint,5,opt,name=deviation,proto3" json:"deviation,omitempty"`
+	ResponseHash  []byte                 `protobuf:"bytes,6,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChallengeVoteContent) Reset() {
+	*x = ChallengeVoteContent{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChallengeVoteContent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChallengeVoteContent) ProtoMessage() {}
+
+func (x *ChallengeVoteContent) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChallengeVoteContent.ProtoReflect.Descriptor instead.
+func (*ChallengeVoteContent) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ChallengeVoteContent) GetEscrowId() string {
+	if x != nil {
+		return x.EscrowId
+	}
+	return ""
+}
+
+func (x *ChallengeVoteContent) GetInferenceId() uint64 {
+	if x != nil {
+		return x.InferenceId
+	}
+	return 0
+}
+
+func (x *ChallengeVoteContent) GetFault() ChallengeFault {
+	if x != nil {
+		return x.Fault
+	}
+	return ChallengeFault_CHALLENGE_FAULT_NONE
+}
+
+func (x *ChallengeVoteContent) GetCheck() ChallengeCheck {
+	if x != nil {
+		return x.Check
+	}
+	return ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED
+}
+
+func (x *ChallengeVoteContent) GetDeviation() int64 {
+	if x != nil {
+		return x.Deviation
+	}
+	return 0
+}
+
+func (x *ChallengeVoteContent) GetResponseHash() []byte {
+	if x != nil {
+		return x.ResponseHash
+	}
+	return nil
+}
+
 // StateSignatureContent is what a host signs for state attestation.
 type StateSignatureContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1035,7 +1142,7 @@ type StateSignatureContent struct {
 
 func (x *StateSignatureContent) Reset() {
 	*x = StateSignatureContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1154,7 @@ func (x *StateSignatureContent) String() string {
 func (*StateSignatureContent) ProtoMessage() {}
 
 func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1167,7 @@ func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSignatureContent.ProtoReflect.Descriptor instead.
 func (*StateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *StateSignatureContent) GetStateRoot() []byte {
@@ -1099,7 +1206,7 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tend_nonce\x18\x02 \x01(\x04R\bendNonce\x12\x19\n" +
 	"\banchor_k\x18\x03 \x01(\x04R\aanchorK\x12\x1b\n" +
 	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xec\x06\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xa7\a\n" +
 	"\n" +
 	"DevshardTx\x12I\n" +
 	"\x0fstart_inference\x18\x01 \x01(\v2\x1e.devshard.v1.MsgStartInferenceH\x00R\x0estartInference\x12C\n" +
@@ -1119,7 +1226,8 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
 	"height_ack\x18\v \x01(\v2\x19.devshard.v1.MsgHeightAckH\x00R\theightAck\x12:\n" +
 	"\n" +
-	"error_miss\x18\x0e \x01(\v2\x19.devshard.v1.MsgErrorMissH\x00R\terrorMissB\x04\n" +
+	"error_miss\x18\x0e \x01(\v2\x19.devshard.v1.MsgErrorMissH\x00R\terrorMiss\x129\n" +
+	"\tchallenge\x18\x0f \x01(\v2\x19.devshard.v1.MsgChallengeH\x00R\tchallengeB\x04\n" +
 	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\xe1\x01\n" +
 	"\fMsgHeartbeat\x12'\n" +
 	"\x0fobserved_height\x18\x02 \x01(\x04R\x0eobservedHeight\x12.\n" +
@@ -1166,7 +1274,14 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06accept\x18\x03 \x01(\bR\x06accept\x12#\n" +
-	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"i\n" +
+	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"\xff\x01\n" +
+	"\x14ChallengeVoteContent\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
+	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x121\n" +
+	"\x05fault\x18\x03 \x01(\x0e2\x1b.devshard.v1.ChallengeFaultR\x05fault\x121\n" +
+	"\x05check\x18\x04 \x01(\x0e2\x1b.devshard.v1.ChallengeCheckR\x05check\x12\x1c\n" +
+	"\tdeviation\x18\x05 \x01(\x03R\tdeviation\x12#\n" +
+	"\rresponse_hash\x18\x06 \x01(\fR\fresponseHash\"i\n" +
 	"\x15StateSignatureContent\x12\x1d\n" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +
@@ -1199,7 +1314,7 @@ func file_devshard_v1_diff_proto_rawDescGZIP() []byte {
 }
 
 var file_devshard_v1_diff_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_devshard_v1_diff_proto_goTypes = []any{
 	(AckStatus)(0),                 // 0: devshard.v1.AckStatus
 	(SyncState)(0),                 // 1: devshard.v1.SyncState
@@ -1212,41 +1327,48 @@ var file_devshard_v1_diff_proto_goTypes = []any{
 	(*ExecutorReceiptContent)(nil), // 8: devshard.v1.ExecutorReceiptContent
 	(*TimeoutVoteContent)(nil),     // 9: devshard.v1.TimeoutVoteContent
 	(*ErrorMissVoteContent)(nil),   // 10: devshard.v1.ErrorMissVoteContent
-	(*StateSignatureContent)(nil),  // 11: devshard.v1.StateSignatureContent
-	(*MsgStartInference)(nil),      // 12: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),        // 13: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),     // 14: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil),    // 15: devshard.v1.MsgTimeoutInference
-	(*MsgValidation)(nil),          // 16: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),      // 17: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),          // 18: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),       // 19: devshard.v1.MsgFinalizeRound
-	(*MsgErrorMiss)(nil),           // 20: devshard.v1.MsgErrorMiss
-	(TimeoutReason)(0),             // 21: devshard.v1.TimeoutReason
+	(*ChallengeVoteContent)(nil),   // 11: devshard.v1.ChallengeVoteContent
+	(*StateSignatureContent)(nil),  // 12: devshard.v1.StateSignatureContent
+	(*MsgStartInference)(nil),      // 13: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),        // 14: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),     // 15: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil),    // 16: devshard.v1.MsgTimeoutInference
+	(*MsgValidation)(nil),          // 17: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),      // 18: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),          // 19: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),       // 20: devshard.v1.MsgFinalizeRound
+	(*MsgErrorMiss)(nil),           // 21: devshard.v1.MsgErrorMiss
+	(*MsgChallenge)(nil),           // 22: devshard.v1.MsgChallenge
+	(TimeoutReason)(0),             // 23: devshard.v1.TimeoutReason
+	(ChallengeFault)(0),            // 24: devshard.v1.ChallengeFault
+	(ChallengeCheck)(0),            // 25: devshard.v1.ChallengeCheck
 }
 var file_devshard_v1_diff_proto_depIdxs = []int32{
 	4,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
-	12, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
-	13, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
-	14, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
-	15, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
-	16, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
-	17, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
-	18, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
-	19, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
+	13, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
+	14, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
+	15, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
+	16, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
+	17, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
+	18, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
+	19, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
+	20, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
 	3,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
 	5,  // 10: devshard.v1.DevshardTx.heartbeat:type_name -> devshard.v1.MsgHeartbeat
 	6,  // 11: devshard.v1.DevshardTx.height_ack:type_name -> devshard.v1.MsgHeightAck
-	20, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
-	7,  // 13: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
-	1,  // 14: devshard.v1.MsgHeightAck.sync_state:type_name -> devshard.v1.SyncState
-	0,  // 15: devshard.v1.SyncVectorEntry.status:type_name -> devshard.v1.AckStatus
-	21, // 16: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
-	17, // [17:17] is the sub-list for method output_type
-	17, // [17:17] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	21, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
+	22, // 13: devshard.v1.DevshardTx.challenge:type_name -> devshard.v1.MsgChallenge
+	7,  // 14: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
+	1,  // 15: devshard.v1.MsgHeightAck.sync_state:type_name -> devshard.v1.SyncState
+	0,  // 16: devshard.v1.SyncVectorEntry.status:type_name -> devshard.v1.AckStatus
+	23, // 17: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
+	24, // 18: devshard.v1.ChallengeVoteContent.fault:type_name -> devshard.v1.ChallengeFault
+	25, // 19: devshard.v1.ChallengeVoteContent.check:type_name -> devshard.v1.ChallengeCheck
+	20, // [20:20] is the sub-list for method output_type
+	20, // [20:20] is the sub-list for method input_type
+	20, // [20:20] is the sub-list for extension type_name
+	20, // [20:20] is the sub-list for extension extendee
+	0,  // [0:20] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_diff_proto_init() }
@@ -1268,6 +1390,7 @@ func file_devshard_v1_diff_proto_init() {
 		(*DevshardTx_Heartbeat)(nil),
 		(*DevshardTx_HeightAck)(nil),
 		(*DevshardTx_ErrorMiss)(nil),
+		(*DevshardTx_Challenge)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1275,7 +1398,7 @@ func file_devshard_v1_diff_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_diff_proto_rawDesc), len(file_devshard_v1_diff_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

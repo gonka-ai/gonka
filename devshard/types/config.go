@@ -14,6 +14,19 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	DefaultValidationRate uint32 = 5000
+	// ChallengeFetchWindowSeconds is how long a host that votes on a
+	// challenge keeps retrying the fetch of the body from the executor,
+	// counted from the moment it applied the Finish. It has to outlast an
+	// executor restart and the voter's own reconnect.
+	//
+	// The window plus the interval until the next diff carries the votes must
+	// stay below the seal clock gate, which opens InferenceSealGraceSeconds
+	// after the latest legal Finish (stateClock - ConfirmedAt >=
+	// InferenceSealGraceSeconds + ExecutionTimeout, on top of the nonce gate;
+	// see autoSealLocked). A challenge never holds the seal, so votes that
+	// arrive after it are lost. Hosts and the gateway cap the window at half
+	// the grace; with the default grace of 3600 s this sits at that cap.
+	ChallengeFetchWindowSeconds int64 = 30 * 60
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
