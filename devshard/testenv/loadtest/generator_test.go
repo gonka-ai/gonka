@@ -55,6 +55,92 @@ func TestRunGenerator_WritesRequestArtifacts(t *testing.T) {
 	require.NotEmpty(t, strings.TrimSpace(string(body)))
 }
 
+func TestRemoteDatasetUsesTargetModelAndHTTPStatusOnly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "requests.jsonl")
+	require.NoError(t, os.WriteFile(path, []byte(`{"model":"captured-model","stream":true,"temperature":0.7,"max_tokens":4096,"messages":[{"role":"user","content":"original prompt"}]}`), 0o600))
+	dataset, err := replay.LoadRequestsFile(path)
+	require.NoError(t, err)
+	_, err = replay.LoadFile(path)
+	require.ErrorContains(t, err, "response.role")
+	for _, status := range []int{200, 503} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Model       string    `json:"model"`
+					Messages    []Message `json:"messages"`
+					Stream      bool      `json:"stream"`
+					MaxTokens   int       `json:"max_tokens"`
+					Temperature float64   `json:"temperature"`
+				}
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+				require.Equal(t, "target-model", body.Model)
+				require.Equal(t, []Message{{Role: "user", Content: "original prompt"}}, body.Messages)
+				require.True(t, body.Stream)
+				require.Equal(t, 4096, body.MaxTokens)
+				require.Equal(t, 0.7, body.Temperature)
+				w.WriteHeader(status)
+				fmt.Fprint(w, "arbitrary body without JSON or SSE")
+			}))
+			defer server.Close()
+			scenario := testScenario()
+			cfg := GeneratorConfig{GatewayURL: server.URL, Client: server.Client(), Scenario: scenario, Replay: replay.NewSelector(dataset, 42), ReplayModel: "target-model", HTTPStatusOnly: true}
+			result := executeRequest(context.Background(), cfg, 1)
+			require.Equal(t, status, result.Status)
+			require.NotNil(t, result.SampleIndex)
+			if status == 200 {
+				require.Equal(t, "completed", result.Outcome)
+				cfg.HTTPStatusOnly = false
+				require.Equal(t, "error", executeRequest(context.Background(), cfg, 1).Outcome)
+			} else {
+				require.Equal(t, "error", result.Outcome)
+			}
+		})
+	}
+}
+
+func TestHTTPStatusOnlyRecordsTruncatedBodyWithoutFailingStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "100")
+		fmt.Fprint(w, "short body")
+	}))
+	defer server.Close()
+	cfg := GeneratorConfig{GatewayURL: server.URL, Client: server.Client(), Scenario: testScenario(), HTTPStatusOnly: true}
+	result := executeRequest(context.Background(), cfg, 1)
+	require.Equal(t, 200, result.Status)
+	require.Equal(t, "completed", result.Outcome)
+	require.NotEmpty(t, result.ResponseReadError)
+	cfg.HTTPStatusOnly = false
+	require.Equal(t, "error", executeRequest(context.Background(), cfg, 1).Outcome)
+}
+
+func TestGeneratorHonorsScenarioRequestTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+			fmt.Fprint(w, `{"choices":[{"message":{"content":"ok"}}]}`)
+		}
+	}))
+	defer server.Close()
+	for _, timeout := range []string{"10ms", "1s"} {
+		t.Run(timeout, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Workload.Duration = "1ms"
+			scenario.Workload.MaxInFlight = 1
+			scenario.Workload.RequestTimeout = timeout
+			summary, err := RunGenerator(context.Background(), GeneratorConfig{GatewayURL: server.URL, Scenario: scenario, OutputDir: t.TempDir()})
+			require.NoError(t, err)
+			require.Equal(t, 1, summary.Requests)
+			if timeout == "10ms" {
+				require.Equal(t, 1, summary.Failed)
+			} else {
+				require.Equal(t, 1, summary.Completed)
+			}
+		})
+	}
+}
+
 func TestRunGenerator_RateProfileRecordsDroppedRequests(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)

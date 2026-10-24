@@ -52,6 +52,26 @@ func TestLoadScenario_NormalLoad(t *testing.T) {
 	require.Equal(t, "30s", scenario.DrainTimeout)
 }
 
+func TestScenarioAllowsStreaming(t *testing.T) {
+	scenario := testScenario()
+	scenario.Workload.Request.Stream = true
+	require.NoError(t, scenario.Validate())
+}
+
+func TestScenarioRequestTimeout(t *testing.T) {
+	scenario := testScenario()
+	require.Equal(t, 30*time.Second, scenario.RequestTimeout())
+	for _, value := range []string{"0s", "-1s", "invalid"} {
+		scenario.Workload.RequestTimeout = value
+		require.ErrorContains(t, scenario.Validate(), "workload.request_timeout")
+	}
+	scenario, err := LoadScenario(filepath.Join("scenarios", "remote-long-load.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, 10*time.Minute, scenario.Duration())
+	require.Equal(t, 3*time.Minute, scenario.RequestTimeout())
+	require.Equal(t, 30*time.Second, scenario.ReportInterval())
+}
+
 func TestLoadScenario_SingleSlowMLNode(t *testing.T) {
 	scenario, err := LoadScenario(filepath.Join("scenarios", "single-slow-ml-node.yaml"))
 	require.NoError(t, err)

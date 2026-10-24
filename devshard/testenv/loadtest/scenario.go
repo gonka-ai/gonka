@@ -177,6 +177,7 @@ type MockMLNode struct {
 }
 
 type Workload struct {
+	RequestTimeout string         `yaml:"request_timeout,omitempty"`
 	HostFaults     []HostFault    `yaml:"host_faults"`
 	Events         []Event        `yaml:"events"`
 	ReportInterval string         `yaml:"report_interval"`
@@ -399,6 +400,12 @@ func (s Scenario) Validate() error {
 	duration, err := time.ParseDuration(s.Workload.Duration)
 	if err != nil {
 		return fmt.Errorf("workload duration: %w", err)
+	}
+	if s.Workload.RequestTimeout != "" {
+		timeout, err := time.ParseDuration(s.Workload.RequestTimeout)
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("workload.request_timeout must be a positive duration")
+		}
 	}
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
 		return err
@@ -708,7 +715,12 @@ func (s Scenario) RequestModels() []string {
 	return []string{s.Workload.Request.Model}
 }
 
+// RequestTimeout limits the entire HTTP exchange, including reading a stream.
 func (s Scenario) RequestTimeout() time.Duration {
+	if s.Workload.RequestTimeout != "" {
+		d, _ := time.ParseDuration(s.Workload.RequestTimeout)
+		return d
+	}
 	if s.Workload.Request.Timeout == "" {
 		return 30 * time.Second
 	}
