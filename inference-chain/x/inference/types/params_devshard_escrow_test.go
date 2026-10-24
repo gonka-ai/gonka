@@ -67,6 +67,18 @@ func TestDevshardEscrowParams_Validate_RejectsInvalidPhase4(t *testing.T) {
 		require.ErrorContains(t, p.Validate(), "vote_threshold_factor")
 	})
 
+	t.Run("vote_threshold_factor_100", func(t *testing.T) {
+		p := base()
+		p.VoteThresholdFactor = 100
+		require.ErrorContains(t, p.Validate(), "vote_threshold_factor")
+	})
+
+	t.Run("vote_threshold_factor_99_ok", func(t *testing.T) {
+		p := base()
+		p.VoteThresholdFactor = 99
+		require.NoError(t, p.Validate())
+	})
+
 	t.Run("vote_threshold_factor_over_100", func(t *testing.T) {
 		p := base()
 		p.VoteThresholdFactor = 101
