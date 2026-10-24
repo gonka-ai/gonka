@@ -611,7 +611,7 @@ GLOBAL_BURST=${GLOBAL_BURST:-5000}
 
 # Gonka API (Standard/Punisher)
 # Default: 10r/m + 600 burst = 1 hr recovery
-GONKA_API_RATE_LIMIT_VAL=${GONKA_API_RATE_LIMIT_RPS:-10}
+GONKA_API_RATE_LIMIT_VAL=${GONKA_API_RATE_LIMIT_RPM:-10}
 # Dedicated budget for the public mlnode metrics federation endpoint:
 # separated from api_zone so scraping consumers (Prometheus/Grafana) do not
 # compete with inference/API clients for the same bucket.
@@ -732,6 +732,12 @@ else
     echo "Concurrency Limits: Disabled"
 fi
 
+# RPC on a policy worker must return to HAProxy in both HA and non-HA mode.
+# This opt-in is supplied by join; standalone nginx retains its old upstream.
+RPC_POLICY_HOST="${DEVSHARD_RPC_POLICY_HOST:-}"
+if [ -n "$RPC_POLICY_HOST" ]; then
+ case "$RPC_POLICY_HOST" in *[!A-Za-z0-9._-]*) echo "invalid DEVSHARD_RPC_POLICY_HOST" >&2; exit 1;; esac
+fi
 # /devshard/ location -- forwards to versiond which dispatches to the matching
 # child binary.
 #
@@ -829,6 +835,20 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
             proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
             proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }"
+    if [ -n "$RPC_POLICY_HOST" ]; then
+        VERSIOND_UPSTREAM="$VERSIOND_UPSTREAM
+upstream rpc_policy_backend {
+    zone rpc_policy_backend 64k;
+    server ${RPC_POLICY_HOST}:18081 resolve;
+}"
+        # Catch every RPC-shaped path, including duplicate prefixes accepted
+        # by versiond, so non-HA cannot bypass the shared HAProxy policy.
+        rpc_location=$(printf '%s\n' "$DEVSHARD_VERSIOND_LOCATION" | sed -n '/        location \/devshard\/ {/,$p' | sed \
+            -e 's#location /devshard/ {#location ~ ^/devshard/(.*/)?sessions/[^/]+/rpc(/|$) {#' \
+            -e 's|proxy_pass http://versiond_backend/;|proxy_pass http://rpc_policy_backend;|')
+        DEVSHARD_VERSIOND_LOCATION="$DEVSHARD_VERSIOND_LOCATION
+$rpc_location"
+    fi
 else
     export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
     export LIMIT_REQ_ZONE_DEVSHARD_OBS=""

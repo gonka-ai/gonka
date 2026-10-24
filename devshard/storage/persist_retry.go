@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"devshard/observability"
@@ -83,5 +84,11 @@ func AppendDiffWithRetryUnlocked(ctx context.Context, store Storage, escrowID st
 		}
 	}
 	observability.IncDiffPersistRetry("exhausted")
+	slog.ErrorContext(ctx, "diff_persist_exhausted",
+		"escrow_id", escrowID,
+		"nonce", rec.Nonce,
+		"attempts", DefaultPersistMaxAttempts,
+		"error", last,
+	)
 	return fmt.Errorf("%w: %w", ErrPersistExhausted, last)
 }

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"devshard/types"
@@ -16,32 +17,72 @@ import (
 const DefaultSnapshotInterval = 5 * time.Minute
 
 type Tracker struct {
-	mu       sync.RWMutex
-	store    *Store
-	escrows  map[string]*escrowState
-	updated  time.Time
-	stop     context.CancelFunc
-	done     chan struct{}
-	once     sync.Once
-	now      func() time.Time
-	errCount uint64
-	wrCount  uint64
+	mu      sync.RWMutex
+	store   *Store
+	escrows map[string]*escrowState
+	dirty   map[string]struct{} // escrow IDs mutated since last successful persist
+	// pendingDeletes are pruned escrow IDs whose deletion has not been persisted
+	// yet, so a failed persist still removes them on the next attempt.
+	pendingDeletes map[string]struct{}
+	updated        time.Time
+	stop           context.CancelFunc
+	done           chan struct{}
+	once           sync.Once
+	now            func() time.Time
+	errCount       uint64
+	wrCount        uint64
+
+	// Disposition delivery. Recording enqueues; a single goroutine calls the
+	// sink, so no sink work happens on the caller's goroutine.
+	sink        atomic.Pointer[sinkHolder]
+	dispCh      chan dispositionItem
+	dispDone    chan struct{}
+	dispStopped atomic.Bool
+	dispDropped atomic.Uint64
 }
 
 type escrowState struct {
-	Meta            EscrowMetadata             `json:"meta"`
-	Latest          uint64                     `json:"latest"`
-	HostStats       map[uint32]types.HostStats `json:"host_stats"`
-	Counters        map[CounterKey]uint64      `json:"counters"`
-	OpenChallenge   map[uint64]uint32          `json:"-"`
-	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
-	ValidatedBySlot map[uint32]uint64          `json:"validated_by_slot"`
-	TimedOutBySlot  map[uint32]uint64          `json:"timed_out_by_slot"`
-	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
-	InvalidNonce    map[uint64]struct{}        `json:"-"`
-	Live            map[uint64]*nonceState     `json:"-"`
-	LiveRequests    map[string]struct{}        `json:"-"`
-	Events          []ProtocolEvent            `json:"-"`
+	Meta           EscrowMetadata             `json:"meta"`
+	Latest         uint64                     `json:"latest"`
+	HostStats      map[uint32]types.HostStats `json:"host_stats"`
+	HostStatsNonce map[uint32]uint64          `json:"host_stats_nonce"`
+	// Counters holds the dispositions derived from a local nonceState. Only the
+	// instance that dispatched a nonce can produce one, so writers hold disjoint
+	// sets and the persisted rows are summed across them.
+	Counters map[CounterKey]uint64 `json:"counters"`
+
+	// ProtocolOnly, Challenge and Invalid record facts every instance reads off
+	// the same committed diffs. They are kept as per-nonce sets rather than
+	// counts because a count cannot be merged across writers: summing turns one
+	// chain event into two, and taking the max drops an observation a writer with
+	// a stale view never saw. A set merges by union, which is exact and
+	// idempotent. Per-slot totals are derived when a view is built.
+	ProtocolOnly map[uint64]uint32          `json:"protocol_only,omitempty"`
+	Challenge    map[uint64]challengeRecord `json:"challenges,omitempty"`
+	Invalid      map[uint64]uint32          `json:"invalid,omitempty"`
+
+	// The next three carry state written by the pre-set layout, which cannot be
+	// reconstructed as nonces. They are never incremented again, only folded into
+	// derived totals on read, and they age out with retention.
+	ChallengeBySlot map[uint32]uint64   `json:"challenge_by_slot,omitempty"`
+	InvalidBySlot   map[uint32]uint64   `json:"invalid_by_slot,omitempty"`
+	InvalidLegacy   map[uint64]struct{} `json:"invalid_nonces,omitempty"`
+
+	ValidatedBySlot map[uint32]uint64      `json:"validated_by_slot"`
+	TimedOutBySlot  map[uint32]uint64      `json:"timed_out_by_slot"`
+	Live            map[uint64]*nonceState `json:"-"`
+	LiveRequests    map[string]struct{}    `json:"-"`
+	Events          []ProtocolEvent        `json:"-"`
+	tracker         *Tracker               `json:"-"`
+}
+
+// challengeRecord tracks one challenged nonce. Resolved only ever goes false to
+// true, so two instances that both see the verdict converge, and the flag
+// replaces deleting the entry: a resolved challenge has to stay recorded or a
+// repeated verdict would open it again.
+type challengeRecord struct {
+	Slot     uint32 `json:"slot"`
+	Resolved bool   `json:"resolved,omitempty"`
 }
 
 type nonceState struct {
@@ -76,6 +117,11 @@ type nonceState struct {
 	GhostTimeoutPending bool
 	RequestID           string
 	Counted             *CounterKey
+	// In-memory only (Live is not persisted). Captured on the first recorder write.
+	TraceID [16]byte
+	SpanID  [8]byte
+	Sampled bool
+	Emitted bool
 }
 
 func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
@@ -84,10 +130,12 @@ func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracke
 		return nil, err
 	}
 	t := &Tracker{
-		store:   store,
-		escrows: make(map[string]*escrowState),
-		updated: time.Now().UTC(),
-		now:     time.Now,
+		store:    store,
+		escrows:  make(map[string]*escrowState),
+		updated:  time.Now().UTC(),
+		now:      time.Now,
+		dispCh:   make(chan dispositionItem, dispositionQueueSize),
+		dispDone: make(chan struct{}),
 	}
 	if err := store.Load(context.Background(), t); err != nil {
 		store.Close()
@@ -100,6 +148,10 @@ func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracke
 	t.stop = cancel
 	t.done = make(chan struct{})
 	go t.snapshotLoop(ctx, interval)
+	go t.dispositionLoop()
+	for _, escrow := range t.escrows {
+		escrow.tracker = t
+	}
 	return t, nil
 }
 
@@ -129,6 +181,7 @@ func (t *Tracker) Close() error {
 			t.stop()
 			<-t.done
 		}
+		t.stopDispositions()
 		if flushErr := t.Flush(context.Background()); flushErr != nil {
 			err = flushErr
 		}
@@ -137,6 +190,104 @@ func (t *Tracker) Close() error {
 		}
 	})
 	return err
+}
+
+// SetDispositionSink registers the sink that receives DispositionEvents. Nil
+// clears it, after which events are dropped without being queued.
+func (t *Tracker) SetDispositionSink(s DispositionSink) {
+	if t == nil {
+		return
+	}
+	if s == nil {
+		t.sink.Store(nil)
+		return
+	}
+	t.sink.Store(&sinkHolder{sink: s})
+}
+
+// FlushDispositions blocks until every event queued so far has been handed to
+// the sink. Used at shutdown and by tests that assert on sink output.
+func (t *Tracker) FlushDispositions() {
+	if t == nil || t.dispCh == nil || t.dispStopped.Load() {
+		return
+	}
+	barrier := make(chan struct{})
+	select {
+	case t.dispCh <- dispositionItem{barrier: barrier}:
+	case <-t.dispDone:
+		return
+	}
+	select {
+	case <-barrier:
+	case <-t.dispDone:
+	}
+}
+
+// DispositionDrops counts events discarded because the delivery queue was full.
+func (t *Tracker) DispositionDrops() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.dispDropped.Load()
+}
+
+func (t *Tracker) dispositionLoop() {
+	defer close(t.dispDone)
+	for item := range t.dispCh {
+		switch {
+		case item.stop:
+			return
+		case item.barrier != nil:
+			close(item.barrier)
+		default:
+			if holder := t.sink.Load(); holder != nil && holder.sink != nil {
+				holder.sink.OnDisposition(item.event)
+			}
+		}
+	}
+}
+
+func (t *Tracker) enqueueDisposition(event DispositionEvent) {
+	select {
+	case t.dispCh <- dispositionItem{event: event}:
+	default:
+		t.dispDropped.Add(1)
+	}
+}
+
+func (t *Tracker) stopDispositions() {
+	if t.dispCh == nil || !t.dispStopped.CompareAndSwap(false, true) {
+		return
+	}
+	select {
+	case t.dispCh <- dispositionItem{stop: true}:
+		<-t.dispDone
+	case <-t.dispDone:
+	}
+}
+
+func (t *Tracker) hasSink() bool {
+	if t == nil || t.dispCh == nil || t.dispStopped.Load() {
+		return false
+	}
+	holder := t.sink.Load()
+	return holder != nil && holder.sink != nil
+}
+
+// AttachTrace stores the span context of the first write for a live nonce.
+func (t *Tracker) AttachTrace(escrowID string, nonce uint64, ref TraceRef) {
+	if t == nil || ref.IsZero() {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	escrow := t.escrows[escrowID]
+	if escrow == nil || escrow.Live == nil {
+		return
+	}
+	if s := escrow.Live[nonce]; s != nil {
+		s.captureTrace(ref)
+	}
 }
 
 func (t *Tracker) Flush(ctx context.Context) error {
@@ -176,21 +327,25 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			if phaseRank(meta.Phase) > phaseRank(existing.Meta.Phase) {
 				existing.Meta.Phase = meta.Phase
 			}
+			t.markDirtyLocked(meta.EscrowID)
 			return nil
 		}
-		t.escrows[meta.EscrowID] = &escrowState{
+		created := &escrowState{
+			tracker:         t,
 			Meta:            meta,
 			HostStats:       make(map[uint32]types.HostStats),
+			HostStatsNonce:  make(map[uint32]uint64),
 			Counters:        make(map[CounterKey]uint64),
-			OpenChallenge:   make(map[uint64]uint32),
-			ChallengeBySlot: make(map[uint32]uint64),
+			ProtocolOnly:    make(map[uint64]uint32),
+			Challenge:       make(map[uint64]challengeRecord),
+			Invalid:         make(map[uint64]uint32),
 			ValidatedBySlot: make(map[uint32]uint64),
 			TimedOutBySlot:  make(map[uint32]uint64),
-			InvalidBySlot:   make(map[uint32]uint64),
-			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
 			LiveRequests:    make(map[string]struct{}),
 		}
+		t.escrows[meta.EscrowID] = created
+		t.markDirtyLocked(meta.EscrowID)
 		return nil
 	})
 }
@@ -286,7 +441,7 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 		if int(slot) >= len(e.Meta.Slots) {
 			return fmt.Errorf("slot %d out of range", slot)
 		}
-		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		e.mergeHostStats(nonce, slot, stats)
 		if recordsProtocolEvent(kind) {
 			e.appendProtocolEvent(nonce, slot, kind, t.nowUTC())
 		}
@@ -307,12 +462,9 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 				e.reclassify(nonce, s, t.nowUTC())
 			}
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[nonce]; !ok {
-				e.OpenChallenge[nonce] = slot
-				e.ChallengeBySlot[slot]++
-			}
+			e.openChallenge(nonce, slot)
 		case ProtocolValidated:
-			e.closeChallenge(nonce, slot)
+			e.resolveChallenge(nonce, slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(nonce, slot)
 		default:
@@ -338,7 +490,7 @@ func (t *Tracker) RecordHostStats(escrowID string, slot uint32, stats types.Host
 		if int(slot) >= len(e.Meta.Slots) {
 			return fmt.Errorf("slot %d out of range", slot)
 		}
-		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		e.mergeHostStats(e.Latest, slot, stats)
 		return nil
 	})
 }
@@ -354,6 +506,12 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 }
 
 func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
+	return t.RecordGhostTraced(escrowID, nonce, phase, quarantine, reason, detail, timeoutPending, TraceRef{})
+}
+
+// RecordGhostTraced is RecordGhost plus the span that produced the burn, captured
+// under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordGhostTraced(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -365,6 +523,7 @@ func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quaran
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
 		s.DetailReason = normalizeDetailReason(detail)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -387,6 +546,12 @@ func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID strin
 }
 
 func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode) error {
+	return t.RecordRealSendTraced(escrowID, nonce, sentAt, phase, quarantine, TraceRef{})
+}
+
+// RecordRealSendTraced is RecordRealSend plus the span that produced the send,
+// captured under the same lock. A zero ref leaves the stored trace unchanged.
+func (t *Tracker) RecordRealSendTraced(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, ref TraceRef) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
@@ -396,6 +561,7 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 		s.SendAt = sentAt.UTC()
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
+		s.captureTrace(ref)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -505,6 +671,113 @@ func (t *Tracker) withWrite(fn func() error) error {
 	return err
 }
 
+func (t *Tracker) markDirtyLocked(escrowID string) {
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	if t.dirty == nil {
+		t.dirty = make(map[string]struct{})
+	}
+	t.dirty[escrowID] = struct{}{}
+}
+
+// restorePersistState re-arms the work a failed persist consumed so the next
+// snapshot retries it instead of silently dropping the changes.
+func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string) {
+	if t == nil || (len(dirtyIDs) == 0 && len(deletedIDs) == 0) {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range dirtyIDs {
+		t.markDirtyLocked(id)
+	}
+	for _, id := range deletedIDs {
+		if t.pendingDeletes == nil {
+			t.pendingDeletes = make(map[string]struct{}, len(deletedIDs))
+		}
+		t.pendingDeletes[id] = struct{}{}
+	}
+}
+
+// takePersistSnapshot refreshes derived state, prunes by retention, and returns
+// the rows to persist. dirtyIDs are escrows mutated since the last persist that
+// still exist; deletedIDs were removed by prune (including deletions a previous
+// failed persist did not land). Clears the dirty and pending-delete sets;
+// restorePersistState puts them back when the persist fails.
+func (t *Tracker) takePersistSnapshot(retention uint64) (storeSnapshot, []string, []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
+	before := make(map[string]struct{}, len(t.escrows))
+	for id := range t.escrows {
+		before[id] = struct{}{}
+	}
+	t.pruneLocked(retention)
+
+	deleted := t.pendingDeletes
+	if deleted == nil {
+		deleted = make(map[string]struct{})
+	}
+	t.pendingDeletes = nil
+	for id := range before {
+		if _, ok := t.escrows[id]; !ok {
+			deleted[id] = struct{}{}
+			delete(t.dirty, id)
+		}
+	}
+	deletedIDs := sortedKeys(deleted)
+
+	dirtyIDs := make([]string, 0, len(t.dirty))
+	for id := range t.dirty {
+		if _, ok := t.escrows[id]; ok {
+			dirtyIDs = append(dirtyIDs, id)
+		}
+	}
+	sort.Strings(dirtyIDs)
+	t.dirty = nil
+
+	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
+	for _, escrow := range t.escrows {
+		out.Escrows = append(out.Escrows, blobFromEscrow(escrow))
+	}
+	return out, dirtyIDs, deletedIDs
+}
+
+func (t *Tracker) pruneLocked(retention uint64) {
+	if retention == 0 {
+		return
+	}
+	var maxEpoch uint64
+	complete := make(map[uint64]bool)
+	for _, escrow := range t.escrows {
+		epoch := escrow.Meta.CreationEpoch
+		if epoch > maxEpoch {
+			maxEpoch = epoch
+		}
+		if _, ok := complete[epoch]; !ok {
+			complete[epoch] = true
+		}
+		if escrow.Meta.Phase != EscrowSettled {
+			complete[epoch] = false
+		}
+	}
+	var cutoff uint64
+	if maxEpoch+1 > retention {
+		cutoff = maxEpoch + 1 - retention
+	}
+	for id, escrow := range t.escrows {
+		if escrow.Meta.CreationEpoch < cutoff && complete[escrow.Meta.CreationEpoch] {
+			delete(t.escrows, id)
+		}
+	}
+}
+
 func (t *Tracker) nowUTC() time.Time {
 	if t.now == nil {
 		return time.Now().UTC()
@@ -521,6 +794,30 @@ func (t *Tracker) ErrorCounts() (recording, writer uint64) {
 	return t.errCount, t.wrCount
 }
 
+func (t *Tracker) slotCount(escrowID string) int {
+	if t == nil {
+		return 0
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	e := t.escrows[strings.TrimSpace(escrowID)]
+	if e == nil {
+		return 0
+	}
+	return len(e.Meta.Slots)
+}
+
+// RetainsEscrow reports whether the escrow is still in the ledger, which retention and purges shrink.
+func (t *Tracker) RetainsEscrow(escrowID string) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	_, retained := t.escrows[escrowID]
+	return retained
+}
+
 func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error {
 	return t.withWrite(func() error {
 		escrowID = strings.TrimSpace(escrowID)
@@ -531,7 +828,11 @@ func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error
 		if e == nil {
 			return fmt.Errorf("escrow %q not registered", escrowID)
 		}
-		return fn(e)
+		if err := fn(e); err != nil {
+			return err
+		}
+		t.markDirtyLocked(escrowID)
+		return nil
 	})
 }
 
@@ -593,7 +894,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		if msg := tx.GetConfirmStart(); msg != nil {
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.Receipt = true
-				state.ReceiptAt = msg.ConfirmedAt
+				if state.ReceiptAt <= 0 {
+					state.ReceiptAt = now.Unix()
+				}
 				e.reclassify(msg.InferenceId, state, now)
 			}
 			continue
@@ -622,12 +925,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		}
 		switch verdict.Kind {
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
-				e.OpenChallenge[verdict.Nonce] = verdict.Slot
-				e.ChallengeBySlot[verdict.Slot]++
-			}
+			e.openChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolValidated:
-			e.closeChallenge(verdict.Nonce, verdict.Slot)
+			e.resolveChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(verdict.Nonce, verdict.Slot)
 		}
@@ -640,9 +940,23 @@ func (e *escrowState) mergeState(latest uint64, hostStats map[uint32]*types.Host
 	}
 	for slot, stats := range hostStats {
 		if stats != nil {
-			e.HostStats[slot] = maxHostStats(e.HostStats[slot], *stats)
+			e.mergeHostStats(latest, slot, *stats)
 		}
 	}
+}
+
+func (e *escrowState) mergeHostStats(nonce uint64, slot uint32, stats types.HostStats) {
+	if nonce < e.HostStatsNonce[slot] {
+		return
+	}
+	if e.HostStatsNonce == nil {
+		e.HostStatsNonce = make(map[uint32]uint64)
+	}
+	e.HostStatsNonce[slot] = nonce
+	merged := maxHostStats(e.HostStats[slot], stats)
+	merged.Validated = stats.Validated
+	merged.Finished = stats.Finished
+	e.HostStats[slot] = merged
 }
 
 func (e *escrowState) recordPhase(phase EscrowPhase) error {
@@ -667,6 +981,7 @@ func (e *escrowState) recordPhase(phase EscrowPhase) error {
 func (e *escrowState) releaseCountedLive() {
 	for nonce, state := range e.Live {
 		if state.Counted != nil {
+			e.emitDisposition(nonce, state, *state.Counted)
 			delete(e.Live, nonce)
 		}
 	}
@@ -679,7 +994,13 @@ func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {
 	e.Latest = nonce
 	slot := AssignedNonceSlot(nonce, uint64(len(e.Meta.Slots)))
 	if !hasStart {
-		e.add(CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly}, 1)
+		// Recorded by nonce, not as a count: every instance following this escrow
+		// sees the same diff and would otherwise count it once each.
+		if e.ProtocolOnly == nil {
+			e.ProtocolOnly = make(map[uint64]uint32)
+		}
+		e.ProtocolOnly[nonce] = slot
+		e.emitProtocolOnly(nonce, CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly})
 		return
 	}
 	if _, exists := e.Live[nonce]; !exists {
@@ -698,6 +1019,7 @@ func (e *escrowState) reclassify(nonce uint64, s *nonceState, now time.Time) {
 	}
 	if s.Counted != nil && classified && *s.Counted == key {
 		if s.terminal() {
+			e.emitDisposition(nonce, s, key)
 			delete(e.Live, nonce)
 		}
 		return
@@ -711,8 +1033,78 @@ func (e *escrowState) reclassify(nonce uint64, s *nonceState, now time.Time) {
 		s.Counted = &key
 	}
 	if s.terminal() {
+		final := key
+		if !classified {
+			final = s.identityKey()
+		}
+		e.emitDisposition(nonce, s, final)
 		delete(e.Live, nonce)
 	}
+}
+
+func (s *nonceState) identityKey() CounterKey {
+	return CounterKey{
+		SlotID:                 s.SlotID,
+		DispatchPhase:          s.DispatchPhase,
+		TimeoutEvaluationPhase: s.TimeoutPhase,
+		QuarantineMode:         s.Quarantine,
+		NoSendReason:           s.NoSendReason,
+		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
+		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
+		TimeoutKind:            s.TimeoutKind,
+		TimeoutOutcome:         s.TimeoutOutcome,
+		TimeoutReason:          s.TimeoutReason,
+	}
+}
+
+func (e *escrowState) emitDisposition(nonce uint64, s *nonceState, key CounterKey) {
+	if s == nil || s.Emitted {
+		return
+	}
+	s.Emitted = true
+	t := e.tracker
+	if t == nil || !t.hasSink() {
+		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
+	}
+	t.enqueueDisposition(DispositionEvent{
+		EscrowID:    e.Meta.EscrowID,
+		Nonce:       nonce,
+		Key:         key,
+		Trace:       s.traceRef(),
+		SendAt:      s.SendAt,
+		ObservedAt:  t.nowUTC(),
+		Participant: participant,
+		Model:       e.Meta.Model,
+	})
+}
+
+func (e *escrowState) emitProtocolOnly(nonce uint64, key CounterKey) {
+	t := e.tracker
+	if t == nil || !t.hasSink() {
+		return
+	}
+	participant := ""
+	if int(key.SlotID) < len(e.Meta.Slots) {
+		participant = e.Meta.Slots[key.SlotID].ValidatorAddress
+	}
+	t.enqueueDisposition(DispositionEvent{
+		EscrowID:    e.Meta.EscrowID,
+		Nonce:       nonce,
+		Key:         key,
+		ObservedAt:  t.nowUTC(),
+		Participant: participant,
+		Model:       e.Meta.Model,
+	})
 }
 
 func (e *escrowState) refreshDerived(now time.Time) {
@@ -733,34 +1125,52 @@ func (e *escrowState) remove(key CounterKey) {
 	e.Counters[key]--
 }
 
-// closeChallenge returns the challenged slot, or fallback when no challenge was
-// open. A repeated verdict must not consume another slot's unresolved count, so
-// nothing is decremented in the fallback case.
-func (e *escrowState) closeChallenge(nonce uint64, fallback uint32) uint32 {
-	slot, open := e.OpenChallenge[nonce]
-	if !open {
-		return fallback
+// openChallenge records a challenged nonce against its executor slot. A repeated
+// challenge verdict is a no-op, and one that arrives after the challenge was
+// resolved does not reopen it.
+func (e *escrowState) openChallenge(nonce uint64, slot uint32) {
+	if _, seen := e.Challenge[nonce]; seen {
+		return
 	}
-	delete(e.OpenChallenge, nonce)
-	if e.ChallengeBySlot[slot] > 0 {
-		e.ChallengeBySlot[slot]--
+	if e.Challenge == nil {
+		e.Challenge = make(map[uint64]challengeRecord)
 	}
-	return slot
+	e.Challenge[nonce] = challengeRecord{Slot: slot}
 }
 
-// recordInvalid counts each invalidated inference once. Verdicts come from a
+// resolveChallenge marks a challenge resolved and returns the slot it was
+// challenged on, or fallback when this instance never saw the challenge. A
+// repeated verdict must not consume another slot's unresolved count, so nothing
+// changes in the fallback case.
+func (e *escrowState) resolveChallenge(nonce uint64, fallback uint32) uint32 {
+	rec, seen := e.Challenge[nonce]
+	if !seen {
+		return fallback
+	}
+	if !rec.Resolved {
+		rec.Resolved = true
+		e.Challenge[nonce] = rec
+	}
+	return rec.Slot
+}
+
+// recordInvalid records each invalidated inference once. Verdicts come from a
 // record's current status, so validations landing after an invalidation repeat
 // it, while HostStats.Invalid moves only once.
 func (e *escrowState) recordInvalid(nonce uint64, fallback uint32) {
-	slot := e.closeChallenge(nonce, fallback)
-	if _, counted := e.InvalidNonce[nonce]; counted {
+	slot := e.resolveChallenge(nonce, fallback)
+	// A nonce counted under the pre-set layout is already in InvalidBySlot;
+	// adding it to the set would count it a second time.
+	if _, legacy := e.InvalidLegacy[nonce]; legacy {
 		return
 	}
-	if e.InvalidNonce == nil {
-		e.InvalidNonce = make(map[uint64]struct{})
+	if _, counted := e.Invalid[nonce]; counted {
+		return
 	}
-	e.InvalidNonce[nonce] = struct{}{}
-	e.InvalidBySlot[slot]++
+	if e.Invalid == nil {
+		e.Invalid = make(map[uint64]uint32)
+	}
+	e.Invalid[nonce] = slot
 }
 
 func (s *nonceState) markFinished() {

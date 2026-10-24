@@ -16,6 +16,13 @@ global
     stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
+    # SETTINGS_MAX_CONCURRENT_STREAMS on the peer-RPC frontend. HAProxy's
+    # default is 100; one TCP carries every Watch. Matches
+    # DefaultH2MaxConcurrentStreams (16384).
+    tune.h2.max-concurrent-streams 16384
+    # normalize-uri is experimental on HAProxy 3.2. The peer-RPC frontend
+    # uses it so path zones see the decoded procedure name.
+    expose-experimental-directives
 
 defaults
     log global
@@ -42,14 +49,44 @@ resolvers docker
 
 # TCP keeps the mature nginx policy contract byte-for-byte, including TLS and
 # HTTP/2. PROXY v2 restores the real client address at the private worker.
+#
+# Peer RPC shares these two ports with the JSON API; there is no separate
+# listen. The first bytes of a connection say which it is:
+#   :80   the HTTP/2 client preface (prior-knowledge h2c) is a peer; an
+#         HTTP/1.x request line is JSON.
+#   :443  a ClientHello offering ALPN gonka-rpc/1 is a peer; h2 and
+#         http/1.1 are browsers and JSON clients.
+# A peer connection is handed to the rpc_h2 frontend in this process over
+# an abstract socket and never enters nginx. The inspection waits for those
+# first bytes, at most PUBLIC_INSPECT_SECONDS, and an idle connection then
+# goes to nginx as before.
 frontend public_http
     mode tcp
     option tcplog
     bind :80
     maxconn ${MAX_CONNECTIONS}
+    ${PUBLIC_HTTP_RPC_GUARD}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
+    tcp-request inspect-delay ${PUBLIC_INSPECT_SECONDS}s
+    # The preface may arrive in pieces. Its first line parses as an HTTP
+    # request, so HTTP alone would end the inspection on "PRI * HTTP/2.0"
+    # and send a peer to nginx; a connection that starts with that line
+    # waits for the whole 24-byte preface instead.
+    acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+    acl peer_rpc_h2c_prefix req.payload(0,14) -m bin 505249202a20485454502f322e30
+    tcp-request content accept if HTTP !peer_rpc_h2c_prefix
+    # A peer connection is counted and capped per client address here,
+    # before the hand-off. src is already the client: a trusted balancer's
+    # PROXY preamble was consumed above. Inside rpc_h2 the address would be
+    # known only after its own preamble and TLS handshake, so a stalled
+    # handshake would hold a slot uncounted. The table lives on rpc_h2.
+    tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c
+    tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }
+    tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }
+    tcp-request content accept if peer_rpc_h2c
+    use_backend rpc_h2c_in if peer_rpc_h2c
     default_backend policy_http
 
 frontend public_https
@@ -60,7 +97,29 @@ frontend public_https
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
+    tcp-request inspect-delay ${PUBLIC_INSPECT_SECONDS}s
+    acl peer_rpc_tls req.ssl_alpn -i ${RPC_ALPN}
+${PUBLIC_HTTPS_RPC_LIMITS}
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    ${PUBLIC_HTTPS_RPC_ROUTE}
     default_backend policy_https
+
+# Hand a peer connection to rpc_h2 inside this process. send-proxy-v2
+# carries the client address (already the one a trusted external PROXY
+# hop restored) so rpc_h2's stick tables and X-Real-IP see the peer.
+# retries 0: the hand-off target is this process, so a failure there is not
+# transient. The default retries would reopen the abstract socket (another
+# rpc_h2 connection each time) and hold the client for a second per retry
+# before it sees the close.
+backend rpc_h2c_in
+    mode tcp
+    retries 0
+    server local abns@rpc_h2c send-proxy-v2
+
+backend rpc_tls_in
+    mode tcp
+    retries 0
+    server local abns@rpc_tls send-proxy-v2
 
 backend policy_http
     mode tcp
@@ -92,10 +151,129 @@ backend policy_https
     tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
     server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2 verify none
 
+# Peer RPC. Reached only from public_http / public_https above, over the
+# abstract sockets; nginx is not on this path. The h2c bind is the HTTP
+# InferenceUrl peer. The TLS bind (HTTPS InferenceUrl) terminates with
+# nginx's cert, negotiates ALPN gonka-rpc/1, and speaks HTTP/2 on it.
+# conn_cur / conn_rate / path zones key src,ipmask(32,64): one IPv4 address,
+# or one IPv6 /64. accept-proxy restores the client from the PROXY v2
+# preamble of the hand-off (the public frontend already consumed a trusted
+# balancer's preamble, so src is the real client in both modes). The
+# connection cap is enforced by the public frontends before the hand-off,
+# into the table defined here. X-Real-IP stays the full client address. Do
+# not copy the tables onto versiond_router_in: that hop's src is the policy
+# worker, and X-Real-IP there is already the address nginx derived from
+# PROXY v2.
+frontend rpc_h2
+    bind abns@rpc_h2c accept-proxy proto h2
+    ${RPC_TLS_BIND}
+    maxconn 4096
+    # A TLS handshake that stalls is closed here. It already holds a
+    # conn_cur slot: public_https tracked it from the ClientHello.
+    timeout client-hs 5s
+    # Per-source conn_cur / conn_rate. public_http and public_https track
+    # into this table before the hand-off and reject there. No track here:
+    # src is known only after the preamble (and the TLS handshake), and a
+    # second track would count every connection twice. conn_rate only slows
+    # the fill; an idle socket that is already tracked holds a maxconn slot
+    # until timeout client. type ipv6 stores native IPv6. type ip would
+    # keep only IPv4.
+    stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)
+
+    http-request del-header X-Real-IP
+    http-request set-header X-Real-IP %[src]
+
+    http-request set-var(txn.rpc_src) src,ipmask(32,64)
+${RPC_POLICY_RULES}
+    http-request deny deny_status 404 unless peer_rpc
+
+    # Same placement key as versiond_router_in and the inner versiond-router.
+    http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
+
+${RPC_H2_VERSION_RULES}
+    default_backend rpc_h1_fallback
+
+backend st_rpc_attach
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_watch
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_chat
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_diffs
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_mempool
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_signatures
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_gossip
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_payload
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend st_rpc_heavy
+    stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)
+
+backend rpc_h2_upstream
+    balance hash var(txn.hashkey)
+    hash-type consistent
+    http-reuse safe
+    option redispatch 1
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+${RPC_H2_CHECKS}
+    ${RPC_H2_SERVER}
+
+${RPC_H1_FALLBACK_BACKEND}
+
 frontend versiond_router_in
     option httplog
     bind ${POLICY_BIND_ADDRESS}:${VERSIOND_FRONTEND_PORT}
     maxconn ${MAX_CONNECTIONS}
+
+    # Only nginx reaches this isolated listener; it overwrites X-Real-IP.
+    http-request set-var(txn.rpc_src) req.hdr_ip(X-Real-IP),ipmask(32,64)
+${RPC_POLICY_RULES}
+    http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
+    http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
+    # The policy worker has already derived these from its trusted PROXY peer.
+    # Preserve them; src here is only the policy container.
+
+    acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
+    ${UNDECLARED_VERSION_GUARD}
+${RPC_H2_VERSION_RULES}
+    use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
+    default_backend versiond_router_coarse
+
+# One H1 request per internal connection, held until the streaming body ends.
+# This admission budget is shared across versions; JSON does not traverse it.
+# The frontend rules send peer RPC here only while the hop behind this proxy
+# has no HTTP/2 (see RPC_H1_CLOSED in entrypoint.sh).
+backend rpc_h1_fallback
+    retries 0
+    option http-server-close
+    timeout queue ${RPC_FALLBACK_QUEUE_MS}ms
+    http-request deny deny_status 503 if { queue(rpc_h1_fallback) ge ${RPC_FALLBACK_MAXQUEUE} }
+    server local abns@proxy_rpc_legacy maxconn ${RPC_FALLBACK_MAXCONN}
+
+frontend rpc_h1_legacy
+    option httplog
+    bind abns@proxy_rpc_legacy proto h1
+    maxconn ${RPC_FALLBACK_MAXCONN}
 
     http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
     http-request set-var(txn.hashkey) var(txn.canonpath)
@@ -108,8 +286,8 @@ frontend versiond_router_in
 
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
     ${UNDECLARED_VERSION_GUARD}
-    use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
-    default_backend versiond_router_coarse
+    ${RPC_H1_VERSION_ROUTE}
+    default_backend ${RPC_LEGACY_DEFAULT}
 
 ${VERSIOND_ROUTER_BACKENDS}
 

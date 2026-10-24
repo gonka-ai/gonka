@@ -20,14 +20,14 @@ const (
 )
 
 type Config struct {
-	OracleURL         string
-	PollInterval      time.Duration
-	BinDir            string
-	DataDir           string
-	BinaryName        string
-	BasePort          int
-	ReadyPath         string
-	ReadyTimeout      time.Duration
+	OracleURL    string
+	PollInterval time.Duration
+	BinDir       string
+	DataDir      string
+	BinaryName   string
+	BasePort     int
+	ReadyPath    string
+	ReadyTimeout time.Duration
 	// RecoveryTimeout bounds the warm-cutover wait: after a replacement
 	// devshardd child is ready to serve, versiond polls admin /ready until
 	// the body's recovery_complete is true before publishing it. Only the
@@ -36,6 +36,7 @@ type Config struct {
 	// long journal is minutes to hours, and ReadyTimeout is the "is the
 	// process up at all" gate.
 	RecoveryTimeout   time.Duration
+	ReadyMaxWait      time.Duration
 	DrainPath         string
 	DrainStatusPath   string
 	DrainTimeout      time.Duration
@@ -80,6 +81,7 @@ func Load() (Config, error) {
 		{&cfg.PollInterval, "VERSIOND_POLL_INTERVAL", 30 * time.Second, false},
 		{&cfg.ReadyTimeout, "VERSIOND_READY_TIMEOUT", 60 * time.Second, false},
 		{&cfg.RecoveryTimeout, "VERSIOND_RECOVERY_TIMEOUT", 30 * time.Minute, false},
+		{&cfg.ReadyMaxWait, "VERSIOND_READY_MAX_WAIT", 32 * time.Minute, false},
 		{&cfg.DrainTimeout, "VERSIOND_DRAIN_TIMEOUT", 15 * time.Minute, false},
 		{&cfg.DrainPollInterval, "VERSIOND_DRAIN_POLL_INTERVAL", time.Second, false},
 		{&cfg.DrainKillGrace, "VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace, false},
@@ -91,6 +93,9 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		*d.dst = value
+	}
+	if cfg.ReadyMaxWait < cfg.ReadyTimeout {
+		cfg.ReadyMaxWait = cfg.ReadyTimeout
 	}
 	cfg.ChildShutdownGrace = cfg.DrainKillGrace
 	if isDevshardBinary(cfg.BinaryName) {

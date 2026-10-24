@@ -8,6 +8,8 @@
 //
 // OnNonceReceived: checks for equivocation (same nonce, different hash -> error).
 // Marks SEEN, forwards to K peers. Tries to accumulate the signature via SigAccumulator.
+// A nonce more than 4096 past lastAfterReqNonce is dropped: not stored, not
+// counted in highest SEEN, not forwarded.
 //
 // BroadcastTxs: sends mempool txs to all peers. Each tx is sent at most once.
 //
@@ -15,5 +17,6 @@
 //
 // Recovery (every 60s): if highest SEEN > lastAfterReqNonce and no recent user
 // contact, fetches diffs via DiffFetcher, applies via StateUpdater (which verifies
-// user signatures), signs each nonce and gossips own sigs.
+// user signatures), signs each nonce and gossips own sigs. One attempt covers at
+// most 4096 nonces past lastAfterReqNonce, 8 windows per tick.
 package gossip

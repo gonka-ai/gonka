@@ -52,7 +52,7 @@ func (s *SQLite) listSealedInferences(escrowID string) ([]InferenceRow, error) {
 			&row.SealedInputLength, &row.SealedMaxTokens,
 			&row.SealedInputTokens, &row.SealedOutputTokens,
 			&row.SealedReservedCost, &row.SealedActualCost,
-			&row.SealedStartedAt, &row.SealedConfirmedAt,
+			&row.SealedStartedAtHeight, &row.SealedConfirmedAtHeight,
 		); err != nil {
 			return nil, err
 		}

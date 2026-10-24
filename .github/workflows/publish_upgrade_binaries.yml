@@ -2,8 +2,9 @@
 # devshardd host zip as a GitHub Release on this repo (gonka-ai/gonka).
 #
 # Tag push uses the workflow file on the tagged commit (not main).
-# Host tags (release/devshard/vX.Y.Z or release/vA.B.C-devshard-vX.Y.Z) publish
-# only the host zip. Other matching tags publish inferenced + dapi + edge-api.
+# Host tags (release/devshard/vX.Y.Z[-rcN] or release/vA.B.C-devshard-vX.Y.Z[-rcN])
+# publish only the host zip. -rcN is release candidate N. Other matching tags
+# publish inferenced + dapi + edge-api.
 name: Build and Release to race-releases
 
 on:
@@ -51,7 +52,7 @@ on:
         required: false
         default: ''
       DEVSHARD_BINARY_VERSION:
-        description: 'Host binary stamp vX.Y.Z (e.g. v4.1.0). Required if build_devshardd.'
+        description: 'Host binary stamp vX.Y.Z or vX.Y.Z-rcN (e.g. v4.1.0, v6.0.0-rc1). Required if build_devshardd.'
         type: string
         required: false
         default: ''

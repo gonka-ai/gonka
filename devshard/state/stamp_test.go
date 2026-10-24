@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -14,21 +15,21 @@ func TestConfirmStart_TamperedObservedHeightFailsExecutorSig(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
 	hash := []byte{0xaa}
+	seedFloor(t, sm, 100, hash)
 
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		ObservedHeight: 100, ObservedBlockHash: hash,
 	})}))
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
-		testutil.ReceiptStamp{Height: 100, Hash: hash})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens,
+		testutil.ReceiptStamp{Height: 101, Hash: hash})
 	msg := &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 		ObservedHeight: 100, ObservedBlockHash: hash,
 	}
-	msg.ObservedHeight = 101
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(msg)}))
 	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
 }
@@ -37,23 +38,24 @@ func TestFinishInference_StampCoveredByProposerSig(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
 	hash := []byte{0xaa}
+	seedFloor(t, sm, 100, hash)
 
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		ObservedHeight: 100, ObservedBlockHash: hash,
 	})}))
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens,
 		testutil.ReceiptStamp{Height: 100, Hash: hash})
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 		ObservedHeight: 100, ObservedBlockHash: hash,
 	})}))
 	require.NoError(t, err)
 
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"),
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
 		EscrowId: "escrow-1", ObservedHeight: 100, ObservedBlockHash: hash,
 	}
@@ -73,29 +75,31 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 
 	stamped, userS := newTestSM(t, hosts, 10000)
 	plain, userP := newTestSM(t, hosts, 10000)
+	seedFloor(t, stamped, 100, hash)
 
 	start := &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	}
 	_, err := plain.ApplyDiff(testutil.SignDiff(t, userP, "escrow-1", 1, []*types.DevshardTx{txStart(start)}))
 	require.NoError(t, err)
-	stampedStart := *start
+	stampedStart := proto.Clone(start).(*types.MsgStartInference)
 	stampedStart.ObservedHeight = 100
 	stampedStart.ObservedBlockHash = hash
-	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 1, []*types.DevshardTx{txStart(&stampedStart)}))
+	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 1, []*types.DevshardTx{txStart(stampedStart)}))
 	require.NoError(t, err)
+	seedFloor(t, stamped, 101, hash)
 
-	plainSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	stampSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
-		testutil.ReceiptStamp{Height: 101, Hash: hash})
+	plainSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	stampSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens,
+		testutil.ReceiptStamp{Height: 100, Hash: hash})
 	_, err = plain.ApplyDiff(testutil.SignDiff(t, userP, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: plainSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: plainSig,
 	})}))
 	require.NoError(t, err)
 	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: stampSig, ConfirmedAt: 1000,
-		ObservedHeight: 101, ObservedBlockHash: hash,
+		InferenceId: 1, ExecutorSig: stampSig,
+		ObservedHeight: 100, ObservedBlockHash: hash,
 	})}))
 	require.NoError(t, err)
 
@@ -111,11 +115,7 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 }
 
 func protoCloneFinish(msg *types.MsgFinishInference) *types.MsgFinishInference {
-	cp := *msg
-	cp.ResponseHash = append([]byte(nil), msg.ResponseHash...)
-	cp.ObservedBlockHash = append([]byte(nil), msg.ObservedBlockHash...)
-	cp.ProposerSig = append([]byte(nil), msg.ProposerSig...)
-	return &cp
+	return proto.Clone(msg).(*types.MsgFinishInference)
 }
 
 func applyFinish(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, nonce uint64, msg *types.MsgFinishInference) error {

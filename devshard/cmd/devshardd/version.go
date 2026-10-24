@@ -15,8 +15,10 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	printChildH2CFlag        = "--print-child-h2c"
 	printFleetCompatFlag     = "--print-fleet-compat"
 	initializePostgresFlag   = "--initialize-postgres-schema"
+	childH2CAdvertise        = "h2c"
 )
 
 func maybeInitializePostgres(ctx context.Context, args []string, stderr io.Writer) (int, bool) {
@@ -51,6 +53,9 @@ func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 			return 1, true
 		}
 		fmt.Fprintln(stdout, storageMode)
+		return 0, true
+	case printChildH2CFlag:
+		fmt.Fprintln(stdout, childH2CAdvertise)
 		return 0, true
 	case printFleetCompatFlag:
 		fmt.Fprintln(stdout, heightsync.FleetCompat())

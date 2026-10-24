@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sync"
+
+	"devshard/types"
 )
 
 // maxQueuedObsOps bounds the per-escrow queue held during a repair. Overflow
@@ -85,6 +87,15 @@ func (g *ObsRepairGate) StorageProof(ctx context.Context, operation ProofOperati
 	return provider.StorageProof(ctx, operation, nonce)
 }
 
+// CurrentEpochID forwards the managed-storage epoch clock. HostManager uses
+// it for the in-memory escrow roster (current epoch and the two before it).
+func (g *ObsRepairGate) CurrentEpochID() uint64 {
+	if h, ok := g.Storage.(interface{ CurrentEpochID() uint64 }); ok {
+		return h.CurrentEpochID()
+	}
+	return 0
+}
+
 // PruneCutoff forwards the managed-storage retention horizon so recovery can
 // skip prune-bound sessions without unwrapping the gate.
 func (g *ObsRepairGate) PruneCutoff() uint64 {
@@ -92,6 +103,10 @@ func (g *ObsRepairGate) PruneCutoff() uint64 {
 		return h.PruneCutoff()
 	}
 	return 0
+}
+
+func (g *ObsRepairGate) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	return appendDiffBatchVia(ctx, g.Storage, escrowID, recs)
 }
 
 // RepairInProgress reports whether an escrow's obs writes are being queued.

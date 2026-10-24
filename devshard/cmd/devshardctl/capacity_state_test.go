@@ -375,7 +375,7 @@ func TestReserveRuntimeForModelPrefersHigherWeightEscrow(t *testing.T) {
 	// catches up to the low-weight escrow.
 	counts := map[string]int{}
 	for i := 0; i < 100; i++ {
-		rt, err := g.reserveRuntimeForModel("M", 1)
+		rt, err := g.reserveRuntimeForModel("M", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -400,7 +400,7 @@ func TestReserveRuntimeForModelUsesModelSpecificWeights(t *testing.T) {
 
 	counts := map[string]int{}
 	for i := 0; i < 100; i++ {
-		rt, err := g.reserveRuntimeForModel("Model/A", 1)
+		rt, err := g.reserveRuntimeForModel("Model/A", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		counts[rt.id]++
 	}
@@ -424,10 +424,10 @@ func TestReserveRuntimeForModelTreatsZeroWeightEscrowAsLastResort(t *testing.T) 
 	g.capacity.SetPoCPreserved([]string{"A"})
 
 	for i := 0; i < 5; i++ {
-		rt, err := g.reserveRuntimeForModel("M", 1)
+		rt, err := g.reserveRuntimeForModel("M", chatRequestCost{promptTokens: 1}, nil)
 		require.NoError(t, err)
 		require.Equal(t, "healthy", rt.id, "iteration %d", i)
-		g.releaseRuntime(rt, 1)
+		g.releaseRuntime(rt, chatRequestCost{promptTokens: 1})
 	}
 }
 

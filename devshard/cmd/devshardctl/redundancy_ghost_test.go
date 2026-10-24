@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/state"
 	"devshard/user"
 )
 
@@ -17,8 +20,8 @@ import (
 // session_picker run loop racing with our explicit runGhostProbe call.
 func prepareForGhost(t *testing.T, session *user.Session, model string) *user.PreparedInference {
 	t.Helper()
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return ghostProbeParams(model), true, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return ghostProbeParams(model), true, context.Background(), nil
 	})
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
@@ -43,7 +46,7 @@ func TestRunGhostProbe_KeepsMsgStartInDiffs(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	nonce := prepared.Nonce()
 
-	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
 
 	require.GreaterOrEqual(t, env.session.Nonce(), nonce,
 		"PrepareInferenceFn must have advanced past the burned nonce")
@@ -58,7 +61,7 @@ func TestRunGhostProbe_DoesNotBlockThePicker(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 
 	start := time.Now()
-	env.proxy.redundancy.runGhostProbe(prepared, ghostExclude, ghostExclude.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostExclude, ghostExclude.reason())
 	elapsed := time.Since(start)
 
 	require.Less(t, elapsed, 50*time.Millisecond,
@@ -107,7 +110,7 @@ func TestRunGhostProbe_BurningANonceChargesTheHostNothing(t *testing.T) {
 			slot := prepared.HostIdx()
 			require.Zero(t, missesForSlot(t, env, slot), "precondition: no miss before the burn")
 
-			env.proxy.redundancy.runGhostProbe(prepared, tc.kind, tc.kind.reason())
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, tc.kind, tc.kind.reason())
 
 			require.Never(t, func() bool { return missesForSlot(t, env, slot) > 0 },
 				ghostMissObservationWindow, 20*time.Millisecond,
@@ -116,4 +119,65 @@ func TestRunGhostProbe_BurningANonceChargesTheHostNothing(t *testing.T) {
 				"%s: burning a nonce must not contact the host", tc.name)
 		})
 	}
+}
+
+func TestRunGhostProbe_RecordsGhostNoSendSlotDecision(t *testing.T) {
+	cases := []ghostKind{ghostPoC, ghostExclude, ghostThrottled, ghostStateDiverged}
+	for _, kind := range cases {
+		kind := kind
+		t.Run(kind.reason(), func(t *testing.T) {
+			env := setupTestProxy(t, 3, nil, true)
+			env.proxy.redundancy.picker.stop()
+			metrics := NewDevshardMetrics()
+			env.proxy.redundancy.metrics = metrics
+			env.proxy.redundancy.devshardID = "escrow-proxy"
+
+			prepared := prepareForGhost(t, env.session, "llama")
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, kind, kind.reason())
+
+			participantKey := env.proxy.redundancy.participantKeyForHost(prepared.HostIdx())
+			families, err := metrics.registry.Gather()
+			require.NoError(t, err)
+			requireMetricCounterValue(t, families, "devshard_gateway_slot_decisions_total", map[string]string{
+				"participant_key": participantKey,
+				"model":           "llama",
+				"escrow_id":       "escrow-proxy",
+				"decision":        "ghost_no_send",
+				"reason":          kind.reason(),
+				"quarantine_mode": "none",
+			}, 1)
+			require.Nil(t, env.killables[prepared.HostIdx()].LastRequest(),
+				"ghost_no_send recording must not contact the host")
+		})
+	}
+}
+
+func TestRunGhostProbe_SkipsAfterRedundancyStop(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	metrics := NewDevshardMetrics()
+	env.proxy.redundancy.metrics = metrics
+	env.proxy.redundancy.devshardID = "escrow-proxy"
+	env.proxy.redundancy.Stop()
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
+
+	families, err := metrics.registry.Gather()
+	require.NoError(t, err)
+	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "escrow-proxy"})
+}
+
+// Test flow:
+//  1. Build the params of a ghost, the nonce the picker burns without sending it.
+//  2. Require it to reserve the least the state machine accepts, since its Pending nonce is paid at ReservedCost, and its prompt to declare that same budget.
+func TestAGhostReservesTheSmallestBudgetTheStateMachineAccepts(t *testing.T) {
+	ghost := ghostProbeParams("llama")
+
+	var declared struct {
+		MaxTokens uint64 `json:"max_tokens"`
+	}
+	require.NoError(t, json.Unmarshal(ghost.Prompt, &declared))
+	require.Equal(t, uint64(state.MinReservationTokens), ghost.MaxTokens)
+	require.Equal(t, ghost.MaxTokens, declared.MaxTokens)
+	require.Equal(t, uint64(len(ghost.Prompt)), ghost.InputLength)
 }
