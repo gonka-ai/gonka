@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"common/httpguard"
+
 	devshardpkg "devshard"
 	"devshard/observability"
 	"devshard/transport"
@@ -131,8 +133,10 @@ func newRPCStatsPoller(gateway *Gateway, cfg rpcStatsConfig) *rpcStatsPoller {
 	if idle <= 0 {
 		idle = defaultRPCStatsInterval * 3
 	}
+	// Scrape targets are participants' on-chain inference URLs: guard the dial.
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           httpguard.NewDialer().DialContext,
 		MaxIdleConns:          rpcStatsMaxIdleConns,
 		MaxIdleConnsPerHost:   rpcStatsMaxIdleConnsPerHost,
 		IdleConnTimeout:       idle,
