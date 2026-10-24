@@ -415,6 +415,23 @@ func (m *CapacityState) TotalWeight() float64 {
 	return m.totalWeightLocked("")
 }
 
+// HostWeightForModel returns the host's current weight for the model, or 0
+// when the state has no entry for it. Unlike hostCurrentWeightForModelLocked it
+// never substitutes the neutral 1.0, so callers can tell "unknown" from "tiny".
+func (m *CapacityState) HostWeightForModel(host, model string) float64 {
+	if m == nil {
+		return 0
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if model != "" {
+		if weights, ok := m.currentWeightsByModel[model]; ok {
+			return weights[host]
+		}
+	}
+	return m.currentWeights[host]
+}
+
 func (m *CapacityState) TotalWeightForModel(model string) float64 {
 	if m == nil {
 		return 0
