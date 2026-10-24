@@ -215,6 +215,7 @@ func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordPro
 		VotesValid:        rec.VotesValid,
 		VotesInvalid:      rec.VotesInvalid,
 		ValidatedBy:       rec.ValidatedBy.Bytes(),
+		UsageChallenged:   rec.UsageChallenged,
 	}
 }
 
@@ -242,6 +243,7 @@ func inferenceRecordFromProto(msg *InferenceRecordProto) *InferenceRecord {
 		VotesValid:        msg.VotesValid,
 		VotesInvalid:      msg.VotesInvalid,
 		ValidatedBy:       Bitmap128FromBytes(msg.ValidatedBy),
+		UsageChallenged:   msg.UsageChallenged,
 	}
 }
 

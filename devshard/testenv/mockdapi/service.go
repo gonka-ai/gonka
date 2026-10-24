@@ -114,6 +114,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	}
 	hostEvents := newHostEventRing()
 	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockMock, cfg.OmitBlockRoutes, cfg.MLNodes)
+	nodeManager.hosts = newHostPools(cfg.MLNodes, cfg.MLNodeHosts, cfg.HostAddrs)
 
 	s := &Service{
 		cfg:            cfg,
@@ -252,6 +253,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		EpochIndex:  s.cfg.GatewayEpochIndex,
 	})
 	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents)
+	mountHostPools(e.Group(""), s.nodeManager.hosts)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {

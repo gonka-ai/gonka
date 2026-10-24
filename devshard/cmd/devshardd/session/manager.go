@@ -636,7 +636,7 @@ func (m *HostManager) ownerEscrow(escrowID, addr string) (*bridge.EscrowInfo, er
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
 // get (nil, nil). Chat and height-sync seed use this.
-// ChallengeReceipt, VerifyTimeout, and VerifyErrorMiss use sessionForStartProof
+// ChallengeReceipt, VerifyTimeout, VerifyErrorMiss, and VerifyChallenge use sessionForStartProof
 // so a peer cannot pick the version: a cold host binds only from the
 // creator-signed MsgStartInference in the diffs.
 func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
@@ -1477,7 +1477,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 
 // hostRPCLookup is the Connect session resolver. Observability GETs and
 // gossip/repair use Existing (no CreateSession). ChallengeReceipt,
-// VerifyTimeout, and VerifyErrorMiss bind via SessionForStartProof
+// VerifyTimeout, VerifyErrorMiss, and VerifyChallenge bind via SessionForStartProof
 // (creator-signed start + version). Chat and seed use SessionForOwner
 // (creator only).
 type hostRPCLookup struct{ m *HostManager }

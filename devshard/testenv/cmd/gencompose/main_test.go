@@ -608,3 +608,58 @@ func TestFillConfig_MaterializesKeyrings(t *testing.T) {
 	_, err := os.Stat(filepath.Join(keyringBase, "keyhash"))
 	require.NoError(t, err)
 }
+
+// The chaos config reaches the one mock node whose profile asks for it, and survives the YAML quoting.
+func TestWriteCompose_ChaosReachesOnlyItsMockNode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	chaos := `{"enabled":true,"seed":7,"weights":{"ok":4,"wrong_answer":1}}`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", Workers: 1},
+		{Name: "mock-openai-1", Workers: 1, ChaosJSON: chaos},
+	}
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, chaos, compose.Services["mock-openai-1"].Environment["MOCK_OPENAI_CHAOS_JSON"])
+	require.NotContains(t, compose.Services["mock-openai-0"].Environment, "MOCK_OPENAI_CHAOS_JSON", "an honest node gets no chaos")
+}
+
+// Test flow:
+// 1. Cap one of two ML nodes, bound to versiond-2, and validate the config.
+// 2. Write the compose file and require mock-dapi to get the cap of that node only.
+// 3. Require a negative cap and a binding to an unknown host to fail validation.
+func TestWriteCompose_MockDapiNodeMaxConcurrent(t *testing.T) {
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0"}, {Name: "mock-openai-1", Host: "versiond-2", MaxConcurrent: 4}}
+	require.NoError(t, cfg.Validate())
+
+	outPath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, "mock-openai-1=4", compose.Services["mock-dapi"].Environment["MOCK_ML_NODE_MAX_CONCURRENT"])
+
+	cfg.MockOpenAI.Nodes[1].MaxConcurrent = -1
+	require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[1].max_concurrent")
+	cfg.MockOpenAI.Nodes[1].MaxConcurrent = 0
+	cfg.MockOpenAI.Nodes[1].Host = "versiond-9"
+	require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[1].host")
+}
