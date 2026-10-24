@@ -382,6 +382,7 @@ func fetchSignedPayloads(
 	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
 		return nil, errPayloadRPCUnavailable
 	}
+	start := time.Now()
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
@@ -393,13 +394,36 @@ func fetchSignedPayloads(
 		}
 		return nil, err
 	}
-	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
+	req := &rpcpb.GetPayloadRequest{
 		InferenceId:      inferenceID,
 		ValidatorAddress: validatorAddress,
 		Timestamp:        timestamp,
 		EpochId:          epochID,
 		Signature:        []byte(signature), // HTTP Authorization header text
-	}, maxBytes)
+	}
+	deadline := start.Add(payloadFetchHeaderTimeout)
+	for {
+		resp, err := fetchPayloadsRPCWithRetry(ctx, rpc, req, maxBytes)
+		if err == nil || !errors.Is(err, transport.ErrPeerNotReady) || ctx.Err() != nil || transport.OutboundPeersReleased() || rpc.DoorRefused() {
+			return resp, err
+		}
+		// The executor dropped the call and has not re-Attached. Like a
+		// silent executor above, it has until the header budget runs out,
+		// counted from the start of the fetch.
+		if !time.Now().Before(deadline) {
+			return nil, tagExecutorPayloadFault(err)
+		}
+		readyCtx, cancelReady := context.WithDeadline(ctx, deadline)
+		werr := rpc.WaitReady(readyCtx)
+		timedOut := werr != nil && payloadAttachTimedOut(ctx, readyCtx) && !rpc.DoorRefused()
+		cancelReady()
+		if werr != nil {
+			if timedOut {
+				return nil, tagExecutorPayloadFault(err)
+			}
+			return nil, err
+		}
+	}
 }
 
 // payloadAttachTimedOut reports that the handshake wait expired while this
