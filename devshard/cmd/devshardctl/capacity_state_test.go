@@ -447,3 +447,28 @@ func TestParticipantLimiterEnforcedUnderCapacityAware(t *testing.T) {
 	require.Error(t, limiter.AllowRequest("shared-host", "/sessions/12/chat/completions"))
 	require.Error(t, limiter.CanAcceptEscrow([]string{"shared-host"}))
 }
+
+// Test flow:
+// 1. Hosts A and B have the same m1 weight; A also serves an m2 escrow.
+// 2. Each m1 escrow gets the full m1 weight of its host, and the model-agnostic weight still splits A across all its escrows.
+// 3. After A drops the m2 escrow and joins a second m1 escrow, its m1 weight splits between its two m1 escrows.
+func TestCapacityStateEscrowWeightForModelIgnoresOtherModelSlots(t *testing.T) {
+	m := NewCapacityState()
+	m.SetEscrowMembershipForModel("X", "m1", map[string]int{"A": 4})
+	m.SetEscrowMembershipForModel("Y", "m1", map[string]int{"B": 4})
+	m.SetEscrowMembershipForModel("Z", "m2", map[string]int{"A": 4})
+	m.SetHostWeightsByModel(map[string]map[string]float64{
+		"m1": {"A": 8, "B": 8},
+		"m2": {"A": 8},
+	}, false)
+
+	require.InDelta(t, 8.0, m.EscrowWeightForModel("X", "m1"), 1e-9)
+	require.InDelta(t, 8.0, m.EscrowWeightForModel("Y", "m1"), 1e-9)
+	require.InDelta(t, 8.0, m.EscrowWeightForModel("Z", "m2"), 1e-9)
+	require.InDelta(t, 0.5, m.EscrowWeight("X"), 1e-9)
+
+	m.RemoveEscrow("Z")
+	m.SetEscrowMembershipForModel("X2", "m1", map[string]int{"A": 4})
+	require.InDelta(t, 4.0, m.EscrowWeightForModel("X", "m1"), 1e-9)
+	require.InDelta(t, 4.0, m.EscrowWeightForModel("X2", "m1"), 1e-9)
+}
