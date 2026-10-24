@@ -252,6 +252,36 @@ func TestChatFrameSink_CoalesceBeatsPerLineFlush(t *testing.T) {
 	require.GreaterOrEqual(t, wonLine, 40, "coalesced gzip must keep the match table, not only skip the blank line")
 }
 
+// The default sends every token in its own frame. Each flush ends a deflate
+// block; the window must survive it, or every frame repeats the event's id,
+// object, created and model. BestSpeed starts each block with an empty window.
+func TestChatFrameSink_PerTokenFramesKeepTheWindow(t *testing.T) {
+	require.Zero(t, chatGzipCut())
+	var body strings.Builder
+	body.WriteString("data: {\"devshard_receipt\":{}}\n\n")
+	words := []string{"Hello", " world", " from", " the", " model"}
+	for i := 1; i <= 100; i++ {
+		body.WriteString(vllmTokenEvent(i, words[(i-1)%len(words)]))
+	}
+	body.WriteString("data: [DONE]\n\n")
+	streamed := gzipRelay(t, body.String(), false)
+	require.Equal(t, body.String(), gzipConcat(t, streamed.chunks))
+	require.Greater(t, len(streamed.chunks), 100, "every token leaves in its own frame")
+
+	var bestSpeed bytes.Buffer
+	gz, err := gzip.NewWriterLevel(&bestSpeed, gzip.BestSpeed)
+	require.NoError(t, err)
+	for _, event := range strings.SplitAfter(body.String(), "\n\n") {
+		_, err := gz.Write([]byte(event))
+		require.NoError(t, err)
+		require.NoError(t, gz.Flush())
+	}
+	require.NoError(t, gz.Close())
+
+	t.Logf("uncompressed %d; per-token frames %d bytes; BestSpeed per-token %d bytes", body.Len(), streamed.bytes, bestSpeed.Len())
+	require.Less(t, 3*streamed.bytes, bestSpeed.Len(), "per-token frames must reuse the window across flushes")
+}
+
 func gzipOneShot(t *testing.T, body string) gzipMeasure {
 	t.Helper()
 	var m gzipMeasure
@@ -334,7 +364,7 @@ func TestChatFrameSink_GatewayUnpacksCoalescedStream(t *testing.T) {
 	require.Len(t, chunks, 1, "the receipt leaves in its own frame")
 
 	first := "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n"
-	require.Less(t, len(first), 128, "the first token is under the BestSpeed floor")
+	require.Less(t, len(first), ChatGzipCoalesceBytes, "the first token is far under the cut")
 	body.WriteString(first)
 	require.NoError(t, relaySSELines(first, sink))
 	require.Len(t, chunks, 2, "the first token leaves immediately, not with the next tokens")
