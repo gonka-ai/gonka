@@ -2,12 +2,20 @@
 package loadtest
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"devshard/testenv/mockopenai"
+
+	"devshard/transport"
 
 	"gopkg.in/yaml.v3"
 )
@@ -23,6 +31,15 @@ type Scenario struct {
 	Assertions    Assertions  `yaml:"assertions"`
 	DrainTimeout  string      `yaml:"drain_timeout"`
 	Diagnostics   Diagnostics `yaml:"diagnostics"`
+	Cases         []Case      `yaml:"cases"`
+}
+
+// Case names a scenario case that events and assertions refer to. A case with
+// KnownBug set is expected to fail: a failure reports XFAIL, a pass XPASS.
+type Case struct {
+	ID       string `yaml:"id"`
+	Title    string `yaml:"title"`
+	KnownBug string `yaml:"known_bug"`
 }
 
 // Protocol contains optional chain timeout overrides for short deterministic
@@ -39,6 +56,10 @@ type Diagnostics struct {
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
 	ContentionProfiles       bool               `yaml:"contention_profiles"`
+	// Export copies the hosts' databases and every mock ML node's request log into the output
+	// directory before the stack stops, for checks that compare what the ML produced with what the
+	// hosts recorded (export.go).
+	Export bool `yaml:"export"`
 }
 
 type ProfileSnapshot struct {
@@ -72,6 +93,17 @@ type Gateway struct {
 type GatewayParticipantThrottle struct {
 	TransportFailureQuarantine string `yaml:"transport_failure_quarantine"`
 	HTTPQuarantine             string `yaml:"http_quarantine"`
+	EmptyStreamQuarantine      string `yaml:"empty_stream_quarantine"`
+	StalledWinnerQuarantine    string `yaml:"stalled_winner_quarantine"`
+}
+
+func (t GatewayParticipantThrottle) settings() map[string]string {
+	return map[string]string{
+		"transport_failure_quarantine": t.TransportFailureQuarantine,
+		"http_quarantine":              t.HTTPQuarantine,
+		"empty_stream_quarantine":      t.EmptyStreamQuarantine,
+		"stalled_winner_quarantine":    t.StalledWinnerQuarantine,
+	}
 }
 
 type GatewayRedundancy struct {
@@ -88,6 +120,13 @@ type GatewayEscrowRotation struct {
 	TargetCount       int    `yaml:"target_count"`
 	Amount            uint64 `yaml:"amount"`
 	PrivateKeyEnv     string `yaml:"private_key_env"`
+	// Models overrides settlement per model; unset keeps the global flag.
+	Models []GatewayRotationModel `yaml:"models"`
+}
+
+type GatewayRotationModel struct {
+	Model             string `yaml:"model"`
+	SettlementEnabled *bool  `yaml:"settlement_enabled"`
 }
 
 const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
@@ -98,35 +137,77 @@ type Topology struct {
 	Participants int            `yaml:"participants"`
 	Chain        ChainTopology  `yaml:"chain"`
 	MockML       MockMLTopology `yaml:"mock_ml"`
+	Hosts        []TopologyHost `yaml:"hosts"`
 }
 
-// HostFault freezes a whole versiond container, including its devshardd child.
-type HostFault struct {
-	Host       string `yaml:"host" json:"host"`
-	Mode       string `yaml:"mode" json:"mode"`
-	StartAfter string `yaml:"start_after" json:"start_after"`
-	Duration   string `yaml:"duration" json:"duration"`
+// TopologyHost adds environment variables to one versiond container. Keys
+// replace the compose defaults of the same name.
+type TopologyHost struct {
+	ID  string            `yaml:"id"`
+	Env map[string]string `yaml:"env"`
+	// RPCChatsPerMin sets DEVSHARD_RPC_MSGS_PER_MIN to this many Chats a
+	// minute at the current transport.RPCWeightChat, so a budget case keeps biting if the weight changes.
+	RPCChatsPerMin int `yaml:"rpc_chats_per_min"`
 }
+
+// ResolvedEnv is Env plus the DEVSHARD_RPC_MSGS_PER_MIN that RPCChatsPerMin implies.
+func (h TopologyHost) ResolvedEnv() map[string]string {
+	if h.RPCChatsPerMin <= 0 {
+		return h.Env
+	}
+	env := make(map[string]string, len(h.Env)+1)
+	for key, value := range h.Env {
+		env[key] = value
+	}
+	env[rpcMsgsPerMinEnv] = strconv.Itoa(h.RPCChatsPerMin * transport.RPCWeightChat)
+	return env
+}
+
+const rpcMsgsPerMinEnv = "DEVSHARD_RPC_MSGS_PER_MIN"
 
 // ChainTopology is the deterministic test-only chain state needed to keep a
 // load scenario from terminating because of fixture defaults.
 type ChainTopology struct {
 	EscrowAmount uint64 `yaml:"escrow_amount"`
 	MaxNonce     uint32 `yaml:"max_nonce"`
+	// ValidationThreshold is the replay similarity bar the chain hands the hosts for every model.
+	// Unset keeps the testenv default, 0.50, which no logprob mismatch can fail: one position adds
+	// less than 0.5 to the distance, so similarity with matching tokens stays above 0.5.
+	ValidationThreshold *ChainDecimal `yaml:"validation_threshold"`
+	// Escrows is how many escrows of the request model the gateway holds during the load, as an operator
+	// that funds several does; it spreads the requests over them. The first is the configured one, the
+	// rest are created through the gateway admin API before the load. 0 and 1 keep the one.
+	Escrows int `yaml:"escrows"`
+}
+
+// ChainDecimal is a chain decimal, value × 10^exponent; mainnet's 0.958 is value 958, exponent -3.
+type ChainDecimal struct {
+	Value    int64 `yaml:"value"`
+	Exponent int32 `yaml:"exponent"`
 }
 
 type MockMLTopology struct {
 	Allocator string       `yaml:"allocator"`
 	Nodes     []MockMLNode `yaml:"nodes"`
+	// Rules are fault rules every node of the scenario runs after its profile's own, so a rule fires
+	// whichever node the pool hands the request it selects.
+	Rules []mockopenai.FaultRule `yaml:"rules"`
 }
 
 type MockMLNode struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
+	// Host binds the node to one versiond host in mock-dapi; empty keeps it
+	// in the shared pool.
+	Host string `yaml:"host"`
+	// MaxConcurrent caps the AcquireMLNode locks mock-dapi hands out on the
+	// node at once, as the dapi broker caps a node; 0 is unlimited.
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 type Workload struct {
 	HostFaults     []HostFault    `yaml:"host_faults"`
+	Events         []Event        `yaml:"events"`
 	ReportInterval string         `yaml:"report_interval"`
 	MaxInFlight    int            `yaml:"max_in_flight"`
 	Duration       string         `yaml:"duration"`
@@ -149,18 +230,40 @@ type TrafficProfile struct {
 	SpikeDuration string         `yaml:"spike_duration"`
 	Interval      string         `yaml:"interval"`
 	Stages        []TrafficStage `yaml:"stages"`
+	// PeakRPS is the rate of every stage marked peak (default 32).
+	PeakRPS float64 `yaml:"peak_rps"`
 }
 
 type TrafficStage struct {
 	Duration string  `yaml:"duration"`
 	RPS      float64 `yaml:"rps"`
+	Peak     bool    `yaml:"peak"`
 }
 
 type Request struct {
-	Model     string    `yaml:"model"`
-	Stream    bool      `yaml:"stream"`
-	MaxTokens int       `yaml:"max_tokens"`
-	Messages  []Message `yaml:"messages"`
+	Model     string      `yaml:"model"`
+	Stream    bool        `yaml:"stream"`
+	MaxTokens int         `yaml:"max_tokens"`
+	Messages  []Message   `yaml:"messages"`
+	Timeout   string      `yaml:"timeout"`
+	Mix       *RequestMix `yaml:"mix"`
+}
+
+// RequestMix draws per-request parameters from weighted choices. Each
+// dimension left empty falls back to the fixed request fields.
+type RequestMix struct {
+	StreamRatio   float64               `yaml:"stream_ratio"`
+	LogprobsRatio float64               `yaml:"logprobs_ratio"`
+	TopLogprobs   int                   `yaml:"top_logprobs"`
+	MaxTokens     []Weighted[int]       `yaml:"max_tokens"`
+	Temperature   []Weighted[float64]   `yaml:"temperature"`
+	Prompts       []Weighted[[]Message] `yaml:"prompts"`
+	Models        []Weighted[string]    `yaml:"models"`
+}
+
+type Weighted[T any] struct {
+	Value  T       `yaml:"value"`
+	Weight float64 `yaml:"weight"`
 }
 
 type Message struct {
@@ -173,6 +276,8 @@ type Assertions struct {
 		HTTPStatus      int     `yaml:"http_status"`
 		TerminalOutcome string  `yaml:"terminal_outcome"`
 		ErrorRate       float64 `yaml:"error_rate"`
+		// DroppedRate bounds the requests the generator never sent; unset, it is ErrorRate.
+		DroppedRate *float64 `yaml:"dropped_rate"`
 	} `yaml:"requests"`
 	EscrowRotation struct {
 		RequireNewEscrow bool `yaml:"require_new_escrow"`
@@ -183,8 +288,36 @@ type Assertions struct {
 	} `yaml:"devshard"`
 	MockML struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
+		// RequireFullNode makes a promises run not valid when no ML node was ever full (none queued a
+		// request for a worker or refused one at capacity): the run did not load its nodes the way it
+		// was meant to.
+		RequireFullNode bool `yaml:"require_full_node"`
 	} `yaml:"mock_ml"`
 	Accounting AccountingAssertions `yaml:"accounting"`
+	Invariants InvariantAssertions  `yaml:"invariants"`
+
+	// Promises holds the exported run to the system properties of citest/harness (CheckLoadtestRun)
+	// and writes promises.json and promises.md; a violation fails the run.
+	Promises bool `yaml:"promises"`
+}
+
+// InvariantAssertions enables the end-of-run invariants. Empty fields
+// keep the defaults from invariantSettings. Cases ties a run-level invariant,
+// such as "no-runtime-for-deactivated-escrow", to a scenario case so its known_bug marker applies.
+type InvariantAssertions struct {
+	Enabled       bool              `yaml:"enabled"`
+	Baseline      InvariantWindow   `yaml:"baseline"`
+	TrendEarly    InvariantWindow   `yaml:"trend_early"`
+	TrendLate     InvariantWindow   `yaml:"trend_late"`
+	Grace         string            `yaml:"grace"`
+	MaxPendingAge string            `yaml:"max_pending_age"`
+	Cases         map[string]string `yaml:"cases"`
+}
+
+// InvariantWindow is an offset range from the workload start.
+type InvariantWindow struct {
+	From string `yaml:"from"`
+	To   string `yaml:"to"`
 }
 
 type AccountingAssertions struct {
@@ -205,6 +338,61 @@ type Profile struct {
 	FailureRate   float64 `yaml:"failure_rate"`
 	HTTPStatus    int     `yaml:"http_status"`
 	Failures      []any   `yaml:"failures"`
+	// Chaos makes the node a dishonest executor: each execution gets one answer shape drawn by these
+	// weights (mockopenai chaos actions, e.g. wrong_answer, odd_usage). A validator's replay is
+	// always answered honestly, so a shape other than ok is one the protocol should catch.
+	Chaos *ProfileChaos `yaml:"chaos"`
+	// Oracle answers a validator's replay from the enforced tokens it carries, and reports usage as the
+	// tokens emitted. ChunkTokens is how many tokens one streamed chunk carries. FirstContentMs and
+	// ExecMs schedule a streamed execution from the request start; ReplayMs delays replays only.
+	Oracle         bool `yaml:"oracle"`
+	ChunkTokens    int  `yaml:"chunk_tokens"`
+	FirstContentMs int  `yaml:"first_content_ms"`
+	ExecMs         int  `yaml:"exec_ms"`
+	ReplayMs       int  `yaml:"replay_ms"`
+	// Rules inject a fault into the requests they select by phase, seed or prompt text; the generator
+	// tags every prompt with "[load-request:<id>]".
+	Rules []mockopenai.FaultRule `yaml:"rules"`
+	// TTFTP99 and TokenIntervalP99 make ttft and token_interval lognormal
+	// medians, seeded from the scenario seed. Empty keeps them fixed.
+	TTFTP99          string `yaml:"ttft_p99"`
+	TokenIntervalP99 string `yaml:"token_interval_p99"`
+}
+
+// ProfileChaos is the chaos part of an ML node profile.
+type ProfileChaos struct {
+	Seed    int64          `yaml:"seed"`
+	Weights map[string]int `yaml:"weights"`
+}
+
+// rulesJSON is the mock's MOCK_OPENAI_RULES_JSON for a node of the profile: the profile's rules, then
+// the ones the scenario gives every node; empty when there are none.
+func (p Profile) rulesJSON(scenarioRules ...mockopenai.FaultRule) (string, error) {
+	rules := append(slices.Clone(p.Rules), scenarioRules...)
+	if len(rules) == 0 {
+		return "", nil
+	}
+	if err := mockopenai.ValidateRules(rules); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(rules)
+	return string(raw), err
+}
+
+// chaosJSON is the mock's MOCK_OPENAI_CHAOS_JSON for the profile, empty when it has no chaos.
+func (p Profile) chaosJSON() (string, error) {
+	if p.Chaos == nil {
+		return "", nil
+	}
+	c := mockopenai.ChaosConfig{Enabled: true, Seed: p.Chaos.Seed, Weights: p.Chaos.Weights}
+	if len(c.Weights) == 0 {
+		return "", fmt.Errorf("chaos needs weights")
+	}
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(c)
+	return string(raw), err
 }
 
 func LoadScenario(path string) (Scenario, error) {
@@ -232,6 +420,26 @@ func LoadProfile(dir, name string) (Profile, error) {
 	}
 	if _, err := time.ParseDuration(profile.TokenInterval); err != nil {
 		return Profile{}, fmt.Errorf("profile %s token_interval: %w", path, err)
+	}
+	if _, err := profile.chaosJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s chaos: %w", path, err)
+	}
+	if _, err := profile.rulesJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s rules: %w", path, err)
+	}
+	if profile.ChunkTokens < 0 || profile.FirstContentMs < 0 || profile.ExecMs < 0 || profile.ReplayMs < 0 {
+		return Profile{}, fmt.Errorf("profile %s chunk_tokens, first_content_ms, exec_ms and replay_ms must be non-negative", path)
+	}
+	if profile.ExecMs > 0 && profile.ExecMs < profile.FirstContentMs {
+		return Profile{}, fmt.Errorf("profile %s exec_ms (the last chunk) must not come before first_content_ms", path)
+	}
+	for field, p99 := range map[string]string{"ttft_p99": profile.TTFTP99, "token_interval_p99": profile.TokenIntervalP99} {
+		if p99 == "" {
+			continue
+		}
+		if _, err := time.ParseDuration(p99); err != nil {
+			return Profile{}, fmt.Errorf("profile %s %s: %w", path, field, err)
+		}
 	}
 	if profile.Workers <= 0 || profile.Queue < 0 {
 		return Profile{}, fmt.Errorf("profile %s workers must be positive and queue non-negative", path)
@@ -269,6 +477,16 @@ func (s Scenario) Validate() error {
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")
 	}
+	// A similarity is at most 1, so a bar of 1 or more fails every honest replay.
+	if t := s.Topology.Chain.ValidationThreshold; t != nil && (t.Value <= 0 || t.Exponent >= 0 || float64(t.Value) >= math.Pow10(int(-t.Exponent))) {
+		return fmt.Errorf("topology.chain.validation_threshold must be above 0 and below 1")
+	}
+	if s.Topology.Chain.Escrows < 0 || s.Topology.Chain.Escrows > maxScenarioEscrows {
+		return fmt.Errorf("topology.chain.escrows must be between 0 and %d", maxScenarioEscrows)
+	}
+	if err := mockopenai.ValidateRules(s.Topology.MockML.Rules); err != nil {
+		return fmt.Errorf("topology.mock_ml.rules: %w", err)
+	}
 	if s.Topology.MockML.Allocator != "round_robin" {
 		return fmt.Errorf("mock DAPI scenarios require mock_ml allocator round_robin")
 	}
@@ -283,6 +501,9 @@ func (s Scenario) Validate() error {
 		if _, exists := seen[node.Name]; exists {
 			return fmt.Errorf("duplicate mock_ml node %q", node.Name)
 		}
+		if node.MaxConcurrent < 0 {
+			return fmt.Errorf("mock_ml node %q max_concurrent must be non-negative", node.Name)
+		}
 		seen[node.Name] = struct{}{}
 	}
 	if s.Workload.MaxInFlight <= 0 {
@@ -293,6 +514,15 @@ func (s Scenario) Validate() error {
 		return fmt.Errorf("workload duration: %w", err)
 	}
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
+		return err
+	}
+	if err := s.validateTopologyBindings(); err != nil {
+		return err
+	}
+	if err := s.validateCases(); err != nil {
+		return err
+	}
+	if err := validateEvents(s, duration); err != nil {
 		return err
 	}
 	protocolTimeouts := map[string]string{
@@ -361,20 +591,26 @@ func (s Scenario) Validate() error {
 		}
 		previousEnd = start + length
 	}
-	if s.Workload.Request.Stream {
-		return fmt.Errorf("streaming requests are not supported by the initial runner")
-	}
 	if s.Workload.Request.Model == "" || len(s.Workload.Request.Messages) == 0 {
 		return fmt.Errorf("request model and messages are required")
 	}
+	if err := s.Workload.Request.validate(); err != nil {
+		return err
+	}
 	if s.Assertions.Requests.ErrorRate < 0 || s.Assertions.Requests.ErrorRate > 1 {
 		return fmt.Errorf("assertions.requests.error_rate must be between 0 and 1")
+	}
+	if bound := s.Assertions.Requests.DroppedRate; bound != nil && (*bound < 0 || *bound > 1) {
+		return fmt.Errorf("assertions.requests.dropped_rate must be between 0 and 1")
 	}
 	if s.Assertions.Requests.HTTPStatus == 0 || s.Assertions.Requests.TerminalOutcome == "" {
 		return fmt.Errorf("request assertions require http_status and terminal_outcome")
 	}
 	if s.Assertions.Devshard.MaxGhostRate < 0 || s.Assertions.Devshard.MaxGhostRate > 1 {
 		return fmt.Errorf("devshard max_ghost_rate must be between 0 and 1")
+	}
+	if err := s.validateInvariants(duration); err != nil {
+		return err
 	}
 	if s.Assertions.Accounting.TargetHost != "" {
 		validHost := false
@@ -397,10 +633,7 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner must be positive")
 		}
 	}
-	for name, value := range map[string]string{
-		"transport_failure_quarantine": s.Gateway.ParticipantThrottle.TransportFailureQuarantine,
-		"http_quarantine":              s.Gateway.ParticipantThrottle.HTTPQuarantine,
-	} {
+	for name, value := range s.Gateway.ParticipantThrottle.settings() {
 		if value == "" {
 			continue
 		}
@@ -427,11 +660,28 @@ func (s Scenario) Validate() error {
 			return fmt.Errorf("gateway.escrow_rotation.private_key_env must be set")
 		}
 	}
+	seenRotationModels := map[string]bool{}
+	for i, model := range rotation.Models {
+		if !rotation.Enabled {
+			return fmt.Errorf("gateway.escrow_rotation.models requires gateway.escrow_rotation.enabled")
+		}
+		if strings.TrimSpace(model.Model) == "" || seenRotationModels[model.Model] {
+			return fmt.Errorf("gateway.escrow_rotation.models[%d]: model must be set and unique", i)
+		}
+		seenRotationModels[model.Model] = true
+	}
 	if s.Assertions.EscrowRotation.RequireNewEscrow && !rotation.Enabled {
 		return fmt.Errorf("assertions.escrow_rotation.require_new_escrow requires gateway.escrow_rotation.enabled")
 	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)
+	}
+	if s.Assertions.Promises && !s.Diagnostics.Export {
+		return fmt.Errorf("assertions.promises requires diagnostics.export")
+	}
+	// The checks find the executor of every inference in compose.log; a cut log hides the early ones.
+	if s.Assertions.Promises && s.Diagnostics.LogTail() != "all" {
+		return fmt.Errorf("assertions.promises requires diagnostics.logs.tail: all")
 	}
 	return nil
 }
@@ -469,6 +719,162 @@ func loadYAML(path string, out any) error {
 	}
 	if err := yaml.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
+
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+func (s Scenario) validateTopologyBindings() error {
+	seenHosts := map[string]bool{}
+	for i, host := range s.Topology.Hosts {
+		if s.Topology.Participants == 0 || !validTopologyHost(host.ID, s.Topology.Participants) {
+			return fmt.Errorf("topology.hosts[%d]: id must be a versiond host of an explicit topology.participants", i)
+		}
+		if seenHosts[host.ID] {
+			return fmt.Errorf("topology.hosts[%d]: duplicate id %q", i, host.ID)
+		}
+		seenHosts[host.ID] = true
+		for key := range host.Env {
+			if !envKeyPattern.MatchString(key) {
+				return fmt.Errorf("topology.hosts[%d].env: invalid variable name %q", i, key)
+			}
+		}
+		if _, set := host.Env[rpcMsgsPerMinEnv]; host.RPCChatsPerMin < 0 || (set && host.RPCChatsPerMin > 0) {
+			return fmt.Errorf("topology.hosts[%d].rpc_chats_per_min must be positive and replaces env %s", i, rpcMsgsPerMinEnv)
+		}
+	}
+	for i, node := range s.Topology.MockML.Nodes {
+		if node.Host == "" {
+			continue
+		}
+		if s.Topology.Participants == 0 || !validTopologyHost(node.Host, s.Topology.Participants) {
+			return fmt.Errorf("topology.mock_ml.nodes[%d].host must be a versiond host of an explicit topology.participants", i)
+		}
+	}
+	return nil
+}
+
+func (s Scenario) validateCases() error {
+	seen := map[string]bool{}
+	for i, c := range s.Cases {
+		if strings.TrimSpace(c.ID) == "" || seen[c.ID] {
+			return fmt.Errorf("cases[%d]: id must be set and unique", i)
+		}
+		seen[c.ID] = true
+	}
+	return nil
+}
+
+func (r Request) validate() error {
+	if r.Timeout != "" {
+		timeout, err := time.ParseDuration(r.Timeout)
+		if err != nil || timeout <= 0 {
+			return fmt.Errorf("workload.request.timeout must be a positive duration")
+		}
+	}
+	mix := r.Mix
+	if mix == nil {
+		return nil
+	}
+	if mix.StreamRatio < 0 || mix.StreamRatio > 1 || mix.LogprobsRatio < 0 || mix.LogprobsRatio > 1 {
+		return fmt.Errorf("workload.request.mix stream_ratio and logprobs_ratio must be between 0 and 1")
+	}
+	if mix.TopLogprobs < 0 || mix.TopLogprobs > 20 {
+		return fmt.Errorf("workload.request.mix.top_logprobs must be between 0 and 20")
+	}
+	if err := validateWeights("max_tokens", mix.MaxTokens, func(v int) bool { return v > 0 }); err != nil {
+		return err
+	}
+	if err := validateWeights("temperature", mix.Temperature, func(v float64) bool { return v >= 0 && v <= 2 }); err != nil {
+		return err
+	}
+	if err := validateWeights("prompts", mix.Prompts, func(v []Message) bool {
+		for _, message := range v {
+			if message.Role == "" || message.Content == "" {
+				return false
+			}
+		}
+		return len(v) > 0
+	}); err != nil {
+		return err
+	}
+	seenModels := map[string]bool{}
+	return validateWeights("models", mix.Models, func(v string) bool {
+		valid := strings.TrimSpace(v) != "" && !seenModels[v]
+		seenModels[v] = true
+		return valid
+	})
+}
+
+func validateWeights[T any](name string, choices []Weighted[T], valid func(T) bool) error {
+	for i, choice := range choices {
+		if choice.Weight <= 0 || !valid(choice.Value) {
+			return fmt.Errorf("workload.request.mix.%s[%d]: requires a valid value and a positive weight", name, i)
+		}
+	}
+	return nil
+}
+
+// RequestModels lists the models the generator can send, in mix order.
+func (s Scenario) RequestModels() []string {
+	if mix := s.Workload.Request.Mix; mix != nil && len(mix.Models) > 0 {
+		models := make([]string, 0, len(mix.Models))
+		for _, choice := range mix.Models {
+			models = append(models, choice.Value)
+		}
+		return models
+	}
+	return []string{s.Workload.Request.Model}
+}
+
+func (s Scenario) RequestTimeout() time.Duration {
+	if s.Workload.Request.Timeout == "" {
+		return 30 * time.Second
+	}
+	d, _ := time.ParseDuration(s.Workload.Request.Timeout)
+	return d
+}
+
+// invariantNamePattern accepts an invariant ("no-runtime-for-deactivated-escrow") or one of its checks ("escrow-accounting-reconciles.final_nonce_le_max").
+var invariantNamePattern = regexp.MustCompile(`^(` + strings.Join(invariantNames(), "|") + `)(\.[a-z0-9_]+)?$`)
+
+func invariantNames() []string {
+	names := make([]string, 0, len(invariantEvaluators))
+	for _, eval := range invariantEvaluators {
+		names = append(names, eval.name)
+	}
+	return names
+}
+
+func (s Scenario) validateInvariants(workload time.Duration) error {
+	inv := s.Assertions.Invariants
+	for name, value := range map[string]string{"grace": inv.Grace, "max_pending_age": inv.MaxPendingAge} {
+		if value == "" {
+			continue
+		}
+		if d, err := time.ParseDuration(value); err != nil || d <= 0 {
+			return fmt.Errorf("assertions.invariants.%s must be a positive duration", name)
+		}
+	}
+	for name, window := range map[string]InvariantWindow{"baseline": inv.Baseline, "trend_early": inv.TrendEarly, "trend_late": inv.TrendLate} {
+		if window.From == "" && window.To == "" {
+			continue
+		}
+		from, e1 := time.ParseDuration(window.From)
+		to, e2 := time.ParseDuration(window.To)
+		if e1 != nil || e2 != nil || from < 0 || to <= from || to > workload {
+			return fmt.Errorf("assertions.invariants.%s requires from < to inside the workload", name)
+		}
+	}
+	declared := map[string]bool{}
+	for _, c := range s.Cases {
+		declared[c.ID] = true
+	}
+	for name, caseID := range inv.Cases {
+		if !invariantNamePattern.MatchString(name) || !declared[caseID] {
+			return fmt.Errorf("assertions.invariants.cases: %s must name an invariant (or one of its checks) and a declared case", name)
+		}
 	}
 	return nil
 }

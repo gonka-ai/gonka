@@ -24,20 +24,61 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
-	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m, plus the promises hold")
+	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
+	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
+	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
+	promises := flag.Bool("promises", false, "turn on diagnostics.export, complete logs and assertions.promises for this run, whatever the scenario says, and hold the run to the system promises")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and, for a run held to the promises, promises.json and promises.md, and print the report, without a stack")
 	flag.Parse()
+	if *recheckDir != "" {
+		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, note := range notes {
+			log.Printf("loadtest: recheck: %s", note)
+		}
+		report, err := loadtest.WriteReport(*recheckDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		if !passed {
+			os.Exit(1)
+		}
+		return
+	}
+	if *reportDir != "" {
+		report, err := loadtest.WriteReport(*reportDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		return
+	}
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
-	scenario, err := loadtest.LoadScenario(*scenarioPath)
+	load := loadtest.LoadScenario
+	if *promises {
+		load = loadtest.LoadScenarioWithPromises
+	}
+	scenario, err := load(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	var build *loadtest.Build
+	if *buildPath != "" {
+		if build, err = loadtest.LoadBuild(*buildPath); err != nil {
+			log.Fatal(err)
+		}
 	}
 	if *runTimeout < 0 {
 		log.Fatal("timeout must be positive")
 	}
 	if *runTimeout == 0 {
-		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute)
+		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute) + scenario.PromisesWait()
 	}
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
@@ -64,7 +105,15 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
+		StrictXFail:     *strictXFail,
+		Build:           build,
+		Promises:        *promises,
 	})
+	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
+		log.Printf("loadtest: no report: %v", reportErr)
+	} else {
+		fmt.Println(report)
+	}
 	if err != nil {
 		if result.Summary.Requests > 0 {
 			printSummary(result, false)
@@ -98,6 +147,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  failed:          %d\n", summary.Failed)
 	fmt.Fprintf(os.Stdout, "  dropped:         %d\n", summary.Dropped)
 	fmt.Fprintf(os.Stdout, "  error rate:      %.2f%%\n", summary.ErrorRate*100)
+	fmt.Fprintf(os.Stdout, "  dropped rate:    %.2f%%\n", summary.DroppedRate*100)
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "Latency")
@@ -121,6 +171,8 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		fmt.Fprintf(os.Stdout, "  finished:         %d\n", terminal.Finished)
 		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
+		fmt.Fprintf(os.Stdout, "  settling:         %d\n", terminal.Settling)
+		fmt.Fprintf(os.Stdout, "  ghost excluded:   %d\n", terminal.GhostExcluded)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
 		statuses := formatIntCounts(terminal.Statuses)

@@ -1,0 +1,15 @@
+schema_version: v1
+profile: oracle-exec-slow
+
+# The oracle node of oracle-chunk1 whose executions stream for 40 s after the first content at 50 ms,
+# past the load generator's 30 s client timeout, so the client cancels after the first content.
+ttft: 0s
+token_interval: 0s
+workers: 128
+queue: 0
+failures: []
+oracle: true
+chunk_tokens: 1
+first_content_ms: 50
+exec_ms: 40000
+replay_ms: 1000

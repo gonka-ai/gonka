@@ -1,0 +1,15 @@
+schema_version: v1
+profile: overclaim
+
+# A dishonest executor: one execution in five reports usage.completion_tokens of 3n+7 for n tokens
+# sent, so the Finish it signs claims more output than the client received.
+ttft: 2ms
+token_interval: 0s
+workers: 100
+queue: 500
+failures: []
+chaos:
+  seed: 7
+  weights:
+    ok: 4
+    odd_usage: 1

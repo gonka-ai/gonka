@@ -50,6 +50,12 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 	return ctx.Err()
 }
 
+// Group returns the root route group so packages that adminface cannot
+// import, such as ledgerface, can add routes.
+func (s *Server) Group() *echo.Group {
+	return s.echo.Group("")
+}
+
 // Handler returns the root http.Handler (tests).
 func (s *Server) Handler() http.Handler {
 	if s == nil {
