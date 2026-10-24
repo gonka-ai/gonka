@@ -14,20 +14,20 @@ import (
 
 // inferenceDiagEntry is one row in the state-root mismatch inference snapshot.
 type inferenceDiagEntry struct {
-	ID          uint64 `json:"id"`
-	Status      uint8  `json:"status"`
-	ConfirmedAt int64  `json:"confirmed_at"`
-	Sealed      bool   `json:"sealed"`
-	SealedNonce uint64 `json:"sealed_nonce,omitempty"`
+	ID                uint64 `json:"id"`
+	Status            uint8  `json:"status"`
+	ConfirmedAtHeight uint64 `json:"confirmed_at_height"`
+	Sealed            bool   `json:"sealed"`
+	SealedNonce       uint64 `json:"sealed_nonce,omitempty"`
 }
 
 // StateRootMismatchOpts carries optional fields for a mismatch diagnostic log line.
 type StateRootMismatchOpts struct {
-	Side            string
-	Nonce           uint64
-	DiffPostState   []byte
-	ComputedState   []byte
-	SealClock       StateClockWindow
+	Side          string
+	Nonce         uint64
+	DiffPostState []byte
+	ComputedState []byte
+	SealClock     StateClockWindow
 }
 
 // IsPostStateRootMismatchError reports whether err is a post_state_root mismatch,
@@ -65,17 +65,17 @@ func (sm *StateMachine) collectInferenceDiagEntriesLocked() []inferenceDiagEntry
 		entry := inferenceDiagEntry{ID: id}
 		if rec, live := sm.state.Inferences[id]; live {
 			entry.Status = uint8(rec.Status)
-			entry.ConfirmedAt = rec.ConfirmedAt
+			entry.ConfirmedAtHeight = rec.ConfirmedAtHeight
 			entry.Sealed = false
 		} else {
 			entry.Sealed = true
 			entry.SealedNonce = sm.sealedNonces[id]
 			if rec, ok := sm.lookupSealedInferenceLocked(id); ok {
 				entry.Status = uint8(rec.Status)
-				entry.ConfirmedAt = rec.ConfirmedAt
+				entry.ConfirmedAtHeight = rec.ConfirmedAtHeight
 			} else if rec, err := sm.hydrateCommittedInferenceLocked(id); err == nil && rec != nil {
 				entry.Status = uint8(rec.Status)
-				entry.ConfirmedAt = rec.ConfirmedAt
+				entry.ConfirmedAtHeight = rec.ConfirmedAtHeight
 			}
 		}
 		entries = append(entries, entry)
@@ -126,9 +126,9 @@ func (sm *StateMachine) logStateRootMismatchDiagnosticLocked(opts StateRootMisma
 	}
 	if opts.SealClock.Known {
 		diagArgs = append(diagArgs,
-			"auto_seal_state_clock", opts.SealClock.Clock,
-			"auto_seal_window_min_confirmed_at", opts.SealClock.MinConfirmedAt,
-			"auto_seal_window_max_confirmed_at", opts.SealClock.MaxConfirmedAt,
+			"auto_seal_state_clock_ms", opts.SealClock.ClockMs,
+			"auto_seal_window_min_confirmed_at_ms", opts.SealClock.MinConfirmedAtMs,
+			"auto_seal_window_max_confirmed_at_ms", opts.SealClock.MaxConfirmedAtMs,
 		)
 	}
 	if len(opts.DiffPostState) > 0 {

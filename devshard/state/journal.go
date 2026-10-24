@@ -173,6 +173,49 @@ func (m *journalMap[K, V]) redo(live map[K]V) {
 	}
 }
 
+func (m *journalMap[K, V]) absorb(child journalMap[K, V]) {
+	for k, s := range child.pre {
+		if m.seen(k) {
+			continue
+		}
+		if m.pre == nil {
+			m.pre = make(map[K]journalSlot[V])
+		}
+		m.pre[k] = s
+	}
+}
+
+type savepoint struct {
+	parent, child *mutationJournal
+}
+
+func (sm *StateMachine) beginSavepointLocked() savepoint {
+	sp := savepoint{parent: sm.journal, child: &mutationJournal{pre: sm.readScalarsLocked()}}
+	sm.journal = sp.child
+	return sp
+}
+
+func (sm *StateMachine) rollbackSavepointLocked(sp savepoint) {
+	sm.undoJournalLocked(sp.child)
+	sm.journal = sp.parent
+}
+
+func (sm *StateMachine) releaseSavepointLocked(sp savepoint) {
+	sm.journal = sp.parent
+	p, c := sp.parent, sp.child
+	if p == nil {
+		return
+	}
+	p.inferences.absorb(c.inferences)
+	p.committed.absorb(c.committed)
+	p.sealed.absorb(c.sealed)
+	p.owed.absorb(c.owed)
+	p.hostStats.absorb(c.hostStats)
+	p.warmKeys.absorb(c.warmKeys)
+	p.trackerCopied = p.trackerCopied || c.trackerCopied
+	p.floorCopied = p.floorCopied || c.floorCopied
+}
+
 // beginJournalLocked opens the journal for one apply. Every return after it
 // must go through closeJournalLocked. Caller must hold sm.mu.
 func (sm *StateMachine) beginJournalLocked() (*mutationJournal, error) {

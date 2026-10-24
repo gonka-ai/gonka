@@ -14,7 +14,7 @@ import (
 // with the root a fresh SM reaches, so every diff depends on the one before.
 func chainedDiffs(t *testing.T, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, probe *StateMachine) []types.Diff {
 	t.Helper()
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	finish := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1, EscrowId: "escrow-1",
@@ -23,9 +23,9 @@ func chainedDiffs(t *testing.T, hosts []*signing.Secp256k1Signer, user *signing.
 	txsByNonce := [][]*types.DevshardTx{
 		{txStart(&types.MsgStartInference{
 			InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})},
-		{txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000})},
+		{txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig})},
 		{txFinish(finish)},
 	}
 	diffs := make([]types.Diff, 0, len(txsByNonce))

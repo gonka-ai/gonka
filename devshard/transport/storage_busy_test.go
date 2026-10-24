@@ -73,6 +73,19 @@ func TestIsStorageBusy(t *testing.T) {
 	require.False(t, IsStorageBusy(errors.New("storage_busy")))
 }
 
+func TestIsHeaderPending(t *testing.T) {
+	pending := &UpstreamStatusError{StatusCode: http.StatusServiceUnavailable, DevshardError: DevshardErrorHeaderPending}
+	require.True(t, IsHeaderPending(pending))
+	require.True(t, IsRetryableNonInference(pending))
+	require.False(t, IsStorageBusy(pending))
+	require.False(t, IsHeaderPending(&UpstreamStatusError{StatusCode: http.StatusServiceUnavailable, DevshardError: DevshardErrorStorageBusy}))
+
+	ce := connect.NewError(connect.CodeUnavailable, errors.New("pending"))
+	ce.Meta().Set(HeaderDevshardError, DevshardErrorHeaderPending)
+	require.True(t, IsHeaderPending(ce))
+	require.True(t, IsRetryableNonInference(ce))
+}
+
 // cancelAwareEngine records whether its context was canceled while it ran.
 type cancelAwareEngine struct {
 	inner    *stub.InferenceEngine
@@ -123,4 +136,18 @@ func TestServeInference_ClientCancelAfterReceiptStillFinishes(t *testing.T) {
 	require.False(t, engine.canceled.Load(), "the execution outlives the request")
 	require.Eventually(t, func() bool { return mempoolHasFinish(env.server.Host().MempoolTxs()) },
 		5*time.Second, 5*time.Millisecond)
+}
+
+func TestHeaderPendingIsAnAnswerNotAnOutage(t *testing.T) {
+	ce := connect.NewError(connect.CodeUnavailable, errors.New("pending"))
+	ce.Meta().Set(HeaderDevshardError, DevshardErrorHeaderPending)
+	require.False(t, executorUnreachable(ce), "the executor answered: it is waiting for a block")
+	require.True(t, executorUnreachable(connect.NewError(connect.CodeUnavailable, errors.New("draining"))))
+
+	tagged := TagHeaderPending(fmt.Errorf("challenge-receipt: %w", ce))
+	require.ErrorIs(t, tagged, types.ErrHeaderPending)
+	var got *connect.Error
+	require.ErrorAs(t, tagged, &got, "the Connect error stays reachable")
+	plain := errors.New("boom")
+	require.Equal(t, plain, TagHeaderPending(plain))
 }

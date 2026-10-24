@@ -38,7 +38,6 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 				InputLength:  10,
 				MaxTokens:    100,
 				ReservedCost: 50,
-				StartedAt:    123,
 				ValidatedBy:  Bitmap128{1, 0},
 			},
 		},

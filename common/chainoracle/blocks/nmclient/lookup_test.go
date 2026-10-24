@@ -3,6 +3,7 @@ package nmclient_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -152,4 +153,22 @@ func TestLookup_TransportErrorIsNotAMiss(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, blocks.ErrHeaderNotFound)
 	require.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+type verifyingStub struct{ stubOracle }
+
+func (verifyingStub) Verifying() bool { return true }
+
+func TestLookup_VerificationOutcomesAreNotTransportErrors(t *testing.T) {
+	refused := dialNM(t, &nmServer{oracle: verifyingStub{stubOracle{atErr: fmt.Errorf("%w: forged", blocks.ErrHeaderUnverified)}}})
+	lookup, err := nmclient.New(refused)
+	require.NoError(t, err)
+	_, err = lookup.At(context.Background(), 1)
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+
+	failing := dialNM(t, &nmServer{oracle: verifyingStub{stubOracle{atErr: errors.New("commit rpc: i/o timeout")}}})
+	lookup, err = nmclient.New(failing)
+	require.NoError(t, err)
+	_, err = lookup.At(context.Background(), 1)
+	require.Equal(t, codes.Internal, status.Code(err), "a verifying dapi's own failure is not Unavailable")
 }

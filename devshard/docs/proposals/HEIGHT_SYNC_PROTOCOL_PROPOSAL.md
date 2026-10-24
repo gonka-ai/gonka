@@ -761,9 +761,9 @@ inputs. Two patterns exist, and only one is safe by default:
 
 `ExecutorReceiptContent` is a signing input only — it never enters
 `Diff`. The verifier reconstructs it from committed state
-(`prompt_hash`, `model`, `input_length`, `max_tokens`, `started_at`,
-`escrow_id`) plus the fields the tx carries (`inference_id`,
-`confirmed_at`). A field present on `MsgConfirmStart` but absent from
+(`prompt_hash`, `model`, `input_length`, `max_tokens`, `escrow_id`)
+plus the fields the tx carries (`inference_id`, `observed_height`,
+`observed_block_hash`). A field present on `MsgConfirmStart` but absent from
 `ExecutorReceiptContent` is therefore **outside the executor's
 signature**: the sequencer could rewrite the executor's height and
 `executor_sig` would still verify. Normative:
@@ -777,8 +777,7 @@ signature**: the sequencer could rewrite the executor's height and
 
 The same rule generalises: **any** future stamp on a message whose
 signature is over a separate content message must be mirrored into that
-content message. `confirmed_at` already follows this pattern and is the
-reference implementation.
+content message. The receipt stamp is the reference implementation.
 
 **No `*_at_height` fields.** `observed_height` on a message already means
 “the height its signer observed when producing this message”, which is
@@ -786,10 +785,10 @@ exactly what `started_at_height` or `confirmed_at_height` would mean on
 the wire. Two fields for one value require a third rule to keep them
 consistent, so exactly one stamp per message is carried. Event-specific
 names belong in **derived state**, not on the wire: the inference record
-SHOULD keep `started_at_height` and `confirmed_at_height` copied from the
-stamps of `MsgStartInference` and `MsgConfirmStart`, because a single
-inference has two distinct events and the consumers of a duration read
-the record rather than the txs.
+keeps `started_at_height` (with its block hash) from the stamp of
+`MsgStartInference`, which is exactly F at its nonce. `MsgConfirmStart`
+carries the same F(inference id), and `confirmed_at_height` is F at the
+nonce where the confirm lands, not a copy of the receipt stamp.
 
 **Signer semantics.** A stamp is only as strong as the key on it:
 
@@ -805,22 +804,91 @@ a real block, so even a user-originated stamp is checkable while
 
 #### 10.5.2 Consequence — timeouts and seals can leave wall time
 
-`observed_height` in the log plus the derived record heights make it
-possible to express in-session deadlines in blocks rather than in each
-verifier's local clock:
+`observed_height` in the log plus the derived record anchors make it
+possible to express in-session deadlines against the chain's own clock
+rather than each verifier's local clock. A floor point `(H, hash)` names
+exactly one block, and that block's header carries its BFT time. The time
+is taken from the verifier's own chain view, and only once that header's
+hash equals the floor hash:
 
-| Decision | Wall-clock form | Height form |
-| -------- | --------------- | ----------- |
-| Execution timeout | `now − confirmed_at ≥ ExecutionTimeout`, evaluated against the verifier's own clock | `h_local − confirmed_at_height ≥ ExecutionTimeoutBlocks` |
-| Refusal timeout | `now − started_at`, where `started_at` is user-controlled and unverifiable | `h − started_at_height`, now checkable via L6 |
-| Deterministic seal clock | max `confirmed_at` over the recent confirmed window | max `confirmed_at_height` — a chain-verifiable logical clock |
+| Decision | Wall-clock form | Header-time form |
+| -------- | --------------- | ---------------- |
+| Refusal timeout | `now − started_at`, where `started_at` is user-controlled and unverifiable | `time(F(m)) − time(start anchor) ≥ RefusalTimeout` |
+| Execution timeout | `now − confirmed_at ≥ ExecutionTimeout`, evaluated against the verifier's own clock | `time(F(m)) − time(confirm anchor) ≥ ExecutionTimeout` |
+| Deterministic seal clock | max `confirmed_at` over the recent confirmed window | max confirm-anchor block time; Finished records seal once `clock − time(confirm anchor) ≥ InferenceSealGraceSeconds + ExecutionTimeout` |
+
+`m` is the nonce the timeout applies at. The record stores both the
+anchor height and the anchor's block time (`started_at_time_ms`,
+`confirmed_at_time_ms`), so a timeout check reads only `time(F(m))`.
+
+A block count is deliberately not used. Mainnet block intervals are
+bimodal (about 2.5 s and 5.5 s) and stall for minutes around upgrades, so
+any fixed `BlockTime` either fires early or late, and a halted chain adds
+no blocks while real time passes.
+
+Header availability is part of the rule:
+
+- A floor height the verifier's chain has not produced yet gives no time.
+  The diff waits (`ErrHeaderPending`) and is retried; it is never judged
+  INVALID for it, and no block interval is substituted. A host behind by
+  a block waits for its node.
+- A floor hash that is not the canonical block at that height is rejected
+  (`ErrHeaderMismatch`).
+- The sequencer does not put a floor raise into a diff unless its own
+  chain view can prove that `(H, hash)`. The apply and validation paths
+  enforce the same check before installing a host-signed floor raise.
+  A fabricated future height therefore never becomes a floor an honest
+  party has to read a time for.
+- Settlement computes every live record's timeout before draining. A
+  pending header defers the drain rather than refunding.
+
+Where the time comes from:
+
+- dapi serves `(height, hash, time)` only for headers it has proven. A new
+  height is light-verified against commit signatures from the last trusted
+  header (CometBFT `light.Verify`, trust level 1/3, trusting period 7 days by
+  default), verifying intermediate heights when validator turnover prevents
+  a direct jump. An older height is proven by its hash link to a proven header
+  above it, including heights older than the in-memory window. The history
+  (about a week) and the trust point are kept in dapi's SQLite with a
+  `verified` flag; verify mode loads only verified rows, and an unverified
+  write never replaces a verified one. A stored trust point that the node
+  cannot serve, or whose block hash differs, or a trust store that cannot be
+  read, stops verification instead of re-trusting the node. Header-store
+  initialization failures stop startup rather than discarding the trust store.
+  Only an expired trust point or `DAPI_CHAINORACLE_RESET_TRUST=true` starts
+  a new trust root. Each trust root
+  has an epoch; a reset starts a new one, and headers proven under another
+  epoch are never loaded.
+  `DAPI_CHAINORACLE_VERIFY_COMMITS=false` turns verification off.
+- `GetBlockHeader` takes `wait_ms`, so a host asking for a height the chain
+  has not produced yet is answered when the block is proven instead of
+  polling. The public HTTP `/block/:height` route does not wait.
+- devshardd reads header times only from dapi. It falls back to direct chain
+  gRPC only when dapi is unreachable at the transport level or does not
+  implement the header RPC, never when dapi answers "not found", rejects a header as unproven (`PermissionDenied`), or
+  reports its own failure (`Internal`). gRPC answers are judged by their code,
+  never by the words in their message.
+  The gateway, which runs no dapi, light-verifies against its own Comet RPC.
+  Without a Comet RPC it uses the chain fallback and logs a warning.
+- A candidate tx the sequencer leaves out only because its header is pending
+  stays queued and is offered again on the next diff. Timeout evidence must
+  pass the same "floor raise is provable" check the sequencer applies, after a
+  short wait for the header, so a Finish stamped at a fabricated height
+  cannot veto a timeout. Evidence whose header is still pending defers the
+  vote only while its height is at most a few blocks past the verifier's own
+  chain tip, and only within one 60 s window per inference counted from the
+  first deferral; a re-signed stamp does not renew it. Further out, or after
+  the window, it is not evidence.
+- An executor that answers a refusal challenge with `header_pending` has
+  answered: it is waiting for a block. The verifier gives no vote for that
+  round, within the same 60 s per-inference window. The answer cannot be
+  checked, so after the window it counts as unreachable again.
 
 This is the §1 motivation applied inward: a deadline that depends on each
-host's clock cannot be agreed on, a height can. Migration is deliberately
-two-step — a deployment first **carries** the heights, and only later
-**switches** decisions onto them, because any decision that folds into a
-state root must change under a version gate rather than a runtime flag,
-or two participants compute different roots.
+host's clock cannot be agreed on, a block's header time can. Any decision
+that folds into a state root changes under a version gate rather than a
+runtime flag, or two participants compute different roots.
 
 ### 10.6 Asynchronous fan-out — the turn is pipelined, never serialized
 
@@ -1373,7 +1441,7 @@ diff-ingest time:
 
 | # | Check | Failure |
 | - | ----- | ------- |
-| L0 | Reference-height monotonicity: a height produced while handling nonce `m` is `≥ F(m)`, where `F(m)` is the high-water mark of the **host-signed** claims the log had established at nonces `< m` (*How far the floor may move* below). Scope is **every** Diff-resident height — the inference legs, `MsgHeartbeat`, and `MsgHeightAck` alike. `m` is the **producing** nonce, not the landing nonce: `inference_id` names it on the executor legs, `ref_nonce + 1` on an ack, and it is the landing nonce for the sequencer-composed messages (see *One height in the log* below). A **sequencer-composed** stamp additionally has an upper bound: it must be exactly `F(m)`, because the user holds no oracle (§10.3.1). Host stamps have no upper bound here — theirs was enforced at envelope admission | `INVALID(height_regression)` below `F(m)`, attributed to the stamp's signer; a sequencer stamp **above** `F(m)` is `MARK(height_unbacked)` at error level and the diff still applies |
+| L0 | Reference-height monotonicity: a height produced while handling nonce `m` is `≥ F(m)`, where `F(m)` is the high-water mark of the **host-signed** claims the log had established at nonces `< m` (*How far the floor may move* below). Scope is **every** Diff-resident height — the inference legs, `MsgHeartbeat`, and `MsgHeightAck` alike. `m` is the **producing** nonce, not the landing nonce: `inference_id` names it on the executor legs, `ref_nonce + 1` on an ack, and it is the landing nonce for the sequencer-composed messages (see *One height in the log* below). A **sequencer-composed** stamp additionally has an upper bound: it must be exactly `F(m)`, because the user holds no oracle (§10.3.1). Host stamps have no upper bound here — theirs was enforced at envelope admission | `INVALID(height_regression)` below `F(m)`, attributed to the stamp's signer; a sequencer stamp **above** `F(m)` is `MARK(height_unbacked)` at error level and the diff still applies, except on `MsgStartInference`, whose stamp anchors the refusal timeout: anything but exactly `F(m)` is rejected (`ErrStampNotFloor`), and so is an executor receipt that does not carry exactly `F(inference_id)` |
 | L0b | Same-executor causal order: `confirm ≤ finish` on `observed_height` for one `inference_id`. `start` is user-signed, so `start`-vs-`confirm` and `start`-vs-`finish` are cross-signer pairs and are deliberately **not** compared (see *One height in the log* below) | `INVALID(height_regression)`, attributed to the executor |
 | L1 | Framing: `slots_num` equals group size; `8 · len(peer_seen) ≥ slots_num` and `len(peer_seen) ≤ ⌈slots_num/8⌉`; `len(sync_vector) ≤ slots_num`; `len(observed_block_hash) ≤ 32` (empty remains legal); `ref_nonce ≠ 0`. No turn-id rule: a turn is named by its span-start nonce, so there is no sequencer-supplied counter to bound — the `1<<60` claim that once needed a stay-or-next rule is unexpressible. | `INVALID(bad_framing)` |
 | L2 | `MsgHeightAck.host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key; a stamp on `MsgConfirmStart` verifies under `executor_sig` only if mirrored into `ExecutorReceiptContent` (§10.5.1). Acks with a missing verifier are `INVALID` (fail closed); heartbeat-only diffs may still pass | `INVALID(ack_sig_invalid)` / `INVALID(executor_sig)` — the user may have fabricated the height |
@@ -1501,6 +1569,7 @@ producer (user or host)
 ApplyDiff / ValidateDiff
   L0: every present stamp ≥ F(m)
       user stamp > F(m) → MARK(height_unbacked), logged at error level
+      (MsgStartInference: stamp ≠ F(m) → rejected, ErrStampNotFloor)
       if AsOf(m) is unknown → skip L0
   apply txs
   Observe(attributed claims)     ← only place F moves
@@ -2257,7 +2326,7 @@ the test scenario that proves it (full catalog in
 | 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | `late` is a positional test — landing nonce against the turn deadline, both in the log — so it does not depend on comparing two height readings. Late acks never clear a turn's `degraded` mark (§10.6), arming keys on contact toward **this** host rather than on turn state, and since acks no longer confirm heights (§17) an admitted late ack buys nothing | Planned: `TestLateAck_DoesNotClearDegraded` |
 | 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
 | 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 against `F(m)`, uniformly across every Diff-resident height, plus L0b within one executor; both pure functions of `Diff`, so every verifier reaches the same verdict | `TestLogPlane_RefStampBelowFloorRejected`, `TestLogPlane_PerInferenceHeightOrder` |
-| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Three invariants, Strong not required: **(1)** a first-party envelope `(H, hash)` cannot be a future height, and a height only enters the system through an envelope that had to clear `\|Δ\| > D` ⇒ Strong at admission. **(2)** `F` never exceeds the max reported **host** envelope `H` — carries do not raise; honest compose writes a host-signed raise as `stamp = response-leg envelope.H`. **(3)** sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) never raise `F`; a user stamp is exactly `F` and `> F` is `MARK(height_unbacked)` (§10.3.1). The diff still applies; L0 asks only `≥ F(m)`. **Distance is not part of the defence:** the raise bound and its `Q` corroboration are removed, because they punished honest repair harder than the attack (§14 *Why no `W_conf` on the floor*). A host-signed lie that does become `F` is **24f** | `TestFloorIndex_HostClaimRaisesAtAnyDistance`, `TestFloorIndex_PoisonedLowFloorRecovers`, `TestFloorIndex_SequencerStampsNeverRaise`, `TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected`, `TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip`; planned: host raise with envelope `t < stamp` is not composed |
+| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Three invariants, Strong not required: **(1)** a first-party envelope `(H, hash)` cannot be a future height, and a height only enters the system through an envelope that had to clear `\|Δ\| > D` ⇒ Strong at admission. **(2)** `F` never exceeds the max reported **host** envelope `H` — carries do not raise; honest compose writes a host-signed raise as `stamp = response-leg envelope.H`. **(3)** sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) never raise `F`; a user stamp is exactly `F` and `> F` is `MARK(height_unbacked)` (§10.3.1), except on `MsgStartInference`, where it is rejected. The diff still applies; L0 asks only `≥ F(m)`. **Distance is not part of the defence:** the raise bound and its `Q` corroboration are removed, because they punished honest repair harder than the attack (§14 *Why no `W_conf` on the floor*). A host-signed lie that does become `F` is **24f** | `TestFloorIndex_HostClaimRaisesAtAnyDistance`, `TestFloorIndex_PoisonedLowFloorRecovers`, `TestFloorIndex_SequencerStampsNeverRaise`, `TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected`, `TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip`; planned: host raise with envelope `t < stamp` is not composed |
 | 24c | **Divergence as a liveness weapon** — a lagging host is made to author invalid diffs, or to be excluded, purely for being behind | The producer rule is always satisfiable — `F(m)` is already in the log, and absence is legal — so a diverged host can serve honestly, and no log-plane verdict rests on how far behind it is (`sync_state` and the envelope anchors record the gap for monitoring). A verdict a lagging host cannot avoid would be a DoS against the escrow, not a defence | `TestHeightSyncDivergence_InferenceFlowNeverBlocked`, `TestHeightSyncDivergence_DeadOracleStillCarriesTime`, `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` |
 | 24d | **Reorg wedge** — the chain reorgs below `F`, so no party can produce a first-party height that clears the floor | `F` never falls, and it does not need to: producers carry it while the live branch is below it (diffs keep applying), L6 attributes the stale pair to the floor's author rather than to the carriers, and once the live branch passes `F` stamping is first-party again with no new session. Depth is irrelevant: carrying has no distance escape, so a deep reorg does not stall stamping either | `TestHeightSyncFloor_ReorgReturnsToTheLiveBranch`, `TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair` |
 | 24e | **Split the floor by refusing at the edge** — a party gets one verifier to refuse a diff at admission (L5a) so the two verifiers' floors, and therefore their L0 verdicts on every later diff, diverge | `F` folds applied diffs and nothing else: admission marks are local evidence and never enter the fold. Both verifiers hold the same floor and return the same verdicts, whichever path the diff arrived by | `TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor` |
@@ -2326,7 +2395,7 @@ the test scenario that proves it (full catalog in
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
 | **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `finalization.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
-| Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
+| Derived record anchors + timeouts / seal clock on header time | ✅ | §10.5.2. Records carry anchor heights and block times. Refusal, execution and seal decisions read `time(F(m))` from the verifier's own chain view. Not wire- or state-compatible with v6. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |
 | Floor garbage cleanup after L6 | ⏸ | Phase F / dispute layer. L6 is attribution only; a garbage pair that became `F` stays `F` until cleanup (§14). Slash does not restore the clock. |
 | Gateway chain follower opt-in (`DEVSHARD_GATEWAY_CHAIN_ORACLE`) | ✅ | Spec §6. Follower off by default (`true`/`1`/`on`). Wired as `HeightSyncLogOracle` only; scheduler always `PeerTipOracleSource`; seed still required. Tests H105–H108. |

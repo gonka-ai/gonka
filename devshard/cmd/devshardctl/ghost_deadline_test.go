@@ -8,77 +8,75 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/statetest"
+	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
 	"devshard/types"
 	"devshard/user"
 )
 
 const ghostDeadlineRefusalTimeout = 60
 
-// escrowHoldingGhostNonce builds the state a verifier reconstructs from catch-up diffs for a nonce
-// the gateway burned: a pending record composed from the probe's own params.
-func escrowHoldingGhostNonce(t *testing.T, params user.InferenceParams) (types.EscrowState, *host.InferencePayload) {
+func ghostNonceVerifier(t *testing.T, params user.InferenceParams) (*state.StateMachine, *host.InferencePayload, func(height uint64)) {
 	t.Helper()
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(group))
+	config.RefusalTimeout = ghostDeadlineRefusalTimeout
+	sm := statetest.MustStateMachine(t, "escrow-1", config, group, 1_000_000, userKey.Address(), signing.NewSecp256k1Verifier())
+
 	promptHash, err := devshard.CanonicalPromptHash(params.Prompt)
 	require.NoError(t, err)
-	state := types.EscrowState{
-		Config: types.SessionConfig{RefusalTimeout: ghostDeadlineRefusalTimeout},
-		Inferences: map[uint64]*types.InferenceRecord{
-			1: {
-				Status:      types.StatusPending,
-				PromptHash:  promptHash,
-				Model:       params.Model,
-				InputLength: params.InputLength,
-				MaxTokens:   params.MaxTokens,
-				StartedAt:   params.StartedAt,
-			},
-		},
+	start := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1, PromptHash: promptHash, Model: params.Model,
+		InputLength: params.InputLength, MaxTokens: params.MaxTokens,
+	}}}
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, userKey, "escrow-1", 1, []*types.DevshardTx{start}))
+	require.NoError(t, err)
+
+	floorAt := func(height uint64) {
+		st := sm.ExportState()
+		rec := st.Inferences[1]
+		rec.StartedAtHeight, rec.StartedAtBlockHash, rec.StartedAtTimeMs = 1, []byte{0x01}, testutil.HeightClockBlockMs
+		floor := heightsync.NewFloorIndex()
+		floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{Signer: 0, Height: height, Hash: []byte{byte(height)}}})
+		require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 	}
 	payload := &host.InferencePayload{
-		Prompt:      params.Prompt,
-		Model:       params.Model,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
+		Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens,
 	}
-	return state, payload
+	return sm, payload, floorAt
 }
 
-// A verifier measures the refusal deadline as now-in-seconds minus the record's StartedAt. Stamping
-// the probe in milliseconds makes that difference permanently negative, so the deadline never passes
-// and every accountability vote comes back rejected. The test proxy's verifiers accept without
-// running this check, which is why the defect survived them.
+func verifyGhostRefusal(t *testing.T, sm *state.StateMachine, payload *host.InferencePayload) bool {
+	t.Helper()
+	st, rec, ok := sm.SnapshotWithInference(1)
+	require.True(t, ok)
+	accept, err := host.VerifyRefusedTimeout(context.Background(), st, 1, rec, payload, nil, nil, nil, sm)
+	require.NoError(t, err)
+	return accept
+}
+
 func TestGhostProbeParams_RefusalDeadlineCanActuallyPass(t *testing.T) {
-	params := ghostProbeParams("llama")
-	state, payload := escrowHoldingGhostNonce(t, params)
+	sm, payload, floorAt := ghostNonceVerifier(t, ghostProbeParams("llama"))
+	floorAt(1 + ghostDeadlineRefusalTimeout)
 
-	// The verifier reads its own clock, so the deadline has to come from one too.
-	pastDeadline := time.Now().Unix() + ghostDeadlineRefusalTimeout + 1
-	accept, err := host.VerifyRefusedTimeout(
-		context.Background(), state, 1, state.Inferences[1], payload, nil, nil, nil, nil, state.Config, pastDeadline,
-	)
-
-	require.NoError(t, err)
-	require.True(t, accept, "a burned nonce past its refusal deadline must be votable")
+	require.True(t, verifyGhostRefusal(t, sm, payload), "a burned nonce past its refusal window must be votable")
 }
 
-// Before the deadline the verifier is right to refuse, and the ghost path must not shortcut that.
 func TestGhostProbeParams_RefusalDeadlineHoldsUntilItPasses(t *testing.T) {
-	params := ghostProbeParams("llama")
-	state, payload := escrowHoldingGhostNonce(t, params)
+	sm, payload, floorAt := ghostNonceVerifier(t, ghostProbeParams("llama"))
+	floorAt(ghostDeadlineRefusalTimeout)
 
-	accept, err := host.VerifyRefusedTimeout(
-		context.Background(), state, 1, state.Inferences[1], payload, nil, nil, nil, nil, state.Config, time.Now().Unix(),
-	)
-
-	require.NoError(t, err)
-	require.False(t, accept, "one second in is not a refusal")
+	require.False(t, verifyGhostRefusal(t, sm, payload), "one block short of the window is not a refusal")
 }
 
-// The unit is the whole defect, so it is asserted directly as well.
 func TestGhostProbeParams_StampsStartedAtInSeconds(t *testing.T) {
 	params := ghostProbeParams("llama")
 
-	require.InDelta(t, time.Now().Unix(), params.StartedAt, 5,
-		"StartedAt must be Unix seconds, matching what a verifier compares it against")
+	require.InDelta(t, time.Now().Unix(), params.StartedAt, 5, "StartedAt must be Unix seconds")
 }

@@ -511,6 +511,12 @@ func mapInferenceError(err error) error {
 					transport.DevshardErrorStorageBusy,
 				)
 			}
+			if errors.Is(err, types.ErrHeaderPending) {
+				return withDevshardError(
+					connect.NewError(connect.CodeUnavailable, inner),
+					transport.DevshardErrorHeaderPending,
+				)
+			}
 			return connect.NewError(connect.CodeUnavailable, inner)
 		default:
 			return connect.NewError(connect.CodeInternal, inner)
@@ -533,6 +539,12 @@ func mapCoreError(err error) error {
 		return withDevshardError(
 			connect.NewError(connect.CodeUnavailable, errors.New(err.Error())),
 			transport.DevshardErrorStorageBusy,
+		)
+	}
+	if errors.Is(err, types.ErrHeaderPending) {
+		return withDevshardError(
+			connect.NewError(connect.CodeUnavailable, errors.New(err.Error())),
+			transport.DevshardErrorHeaderPending,
 		)
 	}
 	if errors.Is(err, transport.ErrNoStorage) || errors.Is(err, transport.ErrHeightSyncSeedDisabled) {

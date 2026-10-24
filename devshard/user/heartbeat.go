@@ -245,7 +245,38 @@ func (s *Session) HeartbeatTurnTracker() *heightsync.TurnTracker {
 	return s.turnTracker
 }
 
+func (s *Session) DriveTimeoutFloor(ctx context.Context) error {
+	if s == nil || s.sm == nil || s.sm.Phase() != types.PhaseActive {
+		return nil
+	}
+	s.mu.Lock()
+	now := time.Now()
+	interval := s.sm.HeartbeatConfig().BlockTime
+	if interval <= 0 {
+		interval = heightsync.DefaultBlockTime
+	}
+	if !s.lastTimeoutFloorRound.IsZero() && now.Sub(s.lastTimeoutFloorRound) < interval {
+		s.mu.Unlock()
+		return nil
+	}
+	s.lastTimeoutFloorRound = now
+	s.mu.Unlock()
+	span, err := s.composeSpan(true)
+	s.dispatchHeartbeatSpan(ctx, span)
+	if err != nil {
+		s.publishHeightSyncView()
+		return err
+	}
+	err = s.flushHeartbeatAckRounds(ctx)
+	s.publishHeightSyncView()
+	return err
+}
+
 func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
+	return s.composeSpan(false)
+}
+
+func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -275,6 +306,9 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	}
 
 	due, reason := s.heartbeat.Due(now, hNow)
+	if force && !due && !s.heartbeat.TurnOpen() {
+		due, reason = true, heightsync.ReasonQuietSession
+	}
 	if !due {
 		s.heartbeat.MaybeRecordDischarged(now, hNow)
 		return nil, nil

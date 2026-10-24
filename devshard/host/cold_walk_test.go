@@ -165,8 +165,8 @@ func runColdCheck(t *testing.T, ctx context.Context, st types.EscrowState, peer 
 	t.Helper()
 	return VerifyRefusedProgress(
 		ctx, st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, ev, peer, journal,
-		50*time.Millisecond, budget, deadlinePassedRefused(st, 1), progressUnreachable,
+		peer, nil, due(ev), peer, journal,
+		50*time.Millisecond, budget, progressUnreachable,
 	)
 }
 
@@ -585,8 +585,8 @@ func TestColdWalkBusyDoesNotClearTheMark(t *testing.T) {
 		return VerifyRefusedProgress(
 			WithColdWalk(context.Background(), gate, "exec"),
 			st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			50*time.Millisecond, 2*time.Second, deadlinePassedRefused(st, 1), unreachable,
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			50*time.Millisecond, 2*time.Second, unreachable,
 		)
 	}
 	for _, p := range []int{0, 1, 2, 0} {
