@@ -23,6 +23,7 @@ message DevshardEscrow {
   uint32 vote_threshold_factor = 16;
   int64 refusal_timeout = 17;
   int64 execution_timeout = 18;
+  uint64 max_model_len = 19;
 }
 
 message DevshardHostEpochStats {
