@@ -622,7 +622,11 @@ func (t *PerfTracker) IsUnresponsiveParticipant(participantKey string) bool {
 }
 
 func statsUnresponsive(st HostPerfStats) bool {
-	if st.TotalSamples == 0 {
+	minSamples := MinSamplesForDecision
+	if minSamples < 1 {
+		minSamples = 1
+	}
+	if st.TotalSamples < minSamples {
 		return false
 	}
 	return st.ResponsiveRate < UnresponsiveThreshold
