@@ -68,6 +68,7 @@ var knownRPCStatEndpoints = func() map[string]struct{} {
 		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetSnapshotProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
 		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,

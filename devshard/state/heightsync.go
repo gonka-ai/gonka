@@ -321,8 +321,13 @@ func foldHeightSync(store storage.DiffReader, st *types.EscrowState, hbCfg heigh
 
 		foldTracker := heightsync.NewTurnTracker(slots, 0, hbCfg)
 		foldFloor := heightsync.NewFloorIndexWith(cfg)
+		nextNonce := uint64(1)
 		err := storage.ReadDiffPages(store, st.EscrowID, 1, st.LatestNonce, func(page []types.DiffRecord) error {
 			for _, rec := range page {
+				if rec.Nonce != nextNonce {
+					return fmt.Errorf("incomplete diff journal: expected nonce %d, got %d", nextNonce, rec.Nonce)
+				}
+				nextNonce++
 				for _, tx := range rec.Txs {
 					if msg := tx.GetForceHeightSyncTurn(); msg != nil {
 						_ = applyForceHeightSyncTurnTo(st, msg, rec.Nonce)
@@ -332,6 +337,9 @@ func foldHeightSync(store storage.DiffReader, st *types.EscrowState, hbCfg heigh
 			}
 			return nil
 		})
+		if err == nil && nextNonce <= st.LatestNonce {
+			err = fmt.Errorf("incomplete diff journal: ended at %d before %d", nextNonce-1, st.LatestNonce)
+		}
 		if err == nil {
 			clearExpiredHeightSyncFlagsOf(st)
 			return heightSyncRestore{tracker: foldTracker, floor: foldFloor, ready: true}

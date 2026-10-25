@@ -1081,6 +1081,133 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	return hs.installLocked(sm)
 }
 
+// NewScratch returns an isolated, store-free StateMachine configured with the
+// same immutable session parameters as sm. Validating an untrusted peer
+// snapshot on a scratch machine never mutates sm or writes to inferenceStore.
+func (sm *StateMachine) NewScratch() *StateMachine {
+	sm.mu.RLock()
+	escrowID := sm.state.EscrowID
+	version := sm.state.StateRootAndProtocolVersion
+	cfg := sm.state.Config
+	groupCopy := make([]types.SlotAssignment, len(sm.state.Group))
+	copy(groupCopy, sm.state.Group)
+	sm.mu.RUnlock()
+
+	hostStats := make(map[uint32]*types.HostStats, len(groupCopy))
+	for _, s := range groupCopy {
+		hostStats[s.SlotID] = &types.HostStats{}
+	}
+	scratch := &StateMachine{
+		state: &types.EscrowState{
+			EscrowID:                    escrowID,
+			StateRootAndProtocolVersion: version,
+			Config:                      cfg,
+			Group:                       groupCopy,
+			Inferences:                  make(map[uint64]*types.InferenceRecord),
+			HostStats:                   hostStats,
+			WarmKeys:                    make(map[uint32]string),
+		},
+		verifier:           sm.verifier,
+		userAddress:        sm.userAddress,
+		slotToAddress:      sm.slotToAddress,
+		addressToSlotCount: sm.addressToSlotCount,
+		addressToSlots:     sm.addressToSlots,
+		totalSlots:         sm.totalSlots,
+		committedEntries:   make(map[uint64][]byte),
+		sealedNonces:       make(map[uint64]uint64),
+		warmResolver:       sm.warmResolver,
+		headerTimes:        sm.headerTimes,
+		heartbeatCfg:       sm.heartbeatCfg,
+		heightSyncMarks:    heightsync.NewMarkLog(),
+	}
+	scratch.liveEntrySum.Zero()
+	scratch.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, scratch.heartbeatCfg)
+	scratch.heightSyncFloor = heightsync.NewFloorIndex()
+	scratch.floorReady = true
+	return scratch
+}
+
+// ValidateSnapshotImmutable checks that snapState preserves the session's
+// immutable genesis parameters and slot membership before scratch restore.
+func (sm *StateMachine) ValidateSnapshotImmutable(snapState *types.EscrowState) error {
+	if snapState == nil {
+		return fmt.Errorf("nil snapshot state")
+	}
+	sm.mu.RLock()
+	wantEscrow := sm.state.EscrowID
+	wantVersion := sm.state.StateRootAndProtocolVersion
+	wantCfg := sm.state.Config
+	wantGroup := sm.state.Group
+	sm.mu.RUnlock()
+
+	if snapState.EscrowID != wantEscrow {
+		return fmt.Errorf("snapshot escrow_id %q does not match %q", snapState.EscrowID, wantEscrow)
+	}
+	if snapState.StateRootAndProtocolVersion != wantVersion {
+		return fmt.Errorf("snapshot protocol version %q does not match %q", snapState.StateRootAndProtocolVersion, wantVersion)
+	}
+	normCfg := types.NormalizeSessionConfig(snapState.Config, len(wantGroup))
+	if normCfg != wantCfg {
+		return fmt.Errorf("snapshot session config mismatch")
+	}
+	if !slices.Equal(snapState.Group, wantGroup) {
+		return fmt.Errorf("snapshot group mismatch")
+	}
+	for slotID, warmAddr := range snapState.WarmKeys {
+		if _, ok := sm.slotToAddress[slotID]; !ok {
+			return fmt.Errorf("%w: warm key slot %d", types.ErrSlotNotInGroup, slotID)
+		}
+		if strings.TrimSpace(warmAddr) == "" {
+			return fmt.Errorf("empty warm key address for slot %d", slotID)
+		}
+	}
+	return nil
+}
+
+// AdoptVerifiedScratch atomically installs a cryptographically verified
+// scratch StateMachine when its LatestNonce is strictly ahead of sm.
+func (sm *StateMachine) AdoptVerifiedScratch(scratch *StateMachine) bool {
+	if scratch == nil {
+		return false
+	}
+	scratch.mu.RLock()
+	nextState := cloneEscrowState(scratch.state)
+	nextCommitted := cloneCommittedInferenceEntries(scratch.committedEntries)
+	nextLiveSum := scratch.liveEntrySum
+	var nextSealed map[uint64]uint64
+	if len(scratch.sealedNonces) > 0 {
+		nextSealed = make(map[uint64]uint64, len(scratch.sealedNonces))
+		maps.Copy(nextSealed, scratch.sealedNonces)
+	} else {
+		nextSealed = make(map[uint64]uint64)
+	}
+	var nextTracker *heightsync.TurnTracker
+	if scratch.turnTracker != nil {
+		nextTracker = scratch.turnTracker.Clone()
+	}
+	var nextFloor *heightsync.FloorIndex
+	if scratch.heightSyncFloor != nil {
+		nextFloor = scratch.heightSyncFloor.Clone()
+	}
+	nextReady := scratch.floorReady
+	scratch.mu.RUnlock()
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if nextState.LatestNonce <= sm.state.LatestNonce {
+		return false
+	}
+	sm.state = nextState
+	sm.committedEntries = nextCommitted
+	sm.liveEntrySum = nextLiveSum
+	sm.sealedNonces = nextSealed
+	sm.turnTracker = nextTracker
+	sm.heightSyncFloor = nextFloor
+	sm.floorReady = nextReady
+	sm.rebuildOwedLocked()
+	return true
+}
+
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	s := *src
 
