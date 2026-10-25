@@ -25,7 +25,7 @@ services:
           - devshard-pool
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/status"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/v1/status"]
       interval: 30s
       timeout: 5s
       retries: 3
