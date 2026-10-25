@@ -476,6 +476,38 @@ func settlementEnabledForModel(settings GatewaySettings, modelID string) bool {
 	return settings.EscrowRotation.SettlementEnabled
 }
 
+func modelExplicitlyDisablesSettlement(settings GatewaySettings, modelID string) bool {
+	modelID = strings.TrimSpace(modelID)
+	for _, model := range normalizedEscrowRotationModels(settings) {
+		if model.ModelID == modelID && model.SettlementEnabled != nil {
+			return !*model.SettlementEnabled
+		}
+	}
+	return false
+}
+
+func (g *Gateway) scheduleUnservableEscrowSettlements(skipped []startupSkippedEscrow) {
+	if g == nil || len(skipped) == 0 {
+		return
+	}
+	g.mu.Lock()
+	settings := g.settings
+	g.mu.Unlock()
+	for _, entry := range skipped {
+		if entry.Reason != startupSkipReasonLocalRecovery || strings.TrimSpace(entry.EscrowID) == "" {
+			continue
+		}
+		if modelExplicitlyDisablesSettlement(settings, entry.Model) {
+			log.Printf("unservable_escrow_settlement_skipped escrow=%s model=%q reason=model_settlement_disabled",
+				entry.EscrowID, entry.Model)
+			continue
+		}
+		log.Printf("unservable_escrow_settlement_queued escrow=%s model=%q reason=%s",
+			entry.EscrowID, entry.Model, entry.Reason)
+		g.scheduleAutoSettlement(entry.EscrowID, entry.Reason)
+	}
+}
+
 func (g *Gateway) promoteActiveRegularEscrowsToTemp(ctx context.Context, modelID string, epoch uint64) (int, error) {
 	state, ok, err := g.store.LoadState(ctx)
 	if err != nil {
@@ -763,7 +795,9 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		g.mu.Lock()
 		settings := g.settings
 		g.mu.Unlock()
-		built, buildErr := gatewayRuntimeBuilder(cfg, g.runtimeBuildDepsFromSettings(g.perf, settings))
+		settleDeps := g.runtimeBuildDepsFromSettings(g.perf, settings)
+		settleDeps.allowHostStateRecovery = true
+		built, buildErr := gatewayRuntimeBuilder(cfg, settleDeps)
 		if buildErr != nil {
 			log.Printf("devshard_settle_failed escrow=%s stage=rehydrate error=%q", id, buildErr.Error())
 			return nil, fmt.Errorf("rehydrate devshard %s for settlement: %w", id, buildErr)

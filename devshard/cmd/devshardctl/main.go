@@ -513,6 +513,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
+	gateway.scheduleUnservableEscrowSettlements(startupSkipped)
 	wireStopTokenVocabulary(chainClient.InferenceQueryClient(), func() uint64 { return gateway.phaseGate.Snapshot().EpochIndex })
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
@@ -621,9 +622,16 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 						if firstFatal == nil {
 							firstFatal = fmt.Errorf("deactivate devshard %s: %w", cfg.ID, deactivateErr)
 						}
+					} else if brokenLocalState {
+						if markErr := gatewayStore.SetDevshardSettlementPending(ctx, cfg.ID, true); markErr != nil {
+							log.Printf("devshard %s mark settlement_pending after unrecoverable local state failed: %v", cfg.ID, markErr)
+						}
 					}
 				}
 				markDevshardInactive(gatewayState, cfg.ID)
+				if brokenLocalState {
+					markDevshardSettlementPending(gatewayState, cfg.ID)
+				}
 				skipped = append(skipped, res.idx)
 				if brokenLocalState {
 					startupSkipped = append(startupSkipped, startupSkippedEscrow{
@@ -701,6 +709,18 @@ func markDevshardInactive(gatewayState *GatewayState, id string) {
 	for i := range gatewayState.Devshards {
 		if gatewayState.Devshards[i].ID == id {
 			gatewayState.Devshards[i].Active = false
+			return
+		}
+	}
+}
+
+func markDevshardSettlementPending(gatewayState *GatewayState, id string) {
+	if gatewayState == nil {
+		return
+	}
+	for i := range gatewayState.Devshards {
+		if gatewayState.Devshards[i].ID == id {
+			gatewayState.Devshards[i].SettlementPending = true
 			return
 		}
 	}

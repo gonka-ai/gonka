@@ -185,6 +185,14 @@ type SignatureFetcher interface {
 	GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error)
 }
 
+// DiffFetcher is optionally implemented by HostClient implementations (HTTP,
+// Connect RPC, and InProcessClient) that can retrieve stored Creator-signed
+// diffs when the gateway's local journal is unrecoverable and the escrow must
+// be reconstructed from hosts for settlement.
+type DiffFetcher interface {
+	GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff, error)
+}
+
 type InProcessClient struct {
 	Host *host.Host
 }
@@ -246,6 +254,15 @@ func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[ui
 		return nil, fmt.Errorf("in-process client has no host")
 	}
 	return c.Host.GetSignatures(nonce)
+}
+
+// GetDiffs implements DiffFetcher for in-process hosts so host-backed session
+// recovery can fetch persisted Creator-signed diffs.
+func (c *InProcessClient) GetDiffs(_ context.Context, from, to uint64) ([]types.Diff, error) {
+	if c == nil || c.Host == nil {
+		return nil, fmt.Errorf("in-process client has no host")
+	}
+	return c.Host.GetDiffs(from, to)
 }
 
 // InferenceParams describes a new inference to send.

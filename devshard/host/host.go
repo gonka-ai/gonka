@@ -2095,6 +2095,23 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return h.store.GetSignatures(h.escrowID, nonce)
 }
 
+// GetDiffs returns bounded persisted diffs for [from, to] so in-process and
+// host-backed recovery callers can retrieve Creator-signed diffs.
+func (h *Host) GetDiffs(from, to uint64) ([]types.Diff, error) {
+	if h == nil || h.store == nil {
+		return nil, fmt.Errorf("no storage configured")
+	}
+	records, err := storage.LoadBoundedDiffs(h.store, h.escrowID, from, to)
+	if err != nil {
+		return nil, err
+	}
+	diffs := make([]types.Diff, len(records))
+	for i, rec := range records {
+		diffs[i] = rec.Diff
+	}
+	return diffs, nil
+}
+
 // signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
 func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 	sigContent := &types.StateSignatureContent{
