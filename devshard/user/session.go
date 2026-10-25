@@ -746,6 +746,29 @@ func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types
 	return diffs, true, nil
 }
 
+// inlineCatchUp is inlineCatchUpLocked with any store read performed after
+// s.mu is released, so catchUpForSend never holds s.mu across ReadDiffPages.
+func (s *Session) inlineCatchUp(hostIdx int, target uint64) ([]types.Diff, bool, error) {
+	s.mu.Lock()
+	from := s.hostSyncNonce[hostIdx] + 1
+	if from+catchUpChunkSize <= target {
+		s.mu.Unlock()
+		return nil, false, nil
+	}
+	to := min(s.nonce, from+catchUpChunkSize-1)
+	first := s.firstRetainedNonceLocked()
+	retained := s.appendRetainedLocked(nil, from, to)
+	s.mu.Unlock()
+	if s.store == nil || from >= first {
+		return retained, true, nil
+	}
+	stored, err := s.storedDiffs(from, min(to, first-1))
+	if err != nil {
+		return nil, false, err
+	}
+	return append(stored, retained...), true, nil
+}
+
 // hostCatchUpLock serializes chunked catch-up to one host.
 func (s *Session) hostCatchUpLock(hostIdx int) *sync.Mutex {
 	s.mu.Lock()
@@ -1895,7 +1918,15 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
 	if err != nil {
-		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
+		// composeDiffLocked already persisted and committed MsgStartInference,
+		// so dropping PreparedInference would leave its ReservedCost stranded
+		// in StatusPending with no inflight or refusal timeout. Fall back to
+		// farBehind so SendOnly retries catchUpForSend outside s.mu.
+		logging.Warn("inline catch-up read failed after commit; deferring to send",
+			"subsystem", "session", "escrow", s.escrowID,
+			"host", s.HostLabel(hostIdx), "host_idx", hostIdx, "nonce", nonce, "error", err)
+		catchUp = nil
+		inline = false
 	}
 	if inline {
 		// TODO: remove this when we are sure that there is no bug in CatchUp
