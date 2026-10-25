@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard"
 	"devshard/host"
@@ -1969,7 +1968,7 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	// original root — the production HTTP path after hosts already signed.
 	fetchers := make([]HostClient, len(hosts))
 	for i, hostSigner := range hosts {
-		sigData, err := proto.Marshal(&types.StateSignatureContent{
+		sigData, err := types.CanonicalSignedBytes(&types.StateSignatureContent{
 			StateRoot: originalRoot, EscrowId: session.escrowID, Nonce: finalNonce,
 		})
 		require.NoError(t, err)

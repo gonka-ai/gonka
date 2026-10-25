@@ -1,6 +1,8 @@
 package types
 
 import (
+	"google.golang.org/protobuf/proto"
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -408,5 +410,27 @@ func TestFinishPreimageCoversObservedStamp(t *testing.T) {
 	}
 	if string(stamped) == string(moved) {
 		t.Fatal("observed height must stay inside the finish preimage")
+	}
+}
+
+func TestCanonicalSignedBytes_StateSignatureContentMatchesProtoMarshal(t *testing.T) {
+	msg := &StateSignatureContent{
+		StateRoot: bytes.Repeat([]byte{0xab}, 32),
+		EscrowId:  "escrow-42",
+		Nonce:     99,
+	}
+	if got := SignedPreimageDomain(msg); got != "" {
+		t.Fatalf("StateSignatureContent must remain in the empty domain for chain compatibility, got %q", got)
+	}
+	canonical, err := CanonicalSignedBytes(msg)
+	if err != nil {
+		t.Fatalf("CanonicalSignedBytes: %v", err)
+	}
+	plain, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("proto.Marshal: %v", err)
+	}
+	if !bytes.Equal(canonical, plain) {
+		t.Fatalf("CanonicalSignedBytes != proto.Marshal for StateSignatureContent:\n  canonical=%x\n  plain=%x", canonical, plain)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -92,7 +91,7 @@ func TestFetchSignature_LiveStateRootWhenDiffsEmpty(t *testing.T) {
 
 	const hostIdx = 1 // nonce 1 % 3
 	const slot = uint32(1)
-	sigData, err := proto.Marshal(&types.StateSignatureContent{
+	sigData, err := types.CanonicalSignedBytes(&types.StateSignatureContent{
 		StateRoot: originalRoot, EscrowId: session.escrowID, Nonce: 1,
 	})
 	require.NoError(t, err)
@@ -129,7 +128,7 @@ func TestFetchSignature_NoFallbackForNonCurrentNonce(t *testing.T) {
 	// A well-formed signature for nonce 1 (current), but requested at nonce 1
 	// after wiping diffs while pretending the session advanced to nonce 5.
 	root := append([]byte(nil), session.Diffs()[0].PostStateRoot...)
-	sigData, err := proto.Marshal(&types.StateSignatureContent{
+	sigData, err := types.CanonicalSignedBytes(&types.StateSignatureContent{
 		StateRoot: root, EscrowId: session.escrowID, Nonce: 1,
 	})
 	require.NoError(t, err)

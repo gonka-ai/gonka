@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -85,7 +84,7 @@ func buildSignedSettlement(t *testing.T, numHosts int) (SettlementPayload, []typ
 		EscrowId:  escrowID,
 		Nonce:     nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 
 	sigs := make(map[uint32][]byte, numHosts)
@@ -185,7 +184,7 @@ func TestVerifySettlement_WrongPhase(t *testing.T) {
 		EscrowId:  escrowID,
 		Nonce:     nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 
 	sigs := make(map[uint32][]byte, numHosts)
@@ -237,7 +236,7 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 		EscrowId:  escrowID,
 		Nonce:     nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 
 	// Sign slot 0 and 2 with cold keys, slot 1 with warm key.
@@ -279,7 +278,7 @@ func TestVerifySettlement_SiblingWarmKeySignatures(t *testing.T) {
 	hostStatsHash, err := ComputeHostStatsHash(hostStats)
 	require.NoError(t, err)
 	stateRoot := ComputeStateRootFromRestHash(hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion)
-	sigData, err := proto.Marshal(&types.StateSignatureContent{
+	sigData, err := types.CanonicalSignedBytes(&types.StateSignatureContent{
 		StateRoot: stateRoot, EscrowId: "escrow-sibling", Nonce: 5,
 	})
 	require.NoError(t, err)
@@ -331,7 +330,7 @@ func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
 		EscrowId:  escrowID,
 		Nonce:     nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 
 	sigs := make(map[uint32][]byte, 3)
