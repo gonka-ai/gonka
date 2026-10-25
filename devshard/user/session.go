@@ -424,7 +424,12 @@ type Session struct {
 	// MaybeHeartbeat available for in-process sessions and tests. The gateway
 	// sets it when DEVSHARD_HEIGHTSYNC_HEARTBEAT is not explicitly on.
 	disableHeightSyncHeartbeat bool
-	lastTimeoutFloorRound      time.Time
+	// heartbeatCoalescePerHost sends one heartbeat RPC per unique peer per
+	// span (delivering all of that peer's slot heartbeats via inline catch-up)
+	// rather than fanning out one RPC per slot. Defaults to true unless
+	// HEIGHT_SYNC_COALESCE_PER_HOST disables it.
+	heartbeatCoalescePerHost bool
+	lastTimeoutFloorRound    time.Time
 	heightSeedLoopOnce         sync.Once
 	heightSeedClosed           bool
 	heightSeedStop             context.CancelFunc
@@ -516,6 +521,23 @@ func (s *Session) heightSyncForceSlotsLocked() uint64 {
 // seed loop is unchanged. Zero leaves MaybeHeartbeat available.
 func WithDisableHeightSyncHeartbeat(on bool) SessionOption {
 	return func(sess *Session) { sess.disableHeightSyncHeartbeat = on }
+}
+
+// WithHeartbeatCoalescePerHost controls whether heartbeat spans coalesce
+// slots owned by the same peer into a single outbound RPC.
+func WithHeartbeatCoalescePerHost(on bool) SessionOption {
+	return func(sess *Session) { sess.heartbeatCoalescePerHost = on }
+}
+
+// SetHeartbeatCoalescePerHost updates per-host heartbeat coalescing on a live
+// or recovered session.
+func (s *Session) SetHeartbeatCoalescePerHost(on bool) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.heartbeatCoalescePerHost = on
+	s.mu.Unlock()
 }
 
 // WithQuietSettleDelay overrides how long a leftover receipt waits for the
@@ -632,6 +654,7 @@ func NewSession(
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
 		signatureCollectHostTimeout: 30 * time.Second,
+		heartbeatCoalescePerHost:    defaultHeartbeatCoalescePerHost(),
 	}
 	for i, slot := range group {
 		sess.participantKeys[i] = slot.ValidatorAddress

@@ -1381,3 +1381,151 @@ func TestHeartbeat_SendIsBoundedByTheHeartbeatSendTimeout(t *testing.T) {
 	require.LessOrEqual(t, recorder.sendBudget, heartbeatSendTimeout)
 	require.Less(t, heartbeatSendTimeout, session.heartbeat.Config().Interval)
 }
+
+func setupWeightedHeartbeatSession(
+	t *testing.T,
+	height *uint64,
+	now *time.Time,
+	extraOpts ...SessionOption,
+) (*Session, *spanProbeClient, *spanProbeClient) {
+	t.Helper()
+	hostAKey := testutil.MustGenerateKey(t)
+	hostBKey := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+
+	// 8 slots across 2 unique validators: hostA owns 0..5 (6 slots), hostB owns 6..7 (2 slots).
+	slotKeys := []*signing.Secp256k1Signer{
+		hostAKey, hostAKey, hostAKey, hostAKey, hostAKey, hostAKey,
+		hostBKey, hostBKey,
+	}
+	group := testutil.MakeGroup(slotKeys)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+
+	orA := &sessionOracle{hash: []byte{0xaa}}
+	orA.height.Store(int64(*height))
+	orB := &sessionOracle{hash: []byte{0xaa}}
+	orB.height.Store(int64(*height))
+
+	smA := statetest.MustStateMachine(t, "escrow-weighted", config, group, 100000, user.Address(), verifier)
+	hA, err := host.NewHost(smA, hostAKey, stub.NewInferenceEngine(), "escrow-weighted", group, nil,
+		host.WithGrace(100), host.WithChainOracle(orA))
+	require.NoError(t, err)
+
+	smB := statetest.MustStateMachine(t, "escrow-weighted", config, group, 100000, user.Address(), verifier)
+	hB, err := host.NewHost(smB, hostBKey, stub.NewInferenceEngine(), "escrow-weighted", group, nil,
+		host.WithGrace(100), host.WithChainOracle(orB))
+	require.NoError(t, err)
+
+	probeA := &spanProbeClient{inner: &InProcessClient{Host: hA}, calls: &atomic.Int32{}}
+	probeB := &spanProbeClient{inner: &InProcessClient{Host: hB}, calls: &atomic.Int32{}}
+
+	clients := []HostClient{
+		probeA, probeA, probeA, probeA, probeA, probeA,
+		probeB, probeB,
+	}
+
+	userSM := statetest.MustStateMachine(t, "escrow-weighted", config, group, 100000, user.Address(), verifier)
+	opts := []SessionOption{
+		WithHeightSyncCadence(10, uint64(len(group))),
+		WithHeartbeatClock(func() time.Time { return *now }),
+		WithObservedHeight(func() (uint64, []byte, bool) {
+			h := *height
+			if h == 0 {
+				return 0, nil, false
+			}
+			return h, []byte{0xaa}, true
+		}),
+	}
+	opts = append(opts, extraOpts...)
+	session, err := NewSession(userSM, user, "escrow-weighted", group, clients, verifier, opts...)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = session.Close() })
+	seedFloorByInference(t, session)
+
+	// Reset probe call counters after bootstrap seed inference.
+	probeA.calls.Store(0)
+	probeB.calls.Store(0)
+	return session, probeA, probeB
+}
+
+func TestHeartbeat_CoalescesMultiSlotPeerToOneSpanSend(t *testing.T) {
+	var height uint64 = 100
+	now := time.Unix(1_700_000_000, 0)
+	session, probeA, probeB := setupWeightedHeartbeatSession(t, &height, &now)
+	base := session.Nonce()
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+
+	// Span dispatch must send 1 RPC to hostA (for all 6 of its slots) and 1 RPC
+	// to hostB (for both of its slots), plus 1 ack-flush RPC committing all 8 acks.
+	totalCalls := probeA.calls.Load() + probeB.calls.Load()
+	require.Equal(t, int32(3), totalCalls,
+		"expected 2 coalesced span RPCs + 1 ack-flush RPC across 8 slots on 2 hosts; got A=%d B=%d",
+		probeA.calls.Load(), probeB.calls.Load())
+	require.GreaterOrEqual(t, probeA.calls.Load(), int32(1))
+	require.GreaterOrEqual(t, probeB.calls.Load(), int32(1))
+
+	acks := heightAcksInDiffs(seenDiffs(session))
+	require.Len(t, acks, 8, "all 8 slot acks must land from the 2 coalesced host roundtrips")
+	rec := session.HeartbeatTurnTracker().Record(base + 1)
+	require.NotNil(t, rec)
+	require.Equal(t, heightsync.TurnComplete, rec.State)
+
+	// Sibling slots on the same peer must advance their sync cursors together so
+	// no unaddressed sibling pins the in-memory diff prefix at 0.
+	session.mu.Lock()
+	syncA0 := session.hostSyncNonce[0]
+	for slot := 1; slot < 6; slot++ {
+		require.Equal(t, syncA0, session.hostSyncNonce[slot], "hostA slot %d cursor out of sync", slot)
+	}
+	require.Equal(t, session.hostSyncNonce[6], session.hostSyncNonce[7], "hostB sibling cursors out of sync")
+	session.mu.Unlock()
+
+	// Inference path stays per-slot and unaffected.
+	_, err := session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+}
+
+func TestHeartbeat_CoalescePerHostFlagFallback(t *testing.T) {
+	t.Setenv(EnvHeightSyncCoalescePerHost, "false")
+	var height uint64 = 100
+	now := time.Unix(1_700_000_000, 0)
+	session, probeA, probeB := setupWeightedHeartbeatSession(t, &height, &now)
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	// With coalescing disabled, all 8 slots fan out individually + 1 ack flush = 9 RPCs.
+	require.Equal(t, int32(9), probeA.calls.Load()+probeB.calls.Load())
+}
+
+func TestHeartbeat_MultiSlotPeerSharesFailureBackoff(t *testing.T) {
+	var height uint64 = 100
+	now := time.Unix(1_700_000_000, 0)
+	session, probeA, _ := setupWeightedHeartbeatSession(t, &height, &now)
+	probeA.fail = errors.New("injected peer failure")
+
+	// Fail on slot 0, then fail on slot 3 (same physical peer hostA).
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 0}))
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 3}))
+	require.Equal(t, int32(2), probeA.calls.Load())
+
+	// A send via sibling slot 5 at the same instant must now see the shared peer backoff.
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 5}))
+	require.Equal(t, int32(2), probeA.calls.Load(), "sibling slot must honor peer-wide backoff")
+
+	// Once Interval elapses and hostA answers on slot 2, backoff clears for all sibling slots.
+	now = now.Add(session.heartbeat.Config().Interval)
+	probeA.fail = nil
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 2}))
+	require.Equal(t, int32(3), probeA.calls.Load())
+
+	probeA.fail = errors.New("injected peer failure")
+	require.NoError(t, session.sendComposedDiff(context.Background(), composedDiff{diff: types.Diff{Nonce: session.Nonce()}, hostIdx: 4}))
+	require.Equal(t, int32(4), probeA.calls.Load(), "answering on one slot must clear backoff on sibling slots")
+}
+
