@@ -18,6 +18,7 @@ import (
 	"devshard/host"
 	"devshard/observability"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
 	"devshard/types"
@@ -490,9 +491,80 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 		return nil
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), storage.ErrDiffPageLimit.Error()) {
+			return nil, fmt.Errorf("get diffs: %w: %v", storage.ErrDiffPageLimit, err)
+		}
 		return nil, fmt.Errorf("get diffs: %w", err)
 	}
 	return diffs, nil
+}
+
+func (c *RPCClient) GetDiffPages(ctx context.Context, fromNonce, toNonce uint64, fn func([]types.Diff) error) error {
+	if !c.Uses(EndpointDiffs) {
+		return c.HTTPClient.GetDiffPages(ctx, fromNonce, toNonce, fn)
+	}
+	return walkDiffPages(ctx, fromNonce, toNonce, c.GetDiffs, fn)
+}
+
+func (c *RPCClient) GetSnapshot(ctx context.Context, maxNonce uint64) (*host.PeerSnapshot, error) {
+	if !c.Uses(EndpointDiffs) {
+		return c.HTTPClient.GetSnapshot(ctx, maxNonce)
+	}
+	timeout := c.config.QueryTimeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	var out *host.PeerSnapshot
+	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceGetSnapshotProcedure, func() error {
+		req, err := tokenRequest(ctx, c, &rpcpb.GetSnapshotRequest{MaxNonce: maxNonce})
+		if err != nil {
+			return err
+		}
+		resp, err := c.sessionQueryClient().GetSnapshot(ctx, req)
+		if err != nil {
+			return err
+		}
+		if resp.Msg.GetAnchorDiff() == nil {
+			return connect.NewError(connect.CodeNotFound, storage.ErrSnapshotNotFound)
+		}
+		anchor, err := DiffFromJSON(DiffJSONFromProto(resp.Msg.GetAnchorDiff()))
+		if err != nil {
+			return fmt.Errorf("decode snapshot anchor diff: %w", err)
+		}
+		var floorRef *types.Diff
+		if resp.Msg.GetFloorRefDiff() != nil {
+			d, fErr := DiffFromJSON(DiffJSONFromProto(resp.Msg.GetFloorRefDiff()))
+			if fErr != nil {
+				return fmt.Errorf("decode snapshot floor diff: %w", fErr)
+			}
+			floorRef = &d
+		}
+		sigs := resp.Msg.GetSignatures()
+		var sigCopy map[uint32][]byte
+		if len(sigs) > 0 {
+			sigCopy = make(map[uint32][]byte, len(sigs))
+			for k, v := range sigs {
+				sigCopy[k] = append([]byte(nil), v...)
+			}
+		}
+		out = &host.PeerSnapshot{
+			Nonce:        resp.Msg.GetNonce(),
+			Snapshot:     append([]byte(nil), resp.Msg.GetSnapshot()...),
+			AnchorDiff:   &anchor,
+			FloorRefDiff: floorRef,
+			Signatures:   sigCopy,
+		}
+		return nil
+	})
+	if err != nil {
+		if connect.CodeOf(err) == connect.CodeNotFound {
+			return nil, storage.ErrSnapshotNotFound
+		}
+		return nil, fmt.Errorf("get snapshot: %w", err)
+	}
+	return out, nil
 }
 
 // SessionHead is the executor tip read for a refused-timeout retry. It calls
