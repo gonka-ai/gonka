@@ -1609,6 +1609,10 @@ func TestRunInference_AStateRootDivergenceThatSurvivesTheReplayBlocksTheHost(t *
 	require.Equal(t, "escrow_state_root_diverged", reason)
 }
 
+// Test flow:
+// 1. The only host streams content and never finishes its nonce, twice.
+// 2. Both answers are served and the host is not blocked.
+// 3. Once the open nonces reach their deadline, the host is shadow-quarantined as a stalled winner.
 func TestRunInference_IncompleteWinnerAfterContentQuarantinesParticipant(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentWithoutFinishClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)
@@ -1624,9 +1628,8 @@ func TestRunInference_IncompleteWinnerAfterContentQuarantinesParticipant(t *test
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
 	require.Contains(t, second.String(), `"content":"x"`)
 	require.False(t, limiter.IsBlocked(participantKey))
-	// The strike lands with the settlement, which now finishes after the answer is served.
 	require.Eventually(t, func() bool { return limiter.IsShadowQuarantined(participantKey) },
-		5*time.Second, 20*time.Millisecond, "the answer is served, the host still earns the strike")
+		testWaitLimit, 20*time.Millisecond, "the answer is served, the host still earns the strike")
 }
 
 // A winner that delivered a whole answer is served even though its nonce never closed; the timeout vote
