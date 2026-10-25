@@ -4222,13 +4222,14 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 		// Clearing the persisted flag first also keeps UpsertDevshard, which
 		// preserves the stored value, from writing it back.
 		if existing.settlementPending.Load() {
-			if err := g.store.SetDevshardSettlementPending(r.Context(), req.ID, false); err != nil {
+			if err := g.store.SetDevshardSettlementPendingWithReason(r.Context(), req.ID, false, ""); err != nil {
 				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 				return
 			}
 			existing.settlementPending.Store(false)
 			existing.settlementReason = ""
 			record.SettlementPending = false
+			record.SettlementReason = ""
 		}
 		if err := g.store.UpsertDevshard(r.Context(), record); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -4918,10 +4919,16 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 
 // markSettlementPending records that an escrow must be settled once its
 // in-flight requests drain. The reason is stored before the flag so the
-// lock-free drain hook in releaseRuntime reads a consistent value.
+// lock-free drain hook in releaseRuntime reads a consistent value, and
+// persisted alongside settlement_pending so a restart preserves the committed
+// settlement decision instead of recalculating it from newer settings.
 func (g *Gateway) markSettlementPending(id, reason string) {
 	if g == nil {
 		return
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = settleDrainingReason
 	}
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
@@ -4931,7 +4938,7 @@ func (g *Gateway) markSettlementPending(id, reason string) {
 	}
 	g.mu.Unlock()
 	if g.store != nil {
-		if err := g.store.SetDevshardSettlementPending(context.Background(), id, true); err != nil {
+		if err := g.store.SetDevshardSettlementPendingWithReason(context.Background(), id, true, reason); err != nil {
 			log.Printf("settlement_pending_persist_failed escrow=%s reason=%q error=%v", id, reason, err)
 		}
 	}
@@ -4947,10 +4954,11 @@ func (g *Gateway) clearSettlementPending(id string) {
 	rt, ok := g.runtimes[id]
 	if ok {
 		rt.settlementPending.Store(false)
+		rt.settlementReason = ""
 	}
 	g.mu.Unlock()
 	if g.store != nil {
-		if err := g.store.SetDevshardSettlementPending(context.Background(), id, false); err != nil {
+		if err := g.store.SetDevshardSettlementPendingWithReason(context.Background(), id, false, ""); err != nil {
 			log.Printf("settlement_pending_clear_failed escrow=%s error=%v", id, err)
 		}
 	}
@@ -4959,6 +4967,12 @@ func (g *Gateway) clearSettlementPending(id string) {
 // reconcilePendingSettlements settles escrows that were marked pending before
 // a restart. After a restart no requests are in flight, so each such escrow
 // can settle immediately. Hydrates the in-memory marker too.
+//
+// When SettlementReason is non-empty, a concrete settlement decision (manual
+// settle drain or committed auto-depletion settle) was already made before the
+// restart and is resumed regardless of subsequent model setting edits. Legacy
+// or unattributed pending marks (empty SettlementReason) remain gated on the
+// current model configuration.
 func (g *Gateway) reconcilePendingSettlements() {
 	if g == nil || g.store == nil {
 		return
@@ -4974,22 +4988,26 @@ func (g *Gateway) reconcilePendingSettlements() {
 		if devshard.Active || !devshard.SettlementPending {
 			continue
 		}
-		// A disabled model keeps its marker, so a later re-enable still settles it.
-		if !settlementEnabledForModel(state.Settings, devshard.Model) {
+		persistedReason := strings.TrimSpace(devshard.SettlementReason)
+		if persistedReason == "" && !settlementEnabledForModel(state.Settings, devshard.Model) {
 			log.Printf("settlement_reconcile_skipped escrow=%s model=%q reason=settlement_disabled", devshard.ID, devshard.Model)
 			continue
 		}
+		reconcileReason := persistedReason
+		if reconcileReason == "" {
+			reconcileReason = "startup_reconcile"
+		}
 		g.mu.Lock()
 		if rt, exists := g.runtimes[devshard.ID]; exists {
-			rt.settlementReason = "startup_reconcile"
+			rt.settlementReason = reconcileReason
 			rt.settlementPending.Store(true)
 		}
 		g.mu.Unlock()
 		// Non-resident pending devshards are still settled: scheduleAutoSettlement
 		// drives settleDevshardOnChain, which rehydrates a transient full runtime
 		// from local storage when the devshard is not resident in memory.
-		log.Printf("settlement_reconcile_queued escrow=%s", devshard.ID)
-		g.scheduleAutoSettlement(devshard.ID, "startup_reconcile")
+		log.Printf("settlement_reconcile_queued escrow=%s reason=%q", devshard.ID, reconcileReason)
+		g.scheduleAutoSettlement(devshard.ID, reconcileReason)
 	}
 }
 
@@ -5125,10 +5143,14 @@ func replacementModelForDepletedEscrow(settings GatewaySettings, modelID string)
 // deactivateDepletedEscrow saves the escrow inactive, with its settlement mark when settlement is enabled for its model, before stopping its traffic in memory, and reports whether this call took it out of service.
 func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, reason string, settings GatewaySettings) (bool, error) {
 	isSettlementEnabled := settlementEnabledForModel(settings, modelID)
+	committedReason := strings.TrimSpace(reason)
+	if committedReason == "" {
+		committedReason = "depleted"
+	}
 	var isDeactivatedInStore bool
 	if err := withDBRetry(ctx, func() error {
 		var err error
-		isDeactivatedInStore, err = g.store.DeactivateDevshardIfActive(ctx, id, isSettlementEnabled)
+		isDeactivatedInStore, err = g.store.DeactivateDevshardWithSettlementReason(ctx, id, isSettlementEnabled, committedReason)
 		return err
 	}); err != nil {
 		return false, err
@@ -5140,21 +5162,21 @@ func (g *Gateway) deactivateDepletedEscrow(ctx context.Context, id, modelID, rea
 		depletedRuntime.active.Store(false)
 		g.releaseHostPing(id)
 		if isSettlementDue {
-			depletedRuntime.settlementReason = reason
+			depletedRuntime.settlementReason = committedReason
 			depletedRuntime.settlementPending.Store(true)
 		}
 	}
 	g.mu.Unlock()
-	log.Printf("escrow_depletion_deactivated escrow=%s reason=%q deactivated_in_store=%t settlement_due=%t", id, reason, isDeactivatedInStore, isSettlementDue)
+	log.Printf("escrow_depletion_deactivated escrow=%s reason=%q deactivated_in_store=%t settlement_due=%t", id, committedReason, isDeactivatedInStore, isSettlementDue)
 	if !isSettlementDue {
 		return isDeactivatedInStore, nil
 	}
 	if isResident && depletedRuntime.escrowHasBackgroundWork() {
 		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_race_cleanup=%d",
-			id, reason, depletedRuntime.activeUserRequests.Load(), depletedRuntime.pendingRaceCleanup.Load())
+			id, committedReason, depletedRuntime.activeUserRequests.Load(), depletedRuntime.pendingRaceCleanup.Load())
 		return isDeactivatedInStore, nil
 	}
-	g.scheduleAutoSettlement(id, reason)
+	g.scheduleAutoSettlement(id, committedReason)
 	return isDeactivatedInStore, nil
 }
 
