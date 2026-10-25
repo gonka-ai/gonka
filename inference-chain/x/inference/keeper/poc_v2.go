@@ -331,14 +331,8 @@ func (k Keeper) SetMLNodeWeightDistribution(ctx context.Context, distribution ty
 	return k.MLNodeWeightDistributions.Set(ctx, pk, distribution)
 }
 
-// findNonPositiveValidationV2ForSigner scans a stage for the first stored
-// validation row whose signer is `validator` and whose weight is not positive
-// (an invalid / -1 vote). It returns the row's key and whether one was found.
-//
-// The validation key ends with the signer, so there is no signer prefix to walk;
-// the scan is over the stage, bounded by the per-signer cap times the signer
-// count. It runs only on the cap safeguard path (a signer at its stage limit),
-// not on the normal store path.
+// findNonPositiveValidationV2ForSigner returns the first -1 row of validator in
+// stage. Stage-wide scan: the key ends with the signer; only the cap path calls it.
 func (k Keeper) findNonPositiveValidationV2ForSigner(ctx context.Context, stage int64, validator sdk.AccAddress) (collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], bool, error) {
 	var zero collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]]
 	iter, err := k.PoCValidationsV2.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](stage))

@@ -334,20 +334,8 @@ func setupWeightDistribution(t *testing.T) (keeper.Keeper, sdk.Context, types.Ms
 	return k, sdkCtx, keeper.NewMsgServerImpl(k)
 }
 
-// TestSubmitPocValidationsV2_PositiveVoteReclaimsSignerCapFromNegativeRow proves
-// that a signer's per-stage validation budget cannot be exhausted by its own
-// negative (invalid) votes in a way that drops a later positive vote.
-//
-// With validation_slots=0 every validator validates every (participant, model)
-// pair. A failing target is reported with an immediate -1; a passing target's +1
-// is submitted later, after the ML callback. The per-signer stage cap counts every
-// stored row regardless of sign, so without reclamation a signer that reports many
-// invalid targets first fills its own budget and its later positive votes are
-// rejected - excluding otherwise-valid participants from the next epoch.
-//
-// The cap must still bound how many rows one signer stores per stage, but a
-// positive vote at the cap reclaims one of the signer's own non-positive rows so
-// the total stays bounded while the consensus-bearing vote is never starved.
+// A +1 at the signer stage cap reclaims one of the signer's own -1 rows;
+// with nothing left to reclaim the next +1 is rejected.
 func TestSubmitPocValidationsV2_PositiveVoteReclaimsSignerCapFromNegativeRow(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
@@ -432,14 +420,8 @@ func TestSubmitPocValidationsV2_PositiveVoteReclaimsSignerCapFromNegativeRow(t *
 	require.Equal(t, 1, count, "rejected batch stores nothing")
 }
 
-// TestSubmitPocValidationsV2_NegativeRowsDoNotStarvePositivesAtScale is the
-// scale/ordering repro: with validation_slots=0 a validator validates every
-// (participant,model) pair, and dapi submits a failing target's -1 synchronously
-// while a passing target's +1 arrives later. So N sybil targets registered in the
-// epoch fill a signer's whole stage budget with -1 before any honest +1 lands.
-// Without reclamation every honest +1 after the cap is starved; with it each +1
-// reclaims one of the signer's own -1 rows, so all honest votes survive and the
-// total stored per signer still never exceeds the cap.
+// n early -1 votes fill the cap; each later +1 reclaims one, and the
+// per-signer total never exceeds the cap.
 func TestSubmitPocValidationsV2_NegativeRowsDoNotStarvePositivesAtScale(t *testing.T) {
 	const n = 4 // sybil pairs = cap; honest targets = n
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)

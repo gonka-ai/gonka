@@ -213,11 +213,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 
-		// Per-signer stage cap. A non-positive row never exceeds the cap: it is
-		// skipped. A positive (consensus-bearing) row at the cap reclaims one of the
-		// signer's own non-positive rows so that a signer cannot starve its own
-		// positive votes with its own invalid ones. The total stored per signer
-		// stays bounded by the cap either way.
+		// At the cap a -1 is skipped and a +1 reclaims one of the signer's own -1 rows.
 		if storedForSigner >= limit {
 			if validation.ValidatedWeight <= 0 {
 				continue
