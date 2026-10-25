@@ -1771,7 +1771,9 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference, diffNonce u
 
 	// Count accept votes, weighted by slots per address.
 	// One signature from a multi-slot validator counts for all its slots.
+	executorAddr := sm.slotToAddress[rec.ExecutorSlot]
 	acceptCount := uint32(0)
+	nonExecutorAcceptCount := uint32(0)
 	seenAddrs := make(map[string]bool, len(msg.Votes))
 	for _, vote := range msg.Votes {
 		// Group membership check.
@@ -1808,14 +1810,21 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference, diffNonce u
 		}
 
 		if vote.Accept {
-			acceptCount += sm.addressToSlotCount[voterAddr]
+			w := sm.addressToSlotCount[voterAddr]
+			acceptCount += w
+			if voterAddr != executorAddr {
+				nonExecutorAcceptCount += w
+			}
 		}
 	}
 
 	// VoteThreshold is frozen in state.Config at session creation (see VoteThreshold()).
-	threshold := sm.state.Config.VoteThreshold
-	if acceptCount <= threshold {
-		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)
+	// When the executor itself holds enough slots that the remaining non-executor
+	// verifiers cannot structurally exceed VoteThreshold, evaluate non-executor
+	// votes against the proportional threshold over non-executor slot weight.
+	threshold, effectiveAccept, sufficient := sm.timeoutQuorumCheckLocked(rec.ExecutorSlot, acceptCount, nonExecutorAcceptCount)
+	if !sufficient {
+		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, effectiveAccept)
 	}
 
 	rec.Status = types.StatusTimedOut
@@ -1842,7 +1851,9 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		return fmt.Errorf("%w: error-miss requires finished, got %d", types.ErrInvalidTransition, rec.Status)
 	}
 
+	executorAddr := sm.slotToAddress[rec.ExecutorSlot]
 	acceptCount := uint32(0)
+	nonExecutorAcceptCount := uint32(0)
 	seenAddrs := make(map[string]bool, len(msg.Votes))
 	for _, vote := range msg.Votes {
 		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
@@ -1873,13 +1884,17 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
 		}
 		if vote.Accept {
-			acceptCount += sm.addressToSlotCount[voterAddr]
+			w := sm.addressToSlotCount[voterAddr]
+			acceptCount += w
+			if voterAddr != executorAddr {
+				nonExecutorAcceptCount += w
+			}
 		}
 	}
 
-	threshold := sm.state.Config.VoteThreshold
-	if acceptCount <= threshold {
-		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)
+	threshold, effectiveAccept, sufficient := sm.timeoutQuorumCheckLocked(rec.ExecutorSlot, acceptCount, nonExecutorAcceptCount)
+	if !sufficient {
+		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, effectiveAccept)
 	}
 
 	rec.Status = types.StatusTimedOut
@@ -2252,6 +2267,57 @@ func (sm *StateMachine) GetInference(id uint64) (types.InferenceRecord, bool) {
 // VoteThreshold returns the session's vote threshold.
 func (sm *StateMachine) VoteThreshold() uint32 {
 	return sm.state.Config.VoteThreshold
+}
+
+// TimeoutVoteThresholdForInference returns the effective timeout/error-miss vote
+// threshold for inferenceID. When the executor holds so many slots that the
+// remaining non-executor verifiers cannot structurally exceed Config.VoteThreshold,
+// it scales the threshold proportionally over the non-executor slot weight so a
+// skewed slot draw cannot deadlock timeout resolution.
+func (sm *StateMachine) TimeoutVoteThresholdForInference(inferenceID uint64) uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if rec, ok := sm.state.Inferences[inferenceID]; ok {
+		return sm.timeoutVoteThresholdLocked(rec.ExecutorSlot)
+	}
+	if len(sm.state.Group) == 0 {
+		return sm.state.Config.VoteThreshold
+	}
+	executorSlot := sm.state.Group[int(inferenceID%uint64(len(sm.state.Group)))].SlotID
+	return sm.timeoutVoteThresholdLocked(executorSlot)
+}
+
+func (sm *StateMachine) timeoutVoteThresholdLocked(executorSlot uint32) uint32 {
+	base := sm.state.Config.VoteThreshold
+	totalSlots := uint32(len(sm.state.Group))
+	executorAddr, ok := sm.slotToAddress[executorSlot]
+	if !ok || totalSlots == 0 {
+		return base
+	}
+	nonExecutorSlots := totalSlots - sm.addressToSlotCount[executorAddr]
+	if nonExecutorSlots == 0 || nonExecutorSlots > base {
+		return base
+	}
+	scaled := uint32((uint64(nonExecutorSlots) * uint64(base)) / uint64(totalSlots))
+	if half := nonExecutorSlots / 2; half > scaled {
+		scaled = half
+	}
+	if scaled >= nonExecutorSlots {
+		scaled = nonExecutorSlots - 1
+	}
+	return scaled
+}
+
+func (sm *StateMachine) timeoutQuorumCheckLocked(executorSlot, acceptCount, nonExecutorAcceptCount uint32) (uint32, uint32, bool) {
+	base := sm.state.Config.VoteThreshold
+	if acceptCount > base {
+		return base, acceptCount, true
+	}
+	eff := sm.timeoutVoteThresholdLocked(executorSlot)
+	if eff < base {
+		return eff, nonExecutorAcceptCount, nonExecutorAcceptCount > eff
+	}
+	return base, acceptCount, false
 }
 
 func SortedSlotIDs(group []types.SlotAssignment) []uint32 {

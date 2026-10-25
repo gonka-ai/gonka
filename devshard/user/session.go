@@ -4151,7 +4151,7 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 	}
 
 	result.Votes = len(votes)
-	result.Accepted = s.HasSufficientTimeoutVotes(votes)
+	result.Accepted = s.HasSufficientTimeoutVotesForInference(nonce, votes)
 	if result.Accepted {
 		s.AddPendingTimeoutTx(nonce, reason, votes)
 		diff, err := s.sendPendingDiff(ctx, nil, nil)
@@ -4410,7 +4410,7 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 		result.ResponseHash = sum[:]
 	}
 
-	if !s.HasSufficientErrorMissVotes(votes) {
+	if !s.HasSufficientErrorMissVotesForInference(nonce, votes) {
 		logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
 	}
@@ -4824,7 +4824,7 @@ func (s *Session) collectTimeoutVotes(
 	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
 
-	voteThreshold := s.sm.VoteThreshold()
+	voteThreshold := s.sm.TimeoutVoteThresholdForInference(inferenceID)
 	var accWeight uint32
 	var errors, rejects, invalid int
 	errorClasses := make(map[string]int)
@@ -5036,7 +5036,7 @@ func (s *Session) CollectErrorMissVotes(
 	var rejectCauses []string
 	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
-	voteThreshold := s.sm.VoteThreshold()
+	voteThreshold := s.sm.TimeoutVoteThresholdForInference(inferenceID)
 	var accWeight uint32
 	var errors, rejects int
 	for i := 0; i < expected; i++ {
@@ -5134,7 +5134,25 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	threshold := s.sm.VoteThreshold()
+	return s.hasSufficientTimeoutVotesLocked(s.sm.VoteThreshold(), "", votes)
+}
+
+// HasSufficientTimeoutVotesForInference evaluates timeout votes for inferenceID,
+// scaling the threshold over reachable non-executor slots when slot skew makes
+// the group-wide VoteThreshold structurally unreachable without the executor.
+func (s *Session) HasSufficientTimeoutVotesForInference(inferenceID uint64, votes []*types.TimeoutVote) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	threshold := s.sm.TimeoutVoteThresholdForInference(inferenceID)
+	var excludeAddr string
+	if threshold < s.sm.VoteThreshold() && len(s.group) > 0 {
+		excludeAddr = s.group[int(inferenceID%uint64(len(s.group)))].ValidatorAddress
+	}
+	return s.hasSufficientTimeoutVotesLocked(threshold, excludeAddr, votes)
+}
+
+func (s *Session) hasSufficientTimeoutVotesLocked(threshold uint32, excludeAddr string, votes []*types.TimeoutVote) bool {
 	counted := make(map[string]bool, len(votes))
 	var accWeight uint32
 	for _, v := range votes {
@@ -5142,6 +5160,9 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 			continue
 		}
 		addr := s.sm.SlotAddress(v.VoterSlot)
+		if excludeAddr != "" && addr == excludeAddr {
+			continue
+		}
 		if counted[addr] {
 			continue
 		}
@@ -5154,13 +5175,36 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 func (s *Session) HasSufficientErrorMissVotes(votes []*types.ErrorMissVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	threshold := s.sm.VoteThreshold()
+	return s.hasSufficientErrorMissVotesLocked(s.sm.VoteThreshold(), "", votes)
+}
+
+func (s *Session) HasSufficientErrorMissVotesForInference(inferenceID uint64, votes []*types.ErrorMissVote) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	threshold := s.sm.TimeoutVoteThresholdForInference(inferenceID)
+	var excludeAddr string
+	if threshold < s.sm.VoteThreshold() && len(s.group) > 0 {
+		excludeAddr = s.group[int(inferenceID%uint64(len(s.group)))].ValidatorAddress
+	}
+	return s.hasSufficientErrorMissVotesLocked(threshold, excludeAddr, votes)
+}
+
+func (s *Session) hasSufficientErrorMissVotesLocked(threshold uint32, excludeAddr string, votes []*types.ErrorMissVote) bool {
+	counted := make(map[string]bool, len(votes))
 	var accWeight uint32
 	for _, v := range votes {
-		if v.Accept {
-			addr := s.sm.SlotAddress(v.VoterSlot)
-			accWeight += s.sm.AddressSlotCount(addr)
+		if !v.Accept {
+			continue
 		}
+		addr := s.sm.SlotAddress(v.VoterSlot)
+		if excludeAddr != "" && addr == excludeAddr {
+			continue
+		}
+		if counted[addr] {
+			continue
+		}
+		counted[addr] = true
+		accWeight += s.sm.AddressSlotCount(addr)
 	}
 	return accWeight > threshold
 }
