@@ -20,6 +20,7 @@ type hostInventory struct {
 	Sessions         int    `json:"sessions"`
 	LiveInferences   int    `json:"live_inferences"`
 	SealedInferences int    `json:"sealed_inferences"`
+	HeartbeatNonces  int    `json:"heartbeat_nonces"`
 	Mempool          int    `json:"mempool"`
 	Executing        int    `json:"executing"`
 	Validating       int    `json:"validating"`
@@ -32,6 +33,7 @@ func hostInventoryFrom(c session.SessionMemory) hostInventory {
 		Sessions:         c.Sessions,
 		LiveInferences:   c.Live,
 		SealedInferences: c.Sealed,
+		HeartbeatNonces:  c.HeartbeatNonces,
 		Mempool:          c.Mempool,
 		Executing:        c.Executing,
 		Validating:       c.Validating,
@@ -45,6 +47,7 @@ func (h hostInventory) LogAttrs() []any {
 		"sessions", h.Sessions,
 		"live_inferences", h.LiveInferences,
 		"sealed_inferences", h.SealedInferences,
+		"heartbeat_nonces", h.HeartbeatNonces,
 		"mempool", h.Mempool,
 		"executing", h.Executing,
 		"validating", h.Validating,

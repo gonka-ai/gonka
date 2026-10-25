@@ -14,6 +14,7 @@ type gatewayInventory struct {
 	Runtimes           int    `json:"runtimes"`
 	LiveInferences     int    `json:"live_inferences"`
 	SealedInferences   int    `json:"sealed_inferences"`
+	HeartbeatNonces    int    `json:"heartbeat_nonces"`
 	RetainedDiffs      int    `json:"retained_diffs"`
 	PendingTxs         int    `json:"pending_txs"`
 	SignatureNonces    int    `json:"signature_nonces"`
@@ -33,6 +34,7 @@ func (g gatewayInventory) LogAttrs() []any {
 		"runtimes", g.Runtimes,
 		"live_inferences", g.LiveInferences,
 		"sealed_inferences", g.SealedInferences,
+		"heartbeat_nonces", g.HeartbeatNonces,
 		"retained_diffs", g.RetainedDiffs,
 		"pending_txs", g.PendingTxs,
 		"signature_nonces", g.SignatureNonces,
@@ -51,6 +53,7 @@ func (g gatewayInventory) LogAttrs() []any {
 func (inv *gatewayInventory) add(c user.MemoryCounts) {
 	inv.LiveInferences += c.Live
 	inv.SealedInferences += c.Sealed
+	inv.HeartbeatNonces += c.HeartbeatNonces
 	inv.RetainedDiffs += c.RetainedDiffs
 	inv.PendingTxs += c.PendingTxs
 	inv.SignatureNonces += c.SignatureNonces
