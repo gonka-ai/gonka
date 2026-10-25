@@ -330,3 +330,62 @@ func (k Keeper) SetMLNodeWeightDistribution(ctx context.Context, distribution ty
 	pk := pocV2StoreCommitKey(distribution.PocStageStartBlockHeight, addr, distribution.ModelId)
 	return k.MLNodeWeightDistributions.Set(ctx, pk, distribution)
 }
+
+// findNonPositiveValidationV2ForSigner scans a stage for the first stored
+// validation row whose signer is `validator` and whose weight is not positive
+// (an invalid / -1 vote). It returns the row's key and whether one was found.
+//
+// The validation key ends with the signer, so there is no signer prefix to walk;
+// the scan is over the stage, bounded by the per-signer cap times the signer
+// count. It runs only on the cap safeguard path (a signer at its stage limit),
+// not on the normal store path.
+func (k Keeper) findNonPositiveValidationV2ForSigner(ctx context.Context, stage int64, validator sdk.AccAddress) (collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], bool, error) {
+	var zero collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]]
+	iter, err := k.PoCValidationsV2.Iterate(ctx, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]](stage))
+	if err != nil {
+		return zero, false, err
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			return zero, false, err
+		}
+		if !key.K3().K2().Equals(validator) {
+			continue
+		}
+		val, err := iter.Value()
+		if err != nil {
+			return zero, false, err
+		}
+		if val.ValidatedWeight <= 0 {
+			return key, true, nil
+		}
+	}
+	return zero, false, nil
+}
+
+// HasNonPositiveValidationV2ForSigner reports whether the signer has at least one
+// non-positive validation row at the stage (a row a positive vote could evict).
+func (k Keeper) HasNonPositiveValidationV2ForSigner(ctx context.Context, stage int64, validator sdk.AccAddress) (bool, error) {
+	_, found, err := k.findNonPositiveValidationV2ForSigner(ctx, stage, validator)
+	return found, err
+}
+
+// EvictOneNonPositiveValidationV2ForSigner deletes one of the signer's non-positive
+// rows at the stage and decrements its counter, freeing a slot for a positive vote.
+// It returns whether a row was evicted. Removing an invalid vote cannot admit its
+// target: a participant still needs a positive majority to pass validation.
+func (k Keeper) EvictOneNonPositiveValidationV2ForSigner(ctx context.Context, stage int64, validator sdk.AccAddress) (bool, error) {
+	key, found, err := k.findNonPositiveValidationV2ForSigner(ctx, stage, validator)
+	if err != nil || !found {
+		return false, err
+	}
+	if err := k.PoCValidationsV2.Remove(ctx, key); err != nil {
+		return false, err
+	}
+	if err := k.adjustPocValidationV2Count(ctx, stage, validator, -1); err != nil {
+		return false, err
+	}
+	return true, nil
+}

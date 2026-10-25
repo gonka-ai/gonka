@@ -333,3 +333,195 @@ func setupWeightDistribution(t *testing.T) (keeper.Keeper, sdk.Context, types.Ms
 	}))
 	return k, sdkCtx, keeper.NewMsgServerImpl(k)
 }
+
+// TestSubmitPocValidationsV2_PositiveVoteReclaimsSignerCapFromNegativeRow proves
+// that a signer's per-stage validation budget cannot be exhausted by its own
+// negative (invalid) votes in a way that drops a later positive vote.
+//
+// With validation_slots=0 every validator validates every (participant, model)
+// pair. A failing target is reported with an immediate -1; a passing target's +1
+// is submitted later, after the ML callback. The per-signer stage cap counts every
+// stored row regardless of sign, so without reclamation a signer that reports many
+// invalid targets first fills its own budget and its later positive votes are
+// rejected - excluding otherwise-valid participants from the next epoch.
+//
+// The cap must still bound how many rows one signer stores per stage, but a
+// positive vote at the cap reclaims one of the signer's own non-positive rows so
+// the total stays bounded while the consensus-bearing vote is never starved.
+func TestSubmitPocValidationsV2_PositiveVoteReclaimsSignerCapFromNegativeRow(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = types.DefaultEpochValidationParams()
+	}
+	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor)  // sybil / invalid target (-1)
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor2) // honest target (+1 later)
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID})
+	for _, target := range []string{testutil.Executor, testutil.Executor2} {
+		require.NoError(t, k.SetPoCV2StoreCommit(sdkCtx, types.PoCV2StoreCommit{
+			ParticipantAddress:       target,
+			PocStageStartBlockHeight: 100,
+			Count:                    10,
+			RootHash:                 make([]byte, 32),
+			ModelId:                  testPoCModelID,
+		}))
+	}
+	validatorAcc, err := types.CanonicalAccAddress(testutil.Validator)
+	require.NoError(t, err)
+
+	// 1) The signer reports the invalid target first: a -1 fills its cap-1 budget.
+	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: -1},
+		},
+	})
+	require.NoError(t, err)
+	count, err := k.CountPocValidationsV2ForValidator(sdkCtx, 100, validatorAcc)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "the negative row fills the budget")
+
+	// 2) The signer's later positive vote for the honest target must be stored by
+	// reclaiming its own negative row - not starved by it.
+	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor2, ModelId: testPoCModelID, ValidatedWeight: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	positiveStored, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
+	require.NoError(t, err)
+	require.True(t, positiveStored, "honest target's positive vote must survive the signer's own negative rows")
+	negativeEvicted, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, testutil.Validator)
+	require.NoError(t, err)
+	require.False(t, negativeEvicted, "the reclaimed negative row is removed")
+	count, err = k.CountPocValidationsV2ForValidator(sdkCtx, 100, validatorAcc)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "total stored per signer stays bounded by the cap")
+
+	// 3) The cap still bounds growth: with no non-positive row left to reclaim, a
+	// further positive vote at the cap is rejected (the safeguard is intact).
+	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
+		},
+	})
+	require.ErrorIs(t, err, types.ErrIllegalState, "cap still bounds growth once no negative row remains")
+	count, err = k.CountPocValidationsV2ForValidator(sdkCtx, 100, validatorAcc)
+	require.NoError(t, err)
+	require.Equal(t, 1, count, "rejected batch stores nothing")
+}
+
+// TestSubmitPocValidationsV2_NegativeRowsDoNotStarvePositivesAtScale is the
+// scale/ordering repro: with validation_slots=0 a validator validates every
+// (participant,model) pair, and dapi submits a failing target's -1 synchronously
+// while a passing target's +1 arrives later. So N sybil targets registered in the
+// epoch fill a signer's whole stage budget with -1 before any honest +1 lands.
+// Without reclamation every honest +1 after the cap is starved; with it each +1
+// reclaims one of the signer's own -1 rows, so all honest votes survive and the
+// total stored per signer still never exceeds the cap.
+func TestSubmitPocValidationsV2_NegativeRowsDoNotStarvePositivesAtScale(t *testing.T) {
+	const n = 4 // sybil pairs = cap; honest targets = n
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = types.DefaultEpochValidationParams()
+	}
+	params.EpochValidationParams.MaxValidationsPerSignerPerStage = uint32(n)
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID})
+
+	addr := func(seed byte) string {
+		b := make([]byte, 20)
+		for i := range b {
+			b[i] = seed + byte(i)
+		}
+		return sdk.AccAddress(b).String()
+	}
+	sybils := make([]string, n)
+	honest := make([]string, n)
+	for i := 0; i < n; i++ {
+		sybils[i] = addr(byte(10 + i))
+		honest[i] = addr(byte(100 + i))
+		for _, target := range []string{sybils[i], honest[i]} {
+			registerPoCParticipant(t, k, sdkCtx, target)
+			require.NoError(t, k.SetPoCV2StoreCommit(sdkCtx, types.PoCV2StoreCommit{
+				ParticipantAddress:       target,
+				PocStageStartBlockHeight: 100,
+				Count:                    10,
+				RootHash:                 make([]byte, 32),
+				ModelId:                  testPoCModelID,
+			}))
+		}
+	}
+	validatorAcc, err := types.CanonicalAccAddress(testutil.Validator)
+	require.NoError(t, err)
+	srv := keeper.NewMsgServerImpl(k)
+
+	// 1) The n sybil -1 votes arrive first and fill the signer's whole budget.
+	for _, s := range sybils {
+		_, err = srv.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+			Creator:                  testutil.Validator,
+			PocStageStartBlockHeight: 100,
+			Validations: []*types.PoCValidationEntryV2{
+				{ParticipantAddress: s, ModelId: testPoCModelID, ValidatedWeight: -1},
+			},
+		})
+		require.NoError(t, err)
+	}
+	count, err := k.CountPocValidationsV2ForValidator(sdkCtx, 100, validatorAcc)
+	require.NoError(t, err)
+	require.Equal(t, n, count, "the negative rows fill the budget")
+
+	// 2) The later positive votes for n honest targets each reclaim a negative row.
+	for _, h := range honest {
+		_, err = srv.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+			Creator:                  testutil.Validator,
+			PocStageStartBlockHeight: 100,
+			Validations: []*types.PoCValidationEntryV2{
+				{ParticipantAddress: h, ModelId: testPoCModelID, ValidatedWeight: 1},
+			},
+		})
+		require.NoError(t, err)
+	}
+	for _, h := range honest {
+		stored, err := k.HasPocValidationV2(sdkCtx, 100, h, testPoCModelID, testutil.Validator)
+		require.NoError(t, err)
+		require.True(t, stored, "every honest target's +1 must survive the signer's own -1 rows")
+	}
+	count, err = k.CountPocValidationsV2ForValidator(sdkCtx, 100, validatorAcc)
+	require.NoError(t, err)
+	require.Equal(t, n, count, "total stored per signer stays bounded by the cap")
+}

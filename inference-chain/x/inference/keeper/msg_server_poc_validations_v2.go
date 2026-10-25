@@ -120,12 +120,36 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 	}
 
 	validator := creatorAddr.String()
+	limit := params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit()
 	storedForSigner, err := k.CountPocValidationsV2ForValidator(ctx, startBlockHeight, creatorAddr)
 	if err != nil {
 		return nil, err
 	}
-	if storedForSigner >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-		return nil, sdkerrors.Wrap(types.ErrIllegalState, "signer stage cap reached")
+	// batchHasPositive: does this batch carry any consensus-bearing (positive)
+	// vote? A positive vote may reclaim one of the signer's own non-positive rows
+	// when the signer is at its stage cap, so a batch that has one is not dead on
+	// arrival even at the cap.
+	batchHasPositive := false
+	for _, v := range msg.Validations {
+		if v != nil && v.ValidatedWeight > 0 {
+			batchHasPositive = true
+			break
+		}
+	}
+	if storedForSigner >= limit {
+		// At the cap the batch is only worth processing if it can store a positive
+		// vote by evicting one of the signer's non-positive rows. Otherwise reject,
+		// preserving the old contract (a batch that cannot store anything errors).
+		canEvict := false
+		if batchHasPositive {
+			canEvict, err = k.HasNonPositiveValidationV2ForSigner(ctx, startBlockHeight, creatorAddr)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if !canEvict {
+			return nil, sdkerrors.Wrap(types.ErrIllegalState, "signer stage cap reached")
+		}
 	}
 
 	// Process each validation - skip failures, don't fail entire batch.
@@ -171,14 +195,6 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 
-		if storedForSigner >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-			k.LogWarn("[SubmitPocValidationsV2] signer stage cap reached, skipping rest", types.PoC,
-				"validator", validator,
-				"stage", startBlockHeight,
-				"stored", storedForSigner)
-			break
-		}
-
 		// Check for duplicate submission (prevents vote flipping)
 		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, participant, modelID, validator)
 		if err != nil {
@@ -195,6 +211,29 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 				"model_id", modelID,
 				"stage", startBlockHeight)
 			continue
+		}
+
+		// Per-signer stage cap. A non-positive row never exceeds the cap: it is
+		// skipped. A positive (consensus-bearing) row at the cap reclaims one of the
+		// signer's own non-positive rows so that a signer cannot starve its own
+		// positive votes with its own invalid ones. The total stored per signer
+		// stays bounded by the cap either way.
+		if storedForSigner >= limit {
+			if validation.ValidatedWeight <= 0 {
+				continue
+			}
+			evicted, err := k.EvictOneNonPositiveValidationV2ForSigner(ctx, startBlockHeight, creatorAddr)
+			if err != nil {
+				return nil, err
+			}
+			if !evicted {
+				k.LogWarn("[SubmitPocValidationsV2] signer stage cap reached, no evictable row, skipping", types.PoC,
+					"validator", validator,
+					"stage", startBlockHeight,
+					"stored", storedForSigner)
+				continue
+			}
+			storedForSigner--
 		}
 
 		// Store the v2 validation (combine message-level height with payload)
