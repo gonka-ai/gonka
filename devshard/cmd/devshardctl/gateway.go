@@ -369,7 +369,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 
 	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
-	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil && !deps.allowHostStateRecovery {
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
 	}
 
@@ -432,6 +432,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		ExtraClientConfig:          extraClient,
 		Heartbeat:                  heartbeatFromDeps(deps),
 		HeaderTimes:                gatewayHeaderTimes(),
+		AllowHostStateRecovery:     deps.allowHostStateRecovery,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
@@ -445,7 +446,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if deps.completionStore != nil {
 		session.SetInferenceCompletionStore(deps.completionStore)
 	}
-	session.StartHeartbeatLoop()
+	if !deps.allowHostStateRecovery {
+		session.StartHeartbeatLoop()
+	}
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}

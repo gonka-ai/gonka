@@ -12,7 +12,10 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/transport"
 	"devshard/types"
+	"net/http"
+	"strings"
 )
 
 // ErrLocalStateUnrecoverable marks a proven integrity failure in persisted
@@ -151,15 +154,15 @@ func RecoverSession(
 	}
 
 	if len(group) != len(meta.Group) {
-		return nil, nil, fmt.Errorf("group size mismatch: caller %d, stored %d", len(group), len(meta.Group))
+		return nil, nil, fmt.Errorf("%w: group size mismatch: caller %d, stored %d", ErrLocalStateUnrecoverable, len(group), len(meta.Group))
 	}
 	for i := range group {
 		if group[i].SlotID != meta.Group[i].SlotID || group[i].ValidatorAddress != meta.Group[i].ValidatorAddress {
-			return nil, nil, fmt.Errorf("group mismatch at slot %d", i)
+			return nil, nil, fmt.Errorf("%w: group mismatch at slot %d", ErrLocalStateUnrecoverable, i)
 		}
 	}
 	if meta.Version != "" && boundVersion != "" && meta.Version != boundVersion {
-		return nil, nil, fmt.Errorf("session version mismatch: stored %s, requested %s", meta.Version, boundVersion)
+		return nil, nil, fmt.Errorf("%w: session version mismatch: stored %s, requested %s", ErrLocalStateUnrecoverable, meta.Version, boundVersion)
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
@@ -555,4 +558,201 @@ func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, stat
 	log.Printf("recover_session escrow=%s snapshot_saved nonce=%d size_bytes=%d host_cursors=%d",
 		escrowID, nonce, len(data), len(cursor))
 	return nil
+}
+
+func isHostSessionAbsentErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return true
+	}
+	var statusErr *transport.UpstreamStatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "not_found:") || strings.Contains(msg, "session not found")
+}
+
+// RecoverSessionFromHosts reconstructs a settlement-ready Session and
+// StateMachine from Creator-signed diffs stored on the escrow's hosts when the
+// gateway's local SQLite journal is unrecoverable or missing. Every fetched
+// diff is verified against creatorAddr's signature and deterministic post-state
+// root via sm.ApplyDiff, and at least a >2/3 slot quorum of hosts must respond
+// cleanly so quorum intersection guarantees observing the highest committed
+// state before finalizing.
+func RecoverSessionFromHosts(
+	ctx context.Context,
+	signer signing.Signer,
+	verifier signing.Verifier,
+	escrowID string,
+	version string,
+	epochID uint64,
+	creatorAddr string,
+	initialBalance uint64,
+	config types.SessionConfig,
+	group []types.SlotAssignment,
+	clients []HostClient,
+	smOpts ...state.SMOption,
+) (*Session, *state.StateMachine, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if strings.TrimSpace(version) == "" {
+		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
+	}
+	if len(clients) != len(group) {
+		return nil, nil, fmt.Errorf("client count %d does not match group size %d", len(clients), len(group))
+	}
+
+	memStore := storage.NewMemory()
+	if err := memStore.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		EpochID:        epochID,
+		Version:        version,
+		CreatorAddr:    creatorAddr,
+		Config:         config,
+		Group:          group,
+		InitialBalance: initialBalance,
+	}); err != nil {
+		return nil, nil, fmt.Errorf("create in-memory recovery session: %w", err)
+	}
+
+	stateOpts := append(smOpts, state.WithVersion(version))
+	sm, err := state.NewStateMachine(escrowID, config, group, initialBalance, creatorAddr, verifier, memStore, stateOpts...)
+	if err != nil {
+		memStore.Close()
+		return nil, nil, fmt.Errorf("create state machine: %w", err)
+	}
+	sess, err := NewSession(sm, signer, escrowID, group, clients, verifier,
+		WithStorage(memStore), WithHeartbeatConfig(sm.HeartbeatConfig()))
+	if err != nil {
+		memStore.Close()
+		return nil, nil, fmt.Errorf("create session: %w", err)
+	}
+
+	type hostEntry struct {
+		client HostClient
+		slots  []int
+	}
+	var uniqueHosts []hostEntry
+	seenIdx := make(map[HostClient]int, len(clients))
+	for slotIdx, cli := range clients {
+		if cli == nil {
+			continue
+		}
+		if idx, exists := seenIdx[cli]; exists {
+			uniqueHosts[idx].slots = append(uniqueHosts[idx].slots, slotIdx)
+			continue
+		}
+		seenIdx[cli] = len(uniqueHosts)
+		uniqueHosts = append(uniqueHosts, hostEntry{client: cli, slots: []int{slotIdx}})
+	}
+
+	respondedSlots := 0
+	var lastHostErr error
+	nextNonce := uint64(1)
+
+	for _, entry := range uniqueHosts {
+		df, ok := entry.client.(DiffFetcher)
+		if !ok {
+			continue
+		}
+		hostClean := true
+		for {
+			from := nextNonce
+			hi := from + uint64(storage.DiffPageMaxNonces) - 1
+			page, fetchErr := df.GetDiffs(ctx, from, hi)
+			for fetchErr != nil && errors.Is(fetchErr, storage.ErrDiffPageLimit) && hi > from {
+				hi = from + (hi-from)/2
+				page, fetchErr = df.GetDiffs(ctx, from, hi)
+			}
+			if fetchErr != nil {
+				if isHostSessionAbsentErr(fetchErr) {
+					break
+				}
+				hostClean = false
+				lastHostErr = fetchErr
+				break
+			}
+			if len(page) == 0 {
+				break
+			}
+			advanced := false
+			for _, d := range page {
+				if d.Nonce < nextNonce {
+					continue
+				}
+				if d.Nonce != nextNonce {
+					hostClean = false
+					lastHostErr = fmt.Errorf("host returned non-sequential diff nonce %d (expected %d)", d.Nonce, nextNonce)
+					break
+				}
+				var root []byte
+				applyErr := state.RetryWhileHeaderPending(ctx, state.ReplayHeaderWait, func() error {
+					var err error
+					root, err = sm.ApplyDiff(d)
+					return err
+				})
+				if applyErr != nil {
+					hostClean = false
+					lastHostErr = fmt.Errorf("verify host diff nonce %d: %w", d.Nonce, applyErr)
+					break
+				}
+				if err := memStore.AppendDiff(escrowID, types.DiffRecord{
+					Diff:      d,
+					StateHash: root,
+				}); err != nil {
+					memStore.Close()
+					return nil, nil, fmt.Errorf("persist host-recovered diff %d: %w", d.Nonce, err)
+				}
+				sess.diffs = append(sess.diffs, d)
+				sess.nonce = d.Nonce
+				nextNonce++
+				advanced = true
+			}
+			if !hostClean || !advanced {
+				break
+			}
+		}
+		if hostClean {
+			respondedSlots += len(entry.slots)
+		}
+	}
+
+	quorumSlots := sm.QuorumThreshold()
+	if uint32(respondedSlots) < quorumSlots {
+		memStore.Close()
+		if lastHostErr != nil {
+			return nil, nil, fmt.Errorf("recover session from hosts: insufficient responsive slots (%d/%d): %w",
+				respondedSlots, quorumSlots, lastHostErr)
+		}
+		return nil, nil, fmt.Errorf("recover session from hosts: insufficient responsive slots (%d/%d)",
+			respondedSlots, quorumSlots)
+	}
+
+	if sess.nonce > 0 && sm.Phase() == types.PhaseSettlement {
+		for _, entry := range uniqueHosts {
+			sf, ok := entry.client.(SignatureFetcher)
+			if !ok {
+				continue
+			}
+			sigs, sigErr := sf.GetSignatures(ctx, sess.nonce)
+			if sigErr != nil || len(sigs) == 0 {
+				continue
+			}
+			if _, exists := sess.signatures[sess.nonce]; !exists {
+				sess.signatures[sess.nonce] = make(map[uint32][]byte)
+			}
+			for slotID, sig := range sigs {
+				sess.signatures[sess.nonce][slotID] = sig
+				_ = memStore.AddSignature(escrowID, sess.nonce, slotID, sig)
+			}
+		}
+	}
+
+	log.Printf("recover_session_from_hosts escrow=%s recovered_nonce=%d phase=%d responded_slots=%d/%d",
+		escrowID, sess.nonce, sm.Phase(), respondedSlots, len(group))
+	return finishRecover(sess, sm, 1)
 }
