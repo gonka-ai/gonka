@@ -499,16 +499,23 @@ func TestTurnTracker_PrunesCompletedTurns(t *testing.T) {
 		tr.Observe(nonce, txs, h)
 	}
 	last := turnStart(n)
+	lastPrunedTurn := n - heightsync.DefaultTurnRetain
+	wantPrunedBelow := turnStart(lastPrunedTurn) + slots
 	require.LessOrEqual(t, tr.TurnCount(), int(heightsync.DefaultTurnRetain)+1,
 		"completed turns outside the retain window must be evicted")
-	require.Equal(t, int(n), tr.HeartbeatAtCount(), "heartbeatAt is not pruned with the turn record")
+	require.LessOrEqual(t, tr.HeartbeatAtCount(), int((heightsync.DefaultTurnRetain+1)*slots),
+		"heartbeatAt must be bounded by the retained turn window")
+	require.Equal(t, wantPrunedBelow, tr.PrunedBelow(),
+		"prunedBelow equals one past the last pruned span")
 	require.Equal(t, last, tr.LatestTurnStart())
 	require.Equal(t, uint64(100+n), tr.LastCompletedHeight(), "h_last survives prune")
 
 	_, ok := tr.HeartbeatTurn(last)
 	require.True(t, ok, "L3 still finds a heartbeat inside the retain window")
 	_, ok = tr.HeartbeatTurn(1)
-	require.True(t, ok, "L3 still finds a heartbeat after its turn record is pruned")
+	require.False(t, ok, "pruned turn span is evicted from heartbeatAt")
+	require.True(t, tr.StaleRef(1), "pruned heartbeat nonce is below cutoff")
+	require.False(t, tr.StaleRef(wantPrunedBelow), "first retained span start is not stale")
 	require.NotNil(t, tr.Record(turnStart(n-1)), "L7 still sees the preceding turn")
 	require.Nil(t, tr.Record(1), "the first turn is long outside the retain window")
 
@@ -531,13 +538,15 @@ func TestTurnTracker_PrunesOpenTurns(t *testing.T) {
 			tr.Observe(i, []*types.DevshardTx{tx}, 0)
 		}
 		require.LessOrEqual(t, tr.TurnCount(), bound)
-		require.Equal(t, n, tr.HeartbeatAtCount())
+		require.LessOrEqual(t, tr.HeartbeatAtCount(), bound)
+		require.Equal(t, uint64(n)-heightsync.DefaultTurnRetain+1, tr.PrunedBelow())
 		require.Equal(t, uint64(n), tr.LatestTurnStart())
 		require.Nil(t, tr.Record(1), "the oldest turn is evicted")
 		require.NotNil(t, tr.Latest())
 		require.Equal(t, heightsync.TurnOpen, tr.Latest().State)
 		_, ok := tr.HeartbeatTurn(1)
-		require.True(t, ok)
+		require.False(t, ok)
+		require.True(t, tr.StaleRef(1))
 	})
 
 	t.Run("flat_stamped", func(t *testing.T) {
@@ -547,7 +556,7 @@ func TestTurnTracker_PrunesOpenTurns(t *testing.T) {
 			tr.Observe(i, []*types.DevshardTx{heartbeatTx(h, 1)}, h)
 		}
 		require.LessOrEqual(t, tr.TurnCount(), bound)
-		require.Equal(t, n, tr.HeartbeatAtCount())
+		require.LessOrEqual(t, tr.HeartbeatAtCount(), bound)
 		require.Nil(t, tr.Record(1), "the oldest turn is evicted")
 		latest := tr.Latest()
 		require.NotNil(t, latest)

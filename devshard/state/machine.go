@@ -638,6 +638,10 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 			logDroppedTx(nonce, tx, types.ErrSessionFinalizing)
 			continue
 		}
+		if ack := tx.GetHeightAck(); ack != nil && sm.turnTracker != nil && sm.turnTracker.StaleRef(ack.RefNonce) {
+			logDroppedTx(nonce, tx, heightsync.ErrStaleHeightAck)
+			continue
+		}
 		trial := make([]*types.DevshardTx, 0, len(applied)+1)
 		trial = append(trial, applied...)
 		trial = append(trial, tx)

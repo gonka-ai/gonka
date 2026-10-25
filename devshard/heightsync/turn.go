@@ -56,9 +56,9 @@ type SyncTurnRecord struct {
 }
 
 // DefaultTurnRetain is how many turns the tracker keeps behind the latest,
-// open ones included. L7 and repair read that tail. L3 uses heartbeatAt, which
-// is not pruned with the turn record — one entry per heartbeat nonce, bounded
-// by session length.
+// open ones included. L7 and repair read that tail. Prune removes older turns
+// and evicts their spans from heartbeatAt behind prunedBelow, bounding
+// heartbeatAt by (DefaultTurnRetain + 1) * slots_num entries.
 const DefaultTurnRetain uint64 = 64
 
 // TurnTracker folds heartbeat + ack txs into SyncTurnRecords. Q is the turn
@@ -69,7 +69,8 @@ type TurnTracker struct {
 	ackDeadline       uint64
 	retain            uint64
 	turns             map[uint64]*SyncTurnRecord
-	heartbeatAt       map[uint64]uint64 // heartbeat nonce → turn start (L3)
+	heartbeatAt       map[uint64]uint64 // heartbeat nonce → turn start (retained window)
+	prunedBelow       uint64            // one past the last nonce of the newest pruned turn
 	stampHeight       uint64            // max host-signed confirm/finish stamp; discharges h_last
 	latestTurnStart   uint64
 	lastCompleted     uint64 // max CompletedAtHeight; survives prune
@@ -286,10 +287,9 @@ func (t *TurnTracker) AdvanceHeight(hNow uint64) {
 	t.prune()
 }
 
-// prune keeps the newest DefaultTurnRetain turns. Turn ids are span-start
-// nonces, so "newest" is by id and the retained set is the tail of the sorted
-// keys. A cutoff arithmetic on the id would be wrong here: nonces are not one
-// apart per turn the way turn_seq was.
+// prune keeps the newest DefaultTurnRetain turns and evicts pruned turn spans
+// from heartbeatAt behind prunedBelow. Turn ids are span-start nonces, so
+// "newest" is by id and the retained set is the tail of the sorted keys.
 func (t *TurnTracker) prune() {
 	if t.retain == 0 {
 		t.retain = DefaultTurnRetain
@@ -303,11 +303,19 @@ func (t *TurnTracker) prune() {
 	}
 	slices.Sort(starts)
 	for _, start := range starts[:uint64(len(starts))-t.retain] {
+		if rec := t.turns[start]; rec != nil {
+			for n := rec.RequestSpan[0]; n <= rec.RequestSpan[1]; n++ {
+				delete(t.heartbeatAt, n)
+				if n == ^uint64(0) {
+					break
+				}
+			}
+			if cutoff := addSat(rec.RequestSpan[1], 1); cutoff > t.prunedBelow {
+				t.prunedBelow = cutoff
+			}
+		}
 		delete(t.turns, start)
 	}
-	// heartbeatAt is the L3 source of truth: ref_nonce names a heartbeat that
-	// was in Diff, not a turn record still in RAM. Do not drop entries whose
-	// turn has been pruned.
 }
 
 // windowClosed reports whether the turn's ack window has passed.
@@ -467,6 +475,22 @@ func (t *TurnTracker) HeartbeatAtCount() int {
 	return len(t.heartbeatAt)
 }
 
+// StaleRef reports whether nonce falls below the pruned turn cutoff.
+func (t *TurnTracker) StaleRef(nonce uint64) bool {
+	if t == nil {
+		return false
+	}
+	return nonce < t.prunedBelow
+}
+
+// PrunedBelow returns one past the last nonce of the newest pruned turn.
+func (t *TurnTracker) PrunedBelow() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.prunedBelow
+}
+
 // Clone returns a deep copy so trial-apply / independent verifiers do not share maps.
 func (t *TurnTracker) Clone() *TurnTracker {
 	if t == nil {
@@ -479,6 +503,7 @@ func (t *TurnTracker) Clone() *TurnTracker {
 		retain:            t.retain,
 		turns:             make(map[uint64]*SyncTurnRecord, len(t.turns)),
 		heartbeatAt:       make(map[uint64]uint64, len(t.heartbeatAt)),
+		prunedBelow:       t.prunedBelow,
 		stampHeight:       t.stampHeight,
 		latestTurnStart:   t.latestTurnStart,
 		lastCompleted:     t.lastCompleted,
