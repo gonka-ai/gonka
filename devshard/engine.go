@@ -147,6 +147,52 @@ type ValidationEngine interface {
 	Validate(ctx context.Context, req ValidateRequest) (*ValidateResult, error)
 }
 
+// ChallengeFetcher is implemented by validation engines that can fetch an
+// inference's stored request and body from its executor without running a
+// model. A host votes on a challenged inference with it.
+type ChallengeFetcher interface {
+	FetchChallengePayload(ctx context.Context, req ValidateRequest) ChallengeFetch
+}
+
+// ChallengeFetchOutcome classifies one attempt to fetch a challenged
+// inference's payload from its executor.
+type ChallengeFetchOutcome uint8
+
+const (
+	// ChallengeFetchRetry is a failure that may clear: the executor did not
+	// answer, rate limited the fetch, or had not attached yet, or this host's
+	// own peer or chain lookup was not ready. Try again inside the window.
+	ChallengeFetchRetry ChallengeFetchOutcome = iota
+	// ChallengeFetchFetched is a body whose executor signature and prompt,
+	// response and served hashes match the Finish.
+	ChallengeFetchFetched
+	// ChallengeFetchMismatch is a fetched payload whose executor signature or
+	// one of the three hashes does not match the Finish.
+	ChallengeFetchMismatch
+	// ChallengeFetchUnavailable is the executor's fault now: it reported the
+	// body gone while the escrow epoch is inside its retention, or sent one
+	// above the size limit.
+	ChallengeFetchUnavailable
+	// ChallengeFetchPruned is a body reported gone after the retention: an
+	// honest prune, not a fault.
+	ChallengeFetchPruned
+	// ChallengeFetchLocal means this host cannot fetch at all (its payload
+	// transport is off or its peers were released). It says nothing about
+	// the executor.
+	ChallengeFetchLocal
+)
+
+// ChallengeFetch is the result of one fetch attempt. Response is set only
+// for ChallengeFetchFetched. ExecutorSide marks a ChallengeFetchRetry whose
+// cause is the executor's (no answer, rate limit, not attached) rather than
+// this host's.
+type ChallengeFetch struct {
+	Outcome      ChallengeFetchOutcome
+	Response     []byte
+	ExecutorSide bool
+	Cause        string
+}
+
 // ValidationAvailability optionally lets schedulers avoid work without credits.
 type ValidationAvailability interface {
 	CanValidate(model string) bool

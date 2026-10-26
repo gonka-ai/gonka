@@ -60,6 +60,20 @@ type MLNodeStats struct {
 	Error               string `json:"error,omitempty"`
 }
 
+// DapiHostStats is one row of mock-dapi's GET /testenv/host-stats: what it handed a versiond host,
+// or under unmappedDapiHost the callers it maps to no host.
+type DapiHostStats struct {
+	Challenged          bool              `json:"challenged"`
+	Nodes               []string          `json:"nodes,omitempty"`
+	Allocations         uint64            `json:"allocations"`
+	NodeAllocations     map[string]uint64 `json:"node_allocations,omitempty"`
+	ChallengeRejections uint64            `json:"challenge_rejections"`
+	AcquireErrors       uint64            `json:"acquire_errors"`
+}
+
+// unmappedDapiHost is the host-stats row of callers whose address mock-dapi maps to no host.
+const unmappedDapiHost = "unmapped"
+
 type GatewayStateSizes struct {
 	Diffs           int     `json:"diffs"`
 	DiffsBytes      int64   `json:"diffs_bytes"`
@@ -109,6 +123,8 @@ type TerminalSummary struct {
 	Orphaned  int            `json:"orphaned"`
 	GhostRate float64        `json:"ghost_rate"`
 	Statuses  map[string]int `json:"statuses,omitempty"`
+	// Settling counts the warm-up probes a host served that are still open, left to settlement.
+	Settling int `json:"settling"`
 }
 
 func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err error) {
@@ -198,6 +214,9 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err := fixComposePaths(composePath, opts.TestenvDir); err != nil {
 			return RunResult{}, err
 		}
+		if err := applyLoadTestComposeOverrides(composePath); err != nil {
+			return RunResult{}, err
+		}
 		err := runCommandWithEnv(ctx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
 		if err == nil {
 			break
@@ -230,8 +249,12 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		// single dataset model uses the multi-DevShard debug route.
 		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
 	}
+	if scenario.Topology.Chain.Escrows > 1 {
+		// Several escrows answer only on the routes scoped to one of them.
+		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
+	}
 	debugGatewayURL := stateGatewayURL
-	if scenario.Gateway.EscrowRotation.Enabled {
+	if scenario.severalRuntimes() {
 		// Rotation adds runtimes while the test is running. The orphan check
 		// discovers and inspects all of them through the Gateway root.
 		debugGatewayURL = result.GatewayURL
@@ -240,6 +263,18 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
+	}
+	if n := scenario.Topology.Chain.Escrows; n > 1 {
+		log.Printf("loadtest: stage=escrows creating %d more of model %s", n-1, scenario.Workload.Request.Model)
+		created, err := addScenarioEscrows(ctx, result.GatewayURL, apiKey, scenario.Workload.Request.Model,
+			scenario.Topology.Chain.EscrowAmount, n, escrowsReadyTimeout)
+		if err != nil {
+			_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+			return RunResult{}, fmt.Errorf("scenario escrows: %w", err)
+		}
+		for _, id := range created {
+			initialEscrowIDs[id] = struct{}{}
+		}
 	}
 	var accountingInitial accountingAPIResponse
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -298,6 +333,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return RunResult{}, err
 	}
 	result.Summary = summary
+	workloadEnd := time.Now()
 	result.HostFaults, err = faultRunner.finish(false)
 	faultErr := err
 	collector.phase.Store("drain")
@@ -310,11 +346,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err := writeComposeLogsTo(opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log", scenario.Diagnostics.LogTail()); err != nil {
 		return RunResult{}, err
 	}
-	ghostIDs, err := readGhostInferenceIDs(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
+	leftOut, err := readLeftOutSlots(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
 	if err != nil {
 		return RunResult{}, err
 	}
-	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, ghostIDs)
+	terminal, assertions, assertionErr := assertRun(ctx, scenario, summary, allocations, debugGatewayURL, apiKey, initialEscrowIDs, leftOut)
 	result.Terminal = terminal
 	for index, fault := range result.HostFaults {
 		assertions = append(assertions, AssertionResult{
@@ -377,6 +413,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 			assertionErr = errors.Join(assertionErr, faultErr)
 		}
 	}
+	if scenario.Assertions.Promises {
+		if err := holdForPromises(ctx, scenario, workloadEnd); err != nil {
+			return RunResult{}, err
+		}
+	}
 	log.Printf("loadtest: stage=artifacts_collection")
 	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail()); err != nil {
 		if assertionErr == nil {
@@ -402,7 +443,31 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	} else if assertionErr == nil {
 		return RunResult{}, statsErr
 	}
+	hostStats, hostStatsErr := fetchHostStats(ctx, cfg.MockDapi.HTTPPort)
+	if hostStatsErr == nil {
+		if err := writeHostStats(opts.OutputDir, hostStats); err != nil && assertionErr == nil {
+			return RunResult{}, err
+		}
+	} else if assertionErr == nil {
+		return RunResult{}, hostStatsErr
+	}
 	_ = writeGatewayInferences(ctx, stateGatewayURL, apiKey, opts.OutputDir)
+	if scenario.Diagnostics.Export {
+		log.Printf("loadtest: stage=export")
+		manifest, err := exportRun(cfg, opts.OutputDir, composeStackAccess(ctx, project, composePath, cfg), &http.Client{Timeout: 2 * time.Minute})
+		switch {
+		case err != nil:
+			log.Printf("loadtest: export failed: %v", err)
+		case !manifest.Complete:
+			log.Printf("loadtest: export incomplete: %v", manifest.Problems)
+		}
+	}
+	if scenario.Assertions.Promises {
+		log.Printf("loadtest: stage=promises")
+		check := promisesAssertion(opts.OutputDir, scenario, profiles)
+		result.Assertions = append(result.Assertions, check)
+		assertionErr = appendAssertionFailure(assertionErr, check)
+	}
 	if assertionErr != nil {
 		return result, assertionErr
 	}
@@ -424,6 +489,7 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 	for name, value := range map[string]string{
 		"transport_failure_quarantine": scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine,
 		"http_quarantine":              scenario.Gateway.ParticipantThrottle.HTTPQuarantine,
+		"empty_stream_quarantine":      scenario.Gateway.ParticipantThrottle.EmptyStreamQuarantine,
 	} {
 		if value == "" {
 			continue
@@ -517,6 +583,36 @@ func rotationModelIDs(cfg *config.File, replayModels []string, scenario Scenario
 	return models
 }
 
+// holdForPromises waits, before the logs and the export are taken, until every inference the load
+// started is due (promisesHold from the end of the load), so the deadline checks judge them all. A
+// scenario without protocol timeouts runs on the chain's defaults, too long to wait for: it is not
+// held, and the promises assertion reports the deadline checks as having judged nothing.
+func holdForPromises(ctx context.Context, scenario Scenario, workloadEnd time.Time) error {
+	if scenario.Protocol.ExecutionTimeout == "" {
+		log.Printf("loadtest: stage=promises_hold skipped: no protocol timeouts")
+		return nil
+	}
+	refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
+	if err != nil {
+		return err
+	}
+	execution, err := protocolTimeoutSeconds(scenario.Protocol.ExecutionTimeout)
+	if err != nil {
+		return err
+	}
+	wait := time.Until(workloadEnd.Add(promisesHold(refusal, execution)))
+	if wait <= 0 {
+		return nil
+	}
+	log.Printf("loadtest: stage=promises_hold wait=%s", wait.Round(time.Second))
+	select {
+	case <-time.After(wait):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile, replayEnabled bool, replayModels []string) error {
 	cfg, err := config.Load(filepath.Join(testenvDir, "config", "config.yaml"))
 	if err != nil {
@@ -548,6 +644,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	for i := range cfg.Escrows {
 		cfg.Escrows[i].Amount = scenario.Topology.Chain.EscrowAmount
 	}
+	applyValidationThreshold(cfg, scenario.Topology.Chain.ValidationThreshold)
 	cfg.MockOpenAI.Nodes = make([]config.MockOpenAINodeCfg, 0, len(scenario.Topology.MockML.Nodes))
 	cfg.MockOpenAI.ReplayFile = ""
 	if replayEnabled {
@@ -555,6 +652,14 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	}
 	for _, node := range scenario.Topology.MockML.Nodes {
 		profile := profiles[node.Profile]
+		chaos, err := profile.chaosJSON()
+		if err != nil {
+			return fmt.Errorf("node %s profile %s: %w", node.Name, node.Profile, err)
+		}
+		rules, err := profile.rulesJSON(scenario.Topology.MockML.Rules...)
+		if err != nil {
+			return fmt.Errorf("node %s profile %s: %w", node.Name, node.Profile, err)
+		}
 		cfg.MockOpenAI.Nodes = append(cfg.MockOpenAI.Nodes, config.MockOpenAINodeCfg{
 			Name:          node.Name,
 			TTFT:          profile.TTFT,
@@ -564,6 +669,16 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 			Hang:          profile.Hang,
 			FailureRate:   profile.FailureRate,
 			HTTPStatus:    profile.HTTPStatus,
+			ChaosJSON:     chaos,
+			Host:          node.Host,
+			MaxConcurrent: node.MaxConcurrent,
+
+			Oracle:         profile.Oracle,
+			ChunkTokens:    profile.ChunkTokens,
+			FirstContentMs: profile.FirstContentMs,
+			ExecMs:         profile.ExecMs,
+			ReplayMs:       profile.ReplayMs,
+			RulesJSON:      rules,
 		})
 	}
 	if err := randomizeTestenv(cfg); err != nil {
@@ -621,6 +736,37 @@ func configureReplayModels(cfg *config.File, models []string) error {
 	cfg.Escrows = escrows
 	cfg.EpochGroups = groups
 	return nil
+}
+
+// applyValidationThreshold sets the scenario's similarity bar on every epoch group. A config with no
+// group yet gets one per escrow model here, since gencompose would otherwise add the 0.50 default.
+func applyValidationThreshold(cfg *config.File, threshold *ChainDecimal) {
+	if threshold == nil {
+		return
+	}
+	if len(cfg.EpochGroups) == 0 {
+		// A config with no escrow gets one of the default model from gencompose.
+		escrows := cfg.Escrows
+		if len(escrows) == 0 {
+			escrows = []config.Escrow{{}}
+		}
+		seen := make(map[string]bool)
+		for _, escrow := range escrows {
+			model := escrow.ModelID
+			if model == "" {
+				model = config.DefaultModelID
+			}
+			if seen[model] {
+				continue
+			}
+			seen[model] = true
+			cfg.EpochGroups = append(cfg.EpochGroups, config.EpochGroupBinding{EpochIndex: cfg.Epoch.Index, ModelID: model})
+		}
+	}
+	for i := range cfg.EpochGroups {
+		cfg.EpochGroups[i].ValidationThreshold = threshold.Value
+		cfg.EpochGroups[i].ValidationExponent = threshold.Exponent
+	}
 }
 
 // configureParticipants keeps the default HA pair as one participant and
@@ -851,6 +997,35 @@ func writeMLNodeStats(outputDir string, stats map[string]MLNodeStats) error {
 	return os.WriteFile(filepath.Join(outputDir, "ml-stats.json"), append(body, '\n'), 0o644)
 }
 
+func fetchHostStats(ctx context.Context, dapiPort int) (map[string]DapiHostStats, error) {
+	url := fmt.Sprintf("http://127.0.0.1:%d/testenv/host-stats", dapiPort)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("host stats endpoint returned %s", response.Status)
+	}
+	var stats map[string]DapiHostStats
+	if err := json.NewDecoder(response.Body).Decode(&stats); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+func writeHostStats(outputDir string, stats map[string]DapiHostStats) error {
+	body, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(outputDir, "host-stats.json"), append(body, '\n'), 0o644)
+}
+
 func fetchGatewayStateSizes(ctx context.Context, gatewayURL, apiKey string) (GatewayStateSizes, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, gatewayURL+"/v1/debug/state-sizes", nil)
 	if err != nil {
@@ -894,7 +1069,7 @@ func writeGatewayStateSizes(outputDir string, sizes GatewayStateSizes) error {
 	return os.WriteFile(filepath.Join(outputDir, "gateway-state.json"), append(body, '\n'), 0o644)
 }
 
-func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, initialEscrowIDs, ghostIDs map[string]struct{}) (TerminalSummary, []AssertionResult, error) {
+func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocations map[string]uint64, gatewayURL, apiKey string, initialEscrowIDs map[string]struct{}, leftOut *leftOutSlots) (TerminalSummary, []AssertionResult, error) {
 	checks := make([]AssertionResult, 0, 5)
 	failures := make([]AssertionResult, 0)
 	addCheck := func(name, expected, actual, details string, passed bool) {
@@ -951,7 +1126,7 @@ func assertRun(ctx context.Context, scenario Scenario, summary Summary, allocati
 	terminal := TerminalSummary{}
 	if scenario.Assertions.Devshard.NoOrphanedWork {
 		var orphanErr error
-		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, ghostIDs, scenario.DrainDuration(), scenario.Gateway.EscrowRotation.Enabled)
+		terminal, orphanErr = waitForNoOrphanedWork(ctx, gatewayURL, apiKey, scenario.Assertions.Devshard.MaxGhostRate, leftOut, scenario.orphanWait(), scenario.severalRuntimes())
 		check := AssertionResult{
 			Name:     "devshard.no_orphaned_work",
 			Passed:   orphanErr == nil,
@@ -977,7 +1152,7 @@ func formatTerminalSummary(summary TerminalSummary) string {
 	if summary.Total == 0 && summary.Statuses != nil {
 		statusCounts = "none"
 	}
-	return fmt.Sprintf("finished=%d orphaned=%d ghost=%d total=%d ghost_rate=%.2f%% statuses=%s", summary.Finished, summary.Orphaned, summary.Ghost, summary.Total, summary.GhostRate*100, statusCounts)
+	return fmt.Sprintf("finished=%d orphaned=%d ghost=%d settling=%d total=%d ghost_rate=%.2f%% statuses=%s", summary.Finished, summary.Orphaned, summary.Ghost, summary.Settling, summary.Total, summary.GhostRate*100, statusCounts)
 }
 
 type debugInference struct {
@@ -988,7 +1163,7 @@ type debugInferencesResponse struct {
 	Inferences map[string]debugInference `json:"inferences"`
 }
 
-func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGhostRate float64, ghostIDs map[string]struct{}, timeout time.Duration, aggregateRuntimeState ...bool) (TerminalSummary, error) {
+func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGhostRate float64, leftOut *leftOutSlots, timeout time.Duration, aggregateRuntimeState ...bool) (TerminalSummary, error) {
 	log.Printf("loadtest: stage=devshard_orphan_check_start timeout=%s max_ghost_rate=%.2f%%", timeout, maxGhostRate*100)
 	aggregate := len(aggregateRuntimeState) > 0 && aggregateRuntimeState[0]
 	deadline := time.NewTimer(timeout)
@@ -1000,7 +1175,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 	var lastReadErr error
 	observedSnapshot := false
 	for {
-		state, err := fetchDebugInferenceSummary(ctx, client, gatewayURL, apiKey, ghostIDs, aggregate)
+		state, err := fetchDebugInferenceSummary(ctx, client, gatewayURL, apiKey, leftOut, aggregate)
 		if err == nil {
 			observedSnapshot = true
 			lastReadErr = nil
@@ -1009,7 +1184,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 				return state, fmt.Errorf("ghost inference rate %.4f exceeds max_ghost_rate %.4f (ghost=%d total=%d)", state.GhostRate, maxGhostRate, state.Ghost, state.Total)
 			}
 			if state.Orphaned == 0 {
-				log.Printf("loadtest: orphan check passed finished=%d orphaned=%d ghost=%d total=%d ghost_rate=%.4f", state.Finished, state.Orphaned, state.Ghost, state.Total, state.GhostRate)
+				log.Printf("loadtest: orphan check passed finished=%d orphaned=%d ghost=%d settling=%d total=%d ghost_rate=%.4f", state.Finished, state.Orphaned, state.Ghost, state.Settling, state.Total, state.GhostRate)
 				return state, nil
 			}
 		} else {
@@ -1025,7 +1200,7 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 				}
 				return lastState, fmt.Errorf("cannot inspect DevShard inference state within %s: %w", timeout, lastReadErr)
 			}
-			details := fmt.Sprintf("orphaned=%d statuses=%s ghost=%d total=%d ghost_rate=%.4f", lastState.Orphaned, formatStatusCounts(lastState.Statuses), lastState.Ghost, lastState.Total, lastState.GhostRate)
+			details := fmt.Sprintf("orphaned=%d statuses=%s ghost=%d settling=%d total=%d ghost_rate=%.4f", lastState.Orphaned, formatStatusCounts(lastState.Statuses), lastState.Ghost, lastState.Settling, lastState.Total, lastState.GhostRate)
 			if lastReadErr != nil {
 				details += fmt.Sprintf("; last debug read error: %v", lastReadErr)
 			}
@@ -1035,18 +1210,20 @@ func waitForNoOrphanedWork(ctx context.Context, gatewayURL, apiKey string, maxGh
 	}
 }
 
-func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewayURL, apiKey string, ghostIDs map[string]struct{}, aggregate bool) (TerminalSummary, error) {
-	debugURLs := []string{gatewayURL}
+func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewayURL, apiKey string, leftOut *leftOutSlots, aggregate bool) (TerminalSummary, error) {
+	// The root route of a gateway with one runtime serves its only escrow, named "" here.
+	escrows := []string{""}
 	if aggregate {
 		var err error
-		debugURLs, err = fetchRuntimeDebugURLs(ctx, client, gatewayURL, apiKey)
+		escrows, err = fetchGatewayDevshardIDs(ctx, gatewayURL, apiKey)
 		if err != nil {
 			return TerminalSummary{}, err
 		}
 	}
 
 	total := TerminalSummary{Statuses: make(map[string]int)}
-	for _, debugURL := range debugURLs {
+	for _, escrow := range escrows {
+		debugURL := scopedGatewayURL(gatewayURL, escrow)
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, debugURL+"/v1/debug/inferences", nil)
 		if err != nil {
 			return TerminalSummary{}, err
@@ -1070,7 +1247,7 @@ func fetchDebugInferenceSummary(ctx context.Context, client *http.Client, gatewa
 		if decodeErr != nil {
 			return TerminalSummary{}, fmt.Errorf("decode /v1/debug/inferences: %w", decodeErr)
 		}
-		mergeTerminalSummary(&total, summarizeDebugInferences(body.Inferences, ghostIDs))
+		mergeTerminalSummary(&total, summarizeDebugInferences(body.Inferences, leftOut, escrow))
 	}
 	if total.Total > 0 {
 		total.GhostRate = float64(total.Ghost) / float64(total.Total)
@@ -1139,18 +1316,6 @@ func fetchGatewayDevshardIDs(ctx context.Context, gatewayURL, apiKey string) ([]
 	return ids, nil
 }
 
-func fetchRuntimeDebugURLs(ctx context.Context, client *http.Client, gatewayURL, apiKey string) ([]string, error) {
-	ids, err := fetchGatewayDevshardIDs(ctx, gatewayURL, apiKey)
-	if err != nil {
-		return nil, err
-	}
-	urls := make([]string, 0, len(ids))
-	for _, id := range ids {
-		urls = append(urls, scopedGatewayURL(gatewayURL, id))
-	}
-	return urls, nil
-}
-
 func difference(values []string, excluded map[string]struct{}) []string {
 	result := make([]string, 0, len(values))
 	for _, value := range values {
@@ -1180,6 +1345,7 @@ func formatEscrowIDsFromSet(ids map[string]struct{}) string {
 func mergeTerminalSummary(dst *TerminalSummary, src TerminalSummary) {
 	dst.Finished += src.Finished
 	dst.Ghost += src.Ghost
+	dst.Settling += src.Settling
 	dst.Total += src.Total
 	dst.Orphaned += src.Orphaned
 	for status, count := range src.Statuses {
@@ -1187,14 +1353,19 @@ func mergeTerminalSummary(dst *TerminalSummary, src TerminalSummary) {
 	}
 }
 
-func summarizeDebugInferences(inferences map[string]debugInference, ghostIDs map[string]struct{}) TerminalSummary {
+func summarizeDebugInferences(inferences map[string]debugInference, leftOut *leftOutSlots, escrow string) TerminalSummary {
 	statuses := make(map[string]int)
 	finished := 0
 	ghosts := 0
+	settling := 0
 	orphaned := 0
 	for id, inference := range inferences {
-		if _, ghost := ghostIDs[id]; ghost {
+		if leftOut.ghost(escrow, id) {
 			ghosts++
+			continue
+		}
+		if leftOut.servedWarmUp(escrow, id) && !isTerminalInferenceStatus(inference.Status) {
+			settling++
 			continue
 		}
 		statuses[inference.Status]++
@@ -1217,6 +1388,7 @@ func summarizeDebugInferences(inferences map[string]debugInference, ghostIDs map
 		Orphaned:  orphaned,
 		GhostRate: ghostRate,
 		Statuses:  statuses,
+		Settling:  settling,
 	}
 }
 
@@ -1229,42 +1401,110 @@ func isTerminalInferenceStatus(status string) bool {
 	}
 }
 
-// readGhostInferenceIDs derives deliberate no-send slots from the gateway
-// trace, leaving production accounting and debug endpoints untouched.
-func readGhostInferenceIDs(path string) (map[string]struct{}, error) {
+// escrowNonces are nonces by escrow ID.
+type escrowNonces map[string]map[string]struct{}
+
+func (n escrowNonces) add(escrow, nonce string) {
+	if n[escrow] == nil {
+		n[escrow] = make(map[string]struct{})
+	}
+	n[escrow][nonce] = struct{}{}
+}
+
+// has says whether the escrow holds the nonce. The escrow "" is the root route of a gateway with one
+// runtime, which serves the only escrow, so a nonce of any escrow matches it.
+func (n escrowNonces) has(escrow, nonce string) bool {
+	if escrow != "" {
+		_, ok := n[escrow][nonce]
+		return ok
+	}
+	for _, nonces := range n {
+		if _, ok := nonces[nonce]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// leftOutSlots are the inferences of a run the orphan check does not count as orphaned work: the
+// ghost slots the gateway burned without a send, which stay pending until settlement, and the warm-up
+// probes a host served. Nonces repeat across escrows, so both are kept by escrow.
+type leftOutSlots struct {
+	ghosts  escrowNonces
+	warmUps escrowNonces
+}
+
+func (l *leftOutSlots) ghost(escrow, nonce string) bool {
+	return l != nil && l.ghosts.has(escrow, nonce)
+}
+
+// servedWarmUp says whether the nonce is a warm-up probe a host served. No request follows the probe
+// to carry its receipt and Finish, so they wait for the escrow's next diff or its settlement.
+func (l *leftOutSlots) servedWarmUp(escrow, nonce string) bool {
+	return l != nil && l.warmUps.has(escrow, nonce)
+}
+
+// readLeftOutSlots derives the left-out slots from the gateway trace, leaving production accounting
+// and debug endpoints untouched.
+func readLeftOutSlots(path string) (*leftOutSlots, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read gateway trace %s: %w", path, err)
 	}
-	ghosts := make(map[string]struct{})
+	slots := &leftOutSlots{ghosts: make(escrowNonces), warmUps: make(escrowNonces)}
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.Contains(line, `"stage":"ghost_probe_skipped"`) {
 			start := strings.IndexByte(line, '{')
 			var entry struct {
-				Nonce *uint64 `json:"nonce"`
+				Escrow string  `json:"escrow"`
+				Nonce  *uint64 `json:"nonce"`
 			}
 			if start < 0 || json.Unmarshal([]byte(line[start:]), &entry) != nil || entry.Nonce == nil {
 				return nil, fmt.Errorf("parse ghost line in %s: %q", path, line)
 			}
-			ghosts[strconv.FormatUint(*entry.Nonce, 10)] = struct{}{}
+			slots.ghosts.add(entry.Escrow, strconv.FormatUint(*entry.Nonce, 10))
+			continue
+		}
+		if at := strings.Index(line, "escrow_warmup_completed "); at >= 0 {
+			fields := traceFields(line[at:])
+			if fields["served"] != "true" {
+				continue
+			}
+			if _, err := strconv.ParseUint(fields["nonce"], 10, 64); err != nil {
+				return nil, fmt.Errorf("parse warm-up nonce %q in %s: %w", fields["nonce"], path, err)
+			}
+			slots.warmUps.add(fields["escrow"], fields["nonce"])
 			continue
 		}
 		if !strings.Contains(line, "stage=ghost_probe_skipped") {
 			continue
 		}
-		for _, field := range strings.Fields(line) {
-			if !strings.HasPrefix(field, "nonce=") {
-				continue
-			}
-			nonce := strings.Trim(strings.TrimPrefix(field, "nonce="), `"`)
-			if _, err := strconv.ParseUint(nonce, 10, 64); err != nil {
-				return nil, fmt.Errorf("parse ghost nonce %q in %s: %w", nonce, path, err)
-			}
-			ghosts[nonce] = struct{}{}
-			break
+		fields := traceFields(line)
+		nonce, ok := fields["nonce"]
+		if !ok {
+			continue
+		}
+		if _, err := strconv.ParseUint(nonce, 10, 64); err != nil {
+			return nil, fmt.Errorf("parse ghost nonce %q in %s: %w", nonce, path, err)
+		}
+		slots.ghosts.add(fields["escrow"], nonce)
+	}
+	return slots, nil
+}
+
+// traceFields reads the key=value fields of a trace line, with their quotes trimmed.
+func traceFields(line string) map[string]string {
+	fields := make(map[string]string)
+	for _, field := range strings.Fields(line) {
+		key, value, ok := strings.Cut(field, "=")
+		if !ok {
+			continue
+		}
+		if _, seen := fields[key]; !seen {
+			fields[key] = strings.Trim(value, `"\`)
 		}
 	}
-	return ghosts, nil
+	return fields
 }
 
 func formatStatusCounts(counts map[string]int) string {

@@ -69,6 +69,9 @@ services:
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "{{ primaryMLEndpoint . }}"
       MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
+      MOCK_ML_NODE_HOSTS: "{{ mockMLNodeHostsEnv . }}"
+      MOCK_DAPI_HOST_ADDRS: "{{ mockDapiHostAddrsEnv . }}"
+      MOCK_ML_NODE_MAX_CONCURRENT: "{{ mlNodeMaxConcurrentEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
@@ -104,7 +107,14 @@ services:
       MOCK_OPENAI_HANG: "{{ $node.Hang }}"
       MOCK_OPENAI_FAILURE_RATE: "{{ $node.FailureRate }}"
       MOCK_OPENAI_HTTP_STATUS: "{{ $node.HTTPStatus }}"
-{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
+{{ if $node.ChaosJSON }}      MOCK_OPENAI_CHAOS_JSON: {{ composeQuote $node.ChaosJSON }}
+{{ end }}{{ if $node.Oracle }}      MOCK_OPENAI_ORACLE: "1"
+{{ end }}{{ if $node.ChunkTokens }}      MOCK_OPENAI_CHUNK_TOKENS: "{{ $node.ChunkTokens }}"
+{{ end }}{{ if $node.FirstContentMs }}      MOCK_OPENAI_FIRST_CONTENT_MS: "{{ $node.FirstContentMs }}"
+{{ end }}{{ if $node.ExecMs }}      MOCK_OPENAI_EXEC_MS: "{{ $node.ExecMs }}"
+{{ end }}{{ if $node.ReplayMs }}      MOCK_OPENAI_REPLAY_MS: "{{ $node.ReplayMs }}"
+{{ end }}{{ if $node.RulesJSON }}      MOCK_OPENAI_RULES_JSON: {{ composeQuote $node.RulesJSON }}
+{{ end }}{{ if $.MockOpenAI.ReplayFile }}      MOCK_OPENAI_REPLAY_FILE: "{{ $.MockOpenAI.ReplayFile }}"
 {{ end }}
 {{ if $.MockOpenAI.ReplayFile }}    volumes:
       - ./replay.jsonl:{{ $.MockOpenAI.ReplayFile }}:ro
@@ -192,7 +202,7 @@ services:
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
-      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat}
       DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
       DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
       DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
@@ -345,7 +355,7 @@ services:
       DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
-      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat}
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"
@@ -387,6 +397,12 @@ services:
     restart: unless-stopped
 `
 
+// composeQuote writes operator text (a node's chaos or rules JSON) as one single-quoted YAML scalar
+// that Compose passes on unchanged: a quote is doubled for YAML, a "$" for Compose interpolation.
+func composeQuote(v string) string {
+	return "'" + strings.ReplaceAll(strings.ReplaceAll(v, "$", "$$"), "'", "''") + "'"
+}
+
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
 		"versionEnvSuffix":          versionEnvSuffix,
@@ -402,12 +418,16 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost":        legacyVersiondHost,
 		"mockMLNodes":               mockMLNodes,
 		"mockMLNodesEnv":            mockMLNodesEnv,
+		"mockMLNodeHostsEnv":        mockMLNodeHostsEnv,
+		"mockDapiHostAddrsEnv":      mockDapiHostAddrsEnv,
+		"mlNodeMaxConcurrentEnv":    mlNodeMaxConcurrentEnv,
 		"primaryEscrowID":           primaryEscrowID,
 		"primaryModelID":            primaryModelID,
 		"mlNodeIDs":                 mlNodeIDs,
 		"mlNodeIPOffset":            config.MLNodeIPOffset,
 		"mlNodeHostPort":            mlNodeHostPort,
 		"primaryMLEndpoint":         primaryMLEndpoint,
+		"composeQuote":              composeQuote,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -460,6 +480,43 @@ func mockMLNodesEnv(cfg *config.File) string {
 	entries := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		entries = append(entries, fmt.Sprintf("%s=http://%s:%d", node.Name, node.Name, cfg.MockOpenAI.HTTPPort))
+	}
+	return strings.Join(entries, ",")
+}
+
+// mockMLNodeHostsEnv formats MOCK_ML_NODE_HOSTS ("node=host,...") for nodes
+// bound to one host.
+func mockMLNodeHostsEnv(cfg *config.File) string {
+	var entries []string
+	for _, node := range mockMLNodes(cfg) {
+		if node.Host != "" {
+			entries = append(entries, node.Name+"="+node.Host)
+		}
+	}
+	return strings.Join(entries, ",")
+}
+
+// mockDapiHostAddrsEnv formats MOCK_DAPI_HOST_ADDRS ("name=host,...") so
+// mock-dapi can tell which host an AcquireMLNode call comes from. Keys are
+// service names resolved through Docker DNS: the runner drops static IPs.
+func mockDapiHostAddrsEnv(cfg *config.File) string {
+	var entries []string
+	for _, host := range cfg.Hosts {
+		if host.ID != "" {
+			entries = append(entries, host.ID+"="+host.ID)
+		}
+	}
+	return strings.Join(entries, ",")
+}
+
+// mlNodeMaxConcurrentEnv formats MOCK_ML_NODE_MAX_CONCURRENT ("node=n,...")
+// for nodes with a lock cap.
+func mlNodeMaxConcurrentEnv(cfg *config.File) string {
+	var entries []string
+	for _, node := range mockMLNodes(cfg) {
+		if node.MaxConcurrent > 0 {
+			entries = append(entries, fmt.Sprintf("%s=%d", node.Name, node.MaxConcurrent))
+		}
 	}
 	return strings.Join(entries, ",")
 }
