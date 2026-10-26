@@ -225,6 +225,11 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
+	err = am.keeper.AssignPendingDevshardSlots(ctx)
+	if err != nil {
+		am.LogError("Failed to assign pending devshard escrow slots", types.Allocation, "error", err)
+	}
+
 	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
 	err = am.keeper.ProcessMaintenanceTransitions(ctx)
 	if err != nil {

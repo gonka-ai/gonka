@@ -81,8 +81,15 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1), resp.EscrowId)
 
+	pending, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.Empty(t, pending.Slots)
+	require.True(t, k.IsDevshardEscrowPendingSlots(ctx, 1))
+
+	require.NoError(t, k.AssignPendingDevshardSlots(ctx))
 	escrow, found := k.GetDevshardEscrow(ctx, 1)
 	require.True(t, found)
+	require.False(t, k.IsDevshardEscrowPendingSlots(ctx, 1))
 	require.Equal(t, creator.String(), escrow.Creator)
 	require.Equal(t, amount, escrow.Amount)
 	require.Len(t, escrow.Slots, keeper.DevshardGroupSize)
@@ -278,6 +285,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
+	require.NoError(t, k.AssignPendingDevshardSlots(ctx))
 	escrow, found := k.GetDevshardEscrow(ctx, resp.EscrowId)
 	require.True(t, found)
 	require.Len(t, escrow.Slots, 8)

@@ -135,8 +135,9 @@ var (
 	// Append-only pass_count records keyed by version name. Survives delete of
 	// the matching approved-version row so a later re-approval cannot flip SPRT
 	// scoring.
-	DevshardVersionPoliciesPrefix = collections.NewPrefix(114)
-	ParamsKey                     = []byte("p_inference")
+	DevshardVersionPoliciesPrefix     = collections.NewPrefix(114)
+	DevshardEscrowsPendingSlotsPrefix = collections.NewPrefix(120)
+	ParamsKey                         = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

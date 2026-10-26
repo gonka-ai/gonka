@@ -272,6 +272,9 @@ func (k Keeper) GetDevshardPruner(params types.Params) Pruner[collections.Pair[u
 			if err := k.DevshardEscrowsByEpoch.Remove(ctx, collections.Join(epochIndex, escrowID)); err != nil {
 				k.LogError("failed to remove devshard escrow index", types.Pruning, "escrow_id", escrowID, "error", err)
 			}
+			if err := k.DevshardEscrowsPendingSlots.Remove(ctx, escrowID); err != nil {
+				k.LogError("failed to remove devshard escrow pending slots entry", types.Pruning, "escrow_id", escrowID, "error", err)
+			}
 			return nil
 		},
 		PostPruneEpoch: func(ctx context.Context, epoch int64) error {
