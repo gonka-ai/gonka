@@ -51,7 +51,8 @@ GLM-5.3-Flash prefill uses a FlashKDA buffer sized from `--max-num-seqs` and
 workspace at about 2015 MiB on TP2 before that buffer is reserved, so a larger buffer
 fails the first prefill (`Workspace is locked`) and the node mines no nonces. On TP2,
 256 sequences with 32768 tokens and 384 sequences with 16384 tokens fit; 256 with
-65536 and 1024 with 32768 do not. Check this before raising either value.
+65536 and 1024 with 32768 do not. TP4 halves the buffer: on H200, 768 sequences with
+16384 tokens fit. Check this before raising either value.
 
 ## DeepSeek-V4-Flash on 2×H200
 
