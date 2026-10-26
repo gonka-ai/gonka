@@ -5,7 +5,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-ENDPOINTS="signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat"
+ENDPOINTS="signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat"
 OUT="../docs/grpc-transport-phase6-9.1-results.txt"
 mkdir -p "$(dirname "$OUT")"
 touch "$OUT"

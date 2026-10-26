@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"time"
 
+	"devshard/logging"
 	"devshard/types"
 )
 
@@ -43,6 +44,7 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.streamsOpen, nonce)
 	finish, isApplied := s.appliedFinishHashes[nonce]
 	if !isApplied {
 		if s.receivedStreams == nil {
@@ -59,9 +61,13 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 
 func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
 	nonce := finish.InferenceId
+	challenged := s.challengeFinishAppliedLocked(nonce)
 	hashes := servedFinishHashes{responseHash: finish.ResponseHash, servedHash: finish.ServedHash}
 	stream, isReceived := s.receivedStreams[nonce]
 	if !isReceived {
+		if challenged {
+			return
+		}
 		if s.appliedFinishHashes == nil {
 			s.appliedFinishHashes = make(map[uint64]waitingAppliedFinish)
 		}
@@ -75,6 +81,10 @@ func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
 }
 
 func (s *Session) reportServedBindingLocked(nonce uint64, verdict ServedBinding) {
+	delete(s.challengeFinishes, nonce)
+	if verdict == ServedBindingMismatch {
+		s.startChallengeLocked(nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
+	}
 	if s.servedBindingHandler == nil || len(s.group) == 0 {
 		return
 	}
@@ -100,8 +110,16 @@ func (s *Session) forgetExpiredServedBindingsLocked(now time.Time) {
 	for nonce, finish := range s.appliedFinishHashes {
 		if now.Sub(finish.appliedAt) > retention {
 			delete(s.appliedFinishHashes, nonce)
+			if _, ended := s.streamsEnded[nonce]; ended {
+				// A probe, a phase-change abort or a cut before any receipt:
+				// its Finish was never going to be checked.
+				continue
+			}
+			logging.Info("applied Finish with no stream to check against, unchecked", "subsystem", "challenge",
+				"escrow", s.escrowID, "nonce", nonce)
 		}
 	}
+	s.forgetExpiredChallengesLocked(now, retention)
 }
 
 func (s *Session) finishCanStillApplyLocked(nonce uint64) bool {

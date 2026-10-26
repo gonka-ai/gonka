@@ -608,3 +608,119 @@ func TestFillConfig_MaterializesKeyrings(t *testing.T) {
 	_, err := os.Stat(filepath.Join(keyringBase, "keyhash"))
 	require.NoError(t, err)
 }
+
+// The chaos config reaches the one mock node whose profile asks for it, and survives the YAML quoting.
+func TestWriteCompose_ChaosReachesOnlyItsMockNode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	chaos := `{"enabled":true,"seed":7,"weights":{"ok":4,"wrong_answer":1}}`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", Workers: 1},
+		{Name: "mock-openai-1", Workers: 1, ChaosJSON: chaos},
+	}
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, chaos, compose.Services["mock-openai-1"].Environment["MOCK_OPENAI_CHAOS_JSON"])
+	require.NotContains(t, compose.Services["mock-openai-0"].Environment, "MOCK_OPENAI_CHAOS_JSON", "an honest node gets no chaos")
+}
+
+// Test flow:
+// 1. Cap one of two ML nodes, bound to versiond-2, and validate the config.
+// 2. Write the compose file and require mock-dapi to get the cap of that node only.
+// 3. Require a negative cap and a binding to an unknown host to fail validation.
+func TestWriteCompose_MockDapiNodeMaxConcurrent(t *testing.T) {
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0"}, {Name: "mock-openai-1", Host: "versiond-2", MaxConcurrent: 4}}
+	require.NoError(t, cfg.Validate())
+
+	outPath := filepath.Join(t.TempDir(), "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, "mock-openai-1=4", compose.Services["mock-dapi"].Environment["MOCK_ML_NODE_MAX_CONCURRENT"])
+
+	cfg.MockOpenAI.Nodes[1].MaxConcurrent = -1
+	require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[1].max_concurrent")
+	cfg.MockOpenAI.Nodes[1].MaxConcurrent = 0
+	cfg.MockOpenAI.Nodes[1].Host = "versiond-9"
+	require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[1].host")
+}
+
+// The oracle knobs and the fault rules reach the one mock node whose profile asks for them.
+func TestWriteCompose_OracleKnobsReachOnlyTheirMockNode(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	rules := `[{"name":"replay-busy","phase":"replay","prompt_contains":"load-request","http_status":503}]`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{
+		{Name: "mock-openai-0", Workers: 1},
+		{Name: "mock-openai-1", Workers: 1, Oracle: true, ChunkTokens: 4, FirstContentMs: 50, ExecMs: 400, ReplayMs: 300, RulesJSON: rules},
+	}
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	env := compose.Services["mock-openai-1"].Environment
+	require.Equal(t, "1", env["MOCK_OPENAI_ORACLE"])
+	require.Equal(t, "4", env["MOCK_OPENAI_CHUNK_TOKENS"])
+	require.Equal(t, "50", env["MOCK_OPENAI_FIRST_CONTENT_MS"])
+	require.Equal(t, "400", env["MOCK_OPENAI_EXEC_MS"])
+	require.Equal(t, "300", env["MOCK_OPENAI_REPLAY_MS"])
+	require.Equal(t, rules, env["MOCK_OPENAI_RULES_JSON"])
+	honest := compose.Services["mock-openai-0"].Environment
+	for _, key := range []string{"MOCK_OPENAI_ORACLE", "MOCK_OPENAI_CHUNK_TOKENS", "MOCK_OPENAI_FIRST_CONTENT_MS",
+		"MOCK_OPENAI_EXEC_MS", "MOCK_OPENAI_REPLAY_MS", "MOCK_OPENAI_RULES_JSON"} {
+		require.NotContains(t, honest, key, "a node without the knobs keeps the PR 1 mock as it was")
+	}
+}
+
+// Operator text in a rule (a quote, a dollar) stays one YAML scalar and reaches the node as written:
+// compose reads "$$" as a literal "$" instead of interpolating a variable.
+func TestWriteCompose_RulesAndChaosTextSurviveTheYAML(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	rules := `[{"name":"it's","prompt_contains":"don't $HOME","http_status":503}]`
+	chaos := `{"enabled":true,"note":"it's $X"}`
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0", Workers: 1, RulesJSON: rules, ChaosJSON: chaos}}
+	cfg.MLNodes = 1
+	require.NoError(t, fillConfig(cfg))
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose), "the rules JSON must stay one YAML scalar")
+	env := compose.Services["mock-openai-0"].Environment
+	require.Equal(t, strings.ReplaceAll(rules, "$", "$$"), env["MOCK_OPENAI_RULES_JSON"])
+	require.Equal(t, strings.ReplaceAll(chaos, "$", "$$"), env["MOCK_OPENAI_CHAOS_JSON"])
+}

@@ -47,6 +47,7 @@ message InferenceRecordProto {
   bytes  started_at_block_hash = 21;
   int64  started_at_time_ms = 22;
   int64  confirmed_at_time_ms = 23;
+  bool   usage_challenged = 24;
 }
 
 message InferencesMapProto {
