@@ -207,6 +207,7 @@
         },
         "confirmation_poc_params": {
           "expected_confirmations_per_epoch": "1",
+          "alpha_threshold": { "value": "5", "exponent": -1 },
           "upgrade_protection_window": "500"
         },
         "genesis_guardian_params": {
