@@ -353,8 +353,10 @@ message ConfirmationPoCParams {
   // alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
   Decimal alpha_threshold = 2;
 
-  // slash_fraction is the collateral slashed for failure (e.g., "0.10")
-  Decimal slash_fraction = 3;
+  // slash_fraction is deprecated and has no effect.
+  // A failed confirmation PoC moves the participant to INACTIVE, which slashes with
+  // collateral_params.slash_fraction_downtime.
+  Decimal slash_fraction = 3 [deprecated = true];
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
   int64 upgrade_protection_window = 4;
