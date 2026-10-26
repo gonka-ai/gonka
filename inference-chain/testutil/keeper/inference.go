@@ -17,6 +17,7 @@ import (
 	"cosmossdk.io/store"
 	"cosmossdk.io/store/metrics"
 	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/x/nft"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
@@ -26,7 +27,9 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/address"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
+	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 	"github.com/stretchr/testify/require"
 
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
@@ -37,6 +40,36 @@ import (
 )
 
 var bech32ConfigOnce sync.Once
+
+var blockedModuleAccounts = []string{
+	authtypes.FeeCollectorName,
+	distrtypes.ModuleName,
+	minttypes.ModuleName,
+	stakingtypes.BondedPoolName,
+	stakingtypes.NotBondedPoolName,
+	nft.ModuleName,
+}
+
+type BlockedAddrs struct {
+	addrs map[string]bool
+}
+
+func StubBlockedAddrs(bankView *MockBankKeeper) *BlockedAddrs {
+	blocked := &BlockedAddrs{addrs: make(map[string]bool, len(blockedModuleAccounts))}
+	for _, name := range blockedModuleAccounts {
+		blocked.Set(authtypes.NewModuleAddress(name), true)
+	}
+	bankView.EXPECT().BlockedAddr(gomock.Any()).DoAndReturn(blocked.IsBlocked).AnyTimes()
+	return blocked
+}
+
+func (b *BlockedAddrs) Set(addr sdk.AccAddress, blocked bool) {
+	b.addrs[string(addr)] = blocked
+}
+
+func (b *BlockedAddrs) IsBlocked(addr sdk.AccAddress) bool {
+	return b.addrs[string(addr)]
+}
 
 func ensureBech32Config() {
 	bech32ConfigOnce.Do(func() {
@@ -59,6 +92,7 @@ func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
 	authzKeeper := NewMockAuthzKeeper(ctrl)
 	upgradeKeeper := NewMockUpgradeKeeper(ctrl)
+	StubBlockedAddrs(bankViewKeeper)
 	mock, context := InferenceKeeperWithMock(t, bankKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock, streamvestingMock, bankViewKeeper, authzKeeper, upgradeKeeper)
 	bankKeeper.ExpectAny(context)
 	mock.PrecomputeSPRTValues(context)
@@ -77,6 +111,7 @@ func InferenceKeeperWithUpgradeKeeper(t testing.TB, upgradeKeeper types.UpgradeK
 	collateralMock := NewMockCollateralKeeper(ctrl)
 	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
 	authzKeeper := NewMockAuthzKeeper(ctrl)
+	StubBlockedAddrs(bankViewKeeper)
 	mock, context := InferenceKeeperWithMock(t, bankKeeper, accountKeeperMock, validatorSetMock, groupMock, stakingMock, collateralMock, streamvestingMock, bankViewKeeper, authzKeeper, upgradeKeeper)
 	bankKeeper.ExpectAny(context)
 	return mock, context
@@ -90,6 +125,7 @@ type InferenceMocks struct {
 	CollateralKeeper    *MockCollateralKeeper
 	StreamVestingKeeper *MockStreamVestingKeeper
 	BankViewKeeper      *MockBankKeeper
+	BlockedAddrs        *BlockedAddrs
 	AuthzKeeper         *MockAuthzKeeper
 	WasmKeeper          *MockWasmKeeper
 }
@@ -167,6 +203,7 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 	streamvestingMock := NewMockStreamVestingKeeper(ctrl)
 	authzKeeper := NewMockAuthzKeeper(ctrl)
 	upgradeKeeper := NewMockUpgradeKeeper(ctrl)
+	blockedAddrs := StubBlockedAddrs(bankViewKeeper)
 	keep, context := InferenceKeeperWithMock(t, bankKeeper, accountKeeperMock, validatorSet, groupMock, stakingMock, collateralMock, streamvestingMock, bankViewKeeper, authzKeeper, upgradeKeeper)
 	keep.SetTokenomicsData(context, types.TokenomicsData{})
 	genesisParams := types.DefaultGenesisOnlyParams()
@@ -179,6 +216,7 @@ func InferenceKeeperReturningMocks(t testing.TB) (keeper.Keeper, sdk.Context, In
 		CollateralKeeper:    collateralMock,
 		StreamVestingKeeper: streamvestingMock,
 		BankViewKeeper:      bankViewKeeper,
+		BlockedAddrs:        blockedAddrs,
 		AuthzKeeper:         authzKeeper,
 	}
 	keep.PrecomputeSPRTValues(context)
