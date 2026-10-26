@@ -431,6 +431,11 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 		return nil, err
 	}
 	if err := g.persistRotationEscrow(ctx, result.EscrowID, model.ModelID, role, epoch, model.PrivateKeyEnv, routePrefix); err != nil {
+		if errors.Is(err, bridge.ErrEscrowSettled) {
+			log.Printf("escrow_rotation_terminal escrow=%d tx=%s model=%q error=%v", result.EscrowID, result.TxHash, model.ModelID, err)
+			g.clearCommitment(ctx, result.TxHash)
+			return nil, err
+		}
 		// Escrow is on chain; commitment survives -> reconcile recovers it by tx hash.
 		log.Printf("escrow_rotation_persist_failed escrow=%d tx=%s model=%q error=%v recover_via_commitment=true", result.EscrowID, result.TxHash, model.ModelID, err)
 		return nil, err
@@ -619,6 +624,7 @@ func (g *Gateway) persistRotationEscrow(ctx context.Context, escrowID uint64, mo
 		RotationRole:  role,
 		RotationEpoch: epoch,
 	}
+	g.waitForEscrowReady(ctx, record.ID)
 	return withDBRetry(ctx, func() error {
 		if _, err := g.addCreatedEscrowRuntime(ctx, record); err != nil {
 			if errors.Is(err, errDevshardAlreadyExists) {
@@ -674,6 +680,11 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 			continue
 		}
 		if err := g.persistRotationEscrow(ctx, escrowID, c.Model, c.Role, c.Epoch, c.PrivateKeyEnv, commitmentRoutePrefix(c)); err != nil {
+			if errors.Is(err, bridge.ErrEscrowSettled) || (errors.Is(err, bridge.ErrEscrowNotFound) && !commitmentTxMayStillLand(c)) {
+				log.Printf("escrow_commitment_terminal tx=%s escrow=%d model=%q clearing=true error=%v", c.TxHash, escrowID, c.Model, err)
+				g.clearCommitment(ctx, c.TxHash)
+				continue
+			}
 			log.Printf("escrow_commitment_persist_failed tx=%s escrow=%d model=%q error=%v", c.TxHash, escrowID, c.Model, err)
 			continue // keep commitment — retry next pass
 		}

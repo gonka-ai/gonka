@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -64,6 +65,10 @@ func (b *ChainBridge) Subscribe(l *events.Listener) {
 		// The websocket event is id-only. Fetch once and hand the escrow to
 		// OnEscrowCreatedHandler (directory warm). Do not CreateSession here.
 		info, err := b.GetEscrow(e.EscrowID)
+		if errors.Is(err, bridge.ErrEscrowNotFound) {
+			go b.warmWhenReady(e.EscrowID)
+			return
+		}
 		if err != nil {
 			slog.Warn("chain events: failed to fetch escrow", "escrow_id", e.EscrowID, "error", err)
 			return
@@ -78,6 +83,17 @@ func (b *ChainBridge) Subscribe(l *events.Listener) {
 			slog.Warn("chain events: settlement finalized handler failed", "escrow_id", e.EscrowID, "error", err)
 		}
 	})
+}
+
+func (b *ChainBridge) warmWhenReady(escrowID string) {
+	info, err := bridge.WaitForEscrow(context.Background(), b, escrowID, bridge.EscrowReadyTimeout)
+	if err != nil {
+		slog.Warn("chain events: escrow not ready", "escrow_id", escrowID, "error", err)
+		return
+	}
+	if err := b.OnEscrowCreated(*info); err != nil {
+		slog.Warn("chain events: escrow created handler failed", "escrow_id", escrowID, "error", err)
+	}
 }
 
 func (b *ChainBridge) OnEscrowCreatedHandler(fn func(bridge.EscrowInfo) error) {

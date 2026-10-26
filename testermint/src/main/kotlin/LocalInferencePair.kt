@@ -629,9 +629,21 @@ data class LocalInferencePair(
     }
 
     fun createDevshardEscrow(amount: Long, modelId: String): TxResponse {
-        return this.submitTransaction(
-            listOf("inference", "create-devshard-escrow", amount.toString(), modelId)
+        return awaitDevshardEscrowSlots(
+            this.submitTransaction(
+                listOf("inference", "create-devshard-escrow", amount.toString(), modelId)
+            )
         )
+    }
+
+    private fun awaitDevshardEscrowSlots(txResp: TxResponse): TxResponse {
+        val escrowId = txResp.getEscrowId()
+        if (txResp.code != 0 || escrowId == null) return txResp
+        repeat(5) {
+            if (node.queryDevshardEscrow(escrowId).found) return txResp
+            node.waitForNextBlock()
+        }
+        error("devshard escrow $escrowId has no slots after 5 blocks")
     }
 
     fun withdrawCollateral(amount: Long): TxResponse {
@@ -1341,7 +1353,7 @@ data class LocalInferencePair(
             listOf("inference", "create-devshard-escrow", amount.toString(), modelId),
             from
         )
-        return node.waitForTxProcessed(txResp.txhash)
+        return awaitDevshardEscrowSlots(node.waitForTxProcessed(txResp.txhash))
     }
 
     fun waitForInference(inferenceId: String, finished: Boolean, blocks: Int = 5): InferencePayload? =
