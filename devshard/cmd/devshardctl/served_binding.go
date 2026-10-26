@@ -162,6 +162,7 @@ func (e *Redundancy) recordChallengeResult(result user.ChallengeResult, err erro
 		}
 		e.metrics.RecordChallenge(types.ChallengeReasonLabel(result.Reason), participant, challengeOutcome(result, err))
 	}
+	e.settleEmptyStreamStrike(result.Nonce, result.Reason, challengeOutcome(result, err))
 }
 
 // challengeOutcome labels a finished challenge. "none" means the votes found
