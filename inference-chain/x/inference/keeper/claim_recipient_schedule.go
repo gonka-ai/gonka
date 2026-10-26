@@ -43,7 +43,16 @@ func (k Keeper) ResolveClaimRecipientAddress(ctx context.Context, participant st
 	if !found {
 		return participantAddr, nil
 	}
-	return sdk.AccAddressFromBech32(recipient)
+	recipientAddr, err := sdk.AccAddressFromBech32(recipient)
+	if err != nil {
+		return nil, err
+	}
+	if k.BankView.BlockedAddr(recipientAddr) {
+		k.LogWarn("Claim recipient is blocked, paying participant instead", types.Claims,
+			"participant", participant, "epoch", epoch, "recipient", recipient)
+		return participantAddr, nil
+	}
+	return recipientAddr, nil
 }
 
 // SetClaimRecipientForEpoch writes the primary schedule entry and pruning index
