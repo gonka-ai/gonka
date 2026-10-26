@@ -1,210 +1,210 @@
-# Proposal: empty-stream evidence, signed checkpoints and frame coalescing
+# Proposal: signed Chat frames and empty-stream handling
 
-**Status:** Draft for discussion. Updated after #2000's design was rewritten to a gateway-started challenge protocol (vitaly-andr, 2026-10-20).
-**Issues:** #1808 (per-chunk stream signatures), #1841 (stream chunk signatures and empty stream detection) — milestone Devshard v7
-**Consumer:** #2000, whose PR 1 now contains the empty-stream verdict
-**Base:** `devshard-0.2.x-v6` @ `3c924cbf6` (line numbers below are at this commit)
+**Status:** Updated 2026-10-26 to match the implementation. It replaces the earlier revisions that put signed checkpoints into the SSE stream and turned an empty stream into a `MsgErrorMiss`.
+**Issues:** #1808 (per-chunk stream signatures), #1841 (stream chunk signatures and empty stream detection), milestone Devshard v7
+**Base:** `devshard/v7`
+
+## Where each piece is
+
+| Piece | PR | State |
+|---|---|---|
+| Chat gzip at level 2 | #2095 | merged into `devshard/v7` |
+| Signed `ChatFrame`s, two gateway knobs, gateway verification | #2102 | open |
+| `EMPTY_STREAM` challenge reason (vitaly-andr) | #2088 | open |
+| The gateway-local empty-stream strike waits for `EMPTY_STREAM` | #2137 | open, stacked on #2088 |
 
 ## Summary
 
-Item 3 was "sign stream chunks and detect empty streams". The design below reached three conclusions, in the order they were learned.
+Item 3 was "sign stream chunks and detect empty streams". Three decisions came out of the review on this PR.
 
-1. **An empty body proves nothing on its own.** #1972 (`00578912e`, in this base) removed the always-on `min_tokens = 64` floor, so an honest engine returns a complete empty stream whenever EOS comes first, and a client can force one through `stop`, `logit_bias`, `stop_token_ids`, a grammar or the thinking knobs. Turning an empty body into a `MsgErrorMiss` — an earlier revision of this proposal — doesn't survive that. **Withdrawn.**
-2. **Empty-stream detection moves to #2000's PR 1, as the `EMPTY_STREAM` reason.** The voters there fetch the stored body from the executor and hold it against the signed Finish, so the gateway contributes nothing but the challenge. What is left for this branch is the trigger, one correction to the evidence rule, and a separate gateway-local fix.
-3. **Signed chunks are not needed by that design.** #2000's voters take nothing from the gateway but the inference id. Signed checkpoints are held in this document for an A K decision on #1808; they close one case the challenge can't settle without a GPU (see "Held: signed checkpoints").
+1. **An empty body proves nothing on its own.** After #1972 dropped the always-on `min_tokens = 64` floor, an honest engine returns a complete empty stream in several ways the client controls. An empty stream is not a `MsgErrorMiss`. That revision is **withdrawn**.
+2. **#2088 detects empty streams.** Its voters judge the stored body by its generated positions, not its text. The gateway-local strike no longer punishes on its own: it waits for that verdict (#2137).
+3. **The executor signs the peer RPC Chat frames**, following A K's spec from 2026-10-21: gzip level 2, a raw 64-byte signature as a `ChatFrame` protobuf field outside the gzip body, the first output in its own frame, then one signed frame per 5 events. The gateway verifies and only logs.
 
-Frame coalescing (A K's gzip question) is independent of both and still stands: **52 bytes per token today → 15** when the gzip flush is batched, while a signature on every event would take it to 4x.
-
-## Background: what is signed today
+## Background: what was signed before
 
 ```
-client ◄── SSE ── gateway(devshardctl) ◄── SSE ── executor(devshardd) ◄── MLNode(vLLM)
+client ◄── SSE ── gateway(devshardctl) ◄── Chat frames ── executor(devshardd) ◄── MLNode(vLLM)
 ```
 
-An executor's stream to the gateway (`transport/inference.go:39` `ServeInference`):
+The executor signed the receipt (`MsgConfirmStart.ExecutorSig`) and the Finish. Nothing in between was signed. Payment comes from the Finish's `InputTokens`/`OutputTokens` alone, capped at the reservation, and only a sampled GPU replay (`state.ShouldValidate`) compares them with the body.
 
-```
-data: {"devshard_receipt": ...}          signed: MsgConfirmStart.ExecutorSig
-data: {"choices":[{"delta":{"content":"Hello"}}]}     unsigned, one line per event
-...
-data: [DONE]
-data: {"devshard_meta": {mempool}}       carries the signed Finish
-```
+The gateway's only binding covers the whole stream. After the stream ends, it hashes what it received and compares that with the Finish's `ServedHash` (`user/served_binding.go`). A cut stream leaves the gateway holding an unsigned prefix.
 
-Payment comes from the Finish's `InputTokens`/`OutputTokens` alone (`state/machine.go:1372` `checkFinishLocked`, capped at the reservation). Nothing compares them against the body the client received except a sampled GPU replay: `state.ShouldValidate` (`state/validation.go:80`) picks about a tenth of finished inferences. #2000 has the multipliers.
+## Empty streams
 
-The gateway's only binding is whole-stream: after the stream ends it hashes what it received and compares with the Finish's `ServedHash` (`user/served_binding.go:40`). A cut stream produces no sums at all (`served_projection.go:86`).
+### Why an empty stream is not a miss
 
-## Why an empty stream is not a miss
+The withdrawn revision relied on `min_tokens = 64`. These three facts break it:
 
-An earlier revision of this proposal made a complete empty stream a `MsgErrorMiss`: the Finish signs the body, the empty body hashes to it, and today the `MsgErrorMiss` verifier rejects it only because it requires an error envelope (`host/timeout.go:416-467`). The safety argument was `min_tokens = 64`.
+- **The floor is gone.** #1972 keeps only a caller's `min_tokens`, and drops even that under a grammar (`EnforceTokenBudget`, `GrammarConstrained` in `common/completionapi/request.go`). `stop_token_ids` survive a vocabulary check. An honest engine returns an empty complete stream whenever EOS, or a requested stop token, comes first.
+- **A `stop` match at offset 0 empties the text.** vLLM holds back `max(len(stop)) - 1` characters from each delta. A `logit_bias` that forces a repeated token, together with a long `stop` string built from it, streams `""` deltas and ends with `finish_reason: "stop"` and a non-zero `completion_tokens` (cyberdelamain's trace on this PR).
+- **A caller's `min_tokens` doesn't close it either.** A forced lone-byte token leaves the decoded text ending in U+FFFD, which the incremental detokenizer never emits. An honest `</think>` followed by EOS streams nothing on a reasoning model.
 
-The argument is gone:
-
-- **The floor is gone.** #1972 (`00578912e`) rewrote the request (`EnforceTokenBudget`, `common/completionapi/request.go:169`) to keep only a caller's `min_tokens`, and to drop even that under a grammar (`GrammarConstrained`, `:182`). `stop_token_ids` are now kept after a vocabulary check (`ValidateStopTokenIDs`, `:226`). With no floor, an honest engine returns a complete empty stream whenever EOS comes first.
-- **A caller's `min_tokens` doesn't close it either.** A host that forces a lone-byte token (e.g. id 159 on DeepSeek-V4-Flash, byte 0xE0) leaves the decoded text ending in U+FFFD, which the incremental detokenizer does not emit (`vllm/v1/engine/detokenizer.py:211-247` in gonka-ai/vllm `befecf605`). Nothing is streamed, and the Finish says `completion_tokens = max_tokens`.
-- **Thinking knobs do the same.** An honest `</think>` followed by EOS streams nothing, because the parser engine treats the delimiter as closing reasoning only. The `min_tokens` that rules this out is model-dependent.
-
-A carve-out keyed on `stop` covers one route and not the others, and the other candidate keys don't hold either:
+A carve-out keyed on any one request field covers one route and misses the others:
 
 | Key | Why it fails |
 |---|---|
-| `stop_reason` | Host-reported, so a host that sent nothing can copy a `stop` entry into it. |
-| Per-token evidence in the served body | `token_ids` are dropped before the body is hashed (`responseprocessor.go:112`, `logprobs_compress.go:18`), and the served body drops `logprobs` as well. |
-| Exempt `stop` only | The client can empty an honest stream through EOS, `stop_token_ids`, a grammar, or the thinking knobs, none of which need `stop`. |
-| Exempt only long `stop` entries | Needs a per-tokenizer lower bound on characters per token, which the split-UTF-8 case puts at about 16. |
+| `stop_reason` | The host reports it, so a host that sent nothing can copy a `stop` entry into it. |
+| Exempt requests with `stop` | EOS, `stop_token_ids`, a grammar or the thinking knobs need no `stop`. |
+| Exempt only long `stop` entries | Needs a per-tokenizer lower bound on characters per token. The split-UTF-8 case puts it near 16. |
 
-So: **an empty body proves nothing.** What a host can still be wrong about is the number of tokens it claims, and that is what #2000 disputes.
+What a host can still lie about is the number of tokens it claims. That is #2000's count dispute.
 
-## Where this goes now: #2000's challenge protocol
+### `EMPTY_STREAM` in #2088
 
-#2000 was rewritten (2026-10-20) to a gateway-started challenge: the gateway sends `VerifyChallenge(inference_id, reason)` with no evidence, every host fetches the request and the stored body from the executor, checks them against the signed Finish, and votes. Above `VoteThreshold` the record is Invalidated and the payment is refunded. Its PR 1 is the protocol, PR 2 adds CPU token counting, PR 3 raises the replay probability for challenged inferences.
+The gateway starts a challenge with the inference id and a reason. Every voter fetches the request and the stored body from the executor and checks them against the signed Finish. A voter votes `EMPTY_STREAM` only when the stored body matches the Finish and has **no generated positions** (`logprobs.content` entries). No text is not enough (`host/challenge.go`). A body with tokens and no text gets `NONE`. That covers all three honest cases above, each of which keeps one stored position per generated token. The executor forces `logprobs` and `return_token_ids` on every request, and the logprob compression drops fields of each entry but never the entry itself. The model `isModelBurnEmpty` names is the one exception: its documented outcome is no positions with completion tokens claimed, so the voter votes `NONE` there too.
 
-Empty-stream detection is **item 8 of PR 1**, under the `EMPTY_STREAM` reason: a signed receipt, then a stream that ended with no content. The voters' evidence is the stored body, not what the gateway received.
+This branch adds nothing to the vote.
 
-### What this branch still owns
+### The gateway-local strike (#2137)
 
-**1. The trigger.** The gateway knows when to send `EMPTY_STREAM`: the attempt has a receipt, ended with no content, and holds a signed Finish. That is `isEmptyStreamAttempt` (`redundancy.go:4445`) combined with the Finish artifacts the ErrorMiss path already collects. The state machine rejects the challenge for a non-Finished record, so a stream with no Finish stays on the timeout path as today.
+`recordSample` struck every empty stream (`ObserveEmptyStreamForModelWithStats`), and three strikes put the participant into a 30-minute shadow quarantine. The only exemption, `isModelBurnEmpty`, matches a retired model. Since #1972, a client can therefore push honest hosts out of rotation.
 
-**2. One correction to the evidence rule.** #2000's wording is "the stored body is missing or has no content either". Read as *text*, that flags honest hosts. In all three client-forceable cases above the stored body has no text:
+#2137 holds the strike when all three of these hold:
 
-| Case | Served and stored text | Stored per-token positions |
-|---|---|---|
-| `stop` match at offset 0 | empty | one per generated token |
-| lone-byte token (U+FFFD) | empty | one per generated token |
-| `</think>` then EOS | empty | one per generated token |
+- the session runs the challenge,
+- the Finish applies,
+- the received stream hashes to the Finish's response or served hash.
 
-The rule has to read *content* as **generated token positions**, not as text: `EMPTY_STREAM` only when the stored body has no positions either, or is missing. That is the same quantity #2000's PR 2 counts, so it is a clarification rather than a new mechanism. The executor already forces the data: `logprobs = true` and `return_token_ids = true` (`common/completionapi/request.go:46,57`). The stored body keeps one `logprobs.content` entry per generated token; `responseprocessor.go:112` drops `token_ids`, and the logprob compression drops `logprob` and `bytes` per entry (`logprobs_compress.go:13`) but never the entry itself.
+The strike is cleared only if the challenge ends `none`. Every other outcome keeps it: either the voters found a fault, or the check never happened, and the gateway then does what it did before. The strike and the outcome wait for each other for up to an hour. `Stop` applies every strike still held. A stream that was cut, that doesn't bind to its Finish, or that ran on an older protocol is struck at once, as before. The new code is in `cmd/devshardctl/empty_stream_strike.go`, and it changes only the gateway.
 
-**3. The gateway-local strike, separately.** `recordSample` charges every empty stream to the host (`redundancy.go:5206-5218`) unless it is Kimi reasoning burn, and `isModelBurnEmpty` is scoped to a model that is retired (`:4463`). After #1972 that penalises honest empty streams with a 30-minute shadow quarantine. The gateway holds the request and doesn't need a vote, so this can be fixed on its own, in this branch, ahead of anything else. **This is the one change here that ships regardless of #2000.**
+Known limitation: a stream that stays open longer than `ChallengeOpenStreamGrace` after its Finish is challenged as `STREAM_UNBOUND` first. If that verdict arrives before the strike is held, it is dropped, and the strike lands at expiry as it does today. The #2137 description has the details.
 
-## Production data
+### Production shape
 
-From one production gateway's `empty_stream` log stage, over one day. Only shares are given.
+From one production gateway's `empty_stream` log stage over one day, as shares only:
 
 | Shape | Share of empty streams |
 |---|---|
 | Receipt only, no body after it | about 98.5% |
 | A body followed the receipt | about 1.5% |
 
-Empty streams were somewhat under a tenth of all attempts.
+- **Receipt only.** No Finish, so the timeout path decides, as today (#1798 stall timeout, #1823). No challenge reaches it.
+- **A body followed.** The nonce finished and the host was paid. This is the shape `EMPTY_STREAM` and #2137 address. It has two sub-shapes the logs can't explain yet. Most are 1–3 chunks with no content the gateway recognises and `usage_tokens = 0`. A handful are GLM-5.3-Flash streams of thousands of chunks with `usage_tokens` in the thousands. That second shape is why reading positions instead of text matters.
 
-- **Receipt only.** In a traced example, no token arrived for 300 s. An execution timeout vote then accepted, ending `TIMEOUT_REASON_EXECUTION`. This shape is already accounted for: no Finish, so the timeout path decides, and #2000 can't challenge it. Nothing here changes.
-- **A body followed.** In a traced example, the nonce was finished and the timeout was skipped with `empty_stream_without_non_empty_winner` (`skipEmptyStreamTimeout`, `redundancy.go:4241`). The host was paid. This is the shape `EMPTY_STREAM` targets.
-- **Two sub-shapes in that 1.5% that the logs can't explain.**
-  - Almost all of it is 1-3 chunks of up to about 1 MB, with no content the gateway recognises and `usage_tokens = 0`.
-  - A handful are GLM-5.3-Flash streams of thousands of chunks, with `usage_tokens` in the thousands, and no content the gateway recognises either.
+## Signed Chat frames (#2102)
 
-  The second is the reason the positions-based reading matters: it may be a body with thousands of positions and no text the current predicate knows, which the gateway calls empty and the voters would call honest.
-- The gateway logs no request parameters beyond `request_flags` (`redundancy.go:306`). Adding `stop_count` and `stop_token_ids_count` there would size the challenge volume, since a client-forced empty body is a challenge that ends `NONE`.
+### Wire
 
-## Held: signed checkpoints
-
-**Status:** held, pending an A K decision on whether #1808 stays in v7. #2000's voters take nothing from the gateway, so the count vote doesn't need these.
-
-There is one case they would settle that the challenge cannot, from #2000's own table: *streams a short text, cuts, stores a self-consistent long body and signs it*. The voters see matching hashes and a count that matches the stored body, so it stands, with only the raised replay probability of PR 3 against it. A signed chain over the served lines would let the voters prove the served prefix was shorter than the stored body, **without a GPU**.
-
-### Chain
-
-The executor keeps a running hash over the lines it writes to the gateway, in the exact form the gateway receives them (the forwarded lines — the ones `ReceivedResponseHasher.Add` sees, `transport/client.go:791`).
-
-```
-h_0 = SHA256("devshard.streamchain.v1" ‖ escrow_id ‖ inference_id ‖ prompt_hash)
-h_i = SHA256(h_{i-1} ‖ uint32_be(len(line_i)) ‖ line_i)
-```
-
-`prompt_hash` comes from `MsgStartInference` (`tx.proto:15`), so a chain cannot be replayed into another request. The length prefix removes line-boundary ambiguity. Blank separator lines and `devshard_*` protocol lines stay out of the chain.
-
-### Checkpoint event
-
-At each checkpoint the host writes one extra event:
-
-```
-data: {"devshard_checkpoint":{"seq":128,"output_tokens":131,"head":"<b64 32B>","sig":"<b64 65B>"}}
-```
-
-The signature is over a new proto message with its own domain (`types/signed_preimage.go`, alongside `devshard.errormissvote.v1`):
+`ChatFrame` (`proto/devshard/transport/v1/session.proto`) gets two fields. Both sit outside the gzip body, so they don't disturb the dictionary:
 
 ```proto
-message StreamCheckpointContent {   // domain "devshard.streamcheckpoint.v1"
-  string escrow_id     = 1;
-  uint64 inference_id  = 2;
-  uint32 executor_slot = 3;
-  uint64 seq           = 4;  // lines committed at this point
-  uint64 output_tokens = 5;  // cumulative, as the MLNode counted them
-  bytes  head          = 6;  // h_seq
-  bool   final         = 7;  // the checkpoint before [DONE]
+message ChatFrame {
+  bytes  chunk        = 1; // opaque gzip-stream bytes
+  bytes  sig          = 2; // 64-byte R||S, empty on an unsigned frame
+  uint64 stream_bytes = 3; // uncompressed bytes sig covers
 }
 ```
 
-Signed with the same key as the Finish (`h.signer`, the warm key on joins) and verified the same way: cold key, or a bound or resolvable warm key (`VerifyFinishProposerSig`, `state/machine.go:1796`).
+The signature is raw bytes on the protobuf frame. It is not base64 inside the SSE JSON, so a gateway that doesn't know the field never forwards it to the client and never hashes it into `ServedHash`. The 64-byte form drops the recovery id. The gateway's side of that is under "Gateway" below.
 
-### Cadence
+### What is signed
 
-- one checkpoint as soon as the first token has been written, content-bearing or not;
-- every `N = 64` lines;
-- one `final` right before `[DONE]`.
+```proto
+message ChatFrameSignatureContent {   // domain "devshard.chatframe.v1"
+  string escrow_id    = 1;
+  uint64 inference_id = 2;
+  uint64 seq          = 3; // 1 for the first signed frame
+  bytes  stream_hash  = 4;
+  uint64 stream_bytes = 5; // uncompressed bytes stream_hash covers
+}
+```
 
-An optional `T = 2 s` heartbeat while lines flow slower than that.
+`stream_hash` is a running SHA-256 over every **uncompressed** byte of the Chat stream, from its first byte up to the end of the frame. It is seeded with length-prefixed domain, escrow id, inference id and the started record's prompt hash, so a signature can't be moved to another inference or another prompt:
 
-### Negotiation (required, not optional)
+```
+h = SHA256( lp("devshard.chatframe.v1") ‖ lp(escrow_id) ‖ u64be(inference_id) ‖ lp(prompt_hash) ‖ stream bytes… )
+```
 
-A gateway on today's code forwards an unknown `devshard_*` line as inference data — the final `forward("data")` in `handleSSELine` (`transport/client.go:903`). That would leak checkpoint events to the client **and** add them to the received hash, breaking the served binding. So the host emits checkpoints only when the request asks:
+Each signature covers the whole prefix and states its length, so after a cut the newest valid signature is all the gateway needs. Because the hash is over uncompressed bytes, it lines up with `ServedHash` and with what #2000 hashes, and the gzip level can change without touching the signature.
 
-- `InferenceRequest.stream_checkpoints = 6` (bool) in `proto/devshard/transport/v1/session.proto:25-31`, and the matching field in the HTTP JSON request.
-- An old host ignores the field; an old gateway never sets it.
+The executor signs with the same key as the Finish (`Signer()`, the warm key on joins), and only when it is the inference's executor and its payload matched the started record. Catch-up, Finalize and any other host keep unsigned per-event frames. Signing starts before the receipt is written (`startFrameSigning`, `transport/inference.go`), so the first signature covers the receipt too.
 
-### Gateway side, and what a voter gains
+### Schedule
 
-- `handleSSELine` handles `devshard_checkpoint` like `devshard_meta`: not forwarded, not added to `ReceivedResponseHasher`.
-- The gateway keeps its own chain over forwarded lines, checks head, signature, `seq` and a non-decreasing `output_tokens` at each checkpoint, and keeps the last valid one for `servedBindingRetention` (`user/served_binding.go:115`).
-- A challenge carries the prefix: `{lines[0..seq), checkpoint}`. The voter recomputes the head and compares the checkpoint's count with the stored body's. A stored body shorter than the prefix is a direct fault; a stored body longer than the prefix where the served text stopped is the case from #2000's table.
+`ChatFrameSink` (`transport/chat_gzip.go`) counts finished SSE events:
 
-## Frame coalescing (A K's question)
-
-### Setup
-
-Synthetic corpus: mixed English and Chinese split into BPE-like pieces of up to 4 bytes, rendered as DeepSeek-style `chat.completion.chunk` events after the logprobs strip. gzip BestSpeed, one window, a sync flush per frame, the way `ChatGzipEmitter` works (`transport/chat_gzip.go:41`). secp256k1 via go-ethereum, signing 11.0 µs, recover 14.4 µs (one Apple M5 core). 300 and 2,000 token runs agree within 2%; the table shows 2,000.
-
-### Cost per token
-
-| Framing | Bytes/token | vs. today |
+| Mode | Flush | Signature |
 |---|---|---|
-| Today: one event per token, flush per event | 52.2 | 100% |
-| Flush every 3 events (events unchanged) | 22.1 | 42% |
-| Flush every 5 events (events unchanged) | 15.2 | 29% |
-| Flush every 10 events (events unchanged) | 10.4 | 20% |
-| 3 tokens merged into one event | 18.4 | 35% |
-| 5 tokens merged into one event | 11.9 | 23% |
-| 10 tokens merged into one event | 7.1 | 14% |
-| Today + a signature on every event | 209.8 | 402% |
-| Today + a checkpoint every 16 lines | 60.4 | 116% |
-| Today + a checkpoint every 64 lines | 54.6 | 105% |
-| Flush every 5 + a checkpoint every 64 | 17.7 | 34% |
+| joined (default, `Every = 5`) | every `Every` events | every flush |
+| separate | every event | every `Every`-th event |
 
-### Findings
+- Before the first output, every finished event leaves alone, and the first output is always signed. Output means content, reasoning, a tool call, an error or `[DONE]`. A role-only delta does not count. Time to first token and winner selection don't wait for a group.
+- The tail (`[DONE]`, `devshard_meta`) leaves signed on `Close`. No prefix is signed twice.
+- 16 KiB of pending bytes force a flush, so a stream with no blank line can't stall.
+- `Every` is capped at 64. A joined group holds tokens, and the gateway cancels a winner that is silent past its inter-chunk stall timeout, so a group must fill well inside that.
 
-- What costs bytes is the **sync flush per event**: every flush closes a deflate block and pads to a byte boundary. The gzip window already removes most of the repeated JSON.
-- Signing every event is not viable — about 4x the bytes, and ~22 ms of signing per 2,000-token answer. Periodic checkpoints are the design that survives contact with the wire.
-- Merging tokens into one event saves another 20-30%, but it changes the stored body (`{"events":[...]}`) that validators replay token by token, and it changes what streaming clients see. Not worth 3-4 bytes per token.
-- The knob already exists: `SetChatGzipCoalesce(ChatGzipCoalesceBytes)`, 1024 bytes ≈ 5 tokens (`transport/chat_gzip.go:18-31`). Only tests call it, so production flushes per token. The first token leaves alone (`firstTokenReady`, `chat_gzip.go:197`), so TTFT is unchanged.
-- **What's missing is a time bound.** A byte cut alone holds tokens until 1,024 bytes accumulate — at 20 tokens/s, about 250 ms. The change adds a hold limit (proposal: 50 ms) and turns the knob on.
-- This applies to the peer RPC (gzip) path. The HTTP inference path appears to be uncompressed SSE; `ResponseCompressionMiddleware` (`transport/compression.go:27`) has no production caller I could find. Worth confirming first.
+### Two knobs on the request
 
-### Caveats
+The gateway sends the schedule as `chat_frames: {every, separate}` in the inference request, from its own environment, so a schedule can be tried without a host release:
 
-The corpus is synthetic. Real traffic with tool calls and reasoning compresses differently, and real inter-token timing is what the hold limit is for. Before this merges, confirm with #1989's prod-like loadtest: bytes per token and TTFT, knob off vs on.
+- `GATEWAY_CHAT_FRAME_EVENTS`: `Every`. `0` means the executor's default (5).
+- `GATEWAY_CHAT_FRAME_SEPARATE`: one flush per event, with a signature every `Every` events.
+
+Joining saves body bytes. Separate keeps per-token delivery.
+
+### Gateway
+
+The verifier (`ChatFrameVerifier`, `transport/chat_frame_sign.go`) sits in the Chat read path (`chatFrameReader` and `countingReader`, `transport/rpc_chat.go`). It hashes every inflated byte in order and checks each signature once the stream reaches exactly the byte count that signature names. Byte counts must strictly increase. At most 64 signatures can wait ahead of the inflated stream.
+
+State holds the executor's addresses, not its key, and a 64-byte signature recovers to one key per recovery id. Only the signer's key also verifies the next signature, so the two candidates narrow by themselves as signatures arrive. When the stream ends, the gateway checks the remaining key once against the slot's cold key or a bound warm key (`frameSignerAllowed`, `user/session.go`), by the same rule as state signatures. Nothing that can reach the chain runs while tokens flow, and the gateway never asks about the other recovered key. Asking would cost a bridge call and leave a permanent `warmChecks` entry on every inference. `TestChatFrameVerifier_AsksOnlyAboutTheSigner` and `_DoesNotAskWhileTheStreamIsRead` pin this.
+
+The rest of the gateway side, per A K:
+
+- An invalid signature is logged as `chat_frame_signature_invalid`, and nothing else happens. Acting on it means another participant challenging the stream, which is a separate protocol change.
+- A stream with no signed frame, from a host that predates signing, logs nothing.
+- `send_completed` logs `chat_frames` and `chat_frames_signed`.
+- Gaps between frames are observability only. `maxChunkGap` goes to metrics and the accounting record, and feeds no QoS or punishment decision. A gap of a few events is the batch, not a stall.
+
+### Compatibility
+
+- An old host ignores `chat_frames` and sends unsigned per-event frames.
+- An old gateway ignores `sig` and `stream_bytes`, which are unknown protobuf fields. It can still read a joined frame, because frames are opaque slices of one gzip stream.
+- `SetChatGzipCoalesce` / `ChatGzipCoalesceBytes` had no production caller, and the event schedule replaces them.
+- Only the peer RPC Chat path is signed. The HTTP inference path writes plain SSE with no frame, so it has nowhere to carry a signature and stays unsigned.
+
+## Size and cost
+
+### Why gzip level 2 (#2095)
+
+An earlier revision of this proposal put the per-token cost on the sync flush itself. That was wrong. `gzip.BestSpeed` resets its window on every `Flush`, so each token can only match within its own frame and pays again for the repeated `id`, `object`, `created` and `model`. Level 2 is the lowest level that keeps the 32 KiB window across a sync flush. `Flush` still ends the block, so the gateway can read each frame immediately. A K's measurement on a real `QwQ-32B` completion (100 content tokens, 104 SSE events):
+
+| Writer | Flush | Bytes/token |
+|---|---|---|
+| BestSpeed (production before #2095) | every event | 58.1 |
+| Level 2 | every event | 17.0 |
+| Level 2 | every 5 events | 10.0 |
+| Level 2 | at the end | 7.0 |
+
+The open level-2 writer takes less heap than BestSpeed (about 794 KiB against 1,176 KiB per open Chat).
+
+### Signed frames (#2102)
+
+Same completion, level 2. The bytes are the marshalled `ChatFrame` messages, so each signature costs its 64 bytes plus the field tags and the `stream_bytes` varint.
+
+| Schedule | Frames | Signed | Bytes/token |
+|---|---|---|---|
+| unsigned, one frame per event (old host on #2095) | 105 | 0 | 18.8 |
+| **signed, joined every 5 (default)** | 24 | 23 | **26.2** |
+| signed, joined every 10 | 14 | 13 | 18.2 |
+| signed, separate, every 5 | 105 | 23 | 34.7 |
+| signed, separate, every 64 | 105 | 4 | 21.5 |
+
+The production stream before #2095 was 56.4 bytes/token on this answer. With signing and level 2 together it is 26.2. Executor CPU for the whole answer, gzip and signing included, is about 0.5 ms. On the gateway, a 64-byte signature costs at most two recoveries (about 32 µs) until the key is known, and about 12 µs per verification after that.
+
+In the full testenv stack (`make citest-peerrpc-chat`), 9 of 10 frames per inference carried a signature the gateway verified, with no `chat_frame_signature_invalid`. The unsigned frame is the role delta. The first output's signature covers it.
 
 ## Out of scope
 
-- **Receipt then silence (#1823).** No Finish, so no challenge reaches it; the stall timeout (#1798) and the timeout vote cover it.
-- **Changing `MsgFinishInference`.** Binding the final chain head in the Finish would be a state-root change. Nothing here needs it.
-- **Gateway-side tokenization.** Per A K, the count stays on the MLNode and the recount belongs to #2000's CPU voters.
-- **A protocol miss for empty streams.** Withdrawn, see "Why an empty stream is not a miss".
+- **Token throughput on the gateway, and a dynamic join window** that moves `Every` with it. A K's further proposal. It waits on the throughput measurement (@qdanik).
+- **A frame signature as challenge evidence.** One case in #2000's table needs it: a host streams a short text, cuts, then stores and signs a self-consistent long body. The newest valid frame signature proves the served prefix, so a voter could show the stored body diverges from it without a GPU. That is a protocol change on #2000's side.
+- **Receipt then silence (#1823).** No Finish, so no challenge applies. The stall timeout (#1798) and the timeout vote cover it.
+- **Changing `MsgFinishInference`.** Binding the final stream hash in the Finish would be a state-root change. Nothing here needs it.
+- **Gateway-side tokenization.** Per A K, the count stays on the MLNode, and the recount belongs to #2000's CPU voters.
 
 ## Open questions
 
-1. **`EMPTY_STREAM` on positions, not text.** Confirm the change with vitaly (:2000 item 8). Without it the reason invalidates honest hosts on a client-forced empty body.
-2. **Does #1808 stay in v7?** Signed checkpoints now buy exactly one row of #2000's table without a GPU (self-consistent stored body after a cut). That is an A K decision on scope.
-3. **The two production shapes.** What are they? The positions-based reading depends on knowing whether the GLM bodies carry positions without text.
-4. **Order.** The gateway-local strike fix is independent and can go now. The `EMPTY_STREAM` trigger waits on #2000 PR 1's protocol. Coalescing is independent of both. Is that the order?
+1. **Order.** #2102 is independent and can go now. #2137 waits on #2088. Is that the order?
+2. **The two production shapes** with a body but no recognised content. Do the GLM bodies carry positions? If they do, #2137 stops striking them once #2088 votes `NONE`.
+3. **The HTTP inference path.** It stays unsigned. Is that acceptable for v7, or should a gateway that wants signatures always use peer RPC?
