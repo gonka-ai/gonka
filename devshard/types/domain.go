@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v6"
+const DevshardStateRootAndProtocolVersion = "v7"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -66,6 +66,9 @@ type InferenceRecord struct {
 	VotesValid         uint32          `json:"votes_valid,omitempty"`
 	VotesInvalid       uint32          `json:"votes_invalid,omitempty"`
 	ValidatedBy        Bitmap128       `json:"validated_by,omitempty"`
+	// UsageChallenged is set by the first applied MsgChallenge, whatever its
+	// tally, so a later one for the same inference is a no-op.
+	UsageChallenged bool `json:"usage_challenged,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -91,7 +94,8 @@ const (
 	ProtocolV41            ProtocolVersion = "4.1"
 	ProtocolV5             ProtocolVersion = "5"
 	ProtocolV6             ProtocolVersion = "6"
-	DefaultProtocolVersion                 = ProtocolV6
+	ProtocolV7             ProtocolVersion = "7"
+	DefaultProtocolVersion                 = ProtocolV7
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.

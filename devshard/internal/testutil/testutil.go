@@ -192,6 +192,31 @@ func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inf
 	}
 }
 
+// SignChallengeVote signs a ChallengeVoteContent and returns the vote with
+// voterSlot set.
+func SignChallengeVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, voterSlot uint32, fault types.ChallengeFault, check types.ChallengeCheck, deviation int64, responseHash []byte) *types.ChallengeVote {
+	t.Helper()
+	content := &types.ChallengeVoteContent{
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Fault:        fault,
+		Check:        check,
+		Deviation:    deviation,
+		ResponseHash: responseHash,
+	}
+	data, err := types.CanonicalSignedBytes(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return &types.ChallengeVote{
+		VoterSlot: voterSlot,
+		Fault:     fault,
+		Check:     check,
+		Deviation: deviation,
+		Signature: sig,
+	}
+}
+
 // MakeMultiSlotGroup creates a group where some signers own multiple slots.
 // slotsPerSigner[i] is the number of slots assigned to signers[i].
 // SlotIDs are assigned sequentially starting from 0.

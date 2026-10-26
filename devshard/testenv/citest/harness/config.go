@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"devshard/testenv/config"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,7 +26,21 @@ type MultiConfigOpts struct {
 	// params and the seed escrow, so the escrow live at boot already has them.
 	RefusalTimeout   int64
 	ExecutionTimeout int64
+	// ModelID is the seed escrow's model and its epoch group; empty keeps
+	// the default test-model. ReplayFile is a replay JSONL copied into the
+	// workdir and served by mock-openai; recorded samples answer only the
+	// requests they were recorded for. LogprobsMode is the chain param.
+	ModelID      string
+	ReplayFile   string
+	LogprobsMode string
+	// PostgresPerParticipant gives every on-chain identity a Postgres of its
+	// own, as operators run them; by default the stack shares one.
+	PostgresPerParticipant bool
 }
+
+// recordedReplayPath is where the generated compose mounts the replay file
+// inside mock-openai.
+const recordedReplayPath = "/fixtures/replay.jsonl"
 
 // WriteStackConfig writes the standard two-versiond stack config.
 // Service ports are selected at runtime and published on Docker-assigned
@@ -102,6 +118,26 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 		paramsExtra += fmt.Sprintf("\n  execution_timeout: %d", opts.ExecutionTimeout)
 		escrowExtra += fmt.Sprintf("\n    execution_timeout: %d", opts.ExecutionTimeout)
 	}
+	if opts.LogprobsMode != "" {
+		paramsExtra += fmt.Sprintf("\n  logprobs_mode: %s", opts.LogprobsMode)
+	}
+	modelID := config.DefaultModelID
+	epochGroups := ""
+	if opts.ModelID != "" {
+		modelID = opts.ModelID
+		epochGroups = fmt.Sprintf("epoch_groups:\n  - epoch_index: 1\n    model_id: %s\n", modelID)
+	}
+	postgresExtra := ""
+	if opts.PostgresPerParticipant {
+		postgresExtra = "\n  per_participant: true"
+	}
+	mockOpenAIExtra := ""
+	if opts.ReplayFile != "" {
+		data, err := os.ReadFile(opts.ReplayFile)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "replay.jsonl"), data, 0o644))
+		mockOpenAIExtra = "\n  replay_file: " + recordedReplayPath
+	}
 
 	var hosts strings.Builder
 	for i := 0; i < opts.Hosts; i++ {
@@ -124,7 +160,7 @@ mock_dapi:
   grpc_port: %d
   http_port: %d
 mock_openai:
-  http_port: %d
+  http_port: %d%s
 ml_nodes: %d
 versiond:
   mode: multi
@@ -135,7 +171,7 @@ versiond_router:
 devshardctl:
   port: %d
 postgres:
-  enabled: true
+  enabled: true%s
 network:
   subnet: 172.31.0.0/24
   base_ip: 172.31.0
@@ -148,12 +184,12 @@ warm_grantee:
   private_key_hex: TODO
 escrows:
   - id: 1
-    model_id: test-model%s%s
-grantees:
+    model_id: %s%s%s
+%sgrantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, paramsExtra, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, opts.MLNodes, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowAmount, escrowExtra)
+`, paramsExtra, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, mockOpenAIExtra, opts.MLNodes, routerPort, gatewayPort, postgresExtra, opts.EscrowSlots, hosts.String(), modelID, escrowAmount, escrowExtra, epochGroups)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 

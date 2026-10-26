@@ -3,6 +3,7 @@ package devshard.transport.v1;
 option go_package = "devshard/transport/rpcpb";
 
 import "devshard/v1/diff.proto";
+import "devshard/v1/tx.proto";
 import "devshard/transport/v1/auth.proto";
 
 // Wire counterparts of transport.DiffJSON / PayloadJSON / InferenceRequest.
@@ -99,6 +100,28 @@ message VerifyErrorMissResponse {
   string         reject_cause = 5;
 }
 
+// VerifyChallengeRequest asks a host for its verdict on a finished inference.
+// The diffs let a cold or lagging host open the session and apply the Finish;
+// the request carries no body or hash the gateway observed.
+message VerifyChallengeRequest {
+  uint64                      inference_id = 1;
+  devshard.v1.ChallengeReason reason       = 2;
+  repeated Diff               diffs        = 3;
+}
+
+// VerifyChallengeResponse is the host's kept verdict. pending means the
+// host's fetch from the executor is still open and the gateway asks again.
+// A reject_cause without a signature means the host cannot vote.
+message VerifyChallengeResponse {
+  bool                       pending      = 1;
+  devshard.v1.ChallengeFault fault        = 2;
+  devshard.v1.ChallengeCheck check        = 3;
+  int64                      deviation    = 4;
+  bytes                      signature    = 5;
+  uint32                     voter_slot   = 6;
+  string                     reject_cause = 7;
+}
+
 message ChallengeReceiptRequest {
   uint64        inference_id = 1;
   Payload       payload      = 2;
@@ -155,6 +178,7 @@ service SessionService {
   rpc RepairHeightSync(SignedEnvelope) returns (RepairResponse);
   rpc VerifyTimeout(SignedEnvelope) returns (VerifyTimeoutResponse);
   rpc VerifyErrorMiss(SignedEnvelope) returns (VerifyErrorMissResponse);
+  rpc VerifyChallenge(SignedEnvelope) returns (VerifyChallengeResponse);
   rpc ChallengeReceipt(SignedEnvelope) returns (ChallengeReceiptResponse);
   rpc GetDiffs(GetDiffsRequest) returns (GetDiffsResponse);
   rpc GetMempool(GetMempoolRequest) returns (GetMempoolResponse);
