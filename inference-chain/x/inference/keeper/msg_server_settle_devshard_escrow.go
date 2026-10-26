@@ -23,6 +23,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if !found {
 		return nil, fmt.Errorf("escrow %d not found", msg.EscrowId)
 	}
+	if k.IsDevshardEscrowPendingSlots(goCtx, msg.EscrowId) {
+		return nil, fmt.Errorf("escrow %d is pending slot assignment", msg.EscrowId)
+	}
 
 	warmKeyChecker := func(granter, grantee string) bool {
 		return k.HasWarmKeyGrant(goCtx, granter, grantee)

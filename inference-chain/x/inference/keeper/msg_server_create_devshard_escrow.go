@@ -2,12 +2,10 @@ package keeper
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -38,30 +36,10 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, fmt.Errorf("epoch %d already has %d escrows (max %d)", epochIndex, epochCount, ep.MaxEscrowsPerEpoch)
 	}
 
-	epochGroup, err := k.GetEpochGroup(goCtx, epochIndex, msg.ModelId)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get epoch group for model %q: %w", msg.ModelId, err)
-	}
-	if epochGroup.GroupData == nil || len(epochGroup.GroupData.ValidationWeights) == 0 {
-		return nil, fmt.Errorf("no validation weights in epoch group for model %q", msg.ModelId)
+	if _, _, err := k.devshardSlotWeights(goCtx, epochIndex, msg.ModelId); err != nil {
+		return nil, err
 	}
 
-	weights := make(map[string]int64)
-	for _, vw := range epochGroup.GroupData.ValidationWeights {
-		if k.IsUnderChallenge(goCtx, vw.MemberAddress) {
-			continue
-		}
-		weights[vw.MemberAddress] = vw.Weight
-	}
-	sortedEntries, totalWeight := calculations.PrepareSortedEntries(weights)
-	if totalWeight <= 0 {
-		return nil, fmt.Errorf("total weight is zero")
-	}
-
-	appHash := hex.EncodeToString(ctx.HeaderInfo().AppHash)
-
-	// We need the escrow ID for slot sampling, but we don't have it yet.
-	// Reserve the next counter value first.
 	counter, err := k.DevshardEscrowCounter.Get(goCtx)
 	if err != nil {
 		counter = 0
@@ -70,15 +48,6 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, fmt.Errorf("devshard escrow counter overflow")
 	}
 	nextID := counter + 1
-
-	slots := calculations.GetSlotsFromSorted(
-		appHash,
-		fmt.Sprintf("devshard_escrow:%d", nextID),
-		msg.ModelId,
-		sortedEntries,
-		totalWeight,
-		int(ep.GroupSize),
-	)
 
 	creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
 	if err != nil {
@@ -97,15 +66,13 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	escrow := &types.DevshardEscrow{
 		Creator:                   msg.Creator,
 		Amount:                    msg.Amount,
-		Slots:                     slots,
 		EpochIndex:                epochIndex,
-		AppHash:                   appHash,
 		Settled:                   false,
 		TokenPrice:                ep.TokenPrice,
 		ModelId:                   msg.ModelId,
 		CreateDevshardFee:         ep.CreateDevshardFee,
 		FeePerNonce:               ep.FeePerNonce,
-		InferenceSealGraceNonces:  types.DevshardInferenceSealGraceNoncesForCreate(ep, uint32(len(slots))),
+		InferenceSealGraceNonces:  types.DevshardInferenceSealGraceNoncesForCreate(ep, ep.GroupSize),
 		InferenceSealGraceSeconds: types.DevshardInferenceSealGraceSecondsForCreate(ep),
 		AutoSealEveryNNonces:      types.DevshardAutoSealEveryNNoncesForCreate(ep),
 		ValidationRate:            types.DevshardValidationRateForCreate(ep),
@@ -116,6 +83,9 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create escrow: %w", err)
+	}
+	if err := k.DevshardEscrowsPendingSlots.Set(goCtx, id, ep.GroupSize); err != nil {
+		return nil, fmt.Errorf("failed to queue escrow slot assignment: %w", err)
 	}
 
 	ctx.EventManager().EmitEvent(sdk.NewEvent(

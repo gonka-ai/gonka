@@ -113,6 +113,7 @@ type (
 		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrowsPendingSlots collections.Map[uint64, uint32]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		DevshardVersionPoliciesMap  collections.Map[string, types.DevshardVersionPolicy]
 		// Maintenance window collections
@@ -589,6 +590,13 @@ func NewKeeper(
 			"devshard_escrows_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
+		),
+		DevshardEscrowsPendingSlots: collections.NewMap(
+			sb,
+			types.DevshardEscrowsPendingSlotsPrefix,
+			"devshard_escrows_pending_slots",
+			collections.Uint64Key,
+			collections.Uint32Value,
 		),
 		DevshardApprovedVersionsMap: collections.NewMap(
 			sb,
