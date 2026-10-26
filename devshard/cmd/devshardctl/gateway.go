@@ -519,6 +519,18 @@ func (g *Gateway) chainBridge() bridge.MainnetBridge {
 	return bridge.NewGRPCBridge(g.chainClient)
 }
 
+var runtimeEscrowReadyTimeout = 15 * time.Second
+
+func (g *Gateway) waitForEscrowReady(ctx context.Context, escrowID string) {
+	br := gatewayChainBridge(g)
+	if br == nil {
+		return
+	}
+	if _, err := bridge.WaitForEscrow(ctx, br, escrowID, runtimeEscrowReadyTimeout); err != nil {
+		log.Printf("escrow_ready_wait_failed escrow=%s error=%v", escrowID, err)
+	}
+}
+
 func (g *Gateway) newChainTxManager(settings GatewaySettings, chainID, feeDenom string, feeAmount, gasLimit uint64) (*chaintx.Manager, error) {
 	if g == nil || g.chainClient == nil {
 		return nil, fmt.Errorf("chain gRPC client is not configured")
@@ -3603,6 +3615,7 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 	} else {
 		record.PrivateKeyEnv = privateKeyEnv
 	}
+	g.waitForEscrowReady(r.Context(), record.ID)
 	record, err = g.addCreatedEscrowRuntime(r.Context(), record)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q,"escrow_id":%q,"tx_hash":%q}}`, err.Error(), record.ID, result.TxHash), http.StatusInternalServerError)

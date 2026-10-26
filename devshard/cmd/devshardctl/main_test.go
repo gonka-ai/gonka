@@ -50,6 +50,7 @@ func TestReadBoolEnvUsesDevshardBooleanGrammar(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
+	fastEscrowReady(t)
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {

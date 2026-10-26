@@ -585,6 +585,11 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 			buildSem <- struct{}{}
 			defer func() { <-buildSem }()
 			rt, err := gatewayRuntimeBuilder(cfg, deps)
+			if errors.Is(err, bridge.ErrEscrowNotFound) && deps.bridge != nil {
+				if _, waitErr := bridge.WaitForEscrow(ctx, deps.bridge, cfg.ID, runtimeEscrowReadyTimeout); waitErr == nil {
+					rt, err = gatewayRuntimeBuilder(cfg, deps)
+				}
+			}
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)
 	}

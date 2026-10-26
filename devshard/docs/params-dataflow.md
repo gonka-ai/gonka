@@ -18,6 +18,8 @@ Governance defaults for fees, consensus params, and seal grace (`DevshardEscrowP
 
 Tx response: **`escrow_id` only** — not the full record.
 
+`slots` and `app_hash` are not set by the create tx. The chain draws the slots in `BeginBlock` of the next block from that block's `AppHash` and emits `devshard_escrow_slots_assigned`. Until then the escrow query returns `found: false`, so callers that just created an escrow use `bridge.WaitForEscrow` before binding. If the model group has no eligible weight left at that point, the creator is refunded and the escrow is marked settled.
+
 ### Session bind (host / user — protocol uses escrow id)
 
 HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per bind (group build reuses the result). `HostManager.create` / user bind merge **two lanes** into `SessionConfig`:
