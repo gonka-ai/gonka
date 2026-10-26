@@ -17,12 +17,8 @@ type Config struct {
 	MLEndpoint        string // MOCK_ML_ENDPOINT single-node shorthand
 	MLNodes           []params.MLNode
 	ChainPollInterval time.Duration
-	BlockInterval     time.Duration
-	ChainID           string
 	Versions          []cosrv.Version
 	BinaryDir         string
-	// BlockSeed seeds the mock block observer (deterministic headers).
-	BlockSeed int64
 	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64
@@ -45,9 +41,6 @@ func DefaultConfig() Config {
 		ChainRPCAddr:      "http://127.0.0.1:26657",
 		MLEndpoint:        "http://mock-openai-0:8088",
 		ChainPollInterval: time.Second,
-		BlockInterval:     time.Second,
-		ChainID:           "gonka-test",
-		BlockSeed:         42,
 		Versions: []cosrv.Version{
 			{Name: "v2", Binary: "file:///opt/devshard/devshardd", SHA256: "0000000000000000000000000000000000000000000000000000000000000000"},
 		},
