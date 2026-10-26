@@ -277,6 +277,7 @@ Each task includes:
   - This function calculates a participant's missed request percentage for the epoch and compares it to the `DowntimeMissedPercentageThreshold` parameter.
   - If the threshold is exceeded, it slashes the participant's collateral using the `SlashFractionDowntime` parameter.
   - The logic is called from `SettleAccount` in `accountsettle.go`, which ensures it runs exactly once per participant at the end of each epoch, right after their final performance stats are available.
+- **Superseded**: The threshold check described above is no longer in the code. `CheckAndSlashForDowntime` was replaced by `SlashForDowntime`, which is called from `deactiveParticipant` in `keeper/participant_status.go` on every transition to `INACTIVE` (SPRT downtime detection in `calculations/status.go` or a failed confirmation PoC). It does not read `DowntimeMissedPercentageThreshold`, which is now deprecated.
 
 ### Section 3: Integration with `x/staking` via Hooks
 
@@ -411,7 +412,7 @@ Each task includes:
     - **Slashing for `INVALID` Status**:
         - `[x]` **Test Full Flow**: A participant deposits collateral. Simulate them providing incorrect inference results until their status changes to `INVALID`. Verify that at the moment of the status flip, the `x/collateral` keeper slashes their funds by the `SlashFractionInvalid` percentage.
     - **Slashing for Downtime**:
-        - `[x]` **Test Full Flow**: A participant deposits collateral. Simulate them missing enough requests to exceed the `DowntimeMissedPercentageThreshold`. Advance the epoch. Verify that during epoch settlement, the `x/collateral` keeper slashes their funds by the `SlashFractionDowntime` percentage.
+        - `[x]` **Test Full Flow**: A participant deposits collateral. Simulate them missing enough requests to exceed the `DowntimeMissedPercentageThreshold`. Advance the epoch. Verify that during epoch settlement, the `x/collateral` keeper slashes their funds by the `SlashFractionDowntime` percentage. *(Superseded: downtime slashing now happens on the `INACTIVE` status transition, see 2.4.)*
     - **Combined Slashing Scenario**:
         - `[x]` **Test Double Jeopardy**: A participant is slashed for downtime at the end of an epoch. In the next epoch, they are marked `INVALID`. Verify both slashes are applied correctly and the remaining collateral is calculated as expected.
 
