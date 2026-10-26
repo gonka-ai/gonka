@@ -15,9 +15,10 @@ const (
 	unixMilliMax int64 = 10_000_000_000_000     // ~2286-11-20
 )
 
+// pingJSON uses pointers so absent/null timestamps are distinct from zero.
 type pingJSON struct {
-	RecvUnixNs int64 `json:"recv_unix_ns"`
-	SendUnixNs int64 `json:"send_unix_ns"`
+	RecvUnixNs *int64 `json:"recv_unix_ns"`
+	SendUnixNs *int64 `json:"send_unix_ns"`
 }
 
 func parsePingTimestamps(h http.Header, body []byte) (recv, send int64, hasRecv, hasSend bool, err error) {
@@ -59,19 +60,30 @@ func parsePingTimestamps(h http.Header, body []byte) (recv, send int64, hasRecv,
 	if jerr := json.Unmarshal(body, &pj); jerr != nil {
 		return 0, 0, false, false, nil // not JSON ping; ignore
 	}
-	if pj.RecvUnixNs == 0 && pj.SendUnixNs == 0 {
+	hasRecv = pj.RecvUnixNs != nil
+	hasSend = pj.SendUnixNs != nil
+	if !hasRecv && !hasSend {
 		return 0, 0, false, false, nil
 	}
-	if err := rejectMillisAsNanos(pj.RecvUnixNs); err != nil {
+	if !hasRecv || !hasSend {
+		// Partial JSON pairs are unusable for four-timestamp math.
+		return 0, 0, false, false, fmt.Errorf("probe: incomplete ping timestamp json")
+	}
+	recv, send = *pj.RecvUnixNs, *pj.SendUnixNs
+	if recv == 0 && send == 0 {
+		// Explicit zero pair: treat as no usable timestamps (Date fallback ok).
+		return 0, 0, false, false, nil
+	}
+	if err := rejectMillisAsNanos(recv); err != nil {
 		return 0, 0, false, false, err
 	}
-	if err := rejectMillisAsNanos(pj.SendUnixNs); err != nil {
+	if err := rejectMillisAsNanos(send); err != nil {
 		return 0, 0, false, false, err
 	}
-	if pj.SendUnixNs < pj.RecvUnixNs {
+	if send < recv {
 		return 0, 0, false, false, fmt.Errorf("probe: send_unix_ns < recv_unix_ns")
 	}
-	return pj.RecvUnixNs, pj.SendUnixNs, true, true, nil
+	return recv, send, true, true, nil
 }
 
 func rejectMillisAsNanos(v int64) error {
