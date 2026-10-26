@@ -2829,6 +2829,14 @@ func (s *Session) nonceStarted(nonce uint64) bool {
 	return ok && rec.Status == types.StatusStarted
 }
 
+// queuedFinishRidesNextDiff reports whether nonce has a Finish queued that apply
+// would accept and that the next composed diff carries (not pinned).
+func (s *Session) queuedFinishRidesNextDiff(nonce uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pinnedFinishIDs[nonce] == 0 && s.pendingFinishReadyLocked(nonce)
+}
+
 // closedByPendingFinish publishes a queued Finish for nonce and reports whether
 // the record is closed afterwards. A failed send leaves the finish queued for
 // the check after the deadline.
@@ -3974,6 +3982,13 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 // the timeout kind to vote. It may loop internally when a refusal wait ends
 // because a receipt started the inference (execution deadline applies next).
 func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTime time.Time) (reason types.TimeoutReason, ready bool, skipped TimeoutResult, err error) {
+	// A Finish already queued with evidence that applies rides the next diff the
+	// session composes: the next Start, or the quiet settle once the escrow goes
+	// idle. While the deadline is ahead the wait only watches for it to be
+	// sequenced; publishing it here would spend a nonce of its own on every
+	// honest inference. At the deadline, or once the Finish leaves the queue
+	// unsequenced, the wait goes on as for any other open nonce.
+	deferQueuedFinish := s.queuedFinishRidesNextDiff(nonce)
 	for {
 		reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime)
 		hostID := s.timeoutHostLabel(nonce)
@@ -3994,7 +4009,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "timeout_not_armed"}, nil
 		}
 
-		if reasonLabel == "execution" {
+		if reasonLabel == "execution" && !deferQueuedFinish {
 			// A receipt moves the inference to Started. Publish its pending
 			// ConfirmStart before asking peers to verify an execution timeout so
 			// they evaluate the same receipt-backed state.
@@ -4016,7 +4031,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 				}
 			}
 		}
-		if s.closedByPendingFinish(ctx, nonce) {
+		if !deferQueuedFinish && s.closedByPendingFinish(ctx, nonce) {
 			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_closed")...)
 			return 0, false, closed, nil
 		}
@@ -4027,6 +4042,9 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 		recordClosed := func() bool {
 			if s.nonceClosed(nonce) || s.timeoutDueAtFloor(nonce) {
 				return true
+			}
+			if deferQueuedFinish {
+				return !s.queuedFinishRidesNextDiff(nonce)
 			}
 			s.mu.Lock()
 			queued := HasMsgFinish(s.pendingTxs, nonce)
@@ -4049,6 +4067,10 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 				}
 			}
 			reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
+		}
+		if deferQueuedFinish {
+			deferQueuedFinish = false
+			continue
 		}
 
 		if s.nonceClosed(nonce) {
