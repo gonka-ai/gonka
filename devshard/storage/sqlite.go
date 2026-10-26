@@ -992,8 +992,8 @@ const sqliteInsertSealedInferenceSQL = `INSERT INTO sealed_inferences (
 			sealed_input_length, sealed_max_tokens,
 			sealed_input_tokens, sealed_output_tokens,
 			sealed_reserved_cost, sealed_actual_cost,
-			sealed_started_at, sealed_confirmed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(escrow_id, inference_id) DO UPDATE SET
 			sealed_nonce = excluded.sealed_nonce,
 			obs_present = excluded.obs_present,
@@ -1012,12 +1012,17 @@ const sqliteInsertSealedInferenceSQL = `INSERT INTO sealed_inferences (
 			sealed_reserved_cost = excluded.sealed_reserved_cost,
 			sealed_actual_cost = excluded.sealed_actual_cost,
 			sealed_started_at = excluded.sealed_started_at,
-			sealed_confirmed_at = excluded.sealed_confirmed_at`
+			sealed_confirmed_at = excluded.sealed_confirmed_at,
+			sealed_usage_challenged = excluded.sealed_usage_challenged`
 
 func sqliteSealedInferenceArgs(escrowID string, row InferenceRow) []any {
 	obsPresent := 0
 	if row.ObsPresent {
 		obsPresent = 1
+	}
+	usageChallenged := 0
+	if row.SealedChallenged {
+		usageChallenged = 1
 	}
 	return []any{
 		escrowID, row.InferenceID, row.SealedNonce,
@@ -1027,7 +1032,7 @@ func sqliteSealedInferenceArgs(escrowID string, row InferenceRow) []any {
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight,
+		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight, usageChallenged,
 	}
 }
 
@@ -1115,13 +1120,13 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 		        sealed_input_length, sealed_max_tokens,
 		        sealed_input_tokens, sealed_output_tokens,
 		        sealed_reserved_cost, sealed_actual_cost,
-		        sealed_started_at, sealed_confirmed_at
+		        sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
 		   FROM sealed_inferences
 		  WHERE escrow_id = ? AND inference_id = ?`,
 		escrowID, inferenceID,
 	)
 	out := InferenceRow{InferenceID: inferenceID}
-	var obsPresent int
+	var obsPresent, usageChallenged int
 	if err := row.Scan(
 		&out.SealedNonce, &obsPresent, &out.SealedStatus, &out.SealedExecutorSlot,
 		&out.SealedVotesValid, &out.SealedVotesInvalid, &out.SealedValidatedBy,
@@ -1129,7 +1134,7 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight,
+		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight, &usageChallenged,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return InferenceRow{}, false, nil
@@ -1137,6 +1142,7 @@ func (s *SQLite) GetSealedInference(escrowID string, inferenceID uint64) (Infere
 		return InferenceRow{}, false, err
 	}
 	out.ObsPresent = obsPresent != 0
+	out.SealedChallenged = usageChallenged != 0
 	return out, true, nil
 }
 

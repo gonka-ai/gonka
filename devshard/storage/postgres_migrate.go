@@ -295,6 +295,28 @@ ALTER TABLE devshard_validation_credits
     ADD COLUMN IF NOT EXISTS hold_token     UUID,
     ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
 	},
+	{
+		// One row per challenged inference this participant voted on. HA
+		// replicas share it, so they answer a challenge with one verdict.
+		ID:   21,
+		Name: "devshard_challenge_votes_parent",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_challenge_votes (
+    epoch_id     BIGINT  NOT NULL,
+    escrow_id    TEXT    NOT NULL,
+    inference_id BIGINT  NOT NULL,
+    settled      BOOLEAN NOT NULL DEFAULT FALSE,
+    data         BYTEA   NOT NULL,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id)
+) PARTITION BY RANGE (epoch_id)`},
+	},
+	{
+		ID:   22,
+		Name: "devshard_sealed_inferences_usage_challenged",
+		Statements: []string{`
+ALTER TABLE devshard_sealed_inferences
+    ADD COLUMN IF NOT EXISTS sealed_usage_challenged BOOLEAN NOT NULL DEFAULT FALSE`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
