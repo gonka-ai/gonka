@@ -7,9 +7,19 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"encoding/json"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
 
 	"github.com/productscience/inference/x/inference/types"
+)
+
+var (
+	pendingUpgradeMu sync.Mutex
+	pendingUpgrade   *apiconfig.UpgradePlan
+	upgradeInfoPath  = "../data/upgrade-info.json"
+	upgradeWaitDone  chan struct{}
 )
 
 func ProcessNewBlockEvent(
@@ -144,51 +154,27 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 		return false
 	}
 
-	successfullyUpgraded := false
 	if configManager.GetHeight() >= upgradePlan.Height-1 {
 		logging.Info("CheckForUpgrade. Upgrade height reached", types.Upgrades, "height", upgradePlan.Height)
 
 		checkForVersionSwitch(configManager)
 		if len(upgradePlan.Binaries) == 0 {
-			return successfullyUpgraded
+			return false
 		}
 
-		// Write out upgrade-info.json
+		// Publish the file before clearing the plan. A failed write must leave
+		// the plan in place and must not shut the process down. The exit path
+		// waits after this returns so it does not race cosmovisor's poller.
 		path := getUpgradeInfoPath()
-		upgradeInfo := UpgradeInfoOutput{
-			Binaries: upgradePlan.Binaries,
-		}
-
-		jsonData, err := json.Marshal(upgradeInfo)
-		if err != nil {
-			logging.Error("Error marshaling upgrade info to JSON", types.Upgrades, "error", err)
-			return false
-		}
-		output := UpgradeOutput{
-			Name: upgradePlan.Name,
-			// We add one, because the chain quits ON the upgrade height before it sends the new block event
-			Height: upgradePlan.Height - 1,
-			Info:   string(jsonData),
-		}
-		jsonData, err = json.Marshal(output)
-		if err != nil {
-			logging.Error("Error marshaling output to JSON", types.Upgrades, "error", err)
-			return false
-		}
-
-		err = os.MkdirAll(filepath.Dir(path), os.ModePerm)
-		if err != nil {
-			logging.Error("Error creating output directory", types.Upgrades, "path", path, "error", err)
-			return false
-		}
-
-		err = os.WriteFile(path, jsonData, 0644)
-		if err != nil {
-			logging.Error("Error writing output to file", types.Upgrades, "path", path, "error", err)
+		if err := writeUpgradeInfo(path, upgradePlan); err != nil {
+			logging.Error("Error writing upgrade info", types.Upgrades, "path", path, "error", err)
 			return false
 		}
 		logging.Info("Upgrade output written to file, clearing upgrade plan", types.Upgrades, "path", path)
-		configManager.ClearUpgradePlan()
+		stagePendingUpgrade(upgradePlan)
+		if err := configManager.ClearUpgradePlan(); err != nil {
+			logging.Error("Error clearing upgrade plan", types.Upgrades, "error", err)
+		}
 		return true
 	}
 
@@ -196,6 +182,88 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 	return false
 }
 
+// FinishUpgradeForCosmovisor blocks until cosmovisor terminates this process
+// (SIGKILL by default, or SIGTERM when DAEMON_SHUTDOWN_GRACE is configured).
+// CheckForUpgrade has already published upgrade-info.json. Exiting on our own
+// triggers WaitForUpgradeOrExit's CheckUpdate in parallel with MonitorUpdate.
+func FinishUpgradeForCosmovisor() {
+	if _, ok := consumePendingUpgrade(); !ok {
+		return
+	}
+	logging.Info("Waiting for cosmovisor to relaunch", types.Upgrades)
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
+	pendingUpgradeMu.Lock()
+	done := upgradeWaitDone
+	pendingUpgradeMu.Unlock()
+
+	select {
+	case <-sigCh:
+	case <-done:
+	}
+}
+
+func stagePendingUpgrade(plan apiconfig.UpgradePlan) {
+	pendingUpgradeMu.Lock()
+	defer pendingUpgradeMu.Unlock()
+	copied := plan
+	pendingUpgrade = &copied
+}
+
+func consumePendingUpgrade() (apiconfig.UpgradePlan, bool) {
+	pendingUpgradeMu.Lock()
+	defer pendingUpgradeMu.Unlock()
+	if pendingUpgrade == nil {
+		return apiconfig.UpgradePlan{}, false
+	}
+	plan := *pendingUpgrade
+	pendingUpgrade = nil
+	return plan, true
+}
+
+func writeUpgradeInfo(path string, plan apiconfig.UpgradePlan) error {
+	upgradeInfo := UpgradeInfoOutput{Binaries: plan.Binaries}
+	infoJSON, err := json.Marshal(upgradeInfo)
+	if err != nil {
+		return err
+	}
+	output := UpgradeOutput{
+		Name: plan.Name,
+		// The chain halts ON the upgrade height, before the new-block event.
+		Height: plan.Height - 1,
+		Info:   string(infoJSON),
+	}
+	jsonData, err := json.Marshal(output)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, os.ModePerm); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".upgrade-info-*.json")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	if _, err := tmp.Write(jsonData); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0644); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
 func getUpgradeInfoPath() string {
-	return "../data/upgrade-info.json"
+	return upgradeInfoPath
 }
