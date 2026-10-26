@@ -52,6 +52,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query account public key and balance by address",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}},
 				},
+				{
+					RpcMethod:      "BridgeKeyLink",
+					Use:            "bridge-key-link [owner-address]",
+					Short:          "Query the bridge key link for a receipt owner address",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "owner_address"}},
+				},
 
 				{
 					RpcMethod: "EpochGroupDataAll",
