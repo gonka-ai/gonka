@@ -128,10 +128,19 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		return nil, sdkerrors.Wrap(types.ErrIllegalState, "signer stage cap reached")
 	}
 
+	eligibility, found, err := k.BuildPocStageVoterEligibility(ctx, startBlockHeight, validator)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "validation snapshot not found for stage")
+	}
+
 	// Process each validation - skip failures, don't fail entire batch.
 	// A proposer can include a transaction CheckTx would have dropped. Skipping
 	// a bad row is what stops that row from being stored.
 	storedCount := 0
+	skippedIneligibleModelCount := 0
 	for _, validation := range msg.Validations {
 		if validation == nil {
 			continue
@@ -139,16 +148,18 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		modelID := validation.ModelId
 		if modelID == "" || !k.IsValidGovernanceModel(ctx, modelID) {
 			k.LogWarn("[SubmitPocValidationsV2] model_id is not a governance model, skipping", types.PoC,
-				"validator", msg.Creator,
-				"participant", validation.ParticipantAddress)
+				"validator", validator)
+			continue
+		}
+		if !eligibility.CanValidateModel(modelID) {
+			skippedIneligibleModelCount++
 			continue
 		}
 
 		targetAddr, err := types.CanonicalAccAddress(validation.ParticipantAddress)
 		if err != nil {
 			k.LogWarn("[SubmitPocValidationsV2] Invalid participant address, skipping", types.PoC,
-				"validator", msg.Creator,
-				"participant", validation.ParticipantAddress,
+				"validator", validator,
 				"error", err)
 			continue
 		}
@@ -222,6 +233,12 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			"participant", participant,
 			"model_id", modelID,
 			"validatedWeight", validation.ValidatedWeight)
+	}
+	if skippedIneligibleModelCount > 0 {
+		k.LogWarn("[SubmitPocValidationsV2] skipped rows where signer has no voting power in stage snapshot", types.PoC,
+			"validator", validator,
+			"stage", startBlockHeight,
+			"skipped", skippedIneligibleModelCount)
 	}
 
 	k.LogInfo("[SubmitPocValidationsV2] Batch complete", types.PoC,

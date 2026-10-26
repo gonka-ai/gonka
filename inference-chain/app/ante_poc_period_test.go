@@ -168,6 +168,17 @@ func seedLiveValidationShape(t *testing.T, k inferencemodulekeeper.Keeper, ctx s
 		RootHash:                 make([]byte, 32),
 		ModelId:                  "test-model",
 	}))
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, inferencetypes.PoCValidationSnapshot{
+		PocStageStartHeight: 100,
+		SnapshotHeight:      155,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*inferencetypes.ModelVotingPowers{{
+			ModelId: "test-model",
+			VotingPowers: []*inferencetypes.VotingPowerEntry{
+				{Address: signer, VotingPower: 100},
+			},
+		}},
+	}))
 }
 
 func TestPocPeriodValidationDecorator_RawBoundsBeforeParticipantCheck(t *testing.T) {
@@ -265,6 +276,40 @@ func TestPocPeriodValidationDecorator_AllowsRegisteredParticipant(t *testing.T) 
 	seedLiveValidationShape(t, k, ctx, signer)
 
 	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(signer))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_RejectsParticipantWithoutSnapshotVotingPower(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+
+	eligibleSigner := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, eligibleSigner)
+
+	sybil := testutil.Validator2
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(sybil), inferencetypes.Participant{
+		Index:   sybil,
+		Address: sybil,
+		Weight:  -1,
+	}))
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(sybil))
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	// Enabling sybil as a genesis guardian allows its tiebreaker vote through CheckTx.
+	sybilAcc := sdk.MustAccAddressFromBech32(sybil)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &inferencetypes.GenesisGuardianParams{
+		GuardianAddresses: []string{sdk.ValAddress(sybilAcc).String()},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &inferencetypes.GenesisOnlyParams{
+		GenesisGuardianEnabled: true,
+	}))
+
+	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(sybil))
 	require.NoError(t, err)
 	require.True(t, nextCalled)
 }

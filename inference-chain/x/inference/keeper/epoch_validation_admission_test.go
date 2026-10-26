@@ -40,6 +40,7 @@ func TestSubmitPocValidationsV2_SkipsUnregisteredModelAndGhostTarget(t *testing.
 		RootHash:                 make([]byte, 32),
 		ModelId:                  testPoCModelID,
 	}))
+	seedPocValidationSnapshot(t, k, sdkCtx, 100, testutil.Validator, testPoCModelID, testPoCModelID2)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
@@ -242,6 +243,7 @@ func TestSubmitPocValidationsV2_StageCapStoresOnlyTheFirstVote(t *testing.T) {
 			ModelId:                  testPoCModelID,
 		}))
 	}
+	seedPocValidationSnapshot(t, k, sdkCtx, 100, testutil.Validator, testPoCModelID)
 
 	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
@@ -278,6 +280,99 @@ func TestSubmitPocValidationsV2_StageCapStoresOnlyTheFirstVote(t *testing.T) {
 	stillAbsent, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
 	require.NoError(t, err)
 	require.False(t, stillAbsent)
+}
+
+func TestSubmitPocValidationsV2_SnapshotVoterEligibilityAndGuardian(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator2)
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor)
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID})
+	require.NoError(t, k.SetPoCV2StoreCommit(sdkCtx, types.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Count:                    10,
+		RootHash:                 make([]byte, 32),
+		ModelId:                  testPoCModelID,
+	}))
+
+	msgServer := keeper.NewMsgServerImpl(k)
+
+	// Missing snapshot rejects the message.
+	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
+		},
+	})
+	require.ErrorIs(t, err, types.ErrIllegalState)
+
+	// Seed snapshot where testutil.Validator has positive voting power and
+	// testutil.Executor has a zero-weight bootstrap entry for testPoCModelID.
+	require.NoError(t, k.SetPoCValidationSnapshot(sdkCtx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 100,
+		SnapshotHeight:      155,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: testPoCModelID,
+			VotingPowers: []*types.VotingPowerEntry{
+				{Address: testutil.Validator, VotingPower: 100},
+				{Address: testutil.Executor, VotingPower: 0},
+			},
+		}},
+	}))
+
+	// Registered participant without voting power (or with 0 voting power) in the snapshot stores 0 rows.
+	for _, ineligible := range []string{testutil.Validator2, testutil.Executor} {
+		_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+			Creator:                  ineligible,
+			PocStageStartBlockHeight: 100,
+			Validations: []*types.PoCValidationEntryV2{
+				{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
+			},
+		})
+		require.NoError(t, err)
+		hasIneligibleVote, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, ineligible)
+		require.NoError(t, err)
+		require.False(t, hasIneligibleVote)
+	}
+
+	// Enabling testutil.Validator2 as a genesis guardian allows its tiebreaker vote.
+	guardianAcc := sdk.MustAccAddressFromBech32(testutil.Validator2)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		GuardianAddresses: []string{sdk.ValAddress(guardianAcc).String()},
+	}
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(sdkCtx, &types.GenesisOnlyParams{
+		GenesisGuardianEnabled: true,
+	}))
+
+	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator2,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
+		},
+	})
+	require.NoError(t, err)
+	hasGuardianVote, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, testutil.Validator2)
+	require.NoError(t, err)
+	require.True(t, hasGuardianVote)
 }
 
 func TestMLNodeWeightDistribution_RawRowOverflowBeforePermission(t *testing.T) {

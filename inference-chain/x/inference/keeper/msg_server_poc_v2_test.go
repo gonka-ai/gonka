@@ -23,6 +23,41 @@ func registerPoCParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr
 	}))
 }
 
+func seedPocValidationSnapshot(t *testing.T, k keeper.Keeper, ctx sdk.Context, stage int64, validator string, modelIDs ...string) {
+	t.Helper()
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, stage)
+	require.NoError(t, err)
+	if !found {
+		snapshot = types.PoCValidationSnapshot{
+			PocStageStartHeight: stage,
+			SnapshotHeight:      stage + 55,
+			TotalNetworkWeight:  100,
+		}
+	}
+	for _, modelID := range modelIDs {
+		updated := false
+		for _, mvw := range snapshot.ModelVotingPowers {
+			if mvw.ModelId == modelID {
+				mvw.VotingPowers = append(mvw.VotingPowers, &types.VotingPowerEntry{
+					Address:     validator,
+					VotingPower: 100,
+				})
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			snapshot.ModelVotingPowers = append(snapshot.ModelVotingPowers, &types.ModelVotingPowers{
+				ModelId: modelID,
+				VotingPowers: []*types.VotingPowerEntry{
+					{Address: validator, VotingPower: 100},
+				},
+			})
+		}
+	}
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, snapshot))
+}
+
 func seedPocValidationAdmission(t *testing.T, k keeper.Keeper, ctx sdk.Context, participant, modelID string, stage int64) {
 	t.Helper()
 	k.SetModel(ctx, &types.Model{Id: modelID})
@@ -34,6 +69,7 @@ func seedPocValidationAdmission(t *testing.T, k keeper.Keeper, ctx sdk.Context, 
 		RootHash:                 make([]byte, 32),
 		ModelId:                  modelID,
 	}))
+	seedPocValidationSnapshot(t, k, ctx, stage, testutil.Validator, modelID)
 }
 
 // Test SetPocValidationV2 error handling (no panic)

@@ -133,7 +133,7 @@ const (
 	MaxValidationsPerMessage = 128
 	// MaxValidationsPerSignerPerStage stops further stores once this signer
 	// already has this many rows for the stage.
-	MaxValidationsPerSignerPerStage = 256
+	MaxValidationsPerSignerPerStage = 512
 )
 
 // DefaultEpochValidationParams is the governance value written at genesis

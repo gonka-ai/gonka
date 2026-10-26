@@ -287,6 +287,18 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 			return inferencetypes.ErrIllegalState
 		}
 	}
+	eligibility, found, err := ppd.inferenceKeeper.BuildPocStageVoterEligibility(ctx, msg.PocStageStartBlockHeight, signer.String())
+	if err != nil {
+		return err
+	}
+	if !found {
+		return inferencetypes.ErrIllegalState.Wrap("validation snapshot not found for stage")
+	}
+	for _, validation := range msg.Validations {
+		if !eligibility.CanValidateModel(validation.ModelId) {
+			return inferencetypes.ErrIllegalState.Wrap("signer has no voting power for model in stage snapshot")
+		}
+	}
 	return nil
 }
 

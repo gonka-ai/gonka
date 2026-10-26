@@ -88,6 +88,17 @@ func setupMsgExecCheckTx(t *testing.T, registerParticipant bool) msgExecCheckTxF
 		Count:                    100,
 		RootHash:                 make([]byte, 32),
 	}))
+	require.NoError(t, testApp.InferenceKeeper.SetPoCValidationSnapshot(ctx, inferencetypes.PoCValidationSnapshot{
+		PocStageStartHeight: 1,
+		SnapshotHeight:      1,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*inferencetypes.ModelVotingPowers{{
+			ModelId: "test-model",
+			VotingPowers: []*inferencetypes.VotingPowerEntry{
+				{Address: granter.String(), VotingPower: 100},
+			},
+		}},
+	}))
 
 	_, err = testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
 		Height: testApp.LastBlockHeight() + 1,

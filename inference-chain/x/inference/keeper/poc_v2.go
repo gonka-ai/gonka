@@ -10,6 +10,7 @@ import (
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 func pocValidationV2Key(pocStageStartBlockHeight int64, participantAddr sdk.AccAddress, modelID string, validatorAddr sdk.AccAddress) collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]] {
@@ -186,6 +187,68 @@ func (k Keeper) HasPoCV2StoreCommit(ctx context.Context, pocStageStartBlockHeigh
 		return false, err
 	}
 	return k.PoCV2StoreCommits.Has(ctx, pocV2StoreCommitKey(pocStageStartBlockHeight, addr, modelID))
+}
+
+type PocStageVoterEligibility struct {
+	eligibleModels map[string]bool
+}
+
+func (k Keeper) IsGenesisGuardianAccAddress(ctx context.Context, validatorAddr string) bool {
+	if !k.GetGenesisGuardianEnabled(ctx) {
+		return false
+	}
+	for _, opAddr := range k.GetGenesisGuardianAddresses(ctx) {
+		accAddr, err := utils.OperatorAddressToAccAddress(opAddr)
+		if err == nil && accAddr == validatorAddr {
+			return true
+		}
+	}
+	return false
+}
+
+func (k Keeper) BuildPocStageVoterEligibility(
+	ctx context.Context,
+	pocStageStartBlockHeight int64,
+	validatorAddr string,
+) (PocStageVoterEligibility, bool, error) {
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, pocStageStartBlockHeight)
+	if err != nil || !found || len(snapshot.ModelVotingPowers) == 0 {
+		return PocStageVoterEligibility{}, false, err
+	}
+
+	isGuardian := k.IsGenesisGuardianAccAddress(ctx, validatorAddr)
+	eligibleModels := make(map[string]bool, len(snapshot.ModelVotingPowers))
+	hasActiveModel := false
+	for _, mvw := range snapshot.ModelVotingPowers {
+		if mvw == nil || mvw.ModelId == "" || len(mvw.VotingPowers) == 0 {
+			continue
+		}
+		hasActiveModel = true
+		if isGuardian {
+			eligibleModels[mvw.ModelId] = true
+			continue
+		}
+		for _, e := range mvw.VotingPowers {
+			if e != nil && e.Address == validatorAddr && e.VotingPower > 0 {
+				eligibleModels[mvw.ModelId] = true
+				break
+			}
+		}
+	}
+	if !hasActiveModel {
+		return PocStageVoterEligibility{}, false, nil
+	}
+
+	return PocStageVoterEligibility{
+		eligibleModels: eligibleModels,
+	}, true, nil
+}
+
+// CanValidateModel returns true when the signer bound to this eligibility
+// object has positive voting power for modelID in the stage snapshot, or is an
+// enabled genesis guardian for a model present in the snapshot.
+func (e PocStageVoterEligibility) CanValidateModel(modelID string) bool {
+	return e.eligibleModels[modelID]
 }
 
 // SetPocValidationV2 stores a PoC v2 validation. Returns error on invalid addresses or storage failure.
