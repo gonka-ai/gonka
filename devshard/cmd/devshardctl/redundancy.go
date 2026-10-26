@@ -558,6 +558,11 @@ type Redundancy struct {
 
 	servedBindingStrikes sync.WaitGroup
 
+	// emptyStrikes are the empty-stream strikes left to a challenge, and the
+	// outcomes that came before their strike, by nonce (holdEmptyStreamStrike).
+	emptyStrikesMu sync.Mutex
+	emptyStrikes   map[uint64]*emptyStreamStrike
+
 	// Detached race cleanups outlive the request that spawned them, so they get
 	// their own cancellation root and are joined by Stop. Built lazily because
 	// Redundancy is also constructed as a struct literal.
@@ -641,6 +646,7 @@ func (e *Redundancy) Stop() {
 	}
 	e.waitRaceCleanups()
 	e.servedBindingStrikes.Wait()
+	e.settleEmptyStreamStrikes()
 }
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
@@ -5287,8 +5293,8 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 			// Reasoning-burn outcome: the model emitted completion tokens but
 			// no content. Telemetry-only — not a host fault, no quarantine.
 			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
-		} else {
-			e.participantLimiter.ObserveEmptyStreamForModelWithStats(participantKey, e.model, emptyStreamQuarantineStats(inf, params))
+		} else if stats := emptyStreamQuarantineStats(inf, params); !e.holdEmptyStreamStrike(inf, participantKey, stats) {
+			e.participantLimiter.ObserveEmptyStreamForModelWithStats(participantKey, e.model, stats)
 		}
 	}
 	if !requestSucceeded && emptyStream {
