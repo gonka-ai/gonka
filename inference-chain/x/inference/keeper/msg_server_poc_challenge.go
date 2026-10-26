@@ -132,6 +132,11 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
+	// Repeated here because a message nested in authz MsgExec reaches the
+	// server without baseapp calling ValidateBasic for it.
+	if err := types.ValidatePoCChallengeValidationEntries(msg.Validations); err != nil {
+		return nil, err
+	}
 	params, err := k.GetParams(goCtx)
 	if err != nil {
 		return nil, err
@@ -139,18 +144,20 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	if !params.PocParams.PocV2Enabled {
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
-	creatorAddr, err := decodePoCCreator(msg.Creator)
+	validatorAddr, err := types.CanonicalAccAddress(msg.Creator)
 	if err != nil {
-		return nil, err
+		return nil, sdkerrors.Wrapf(types.ErrInvalidAddress, "invalid creator address: %v", err)
 	}
-	if k.IsPoCParticipantBlocked(goCtx, creatorAddr.String()) {
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, creatorAddr.String())
+	validator := validatorAddr.String()
+	if k.IsPoCParticipantBlocked(goCtx, validator) {
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, validator)
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	height := ctx.BlockHeight()
 	startBlockHeight := msg.PocStageStartBlockHeight
-	if err := k.validateChallengeVoteWindow(goCtx, height, startBlockHeight, params); err != nil {
+	snapshotKey, err := k.validateChallengeVoteWindow(goCtx, height, params)
+	if err != nil {
 		return nil, err
 	}
 	epochIndex, ok := k.GetEffectiveEpochIndex(goCtx)
@@ -158,18 +165,35 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		return nil, types.ErrEffectiveEpochNotFound
 	}
 
+	// Only votes from validators with voting power in the segment's snapshot
+	// are counted when the segment is decided, so anything else is dropped
+	// here instead of occupying state until the decision.
+	snapshot, found, err := k.GetPoCValidationSnapshot(goCtx, snapshotKey)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, sdkerrors.Wrapf(types.ErrPoCChallengeSnapshotMissing, "snapshot key %d", snapshotKey)
+	}
+	creatorPowerByModel := challengeVoterPowerByModel(snapshot, validator)
+
 	storedCount := 0
+	skippedNoPower := 0
 	for _, validation := range msg.Validations {
-		if validation == nil || validation.ParticipantAddress == "" {
+		if validation == nil || validation.ParticipantAddress == "" || validation.ModelId == "" {
 			continue
 		}
-		if validation.ModelId == "" || !k.IsValidGovernanceModel(goCtx, validation.ModelId) {
+		if creatorPowerByModel[validation.ModelId] <= 0 {
+			skippedNoPower++
+			continue
+		}
+		if !k.IsValidGovernanceModel(goCtx, validation.ModelId) {
 			continue
 		}
 		target, err := types.CanonicalAccAddress(validation.ParticipantAddress)
 		if err != nil {
 			k.LogWarn("[SubmitPoCChallengeValidations] Invalid participant address, skipping", types.PoC,
-				"validator", msg.Creator, "participant", validation.ParticipantAddress, "error", err)
+				"validator", validator, "participant", validation.ParticipantAddress, "error", err)
 			continue
 		}
 		participant := target.String()
@@ -194,22 +218,18 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 			continue
 		}
 
-		validatorAddr, err := types.CanonicalAccAddress(msg.Creator)
-		if err != nil {
-			return nil, sdkerrors.Wrap(types.ErrInvalidAddress, err.Error())
-		}
 		exists, err := k.PoCChallengeValidations.Has(goCtx, collections.Join3(target, validation.ModelId, validatorAddr))
 		if err != nil {
 			return nil, sdkerrors.Wrapf(err, "failed to check existing challenge validation for participant %s", participant)
 		}
 		if exists {
 			k.LogWarn("[SubmitPoCChallengeValidations] Validation already exists, skipping duplicate", types.PoC,
-				"validator", validatorAddr.String(), "participant", participant, "model_id", validation.ModelId)
+				"validator", validator, "participant", participant, "model_id", validation.ModelId)
 			continue
 		}
 		stored := types.PoCValidationV2{
 			ParticipantAddress:          participant,
-			ValidatorParticipantAddress: validatorAddr.String(),
+			ValidatorParticipantAddress: validator,
 			PocStageStartBlockHeight:    startBlockHeight,
 			ValidatedWeight:             validation.ValidatedWeight,
 			ModelId:                     validation.ModelId,
@@ -220,35 +240,58 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		storedCount++
 	}
 	k.LogInfo("[SubmitPoCChallengeValidations] Batch complete", types.PoC,
-		"validator", msg.Creator, "start", startBlockHeight, "storedCount", storedCount)
+		"validator", validator, "start", startBlockHeight, "storedCount", storedCount, "skippedNoPower", skippedNoPower)
 	return &types.MsgSubmitPoCChallengeValidationsResponse{}, nil
 }
 
-func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height, startBlockHeight int64, params types.Params) error {
+// challengeVoterPowerByModel returns the voting power the validator holds per
+// model in the snapshot. Snapshot addresses are canonical bech32, the same
+// spelling the segment decision keys votes by, so a plain string comparison
+// matches the decision exactly.
+func challengeVoterPowerByModel(snapshot types.PoCValidationSnapshot, validator string) map[string]int64 {
+	result := make(map[string]int64, len(snapshot.ModelVotingPowers))
+	for _, mvw := range snapshot.ModelVotingPowers {
+		if mvw == nil {
+			continue
+		}
+		for _, vp := range mvw.VotingPowers {
+			if vp != nil && vp.Address == validator {
+				result[mvw.ModelId] = vp.VotingPower
+				break
+			}
+		}
+	}
+	return result
+}
+
+// validateChallengeVoteWindow checks that the current height is inside an open
+// vote window and returns the key of the validation snapshot that the segment
+// decision for this window will read: the confirmation event trigger height
+// during a confirmation PoC, otherwise the upcoming epoch's PoC start height.
+func (k msgServer) validateChallengeVoteWindow(ctx context.Context, height int64, params types.Params) (int64, error) {
 	if params.EpochParams == nil {
-		return sdkerrors.Wrap(types.ErrIllegalState, "epoch params not set")
+		return 0, sdkerrors.Wrap(types.ErrIllegalState, "epoch params not set")
 	}
 	event, isActive, err := k.GetActiveConfirmationPoCEvent(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if isActive && event != nil && event.Phase != types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		if event.Phase != types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION {
-			return sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC is not in validation")
+			return 0, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC is not in validation")
 		}
 		if !event.IsInValidationWindow(height, params.EpochParams) {
-			return sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
+			return 0, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
 		}
-		return nil
+		return event.TriggerHeight, nil
 	}
 	upcomingEpoch, found := k.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
-		return sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
+		return 0, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
 	}
 	epochContext := types.NewEpochContext(*upcomingEpoch, *params.EpochParams)
 	if !epochContext.IsValidationExchangeWindow(height) {
-		return sdkerrors.Wrap(types.ErrPocTooLate, "PoC validation exchange window is closed")
+		return 0, sdkerrors.Wrap(types.ErrPocTooLate, "PoC validation exchange window is closed")
 	}
-	_ = startBlockHeight
-	return nil
+	return upcomingEpoch.PocStartBlockHeight, nil
 }

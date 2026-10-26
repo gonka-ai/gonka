@@ -544,3 +544,64 @@ func TestDecideLastChallengeSegments_PropagatesWhenUpcomingMissing(t *testing.T)
 	require.True(t, found)
 	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN, ch.State)
 }
+
+// Votes submitted through the message server: only the validator with voting
+// power in the segment snapshot is stored, and the decision is unchanged by
+// the registered accounts without power that voted against the target.
+func TestDecideCurrentChallengeSegment_HandlerVotesWithoutPowerDoNotReachDecision(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 800, 0, []challengeEvalModel{
+		{id: "m1", weight: 100, count: 50, accept: true},
+	})
+	target := sdk.MustAccAddressFromBech32(testutil.Executor)
+	validator := sdk.MustAccAddressFromBech32(testutil.Validator)
+	// prepareChallengeEval seeds the honest vote directly; drop it so every vote goes through the handler.
+	require.NoError(t, k.PoCChallengeValidations.Remove(ctx, collections.Join3(target, "m1", validator)))
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	// The regular vote window of upcoming epoch 3 reads the snapshot keyed by its PoC start height.
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, 180)
+	require.NoError(t, err)
+	require.True(t, found)
+	snapshot.PocStageStartHeight = 2000
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, snapshot))
+	k.SetModel(ctx, &types.Model{Id: "m1"})
+	for _, addr := range []string{testutil.Validator, testutil.Validator2, testutil.Executor2} {
+		require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(addr), types.Participant{
+			Index:   addr,
+			Address: addr,
+		}))
+	}
+	upcoming := types.NewEpochContext(types.Epoch{Index: 3, PocStartBlockHeight: 2000}, *params.EpochParams)
+	voteCtx := ctx.WithBlockHeight(upcoming.StartOfPoCValidation() + 1)
+	ms := keeper.NewMsgServerImpl(k)
+	vote := func(creator string, weight int64) {
+		_, err := ms.SubmitPoCChallengeValidations(voteCtx, &types.MsgSubmitPoCChallengeValidations{
+			Creator:                  creator,
+			PocStageStartBlockHeight: 100,
+			Validations: []*types.PoCValidationEntryV2{{
+				ParticipantAddress: testutil.Executor,
+				ModelId:            "m1",
+				ValidatedWeight:    weight,
+			}},
+		})
+		require.NoError(t, err)
+	}
+	vote(testutil.Validator, 50) // in snapshot: stored
+	vote(testutil.Validator2, 0) // registered, no power: dropped
+	vote(testutil.Executor2, 0)  // registered, no power: dropped
+
+	votes, err := k.ListChallengeValidations(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.Len(t, votes, 1)
+	require.Equal(t, testutil.Validator, votes[0].ValidatorParticipantAddress)
+
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 2000, false))
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+}

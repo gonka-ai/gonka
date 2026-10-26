@@ -219,9 +219,13 @@ func TestSubmitPoCChallengeValidations_WindowsAndSelfVote(t *testing.T) {
 
 	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
 		EpochIndex:            2,
+		TriggerHeight:         70,
 		GenerationStartHeight: 80,
 		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
 	}))
+	seedChallengeVoteSnapshot(t, k, ctx, 70, map[string]map[string]int64{
+		challengeTestModel: {testutil.Executor: 100},
+	})
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	event, ok, err := k.GetActiveConfirmationPoCEvent(ctx)
@@ -251,6 +255,9 @@ func TestSubmitPoCChallengeValidations_RegularWindow(t *testing.T) {
 		Address: testutil.Validator,
 	}))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 3, PocStartBlockHeight: 2000}))
+	seedChallengeVoteSnapshot(t, k, ctx, 2000, map[string]map[string]int64{
+		challengeTestModel: {testutil.Validator: 100},
+	})
 	ms := keeper.NewMsgServerImpl(k)
 	upcoming := types.NewEpochContext(types.Epoch{Index: 3, PocStartBlockHeight: 2000}, *challengeEpochParams())
 	height := upcoming.StartOfPoCValidation() + 1

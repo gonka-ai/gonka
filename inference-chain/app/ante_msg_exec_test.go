@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -231,4 +232,47 @@ func TestMsgExecAuthorizationDecorator_NonGenericAuthorizationFails(t *testing.T
 	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
 	require.ErrorIs(t, err, authz.ErrNoAuthorizationFound)
 	require.False(t, nextCalled)
+}
+
+func challengeVoteExecMsg(entryCount int) *inferencetypes.MsgSubmitPoCChallengeValidations {
+	entries := make([]*inferencetypes.PoCValidationEntryV2, 0, entryCount)
+	for i := 0; i < entryCount; i++ {
+		entries = append(entries, &inferencetypes.PoCValidationEntryV2{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            fmt.Sprintf("model-%d", i),
+			ValidatedWeight:    1,
+		})
+	}
+	return &inferencetypes.MsgSubmitPoCChallengeValidations{
+		Creator:                  testutil.Creator,
+		PocStageStartBlockHeight: 1,
+		Validations:              entries,
+	}
+}
+
+func TestMsgExecAuthorizationDecorator_InnerChallengeVotesOverCapFails(t *testing.T) {
+	_, ctx, ak, decorator := setupMsgExecAuthzAnte(t)
+
+	granter := sdk.MustAccAddressFromBech32(testutil.Creator)
+	grantee := sdk.MustAccAddressFromBech32(testutil.Executor)
+	inner := challengeVoteExecMsg(inferencetypes.MaxPoCChallengeValidationsPerMsg + 1)
+	ak.save(grantee, granter, authz.NewGenericAuthorization(sdk.MsgTypeURL(inner)))
+
+	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds maximum count")
+	require.False(t, nextCalled)
+}
+
+func TestMsgExecAuthorizationDecorator_InnerChallengeVotesAtCapPasses(t *testing.T) {
+	_, ctx, ak, decorator := setupMsgExecAuthzAnte(t)
+
+	granter := sdk.MustAccAddressFromBech32(testutil.Creator)
+	grantee := sdk.MustAccAddressFromBech32(testutil.Executor)
+	inner := challengeVoteExecMsg(inferencetypes.MaxPoCChallengeValidationsPerMsg)
+	ak.save(grantee, granter, authz.NewGenericAuthorization(sdk.MsgTypeURL(inner)))
+
+	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
 }
