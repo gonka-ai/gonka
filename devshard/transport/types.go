@@ -37,6 +37,9 @@ type InferenceRequest struct {
 	// ForceHeightSyncAnchor triggers manual-force Anchor on this message (policy hook).
 	ForceHeightSyncAnchor        bool  `json:"force_height_sync_anchor,omitempty"`
 	LogprobsOptimizationOverride *bool `json:"logprobs_optimization_override,omitempty"`
+	// ChatFrames is the gateway's frame schedule. A host that predates it
+	// ignores the field and sends one unsigned frame per event.
+	ChatFrames *host.ChatFrameSchedule `json:"chat_frames,omitempty"`
 }
 
 // InferenceResponse is the JSON body returned by the inference endpoint.
@@ -193,6 +196,7 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 		Nonce:                        req.Nonce,
 		ForceHeightSyncAnchor:        req.ForceHeightSyncAnchor,
 		LogprobsOptimizationOverride: req.LogprobsOptimizationOverride,
+		ChatFrames:                   req.ChatFrames,
 	}
 	ir.Payload = PayloadToJSON(req.Payload)
 	return ir, nil
@@ -214,6 +218,7 @@ func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
 		Nonce:                        ir.Nonce,
 		ForceHeightSyncAnchor:        ir.ForceHeightSyncAnchor,
 		LogprobsOptimizationOverride: ir.LogprobsOptimizationOverride,
+		ChatFrames:                   ir.ChatFrames,
 	}
 	req.Payload = PayloadFromJSON(ir.Payload)
 	return req, nil

@@ -259,6 +259,9 @@ type InferenceParams struct {
 	Stream                       bool
 	ForceHeightSyncAnchor        bool
 	LogprobsOptimizationOverride *bool
+	// ChatFrames is the frame schedule the executor is asked for. Nil is the
+	// executor's default.
+	ChatFrames *host.ChatFrameSchedule
 }
 
 type warmCheckKey struct {
@@ -1250,9 +1253,10 @@ func (s *Session) ProcessResponse(hostIdx int, resp *host.HostResponse, inferenc
 
 // PreparedInference holds the data prepared under lock for an inference send.
 type PreparedInference struct {
-	diff    types.Diff
-	hostIdx int
-	catchUp []types.Diff
+	diff       types.Diff
+	hostIdx    int
+	promptHash []byte
+	catchUp    []types.Diff
 	// farBehind marks a host more than one catch-up chunk behind. SendOnly
 	// builds its catch-up with catchUpForSend instead of using catchUp.
 	farBehind bool
@@ -1902,12 +1906,13 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		s.validateCatchUp(catchUp, nonce, hostIdx)
 	}
 	return &PreparedInference{
-		diff:      diff,
-		hostIdx:   hostIdx,
-		catchUp:   catchUp,
-		farBehind: !inline,
-		params:    params,
-		isProbe:   probe,
+		diff:       diff,
+		hostIdx:    hostIdx,
+		promptHash: promptHash,
+		catchUp:    catchUp,
+		farBehind:  !inline,
+		params:     params,
+		isProbe:    probe,
 	}, nil
 }
 
@@ -1968,6 +1973,9 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		HeightSyncEscrow:             s.heightSyncEscrowHints(),
 		Payload:                      p.Payload(),
 		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
+		ChatFrames:                   p.params.ChatFrames,
+		PromptHash:                   p.promptHash,
+		FrameSignerAllowed:           s.frameSignerAllowed(p.hostIdx),
 	}, stream, func(partial *host.HostResponse) {
 		if s.confirmStartOnReceipt(p.diff.Nonce, partial) && receiptHandler != nil {
 			receiptHandler()
@@ -3176,6 +3184,19 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
+}
+
+// frameSignerAllowed reports whether an address may sign the Chat frames
+// that hostIdx sends: its cold key or a warm key bound to it, the same rule
+// the gateway applies to that host's state signatures.
+func (s *Session) frameSignerAllowed(hostIdx int) func(string) bool {
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return nil
+	}
+	expected := s.group[hostIdx].ValidatorAddress
+	return func(recovered string) bool {
+		return recovered == expected || s.warmKeyAuthorized(recovered, expected)
+	}
 }
 
 func (s *Session) warmKeyAuthorized(warm, cold string) bool {

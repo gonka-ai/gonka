@@ -258,6 +258,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:                    req.MaxTokens,
 		StartedAt:                    time.Now().Unix(),
 		LogprobsOptimizationOverride: logprobsOptimizationOverride,
+		ChatFrames:                   chatFrameSchedule,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
