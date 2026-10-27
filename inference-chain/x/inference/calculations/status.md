@@ -1,57 +1,70 @@
 # Participant Status Calculation — Technical Specification
 
-Last updated: 2025-10-27 14:54
+Last updated: 2026-10-26
 
 This document provides a formal description of the status calculation implemented in `status.go` for the Inference module. It defines inputs, outputs, decision logic, and the statistical foundations used to classify participants.
-
 
 ## Inputs and Outputs
 
 - Inputs to `ComputeStatus`:
-  - `validationParameters` (`*types.ValidationParams`), notably `FalsePositiveRate` (denoted $`p \in (0,1)`$) and `MinRampUpMeasurements` (a positive integer cap for ramp-up observations).
+  - `validationParameters` (`*types.ValidationParams`), providing `FalsePositiveRate` ($`p \in (0,1)`$), `QuickFailureThreshold`, the invalidation SPRT parameters (`BadParticipantInvalidationRate`, `InvalidationHThreshold`) and the downtime SPRT parameters (`DowntimeGoodPercentage`, `DowntimeBadPercentage`, `DowntimeHThreshold`).
+  - `confirmationPocParams` (`*types.ConfirmationPoCParams`), providing `AlphaThreshold`. `SlashFraction` is deprecated and not read here.
   - `participant` (`types.Participant`) with fields:
+    - `Status` (any existing `INVALID`/`INACTIVE` short-circuits)
     - `ConsecutiveInvalidInferences` (denoted $`N`$)
     - `CurrentEpochStats` (may be `nil`), with fields
       - `ValidatedInferences` (denoted $`V`$)
       - `InvalidatedInferences` (denoted $`I`$)
-      - $`\text{InferenceCount} = V + I`$ (denoted $`n`$)
-    - `EpochsCompleted` (denoted $`E`$)
-
+      - `InferenceCount` (denoted $`n`$)
+      - `MissedRequests`, and the running likelihood ratios `InvalidLLR` / `InactiveLLR`
+      - `ConfirmationPoCRatio`
+  - `precomputed` (`types.SPRTPrecomputedValues`): log-likelihood increments derived from the parameters by `PrecomputeSPRTValues` in `keeper/sprt_precompute.go`.
 - Outputs from `ComputeStatus`:
-  - $`\text{status} \in \{\text{ACTIVE},\ \text{RAMPING},\ \text{INVALID}\}`$
-  - $`\text{reason} \in \{\text{""},\ \text{consecutive\_failures},\ \text{ramping},\ \text{statistical\_invalidations}\}`$
+  - $`\text{status} \in \{\text{ACTIVE},\ \text{INACTIVE},\ \text{INVALID}\}`$
+  - $`\text{reason} \in \{``,\ \text{consecutive\_failures},\ \text{statistical\_invalidations},\ \text{downtime},\ \text{failed\_confirmation\_poc},\ \text{algorithm\_error},\ \text{already\_set}\}`$
+  - the updated `CurrentEpochStats` (the SPRT log-likelihood ratios advance in place)
 
+`RAMPING` is a deprecated enum value. `computations.Ramping` is still declared as a reason constant, but nothing returns it.
 
 ## High-Level Decision Procedure
 
-The function `ComputeStatus(p, participant)` returns a status and reason according to the following ordered checks:
+`ComputeStatus` returns a status and reason according to the following ordered checks:
 
 1) Genesis short-circuit
-- If `validationParameters == nil` or `validationParameters.FalsePositiveRate == nil`:
-  - Return `ACTIVE, ""` (test-only genesis behavior).
+- If `validationParameters == nil`, or `FalsePositiveRate == nil`, or `QuickFailureThreshold == nil`:
+  - Return `ACTIVE, ""`.
 
-2) Consecutive failure improbability test
-- Using expected false-positive rate $`p = \text{FalsePositiveRate.ToFloat()}`$ and consecutive failures $`N = \text{participant.ConsecutiveInvalidInferences}`$, compute
-  - $`P(F^N \mid G) = p^N`$.
-- If $`p^N < 10^{-6}`$, return `INVALID, consecutive_failures`.
+2) Already terminal
+- If `participant.Status` is `INVALID` or `INACTIVE`: return that status with `already_set`.
+- These can only be reset deliberately, at epoch start.
 
 3) Epoch stats defaulting
-- If `participant.CurrentEpochStats == nil`, instantiate an empty `CurrentEpochStats{}` (for genesis tests/automation only).
+- If `participant.CurrentEpochStats == nil`, use an empty `CurrentEpochStats{}`. Missing LLRs default to zero.
 
-4) Z-score deviation test and ramping gate
-- Compute the one-sided standardized deviation of observed invalidation rate from `p` using
-  - $`z = (I/n - p) / \sqrt{p(1-p)/n}`$, with the conventions:
-    - If $`n = 0`$, then $`z := 0`$.
-    - If $`\frac{p(1-p)}{n} = 0`$, then $`z := 0`$.
-- Compute the minimal measurement count required by `MeasurementsNeeded(p, max)` (see Section “Ramp-up threshold”). Let $`\text{needed}`$ be its return and $`E`$ be $`\text{EpochsCompleted}`$.
-- If $`n < \text{needed}`$ and $`E < 1`$, return `RAMPING, ramping`.
-- Else if $`z > 1`$, return `INVALID, statistical_invalidations`.
+4) Consecutive failure improbability test
+- With expected false-positive rate $`p`$ and consecutive failures $`N`$, compute $`P(F^N \mid G) = p^N`$.
+- If $`p^N < \text{QuickFailureThreshold}`$ (default $`10^{-6}`$), return `INVALID, consecutive_failures`.
 
-5) Default
+5) Invalidation SPRT
+- Advance `InvalidLLR` by the validated/invalidated deltas since the previous call and return its decision:
+  - `Fail` → `INVALID, statistical_invalidations`
+  - `Error` → `ACTIVE, algorithm_error` (missing `BadParticipantInvalidationRate`, `InvalidationHThreshold` or precomputed values)
+  - `Pass`/`Undetermined` → continue
+
+6) Downtime SPRT
+- Advance `InactiveLLR` by the inference/missed-request deltas since the previous call and return its decision:
+  - `Fail` → `INACTIVE, downtime`
+  - `Error` → `ACTIVE, algorithm_error` (missing downtime parameters or precomputed values)
+  - `Pass`/`Undetermined` → continue
+
+7) Confirmation PoC
+- If `ConfirmationPoCRatio < AlphaThreshold`, return `INACTIVE, failed_confirmation_poc`.
+- A nil/zero `AlphaThreshold` or a missing ratio passes.
+
+8) Default
 - Return `ACTIVE, ""`.
 
 The order is strict and deterministic.
-
 
 ## Formal Components
 
@@ -65,150 +78,126 @@ $$
 
 Decision rule:
 
-- If $`p^N < 10^{-6}`$ (i.e., rarer than one in a million), classify as `INVALID` due to `consecutive_failures`.
+- If $`p^N < \text{QuickFailureThreshold}`$ (default $`10^{-6}`$, i.e. rarer than one in a million), classify as `INVALID` due to `consecutive_failures`.
 
 Example:
-- For $`p = 0.01`$, $`p^3 = 10^{-6}`$. Because the code uses a strict inequality $`< 10^{-6}`$, one needs $`N \ge 4`$ consecutive invalidations to trigger this rule.
+- With the default $`p = 0.05`$, $`p^4 \approx 6.3 \times 10^{-6}`$ and $`p^5 \approx 3.1 \times 10^{-7}`$, so one needs $`N \ge 5`$ consecutive invalidations to trigger this rule.
 
+### 2) Sequential Probability Ratio Test
 
-### 2) Z-score for observed invalidation rate
+Both the invalidation and the downtime checks are two-sided SPRTs over a running log-likelihood ratio, not z-scores. Each new measurement adds a fixed increment:
 
-Let $`n = V + I`$ be the number of validated measurements in the current epoch, and let the observed invalidation rate be $`\hat{q} = I/n`$. Under the binomial model with null proportion $`p`$, the standard error of $`\hat{q}`$ is
+- on failure: $`\ln(p_1 / p_0)`$
+- on pass: $`\ln((1 - p_1) / (1 - p_0))`$
 
-$$
-\operatorname{SE}(\hat{q}) = \sqrt{\frac{p(1-p)}{n}}.
-$$
+where $`p_0`$ is the rate expected of a good participant and $`p_1`$ the rate expected of a bad one. The increments are computed once per block into the transient store by `PrecomputeSPRTValues` (`CalculateLogLLR`, 12-digit precision) and passed in as `precomputed`. When a precomputed value is missing, the zero default turns the test off rather than misclassifying anyone.
 
-The standardized deviation (z-score) used is
+A state is reached once the accumulated LLR crosses a symmetric threshold $`\pm H`$:
 
-$$
- z = \frac{\hat{q} - p}{\sqrt{\frac{p(1-p)}{n}}}.
-$$
+- $`\text{LLR} \ge H`$ → `Fail`
+- $`\text{LLR} \le -H`$ → `Pass`
+- otherwise → `Undetermined`
 
-Conventions:
-- If $`n = 0`$, set $`z = 0`$.
-- If $`\frac{p(1-p)}{n} = 0`$, set $`z = 0`$.
+Parameter mapping:
 
-Decision rule (one-sided):
-- If $`z > 1`$, classify as `INVALID` due to `statistical_invalidations`.
+| Test | $`p_1`$ | $`p_0`$ | $`H`$ |
+|---|---|---|---|
+| Invalidation | `BadParticipantInvalidationRate` (default 0.20) | `FalsePositiveRate` (default 0.05) | `InvalidationHThreshold` (default 4) |
+| Downtime | `DowntimeBadPercentage` (default 0.20) | `DowntimeGoodPercentage` (default 0.10) | `DowntimeHThreshold` (default 4) |
+
+The LLRs are persisted per participant and per epoch, so the test accumulates across status computations within an epoch rather than restarting each time. They are reset with the rest of `CurrentEpochStats` at the epoch boundary.
 
 Interpretation:
-- This is a one-sided test at approximately the 84th percentile threshold; it flags participants whose observed invalidation rate is more than one standard deviation higher than expected. This threshold is intentionally lenient and is gated behind the ramp-up rule for early measurements.
+- Because both bounds are applied to the same statistic, a participant can be cleared (`Pass`) as well as failed. A `Pass` on downtime does not force `ACTIVE`; the later checks still run.
 
+### 3) Ramp-up gate: deprecated
 
-### 3) Ramp-up threshold: `MeasurementsNeeded(p, max)`
+Earlier versions gated the statistical test behind `MeasurementsNeeded(p, max)`, with `max = MinRampUpMeasurements`. Neither function nor parameter is read by this code any more:
 
-Purpose: Ensure sufficient sample size so that a single invalidation is not trivially expected to exceed one standard deviation (preventing premature classification while data is scarce).
+- `MeasurementsNeeded` and `CalculateZScoreFromFPR` no longer exist in the package.
+- `ValidationParams.MinRampUpMeasurements` is deprecated and has no effect. So are `ValidationParams.PassValue`, `EpochParams.EpochMultiplier`, `PocParams.DefaultDifficulty`, the `TokenomicsParams` subsidy fields and the `BitcoinRewardParams` bonus factors; see `params.proto`.
 
-Implementation:
-
-```
-func MeasurementsNeeded(p float64, max uint64) uint64 {
-    if p <= 0 || p >= 1 { panic("Probability p must be between 0 and 1, exclusive") }
-    requiredValue := (3 + math.Sqrt(5)) / 2
-    n := requiredValue / p
-    needed := uint64(math.Ceil(n))
-    if needed > max { return max }
-    return needed
-}
-```
-
-The function caps the requirement by `max = MinRampUpMeasurements` to bound the ramp-up window.
-
-Heuristic derivation (as per in-code comment): consider wanting the deviation of one failure from expectation to lie within one standard deviation. Let `y = np`. Starting from
-
-$$
-\left|1 - np\right| \le \sqrt{np(1-p)},
-$$
-
-this can be manipulated into a quadratic inequality in `y` which admits the sufficient condition
-
-$$
- y \ge \frac{3 + \sqrt{5}}{2} \approx 2.618.
-$$
-
-Thus, a sufficient number of measurements is
-
-$$
- n \ge \frac{\tfrac{3 + \sqrt{5}}{2}}{p}.
-$$
-
-The implementation takes the ceiling and applies an upper bound `max`.
-
-Remarks:
-- The derivation is heuristic and intentionally simple to keep runtime and determinism constraints; the chosen constant produces conservative behavior across a broad range of `p` values.
-- Panics on invalid `p` (outside `(0,1)`).
-
+Nothing in `ComputeStatus` inspects `EpochsCompleted`, so there is no sample-size floor: a participant is judged from its first measurement.
 
 ## Complete Decision Logic (pseudo-code)
 
 ```text
-Input: p (false-positive rate), N (consecutive invalidations),
-       V, I (validated/invalidated counts), E (epochs completed),
-       max = MinRampUpMeasurements
+Input: p (false-positive rate), threshold (QuickFailureThreshold),
+       N (consecutive invalidations), status, stats,
+       invalidation SPRT (H, LLR, logFail, logPass),
+       downtime SPRT (H, LLR, logFail, logPass),
+       alpha (ConfirmationPoC.AlphaThreshold), ratio (ConfirmationPoCRatio)
 
-If p is unset -> return ACTIVE, ""
-If p^N < 1e-6 -> return INVALID, consecutive_failures
-If CurrentEpochStats is nil -> set to empty
-n := V + I
-z := 0
-if n > 0 and p(1-p)/n > 0 then
-    z := (I/n - p) / sqrt(p(1-p)/n)
-needed := min( ceil(((3+sqrt(5))/2)/p), max )
-If n < needed and E < 1 -> return RAMPING, ramping
-If z > 1 -> return INVALID, statistical_invalidations
+If p is unset or threshold is unset -> return ACTIVE, ""
+If status is INVALID or INACTIVE -> return status, already_set
+If stats is nil -> set to empty
+If p^N < threshold -> return INVALID, consecutive_failures
+
+LLR_invalid += dInvalidated*logFail_invalid + dValidated*logPass_invalid
+if LLR_invalid >= H_invalid -> return INVALID, statistical_invalidations
+if SPRT params missing      -> return ACTIVE, algorithm_error
+
+LLR_inactive += dMissed*logFail_inactive + dInference*logPass_inactive
+if LLR_inactive >= H_inactive -> return INACTIVE, downtime
+if SPRT params missing       -> return ACTIVE, algorithm_error
+
+if alpha is set and ratio is set and ratio < alpha
+    -> return INACTIVE, failed_confirmation_poc
+
 return ACTIVE, ""
 ```
 
-
 ## Determinism and Chain Safety
 
-- The algorithm uses only basic arithmetic on scalar values; it does not iterate over Go maps nor use randomness in state derivation. This preserves deterministic behavior across nodes, conforming to blockchain consensus requirements.
+- The algorithm uses only decimal arithmetic on scalar values; it does not iterate over Go maps nor use randomness in state derivation. This preserves deterministic behavior across nodes, conforming to blockchain consensus requirements.
 - All thresholds and inequalities are fixed, with no dependence on runtime-ordering of non-deterministic data structures.
-
+- The log-likelihood increments come from the transient store, recomputed identically on every node each block.
 
 ## Edge Cases and Guards
 
-- If $`n = 0`$, z-score computation returns $`0`$.
-- If $`\frac{p(1-p)}{n} = 0`$, z-score computation returns $`0`$ (prevents division by zero when $`p`$ is extreme or $`n=0`$).
-- `probabilityOfConsecutiveFailures(p, N)` panics if $`p \notin [0,1]`$ or $`N < 0`$.
-- `MeasurementsNeeded(p, max)` panics if $`p \notin (0,1)`$.
+- A nil `ValidationParams`, `FalsePositiveRate` or `QuickFailureThreshold` short-circuits to `ACTIVE`.
+- Missing SPRT parameters or precomputed values return `Error`, which maps to `ACTIVE` with `algorithm_error`, never to a punitive status.
+- `probabilityOfConsecutiveFailures` returns `0` for a rate outside `[0,1]` or a negative count instead of panicking.
+- A nil/zero `AlphaThreshold` or a missing `ConfirmationPoCRatio` passes the confirmation PoC check.
 - `CurrentEpochStats` is defaulted to an empty struct when `nil` to simplify test/genesis flows.
-
 
 ## Complexity
 
 - Time: O(1)
 - Space: O(1)
 
-
 ## Practical Examples
 
-- Consecutive failure tripwire:
-  - $`p = 0.01`$, $`N = 4`$ → $`p^N = 10^{-8} < 10^{-6}`$ → `INVALID (consecutive_failures)`.
-  - $`p = 0.01`$, $`N = 3`$ → $`p^N = 10^{-6}`$ (not strictly less) → does not trigger.
+- Consecutive failure tripwire with the default $`p = 0.05`$:
+  - $`N = 5`$ → $`p^N \approx 3.1 \times 10^{-7} < 10^{-6}`$ → `INVALID (consecutive_failures)`.
+  - $`N = 4`$ → $`p^N \approx 6.3 \times 10^{-6}`$ → does not trigger.
+  - The inequality is strict: with $`p = 0.01`$, $`N = 3`$ gives exactly $`10^{-6}`$ and does not trigger.
 
-- Ramping threshold (with `max = 10_000` for illustration):
-  - $`p = 0.02`$ → $`\text{needed} = \lceil 2.618/0.02 \rceil = \lceil 130.9 \rceil = 131`$.
-  - If $`n = 100`$ and $`E = 0`$ → `RAMPING`.
+- Statistical invalidations with the defaults ($`p_0 = 0.05`$, $`p_1 = 0.20`$, $`H = 4`$):
+  - $`\ln(p_1/p_0) \approx 1.386`$ per invalidation and $`\ln(0.80/0.95) \approx -0.172`$ per validation.
+  - Three invalidations take the LLR to about $`4.16 \ge 4`$ → `INVALID (statistical_invalidations)`; two only reach $`2.77`$. A single validation in between already keeps three below $`H`$ ($`3.99`$).
+  - With the default $`p = 0.05`$ this test fires before the consecutive-failure tripwire.
 
-- Statistical invalidations:
-  - $`p = 0.02`$, $`n = 500`$, $`I = 20`$ → $`\hat{q} = 0.04`$.
-  - $`\operatorname{SE} = \sqrt{\tfrac{0.02\cdot 0.98}{500}} \approx 0.00626`$, $`z \approx \tfrac{0.04-0.02}{0.00626} \approx 3.19 > 1`$ → `INVALID (statistical_invalidations)` (assuming not in ramping state).
+- Downtime with the defaults ($`p_0 = 0.10`$, $`p_1 = 0.20`$, $`H = 4`$):
+  - $`\ln(p_1/p_0) \approx 0.693`$ per missed request and $`\ln(0.80/0.90) \approx -0.118`$ per served inference.
+  - Six straight misses from a zero start cross the threshold ($`4.16`$).
+  - With 2 served inferences per miss (a 1/3 miss rate), it first crosses after 9 misses and 18 served ($`4.12`$).
 
+- These are the code defaults; governance has set different values on mainnet (as of block 6,756,318, October 2026):
+  - Invalidation: $`p_1 = 0.18`$, $`H = 40`$ with $`p_0 = 0.05`$, so about $`1.281`$ per invalidation and $`-0.147`$ per validation. It takes 32 straight invalidations to cross $`H`$, so the consecutive-failure tripwire ($`N \ge 5`$) fires first.
+  - Downtime: `DowntimeGoodPercentage` and `DowntimeBadPercentage` are both 0.99, so both increments are $`\ln 1 = 0`$ and the downtime test never fires.
 
 ## Notes on Thresholds and Tuning
 
-- The $`10^{-6}`$ rarity threshold is a hard guardrail against streaks of invalidation inconsistent with the declared false-positive rate for good actors.
-- The one-sided $`z > 1`$ rule is permissive and intended for early detection of elevated invalidation rates while avoiding excessive false positives; more conservative thresholds (e.g., $`z > 2`$) can be considered if needed by policy.
-- The ramp-up requirement ensures sufficient evidence before enabling the z-score gate in the first epoch.
-
+- The consecutive-failure threshold is a hard guardrail against streaks of invalidation inconsistent with the declared false-positive rate for good actors.
+- $`H`$ trades sensitivity against the number of observations needed: raising it delays both `Fail` and `Pass`.
+- The SPRT is sequential, so there is no fixed sample size. A participant can be classified after very few measurements if it is far from expected behavior, which is why the deprecated ramp-up gate left no sample-size floor behind.
 
 ## Source References
 
-- `ComputeStatus` orchestrates the checks and returns `(status, reason)`.
-- `CalculateZScoreFromFPR` implements the z-score computation.
-- `MeasurementsNeeded` provides the ramp-up `n` threshold.
-- `probabilityOfConsecutiveFailures` implements the `p^N` calculation.
-
-All of the above are implemented in `x/inference/calculations/status.go`.
+- `ComputeStatus` orchestrates the checks and returns `(status, reason, stats)`.
+- `getInvalidationStatus` and `getInactiveStatus` implement the two SPRT checks.
+- `ConfirmationPoCStatus` implements the alpha threshold check.
+- `SPRT.UpdateCounts` / `SPRT.Decision` in `sprt.go` implement the test itself.
+- `PrecomputeSPRTValues` / `CalculateLogLLR` in `keeper/sprt_precompute.go` derive the increments.
+- `probabilityOfConsecutiveFailures` implements the $`p^N`$ calculation.

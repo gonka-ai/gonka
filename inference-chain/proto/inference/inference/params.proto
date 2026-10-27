@@ -95,9 +95,9 @@ message GenesisOnlyParams {
 
 message TokenomicsParams {
   option (gogoproto.equal) = true;
-  Decimal subsidy_reduction_interval = 1;
-  Decimal subsidy_reduction_amount = 2;
-  Decimal current_subsidy_percentage = 3;
+  Decimal subsidy_reduction_interval = 1 [deprecated = true]; // Deprecated: no effect, not read by any module
+  Decimal subsidy_reduction_amount = 2 [deprecated = true]; // Deprecated: no effect, not read by any module
+  Decimal current_subsidy_percentage = 3 [deprecated = true]; // Deprecated: no effect, not read by any module
   reserved 4, 5;
   reserved "top_reward_allowed_failure", "top_miner_poc_qualification";
   uint64 work_vesting_period = 6;
@@ -109,7 +109,7 @@ message TokenomicsParams {
 message EpochParams {
   option (gogoproto.equal) = true;
   int64 epoch_length = 1;
-  int64 epoch_multiplier = 2;
+  int64 epoch_multiplier = 2 [deprecated = true]; // Deprecated: no effect, not read by any module
   int64 epoch_shift = 3;
   int64 default_unit_of_compute_price = 4;
   int64 poc_stage_duration = 5;
@@ -128,8 +128,8 @@ message EpochParams {
 message ValidationParams {
   option (gogoproto.equal) = true;
   Decimal false_positive_rate = 1;
-  int32  min_ramp_up_measurements = 2;
-  Decimal pass_value = 3;
+  int32  min_ramp_up_measurements = 2 [deprecated = true]; // Deprecated: no effect, not read by any module
+  Decimal pass_value = 3 [deprecated = true]; // Deprecated: no effect, not read by any module
   Decimal min_validation_average = 4;
   Decimal max_validation_average = 5;
   int64  expiration_blocks = 6;
@@ -208,7 +208,7 @@ message DynamicCoefficientParams {
 
 message PocParams {
   option (gogoproto.equal) = true;
-  int32 default_difficulty = 1;
+  int32 default_difficulty = 1 [deprecated = true]; // Deprecated: no effect, not read by any module
   int32 validation_sample_size = 2;
   uint64 poc_data_pruning_epoch_threshold = 3;
   Decimal weight_scale_factor = 4 [deprecated = true]; // Deprecated: use models[*].weight_scale_factor
@@ -242,8 +242,10 @@ message CollateralParams {
   // slash_fraction_downtime is the percentage of collateral to slash for downtime.
   Decimal slash_fraction_downtime = 2;
 
-  // downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
-  Decimal downtime_missed_percentage_threshold = 3;
+  // downtime_missed_percentage_threshold is deprecated and has no effect.
+  // Downtime slashing is triggered by INACTIVE status transitions based on SPRT downtime detection
+  // or confirmation PoC failures, not by a simple missed percentage threshold.
+  Decimal downtime_missed_percentage_threshold = 3 [deprecated = true];
 
   uint64 grace_period_end_epoch = 4;
 
@@ -270,14 +272,17 @@ message BitcoinRewardParams {
   // genesis_epoch is the starting epoch for Bitcoin-style calculations
   uint64 genesis_epoch = 4;
 
-  // utilization_bonus_factor controls bonus multipliers for high-demand models (Phase 2)
-  Decimal utilization_bonus_factor = 5;
+  // utilization_bonus_factor controls bonus multipliers for high-demand models (Phase 2).
+  // Deprecated: no effect; CalculateUtilizationBonuses is a stub that returns 1.0 and does not read it.
+  Decimal utilization_bonus_factor = 5 [deprecated = true];
 
-  // full_coverage_bonus_factor is the multiplier for participants supporting all governance models (Phase 2)
-  Decimal full_coverage_bonus_factor = 6;
+  // full_coverage_bonus_factor is the multiplier for participants supporting all governance models (Phase 2).
+  // Deprecated: no effect; CalculateModelCoverageBonuses is a stub that returns 1.0 and does not read it.
+  Decimal full_coverage_bonus_factor = 6 [deprecated = true];
 
-  // partial_coverage_bonus_factor is the scaling factor for partial model coverage (Phase 2)
-  Decimal partial_coverage_bonus_factor = 7;
+  // partial_coverage_bonus_factor is the scaling factor for partial model coverage (Phase 2).
+  // Deprecated: no effect; CalculateModelCoverageBonuses is a stub that returns 1.0 and does not read it.
+  Decimal partial_coverage_bonus_factor = 7 [deprecated = true];
 }
 
 // DynamicPricingParams defines the parameters for the dynamic pricing system.
@@ -348,8 +353,10 @@ message ConfirmationPoCParams {
   // alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
   Decimal alpha_threshold = 2;
 
-  // slash_fraction is the collateral slashed for failure (e.g., "0.10")
-  Decimal slash_fraction = 3;
+  // slash_fraction is deprecated and has no effect.
+  // A failed confirmation PoC moves the participant to INACTIVE, which slashes with
+  // collateral_params.slash_fraction_downtime.
+  Decimal slash_fraction = 3 [deprecated = true];
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
   int64 upgrade_protection_window = 4;
