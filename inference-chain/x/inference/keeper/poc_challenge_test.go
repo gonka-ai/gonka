@@ -676,3 +676,32 @@ func TestCreatePoCChallenge_RejectsWhenPocV2Disabled(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 }
+
+func TestPoCChallengeStoreCommit_RejectsBlockedParticipant(t *testing.T) {
+	k, ctx, _ := setupChallengeCreate(t, 100)
+	seedOpenChallenge(t, k, ctx, 50)
+	k.SetModel(ctx, &types.Model{Id: challengeTestModel})
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.ParticipantAccessParams = &types.ParticipantAccessParams{
+		BlockedParticipantAddresses: []string{testutil.Executor},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	ms := keeper.NewMsgServerImpl(k)
+	_, err = ms.PoCChallengeStoreCommit(ctx, &types.MsgPoCChallengeStoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 50,
+		Entries: []*types.PoCV2CommitEntry{{
+			ModelId:   challengeTestModel,
+			Count:     4,
+			RootHash:  make([]byte, 32),
+			TreeDepth: 24,
+		}},
+	})
+	require.ErrorIs(t, err, types.ErrParticipantBlocked)
+
+	commits, err := k.ListChallengeCommits(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.Empty(t, commits)
+}
