@@ -81,7 +81,7 @@ Decision rule:
 - If $`p^N < \text{QuickFailureThreshold}`$ (default $`10^{-6}`$, i.e. rarer than one in a million), classify as `INVALID` due to `consecutive_failures`.
 
 Example:
-- For $`p = 0.01`$, $`p^3 = 10^{-6}`$. Because the code uses a strict inequality $`< 10^{-6}`$, one needs $`N \ge 4`$ consecutive invalidations to trigger this rule.
+- With the default $`p = 0.05`$, $`p^4 \approx 6.3 \times 10^{-6}`$ and $`p^5 \approx 3.1 \times 10^{-7}`$, so one needs $`N \ge 5`$ consecutive invalidations to trigger this rule.
 
 ### 2) Sequential Probability Ratio Test
 
@@ -102,7 +102,7 @@ Parameter mapping:
 
 | Test | $`p_1`$ | $`p_0`$ | $`H`$ |
 |---|---|---|---|
-| Invalidation | `BadParticipantInvalidationRate` (default 0.20) | `FalsePositiveRate` | `InvalidationHThreshold` (default 4) |
+| Invalidation | `BadParticipantInvalidationRate` (default 0.20) | `FalsePositiveRate` (default 0.05) | `InvalidationHThreshold` (default 4) |
 | Downtime | `DowntimeBadPercentage` (default 0.20) | `DowntimeGoodPercentage` (default 0.10) | `DowntimeHThreshold` (default 4) |
 
 The LLRs are persisted per participant and per epoch, so the test accumulates across status computations within an epoch rather than restarting each time. They are reset with the rest of `CurrentEpochStats` at the epoch boundary.
@@ -168,13 +168,15 @@ return ACTIVE, ""
 
 ## Practical Examples
 
-- Consecutive failure tripwire:
-  - $`p = 0.01`$, $`N = 4`$ → $`p^N = 10^{-8} < 10^{-6}`$ → `INVALID (consecutive_failures)`.
-  - $`p = 0.01`$, $`N = 3`$ → $`p^N = 10^{-6}`$ (not strictly less) → does not trigger.
+- Consecutive failure tripwire with the default $`p = 0.05`$:
+  - $`N = 5`$ → $`p^N \approx 3.1 \times 10^{-7} < 10^{-6}`$ → `INVALID (consecutive_failures)`.
+  - $`N = 4`$ → $`p^N \approx 6.3 \times 10^{-6}`$ → does not trigger.
+  - The inequality is strict: with $`p = 0.01`$, $`N = 3`$ gives exactly $`10^{-6}`$ and does not trigger.
 
-- Statistical invalidations with the defaults ($`p_0 = 0.01`$, $`p_1 = 0.20`$, $`H = 4`$):
-  - $`\ln(p_1/p_0) \approx 3.00`$ per invalidation and $`\ln(0.80/0.99) \approx -0.213`$ per validation.
-  - Two invalidations take the LLR to about $`6.0 > 4`$ → `INVALID (statistical_invalidations)` unless validations have already offset it. Two validations only offset about $`0.43`$.
+- Statistical invalidations with the defaults ($`p_0 = 0.05`$, $`p_1 = 0.20`$, $`H = 4`$):
+  - $`\ln(p_1/p_0) \approx 1.386`$ per invalidation and $`\ln(0.80/0.95) \approx -0.172`$ per validation.
+  - Three invalidations take the LLR to about $`4.16 \ge 4`$ → `INVALID (statistical_invalidations)`; two only reach $`2.77`$. A single validation in between already keeps three below $`H`$ ($`3.99`$).
+  - With the default $`p = 0.05`$ this test fires before the consecutive-failure tripwire.
 
 - Downtime with the defaults ($`p_0 = 0.10`$, $`p_1 = 0.20`$, $`H = 4`$):
   - $`\ln(p_1/p_0) \approx 0.693`$ per missed request and $`\ln(0.80/0.90) \approx -0.118`$ per served inference.
