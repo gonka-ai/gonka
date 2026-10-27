@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	pserver "decentralized-api/internal/server/public"
@@ -69,4 +70,35 @@ func (s *Server) postBridgeBlock(c echo.Context) error {
 		slog.Error("Bridge: malformed/unexpected block", "blockNumber", blockData.BlockNumber, "error", err)
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
+}
+
+const (
+	defaultBridgeQuarantineLimit = 100
+	maxBridgeQuarantineLimit     = 1000
+)
+
+// getBridgeQuarantine lists receipts this node skipped because their content can
+// never pass MsgBridgeExchange.ValidateBasic (newest first).
+func (s *Server) getBridgeQuarantine(c echo.Context) error {
+	chain := c.QueryParam("chain")
+	if chain == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Chain parameter is required (e.g., 'ethereum')"})
+	}
+	limit := defaultBridgeQuarantineLimit
+	if raw := c.QueryParam("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "limit must be a positive integer"})
+		}
+		limit = min(parsed, maxBridgeQuarantineLimit)
+	}
+	receipts, err := s.blockQueue.GetQuarantinedReceipts(c.Request().Context(), chain, limit)
+	if err != nil {
+		slog.Error("Bridge: failed to list quarantined receipts", "chain", chain, "error", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"chain":    chain,
+		"receipts": receipts,
+	})
 }
