@@ -236,6 +236,46 @@ func TestHostEvents_LifecycleMaintenanceCanceled_NewBlock(t *testing.T) {
 	require.Equal(t, uint64(20), got.Events[0].Maintenance.DurationBlocks)
 }
 
+// With maintenance disabled, BeginBlock cancels every reservation whose
+// activation falls on that height, one event each. The NewBlock event map
+// holds them all; the local participant's cancel must reach the ring even
+// when another participant's comes first.
+func TestHostEvents_LifecycleMaintenanceCanceled_EveryReservationInBlock(t *testing.T) {
+	el, ring := testListenerWithRing(t, WithParticipantAddress("host-a"))
+	el.handleMaintenanceLifecycleEvents(&chainevents.JSONRPCResponse{
+		Result: chainevents.Result{
+			Data: chainevents.Data{Type: newBlockEventType},
+			Events: map[string][]string{
+				"maintenance_canceled.reservation_id":  {"11", "12"},
+				"maintenance_canceled.participant":     {"someone-else", "host-a"},
+				"maintenance_canceled.credit_refunded": {"20", "30"},
+				"maintenance_canceled.reason":          {"maintenance_disabled", "maintenance_disabled"},
+			},
+		},
+	}, "test")
+
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindMaintenanceCanceled})
+	require.Len(t, got.Events, 1)
+	require.Equal(t, uint64(12), got.Events[0].Maintenance.ReservationID)
+	require.Equal(t, uint64(30), got.Events[0].Maintenance.DurationBlocks)
+}
+
+// Same for a tx that schedules two reservations.
+func TestHostEvents_MaintenanceScheduled_EveryReservationInTx(t *testing.T) {
+	el, ring := testListenerWithRing(t, WithParticipantAddress("host-a"))
+	require.NoError(t, (&MaintenanceScheduledEventHandler{}).Handle(txEvent(map[string][]string{
+		"maintenance_scheduled.reservation_id":  {"1", "2"},
+		"maintenance_scheduled.participant":     {"someone-else", "host-a"},
+		"maintenance_scheduled.start_height":    {"100", "200"},
+		"maintenance_scheduled.duration_blocks": {"50", "60"},
+	}), el))
+
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindMaintenanceScheduled})
+	require.Len(t, got.Events, 1)
+	require.Equal(t, uint64(2), got.Events[0].Maintenance.ReservationID)
+	require.Equal(t, int64(200), got.Events[0].Maintenance.StartHeight)
+}
+
 func TestHostEvents_UnhandledEventsStillDroppedByHasHandler(t *testing.T) {
 	el, _ := testListenerWithRing(t)
 	require.False(t, el.hasHandler(txEvent(map[string][]string{
