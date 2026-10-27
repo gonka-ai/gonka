@@ -58,16 +58,30 @@ func appendMaintenanceScheduled(el *EventListener, ev map[string][]string) error
 	if el.hostEvents == nil {
 		return nil
 	}
-	reservationID, err := strconv.ParseUint(firstAttr(ev, maintenanceScheduledEvent+".reservation_id"), 10, 64)
+	// One value per reservation under each key; read them by index like the
+	// other batched events.
+	for i := range ev[maintenanceScheduledEvent+".reservation_id"] {
+		if err := appendMaintenanceScheduledAt(el, ev, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendMaintenanceScheduledAt(el *EventListener, ev map[string][]string, i int) error {
+	rawID, _ := getEventValue(ev, maintenanceScheduledEvent+".reservation_id", i)
+	reservationID, err := strconv.ParseUint(rawID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse reservation_id: %w", err)
 	}
-	participant := firstAttr(ev, maintenanceScheduledEvent+".participant")
+	participant, _ := getEventValue(ev, maintenanceScheduledEvent+".participant", i)
 	if skipForeignMaintenance(el, participant) {
 		return nil
 	}
-	startHeight, _ := strconv.ParseInt(firstAttr(ev, maintenanceScheduledEvent+".start_height"), 10, 64)
-	duration, _ := strconv.ParseUint(firstAttr(ev, maintenanceScheduledEvent+".duration_blocks"), 10, 64)
+	rawStart, _ := getEventValue(ev, maintenanceScheduledEvent+".start_height", i)
+	startHeight, _ := strconv.ParseInt(rawStart, 10, 64)
+	rawDuration, _ := getEventValue(ev, maintenanceScheduledEvent+".duration_blocks", i)
+	duration, _ := strconv.ParseUint(rawDuration, 10, 64)
 
 	el.hostEvents.Append(apiconfig.HostEvent{
 		Kind: apiconfig.HostEventKindMaintenanceScheduled,
@@ -85,20 +99,33 @@ func appendMaintenanceCanceled(el *EventListener, ev map[string][]string) error 
 	if el.hostEvents == nil {
 		return nil
 	}
-	reservationID, err := strconv.ParseUint(firstAttr(ev, maintenanceCanceledEvent+".reservation_id"), 10, 64)
+	// BeginBlock cancels every reservation activating at a height once
+	// maintenance is disabled, so one map can hold several; read by index.
+	for i := range ev[maintenanceCanceledEvent+".reservation_id"] {
+		if err := appendMaintenanceCanceledAt(el, ev, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func appendMaintenanceCanceledAt(el *EventListener, ev map[string][]string, i int) error {
+	rawID, _ := getEventValue(ev, maintenanceCanceledEvent+".reservation_id", i)
+	reservationID, err := strconv.ParseUint(rawID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse reservation_id: %w", err)
 	}
-	participant := firstAttr(ev, maintenanceCanceledEvent+".participant")
+	participant, _ := getEventValue(ev, maintenanceCanceledEvent+".participant", i)
 	if skipForeignMaintenance(el, participant) {
 		return nil
 	}
 	// Tx cancel uses credit_restored; lifecycle disabled uses credit_refunded.
-	durationStr := firstAttr(ev, maintenanceCanceledEvent+".credit_restored")
+	durationStr, _ := getEventValue(ev, maintenanceCanceledEvent+".credit_restored", i)
 	if durationStr == "" {
-		durationStr = firstAttr(ev, maintenanceCanceledEvent+".credit_refunded")
+		durationStr, _ = getEventValue(ev, maintenanceCanceledEvent+".credit_refunded", i)
 	}
 	duration, _ := strconv.ParseUint(durationStr, 10, 64)
+	reason, _ := getEventValue(ev, maintenanceCanceledEvent+".reason", i)
 
 	el.hostEvents.Append(apiconfig.HostEvent{
 		Kind: apiconfig.HostEventKindMaintenanceCanceled,
@@ -106,7 +133,7 @@ func appendMaintenanceCanceled(el *EventListener, ev map[string][]string) error 
 			ReservationID:  reservationID,
 			Participant:    participant,
 			DurationBlocks: duration,
-			Reason:         firstAttr(ev, maintenanceCanceledEvent+".reason"),
+			Reason:         reason,
 		},
 	})
 	return nil

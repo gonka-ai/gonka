@@ -194,10 +194,3 @@ func (el *EventListener) localParticipantAddress() string {
 	}
 	return el.transactionRecorder.GetAddress()
 }
-
-func firstAttr(events map[string][]string, key string) string {
-	if vals := events[key]; len(vals) > 0 {
-		return vals[0]
-	}
-	return ""
-}
