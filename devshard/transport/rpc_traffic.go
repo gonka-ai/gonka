@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/observability"
+	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 const (
@@ -19,6 +20,12 @@ const (
 	RPCZoneStreams = "streams"
 	// RPCZoneAttachFloor is the process-wide Attach floor.
 	RPCZoneAttachFloor = "attach_floor"
+	// RPCZoneAttachOrigin is one X-Real-IP (one IPv4, or one IPv6 /64).
+	RPCZoneAttachOrigin = "attach_origin"
+	// RPCZoneAttachRenew is the live-token Attach bucket. Snapshots record
+	// Attach on RPCZoneAttachFloor; this name stays classified so a host
+	// that reports it is not folded into the overflow label.
+	RPCZoneAttachRenew = "attach_renew"
 
 	rpcTrafficClosedMinutes = 5
 	rpcTrafficPeerCap       = 1000
@@ -41,7 +48,71 @@ const (
 	ReconnectWatch = "watch"
 	// ReconnectTTL is a token-refresh re-Attach.
 	ReconnectTTL = "ttl"
+
+	// RPCStatsOtherLabel is the snapshot label for an endpoint, zone, or
+	// reconnect reason outside the classified set.
+	RPCStatsOtherLabel = rpcTrafficOtherKey
 )
+
+// knownRPCStatEndpoints is every Connect method the snapshot labels by
+// (the last path segment), plus the overflow bucket. The gateway refuses
+// any other endpoint string so a polled host cannot mint a series per name.
+var knownRPCStatEndpoints = func() map[string]struct{} {
+	procs := []string{
+		rpcpbconnect.PeerAuthServiceAttachProcedure,
+		rpcpbconnect.PeerAuthServiceWatchProcedure,
+		rpcpbconnect.SessionServiceChatProcedure,
+		rpcpbconnect.SessionServiceSeedHeightSyncProcedure,
+		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
+		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
+		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
+		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetMempoolProcedure,
+		rpcpbconnect.SessionServiceGetStateProcedure,
+		rpcpbconnect.SessionServiceGetSignaturesProcedure,
+		rpcpbconnect.GossipServiceNonceProcedure,
+		rpcpbconnect.GossipServiceTxsProcedure,
+		rpcpbconnect.PayloadServiceGetPayloadProcedure,
+	}
+	m := make(map[string]struct{}, len(procs)+1)
+	for _, p := range procs {
+		m[RPCEndpointName(p)] = struct{}{}
+	}
+	m[RPCStatsOtherLabel] = struct{}{}
+	return m
+}()
+
+// RPCStatsEndpointLabel is the Prometheus endpoint label for a snapshot row.
+// Names outside the classified Connect methods become RPCStatsOtherLabel.
+func RPCStatsEndpointLabel(name string) string {
+	if _, ok := knownRPCStatEndpoints[name]; ok {
+		return name
+	}
+	return RPCStatsOtherLabel
+}
+
+// RPCStatsZoneLabel is the Prometheus zone label for a snapshot row.
+// Names outside the rate-limit zones become RPCStatsOtherLabel.
+func RPCStatsZoneLabel(zone string) string {
+	switch zone {
+	case RPCZoneShared, RPCZoneStreams, RPCZoneAttachFloor, RPCZoneAttachOrigin, RPCZoneAttachRenew, RPCStatsOtherLabel:
+		return zone
+	default:
+		return RPCStatsOtherLabel
+	}
+}
+
+// RPCStatsReconnectReason is the Prometheus reason label for an outbound
+// re-attach. Reasons outside the recorded set become RPCStatsOtherLabel.
+func RPCStatsReconnectReason(reason string) string {
+	switch reason {
+	case ReconnectFirstAttach, ReconnectWatch, ReconnectTTL:
+		return reason
+	default:
+		return RPCStatsOtherLabel
+	}
+}
 
 // RPCStatsSnapshot is GET /devshard/stats/rpc. Last closed minute.
 type RPCStatsSnapshot struct {
@@ -115,21 +186,23 @@ type RPCStatsReconnect struct {
 
 // RPCStatsAttach is the process-wide Attach throttle block.
 type RPCStatsAttach struct {
-	Attempts    uint64 `json:"attempts"`
-	Banned      uint64 `json:"banned"`
-	BannedFloor uint64 `json:"banned_floor"`
+	Attempts     uint64 `json:"attempts"`
+	Banned       uint64 `json:"banned"`
+	BannedFloor  uint64 `json:"banned_floor"`
+	BannedOrigin uint64 `json:"banned_origin"`
 }
 
 // RPCSample is one classified inbound RPC (or Attach).
 type RPCSample struct {
-	Procedure   string
-	Peer        string
-	Escrow      string
-	IP          string
-	Banned      bool
-	Attach      bool
-	AttachFloor bool
-	StreamCap   bool
+	Procedure    string
+	Peer         string
+	Escrow       string
+	IP           string
+	Banned       bool
+	Attach       bool
+	AttachFloor  bool
+	AttachOrigin bool
+	StreamCap    bool
 }
 
 // RPCRateLimitZone is the bucket that can ban this procedure.
@@ -234,7 +307,7 @@ func (t *RPCTraffic) SetWarn(fn func(ctx context.Context, minute int64, host RPC
 }
 
 func (t *RPCTraffic) defaultWarn(ctx context.Context, minute int64, host RPCStatsHost) {
-	kv := []any{"minute_unix", minute, "banned", host.Banned, "banned_floor", host.Attach.BannedFloor}
+	kv := []any{"minute_unix", minute, "banned", host.Banned, "banned_floor", host.Attach.BannedFloor, "banned_origin", host.Attach.BannedOrigin}
 	kv = AppendRPCStatsLogTag(kv, "", minute)
 	for _, z := range host.Zones {
 		if z.Banned > 0 {
@@ -469,6 +542,7 @@ func mergeMinute(dst, src *minuteBucket) {
 	dst.attach.Attempts += src.attach.Attempts
 	dst.attach.Banned += src.attach.Banned
 	dst.attach.BannedFloor += src.attach.BannedFloor
+	dst.attach.BannedOrigin += src.attach.BannedOrigin
 	for id, em := range src.escrows {
 		if em == nil {
 			continue
@@ -544,6 +618,9 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 	zone := RPCRateLimitZone(s.Procedure, s.StreamCap)
 	if s.Attach {
 		zone = RPCZoneAttachFloor
+		if s.AttachOrigin {
+			zone = RPCZoneAttachOrigin
+		}
 		endpoint = "Attach"
 	}
 
@@ -561,7 +638,9 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 		observability.IncPeerRPCBanned(endpoint, zone)
 		if s.Attach {
 			reason := "other"
-			if s.AttachFloor {
+			if s.AttachOrigin {
+				reason = "origin"
+			} else if s.AttachFloor {
 				reason = "floor"
 			}
 			observability.IncPeerRPCAttachBanned(reason)
@@ -590,7 +669,9 @@ func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSa
 		if sample.Banned {
 			b.attach.Banned++
 		}
-		if sample.AttachFloor {
+		if sample.AttachOrigin {
+			b.attach.BannedOrigin++
+		} else if sample.AttachFloor {
 			b.attach.BannedFloor++
 		}
 		return advanced

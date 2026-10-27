@@ -20,11 +20,14 @@ import (
 const (
 	channelLimiterIdleFor    = time.Minute
 	channelLimiterEvictBatch = 32
-	// maxWatchesPerPeer bounds concurrent Watch streams for one peer. A
-	// peer may hold many live tokens, so the process cap alone lets one
-	// peer take every slot. Two covers a reopen that lands while the
-	// previous stream is still unwinding on the server.
-	maxWatchesPerPeer = 2
+	// maxWatchesPerPeer bounds concurrent Watch streams for one peer
+	// address. Tokens from the same signer share the cap, so one peer
+	// cannot fill MaxSessions by minting tokens. Eight is two HA replicas,
+	// two generations during a rolling deploy, and two streams per process
+	// while a reopen is still unwinding (2 × 2 × 2). A reconnect holds the
+	// live Watch and the replacement at once. Replicas of one participant
+	// share a signer, so they count as one peer.
+	maxWatchesPerPeer = 8
 	// renewalBurst and renewalPerMin size the per-peer bucket an Attach
 	// with a live token spends before VerifyAttach. A client refreshes at
 	// 75% of a two-minute TTL, so a healthy peer uses well under one per
@@ -32,15 +35,22 @@ const (
 	// ECDSA work one peer can buy without the anonymous floor.
 	renewalBurst  = 4
 	renewalPerMin = 4
+	// maxPendingChatsPerPeer and maxPendingChatsTotal bound Chats whose
+	// envelope is still being read. Those hold an HTTP/2 stream and a
+	// goroutine but no Chat slot yet, and ChatReadTimeout ends each one.
+	// A gateway's burst only waits here for the envelope upload.
+	maxPendingChatsPerPeer = 512
+	maxPendingChatsTotal   = 2048
 )
 
 type rateLimitZone string
 
 const (
-	zoneShared      rateLimitZone = "shared"
-	zoneStreams     rateLimitZone = "streams"
-	zoneAttachFloor rateLimitZone = "attach_floor"
-	zoneAttachRenew rateLimitZone = "attach_renew"
+	zoneShared       rateLimitZone = "shared"
+	zoneStreams      rateLimitZone = "streams"
+	zoneAttachFloor  rateLimitZone = "attach_floor"
+	zoneAttachOrigin rateLimitZone = "attach_origin"
+	zoneAttachRenew  rateLimitZone = "attach_renew"
 )
 
 type tokenBucket struct {
@@ -113,10 +123,18 @@ type channelLimiter struct {
 	procWatches int
 	maxWatches  int
 	peerWatches map[string]int
+	// pendingChats / procPendingChats count Chats still reading their
+	// envelope. They do not spend procChats.
+	pendingChats      map[string]int
+	procPendingChats  int
+	maxPendingPerPeer int
+	maxPendingTotal   int
 	// evictVisited is how many keys the last at-cap idle walk inspected.
 	evictVisited int
 
-	warnMinute atomic.Int64
+	// warnByZone is one log per zone per minute. Origin and process-floor
+	// refusals must not hide each other.
+	warnByZone sync.Map // zone string -> *atomic.Int64
 }
 
 // peerStreamCount is Chat occupancy. Chat uses at most max-1 when max>1
@@ -139,6 +157,10 @@ func newChannelLimiter(cfg transport.ChannelLimitConfig, now func() time.Time) *
 		streams:     make(map[string]peerStreamCount),
 		maxWatches:  defaultMaxSessions,
 		peerWatches: make(map[string]int),
+
+		pendingChats:      make(map[string]int),
+		maxPendingPerPeer: maxPendingChatsPerPeer,
+		maxPendingTotal:   maxPendingChatsTotal,
 	}
 }
 
@@ -164,9 +186,8 @@ func advertisedRateLimits(cfg transport.ChannelLimitConfig) *rpcpb.RateLimits {
 		MessagesPerMin: cfg.MessagesPerMin,
 		MessagesBurst:  cfg.MessagesBurst,
 		MaxStreams:     cfg.EffectiveMaxStreams(),
-		// Child does not key Attach on IP. Per-IP bounds live on versiond /
-		// Phase 6 proxy. Advertise unlimited so mixed-fleet clients do not
-		// self-throttle to a bucket this process never enforces.
+		// The origin Attach bucket is an admission gate, not this budget.
+		// Advertise unlimited so clients do not pace themselves to it.
 		IpWeightPerMin: transport.UnlimitedRPCLimit,
 		IpBurst:        transport.UnlimitedRPCLimit,
 	}
@@ -298,6 +319,53 @@ func (l *channelLimiter) acquireWatch(ctx context.Context, peer, procedure strin
 	return nil
 }
 
+// acquirePendingChat counts one Chat whose envelope is not read yet. The
+// count is released when that Chat takes its stream slot or the request
+// ends, whichever is first.
+func (l *channelLimiter) acquirePendingChat(ctx context.Context, peer string) error {
+	if l == nil || l.cfg.Disabled || peer == "" {
+		return nil
+	}
+	procedure := rpcpbconnect.SessionServiceChatProcedure
+	perPeerUnlimited := transport.IsUnlimitedRPCLimit(l.cfg.EffectiveMaxStreams())
+	_, _, procUnlimited := l.cfg.ProcessStreamCaps()
+	l.streamMu.Lock()
+	if !perPeerUnlimited && l.pendingChats[peer] >= l.maxPendingPerPeer {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, peer)
+		return rateLimitExhausted("too many pending chats", time.Second)
+	}
+	if !procUnlimited && l.procPendingChats >= l.maxPendingTotal {
+		l.streamMu.Unlock()
+		l.warnBanned(ctx, procedure, zoneStreams, "process")
+		return rateLimitExhausted("too many pending chats", time.Second)
+	}
+	l.pendingChats[peer]++
+	l.procPendingChats++
+	l.streamMu.Unlock()
+	return nil
+}
+
+func (l *channelLimiter) releasePendingChat(peer string) {
+	if l == nil || peer == "" {
+		return
+	}
+	l.streamMu.Lock()
+	defer l.streamMu.Unlock()
+	n, ok := l.pendingChats[peer]
+	if !ok {
+		return
+	}
+	if l.procPendingChats > 0 {
+		l.procPendingChats--
+	}
+	if n <= 1 {
+		delete(l.pendingChats, peer)
+		return
+	}
+	l.pendingChats[peer] = n - 1
+}
+
 func (l *channelLimiter) releaseStream(peer, procedure string) {
 	if l == nil || peer == "" {
 		return
@@ -388,20 +456,29 @@ func (l *channelLimiter) evictIdleLocked(buckets map[string]*tokenBucket, now ti
 }
 
 func (l *channelLimiter) warnBanned(ctx context.Context, procedure string, zone rateLimitZone, key string) {
-	minute := l.now().Unix() / 60
-	for {
-		prev := l.warnMinute.Load()
-		if prev == minute {
-			return
-		}
-		if l.warnMinute.CompareAndSwap(prev, minute) {
-			break
-		}
+	if !l.reserveWarn(zone) {
+		return
 	}
 	observability.Log(ctx, observability.LevelWarn, "rate limit exceeded",
 		observability.StageReceived, observability.WhereTransportRateLimit,
 		EscrowIDFromContext(ctx), observability.ReasonRateLimited, nil,
 		"endpoint", procedure, "zone", string(zone), "key", key)
+}
+
+// reserveWarn is true the first time this zone warns in the current minute.
+func (l *channelLimiter) reserveWarn(zone rateLimitZone) bool {
+	minute := l.now().Unix() / 60
+	v, _ := l.warnByZone.LoadOrStore(string(zone), &atomic.Int64{})
+	slot := v.(*atomic.Int64)
+	for {
+		prev := slot.Load()
+		if prev == minute {
+			return false
+		}
+		if slot.CompareAndSwap(prev, minute) {
+			return true
+		}
+	}
 }
 
 func rateLimitExhausted(msg string, retry time.Duration) error {

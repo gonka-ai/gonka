@@ -1,0 +1,65 @@
+# Shared by direct H2 and trusted nginx H1 ingress. Never trust public IP headers.
+    # Match zones on the path the child will route. Unreserved escapes
+    # (%41ttach) decode to Attach; a leftover % under a session RPC path is
+    # never a procedure name.
+    http-request normalize-uri percent-decode-unreserved strict
+    http-request normalize-uri percent-to-uppercase
+    http-request normalize-uri path-merge-slashes
+    http-request normalize-uri path-strip-dot
+    http-request normalize-uri path-strip-dotdot
+    http-request deny deny_status 400 if { path_reg ^(/devshard)?/[^/]+/sessions/.*[%] }
+    # Session RPC only, including Watch on /sessions/_/rpc/. A dot-dot
+    # segment is removed above, so /sessions/{id}/rpc/../metrics becomes
+    # /sessions/{id}/metrics and misses this pattern. Obs, healthz, and
+    # versionless diffs stay on :80/:443.
+    acl peer_rpc path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$
+    # The child accepts the last matching mount in a nested URL. Reject
+    # non-canonical RPC-shaped paths before they can take the JSON route.
+    acl rpc_mount path_reg /sessions/[^/]+/rpc(/|$)
+    http-request deny deny_status 400 if rpc_mount !peer_rpc
+    http-request deny deny_status 400 if peer_rpc !{ var(txn.rpc_src) -m found }
+
+    acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach
+    acl is_watch path_end /devshard.transport.v1.PeerAuthService/Watch
+    acl is_chat path_end /devshard.transport.v1.SessionService/Chat
+    acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs
+    acl is_mempool path_end /devshard.transport.v1.SessionService/GetMempool
+    acl is_signatures path_end /devshard.transport.v1.SessionService/GetSignatures
+    acl is_gossip path_end /devshard.transport.v1.GossipService/Nonce /devshard.transport.v1.GossipService/Txs
+    acl is_payload path_end /devshard.transport.v1.PayloadService/GetPayload
+    acl is_heavy path_end /devshard.transport.v1.SessionService/SeedHeightSync /devshard.transport.v1.SessionService/RepairHeightSync /devshard.transport.v1.SessionService/VerifyTimeout /devshard.transport.v1.SessionService/VerifyErrorMiss /devshard.transport.v1.SessionService/ChallengeReceipt
+    # Both ingress frontends share these budgets. Connect keeps HTTP 429. Native gRPC
+    # (content-type application/grpc) needs HTTP 200, content-type
+    # application/grpc, and grpc-status 8. A bare return drops Content-Type
+    # unless the body comes from an errorfile, so that file carries both
+    # headers. The gRPC return is first so it wins over the Connect response.
+    acl is_native_grpc req.hdr(content-type) -m reg ^application/grpc($|\+|;)
+
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_attach if peer_rpc is_attach
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_attach { sc_http_req_rate(1) gt 100 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_attach { sc_http_req_rate(1) gt 100 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_watch if peer_rpc is_watch
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_watch { sc_http_req_rate(1) gt 100 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_watch { sc_http_req_rate(1) gt 100 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_chat if peer_rpc is_chat
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_chat { sc_http_req_rate(1) gt 2000 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_chat { sc_http_req_rate(1) gt 2000 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_diffs if peer_rpc is_diffs
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_diffs { sc_http_req_rate(1) gt 400 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_diffs { sc_http_req_rate(1) gt 400 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_mempool if peer_rpc is_mempool
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_mempool { sc_http_req_rate(1) gt 400 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_mempool { sc_http_req_rate(1) gt 400 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_signatures if peer_rpc is_signatures
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_signatures { sc_http_req_rate(1) gt 600 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_signatures { sc_http_req_rate(1) gt 600 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_gossip if peer_rpc is_gossip
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_gossip { sc_http_req_rate(1) gt 200 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_gossip { sc_http_req_rate(1) gt 200 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_payload if peer_rpc is_payload
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_payload { sc_http_req_rate(1) gt 200 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_payload { sc_http_req_rate(1) gt 200 }
+    http-request track-sc1 var(txn.rpc_src) table st_rpc_heavy if peer_rpc is_heavy
+    http-request return status 200 errorfile /etc/haproxy/grpc-exhausted.http if peer_rpc is_native_grpc is_heavy { sc_http_req_rate(1) gt 200 }
+    http-request return status 429 content-type application/json string '{"code":"resource_exhausted","message":"RPC rate limit exceeded"}' hdr Retry-After 10 if peer_rpc is_heavy { sc_http_req_rate(1) gt 200 }
+

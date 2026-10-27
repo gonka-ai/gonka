@@ -27,7 +27,7 @@ import (
 // TestPeerRPCParity is §8.4. One overlay stack. The gateway chat is the
 // same prompt on Connect over HTTP/2 and on native gRPC. Session HTTP is
 // retired, so clearing DEVSHARD_RPC_ENDPOINTS does not select a JSON chat
-// leg, and upgrade off would send Connect to :8080, which the router 404s.
+// leg; upgrade off would be the same Connect over HTTP/1.1 on the same port.
 // GetSignatures and GetDiffs round-trip on the HTTP client and on one
 // native gRPC session. A second Watch for the Connect dial would be a
 // third stream for this signer (the child allows two), so Connect

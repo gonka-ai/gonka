@@ -74,6 +74,10 @@ func (c *heldExecutorReply) GetMempool(context.Context) ([]*types.DevshardTx, er
 	return c.executor.MempoolTxs(), nil
 }
 
+func (c *heldExecutorReply) ChallengeCatchUp(context.Context, uint64, []types.DiffWire, string) error {
+	return nil
+}
+
 func (c *heldExecutorReply) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, _ []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	receipt, _, err := c.executor.ChallengeReceipt(ctx, inferenceID, payload, c.diffs)
 	if err != nil {
@@ -104,7 +108,7 @@ func TestHost_RefusedChallengeAnsweredAfterItsConfirmAppliedLeavesNoCopy(t *test
 	}
 	done := make(chan verdict, 1)
 	go func() {
-		accept, err := VerifyRefusedTimeout(ctx, st, 1, defaultPayload(), verifier.MempoolTxs(), client, verifier, verifier, st.Config, nowUnix)
+		accept, err := VerifyRefusedTimeout(ctx, st, 1, st.Inferences[1], defaultPayload(), verifier.MempoolTxs(), client, verifier, verifier, st.Config, nowUnix)
 		done <- verdict{accept, err}
 	}()
 

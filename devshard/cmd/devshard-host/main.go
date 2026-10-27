@@ -171,7 +171,7 @@ func (l e2eHostLookup) SessionForOwner(id, _ string) (rpcserver.SessionCore, err
 	return l.SessionServerExisting(id)
 }
 
-func (l e2eHostLookup) SessionForStartProof(id, _ string, _ []types.Diff, _ string) (rpcserver.SessionCore, error) {
+func (l e2eHostLookup) SessionForStartProof(id, _ string, _ func() ([]types.Diff, error), _ string) (rpcserver.SessionCore, error) {
 	return l.SessionServerExisting(id)
 }
 

@@ -45,26 +45,46 @@ func attachNowUnix(cfg PeerAuthConfig) int64 {
 }
 
 func startLimitEnv(t *testing.T, cfg PeerAuthConfig, lookup SessionLookup, opts ...MuxOption) limitEnv {
+	return startLimitEnvProto(t, false, cfg, lookup, opts...)
+}
+
+// startLimitEnvProto is startLimitEnv over prior-knowledge h2c when h2c is
+// true, the child's production listen.
+func startLimitEnvProto(t *testing.T, h2c bool, cfg PeerAuthConfig, lookup SessionLookup, opts ...MuxOption) limitEnv {
 	t.Helper()
 	auth := newTestAuth(cfg)
 	mux := NewMux(auth, NewSessionHandler(lookup), opts...)
-	srv := httptest.NewServer(withTestEscrow(mux))
+	srv := httptest.NewUnstartedServer(withTestEscrow(mux))
+	if h2c {
+		srv.Config.Protocols = new(http.Protocols)
+		srv.Config.Protocols.SetHTTP1(true)
+		srv.Config.Protocols.SetUnencryptedHTTP2(true)
+	}
+	srv.Start()
 	t.Cleanup(srv.Close)
+	client := srv.Client()
+	if h2c {
+		protocols := new(http.Protocols)
+		protocols.SetUnencryptedHTTP2(true)
+		tr := &http.Transport{Protocols: protocols}
+		t.Cleanup(tr.CloseIdleConnections)
+		client = &http.Client{Transport: tr}
+	}
 
 	signer := devtest.MustGenerateKey(t)
-	authc := rpcpbconnect.NewPeerAuthServiceClient(srv.Client(), srv.URL)
+	authc := rpcpbconnect.NewPeerAuthServiceClient(client, srv.URL)
 	nonce := []byte("channel-limit-attach-0123456")
 	attached := attachAt(t, authc, signer, nonce, attachNowUnix(cfg))
 	return limitEnv{
-		session: rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL),
+		session: rpcpbconnect.NewSessionServiceClient(client, srv.URL),
 		authc:   authc,
-		payload: rpcpbconnect.NewPayloadServiceClient(srv.Client(), srv.URL),
-		gossip:  rpcpbconnect.NewGossipServiceClient(srv.Client(), srv.URL),
+		payload: rpcpbconnect.NewPayloadServiceClient(client, srv.URL),
+		gossip:  rpcpbconnect.NewGossipServiceClient(client, srv.URL),
 		token:   attached.SessionToken,
 		signer:  signer,
 		now:     cfg.Now,
 		url:     srv.URL,
-		client:  srv.Client(),
+		client:  client,
 		auth:    auth,
 	}
 }
@@ -108,6 +128,16 @@ func requireResourceExhausted(t *testing.T, err error, msg string) {
 	require.Equal(t, connect.CodeResourceExhausted, connect.CodeOf(err))
 	require.Contains(t, err.Error(), msg)
 	requireRetryAfter(t, err)
+}
+
+func TestReserveWarnIsPerZone(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{}, func() time.Time {
+		return time.Unix(1_700_000_000, 0)
+	})
+	require.True(t, l.reserveWarn(zoneAttachOrigin))
+	require.False(t, l.reserveWarn(zoneAttachOrigin))
+	require.True(t, l.reserveWarn(zoneAttachFloor))
+	require.False(t, l.reserveWarn(zoneAttachFloor))
 }
 
 func TestChannelLimit_AdvertisedMatchesConfig(t *testing.T) {
@@ -303,10 +333,11 @@ func TestChannelLimit_AttachFloorBeforeVerify(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.Attach(context.Background(), connect.NewRequest(req))
 	requireResourceExhausted(t, err, "too many attach attempts")
+	require.NotContains(t, err.Error(), "for this address")
 	require.Equal(t, calls, spy.n.Load(), "floor must fire before ECDSA")
 }
 
-func TestChannelLimit_AttachFloorIgnoresXRealIP(t *testing.T) {
+func TestChannelLimit_NewOriginDoesNotBypassProcessFloor(t *testing.T) {
 	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
 	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{
 		AttachFloorPerMin: 1,
@@ -323,7 +354,8 @@ func TestChannelLimit_AttachFloorIgnoresXRealIP(t *testing.T) {
 	creq.Header().Set("X-Real-IP", "198.51.100.7")
 	_, err = client.Attach(context.Background(), creq)
 	requireResourceExhausted(t, err, "too many attach attempts")
-	require.Equal(t, calls, spy.n.Load(), "floor must be process-wide, not keyed on X-Real-IP")
+	require.NotContains(t, err.Error(), "for this address")
+	require.Equal(t, calls, spy.n.Load(), "a fresh X-Real-IP does not refill the process floor")
 }
 
 func TestChannelLimit_AttachFloorOnHTTP1(t *testing.T) {
@@ -745,7 +777,7 @@ func TestChannelLimit_ChatRateLimitRecordsNoReceipt(t *testing.T) {
 			MessagesPerMin: 10,
 			MessagesBurst:  transport.RPCWeightChat,
 		},
-	}, stubLookup{core: stubCore{}})
+	}, stubLookup{core: stubCore{owner: true}})
 
 	counter := observability.RequestTerminalCounterForTest(
 		observability.TerminalNoReceiptInterrupted, observability.ReasonRateLimited)
@@ -773,7 +805,7 @@ func TestChannelLimit_ChatChargesAfterAcquire(t *testing.T) {
 			MessagesPerMin: 10,
 			MessagesBurst:  transport.RPCWeightChat,
 		},
-	}, stubLookup{core: stubCore{}})
+	}, stubLookup{core: stubCore{owner: true}})
 
 	chat, err := e.session.Chat(context.Background(), withSession(
 		connect.NewRequest(&rpcpb.SignedEnvelope{EscrowId: "1"}), e.token))
@@ -782,6 +814,24 @@ func TestChannelLimit_ChatChargesAfterAcquire(t *testing.T) {
 	require.NotEqual(t, connect.CodeUnimplemented, connect.CodeOf(chat.Err()))
 	_ = chat.Close()
 	requireResourceExhausted(t, e.getSigs(), "rate limit exceeded")
+}
+
+func TestChannelLimit_ChatNonOwnerDoesNotCharge(t *testing.T) {
+	e := startLimitEnv(t, PeerAuthConfig{
+		Limits: &transport.ChannelLimitConfig{
+			MaxStreams:     8,
+			MessagesPerMin: 10,
+			MessagesBurst:  transport.RPCWeightChat,
+		},
+	}, stubLookup{core: stubCore{}})
+
+	chat, err := e.session.Chat(context.Background(), withSession(
+		connect.NewRequest(&rpcpb.SignedEnvelope{EscrowId: "1"}), e.token))
+	require.NoError(t, err)
+	require.False(t, chat.Receive())
+	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(chat.Err()))
+	_ = chat.Close()
+	require.NoError(t, e.getSigs(), "a refused non-owner Chat must not spend weight")
 }
 
 func TestChannelLimit_UnimplementedDoesNotCharge(t *testing.T) {
@@ -981,6 +1031,14 @@ func TestAttachBucket_DefaultBurstIsNotTheMinuteCap(t *testing.T) {
 	require.Equal(t, float64(defaultAttachBurst), burst)
 	require.Equal(t, float64(defaultAttachRefillPerSec), perSec)
 	require.Equal(t, defaultAttachInFlight, maxIn)
+
+	oBurst, oPerSec, oIn, oUnlimited := auth.originAttachLimit()
+	require.False(t, oUnlimited)
+	require.Equal(t, float64(defaultOriginAttachBurst), oBurst)
+	require.Equal(t, float64(defaultOriginAttachRefillPerSec), oPerSec)
+	require.Equal(t, defaultOriginAttachInFlight, oIn)
+	require.Less(t, oBurst, burst)
+	require.Less(t, oIn, maxIn)
 }
 
 func TestChannelLimit_OverflowRefusesNewStreamPeers(t *testing.T) {

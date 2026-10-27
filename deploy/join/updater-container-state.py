@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
 import shutil
@@ -45,18 +46,46 @@ def create(config, name):
     request = (f"POST /containers/create?name={urllib.parse.quote(name, safe='')} HTTP/1.1\r\n"
                f"Host: docker\r\nContent-Type: application/json\r\nContent-Length: {len(body)}\r\n"
                "Connection: close\r\n\r\n").encode() + body
-    reply = subprocess.run([DOCKER, "system", "dial-stdio"], input=request,
-                           capture_output=True, check=True, timeout=60).stdout
+    # Keep stdin open until the reply. EOF half-closes the daemon connection and
+    # Go cancels the create. The containerd image store then answers an empty
+    # 499 on Docker 29 (500 "context canceled" on 28). The request already sends
+    # Connection: close, so stdout ends while stdin is still open.
+    args = [DOCKER, "system", "dial-stdio"]
+    expired = threading.Event()
+    with subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL) as process:
+        timer = threading.Timer(60, lambda: (expired.set(), process.kill()))
+        timer.start()
+        try:
+            process.stdin.write(request)
+            process.stdin.flush()
+            reply = process.stdout.read()
+        finally:
+            timer.cancel()
+    if expired.is_set():
+        raise RuntimeError("docker system dial-stdio timed out")
+    if process.returncode:
+        raise RuntimeError(f"docker system dial-stdio failed ({process.returncode})")
 
     class Socket:
         def makefile(self, *_args):
             return io.BytesIO(reply)
 
     response = http.client.HTTPResponse(Socket())
-    response.begin()
-    result = json.loads(response.read())
-    if response.status != 201:
-        raise RuntimeError(f"Docker could not restore {name}: {result.get('message', response.status)}")
+    try:
+        response.begin()
+        payload = response.read()
+    except http.client.HTTPException as error:
+        raise RuntimeError(f"Docker could not restore {name}: {type(error).__name__}") from error
+    if not payload:
+        raise RuntimeError(f"Docker could not restore {name}: HTTP {response.status} with an empty body")
+    try:
+        result = json.loads(payload)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Docker could not restore {name}: HTTP {response.status} with a non-JSON body") from None
+    if response.status != 201 or not isinstance(result, dict) or "Id" not in result:
+        message = result.get("message", response.status) if isinstance(result, dict) else response.status
+        raise RuntimeError(f"Docker could not restore {name}: {message}")
     return result["Id"]
 
 

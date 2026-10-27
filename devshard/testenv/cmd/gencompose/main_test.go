@@ -516,6 +516,38 @@ func TestWriteCompose_ContentionProfilesEnv(t *testing.T) {
 	require.Equal(t, "true", compose.Services["devshardctl"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
 }
 
+func TestWriteCompose_PerParticipantPostgres(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Postgres.PerParticipant = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Contains(t, compose.Services, "devshard-postgres-versiond-0")
+	require.Contains(t, compose.Services, "devshard-postgres-versiond-2")
+	require.NotContains(t, compose.Services, "devshard-postgres-versiond-1")
+	require.NotContains(t, compose.Services, "devshard-postgres")
+	for host, want := range map[string]string{
+		"versiond-0": "devshard-postgres-versiond-0",
+		"versiond-1": "devshard-postgres-versiond-0",
+		"versiond-2": "devshard-postgres-versiond-2",
+	} {
+		require.Equal(t, want, compose.Services[host].Environment["PGHOST"], host)
+	}
+	require.Equal(t, "postgres", compose.Services["versiond-1"].Environment["DEVSHARD_STORAGE_MODE"])
+	require.Equal(t, "hybrid", compose.Services["versiond-2"].Environment["DEVSHARD_STORAGE_MODE"])
+}
+
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()

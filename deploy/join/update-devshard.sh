@@ -6,15 +6,17 @@
 # The host updater sequences PostgreSQL, the router fleet, public ingress,
 # and versiond replicas. Among versiond replicas, VERSIOND_LEGACY_HOST is last.
 # Public ingress is replaced as a group because its proxy and policy workers
-# depend on each other. A forward move, including a switch onto the v6 peer-RPC
-# release, applies the fleet, then the proxy, then versiond. Admission is the
-# point the public path changes; a failure there restores the previous proxy
-# and leaves the old versiond. JSON backends stay HTTP/1.1, so a v4 or v5
-# child stays up. Only the peer-RPC twin dials proto h2, and it stays down
-# until the child answers peer-rpc-ok, so :9443 can be published with the
-# proxy while that pool is empty. A rollback off peer RPC (image label
-# ai.gonka.peer-rpc-h2) replaces the proxy first, so :9443 is gone before any
-# router loses :8081.
+# depend on each other. An HA move applies the fleet, then the proxy, then
+# versiond, in either direction. Admission is the point the public path
+# changes; a failure there restores the previous proxy and leaves the old
+# versiond. JSON backends stay HTTP/1.1, so a v4 or v5 child stays up. Peer
+# RPC shares the public ports with JSON. Current routers admit H2 on :8081
+# and bounded Connect/H1 compatibility on :8080. Released v4/v5 wrappings
+# retain Connect via nginx. Intermediate separate-port v6 testnet routers
+# reject H1 RPC on :8080 and require a planned migration to a matching client
+# and wrapping generation; a common :8081 port does not make either order safe.
+# Only the peer-RPC twin dials proto h2 (it stays down until the child answers
+# peer-rpc-ok). Follow the canonical gonka-docs host upgrade procedure.
 # Failed replacements restore the saved Docker specification; an interrupted
 # replacement is recovered on the next normal run. PostgreSQL restores only its
 # image, retaining the migration target and its data. See the release guide for
@@ -846,14 +848,6 @@ if [[ $postgres_mode == local ]]; then
     up devshard-postgres
 fi
 
-# ai.gonka.peer-rpc-h2=1 marks an image that publishes the HTTP/2 peer hop.
-# Pre-h2 images have no such label, which is how a rollback is recognized.
-image_label() {
-    local image=$1 key=$2
-    [[ -n $image ]] || return 0
-    "$docker_bin" image inspect --format "{{if .Config.Labels}}{{index .Config.Labels \"$key\"}}{{end}}" "$image" 2>/dev/null || true
-}
-
 apply_router_fleet() {
     [[ $topology == ha ]] || return 0
     echo "Step: versiond-router fleet"
@@ -904,35 +898,6 @@ apply_public_proxy() {
     commit_replacement
 }
 
-# Rolling the routers off peer RPC while :9443 is still published refuses
-# every Connect call. Drop the proxy's hop first. A candidate proxy that
-# still carries the label would put :9443 back, so that combination stops.
-peer_rpc_rollback=false
-if [[ $topology == ha && -n $router_image && $(image_label "$router_image" ai.gonka.peer-rpc-h2) != 1 ]]; then
-    running_peer_rpc=false
-    if container_exists proxy; then
-        running_proxy_image=$("$docker_bin" inspect --format '{{.Config.Image}}' proxy) || \
-            fail "cannot read the running proxy image"
-        [[ $(image_label "$running_proxy_image" ai.gonka.peer-rpc-h2) == 1 ]] && running_peer_rpc=true
-    fi
-    while IFS= read -r router_name; do
-        [[ -n $router_name ]] || continue
-        running_router_image=$("$docker_bin" inspect --format '{{.Config.Image}}' "$router_name") || \
-            fail "cannot read the image of router $router_name"
-        if [[ $(image_label "$running_router_image" ai.gonka.peer-rpc-h2) == 1 ]]; then
-            running_peer_rpc=true
-            break
-        fi
-    done < <("$docker_bin" ps -a --format '{{.Names}}' --filter label=ai.gonka.component=versiond-router)
-    if [[ $running_peer_rpc == true ]]; then
-        candidate_proxy_image=$(jq -r '.services.proxy.image // ""' <<<"$rendered")
-        [[ $(image_label "$candidate_proxy_image" ai.gonka.peer-rpc-h2) != 1 ]] || \
-            fail "refusing to roll versiond-router off peer RPC while proxy image ${candidate_proxy_image:-<unset>} still serves :9443; roll that proxy back in the same run"
-        peer_rpc_rollback=true
-        echo "Step: peer RPC rollback — public proxy leaves :9443 before the router fleet loses :8081"
-    fi
-fi
-
 # versiond rolls after admission. JSON is already served over HTTP/1.1.
 # Replacing these children is what fills the peer-RPC pool: the twin stays
 # down until the new process answers peer-rpc-ok.
@@ -981,11 +946,7 @@ replace_versiond() {
     done
 }
 
-if [[ $topology == ha && $peer_rpc_rollback == true ]]; then
-    apply_public_proxy
-    apply_router_fleet
-    replace_versiond
-elif [[ $topology == ha ]]; then
+if [[ $topology == ha ]]; then
     apply_router_fleet
     apply_public_proxy
     replace_versiond

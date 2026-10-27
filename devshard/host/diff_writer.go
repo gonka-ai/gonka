@@ -25,7 +25,42 @@ type diffWriter struct {
 	mu      sync.Mutex
 	queue   []*diffWaiter
 	running bool
+	// claims are nonce ranges a challenge request is applying. Guarded by h.mu.
+	claims []*nonceClaim
 }
+
+// applyChunkNonces is the most diffs one hold of h.mu validates. It matches
+// the gateway catch-up chunk.
+const applyChunkNonces = 200
+
+// testAfterApplyChunk, when set, runs between chunks of a long run while h.mu
+// is not held.
+var testAfterApplyChunk func()
+
+// testBeforeClaimWait, when set, runs as a request is about to wait on another
+// request's claim. h.mu is not held.
+var testBeforeClaimWait func()
+
+// testBeforeClaimDecode, when set, runs while a challenge claim decodes a wire
+// that is not already known. h.mu is not held.
+var testBeforeClaimDecode func()
+
+// testBeforeClaimSig, when set, runs before each user-signature check of a
+// challenge claim, after that diff is decoded and before the next one is.
+// h.mu is not held.
+var testBeforeClaimSig func()
+
+// testBeforeStackedWait, when set, runs as a stacked claim is about to wait for
+// the claim below it to reach the writer queue. h.mu is not held.
+var testBeforeStackedWait func()
+
+// testBeforeTakeQueue, when set, runs before the diff writer takes the queue.
+// It holds neither h.mu nor the writer lock.
+var testBeforeTakeQueue func()
+
+// testStackedWaitLimit, when set, replaces the half-deadline cap on how long a
+// stacked claim waits for the claim below it to reach the writer queue.
+var testStackedWaitLimit func(remaining time.Duration) time.Duration
 
 type diffWaiter struct {
 	ctx   context.Context
@@ -83,14 +118,32 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		h.mu.Lock()
 		return nil, sigErr
 	}
+	h.mu.Lock()
 
+	newly, err := h.enqueueDiffsLocked(ctx, pending, nil)
+	if err != nil {
+		return newly, err
+	}
+	return newly, sigErr
+}
+
+// enqueueDiffsLocked queues pending and waits for the writer. Signatures are
+// already checked. Caller holds h.mu; it is released while the batch runs and
+// held again on return. queued, when non-nil, is closed once the batch is in
+// the writer queue and before h.mu is released, so a claim stacked above this
+// one can enqueue into the same writer batch.
+func (h *Host) enqueueDiffsLocked(ctx context.Context, pending []types.Diff, queued chan struct{}) ([]types.Diff, error) {
 	w := &diffWaiter{ctx: ctx, diffs: pending, done: make(chan struct{})}
 	h.writer.mu.Lock()
 	h.writer.queue = append(h.writer.queue, w)
 	start := !h.writer.running
 	h.writer.running = true
 	h.writer.mu.Unlock()
+	if queued != nil {
+		close(queued)
+	}
 
+	h.mu.Unlock()
 	if start {
 		go h.runDiffWriter()
 	}
@@ -108,16 +161,16 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		<-w.done
 	}
 	h.mu.Lock()
-	if w.err != nil {
-		return w.newly, w.err
-	}
-	return w.newly, sigErr
+	return w.newly, w.err
 }
 
 // runDiffWriter drains the queue one batch at a time and exits when it is
 // empty. At most one runs per host.
 func (h *Host) runDiffWriter() {
 	for {
+		if testBeforeTakeQueue != nil {
+			testBeforeTakeQueue()
+		}
 		h.writer.mu.Lock()
 		queued := h.writer.queue
 		h.writer.queue = nil
@@ -222,10 +275,10 @@ func (h *Host) writeDiffBatch(ws []*diffWaiter) {
 }
 
 // applyRunLocked applies one contiguous run: heal any gap below it from the
-// store, validate the run as a chain, persist it as one batch with h.mu
-// released, then commit each diff. Caller holds h.mu.
+// store, then validate and commit at most applyChunkNonces diffs per hold of
+// h.mu. Caller holds h.mu.
 func (h *Host) applyRunLocked(ctx context.Context, run []types.Diff, applied map[uint64]bool) error {
-	for {
+	for len(run) > 0 {
 		latest := h.sm.LatestNonce()
 		for len(run) > 0 && run[0].Nonce <= latest {
 			run = run[1:]
@@ -233,18 +286,37 @@ func (h *Host) applyRunLocked(ctx context.Context, run []types.Diff, applied map
 		if len(run) == 0 {
 			return nil
 		}
-		if run[0].Nonce == latest+1 {
-			break
+		if run[0].Nonce != latest+1 {
+			if h.store == nil {
+				return fmt.Errorf("%w: escrow %s mem=%d incoming=%d (no store)",
+					ErrReconcileGap, h.escrowID, latest, run[0].Nonce)
+			}
+			if err := h.applyDurablePagesLocked(ctx, latest+1, run[0].Nonce-1, "reconcile", "reconcile_fast_forward", run[0].Nonce); err != nil {
+				return err
+			}
+			continue
 		}
-		if h.store == nil {
-			return fmt.Errorf("%w: escrow %s mem=%d incoming=%d (no store)",
-				ErrReconcileGap, h.escrowID, latest, run[0].Nonce)
+		n := len(run)
+		if n > applyChunkNonces {
+			n = applyChunkNonces
 		}
-		if err := h.applyDurablePagesLocked(ctx, latest+1, run[0].Nonce-1, "reconcile", "reconcile_fast_forward", run[0].Nonce); err != nil {
+		if err := h.applyChunkLocked(ctx, run[:n], applied); err != nil {
 			return err
 		}
+		run = run[n:]
+		if len(run) == 0 {
+			return nil
+		}
+		h.mu.Unlock()
+		if testAfterApplyChunk != nil {
+			testAfterApplyChunk()
+		}
+		h.mu.Lock()
 	}
+	return nil
+}
 
+func (h *Host) applyChunkLocked(ctx context.Context, run []types.Diff, applied map[uint64]bool) error {
 	if h.store == nil {
 		for _, diff := range run {
 			phaseBefore := h.sm.Phase()

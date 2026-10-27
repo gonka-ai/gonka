@@ -119,6 +119,10 @@ type Server struct {
 	heightSyncMarks     *heightsync.MarkLog
 	heightSyncSeedRPC   bool
 
+	// coldWalks remembers, for this process only, how far a gated catch-up
+	// got for each executor address. One address can own several slots.
+	coldWalks *host.ColdWalks
+
 	pendingUntrustedMu        sync.Mutex
 	pendingUntrustedBySession map[string]*pendingUntrustedTip
 
@@ -188,6 +192,7 @@ func NewServer(
 		verifier:    verifier,
 		userAddr:    userAddr,
 		maxBodySize: DefaultMaxBodySize,
+		coldWalks:   host.NewColdWalks(),
 	}
 	for _, o := range opts {
 		o(s)
@@ -649,10 +654,14 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 		s.host.ApplyCatchUpDiffs(diffs)
 	}
 
-	st := s.host.SnapshotState()
+	st, rec, ok := s.host.SnapshotForTimeout(req.InferenceID)
+	if !ok || rec == nil {
+		return nil, fmt.Errorf("inference %d not found", req.InferenceID)
+	}
 	localMempool := s.host.MempoolTxs()
 
-	executorIdx := int(req.InferenceID % uint64(len(s.host.Group())))
+	group := s.host.Group()
+	executorIdx := int(req.InferenceID % uint64(len(group)))
 	executorClient, err := s.timeoutExecutor(ctx, executorIdx)
 	if err != nil {
 		return nil, err
@@ -663,9 +672,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	var accept bool
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, PayloadFromJSON(req.Payload), localMempool, executorClient, nowUnix)
+		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, group[executorIdx].ValidatorAddress, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient, s.host, s.host, st.Config, nowUnix)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
@@ -840,19 +849,31 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	if forged, ok := forgedChallengeReceipt(s.host, req.InferenceID); ok {
 		return forged, nil
 	}
-	diffs, err := decodeDiffsJSON(req.Diffs)
+	wires := make([]types.DiffWire, len(req.Diffs))
+	for i, dj := range req.Diffs {
+		wires[i] = types.DiffWire{
+			Nonce:         dj.Nonce,
+			Txs:           dj.Txs,
+			UserSig:       dj.UserSig,
+			PostStateRoot: dj.PostStateRoot,
+		}
+	}
+
+	payload := PayloadFromJSON(req.Payload)
+	receipt, _, err := s.host.ChallengeReceiptWire(ctx, req.InferenceID, payload, wires, PredecodedDiffs(ctx))
 	if err != nil {
 		return nil, err
 	}
 
-	receipt, _, err := s.host.ChallengeReceipt(ctx, req.InferenceID, PayloadFromJSON(req.Payload), diffs)
-	if err != nil {
-		return nil, err
-	}
-
-	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
-	if err != nil {
-		return nil, err
+	// A nil payload with diffs is catch-up. The verifier discards the mempool,
+	// and building it takes the host lock. An execution vote sends no diffs
+	// and reads this mempool, so that call still builds it.
+	var mempoolBytes [][]byte
+	if payload != nil || len(wires) == 0 {
+		mempoolBytes, err = DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes}, nil
 }

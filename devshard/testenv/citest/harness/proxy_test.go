@@ -1,11 +1,11 @@
 package harness
 
 import (
+	"devshard/testenv/config"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"devshard/testenv/config"
 
 	"github.com/stretchr/testify/require"
 )
@@ -26,7 +26,7 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.NoError(t, err)
 	text := string(src)
 	require.Regexp(t, `(?m)^  proxy:`, text)
-	require.Contains(t, text, `"127.0.0.1:8443:8443"`)
+	require.Contains(t, text, `"127.0.0.1:18443:8080"`)
 	require.Contains(t, text, "./proxy/haproxy-rpc.cfg")
 	require.Contains(t, text, "versiond-router")
 	require.Contains(t, text, "ipv4_address: 172.30.0.70")
@@ -37,8 +37,8 @@ func TestRewriteProxyComposeRandomizesHostPort(t *testing.T) {
 	require.NoError(t, err)
 
 	got := rewriteProxyCompose(text)
-	require.Contains(t, got, `"127.0.0.1::8443"`)
-	require.NotContains(t, got, `"127.0.0.1:8443:8443"`)
+	require.Contains(t, got, `"127.0.0.1::8080"`)
+	require.NotContains(t, got, `"127.0.0.1:18443:8080"`)
 	require.Contains(t, got, "./proxy/grpc-exhausted.http")
 	require.NotContains(t, got, "../../proxy-router/grpc-exhausted.http")
 }
@@ -47,13 +47,35 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	cfg, err := os.ReadFile(filepath.Join("..", "..", "proxy", "haproxy-rpc.cfg"))
 	require.NoError(t, err)
 	text := string(cfg)
-	require.Contains(t, text, "bind *:8443 proto h2")
+	require.Contains(t, text, "bind *:8080\n")
+	require.Contains(t, text, "acl peer_rpc_h2c req.payload(0,24) -m bin 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a")
+	require.Contains(t, text, "acl peer_rpc_h2c_prefix req.payload(0,14) -m bin 505249202a20485454502f322e30")
+	require.Contains(t, text, "tcp-request content accept if peer_rpc_h2c\n")
+	require.Contains(t, text, "tcp-request content accept if HTTP !peer_rpc_h2c_prefix")
+	require.NotContains(t, text, "accept if peer_rpc_h2c or HTTP", "a partial preface must not end the inspection as HTTP")
+	require.Contains(t, text, "use_backend rpc_h2c_in if peer_rpc_h2c")
+	require.Contains(t, text, "server local abns@rpc_h2c send-proxy-v2")
+	require.Contains(t, text, "bind abns@rpc_h2c accept-proxy proto h2")
 	require.Contains(t, text, "tune.h2.max-concurrent-streams 16384")
 	require.Contains(t, text, "versiond-router:8081 proto h2")
+	require.Contains(t, text, "server router versiond-router:8080 resolvers docker")
+	require.NotContains(t, text, "8443")
 	require.Contains(t, text, "http-request del-header X-Real-IP")
 	require.Contains(t, text, "X-Real-IP %[src]")
-	require.Contains(t, text, "store conn_rate(1s),sess_rate(1s)")
-	require.Contains(t, text, "tcp-request connection track-sc0 src")
+	require.Contains(t, text, "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)\n")
+	require.Contains(t, text, "acl trusted_external_proxy src 0.0.0.0/32")
+	require.Contains(t, text, "timeout client-hs 5s")
+	require.Contains(t, text, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
+	require.Contains(t, text, "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt 32 }")
+	require.NotContains(t, text, "tcp-request connection track-sc0")
+	require.NotContains(t, text, "tcp-request session track-sc0")
+	require.True(t, strings.Index(text, "track-sc0 src,ipmask(32,64) table rpc_h2") < strings.Index(text, "use_backend rpc_h2c_in"),
+		"the public port must count a peer connection before handing it off")
+	// A rejected hand-off must not be retried: every retry is another
+	// rpc_h2 session and a second of delay before the client sees the close.
+	require.Contains(t, text, "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
+	require.Contains(t, text, "tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }")
+	require.NotContains(t, text, "tcp-request connection expect-proxy")
 	require.Contains(t, text, "expose-experimental-directives")
 	require.Contains(t, text, "normalize-uri percent-decode-unreserved strict")
 	require.Contains(t, text, "normalize-uri percent-to-uppercase")
@@ -61,25 +83,45 @@ func TestProxyHAProxySpeaksH2ToVersiondRouter(t *testing.T) {
 	require.Contains(t, text, "path-strip-dotdot")
 	require.Contains(t, text, "deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }")
 	require.Contains(t, text, "path_end /devshard.transport.v1.PeerAuthService/Watch")
-	require.Contains(t, text, "track-sc1 src table st_rpc_watch")
+	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_watch")
 	require.Contains(t, text, "path_end /devshard.transport.v1.PeerAuthService/Attach")
 	require.Contains(t, text, "path_end /devshard.transport.v1.SessionService/Chat")
 	require.Contains(t, text, "path_end /devshard.transport.v1.SessionService/GetDiffs")
-	require.Contains(t, text, "track-sc1 src table st_rpc_attach")
-	require.Contains(t, text, "track-sc1 src table st_rpc_chat")
-	require.Contains(t, text, "track-sc1 src table st_rpc_diffs")
-	require.NotContains(t, text, "bind *:8080")
+	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_attach")
+	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_chat")
+	require.Contains(t, text, "track-sc1 src,ipmask(32,64) table st_rpc_diffs")
+	require.Contains(t, text, "stick-table type ipv6 size 1m expire 10s store http_req_rate(10s)")
+	require.Contains(t, text, "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
+	require.NotContains(t, text, "tcp-request connection track-sc0")
 
 	prod, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "proxy-router", "haproxy.cfg.template"))
 	require.NoError(t, err)
+	policy, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "proxy-router", "rpc-policy.cfg.template"))
+	require.NoError(t, err)
+	entrypoint, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "proxy-router", "entrypoint.sh"))
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(string(prod), "${RPC_POLICY_RULES}"), "H1 and H2 must share procedure budgets")
 	require.Contains(t, string(prod), "expose-experimental-directives")
-	require.Contains(t, string(prod), "normalize-uri percent-decode-unreserved strict")
-	require.Contains(t, string(prod), "normalize-uri percent-to-uppercase")
-	require.Contains(t, string(prod), "path_reg ^(/devshard)?/[^/]+/sessions/[^/]+/rpc/.*[%]")
+	require.Contains(t, string(policy), "normalize-uri percent-decode-unreserved strict")
+	require.Contains(t, string(policy), "normalize-uri percent-to-uppercase")
+	require.Contains(t, string(policy), "path_reg ^(/devshard)?/[^/]+/sessions/.*[%]")
 	require.Contains(t, string(prod), "${PUBLIC_PROXY_ACL}")
 	require.Contains(t, string(prod), "${PUBLIC_PROXY_EXPECT}")
-	require.Contains(t, string(prod), "path-strip-dotdot")
-	require.Contains(t, string(prod), "deny deny_status 404 unless { path_reg ^(/devshard)?(/[^/]+)?/sessions/[^/]+/rpc/[^/]+/[^/]+$ }")
+	require.NotContains(t, string(prod), "${RPC_PROXY_ACL}")
+	require.Contains(t, string(prod), "timeout client-hs 5s")
+	require.Contains(t, string(prod), "stick-table type ipv6 size 1m expire 10s store conn_cur,conn_rate(1s)\n")
+	require.Contains(t, string(prod), "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_h2c\n")
+	require.Contains(t, string(entrypoint), "tcp-request content track-sc0 src,ipmask(32,64) table rpc_h2 if peer_rpc_tls\n")
+	require.NotContains(t, string(prod), "tcp-request connection track-sc0")
+	require.NotContains(t, string(prod), "tcp-request session track-sc0")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_h2c { sc_conn_cur(0) gt ${RPC_H2_MAX_CONNS_PER_SRC} }")
+	require.Contains(t, string(entrypoint), "tcp-request content reject if peer_rpc_tls { sc_conn_cur(0) gt $RPC_H2_MAX_CONNS_PER_SRC }")
+	require.Contains(t, string(prod), "backend rpc_h2c_in\n    mode tcp\n    retries 0\n")
+	require.Contains(t, string(prod), "backend rpc_tls_in\n    mode tcp\n    retries 0\n")
+	require.Contains(t, string(prod), "tcp-request content reject if peer_rpc_h2c { sc_conn_rate(0) gt 200 }")
+	require.Contains(t, string(entrypoint), "tcp-request content reject if peer_rpc_tls { sc_conn_rate(0) gt 200 }")
+	require.Contains(t, string(policy), "path-strip-dotdot")
+	require.Contains(t, string(prod), "deny deny_status 404 unless peer_rpc")
 	require.Contains(t, string(prod), "st_rpc_watch")
 }
 
@@ -94,12 +136,15 @@ func TestVersiondRouterHasNoPerIPZones(t *testing.T) {
 	require.NotContains(t, string(pool), "sess_rate")
 	require.Contains(t, string(router), "Per-IP zones stay on the published hop (proxy), not here.")
 	require.Contains(t, string(router), "tune.h2.max-concurrent-streams 16384")
-	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:${H2_PORT} proto h2")
+	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:8080 id 1\n")
+	require.Contains(t, string(router), "bind ${FRONT_BIND_ADDRESS}:8081 id 2\n")
+	require.NotContains(t, string(router), "proto h2\n", "no bind forces proto h2: HAProxy detects the preface on either cleartext bind")
 	require.Contains(t, string(router), "expose-experimental-directives")
 	require.Contains(t, string(router), "normalize-uri percent-decode-unreserved strict")
 	require.Contains(t, string(router), "normalize-uri percent-to-uppercase")
-	require.Contains(t, string(router), "dst_port 8080")
-	require.Contains(t, string(router), "var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/")
+	require.Contains(t, string(router), "acl rpc_health dst_port 8081")
+	require.Contains(t, string(router), "use_backend %[var(txn.rpc_backend)] if rpc_health health_path")
+	require.Contains(t, string(router), "acl peer_rpc var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+/rpc/")
 	require.NotContains(t, string(router), "path_sub /rpc/")
 }
 
@@ -126,8 +171,8 @@ func TestComposeFileArgsProxyOverlay(t *testing.T) {
 func TestDefaultInferenceURLStaysRouter8080(t *testing.T) {
 	require.Equal(t, "http://versiond-router:8080", config.DefaultEscrowSlotURL)
 	require.Equal(t, 8080, config.DefaultVersiondRouterPort)
-	require.Equal(t, 8081, config.DefaultVersiondRouterH2Port)
-	require.Equal(t, 8443, config.DefaultRPCH2Port)
+	require.Equal(t, 8080, config.DefaultProxyPort)
+	require.Equal(t, "http://proxy:8080", config.ProxyOverlayURL)
 	require.Equal(t, "proxy", config.DefaultProxyService)
 }
 

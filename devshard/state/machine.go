@@ -11,7 +11,6 @@ import (
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -50,6 +49,9 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	}
 	return cost, nil
 }
+
+// MinReservationTokens is the smallest max_tokens a MsgStartInference may reserve.
+const MinReservationTokens = 1
 
 func ReservedCost(inputLength, maxTokens, tokenPrice uint64) (uint64, error) {
 	return tokenCost(inputLength, maxTokens, tokenPrice)
@@ -965,7 +967,23 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	src := sm.state
+	return snapshotNoInferencesLocked(sm.state)
+}
+
+// SnapshotWithInference copies the escrow summary and one inference record
+// under the same lock. The returned state has a nil inference map.
+func (sm *StateMachine) SnapshotWithInference(id uint64) (types.EscrowState, *types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	st := snapshotNoInferencesLocked(sm.state)
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return st, nil, false
+	}
+	return st, copyInferenceRecord(rec), true
+}
+
+func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
 	// only ever replaced wholesale (append to a nil slice), never mutated in
 	// place, so readers of the snapshot see a stable value.
@@ -1291,8 +1309,8 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
-	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
-		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	if !sm.replayingPersisted && msg.MaxTokens < MinReservationTokens {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, MinReservationTokens)
 	}
 
 	// Duplicate inference ID guard.

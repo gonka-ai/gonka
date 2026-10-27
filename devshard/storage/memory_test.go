@@ -30,6 +30,14 @@ func TestMemory_DiffSizes(t *testing.T) {
 	runDiffSizes(t, NewMemory())
 }
 
+func TestMemory_DiffStateHash(t *testing.T) {
+	runDiffStateHash(t, NewMemory())
+}
+
+func TestMemory_GetDiffWires(t *testing.T) {
+	runGetDiffWires(t, NewMemory())
+}
+
 func TestMemory_GetSignatures(t *testing.T) {
 	runGetSignatures(t, NewMemory())
 }

@@ -677,15 +677,19 @@ func TestRewindMakesTheNextCatchUpCarryTheWholeHistory(t *testing.T) {
 	}
 	session.mu.Lock()
 	session.hostSyncNonce[2] = 4
-	before := len(session.diffsForHost(2))
+	beforeDiffs, err := session.diffsForHost(2)
 	session.mu.Unlock()
+	require.NoError(t, err)
+	before := len(beforeDiffs)
 	require.NotZero(t, before, "precondition: the cursor hides part of a non-empty history")
 
 	require.True(t, session.RewindHostCatchUp(2, "escrow_state_root_diverged"))
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	require.Greater(t, len(session.diffsForHost(2)), before,
+	afterDiffs, err := session.diffsForHost(2)
+	require.NoError(t, err)
+	require.Greater(t, len(afterDiffs), before,
 		"a rewound host has to be handed the chain its cursor claimed it already had")
 }
 

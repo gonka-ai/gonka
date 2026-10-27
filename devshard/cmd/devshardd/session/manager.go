@@ -1563,8 +1563,8 @@ func (l hostRPCLookup) SessionForOwner(id, addr string) (rpcserver.SessionCore, 
 	return srv, nil
 }
 
-func (l hostRPCLookup) SessionForStartProof(id, addr string, diffs []types.Diff, claimedVersion string) (rpcserver.SessionCore, error) {
-	srv, err := l.m.sessionForStartProof(id, addr, diffs, claimedVersion)
+func (l hostRPCLookup) SessionForStartProof(id, addr string, decode func() ([]types.Diff, error), claimedVersion string) (rpcserver.SessionCore, error) {
+	srv, err := l.m.sessionForStartProof(id, addr, decode, claimedVersion)
 	if err != nil {
 		return nil, err
 	}

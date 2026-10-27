@@ -53,9 +53,10 @@ var (
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
 
-	peerRPCEnabled     prometheus.Gauge
-	peerRPCAttachTotal *prometheus.CounterVec
-	peerRPCGateTotal   *prometheus.CounterVec
+	peerRPCEnabled          prometheus.Gauge
+	peerRPCAttachTotal      *prometheus.CounterVec
+	peerRPCGateTotal        *prometheus.CounterVec
+	peerRPCChatDroppedTotal *prometheus.CounterVec
 
 	peerSessionState         *prometheus.GaugeVec
 	peerAttachTotal          *prometheus.CounterVec
@@ -67,6 +68,23 @@ var (
 	peerRPCRequestsTotal     *prometheus.CounterVec
 	peerRPCBannedTotal       *prometheus.CounterVec
 	peerRPCAttachBannedTotal *prometheus.CounterVec
+
+	refusalChallengePages *prometheus.CounterVec
+	refusalChallengeBytes prometheus.Histogram
+	challengeDiffsTotal   *prometheus.CounterVec
+	challengeClaimRetries *prometheus.CounterVec
+
+	// Concrete counters resolved once so a request increments with one atomic.
+	pageOK           prometheus.Counter
+	pageAnswered     prometheus.Counter
+	pageUnreachable  prometheus.Counter
+	pageTooLarge     prometheus.Counter
+	pageDeadline     prometheus.Counter
+	diffsClaimed     prometheus.Counter
+	diffsApplied     prometheus.Counter
+	diffsWaited      prometheus.Counter
+	retryClaimFailed prometheus.Counter
+	retryGap         prometheus.Counter
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -246,6 +264,10 @@ func initRegistry() {
 		Name: "devshard_peer_rpc_gate_total",
 		Help: "Peer RPC handshake-gate outcomes (admitted, missing, forged, expired, oversized).",
 	}, []string{"reason"})
+	peerRPCChatDroppedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_peer_rpc_chat_dropped_total",
+		Help: "Inbound Chat streams the child ended or refused before or during inference (pending_cap, read_timeout, send_timeout).",
+	}, []string{"reason"})
 	peerSessionState = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_peer_session_state",
 		Help: "Client PeerConn state (1 on the current state, 0 on the others) per destination host child (addr@version).",
@@ -284,8 +306,28 @@ func initRegistry() {
 	}, []string{"endpoint", "zone"})
 	peerRPCAttachBannedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_peer_rpc_attach_banned_total",
-		Help: "Attach refusals by reason (floor, other). No peer/ip labels.",
+		Help: "Attach refusals by reason (floor, origin, other). No peer/ip labels.",
 	}, []string{"reason"})
+	refusalChallengePages = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_refusal_challenge_pages_total",
+		Help: "Refused-timeout challenge pages by result (ok, answered_error, unreachable, too_large, deadline).",
+	}, []string{"result"})
+	refusalChallengeBytes = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name: "devshard_refusal_challenge_bytes",
+		Help: "Refused-timeout challenge request body size in bytes.",
+		Buckets: []float64{
+			1024, 4096, 16384, 65536, 262144,
+			1 << 20, 2 << 20, 4 << 20, 8 << 20, 10 << 20,
+		},
+	})
+	challengeDiffsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_challenge_diffs_total",
+		Help: "Diffs in a challenge request by outcome (claimed, applied, waited).",
+	}, []string{"outcome"})
+	challengeClaimRetries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_challenge_claim_retries_total",
+		Help: "Challenge claim retries by cause (claim_failed, gap).",
+	}, []string{"cause"})
 
 	registry.MustRegister(
 		inflight,
@@ -326,6 +368,7 @@ func initRegistry() {
 		peerRPCEnabled,
 		peerRPCAttachTotal,
 		peerRPCGateTotal,
+		peerRPCChatDroppedTotal,
 		peerSessionState,
 		peerAttachTotal,
 		peerReattachTotal,
@@ -336,7 +379,21 @@ func initRegistry() {
 		peerRPCRequestsTotal,
 		peerRPCBannedTotal,
 		peerRPCAttachBannedTotal,
+		refusalChallengePages,
+		refusalChallengeBytes,
+		challengeDiffsTotal,
+		challengeClaimRetries,
 	)
+	pageOK = refusalChallengePages.WithLabelValues("ok")
+	pageAnswered = refusalChallengePages.WithLabelValues("answered_error")
+	pageUnreachable = refusalChallengePages.WithLabelValues("unreachable")
+	pageTooLarge = refusalChallengePages.WithLabelValues("too_large")
+	pageDeadline = refusalChallengePages.WithLabelValues("deadline")
+	diffsClaimed = challengeDiffsTotal.WithLabelValues("claimed")
+	diffsApplied = challengeDiffsTotal.WithLabelValues("applied")
+	diffsWaited = challengeDiffsTotal.WithLabelValues("waited")
+	retryClaimFailed = challengeClaimRetries.WithLabelValues("claim_failed")
+	retryGap = challengeClaimRetries.WithLabelValues("gap")
 }
 
 // RegisterRuntimeCollectors registers the standard Go runtime / process
@@ -616,6 +673,25 @@ func IncPeerRPCGate(reason string) {
 	peerRPCGateTotal.WithLabelValues(reason).Inc()
 }
 
+const (
+	PeerRPCChatDroppedPendingCap  = "pending_cap"
+	PeerRPCChatDroppedReadTimeout = "read_timeout"
+	PeerRPCChatDroppedSendTimeout = "send_timeout"
+)
+
+// IncPeerRPCChatDropped counts one inbound Chat the child refused while
+// its envelope was unread, or ended on a read or send deadline.
+func IncPeerRPCChatDropped(reason string) {
+	ensureMetrics()
+	peerRPCChatDroppedTotal.WithLabelValues(reason).Inc()
+}
+
+// PeerRPCChatDroppedForTest is the counter behind IncPeerRPCChatDropped.
+func PeerRPCChatDroppedForTest(reason string) prometheus.Counter {
+	ensureMetrics()
+	return peerRPCChatDroppedTotal.WithLabelValues(reason)
+}
+
 // IncPeerRPCRequests counts one classified inbound RPC. result is ok or banned.
 func IncPeerRPCRequests(endpoint, result string) {
 	ensureMetrics()
@@ -642,7 +718,8 @@ func IncPeerRPCBanned(endpoint, zone string) {
 }
 
 // IncPeerRPCAttachBanned counts an Attach resource_exhausted. reason is
-// floor (process Attach cap) or other (oversized, too many sessions).
+// floor (process Attach cap), origin (one X-Real-IP), or other (oversized,
+// too many sessions).
 func IncPeerRPCAttachBanned(reason string) {
 	ensureMetrics()
 	if reason == "" {
@@ -778,4 +855,77 @@ func PeerSessionStateGauge(peer, state string) prometheus.Gauge {
 func PeerPoolExhaustedCounter(peer string) prometheus.Counter {
 	ensureMetrics()
 	return peerPoolExhaustedTotal.WithLabelValues(peer)
+}
+
+// IncRefusalChallengePage counts one refused-timeout challenge page.
+// result is ok, answered_error, unreachable, too_large, or deadline.
+func IncRefusalChallengePage(result string) {
+	ensureMetrics()
+	switch result {
+	case "ok":
+		pageOK.Inc()
+	case "unreachable":
+		pageUnreachable.Inc()
+	case "too_large":
+		pageTooLarge.Inc()
+	case "deadline":
+		pageDeadline.Inc()
+	default:
+		pageAnswered.Inc()
+	}
+}
+
+// ObserveRefusalChallengeBytes records one refused-timeout request body.
+func ObserveRefusalChallengeBytes(n int) {
+	if n < 0 {
+		return
+	}
+	ensureMetrics()
+	refusalChallengeBytes.Observe(float64(n))
+}
+
+// AddChallengeDiffs counts diffs in one challenge request.
+// outcome is claimed (decoded by this request), applied (already at or below
+// latest), or waited (covered by another request's claim).
+func AddChallengeDiffs(outcome string, n int) {
+	if n <= 0 {
+		return
+	}
+	ensureMetrics()
+	switch outcome {
+	case "applied":
+		diffsApplied.Add(float64(n))
+	case "waited":
+		diffsWaited.Add(float64(n))
+	default:
+		diffsClaimed.Add(float64(n))
+	}
+}
+
+// ChallengeDiffCounter is the challenge-diff counter for tests.
+func ChallengeDiffCounter(outcome string) prometheus.Counter {
+	ensureMetrics()
+	if outcome == "" {
+		outcome = "claimed"
+	}
+	return challengeDiffsTotal.WithLabelValues(outcome)
+}
+
+// ChallengeClaimRetryCounter is the claim-retry counter for tests.
+func ChallengeClaimRetryCounter(cause string) prometheus.Counter {
+	ensureMetrics()
+	if cause == "" {
+		cause = "claim_failed"
+	}
+	return challengeClaimRetries.WithLabelValues(cause)
+}
+
+// IncChallengeClaimRetry counts one claim retry. cause is claim_failed or gap.
+func IncChallengeClaimRetry(cause string) {
+	ensureMetrics()
+	if cause == "gap" {
+		retryGap.Inc()
+		return
+	}
+	retryClaimFailed.Inc()
 }

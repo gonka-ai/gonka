@@ -86,26 +86,16 @@ if ! awk -F, -v backend="$backend" -v server="$server" '
     exit 1
 fi
 
-# Peer RPC is the _rpc twin of this version backend. A fleet that rendered
-# the twin is admitted only when that server is UP too. Non-HA has no twin.
+# Peer RPC is the _rpc twin of this version backend. Its state does not
+# gate admission: while the twin is DOWN (a router generation without the
+# :8081 peer-RPC listen, or no child answering peer-rpc-ok yet) the proxy
+# sends this version's peer RPC to the JSON backend over HTTP/1.1, the one
+# admitted above. The twin's state is reported for the operator.
 rpc_backend="${backend}_rpc"
-if awk -F, -v backend="$rpc_backend" -v server="$server" '
-        $1 == backend { backend_found = 1 }
+awk -F, -v backend="$rpc_backend" -v server="$server" '
         $1 == backend && $2 == server {
-            found = 1
-            if ($18 ~ /^UP/) exit 0
-            exit 1
+            print "route-status: peer RPC twin " backend "/" $2 " is " $18 \
+                ($18 ~ /^UP/ ? "" : " (peer RPC takes the HTTP/1.1 path)") > "/dev/stderr"
         }
-        END {
-            if (!backend_found) exit 2
-            if (!found) exit 1
-        }
-    ' "$tmpdir/stats"; then
-    exit 0
-else
-    status=$?
-    if [ "$status" -eq 2 ]; then
-        exit 0
-    fi
-    exit 1
-fi
+    ' "$tmpdir/stats"
+exit 0

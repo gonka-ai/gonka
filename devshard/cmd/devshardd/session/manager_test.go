@@ -257,7 +257,7 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 
 	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, Model: "llama", InputLength: 100,
-		MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		MaxTokens: 0, StartedAt: 1000,
 	}}}}
 	_, err = sm.ApplyLocal(1, txs)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
@@ -446,7 +446,9 @@ func TestHostManager_BindDoesNotWaitForPeerLookups(t *testing.T) {
 	require.NoError(t, err, "bind must not wait for the hung lookup")
 	require.Eventually(t, func() bool { return len(srv.PeerClients()) == 2 }, 5*time.Second, time.Millisecond)
 	require.NotContains(t, srv.PeerClients(), 2)
-	require.EqualValues(t, 1, br.calls.Load())
+	// The healthy slots can finish before the hung lookup goroutine starts.
+	// Wait for that lookup before checking that the repair joins it.
+	require.Eventually(t, func() bool { return br.calls.Load() == 1 }, 5*time.Second, time.Millisecond)
 
 	probed := make(chan struct{})
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

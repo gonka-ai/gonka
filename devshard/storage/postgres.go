@@ -1345,6 +1345,9 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	return &meta, nil
 }
 
+// GetDiffs loads each nonce's txs_proto once, then that nonce's signatures.
+// One repeatable-read transaction keeps the two statements on the same
+// snapshot. A join would repeat and detoast the blob once per signature row.
 func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
@@ -1353,75 +1356,104 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx,
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
+		 FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	recs, err := readDiffRecords(rows)
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return recs, nil
+	}
+
+	sigRows, err := tx.Query(ctx,
+		`SELECT nonce, slot_id, sig FROM devshard_signatures
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce, slot_id`,
+		epochID, escrowID, fromNonce, toNonce,
+	)
+	if err != nil {
+		return nil, err
+	}
+	err = attachDiffSignatureRows(sigRows, recs)
+	sigRows.Close()
+	if err != nil {
+		return nil, err
+	}
+	return recs, nil
+}
+
+func (s *Postgres) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	if fromNonce > toNonce {
+		return nil, nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
 	rows, err := s.pool.Query(ctx,
-		`SELECT d.nonce, d.txs_proto, d.user_sig, d.post_state_root, d.state_hash,
-		        d.warm_keys_json, d.created_at, s.slot_id, s.sig
-		 FROM devshard_diffs d
-		 LEFT JOIN devshard_signatures s
-		        ON d.epoch_id = s.epoch_id AND d.escrow_id = s.escrow_id AND d.nonce = s.nonce
-		 WHERE d.epoch_id = $1 AND d.escrow_id = $2 AND d.nonce >= $3 AND d.nonce <= $4
-		 ORDER BY d.nonce, s.slot_id`,
+		`SELECT nonce, txs_proto, user_sig, post_state_root FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
+		 ORDER BY nonce`,
 		epochID, escrowID, fromNonce, toNonce,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var result []types.DiffRecord
-	var current *types.DiffRecord
-	var currentNonce uint64
-
+	var out []types.DiffWire
 	for rows.Next() {
-		var nonce uint64
-		var txsProto []byte
-		var userSig, postStateRoot, stateHash []byte
-		var warmJSON *string
-		var createdAt int64
-		var slotID *uint32
-		var sig []byte
-
-		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt, &slotID, &sig); err != nil {
+		var w types.DiffWire
+		// pgx scans bytea into a fresh slice, so the row buffer is not aliased.
+		if err := rows.Scan(&w.Nonce, &w.Txs, &w.UserSig, &w.PostStateRoot); err != nil {
 			return nil, err
 		}
-
-		if current == nil || nonce != currentNonce {
-			if current != nil {
-				result = append(result, *current)
-			}
-
-			txs, err := unmarshalTxs(txsProto)
-			if err != nil {
-				return nil, err
-			}
-
-			rec := types.DiffRecord{
-				Diff: types.Diff{
-					Nonce:         nonce,
-					Txs:           txs,
-					UserSig:       userSig,
-					PostStateRoot: postStateRoot,
-				},
-				StateHash: stateHash,
-				CreatedAt: createdAt,
-			}
-			current = &rec
-			currentNonce = nonce
-		}
-
-		if slotID != nil && sig != nil {
-			if current.Signatures == nil {
-				current.Signatures = make(map[uint32][]byte)
-			}
-			current.Signatures[*slotID] = sig
-		}
+		out = append(out, w)
 	}
+	return out, rows.Err()
+}
 
-	if current != nil {
-		result = append(result, *current)
+// DiffStateHash reads one state_hash. Transactions and signatures stay in the table.
+func (s *Postgres) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, false, err
 	}
-
-	return result, rows.Err()
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var hash []byte
+	err = s.pool.QueryRow(ctx,
+		`SELECT state_hash FROM devshard_diffs
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce = $3`,
+		epochID, escrowID, nonce,
+	).Scan(&hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return append([]byte(nil), hash...), true, nil
 }
 
 // DiffSizes reads octet_length from the TOAST header, so a large txs_proto is

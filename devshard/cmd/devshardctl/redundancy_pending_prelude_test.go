@@ -642,7 +642,7 @@ func TestPreludeOverflowEscalatesAsAttemptFailed(t *testing.T) {
 	inf.err = errPendingPreludeTooLarge
 	close(inf.done)
 
-	trigger, ok := (&Redundancy{}).escalationForInflight(inf, user.InferenceParams{})
+	trigger, ok := (&Redundancy{}).escalationForInflight(inf, user.InferenceParams{}, true)
 	require.True(t, ok, "an overflowed attempt must hand the request to another host")
 	require.Equal(t, "attempt_failed", trigger.stage)
 }

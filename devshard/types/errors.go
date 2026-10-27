@@ -48,7 +48,7 @@ var (
 	ErrInvalidGroup                    = errors.New("invalid group")
 	ErrEscrowIDMismatch                = errors.New("escrow_id does not match session")
 	ErrNonceLimitExceeded              = errors.New("nonce exceeds chain max_nonce limit")
-	ErrMaxTokensBelowFloor             = errors.New("max_tokens below min_tokens floor")
+	ErrMaxTokensBelowFloor             = errors.New("max_tokens below the reservation floor")
 	ErrFloorNotRestored                = errors.New("height-sync floor not restored")
 	ErrStartProofMissing               = errors.New("gateway start proof required to open session")
 	ErrProtocolVersionMismatch         = errors.New("protocol version mismatch")

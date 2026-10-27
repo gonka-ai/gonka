@@ -43,7 +43,7 @@ func DefaultConfig() Config {
 
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
 //
-// Latency delays non-stream JSON only (Validate). StreamFirstTokenDelay delays
+// Latency delays Validate only (non-stream JSON or an enforced-token replay). StreamFirstTokenDelay delays
 // the first SSE chunk (Execute TTFT). StreamChunkDelay sleeps after each
 // flushed chunk, so the first token stays immediate when StreamFirstTokenDelay
 // is zero. Do not put Validate latency in front of the first stream chunk.
@@ -174,8 +174,8 @@ func replayMessages(messages []ChatMessage) []replay.Message {
 // stream / stream_options are excluded so a forced-upstream streaming request
 // yields the same seed as the equivalent non-streaming request.
 //
-// When max_tokens is larger than the base echo, the text is padded so citest
-// can force aggregate spill / oversize without a real long generation.
+// The text is cut or padded to max_tokens, one token per rune, so an honest replay never has more
+// positions than max_tokens and citest can force aggregate spill / oversize without a real long generation.
 func completionText(body []byte) string {
 	var req struct {
 		Model     string        `json:"model"`
@@ -193,10 +193,10 @@ func completionText(body []byte) string {
 	}
 	sum := sha256.Sum256(seed)
 	base := "mock-openai:" + hex.EncodeToString(sum[:8])
-	if req.MaxTokens <= len([]rune(base)) {
-		return base
-	}
 	runes := []rune(base)
+	if req.MaxTokens > 0 && req.MaxTokens < len(runes) {
+		return string(runes[:req.MaxTokens])
+	}
 	for len(runes) < req.MaxTokens {
 		runes = append(runes, 'x')
 	}

@@ -253,10 +253,8 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			err = fmt.Errorf("host %s: %w", addr, transport.ErrPeerURLMissing)
 		}
 		if err != nil {
-			if !errors.Is(err, bridge.ErrParticipantNotFound) {
-				logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
-					"escrow", cfg.EscrowID, "participant", addr, "error", err)
-			}
+			logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
+				"escrow", cfg.EscrowID, "participant", addr, "error", err)
 			return nil, err
 		}
 		httpClient := transport.NewHTTPClient(strings.TrimSpace(info.URL), cfg.EscrowID, signer,
@@ -355,9 +353,10 @@ var hostLookupOpenWait = transport.DefaultLazyWait
 // openHostClients builds one client per distinct participant in group. A
 // participant whose lookup fails transiently, publishes no URL, or outlasts
 // hostLookupOpenWait does not fail the session: it gets a lazyHostClient that
-// resolves on use, which the gateway's chat picker skips until then.
-// bridge.ErrParticipantNotFound is a definitive chain answer and still fails
-// the open, so the gateway parks the escrow until the participant appears.
+// resolves on use, which the gateway's chat picker skips until then. A
+// participant absent from the chain (bridge.ErrParticipantNotFound) opens the
+// same way, so the escrow serves on the rest of its group and takes the host
+// back once the chain lists it again.
 func openHostClients(escrowID string, group []types.SlotAssignment, build func(addr string) (HostClient, error)) (map[string]HostClient, error) {
 	lazies := make(map[string]*transport.Lazy[HostClient], len(group))
 	for _, slot := range group {
@@ -380,14 +379,6 @@ func openHostClients(escrowID string, group []types.SlotAssignment, build func(a
 	}
 	wg.Wait()
 
-	for _, l := range lazies {
-		if _, err := l.Failure(); errors.Is(err, bridge.ErrParticipantNotFound) {
-			for _, l := range lazies {
-				l.Close()
-			}
-			return nil, err
-		}
-	}
 	out := make(map[string]HostClient, len(lazies))
 	var unresolved []string
 	for addr, l := range lazies {
