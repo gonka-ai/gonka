@@ -386,6 +386,68 @@ func TestSubmitPocValidationsV2_SnapshotVoterEligibilityAndGuardian(t *testing.T
 	require.True(t, hasGuardianVote)
 }
 
+func TestSubmitPocValidationsV2_MixedModelStoresEligibleRowOnly(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor)
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID})
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID2})
+	for _, modelID := range []string{testPoCModelID, testPoCModelID2} {
+		require.NoError(t, k.SetPoCV2StoreCommit(sdkCtx, types.PoCV2StoreCommit{
+			ParticipantAddress:       testutil.Executor,
+			PocStageStartBlockHeight: 100,
+			Count:                    10,
+			RootHash:                 make([]byte, 32),
+			ModelId:                  modelID,
+		}))
+	}
+	require.NoError(t, k.SetPoCValidationSnapshot(sdkCtx, types.PoCValidationSnapshot{
+		PocStageStartHeight: 100,
+		SnapshotHeight:      155,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*types.ModelVotingPowers{{
+			ModelId: testPoCModelID,
+			VotingPowers: []*types.VotingPowerEntry{
+				{Address: testutil.Validator, VotingPower: 100},
+			},
+		}, {
+			ModelId: testPoCModelID2,
+			VotingPowers: []*types.VotingPowerEntry{
+				{Address: testutil.Executor, VotingPower: 50},
+			},
+		}},
+	}))
+
+	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID2, ValidatedWeight: -1},
+		},
+	})
+	require.NoError(t, err)
+	storedA, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, testutil.Validator)
+	require.NoError(t, err)
+	require.True(t, storedA)
+	storedB, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID2, testutil.Validator)
+	require.NoError(t, err)
+	require.False(t, storedB)
+}
+
 func TestMLNodeWeightDistribution_RawRowOverflowBeforePermission(t *testing.T) {
 	_, sdkCtx, ms := setupWeightDistribution(t)
 	msg := &types.MsgMLNodeWeightDistribution{

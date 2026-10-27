@@ -377,10 +377,64 @@ func TestPocVoterEligibility_RejectsInvalidSigAndUnauthorizedMsgExecBeforeSnapsh
 
 	_, ineligibleDirect := signCheckTx(t, f, []sdk.Msg{f.pocMsg}, f.granter, f.granterKey)
 	require.NotEqual(t, uint32(0), ineligibleDirect.Code)
-	require.Contains(t, ineligibleDirect.Log, "signer has no voting power for model in stage snapshot")
+	require.Contains(t, ineligibleDirect.Log, "signer has no voting power for any submitted model in stage snapshot")
 
 	_, ineligibleExec := signCheckTx(t, f, []sdk.Msg{&execMsg}, f.grantee, f.granteeKey)
 	require.NotEqual(t, uint32(0), ineligibleExec.Code)
-	require.Contains(t, ineligibleExec.Log, "signer has no voting power for model in stage snapshot")
+	require.Contains(t, ineligibleExec.Log, "signer has no voting power for any submitted model in stage snapshot")
 }
 
+func TestPocVoterEligibility_AuthorizedMsgExecMixedModelMatchesDirect(t *testing.T) {
+	f := setupMsgExecCheckTx(t, true)
+	writeCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	f.testApp.InferenceKeeper.SetModel(writeCtx, &inferencetypes.Model{Id: "model-b"})
+	require.NoError(t, f.testApp.InferenceKeeper.SetPoCV2StoreCommit(writeCtx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       f.grantee.String(),
+		PocStageStartBlockHeight: 1,
+		ModelId:                  "model-b",
+		Count:                    10,
+		RootHash:                 make([]byte, 32),
+	}))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	mixed := &inferencetypes.MsgSubmitPocValidationsV2{
+		Creator:                  f.granter.String(),
+		PocStageStartBlockHeight: 1,
+		Validations: []*inferencetypes.PoCValidationEntryV2{
+			{ParticipantAddress: f.grantee.String(), ModelId: "test-model", ValidatedWeight: 1},
+			{ParticipantAddress: f.grantee.String(), ModelId: "model-b", ValidatedWeight: -1},
+		},
+	}
+	onlyB := &inferencetypes.MsgSubmitPocValidationsV2{
+		Creator:                  f.granter.String(),
+		PocStageStartBlockHeight: 1,
+		Validations: []*inferencetypes.PoCValidationEntryV2{
+			{ParticipantAddress: f.grantee.String(), ModelId: "model-b", ValidatedWeight: -1},
+		},
+	}
+
+	_, mixedDirect := signCheckTx(t, f, []sdk.Msg{mixed}, f.granter, f.granterKey)
+	require.Equal(t, uint32(0), mixedDirect.Code, "mixed batch CheckTx log=%q", mixedDirect.Log)
+	_, onlyBDirect := signCheckTx(t, f, []sdk.Msg{onlyB}, f.granter, f.granterKey)
+	require.NotEqual(t, uint32(0), onlyBDirect.Code)
+	require.Contains(t, onlyBDirect.Log, "signer has no voting power for any submitted model in stage snapshot")
+
+	persistGrant(t, f, authz.NewGenericAuthorization(sdk.MsgTypeURL(mixed)), nil)
+	execMixed := authz.NewMsgExec(f.grantee, []sdk.Msg{mixed})
+	_, mixedExec := signCheckTx(t, f, []sdk.Msg{&execMixed}, f.grantee, f.granteeKey)
+	require.Equal(t, uint32(0), mixedExec.Code, "authorized mixed MsgExec CheckTx log=%q", mixedExec.Log)
+	execOnlyB := authz.NewMsgExec(f.grantee, []sdk.Msg{onlyB})
+	_, onlyBExec := signCheckTx(t, f, []sdk.Msg{&execOnlyB}, f.grantee, f.granteeKey)
+	require.NotEqual(t, uint32(0), onlyBExec.Code)
+	require.Contains(t, onlyBExec.Log, "signer has no voting power for any submitted model in stage snapshot")
+}

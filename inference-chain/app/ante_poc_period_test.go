@@ -351,6 +351,85 @@ func TestPocVoterEligibilityDecorator_RejectsParticipantWithoutSnapshotVotingPow
 	require.Equal(t, oneMsgGas, twoMsgCtx.GasMeter().GasConsumed(), "second inner message for same (stage, signer) must reuse cached eligibility without additional KV reads")
 }
 
+func mixedModelValidationMsg(creator string, models ...string) *inferencetypes.MsgSubmitPocValidationsV2 {
+	rows := make([]*inferencetypes.PoCValidationEntryV2, 0, len(models))
+	for _, modelID := range models {
+		rows = append(rows, &inferencetypes.PoCValidationEntryV2{
+			ParticipantAddress: testutil.Executor,
+			ModelId:            modelID,
+			ValidatedWeight:    -1,
+		})
+	}
+	return &inferencetypes.MsgSubmitPocValidationsV2{
+		Creator:                  creator,
+		PocStageStartBlockHeight: 100,
+		Validations:              rows,
+	}
+}
+
+func TestPocVoterEligibilityDecorator_AdmitsMixedModelBatch(t *testing.T) {
+	k, ctx, _ := setupPocPeriodAnte(t)
+	decorator := NewPocVoterEligibilityDecorator(&k, testMsgCodec(t))
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
+
+	runEligibility := func(msgs ...sdk.Msg) (bool, error) {
+		nextCalled := false
+		_, err := decorator.AnteHandle(ctx, testFeeTx{msgs: msgs}, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+			nextCalled = true
+			return ctx, nil
+		})
+		return nextCalled, err
+	}
+
+	nextCalled, err := runEligibility(mixedModelValidationMsg(signer, "test-model", "model-b"))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+
+	nextCalled, err = runEligibility(mixedModelValidationMsg(signer, "model-b"))
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	inner, err := codectypes.NewAnyWithValue(mixedModelValidationMsg(signer, "test-model", "model-b"))
+	require.NoError(t, err)
+	nextCalled, err = runEligibility(&authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{inner},
+	})
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+
+	onlyB, err := codectypes.NewAnyWithValue(mixedModelValidationMsg(signer, "model-b"))
+	require.NoError(t, err)
+	nextCalled, err = runEligibility(&authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{onlyB},
+	})
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	oneMsgCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = decorator.AnteHandle(oneMsgCtx, testFeeTx{msgs: []sdk.Msg{mixedModelValidationMsg(signer, "test-model", "model-b")}}, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	oneMsgGas := oneMsgCtx.GasMeter().GasConsumed()
+
+	first, err := codectypes.NewAnyWithValue(mixedModelValidationMsg(signer, "test-model", "model-b"))
+	require.NoError(t, err)
+	second, err := codectypes.NewAnyWithValue(mixedModelValidationMsg(signer, "test-model", "model-b"))
+	require.NoError(t, err)
+	twoMsgCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = decorator.AnteHandle(twoMsgCtx, testFeeTx{msgs: []sdk.Msg{&authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{first, second},
+	}}}, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, oneMsgGas, twoMsgCtx.GasMeter().GasConsumed())
+}
+
 func TestPocPeriodValidationDecorator_RejectsMalformedCreator(t *testing.T) {
 	_, ctx, decorator := setupPocPeriodAnte(t)
 

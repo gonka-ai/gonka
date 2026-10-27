@@ -398,13 +398,17 @@ func (d PocVoterEligibilityDecorator) checkVoterEligibility(
 		}
 		(*cache)[key] = eligibility
 	}
+	hasEligibleRow := false
 	for _, validation := range msg.Validations {
 		if validation == nil {
 			return inferencetypes.ErrInvalidModel
 		}
-		if !eligibility.CanValidateModel(validation.ModelId) {
-			return inferencetypes.ErrIllegalState.Wrap("signer has no voting power for model in stage snapshot")
+		if eligibility.CanValidateModel(validation.ModelId) {
+			hasEligibleRow = true
 		}
+	}
+	if !hasEligibleRow {
+		return inferencetypes.ErrIllegalState.Wrap("signer has no voting power for any submitted model in stage snapshot")
 	}
 	return nil
 }
