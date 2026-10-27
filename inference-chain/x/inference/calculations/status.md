@@ -183,6 +183,10 @@ return ACTIVE, ""
   - Six straight misses from a zero start cross the threshold ($`4.16`$).
   - With 2 served inferences per miss (a 1/3 miss rate), it first crosses after 9 misses and 18 served ($`4.12`$).
 
+- These are the code defaults; governance has set different values on mainnet (as of block 6,756,318, October 2026):
+  - Invalidation: $`p_1 = 0.18`$, $`H = 40`$ with $`p_0 = 0.05`$, so about $`1.281`$ per invalidation and $`-0.147`$ per validation. It takes 32 straight invalidations to cross $`H`$, so the consecutive-failure tripwire ($`N \ge 5`$) fires first.
+  - Downtime: `DowntimeGoodPercentage` and `DowntimeBadPercentage` are both 0.99, so both increments are $`\ln 1 = 0`$ and the downtime test never fires.
+
 ## Notes on Thresholds and Tuning
 
 - The consecutive-failure threshold is a hard guardrail against streaks of invalidation inconsistent with the declared false-positive rate for good actors.
