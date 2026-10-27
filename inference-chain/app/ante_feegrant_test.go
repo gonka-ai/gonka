@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -112,10 +113,12 @@ func TestFeegrant_WrapperMatchesSDKKeeper(t *testing.T) {
 		},
 	}
 	payers := map[string]sdk.AccAddress{}
-	grantee := sdk.AccAddress([]byte("feegrant-wrapper-grantee"))
+	// 20-byte addresses: a wasm test input in this package leaves a 20/32-byte address verifier set
+	addr := func(name string) sdk.AccAddress { return sdk.AccAddress(fmt.Appendf(nil, "%-20s", "fg-"+name)) }
+	grantee := addr("grantee")
 	a.AccountKeeper.SetAccount(setup, a.AccountKeeper.NewAccountWithAddress(setup, grantee))
 	for name, g := range grants {
-		payers[name] = sdk.AccAddress([]byte("feegrant-wrapper-" + name))
+		payers[name] = addr(name)
 		require.NoError(t, a.FeeGrantKeeper.GrantAllowance(setup, payers[name], grantee, g))
 	}
 	finalizeTxs(t, a)
@@ -164,7 +167,7 @@ func TestFeegrant_WrapperMatchesSDKKeeper(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			payer := payers[tc.grant]
 			if payer == nil {
-				payer = sdk.AccAddress([]byte("feegrant-wrapper-nobody"))
+				payer = addr("nobody")
 			}
 			at := time.Now().UTC().Add(tc.later)
 			sdkRes := use(a.FeeGrantKeeper, payer, tc.fee, at)
