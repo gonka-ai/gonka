@@ -309,7 +309,7 @@ Makefile target `citest-height-sync` (auto-discovered by `list-citest-targets`):
 | B | Lost first response / force turn / cheating trail | Lost-first: `TestHeightSync_LostFirstChunk` (same mock-openai fault as A1, height-sync on). Force/session-start: covered by A (nonce 1). Cheating-trail mutate hooks stay in-process e2e (`testenv/scenarios`, catalog §4) — production binaries have no response-mutate hook |
 | C | Feed stop → Omit / degraded; recover → Anchor | `TestHeightSync_FeedStoppedOmitsThenRecovers`: `docker compose pause mock-dapi` after a live Anchor; next chat is `mode=omit` or `tip_stale_after_ms`; unpause recovers. mock-chain does not serve Comet `/block`, so failover cannot Anchor while mock-dapi is paused (D10 is the unit test for a live chain). |
 
-Also `TestHeightSync_MockDapiBlockLatest` (D6): `/block/latest` advances on the stock mock-dapi, no height-sync env required.
+Also `TestHeightSync_MockDapiBlockAt` (D6): `/block/:height` advances on the stock mock-dapi, no height-sync env required.
 
 `StaleAfter`: keep `MOCKDAPI_STALE_AFTER` ≥ block cadence (catalog already documents this). Client default `StaleAfter` is 10s; mock-dapi block interval is 1s.
 
@@ -419,7 +419,7 @@ Height-sync calls `oracle.Latest()` for anchors and `oracle.At()` for L6 / claim
 | D3 | Host client: `/block/latest` 200 | uses chainoracle client; Anchor still emits; Comet RPC not touched |
 | D4 | Host client: `/block/latest` 404 (old dapi) then chain ok | capability fallback; scheduler still emits Anchor |
 | D5 | Host client: dapi **and** chain missing | Omit + local oracle unavailable |
-| D6 | citest: current mock-dapi (has `/block/*`) | `TestHeightSync_MockDapiBlockLatest` (Phase C) |
+| D6 | citest: current mock-dapi (has `/block/*`) | `TestHeightSync_MockDapiBlockAt` (Phase C) |
 | D7 | citest or unit: simulated old dapi (no `/block/*`, chain RPC only) | cadence Anchors still flow; Strong never claimed. Container: `TestHeightSync_LegacyDapiChatCompletes` (`MOCK_DAPI_OMIT_BLOCK_ROUTES=1`). |
 | D8 | `/block/:height/prove` absent or 501 | Anchor path unaffected |
 | D9 | Unit: heartbeat turn (Phase E) on a hash-only direct-chain oracle | turn reaches `complete`; no Strong requested |
