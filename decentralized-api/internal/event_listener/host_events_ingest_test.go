@@ -136,6 +136,51 @@ func TestHostEvents_EscrowSettled_Appends(t *testing.T) {
 	require.Equal(t, "10", got.Events[0].Escrow.TotalPayout)
 }
 
+// A tx with two MsgSettleDevshardEscrow emits two devshard_escrow_settled
+// events; BlockObserver flattens them into one map, one value per event.
+// Each escrow must reach the ring, or the second one's host session stays
+// open after the chain settled it.
+func TestHostEvents_EscrowSettled_AppendsEveryEscrowInTx(t *testing.T) {
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"host-a"}}}
+	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
+
+	err := (&DevshardEscrowSettledEventHandler{}).Handle(txEvent(map[string][]string{
+		"devshard_escrow_settled.escrow_id":    {"7", "8"},
+		"devshard_escrow_settled.settler":      {"s", "s"},
+		"devshard_escrow_settled.total_payout": {"10", "20"},
+		"devshard_escrow_settled.fees":         {"1", "2"},
+		"devshard_escrow_settled.remainder":    {"0", "0"},
+	}), el)
+	require.NoError(t, err)
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowSettled})
+	ids := make([]uint64, 0, len(got.Events))
+	for _, ev := range got.Events {
+		ids = append(ids, ev.Escrow.EscrowID)
+	}
+	require.Equal(t, []uint64{7, 8}, ids)
+}
+
+// Same for a tx with two MsgCreateDevshardEscrow.
+func TestHostEvents_EscrowCreated_AppendsEveryEscrowInTx(t *testing.T) {
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"host-a"}}}
+	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
+
+	err := (&DevshardEscrowCreatedEventHandler{}).Handle(txEvent(map[string][]string{
+		"devshard_escrow_created.escrow_id":   {"7", "8"},
+		"devshard_escrow_created.epoch_index": {"3", "3"},
+		"devshard_escrow_created.creator":     {"c", "c"},
+		"devshard_escrow_created.amount":      {"100", "200"},
+		"devshard_escrow_created.model_id":    {"m", "m"},
+	}), el)
+	require.NoError(t, err)
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	ids := make([]uint64, 0, len(got.Events))
+	for _, ev := range got.Events {
+		ids = append(ids, ev.Escrow.EscrowID)
+	}
+	require.Equal(t, []uint64{7, 8}, ids)
+}
+
 func TestHostEvents_MaintenanceScheduledAndCanceled(t *testing.T) {
 	el, ring := testListenerWithRing(t, WithParticipantAddress("host-a"))
 
@@ -189,6 +234,46 @@ func TestHostEvents_LifecycleMaintenanceCanceled_NewBlock(t *testing.T) {
 	require.Len(t, got.Events, 1)
 	require.Equal(t, "maintenance_disabled", got.Events[0].Maintenance.Reason)
 	require.Equal(t, uint64(20), got.Events[0].Maintenance.DurationBlocks)
+}
+
+// With maintenance disabled, BeginBlock cancels every reservation whose
+// activation falls on that height, one event each. The NewBlock event map
+// holds them all; the local participant's cancel must reach the ring even
+// when another participant's comes first.
+func TestHostEvents_LifecycleMaintenanceCanceled_EveryReservationInBlock(t *testing.T) {
+	el, ring := testListenerWithRing(t, WithParticipantAddress("host-a"))
+	el.handleMaintenanceLifecycleEvents(&chainevents.JSONRPCResponse{
+		Result: chainevents.Result{
+			Data: chainevents.Data{Type: newBlockEventType},
+			Events: map[string][]string{
+				"maintenance_canceled.reservation_id":  {"11", "12"},
+				"maintenance_canceled.participant":     {"someone-else", "host-a"},
+				"maintenance_canceled.credit_refunded": {"20", "30"},
+				"maintenance_canceled.reason":          {"maintenance_disabled", "maintenance_disabled"},
+			},
+		},
+	}, "test")
+
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindMaintenanceCanceled})
+	require.Len(t, got.Events, 1)
+	require.Equal(t, uint64(12), got.Events[0].Maintenance.ReservationID)
+	require.Equal(t, uint64(30), got.Events[0].Maintenance.DurationBlocks)
+}
+
+// Same for a tx that schedules two reservations.
+func TestHostEvents_MaintenanceScheduled_EveryReservationInTx(t *testing.T) {
+	el, ring := testListenerWithRing(t, WithParticipantAddress("host-a"))
+	require.NoError(t, (&MaintenanceScheduledEventHandler{}).Handle(txEvent(map[string][]string{
+		"maintenance_scheduled.reservation_id":  {"1", "2"},
+		"maintenance_scheduled.participant":     {"someone-else", "host-a"},
+		"maintenance_scheduled.start_height":    {"100", "200"},
+		"maintenance_scheduled.duration_blocks": {"50", "60"},
+	}), el))
+
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindMaintenanceScheduled})
+	require.Len(t, got.Events, 1)
+	require.Equal(t, uint64(2), got.Events[0].Maintenance.ReservationID)
+	require.Equal(t, int64(200), got.Events[0].Maintenance.StartHeight)
 }
 
 func TestHostEvents_UnhandledEventsStillDroppedByHasHandler(t *testing.T) {

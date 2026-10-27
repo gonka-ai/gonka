@@ -50,22 +50,38 @@ func (e *DevshardEscrowCreatedEventHandler) Handle(event *chainevents.JSONRPCRes
 		return nil
 	}
 	ev := event.Result.Events
-	escrowID, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".escrow_id"), 10, 64)
+	// A tx with several MsgCreateDevshardEscrow carries one value per escrow
+	// under each key; read them by index like the other batched events.
+	for i := range ev[escrowCreatedEvent+".escrow_id"] {
+		if err := el.appendEscrowCreated(ev, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (el *EventListener) appendEscrowCreated(ev map[string][]string, i int) error {
+	rawID, _ := getEventValue(ev, escrowCreatedEvent+".escrow_id", i)
+	escrowID, err := strconv.ParseUint(rawID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse escrow_id: %w", err)
 	}
-	epochIndex, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".epoch_index"), 10, 64)
+	rawEpoch, _ := getEventValue(ev, escrowCreatedEvent+".epoch_index", i)
+	epochIndex, err := strconv.ParseUint(rawEpoch, 10, 64)
 	if err != nil {
 		logging.Warn("host_events: malformed epoch_index on escrow_created; defaulting to 0", types.EventProcessing,
-			"escrow_id", escrowID, "raw", firstAttr(ev, escrowCreatedEvent+".epoch_index"), "error", err)
+			"escrow_id", escrowID, "raw", rawEpoch, "error", err)
 		epochIndex = 0
 	}
+	modelID, _ := getEventValue(ev, escrowCreatedEvent+".model_id", i)
+	creator, _ := getEventValue(ev, escrowCreatedEvent+".creator", i)
+	amount, _ := getEventValue(ev, escrowCreatedEvent+".amount", i)
 	payload := &apiconfig.EscrowPayload{
 		EscrowID:   escrowID,
 		EpochIndex: epochIndex,
-		ModelID:    firstAttr(ev, escrowCreatedEvent+".model_id"),
-		Creator:    firstAttr(ev, escrowCreatedEvent+".creator"),
-		Amount:     firstAttr(ev, escrowCreatedEvent+".amount"),
+		ModelID:    modelID,
+		Creator:    creator,
+		Amount:     amount,
 	}
 
 	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
@@ -99,16 +115,32 @@ func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCRes
 		return nil
 	}
 	ev := event.Result.Events
-	escrowID, err := strconv.ParseUint(firstAttr(ev, escrowSettledEvent+".escrow_id"), 10, 64)
+	// A tx with several MsgSettleDevshardEscrow carries one value per escrow
+	// under each key; read them by index like the other batched events.
+	for i := range ev[escrowSettledEvent+".escrow_id"] {
+		if err := el.appendEscrowSettled(ev, i); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (el *EventListener) appendEscrowSettled(ev map[string][]string, i int) error {
+	rawID, _ := getEventValue(ev, escrowSettledEvent+".escrow_id", i)
+	escrowID, err := strconv.ParseUint(rawID, 10, 64)
 	if err != nil {
 		return fmt.Errorf("parse escrow_id: %w", err)
 	}
+	settler, _ := getEventValue(ev, escrowSettledEvent+".settler", i)
+	totalPayout, _ := getEventValue(ev, escrowSettledEvent+".total_payout", i)
+	fees, _ := getEventValue(ev, escrowSettledEvent+".fees", i)
+	remainder, _ := getEventValue(ev, escrowSettledEvent+".remainder", i)
 	payload := &apiconfig.EscrowPayload{
 		EscrowID:    escrowID,
-		Settler:     firstAttr(ev, escrowSettledEvent+".settler"),
-		TotalPayout: firstAttr(ev, escrowSettledEvent+".total_payout"),
-		Fees:        firstAttr(ev, escrowSettledEvent+".fees"),
-		Remainder:   firstAttr(ev, escrowSettledEvent+".remainder"),
+		Settler:     settler,
+		TotalPayout: totalPayout,
+		Fees:        fees,
+		Remainder:   remainder,
 	}
 
 	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
@@ -161,11 +193,4 @@ func (el *EventListener) localParticipantAddress() string {
 		}
 	}
 	return el.transactionRecorder.GetAddress()
-}
-
-func firstAttr(events map[string][]string, key string) string {
-	if vals := events[key]; len(vals) > 0 {
-		return vals[0]
-	}
-	return ""
 }
