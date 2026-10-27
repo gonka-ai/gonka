@@ -3,6 +3,7 @@ package app
 import (
 	"testing"
 
+	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -280,8 +281,9 @@ func TestPocPeriodValidationDecorator_AllowsRegisteredParticipant(t *testing.T) 
 	require.True(t, nextCalled)
 }
 
-func TestPocPeriodValidationDecorator_RejectsParticipantWithoutSnapshotVotingPower(t *testing.T) {
-	k, ctx, decorator := setupPocPeriodAnte(t)
+func TestPocVoterEligibilityDecorator_RejectsParticipantWithoutSnapshotVotingPower(t *testing.T) {
+	k, ctx, _ := setupPocPeriodAnte(t)
+	decorator := NewPocVoterEligibilityDecorator(&k, testMsgCodec(t))
 
 	eligibleSigner := testutil.Creator
 	seedLiveValidationShape(t, k, ctx, eligibleSigner)
@@ -293,7 +295,17 @@ func TestPocPeriodValidationDecorator_RejectsParticipantWithoutSnapshotVotingPow
 		Weight:  -1,
 	}))
 
-	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(sybil))
+	runEligibility := func(msgs ...sdk.Msg) (bool, error) {
+		nextCalled := false
+		next := func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+			nextCalled = true
+			return ctx, nil
+		}
+		_, err := decorator.AnteHandle(ctx, testFeeTx{msgs: msgs}, false, next)
+		return nextCalled, err
+	}
+
+	nextCalled, err := runEligibility(pocValidationsMsg(sybil))
 	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
 	require.False(t, nextCalled)
 
@@ -309,9 +321,34 @@ func TestPocPeriodValidationDecorator_RejectsParticipantWithoutSnapshotVotingPow
 		GenesisGuardianEnabled: true,
 	}))
 
-	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(sybil))
+	nextCalled, err = runEligibility(pocValidationsMsg(sybil))
 	require.NoError(t, err)
 	require.True(t, nextCalled)
+
+	// Repeated messages for the same (stage, signer) in one transaction reuse the
+	// cached eligibility result instead of reading the snapshot again.
+	oneMsgCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = decorator.AnteHandle(oneMsgCtx, testFeeTx{msgs: []sdk.Msg{pocValidationsMsg(eligibleSigner)}}, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	oneMsgGas := oneMsgCtx.GasMeter().GasConsumed()
+	require.Greater(t, oneMsgGas, storetypes.Gas(0))
+
+	inner1, err := codectypes.NewAnyWithValue(pocValidationsMsg(eligibleSigner))
+	require.NoError(t, err)
+	inner2, err := codectypes.NewAnyWithValue(pocValidationsMsg(eligibleSigner))
+	require.NoError(t, err)
+	execTwo := &authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{inner1, inner2},
+	}
+	twoMsgCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = decorator.AnteHandle(twoMsgCtx, testFeeTx{msgs: []sdk.Msg{execTwo}}, false, func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return ctx, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, oneMsgGas, twoMsgCtx.GasMeter().GasConsumed(), "second inner message for same (stage, signer) must reuse cached eligibility without additional KV reads")
 }
 
 func TestPocPeriodValidationDecorator_RejectsMalformedCreator(t *testing.T) {

@@ -312,7 +312,18 @@ func TestSubmitPocValidationsV2_SnapshotVoterEligibilityAndGuardian(t *testing.T
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
-	// Missing snapshot rejects the message.
+	// Rows skipped by earlier checks (non-governance model, non-participant target,
+	// missing store commit) do not trigger a validation snapshot load.
+	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: "not-a-governance-model", ValidatedWeight: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	// Missing snapshot rejects the message once a row passes the target/model/commit checks.
 	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
 		PocStageStartBlockHeight: 100,
