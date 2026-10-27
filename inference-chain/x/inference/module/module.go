@@ -452,6 +452,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.RemoveInferenceTimeout(ctx, t.ExpirationHeight, t.InferenceId)
 	}
 
+	am.keeper.RecheckPendingBridgeTransactions(sdkCtx)
+
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
@@ -1883,12 +1885,17 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			am.LogError("Participant secp256k1 public key bytes are empty for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID)
 			continue
 		}
-		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogError("Participant secp256k1 public key is invalid for BLS", types.EpochGroup, "participantAddress", ap.Index, "epochID", epochID, "error", err)
+			continue
+		}
+		primaryPubKey := append([]byte(nil), pubKeyBytes...)
+		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, primaryPubKey, maxAdditionalKeys)
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
 			Address:                    ap.Index,
 			PercentageWeight:           math.LegacyZeroDec(),
-			Secp256k1PublicKey:         pubKeyBytes,
+			Secp256k1PublicKey:         primaryPubKey,
 			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
@@ -1973,18 +1980,11 @@ func (am AppModule) collectAdditionalBLSParticipantPubKeys(ctx context.Context, 
 				"error", err)
 			continue
 		}
-		if len(pubKeyBytes) != 33 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key length for BLS snapshot", types.EpochGroup,
+		if err := blstypes.ValidateCompressedSecp256k1PubKey(pubKeyBytes); err != nil {
+			am.LogWarn("Skipping invalid grantee secp256k1 public key for BLS snapshot", types.EpochGroup,
 				"participant", participantAddress,
 				"grantee", grantee.Address,
-				"length", len(pubKeyBytes))
-			continue
-		}
-		if pubKeyBytes[0] != 0x02 && pubKeyBytes[0] != 0x03 {
-			am.LogWarn("Skipping invalid grantee secp256k1 public key prefix for BLS snapshot", types.EpochGroup,
-				"participant", participantAddress,
-				"grantee", grantee.Address,
-				"prefix", fmt.Sprintf("0x%x", pubKeyBytes[0]))
+				"error", err)
 			continue
 		}
 		if bytes.Equal(pubKeyBytes, primaryPubKey) {

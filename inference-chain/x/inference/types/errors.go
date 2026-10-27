@@ -122,4 +122,5 @@ var (
 	ErrTrainshardBaseImageInvalid            = sdkerrors.Register(ModuleName, 1316, "base image must be pinned as repository@sha256:<digest>")
 	ErrTrainshardOptInRequest                = sdkerrors.Register(ModuleName, 1317, "invalid training opt-in request")
 	ErrTrainshardAssemblyDuringPoC           = sdkerrors.Register(ModuleName, 1319, "a trainshard is not assembled while PoC or confirmation PoC is running")
+	ErrInvalidBridgeKeyLink                  = sdkerrors.Register(ModuleName, 1205, "invalid bridge key link")
 )

@@ -19,10 +19,8 @@ import (
 )
 
 // DefaultMLOpsFeeAllowance is the spend limit on the feegrant allowance from
-// cold to warm key when granting ML ops permissions. At ~10 ngonka per gas
-// and typical transaction sizes, this covers many months of routine DAPI
-// operation (claim rewards, hardware diff updates, seeds). Hosts can re-grant
-// when the allowance is depleted.
+// cold to warm key. Paid PoC store commits spend it; rerun the grant command
+// to refresh it.
 var DefaultMLOpsFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(10_000_000_000))) // 10 GNK
 
 var InferenceOperationKeyPerms = []sdk.Msg{
@@ -100,21 +98,24 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	// account as the fee_granter on every tx; without this allowance, the
 	// chain rejects the tx because the warm key has no balance.
 	//
-	// We check for an existing allowance first because the chain rejects
-	// duplicate MsgGrantAllowance with "fee allowance already exists". Hosts
-	// who upgraded from v0.2.11 already have an allowance auto-created by the
-	// v0.2.12 upgrade handler; in that case we skip this message and only
-	// re-grant the authz permissions. To refresh an expired or depleted
-	// allowance, hosts must first run `inferenced tx feegrant revoke`.
-	hasExistingAllowance, err := checkFeegrantExists(ctx, clientCtx, operatorAddress, aiOperationalAddress)
+	// The chain rejects a duplicate MsgGrantAllowance, so an existing
+	// allowance is kept unless it is expired, expires before the new authz
+	// grants or holds less than the default; then it is revoked and granted
+	// again in this tx, so rerunning this command refreshes it.
+	existing, err := queryFeegrantAllowance(ctx, clientCtx, operatorAddress, aiOperationalAddress)
 	if err != nil {
 		fmt.Printf("Warning: could not check existing feegrant allowance: %v\n", err)
 		// Continue and let the chain reject the duplicate if necessary.
 	}
-	if !hasExistingAllowance {
+	refresh, spendLimit, allowanceExp := feegrantRefresh(existing, time.Now(), expirationTime)
+	if existing == nil || refresh {
+		if refresh {
+			revokeMsg := feegrant.NewMsgRevokeAllowance(operatorAddress, aiOperationalAddress)
+			grantMsgs = append(grantMsgs, &revokeMsg)
+		}
 		allowance := &feegrant.BasicAllowance{
-			SpendLimit: DefaultMLOpsFeeAllowance,
-			Expiration: &expirationTime,
+			SpendLimit: spendLimit,
+			Expiration: allowanceExp,
 		}
 		feeGrantMsg, err := feegrant.NewMsgGrantAllowance(
 			allowance,
@@ -125,10 +126,13 @@ func GrantMLOperationalKeyPermissionsToAccount(
 			return fmt.Errorf("failed to create MsgGrantAllowance: %w", err)
 		}
 		grantMsgs = append(grantMsgs, feeGrantMsg)
-		fmt.Println("Including new feegrant allowance from cold to warm in this transaction.")
+		if refresh {
+			fmt.Println("Refreshing the feegrant allowance from cold to warm in this transaction.")
+		} else {
+			fmt.Println("Including new feegrant allowance from cold to warm in this transaction.")
+		}
 	} else {
-		fmt.Println("Existing feegrant allowance from cold to warm detected; skipping MsgGrantAllowance. " +
-			"Run `inferenced tx feegrant revoke <warm-address>` first if you want to refresh it.")
+		fmt.Println("Existing feegrant allowance from cold to warm is valid; skipping MsgGrantAllowance.")
 	}
 
 	// This command bypasses GenerateOrBroadcastTxCLI, so we replicate its
@@ -203,10 +207,9 @@ func GrantMLOperationalKeyPermissionsToAccount(
 	return fmt.Errorf("\nTimed out waiting for transaction %s to be confirmed in a block", txHash)
 }
 
-// checkFeegrantExists queries the chain for an existing feegrant allowance
-// from granter to grantee. Returns true if one exists, false if not (including
-// when the query returns "not found"). Any other error is propagated.
-func checkFeegrantExists(ctx context.Context, clientCtx client.Context, granter, grantee sdk.AccAddress) (bool, error) {
+// queryFeegrantAllowance returns the allowance from granter to grantee, or
+// nil when there is none. Any other error is propagated.
+func queryFeegrantAllowance(ctx context.Context, clientCtx client.Context, granter, grantee sdk.AccAddress) (feegrant.FeeAllowanceI, error) {
 	queryClient := feegrant.NewQueryClient(clientCtx)
 	resp, err := queryClient.Allowance(ctx, &feegrant.QueryAllowanceRequest{
 		Granter: granter.String(),
@@ -215,9 +218,48 @@ func checkFeegrantExists(ctx context.Context, clientCtx client.Context, granter,
 	if err != nil {
 		// "not found" is the expected case for new hosts; treat it as "no allowance".
 		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "NotFound") {
-			return false, nil
+			return nil, nil
 		}
-		return false, err
+		return nil, err
 	}
-	return resp != nil && resp.Allowance != nil, nil
+	if resp == nil || resp.Allowance == nil || resp.Allowance.Allowance == nil {
+		return nil, nil
+	}
+	var allowance feegrant.FeeAllowanceI
+	if err := clientCtx.Codec.UnpackAny(resp.Allowance.Allowance, &allowance); err != nil {
+		return nil, err
+	}
+	return allowance, nil
+}
+
+// feegrantRefresh reports whether an existing BasicAllowance must be
+// replaced, and the spend limit and expiration for the new one. A larger or
+// unlimited limit and a later or absent expiration are kept; other allowance
+// types are left to the operator.
+func feegrantRefresh(existing feegrant.FeeAllowanceI, now, expiration time.Time) (bool, sdk.Coins, *time.Time) {
+	basic, ok := existing.(*feegrant.BasicAllowance)
+	if !ok {
+		return false, DefaultMLOpsFeeAllowance, &expiration
+	}
+	const denom = "ngonka"
+	spendLimit := DefaultMLOpsFeeAllowance
+	low := false
+	if !basic.SpendLimit.IsZero() {
+		low = basic.SpendLimit.AmountOf(denom).LT(DefaultMLOpsFeeAllowance.AmountOf(denom))
+		if !low {
+			spendLimit = basic.SpendLimit
+		}
+	} else {
+		spendLimit = nil
+	}
+	exp := &expiration
+	expiring := false
+	if basic.Expiration == nil {
+		exp = nil
+	} else if basic.Expiration.After(expiration) {
+		exp = basic.Expiration
+	} else {
+		expiring = true
+	}
+	return low || expiring, spendLimit, exp
 }

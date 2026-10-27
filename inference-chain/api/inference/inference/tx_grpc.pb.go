@@ -68,6 +68,7 @@ const (
 	Msg_AutokickTrainshardNode_FullMethodName           = "/inference.inference.Msg/AutokickTrainshardNode"
 	Msg_SetTrainingNodeOptIn_FullMethodName             = "/inference.inference.Msg/SetTrainingNodeOptIn"
 	Msg_RefreshTrainingNodeOptIn_FullMethodName         = "/inference.inference.Msg/RefreshTrainingNodeOptIn"
+	Msg_RegisterBridgeKeyLink_FullMethodName            = "/inference.inference.Msg/RegisterBridgeKeyLink"
 )
 
 // MsgClient is the client API for Msg service.
@@ -127,6 +128,10 @@ type MsgClient interface {
 	AutokickTrainshardNode(ctx context.Context, in *MsgAutokickTrainshardNode, opts ...grpc.CallOption) (*MsgAutokickTrainshardNodeResponse, error)
 	SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error)
 	RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefreshTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgRefreshTrainingNodeOptInResponse, error)
+	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
+	// Bridge settlement then credits that Gonka account when a receipt's owner address
+	// was derived from the Ethereum key.
+	RegisterBridgeKeyLink(ctx context.Context, in *MsgRegisterBridgeKeyLink, opts ...grpc.CallOption) (*MsgRegisterBridgeKeyLinkResponse, error)
 }
 
 type msgClient struct {
@@ -578,6 +583,15 @@ func (c *msgClient) RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefresh
 	return out, nil
 }
 
+func (c *msgClient) RegisterBridgeKeyLink(ctx context.Context, in *MsgRegisterBridgeKeyLink, opts ...grpc.CallOption) (*MsgRegisterBridgeKeyLinkResponse, error) {
+	out := new(MsgRegisterBridgeKeyLinkResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterBridgeKeyLink_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -635,6 +649,10 @@ type MsgServer interface {
 	AutokickTrainshardNode(context.Context, *MsgAutokickTrainshardNode) (*MsgAutokickTrainshardNodeResponse, error)
 	SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error)
 	RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error)
+	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
+	// Bridge settlement then credits that Gonka account when a receipt's owner address
+	// was derived from the Ethereum key.
+	RegisterBridgeKeyLink(context.Context, *MsgRegisterBridgeKeyLink) (*MsgRegisterBridgeKeyLinkResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -788,6 +806,9 @@ func (UnimplementedMsgServer) SetTrainingNodeOptIn(context.Context, *MsgSetTrain
 }
 func (UnimplementedMsgServer) RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RefreshTrainingNodeOptIn not implemented")
+}
+func (UnimplementedMsgServer) RegisterBridgeKeyLink(context.Context, *MsgRegisterBridgeKeyLink) (*MsgRegisterBridgeKeyLinkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterBridgeKeyLink not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1684,6 +1705,24 @@ func _Msg_RefreshTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RegisterBridgeKeyLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterBridgeKeyLink)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterBridgeKeyLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterBridgeKeyLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterBridgeKeyLink(ctx, req.(*MsgRegisterBridgeKeyLink))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1886,6 +1925,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RefreshTrainingNodeOptIn",
 			Handler:    _Msg_RefreshTrainingNodeOptIn_Handler,
+		},
+		{
+			MethodName: "RegisterBridgeKeyLink",
+			Handler:    _Msg_RegisterBridgeKeyLink_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

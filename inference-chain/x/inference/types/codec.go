@@ -121,6 +121,9 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitPoCChallengeValidations{},
 	)
+	registry.RegisterImplementations((*sdk.Msg)(nil),
+		&MsgRegisterBridgeKeyLink{},
+	)
 
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgUpdateParams{},

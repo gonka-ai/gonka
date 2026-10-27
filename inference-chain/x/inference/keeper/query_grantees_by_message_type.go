@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"strings"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
@@ -77,8 +78,8 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 
 					pubKey := account.GetPubKey()
 					pubKeyStr := ""
-					if pubKey != nil {
-						pubKeyStr = base64.StdEncoding.EncodeToString(pubKey.Bytes())
+					if secpPubKey, ok := pubKey.(*secp256k1.PubKey); ok && secpPubKey != nil {
+						pubKeyStr = base64.StdEncoding.EncodeToString(secpPubKey.Bytes())
 					}
 
 					grantees = append(grantees, &types.Grantee{
@@ -98,7 +99,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 	k.LogInfo("GranteesByMessageType query called", types.Participants,
 		"granter", req.GranterAddress,
 		"messageType", req.MessageTypeUrl,
-		"grantees", grantees)
+		"granteeCount", len(grantees))
 
 	return &types.QueryGranteesByMessageTypeResponse{
 		Grantees: grantees,

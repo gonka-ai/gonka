@@ -325,6 +325,16 @@ service Query {
 
   }
 
+  // Queries the bridge key link for a receipt owner address.
+  // owner_address is the Gonka address derived from the compressed external
+  // public key, the same value MsgBridgeExchange stores as ownerAddress.
+  // found is false when no link is stored. Settlement then pays owner_address.
+  // nonce is the last accepted Ethereum authorization for that owner.
+  rpc BridgeKeyLink (QueryBridgeKeyLinkRequest) returns (QueryBridgeKeyLinkResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/bridge_key_link/{owner_address}";
+
+  }
+
   // Queries the singleton liquidity pool
   rpc LiquidityPool (QueryLiquidityPoolRequest) returns (QueryLiquidityPoolResponse) {
     option (google.api.http).get = "/productscience/inference/inference/liquidity_pool";
@@ -1077,6 +1087,17 @@ message QueryBridgeAddressesByChainRequest {
 
 message QueryBridgeAddressesByChainResponse {
   repeated BridgeContractAddress addresses = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryBridgeKeyLinkRequest {
+  string owner_address = 1;
+}
+
+message QueryBridgeKeyLinkResponse {
+  bool found = 1;
+  string owner_address = 2;
+  string recipient_address = 3;
+  uint64 nonce = 4;
 }
 
 message QueryValidateWrappedTokenForTradeRequest {

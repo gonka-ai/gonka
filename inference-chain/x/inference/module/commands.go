@@ -33,9 +33,10 @@ This single transaction does TWO things:
      are deducted from the cold account's balance. The warm key never needs
      to hold tokens.
 
-The default fee allowance is 10 GNK, which covers many months of routine DAPI
-operation. When depleted, simply re-run this command to refresh both the authz
-grants and the fee allowance.
+The default fee allowance is 10 GNK; paid PoC store commits spend it. Re-run
+this command to refresh both the authz grants and the fee allowance: an
+existing allowance that is low or expires earlier is revoked and granted again
+in the same transaction.
 
 The account key retains full control and can revoke either the permissions or
 the fee allowance at any time.

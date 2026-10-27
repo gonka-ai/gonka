@@ -160,7 +160,15 @@ var (
 	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
 	TrainingNodeEndpointsPrefix     = collections.NewPrefix(142)
 	TrainshardWeightEpochPrefix     = collections.NewPrefix(143)
-	ParamsKey                       = []byte("p_inference")
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114 and 115 are taken above. Not 115: 's' is the
+	// first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
+	// 114, 115, and 117-119 are taken by v0.2.17.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

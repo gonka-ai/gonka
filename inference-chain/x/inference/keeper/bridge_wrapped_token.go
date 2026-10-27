@@ -697,11 +697,17 @@ func (k Keeper) MintTokens(ctx sdk.Context, contractAddr string, recipient strin
 
 // handleCompletedBridgeTransaction handles minting tokens when a bridge transaction is completed
 func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *types.BridgeTransaction) error {
+	recipient, err := k.ResolveBridgeRecipient(ctx, bridgeTx.OwnerAddress)
+	if err != nil {
+		k.LogError("Bridge exchange: Failed to resolve bridge recipient", types.Messages, "error", err)
+		return fmt.Errorf("resolve bridge recipient: %w", err)
+	}
+
 	// Check if this is a native token release (WGNK burn on Ethereum)
 	isBridgeContract := k.IsBridgeContractAddress(ctx, bridgeTx.ChainId, bridgeTx.ContractAddress)
 	if isBridgeContract {
 		// Handle native token release from escrow
-		err := k.HandleNativeTokenRelease(ctx, bridgeTx)
+		err := k.HandleNativeTokenRelease(ctx, bridgeTx, recipient)
 		if err != nil {
 			k.LogError("Bridge exchange: Failed to release native tokens", types.Messages, "error", err)
 			return fmt.Errorf("failed to release native tokens: %v", err)
@@ -710,7 +716,8 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 		k.LogInfo("Bridge exchange: Successfully released native tokens from escrow",
 			types.Messages,
 			"contractAddress", bridgeTx.ContractAddress,
-			"recipient", bridgeTx.OwnerAddress,
+			"recipient", recipient,
+			"ownerAddress", bridgeTx.OwnerAddress,
 			"amount", bridgeTx.Amount,
 			"chainId", bridgeTx.ChainId)
 
@@ -725,8 +732,9 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 		return fmt.Errorf("failed to handle token contract: %v", err)
 	}
 
-	// Mint tokens to the recipient
-	err = k.MintTokens(ctx, contractAddr, bridgeTx.OwnerAddress, bridgeTx.Amount)
+	// Mint tokens to the recipient. A registered key link redirects a mnemonic
+	// Gonka account without changing the receipt content validators agreed on.
+	err = k.MintTokens(ctx, contractAddr, recipient, bridgeTx.Amount)
 	if err != nil {
 		k.LogError("Bridge exchange: Failed to mint external tokens", types.Messages, "error", err)
 		return fmt.Errorf("failed to mint tokens: %v", err)
@@ -735,7 +743,8 @@ func (k Keeper) handleCompletedBridgeTransaction(ctx sdk.Context, bridgeTx *type
 	k.LogInfo("Bridge exchange: Successfully minted external tokens",
 		types.Messages,
 		"contract", contractAddr,
-		"recipient", bridgeTx.OwnerAddress,
+		"recipient", recipient,
+		"ownerAddress", bridgeTx.OwnerAddress,
 		"amount", bridgeTx.Amount)
 
 	return nil
@@ -853,4 +862,22 @@ func (k Keeper) GetAllBridgeTradeApprovedTokens(ctx sdk.Context) []types.BridgeT
 	}
 
 	return approvedTokens
+}
+
+// IsWrappedContractEligibleForTrade reports whether ante may waive the fee
+// for a cw20 send from contractAddr. The contract must be the registered
+// instance, with metadata and trading approval. A missing record is not
+// eligible. This does not query the contract.
+func (k Keeper) IsWrappedContractEligibleForTrade(ctx sdk.Context, contractAddr string) bool {
+	reference, err := k.WrappedContractReverseIndex.Get(ctx, strings.ToLower(contractAddr))
+	if err != nil || reference.ChainId == "" {
+		return false
+	}
+	if _, found := k.GetWrappedTokenContract(ctx, reference.ChainId, reference.ContractAddress); !found {
+		return false
+	}
+	if _, found := k.GetTokenMetadata(ctx, reference.ChainId, reference.ContractAddress); !found {
+		return false
+	}
+	return k.HasBridgeTradeApprovedToken(ctx, reference.ChainId, reference.ContractAddress)
 }
