@@ -51,9 +51,18 @@ func TestLiquidityPoolBypass_DirectPoolCall(t *testing.T) {
 		{"not json object", testPoolAddress, `"purchase_with_native"`, ibcCoins(1), false},
 		{"oversized payload", testPoolAddress, `{"purchase_with_native":{}}` + strings.Repeat(" ", maxBypassMsgBytes), ibcCoins(1), false},
 		{"other contract", "gonka1other", `{"purchase_with_native":{}}`, ibcCoins(1), false},
+		{"unapproved ibc denom", testPoolAddress, `{"purchase_with_native":{}}`, sdk.NewCoins(sdk.NewInt64Coin("ibc/NOTAPPROVED", 1)), false},
 	}
 
-	d := LiquidityPoolFeeBypassDecorator{}
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetIBCTradeApprovedToken(ctx, inferencetypes.BridgeTokenReference{
+		ChainId:         "cosmoshub-4",
+		ContractAddress: "ibc/USDT",
+	}))
+	require.NoError(t, k.SetIBCTokenMetadata(ctx, "cosmoshub-4", "ibc/USDT", inferencetypes.BridgeTokenMetadata{
+		Name: "Tether", Symbol: "USDT", Decimals: 6,
+	}))
+	d := LiquidityPoolFeeBypassDecorator{InferenceKeeper: &k}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := &wasmtypes.MsgExecuteContract{
@@ -62,7 +71,7 @@ func TestLiquidityPoolBypass_DirectPoolCall(t *testing.T) {
 				Msg:      []byte(tc.msg),
 				Funds:    tc.funds,
 			}
-			require.Equal(t, tc.want, d.matchesAllowedSwap(newTestContext(), msg, testPoolAddress, 1))
+			require.Equal(t, tc.want, d.matchesAllowedSwap(ctx, msg, testPoolAddress, 1))
 		})
 	}
 }
@@ -178,7 +187,8 @@ func TestLiquidityPoolBypass_Cw20SendFromWrappedToken(t *testing.T) {
 	}
 	toPool := `{"send":{"contract":"gonka1pool","amount":"1000","msg":"e30="}}`
 
-	require.True(t, d.matchesAllowedSwap(ctx, send(wrapped.Contract, toPool), testPoolAddress, wrapped.CodeID))
+	require.False(t, d.matchesAllowedSwap(ctx, send(wrapped.Contract, toPool), testPoolAddress, wrapped.CodeID),
+		"code id alone is not a registered wrapped instance")
 	require.False(t, d.matchesAllowedSwap(ctx, send(other.Contract, toPool), testPoolAddress, wrapped.CodeID),
 		"cw20 contract with a different code id")
 	require.False(t, d.matchesAllowedSwap(ctx,
@@ -234,6 +244,13 @@ func TestLiquidityPoolBypass_AnteHandle(t *testing.T) {
 			if !tc.skipWrapped {
 				require.NoError(t, k.SetWrappedTokenCodeID(ctx, 1))
 			}
+			require.NoError(t, k.SetIBCTradeApprovedToken(ctx, inferencetypes.BridgeTokenReference{
+				ChainId:         "cosmoshub-4",
+				ContractAddress: "ibc/USDT",
+			}))
+			require.NoError(t, k.SetIBCTokenMetadata(ctx, "cosmoshub-4", "ibc/USDT", inferencetypes.BridgeTokenMetadata{
+				Name: "Tether", Symbol: "USDT", Decimals: 6,
+			}))
 			ctx = ctx.WithMinGasPrices(sdk.NewDecCoins(sdk.NewInt64DecCoin("ngonka", 1)))
 
 			d := LiquidityPoolFeeBypassDecorator{InferenceKeeper: &k, GasCap: gasCap}

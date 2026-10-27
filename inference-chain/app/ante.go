@@ -219,15 +219,22 @@ func (d LiquidityPoolFeeBypassDecorator) matchesAllowedSwap(ctx sdk.Context, msg
 		return info.CodeID == wrappedCodeID
 	}
 
-	// Path A: direct execute to pool
+	// Path A: direct execute to pool. The asset must be approved; a missing
+	// record keeps the normal fee instead of rejecting the transaction.
 	if exec.Contract == poolAddress {
-		return isPoolPurchaseWithNative(exec)
+		if !isPoolPurchaseWithNative(exec) || d.InferenceKeeper == nil {
+			return false
+		}
+		return d.InferenceKeeper.IsIBCDenomEligibleForTrade(ctx, exec.Funds[0].Denom)
 	}
 
-	// Path B: cw20::Send to pool (exec is sent to cw20)
+	// Path B: cw20::Send to pool (exec is sent to cw20). Code id is the
+	// class check. The reverse index is the instance check.
 	if target, ok := cw20SendTarget(exec.Msg); ok && target == poolAddress {
-		// Only allow if the caller contract is a wrapped token (by code id)
-		return isWrappedByCodeID(exec.Contract)
+		if !isWrappedByCodeID(exec.Contract) || d.InferenceKeeper == nil {
+			return false
+		}
+		return d.InferenceKeeper.IsWrappedContractEligibleForTrade(ctx, exec.Contract)
 	}
 	return false
 }
