@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"cosmossdk.io/collections"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -56,8 +54,7 @@ func TestMLNodeWeightDistribution_UppercaseCreatorUsesCanonicalAccount(t *testin
 	_, err = ms.MLNodeWeightDistribution(sdkCtx, blocked)
 	require.NoError(t, err)
 
-	addr := sdk.MustAccAddressFromBech32(testutil.Validator)
-	stored, err := k.MLNodeWeightDistributions.Get(sdkCtx, collections.Join3(int64(100), addr, testPoCModelID))
+	stored, err := k.GetMLNodeWeightDistribution(sdkCtx, 100, testutil.Validator, testPoCModelID)
 	require.NoError(t, err)
 	require.Equal(t, testutil.Validator, stored.ParticipantAddress)
 }

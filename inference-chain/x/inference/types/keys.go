@@ -151,6 +151,9 @@ var (
 	// 114, 115, and 117-119 are taken by v0.2.17.
 	BridgeKeyLinksPrefix = collections.NewPrefix(144)
 	ParamsKey            = []byte("p_inference")
+
+	ReputationAggregatesPrefix   = collections.NewPrefix(145)
+	DevshardSettledEscrowsPrefix = collections.NewPrefix(147)
 )
 
 func KeyPrefix(p string) []byte {
@@ -168,6 +171,6 @@ var (
 	FinishedInferenceQueueEntryPrefix = collections.NewPrefix(1)
 	FinishedInferenceQueueNextSeqKey  = collections.NewPrefix(2)
 	TransientSPRTValuesKey            = collections.NewPrefix(3)
-	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
-	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
+	// TransientTxCounterKey holds the app ante's tx position in the block (wasm env.transaction.index).
+	TransientTxCounterKey = collections.NewPrefix(6)
 )

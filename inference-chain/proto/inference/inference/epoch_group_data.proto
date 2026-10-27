@@ -38,6 +38,9 @@ message EpochGroupData {
   int64 total_throughput = 18;
   repeated ConfirmationWeightScale confirmation_weight_scales = 19;
   DynamicCoefficientParams dynamic_coefficient_params = 20;
+  // Storage form set by the keeper: every ML node's timeslot_allocation is
+  // [true, false] and is left out. Reads restore it; queries never return this.
+  bool default_timeslot_allocations = 21;
 }
 
 message ConfirmationWeightScale {
@@ -63,11 +66,18 @@ message ValidationWeight {
   // voting_power is the delegation-resolved voting power for this model.
   // Only meaningful in model subgroups. Root group entries have voting_power = 0.
   int64 voting_power = 6;
+  // Storage form set by the keeper: member address bytes. Reads restore
+  // member_address; queries never return this.
+  bytes member_addr = 7;
 }
 
 message SeedSignature {
   string member_address = 1;
   string signature = 2;
+  // Storage form set by the keeper: address bytes and the decoded hex
+  // signature. Reads restore the strings; queries never return these.
+  bytes member_addr = 3;
+  bytes signature_raw = 4;
 }
 
 message MLNodeInfo {

@@ -1,9 +1,11 @@
 package keeper
 
 import (
+	"bytes"
 	"testing"
 
 	storetypes "cosmossdk.io/store/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/bls/types"
@@ -215,4 +217,372 @@ func TestStoreThresholdSigningRequest_GasBoundedWhenPartialSignaturesNulled(t *t
 
 	require.Greater(t, usedPopulated, used*3,
 		"populated (%d) must cost notably more than nulled (%d)", usedPopulated, used)
+}
+
+// The threshold-signing path reads only base-record fields (participants,
+// slot public keys, group key, phase), so its epoch lookup must not pay for
+// rehydrating every dealer part. With N=16 dealer parts of ~5 KB each the
+// full rehydration alone is ~265k gas; a mainnet dealer part is ~34 KB at
+// i_total_slots=100, so the read grows by ~100k gas per BLS participant.
+func TestThresholdSigning_EpochReadSkipsDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(43)
+
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{
+			Address:        string(rune('a' + i)),
+			SlotStartIndex: uint32(i),
+			SlotEndIndex:   uint32(i),
+		}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		Participants:   participants,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
+		GroupPublicKey: []byte{1},
+		TSlotsDegree:   8,
+	}))
+	for i := 0; i < gasRegressionN; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+		require.NoError(t, k.SetVerificationSubmission(ctx, epochID, uint32(i), makeVerificationSubmission()))
+	}
+
+	gasOf := func(f func(sdk.Context)) storetypes.Gas {
+		metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+		f(metered)
+		return metered.GasMeter().GasConsumed()
+	}
+	fullRead := gasOf(func(c sdk.Context) {
+		full, err := k.GetEpochBLSData(c, epochID)
+		require.NoError(t, err)
+		require.Len(t, full.DealerParts, gasRegressionN)
+	})
+
+	signingData := types.SigningData{
+		CurrentEpochId: epochID,
+		ChainId:        bytes.Repeat([]byte{7}, 32),
+		RequestId:      bytes.Repeat([]byte{8}, 32),
+		Data:           [][]byte{bytes.Repeat([]byte{9}, 32)},
+	}
+	request := gasOf(func(c sdk.Context) { require.NoError(t, k.RequestThresholdSignature(c, signingData)) })
+	require.Less(t, request, fullRead,
+		"RequestThresholdSignature (%d gas) must not rehydrate dealer parts (full read alone %d)", request, fullRead)
+
+	// A submitter outside the participant set fails right after the epoch
+	// read, so the gas up to that point is the read plus request lookup.
+	partial := gasOf(func(c sdk.Context) {
+		err := k.AddPartialSignature(c, signingData.RequestId, []uint32{0}, make([]byte, 48), "outsider")
+		require.ErrorContains(t, err, "not found in epoch")
+	})
+	require.Less(t, partial, fullRead,
+		"AddPartialSignature (%d gas) must not rehydrate dealer parts (full read alone %d)", partial, fullRead)
+	t.Logf("gas: full epoch read %d, RequestThresholdSignature %d, AddPartialSignature up to ownership check %d",
+		fullRead, request, partial)
+}
+
+func TestGetEpochBLSDataBase_SkipsSplitFields(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(44)
+
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{Address: string(rune('a' + i)), SlotStartIndex: uint32(i), SlotEndIndex: uint32(i)}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		Participants:   participants,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
+		GroupPublicKey: []byte{1},
+		SlotPublicKeys: [][]byte{{2}, {3}},
+		TSlotsDegree:   8,
+	}))
+	for i := 0; i < gasRegressionN; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+		require.NoError(t, k.SetVerificationSubmission(ctx, epochID, uint32(i), makeVerificationSubmission()))
+	}
+
+	full, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Empty(t, base.DealerParts)
+	require.Empty(t, base.VerificationSubmissions)
+	full.DealerParts, full.VerificationSubmissions, full.DealerComplaints = nil, nil, nil
+	require.Equal(t, full, base)
+
+	_, err = k.GetEpochBLSDataBase(ctx, epochID+1)
+	require.ErrorIs(t, err, types.ErrEpochBLSDataNotFound)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = k.GetEpochBLSDataBase(metered, epochID)
+	require.NoError(t, err)
+	baseRead := metered.GasMeter().GasConsumed()
+	require.Less(t, baseRead, storetypes.Gas(50_000), "base read must not scale with dealer parts")
+}
+
+// seedEpochWithDealerParts stores an epoch whose first `parts` participants
+// have submitted dealer parts, so a full GetEpochBLSData pays for all of them.
+func seedEpochWithDealerParts(t *testing.T, k Keeper, ctx sdk.Context, epochID uint64, phase types.DKGPhase, parts int) []types.BLSParticipantInfo {
+	t.Helper()
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{
+			Address:        string(rune('a' + i)),
+			SlotStartIndex: uint32(i),
+			SlotEndIndex:   uint32(i),
+		}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               gasRegressionN,
+		TSlotsDegree:              1,
+		Participants:              participants,
+		DkgPhase:                  phase,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		GroupPublicKey:            []byte{1},
+	}))
+	for i := 0; i < parts; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+	return participants
+}
+
+// The last dealer must not pay for reading every earlier dealer part: its
+// handler needs only the base record and its own sub-key.
+func TestSubmitDealerPart_GasIndependentOfEarlierDealers(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(45)
+	participants := seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DEALING, gasRegressionN-1)
+
+	gasOf := func(f func(sdk.Context)) storetypes.Gas {
+		metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+		f(metered)
+		return metered.GasMeter().GasConsumed()
+	}
+	fullRead := gasOf(func(c sdk.Context) {
+		_, err := k.GetEpochBLSData(c, epochID)
+		require.NoError(t, err)
+	})
+
+	shares := make([]types.EncryptedSharesForParticipant, gasRegressionN)
+	for i := range shares {
+		shares[i] = types.EncryptedSharesForParticipant{EncryptedShares: [][]byte{make([]byte, types.MinEncryptedShareCiphertextLen)}}
+	}
+	msg := &types.MsgSubmitDealerPart{
+		Creator:                        participants[gasRegressionN-1].Address,
+		EpochId:                        epochID,
+		Commitments:                    [][]byte{{1}, {2}},
+		EncryptedSharesForParticipants: shares,
+	}
+	dealer := gasOf(func(c sdk.Context) {
+		_, err := ms.SubmitDealerPart(c, msg)
+		require.NoError(t, err)
+	})
+	require.Less(t, dealer, fullRead,
+		"SubmitDealerPart (%d gas) must not rehydrate earlier dealer parts (full read alone %d)", dealer, fullRead)
+
+	// A second submission by the same dealer is still rejected.
+	_, err := ms.SubmitDealerPart(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
+	t.Logf("gas: full epoch read %d, SubmitDealerPart %d", fullRead, dealer)
+}
+
+// Group key validation reads two epochs but only their base fields
+// (participants, slot keys, group key, phase).
+func TestSubmitGroupKeyValidationSignature_EpochReadsSkipDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const prevEpochID, newEpochID = uint64(46), uint64(47)
+	seedEpochWithDealerParts(t, k, ctx, prevEpochID, types.DKGPhase_DKG_PHASE_SIGNED, gasRegressionN)
+	seedEpochWithDealerParts(t, k, ctx, newEpochID, types.DKGPhase_DKG_PHASE_COMPLETED, gasRegressionN)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, prevEpochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	// An outsider fails right after both epoch reads.
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.SubmitGroupKeyValidationSignature(metered, &types.MsgSubmitGroupKeyValidationSignature{
+		Creator:          "outsider",
+		NewEpochId:       newEpochID,
+		SlotIndices:      []uint32{0},
+		PartialSignature: make([]byte, 48),
+	})
+	require.ErrorContains(t, err, "not found in previous epoch")
+	validation := metered.GasMeter().GasConsumed()
+	require.Less(t, validation, fullRead,
+		"two epoch reads (%d gas) must cost less than one full read (%d)", validation, fullRead)
+	t.Logf("gas: full epoch read %d, SubmitGroupKeyValidationSignature up to participant check %d", fullRead, validation)
+}
+
+// A verifier needs the commitments of the dealers it votes valid, not every
+// dealer's encrypted shares for all participants.
+func TestSubmitVerificationVector_ReadsCommitmentsNotDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(49)
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{Address: string(rune('a' + i)), SlotStartIndex: uint32(i), SlotEndIndex: uint32(i)}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                     epochID,
+		ITotalSlots:                 gasRegressionN,
+		TSlotsDegree:                7,
+		Participants:                participants,
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_VERIFYING,
+		VerifyingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+	}))
+	for i := range participants {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	// Every dealer voted valid; the loaded (junk) commitments fail to decode
+	// at the first proof check, after all the dealer data has been read.
+	validity := make([]bool, gasRegressionN)
+	proofs := make([]types.DealerValidityProof, 0, gasRegressionN-1)
+	for i := range validity {
+		validity[i] = true
+		if i > 0 {
+			proofs = append(proofs, types.DealerValidityProof{DealerIndex: uint32(i), ProofSignature: make([]byte, 96)})
+		}
+	}
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.SubmitVerificationVector(metered, &types.MsgSubmitVerificationVector{
+		Creator:              participants[0].Address,
+		EpochId:              epochID,
+		DealerValidity:       validity,
+		DealerValidityProofs: proofs,
+	})
+	require.ErrorContains(t, err, "invalid proof for dealer 1: failed to precompute dealer slot public keys")
+	verifier := metered.GasMeter().GasConsumed()
+	require.Less(t, verifier*2, fullRead,
+		"SubmitVerificationVector (%d gas) must read commitments only, not full dealer parts (full read %d)", verifier, fullRead)
+	t.Logf("gas: full epoch read %d, SubmitVerificationVector up to the first proof %d", fullRead, verifier)
+}
+
+// EndBlock reads the active DKG epoch every block; only a deadline block
+// needs the dealer parts, so earlier blocks must read just the base record.
+func TestProcessDKGPhaseTransition_SkipsDealerPartsBeforeDeadline(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(48)
+	seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DEALING, gasRegressionN)
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err := k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	require.NoError(t, k.ProcessDKGPhaseTransitionForEpoch(metered, epochID))
+	idle := metered.GasMeter().GasConsumed()
+	require.Less(t, idle, fullRead/4,
+		"a block before the deadline (%d gas) must not rehydrate dealer parts (full read %d)", idle, fullRead)
+
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_DEALING, base.DkgPhase)
+
+	// The deadline block still sees every dealer part and moves the phase on.
+	require.NoError(t, k.ProcessDKGPhaseTransitionForEpoch(ctx.WithBlockHeight(base.DealingPhaseDeadlineBlock), epochID))
+	base, err = k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, types.DKGPhase_DKG_PHASE_VERIFYING, base.DkgPhase)
+	t.Logf("gas: full epoch read %d, EndBlock before deadline %d", fullRead, idle)
+}
+
+// A dealer answering a complaint needs the base record and its own
+// complaint, not every dealer part of the epoch.
+func TestRespondDealerComplaints_GasSkipsDealerParts(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(49)
+	participants := seedEpochWithDealerParts(t, k, ctx, epochID, types.DKGPhase_DKG_PHASE_DISPUTING, gasRegressionN)
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	require.NoError(t, err)
+	base.DisputingPhaseDeadlineBlock = ctx.BlockHeight() + 100
+	require.NoError(t, k.SetEpochBLSDataBaseOnly(ctx, base))
+	require.NoError(t, k.SetDealerComplaint(ctx, epochID, &types.DealerComplaint{DealerIndex: 1, ComplainerIndex: 0}))
+
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = k.GetEpochBLSData(metered, epochID)
+	require.NoError(t, err)
+	fullRead := metered.GasMeter().GasConsumed()
+
+	msg := &types.MsgRespondDealerComplaints{
+		Creator:     participants[1].Address,
+		EpochId:     epochID,
+		DealerIndex: 1,
+		Responses: []types.DealerComplaintResponse{{
+			ComplainerIndex:         0,
+			ResponseShareBytes:      bytes.Repeat([]byte{1}, dkgShareBytesLen),
+			ResponseOpeningMaterial: bytes.Repeat([]byte{2}, dkgOpeningSeedLen),
+		}},
+	}
+	metered = ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	_, err = ms.RespondDealerComplaints(metered, msg)
+	require.NoError(t, err)
+	respond := metered.GasMeter().GasConsumed()
+	require.Less(t, respond, fullRead/4,
+		"RespondDealerComplaints (%d gas) must not rehydrate dealer parts (full read %d)", respond, fullRead)
+
+	stored, err := k.GetDealerComplaint(ctx, epochID, 1, 0)
+	require.NoError(t, err)
+	require.True(t, stored.ResponseSubmitted)
+	require.Equal(t, msg.Responses[0].ResponseShareBytes, stored.ResponseShareBytes)
+
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
+
+	msg.Responses[0].ComplainerIndex = 2
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "complaint not found")
+	t.Logf("gas: full epoch read %d, RespondDealerComplaints %d", fullRead, respond)
+}
+
+// A complaint still inline in a pre-split base record can be answered once.
+func TestRespondDealerComplaints_LegacyInlineComplaint(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ms := NewMsgServerImpl(k)
+	const epochID = uint64(50)
+	legacy := &types.EpochBLSData{
+		EpochId:                     epochID,
+		Participants:                []types.BLSParticipantInfo{{Address: "addr-0"}, {Address: "addr-1"}},
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_DISPUTING,
+		DisputingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		DealerComplaints:            []types.DealerComplaint{{DealerIndex: 1, ComplainerIndex: 0, DisputedSlotIndex: 7}},
+	}
+	bz, err := k.cdc.Marshal(legacy)
+	require.NoError(t, err)
+	require.NoError(t, k.storeService.OpenKVStore(ctx).Set(types.EpochBLSDataKey(epochID), bz))
+
+	msg := &types.MsgRespondDealerComplaints{
+		Creator:     "addr-1",
+		EpochId:     epochID,
+		DealerIndex: 1,
+		Responses: []types.DealerComplaintResponse{{
+			ComplainerIndex:         0,
+			ResponseShareBytes:      bytes.Repeat([]byte{1}, dkgShareBytesLen),
+			ResponseOpeningMaterial: bytes.Repeat([]byte{2}, dkgOpeningSeedLen),
+		}},
+	}
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.NoError(t, err)
+
+	got, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, got.DealerComplaints, 1)
+	require.True(t, got.DealerComplaints[0].ResponseSubmitted)
+	require.Equal(t, uint32(7), got.DealerComplaints[0].DisputedSlotIndex)
+
+	_, err = ms.RespondDealerComplaints(ctx, msg)
+	require.ErrorContains(t, err, "already submitted")
 }
