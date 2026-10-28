@@ -55,13 +55,20 @@ type SQLite struct {
 type epochPool struct {
 	writeDB *sql.DB
 	readDB  *sql.DB
+	// snapDB keeps snapshots out of writeDB: a multi-MB snapshot write would
+	// otherwise hold the only writer while the diff journal waits under Session.mu.
+	snapDB *sql.DB
+	// snapReadDB lets LoadSnapshot read the sidecar while a snapshot is being written.
+	snapReadDB *sql.DB
 }
 
 const epochFilePrefix = "epoch_"
 const epochFileSuffix = ".db"
+const snapshotFileSuffix = ".snapshots.db"
 const metaDBFile = "_meta.db"
 
 var epochFileRegex = regexp.MustCompile(`^epoch_(\d+)\.db$`)
+var epochSnapshotFileRegex = regexp.MustCompile(`^epoch_(\d+)\.snapshots\.db$`)
 
 // NewSQLite opens (or creates) a per-epoch SQLite store under baseDir. Reads
 // the escrow_id -> epoch_id index from _meta.db so per-epoch DBs do not need
@@ -233,6 +240,58 @@ func (s *SQLite) epochFilePath(epochID uint64) string {
 	return filepath.Join(s.baseDir, fmt.Sprintf("%s%d%s", epochFilePrefix, epochID, epochFileSuffix))
 }
 
+func (s *SQLite) snapshotFilePath(epochID uint64) string {
+	return filepath.Join(s.baseDir, fmt.Sprintf("%s%d%s", epochFilePrefix, epochID, snapshotFileSuffix))
+}
+
+// epochFiles lists the epoch database and its snapshot sidecar with WAL/shm.
+func (s *SQLite) epochFiles(epochID uint64) []string {
+	var out []string
+	for _, base := range []string{s.epochFilePath(epochID), s.snapshotFilePath(epochID)} {
+		for _, suffix := range []string{"", "-wal", "-shm"} {
+			out = append(out, base+suffix)
+		}
+	}
+	return out
+}
+
+func openSnapshotDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
+	}
+	db.SetMaxOpenConns(1)
+	for _, q := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA busy_timeout=5000",
+	} {
+		if _, err := db.Exec(q); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("exec %s on snapshot db: %w", q, err)
+		}
+	}
+	if err := MigrateSnapshotPool(context.Background(), db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// openSnapshotReadDB opens a WAL reader on the sidecar; call after openSnapshotDB created the schema.
+func openSnapshotReadDB(dbPath string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %s: %w", dbPath, err)
+	}
+	db.SetMaxOpenConns(4)
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("exec busy_timeout on snapshot read db: %w", err)
+	}
+	return db, nil
+}
+
 // openOrLoadPool returns the pool for epochID, opening it lazily on miss.
 // Caller need not hold s.mu; this method takes the write lock.
 func (s *SQLite) openOrLoadPool(epochID uint64) (*epochPool, error) {
@@ -243,6 +302,16 @@ func (s *SQLite) openOrLoadPool(epochID uint64) (*epochPool, error) {
 	}
 	p, err := openEpochPool(s.epochFilePath(epochID))
 	if err != nil {
+		return nil, err
+	}
+	p.snapDB, err = openSnapshotDB(s.snapshotFilePath(epochID))
+	if err != nil {
+		_ = p.close()
+		return nil, err
+	}
+	p.snapReadDB, err = openSnapshotReadDB(s.snapshotFilePath(epochID))
+	if err != nil {
+		_ = p.close()
 		return nil, err
 	}
 	s.pools[epochID] = p
@@ -337,10 +406,21 @@ func (p *epochPool) close() error {
 	} else {
 		rErr = p.readDB.Close()
 	}
+	var sErr error
+	for _, db := range []*sql.DB{p.snapReadDB, p.snapDB} {
+		if db != nil {
+			if err := db.Close(); err != nil && sErr == nil {
+				sErr = err
+			}
+		}
+	}
 	if wErr != nil {
 		return wErr
 	}
-	return rErr
+	if rErr != nil {
+		return rErr
+	}
+	return sErr
 }
 
 // Close closes every per-epoch pool. Best-effort: returns the first error if
@@ -953,7 +1033,7 @@ func (s *SQLite) SaveSnapshot(escrowID string, nonce uint64, data []byte) error 
 	if err != nil {
 		return err
 	}
-	_, err = p.writeDB.Exec(
+	_, err = p.snapDB.Exec(
 		`INSERT INTO snapshots (escrow_id, nonce, state_data, created_at)
 		 VALUES (?, ?, ?, strftime('%s','now'))
 		 ON CONFLICT(escrow_id) DO UPDATE SET nonce = excluded.nonce, state_data = excluded.state_data, created_at = excluded.created_at
@@ -968,10 +1048,16 @@ func (s *SQLite) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	if err != nil {
 		return 0, nil, err
 	}
-	row := p.readDB.QueryRow(`SELECT nonce, state_data FROM snapshots WHERE escrow_id = ?`, escrowID)
+	row := p.snapReadDB.QueryRow(`SELECT nonce, state_data FROM snapshots WHERE escrow_id = ?`, escrowID)
 	var nonce uint64
 	var data []byte
-	if err := row.Scan(&nonce, &data); err != nil {
+	err = row.Scan(&nonce, &data)
+	if err == sql.ErrNoRows {
+		// Snapshots written before the sidecar live in the epoch file.
+		row = p.readDB.QueryRow(`SELECT nonce, state_data FROM snapshots WHERE escrow_id = ?`, escrowID)
+		err = row.Scan(&nonce, &data)
+	}
+	if err != nil {
 		if err == sql.ErrNoRows {
 			return 0, nil, ErrSnapshotNotFound
 		}
@@ -1437,9 +1523,7 @@ func (s *SQLite) PruneEpoch(epochID uint64) error {
 		}
 	}
 
-	dbPath := s.epochFilePath(epochID)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		path := dbPath + suffix
+	for _, path := range s.epochFiles(epochID) {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove %s: %w", path, err)
 		}
@@ -1502,6 +1586,9 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 		}
 		m := epochFileRegex.FindStringSubmatch(ent.Name())
 		if m == nil {
+			m = epochSnapshotFileRegex.FindStringSubmatch(ent.Name())
+		}
+		if m == nil {
 			continue
 		}
 		epochID, err := strconv.ParseUint(m[1], 10, 64)
@@ -1512,9 +1599,7 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 	}
 
 	for epochID := range epochs {
-		dbPath := s.epochFilePath(epochID)
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			path := dbPath + suffix
+		for _, path := range s.epochFiles(epochID) {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("remove %s: %w", path, err)
 			}
