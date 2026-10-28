@@ -813,9 +813,15 @@ func convertInferenceNodeToHardwareNode(in *NodeWithState, nodeModels map[string
 		})
 	}
 
+	// A disabled node keeps serving until the end of the epoch it was disabled in
+	// (ShouldBeOperational), but it must not enter the next one. It is reported with
+	// no models: the chain then never samples it as preserved and drops it at epoch
+	// formation, while the current epoch group (and its routing) is unchanged.
 	modelNames := make([]string, 0)
-	for model := range nodeModels {
-		modelNames = append(modelNames, model)
+	if in.State.AdminState.Enabled {
+		for model := range nodeModels {
+			modelNames = append(modelNames, model)
+		}
 	}
 
 	// sort models names to make sure they will be in same order every time

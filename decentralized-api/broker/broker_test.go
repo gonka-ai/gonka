@@ -2534,6 +2534,10 @@ func TestAreHardwareNodesEqual_Version(t *testing.T) {
 	a.Host = b.Host
 	a.Port = "1"
 	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different ports should not be equal")
+	a.Port = b.Port
+	a.Models = []string{"model-a"}
+	b.Models = nil
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different models should not be equal")
 }
 
 func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
@@ -2543,6 +2547,50 @@ func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
 	hw := convertInferenceNodeToHardwareNode(node, node.Node.Models)
 
 	assert.Equal(t, "v2.3.4", hw.Version)
+}
+
+func TestConvertInferenceNodeToHardwareNode_DisabledNodeReportsNoModels(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{"model-a": {}}
+
+	node.State.AdminState = AdminState{Enabled: true, Epoch: 10}
+	hw := convertInferenceNodeToHardwareNode(node, node.Node.Models)
+	assert.Equal(t, []string{"model-a"}, hw.Models)
+
+	// Disabled: still serving the current epoch (status unchanged), but leaving.
+	node.State.AdminState = AdminState{Enabled: false, Epoch: 10}
+	hw = convertInferenceNodeToHardwareNode(node, node.Node.Models)
+	assert.Empty(t, hw.Models)
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, hw.Status)
+}
+
+func TestCalculateNodesDiff_DisableAndEnableAreSubmitted(t *testing.T) {
+	broker := NewTestBroker()
+	require.NoError(t, broker.configManager.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{
+			{ModelId: "model-a", SeqLen: 128},
+		},
+	}))
+
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{"model-a": {}}
+	node.State.AdminState = AdminState{Enabled: true, Epoch: 10}
+	local := map[string]*NodeWithState{"node-1": node}
+
+	onChain := convertInferenceNodeToHardwareNode(node, broker.supportedNodeModels(node.Node.Models))
+	diff := broker.calculateNodesDiff(map[string]*types.HardwareNode{"node-1": onChain}, local)
+	require.Empty(t, diff.NewOrModified, "no change, no diff")
+
+	node.State.AdminState = AdminState{Enabled: false, Epoch: 10}
+	diff = broker.calculateNodesDiff(map[string]*types.HardwareNode{"node-1": onChain}, local)
+	require.Len(t, diff.NewOrModified, 1, "disable must reach the chain")
+	assert.Empty(t, diff.NewOrModified[0].Models)
+
+	disabledOnChain := diff.NewOrModified[0]
+	node.State.AdminState = AdminState{Enabled: true, Epoch: 11}
+	diff = broker.calculateNodesDiff(map[string]*types.HardwareNode{"node-1": disabledOnChain}, local)
+	require.Len(t, diff.NewOrModified, 1, "re-enable must reach the chain")
+	assert.Equal(t, []string{"model-a"}, diff.NewOrModified[0].Models)
 }
 
 func TestCalculateNodesDiff_FiltersUnsupportedConfiguredModelsFromHardwareDiff(t *testing.T) {
