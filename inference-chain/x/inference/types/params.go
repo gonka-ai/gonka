@@ -11,12 +11,11 @@ import (
 )
 
 var (
-	KeySlashFractionInvalid              = []byte("SlashFractionInvalid")
-	KeySlashFractionDowntime             = []byte("SlashFractionDowntime")
-	KeyDowntimeMissedPercentageThreshold = []byte("DowntimeMissedPercentageThreshold")
-	KeyGracePeriodEndEpoch               = []byte("GracePeriodEndEpoch")
-	KeyBaseWeightRatio                   = []byte("BaseWeightRatio")
-	KeyCollateralPerWeightUnit           = []byte("CollateralPerWeightUnit")
+	KeySlashFractionInvalid    = []byte("SlashFractionInvalid")
+	KeySlashFractionDowntime   = []byte("SlashFractionDowntime")
+	KeyGracePeriodEndEpoch     = []byte("GracePeriodEndEpoch")
+	KeyBaseWeightRatio         = []byte("BaseWeightRatio")
+	KeyCollateralPerWeightUnit = []byte("CollateralPerWeightUnit")
 	// Vesting parameter keys for TokenomicsParams
 	KeyWorkVestingPeriod   = []byte("WorkVestingPeriod")
 	KeyRewardVestingPeriod = []byte("RewardVestingPeriod")
@@ -361,12 +360,11 @@ func DefaultTokenomicsParams() *TokenomicsParams {
 
 func DefaultCollateralParams() *CollateralParams {
 	return &CollateralParams{
-		SlashFractionInvalid:              DecimalFromFloat(0.20),
-		SlashFractionDowntime:             DecimalFromFloat(0.10),
-		DowntimeMissedPercentageThreshold: DecimalFromFloat(0.05),
-		GracePeriodEndEpoch:               180,
-		BaseWeightRatio:                   DecimalFromFloat(0.2),
-		CollateralPerWeightUnit:           DecimalFromFloat(1),
+		SlashFractionInvalid:    DecimalFromFloat(0.20),
+		SlashFractionDowntime:   DecimalFromFloat(0.10),
+		GracePeriodEndEpoch:     180,
+		BaseWeightRatio:         DecimalFromFloat(0.2),
+		CollateralPerWeightUnit: DecimalFromFloat(1),
 	}
 }
 
@@ -617,7 +615,6 @@ func validateParamDecimalExponents(p Params) error {
 		{"confirmation_poc_params.slash_fraction", p.ConfirmationPocParams.GetSlashFraction()},
 		{"collateral_params.slash_fraction_invalid", p.CollateralParams.GetSlashFractionInvalid()},
 		{"collateral_params.slash_fraction_downtime", p.CollateralParams.GetSlashFractionDowntime()},
-		{"collateral_params.downtime_missed_percentage_threshold", p.CollateralParams.GetDowntimeMissedPercentageThreshold()},
 		{"collateral_params.base_weight_ratio", p.CollateralParams.GetBaseWeightRatio()},
 		{"collateral_params.collateral_per_weight_unit", p.CollateralParams.GetCollateralPerWeightUnit()},
 		{"bitcoin_reward_params.decay_rate", p.BitcoinRewardParams.GetDecayRate()},
@@ -702,7 +699,6 @@ func (p *CollateralParams) ParamSetPairs() paramtypes.ParamSetPairs {
 	return paramtypes.ParamSetPairs{
 		paramtypes.NewParamSetPair(KeySlashFractionInvalid, &p.SlashFractionInvalid, validateSlashFraction),
 		paramtypes.NewParamSetPair(KeySlashFractionDowntime, &p.SlashFractionDowntime, validateSlashFraction),
-		paramtypes.NewParamSetPair(KeyDowntimeMissedPercentageThreshold, &p.DowntimeMissedPercentageThreshold, validatePercentage),
 		paramtypes.NewParamSetPair(KeyGracePeriodEndEpoch, &p.GracePeriodEndEpoch, validateEpoch),
 		paramtypes.NewParamSetPair(KeyBaseWeightRatio, &p.BaseWeightRatio, validateBaseWeightRatio),
 		paramtypes.NewParamSetPair(KeyCollateralPerWeightUnit, &p.CollateralPerWeightUnit, validateCollateralPerWeightUnit),
@@ -1169,9 +1165,6 @@ func (p *CollateralParams) Validate() error {
 	}
 	if err := validateSlashFraction(p.SlashFractionDowntime); err != nil {
 		return errors.Wrap(err, "invalid slash_fraction_downtime")
-	}
-	if err := validatePercentage(p.DowntimeMissedPercentageThreshold); err != nil {
-		return errors.Wrap(err, "invalid downtime_missed_percentage_threshold")
 	}
 	if err := validateEpoch(p.GracePeriodEndEpoch); err != nil {
 		return errors.Wrap(err, "invalid grace_period_end_epoch")
