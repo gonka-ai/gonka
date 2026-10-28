@@ -3998,8 +3998,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			// A receipt moves the inference to Started. Publish its pending
 			// ConfirmStart before asking peers to verify an execution timeout so
 			// they evaluate the same receipt-backed state.
-			st := s.sm.SnapshotState()
-			if rec, ok := st.Inferences[nonce]; !ok {
+			if _, rec, ok := s.sm.SnapshotWithInference(nonce); !ok {
 				return 0, false, TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
 			} else if rec.Status == types.StatusPending {
 				if err := s.SendPendingDiff(ctx); err != nil {
@@ -4384,8 +4383,7 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 	// VerifyErrorMiss rejects Pending as no_finish_tx (Started/Finished only),
 	// and pairwise AB can leave a second nonce in flight so no heartbeat
 	// drains the receipt first. Publish catch-up while the Finish stays pinned.
-	st := s.sm.SnapshotState()
-	if rec, ok := st.Inferences[nonce]; !ok {
+	if _, rec, ok := s.sm.SnapshotWithInference(nonce); !ok {
 		return result, fmt.Errorf("error miss inference %d not found", nonce)
 	} else if rec.Status == types.StatusPending {
 		if err := s.SendPendingDiff(ctx); err != nil {
