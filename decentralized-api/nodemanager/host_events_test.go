@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"common/nodemanager/gen"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"common/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -329,4 +329,35 @@ func TestNodeManager_AcquireMLNode_RecordsEscrowLoad(t *testing.T) {
 	snap := load.Snapshot()
 	require.Len(t, snap, 1)
 	require.Equal(t, uint64(11), snap[0].EscrowID)
+}
+
+// Test flow:
+//  1. Build the timed-out response from a re-read that found one subscribed event, from one that found none, and
+//     from one that needs a reset.
+//  2. Assert the event travels in the response with next_cursor past it instead of being dropped as "unchanged",
+//     an empty re-read is "unchanged", and a reset is reported as such.
+func TestNodeManager_GetHostEvents_TimedOutPollReturnsWhatTheReReadFound(t *testing.T) {
+	ring := testHostEventRing(t)
+	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
+	ring.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindWarmKeyGranted, WarmKey: &apiconfig.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantID: 2, Height: 10}})
+
+	late := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp := srv.hostEventsTimedOutResponse(late)
+	require.False(t, resp.Unchanged)
+	require.False(t, resp.NeedsReset)
+	require.Len(t, resp.Events, 1)
+	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED, resp.Events[0].Kind)
+	require.Equal(t, "warm", resp.Events[0].WarmKey.Grantee)
+	require.Equal(t, uint64(2), resp.Events[0].WarmKey.GrantId)
+	require.Equal(t, uint64(1), resp.NextCursor)
+
+	none := ring.Since(1, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp = srv.hostEventsTimedOutResponse(none)
+	require.True(t, resp.Unchanged)
+	require.Empty(t, resp.Events)
+
+	reset := ring.Since(5, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp = srv.hostEventsTimedOutResponse(reset)
+	require.True(t, resp.NeedsReset)
+	require.False(t, resp.Unchanged)
 }

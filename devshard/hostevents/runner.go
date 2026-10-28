@@ -7,15 +7,21 @@ import (
 
 	"common/nodemanager/gen"
 
+	"devshard/bridge"
+
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// devshardd only consumes escrow events. Maintenance windows are the gateway's
-// concern (out of scope), so devshardd never subscribes to maintenance kinds.
+// devshardd consumes escrow events and warm-key log events. Maintenance
+// windows are the gateway's concern (out of scope), so devshardd never
+// subscribes to maintenance kinds. A dapi that predates the warm-key kinds
+// ignores them in the subscribe set and serves the escrow kinds as before.
 var defaultSubscribe = []gen.HostEventKind{
 	gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
 	gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+	gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+	gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED,
 }
 
 // Run long-polls GetHostEvents until ctx cancel or Unimplemented (old dapi).
@@ -165,9 +171,43 @@ func dispatch(cfg Config, sink Sink, ev *gen.HostEvent) error {
 		}
 		cfg.Log.Debug("hostevents: OnEscrowSettled", "escrow_id", id, "seq", ev.GetSeq())
 		return sink.OnEscrowSettled(id)
+	case gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED:
+		entry, ok := warmKeyEntryOf(ev)
+		if !ok {
+			return nil
+		}
+		cfg.Log.Debug("hostevents: OnWarmKeyEvent", "granter", entry.Granter, "grantee", entry.Grantee,
+			"grant_id", entry.ID, "end", entry.End, "seq", ev.GetSeq())
+		return sink.OnWarmKeyEvent(entry)
 	default:
 		return nil
 	}
+}
+
+// warmKeyEntryOf maps a warm-key host event onto the bridge's entry type. A
+// grant event carries the granted-at height; an end event carries the
+// revoked-at height and the end name.
+func warmKeyEntryOf(ev *gen.HostEvent) (bridge.WarmKeyEntry, bool) {
+	p := ev.GetWarmKey()
+	if p == nil || p.GetGranter() == "" || p.GetGrantee() == "" || p.GetGrantId() == 0 {
+		return bridge.WarmKeyEntry{}, false
+	}
+	entry := bridge.WarmKeyEntry{
+		Granter:       p.GetGranter(),
+		ID:            p.GetGrantId(),
+		Grantee:       p.GetGrantee(),
+		ExpiresAtUnix: p.GetExpiresAtUnix(),
+	}
+	if ev.GetKind() == gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED {
+		entry.RevokedAtHeight = p.GetHeight()
+		entry.End = p.GetEnd()
+		if entry.End == "" {
+			entry.End = "WARM_KEY_LOG_END_REVOKED"
+		}
+	} else {
+		entry.GrantedAtHeight = p.GetHeight()
+	}
+	return entry, true
 }
 
 func escrowIDString(ev *gen.HostEvent) string {

@@ -93,26 +93,40 @@ func (s *Server) getHostEventsOnce(
 		return nil, status.FromContextError(waitErr).Err(), false
 	}
 	if outcome == longpoll.TimedOut {
+		// The re-read advances next_cursor past anything appended between
+		// the timeout and now, so what it finds has to travel in this
+		// response: returned as "unchanged" it would be skipped for good.
 		got = s.hostEvents.Since(cursor, clientGen, subscribe)
 		logging.Debug("host_events: GetHostEvents long-poll timed out", types.Config,
 			"cursor", cursor,
 			"nextCursor", got.NextCursor,
 			"generation", got.Generation,
 			"maxWait", maxWait,
+			"lateEvents", len(got.Events),
 		)
-		return s.hostEventsResponse(got, nil, true, got.Reset), nil, false
+		return s.hostEventsTimedOutResponse(got), nil, false
 	}
 	return nil, nil, true
 }
 
+// hostEventsTimedOutResponse is the answer to a long-poll that timed out: the
+// re-read's events, if the ring got any between the deadline and the re-read,
+// and "unchanged" only when it got none.
+func (s *Server) hostEventsTimedOutResponse(got apiconfig.HostEventSince) *gen.GetHostEventsResponse {
+	if got.Reset {
+		return s.hostEventsResponse(got, nil, false, true)
+	}
+	return s.hostEventsResponse(got, hostEventsToProto(got.Events), len(got.Events) == 0, false)
+}
+
 func (s *Server) hostEventsResponse(got apiconfig.HostEventSince, events []*gen.HostEvent, unchanged, needsReset bool) *gen.GetHostEventsResponse {
 	return &gen.GetHostEventsResponse{
-		Unchanged:   unchanged,
-		Events:      events,
-		NextCursor:  got.NextCursor,
-		Generation:  got.Generation,
-		NeedsReset:  needsReset,
-		EscrowLoad:  s.escrowLoadSnapshot(),
+		Unchanged:  unchanged,
+		Events:     events,
+		NextCursor: got.NextCursor,
+		Generation: got.Generation,
+		NeedsReset: needsReset,
+		EscrowLoad: s.escrowLoadSnapshot(),
 	}
 }
 
@@ -183,6 +197,16 @@ func hostEventToProto(ev apiconfig.HostEvent) *gen.HostEvent {
 			StartHeight:    ev.Maintenance.StartHeight,
 			DurationBlocks: ev.Maintenance.DurationBlocks,
 			Reason:         ev.Maintenance.Reason,
+		}
+	}
+	if ev.WarmKey != nil {
+		msg.WarmKey = &gen.WarmKeyPayload{
+			Granter:       ev.WarmKey.Granter,
+			Grantee:       ev.WarmKey.Grantee,
+			GrantId:       ev.WarmKey.GrantID,
+			Height:        ev.WarmKey.Height,
+			ExpiresAtUnix: ev.WarmKey.ExpiresAtUnix,
+			End:           ev.WarmKey.End,
 		}
 	}
 	return msg

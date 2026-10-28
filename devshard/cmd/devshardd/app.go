@@ -465,7 +465,7 @@ func startHostEventsWarm(
 	if queryBridge == nil {
 		queryBridge = chainBridge
 	}
-	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr).withWarmKeys(chainBridge.WarmKeys())
 	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
 		return sink.WarmFromInfo(&info)
 	})

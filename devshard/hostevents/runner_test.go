@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+	"devshard/bridge"
 	"devshard/hostevents"
 
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,7 @@ type recordingSink struct {
 	mu        sync.Mutex
 	warmed    []string
 	settled   []string
+	warmKeys  []bridge.WarmKeyEntry
 	rehydrate int
 }
 
@@ -43,6 +45,19 @@ func (s *recordingSink) RehydrateOpenEscrows() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rehydrate++
+}
+
+func (s *recordingSink) OnWarmKeyEvent(entry bridge.WarmKeyEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warmKeys = append(s.warmKeys, entry)
+	return nil
+}
+
+func (s *recordingSink) warmKeyEntries() []bridge.WarmKeyEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bridge.WarmKeyEntry(nil), s.warmKeys...)
 }
 
 func (s *recordingSink) snapshot() (warmed, settled []string, rehydrate int) {
@@ -356,4 +371,61 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
 	require.NotZero(t, rehydrate,
 		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
+}
+
+// Test flow:
+//  1. Serve a warm-key grant and a warm-key end event and assert the subscribe set names both kinds.
+//  2. Assert the sink receives the grant with its granted-at height and the end with its revoked-at height and
+//     end name, in order.
+func TestRun_RoutesWarmKeyEvents(t *testing.T) {
+	srv := &fakeHostEventsServer{}
+	srv.SetHandlers(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		require.Contains(t, req.Subscribe, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED)
+		require.Contains(t, req.Subscribe, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED)
+		return &gen.GetHostEventsResponse{
+			Generation: 1,
+			NextCursor: 2,
+			Events: []*gen.HostEvent{
+				{
+					Seq:     1,
+					Kind:    gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+					WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 3, Height: 100, ExpiresAtUnix: 5000},
+				},
+				{
+					Seq:     2,
+					Kind:    gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED,
+					WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 3, Height: 120, End: "WARM_KEY_LOG_END_REVOKED"},
+				},
+				{
+					Seq:  3,
+					Kind: gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+				},
+			},
+		}, nil
+	})
+	client := dialFake(t, srv)
+	sink := &recordingSink{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:          client,
+			ServerMaxWait:   100 * time.Millisecond,
+			ErrorBackoffMin: 10 * time.Millisecond,
+			ErrorBackoffMax: 20 * time.Millisecond,
+		}, sink)
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(sink.warmKeyEntries()) >= 2
+	}, 2*time.Second, 20*time.Millisecond)
+	cancel()
+	<-done
+
+	entries := sink.warmKeyEntries()
+	require.Len(t, entries, 2, "an event without a payload is dropped, not dispatched")
+	require.Equal(t, bridge.WarmKeyEntry{Granter: "cold", ID: 3, Grantee: "warm", GrantedAtHeight: 100, ExpiresAtUnix: 5000}, entries[0])
+	require.Equal(t, bridge.WarmKeyEntry{Granter: "cold", ID: 3, Grantee: "warm", RevokedAtHeight: 120, End: "WARM_KEY_LOG_END_REVOKED"}, entries[1])
 }
