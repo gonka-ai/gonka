@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -21,34 +20,65 @@ type versionsResponse struct {
 	MLNodes []mlnodeVersionEntry `json:"mlnodes"`
 }
 
-const maxVersionsResponseBytes = 1 << 20
+const (
+	maxVersionsResponseBytes = 1 << 20
+	versionsRefreshInterval  = time.Minute
+	versionsRetryInterval    = 15 * time.Second
+)
 
 type versionsEntry struct {
 	capableNodes map[string]bool // node_id -> validation-inference capable
 	fetchedAt    time.Time
+	attemptedAt  time.Time
 }
 
 // VersionsCache polls each candidate miner's dapi /v1/versions in the background
 // and answers, per (miner, node_id), whether that node can serve inference during
 // PoC validation. Fail-closed: unknown miner/node, error, or stale entry -> false.
 type VersionsCache struct {
-	client *http.Client
-	ttl    time.Duration
+	client       *http.Client
+	ttl          time.Duration
+	refreshAfter time.Duration
+	retryAfter   time.Duration
 
 	mu         sync.RWMutex
 	candidates map[string]string // miner -> dapi base URL (inference_url)
 	entries    map[string]versionsEntry
+	active     bool
+	wakeCh     chan struct{}
 	now        func() time.Time
 }
 
 func NewVersionsCache(client *http.Client, ttl time.Duration) *VersionsCache {
 	return &VersionsCache{
-		client:     client,
-		ttl:        ttl,
-		candidates: map[string]string{},
-		entries:    map[string]versionsEntry{},
-		now:        time.Now,
+		client:       client,
+		ttl:          ttl,
+		refreshAfter: versionsRefreshInterval,
+		retryAfter:   versionsRetryInterval,
+		candidates:   map[string]string{},
+		entries:      map[string]versionsEntry{},
+		wakeCh:       make(chan struct{}, 1),
+		now:          time.Now,
 	}
+}
+
+func (c *VersionsCache) SetActive(active bool) {
+	c.mu.Lock()
+	wasActive := c.active
+	c.active = active
+	c.mu.Unlock()
+	if active && !wasActive {
+		select {
+		case c.wakeCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *VersionsCache) isActive() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.active
 }
 
 // SetCandidates replaces the miner->URL set polled on the next pass and drops
@@ -63,12 +93,12 @@ func (c *VersionsCache) SetCandidates(minerURLs map[string]string) {
 		}
 		next[miner] = u
 	}
-	c.candidates = next
 	for miner := range c.entries {
-		if _, ok := next[miner]; !ok {
+		if u, ok := next[miner]; !ok || u != c.candidates[miner] {
 			delete(c.entries, miner)
 		}
 	}
+	c.candidates = next
 }
 
 // versionsURL builds the dapi public /v1/versions endpoint from a miner's
@@ -80,16 +110,39 @@ func versionsURL(base string) string {
 // Poll runs one pass over the current candidate set.
 func (c *VersionsCache) Poll(ctx context.Context) {
 	c.mu.RLock()
-	candidates := make(map[string]string, len(c.candidates))
-	maps.Copy(candidates, c.candidates)
+	now := c.now()
+	due := make(map[string]string, len(c.candidates))
+	for miner, base := range c.candidates {
+		if entry, ok := c.entries[miner]; !ok || c.dueLocked(entry, now) {
+			due[miner] = base
+		}
+	}
 	c.mu.RUnlock()
 
-	for miner, base := range candidates {
+	for miner, base := range due {
 		nodes := c.fetchOne(ctx, base)
 		c.mu.Lock()
-		c.entries[miner] = versionsEntry{capableNodes: nodes, fetchedAt: c.now()}
+		entry := c.entries[miner]
+		entry.attemptedAt = c.now()
+		if nodes != nil {
+			entry.capableNodes = nodes
+			entry.fetchedAt = entry.attemptedAt
+		}
+		if c.candidates[miner] == base {
+			c.entries[miner] = entry
+		}
 		c.mu.Unlock()
 	}
+}
+
+func (c *VersionsCache) dueLocked(entry versionsEntry, now time.Time) bool {
+	if now.Sub(entry.attemptedAt) < c.retryAfter {
+		return false
+	}
+	if entry.capableNodes == nil || entry.fetchedAt.Before(entry.attemptedAt) {
+		return true
+	}
+	return now.Sub(entry.fetchedAt) >= c.refreshAfter
 }
 
 // fetchOne returns the per-node capability map, or nil on any error (fail-closed).
@@ -149,7 +202,10 @@ func (c *VersionsCache) Run(ctx context.Context, interval time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.wakeCh:
 		case <-ticker.C:
+		}
+		if c.isActive() {
 			c.Poll(ctx)
 		}
 	}
