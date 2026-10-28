@@ -770,7 +770,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		}
 		built.active.Store(false)
 		if built.session != nil && g.store != nil {
-			built.session.SetInferenceCompletionStore(g.store)
+			built.session.UseSessionCompletionJournal(g.store)
 		}
 		rt = built
 		attachAccounting(g.accounting, rt)

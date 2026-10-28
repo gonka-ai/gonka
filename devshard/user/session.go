@@ -367,7 +367,14 @@ type Session struct {
 	finalizeInFlight        atomic.Bool
 	completionStore         InferenceCompletionStore
 	completionDurabilityErr error
-	activeInferenceSends    int
+	// completionJournal is set when the journal lives in the session storage: a Start's obligation is then
+	// staged in stagedCompletion and written by the Start's own diff commit.
+	completionJournal storage.CompletionJournal
+	stagedCompletion  *InferenceCompletion
+	// pendingSignatures are host signatures not yet written; with completionJournal set they ride on the next diff
+	// commit, and their nonces stay in signatures until then.
+	pendingSignatures    []storage.SignatureRow
+	activeInferenceSends int
 
 	// Retry settings for signature collection (handles transient host failures during finalize).
 	signatureCollectMaxRetries  int
@@ -943,6 +950,9 @@ func (s *Session) dropSignaturesThroughLocked(floor uint64) {
 	for _, nonce := range highest {
 		keep[nonce] = struct{}{}
 	}
+	for _, row := range s.pendingSignatures {
+		keep[row.Nonce] = struct{}{}
+	}
 	for nonce := range s.signatures {
 		if _, ok := keep[nonce]; nonce <= floor && !ok {
 			delete(s.signatures, nonce)
@@ -1187,7 +1197,9 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[resp.Nonce][slot] = resp.StateSig
 			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
-			if s.store != nil {
+			if s.completionJournal != nil {
+				s.pendingSignatures = append(s.pendingSignatures, storage.SignatureRow{Nonce: resp.Nonce, Slot: slot, Sig: resp.StateSig})
+			} else if s.store != nil {
 				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
 					logging.Warn("failed to persist signature",
 						"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
@@ -1361,11 +1373,11 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+		if err := s.persistComposedDiffLocked(ctx, types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
-		}); err != nil {
+		}, vd.Applied); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
@@ -1748,6 +1760,7 @@ func (s *Session) FlushSnapshot() error {
 	}
 
 	s.mu.Lock()
+	s.flushPendingSignaturesLocked()
 	if s.nonce == 0 {
 		s.mu.Unlock()
 		return nil
@@ -4563,6 +4576,9 @@ func (s *Session) Close() error {
 	s.stopLaggingSync()
 	s.stopSendCatchUps()
 	closeHostClients(s.clients)
+	s.mu.Lock()
+	s.flushPendingSignaturesLocked()
+	s.mu.Unlock()
 	if s.store != nil {
 		return s.store.Close()
 	}

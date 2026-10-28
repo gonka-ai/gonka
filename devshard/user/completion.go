@@ -29,8 +29,11 @@ type InferenceCompletionStore interface {
 func (s *Session) SetInferenceCompletionStore(store InferenceCompletionStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.flushPendingSignaturesLocked()
 	s.completionStore = store
 	s.completionDurabilityErr = nil
+	s.completionJournal = nil
+	s.stagedCompletion = nil
 	if store != nil {
 		if durable, ok := s.store.(interface{ RequireDurableCommits(string) error }); ok {
 			s.completionDurabilityErr = durable.RequireDurableCommits(s.escrowID)
@@ -50,6 +53,10 @@ func (s *Session) registerCompletionLocked(nonce uint64, params InferenceParams)
 		Nonce: nonce, PreparedAt: time.Now().UnixNano(),
 		Payload: host.InferencePayload{Prompt: params.Prompt, Model: params.Model,
 			InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt},
+	}
+	if s.completionJournal != nil {
+		s.stagedCompletion = &entry
+		return nil
 	}
 	err := s.completionStore.SaveInferenceCompletion(s.escrowID, entry)
 	if errors.Is(err, ErrInferenceCompletionConflict) && s.uncommittedCompletionLocked(nonce) {
@@ -154,6 +161,12 @@ func (s *Session) removeUncommittedCompletionLocked(nonce uint64) {
 	if s.completionStore == nil {
 		return
 	}
+	if s.completionJournal != nil {
+		if s.stagedCompletion != nil && s.stagedCompletion.Nonce == nonce {
+			s.stagedCompletion = nil
+		}
+		return
+	}
 	if !s.uncommittedCompletionLocked(nonce) {
 		return
 	}
@@ -165,6 +178,17 @@ func (s *Session) resolveAppliedCompletionsLocked(txs []*types.DevshardTx) {
 	if s.completionStore == nil {
 		return
 	}
+	if s.completionJournal != nil {
+		// The diff that applied txs dropped their journal rows in its own commit.
+		return
+	}
+	for _, id := range resolvedCompletionIDs(txs) {
+		_ = s.completionStore.DeleteInferenceCompletion(s.escrowID, id)
+	}
+}
+
+func resolvedCompletionIDs(txs []*types.DevshardTx) []uint64 {
+	var ids []uint64
 	for _, tx := range txs {
 		var id uint64
 		if fi := tx.GetFinishInference(); fi != nil {
@@ -173,9 +197,10 @@ func (s *Session) resolveAppliedCompletionsLocked(txs []*types.DevshardTx) {
 			id = timeout.InferenceId
 		}
 		if id != 0 {
-			_ = s.completionStore.DeleteInferenceCompletion(s.escrowID, id)
+			ids = append(ids, id)
 		}
 	}
+	return ids
 }
 
 func (s *Session) guardCompletion(ctx context.Context) error {
