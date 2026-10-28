@@ -719,6 +719,9 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 func setupLiveFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
 	env := setupSeededFloorProxy(t, numHosts, engines, verifierAccept, &testChain{live: true, start: time.Now()})
+	// The gateway leaves the heartbeat cadence off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is on;
+	// StartHeartbeatLoop still starts the height-seed loop.
+	env.session.SetDisableHeightSyncHeartbeat(true)
 	env.session.StartHeartbeatLoop()
 	return env
 }
