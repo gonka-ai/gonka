@@ -7,6 +7,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
+	"devshard/types"
 )
 
 func benchFillSQLite(b *testing.B, escrowID string) (*StateMachine, *storage.SQLite) {
@@ -110,6 +111,34 @@ func BenchmarkFillSealedInferenceIndexGaps_AllMissing(b *testing.B) {
 				}
 				if inserted != n {
 					b.Fatalf("inserted %d, want %d", inserted, n)
+				}
+			}
+		})
+	}
+}
+
+// One auto-seal evaluation over n live Finished records still inside the seal grace.
+func BenchmarkAutoSealPlateau(b *testing.B) {
+	for _, n := range []int{10_000, 60_000, 177_000} {
+		b.Run(fmt.Sprintf("live=%d", n), func(b *testing.B) {
+			sm := benchFillSM(b, storage.NewMemory(), "bench-as")
+			sm.state.Config.InferenceSealGraceSeconds = 3600
+			sm.state.Config.ExecutionTimeout = 1920
+			sm.state.Config.InferenceSealGraceNonces = 10
+			base := int64(1_700_000_000_000)
+			for i := 0; i < n; i++ {
+				id := uint64(i + 1)
+				sm.state.Inferences[id] = &types.InferenceRecord{Status: types.StatusFinished, ConfirmedAtTimeMs: base + int64(i)*27}
+			}
+			seal := uint64(n + 100)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				sm.mu.Lock()
+				ids, _, err := sm.autoSealLocked("bench", seal)
+				sm.mu.Unlock()
+				if err != nil || len(ids) != 0 {
+					b.Fatal(err, len(ids))
 				}
 			}
 		})
