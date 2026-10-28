@@ -217,7 +217,7 @@ Each task includes:
   - `collateral_per_weight_unit`: The collateral required per unit of weight. Default `1`.
   - `slash_fraction_invalid`: Percentage of collateral to slash when a participant is marked `INVALID`. Default `0.20` (20%).
   - `slash_fraction_downtime`: Percentage of collateral to slash for downtime. Default `0.10` (10%).
-  - `downtime_missed_percentage_threshold`: The missed request percentage that triggers a downtime slash. Default `0.05` (5%).
+  - `downtime_missed_percentage_threshold`: The missed request percentage that triggers a downtime slash. Default `0.05` (5%). *Removed in v0.2.18: no longer read by current code; superseded by the SPRT-based `INACTIVE` transition (see 2.4).*
   Update `params.go` with default values and validation.
 - **Where**:
   - `inference-chain/proto/inference/inference/params.proto`
@@ -269,6 +269,7 @@ Each task includes:
 
 #### 2.4 Trigger Slashing for Downtime at End of Epoch
 - **Task**: [x] Add downtime slashing trigger to epoch settlement
+- **Superseded**: The threshold check described below no longer exists. Downtime is detected by the SPRT in `getInactiveStatus` (`calculations/status.go`) or by a failed confirmation PoC; on the transition to `INACTIVE`, `deactiveParticipant` calls `SlashForDowntime`, which applies `SlashFractionDowntime` without any threshold comparison. `DowntimeMissedPercentageThreshold` was removed in v0.2.18.
 - **What**: Enhance the `x/inference` module by adding logic to check each participant's performance for the completed epoch. If their missed request percentage exceeds the `DowntimeMissedPercentageThreshold` parameter, it should trigger a call to the `x/collateral` module's `Slash` function.
 - **Where**: The new logic has been placed inside the `SettleAccount` function in `inference-chain/x/inference/keeper/accountsettle.go`, which is a more efficient location than originally planned.
 - **Dependencies**: 1.6, 2.1

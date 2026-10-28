@@ -81,7 +81,7 @@ The `x/inference` module will introduce new governance parameters to control the
 *   `CollateralPerWeightUnit`: The amount of collateral (in the native token) required to activate one unit of `Collateral-Eligible Weight`.
 *   `SlashFractionInvalid`: The percentage of a participant's total collateral to be slashed when they are marked as `INVALID`. Proposed default: `0.20` (20%).
 *   `SlashFractionDowntime`: The percentage of a participant's total collateral to be slashed for failing to meet participation requirements in an epoch. Proposed default: `0.10` (10%).
-*   `DowntimeMissedPercentageThreshold`: The epoch performance threshold that triggers a downtime slash. If a participant's missed request percentage for an epoch exceeds this value, their collateral will be slashed. Proposed default: `0.05` (5%).
+*   `DowntimeMissedPercentageThreshold`: *Removed in v0.2.18.* It is no longer read by current code; the downtime slash decision is made by the `INACTIVE` status transition described in 2.3.2.
 
 #### 2.3.1. Malicious Behavior (Marked as `INVALID`)
 
@@ -96,7 +96,7 @@ The most severe penalty is reserved for participants whose work is consistently 
 
 The network relies on active participation. Participants who fail to meet performance standards for an epoch will have a portion of their collateral slashed.
 
-*   **Trigger**: This check is performed **once per epoch**. The logic resides within the `onSetNewValidatorsStage` function in `inference-chain/x/inference/module/module.go`, which is called from the module's `EndBlocker` when an epoch concludes. A slash is triggered if a participant's performance (e.g., missed request percentage) for the epoch crosses a governance-defined threshold.
+*   **Trigger**: The slash is triggered at the moment a participant's status changes to `INACTIVE`. Status is recomputed by `UpdateParticipantStatus` (`inference-chain/x/inference/keeper/participant_status.go`) whenever participant stats change, using `ComputeStatus` (`inference-chain/x/inference/calculations/status.go`). A participant becomes `INACTIVE` with reason `downtime` when the downtime SPRT (`ValidationParams.DowntimeGoodPercentage`, `DowntimeBadPercentage`, `DowntimeHThreshold`) accumulated over missed requests reaches its failure bound, or with reason `failed_confirmation_poc` when a confirmation PoC fails (`ConfirmationPoCParams.AlphaThreshold`). The transition calls `deactiveParticipant`, which calls `SlashForDowntime`.
 *   **Action**: The `x/inference` module will call the `x/collateral` module's `Slash` function, using the `SlashFractionDowntime` parameter to determine the penalty.
 
 This separation of concerns ensures that `x/inference` is responsible for defining *what* constitutes a slashable offense, while `x/collateral` is responsible for the financial operation of *executing* the slash.

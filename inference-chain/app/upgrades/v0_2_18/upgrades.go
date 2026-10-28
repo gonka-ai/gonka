@@ -34,6 +34,10 @@ func CreateUpgradeHandler(
 
 		// Future v0.2.18 migration steps land below this line.
 
+		if err := dropRemovedParams(ctx, k); err != nil {
+			return nil, err
+		}
+
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
 			return toVM, err
@@ -42,4 +46,12 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func dropRemovedParams(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	return k.SetParams(ctx, params)
 }

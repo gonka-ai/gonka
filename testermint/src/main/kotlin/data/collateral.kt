@@ -11,7 +11,6 @@ data class Collateral(
 data class CollateralParams(
     val slashFractionInvalid: Decimal,
     val slashFractionDowntime: Decimal,
-    val downtimeMissedPercentageThreshold: Decimal,
     val gracePeriodEndEpoch: Long,
     val baseWeightRatio: Decimal,
     val collateralPerWeightUnit: Decimal

@@ -192,8 +192,8 @@ func (k Keeper) SlashForInvalidStatus(ctx context.Context, participant *types.Pa
 	}
 }
 
-// SlashForDowntime checks a participant's performance for the completed epoch and
-// slashes their collateral if their missed request percentage exceeds the threshold.
+// SlashForDowntime slashes a participant's collateral by SlashFractionDowntime when
+// the participant transitions to INACTIVE.
 func (k Keeper) SlashForDowntime(ctx context.Context, participant *types.Participant, params types.Params) {
 	slashFractionDown, err := params.CollateralParams.SlashFractionDowntime.ToLegacyDec()
 	if err != nil {
