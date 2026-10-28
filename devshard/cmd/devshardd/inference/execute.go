@@ -5,11 +5,16 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"os"
 
 	"common/completionapi"
 	devshardpkg "devshard"
 	"devshard/observability"
 )
+
+// tapeSampling switches execution and validation to the public sampling tape
+// (gonka_poc plugin); executors and validators must flip it together.
+var tapeSampling = os.Getenv("DEVSHARD_TAPE_SAMPLING") == "1"
 
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
@@ -32,6 +37,9 @@ func executeInference(
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
+	if err == nil && tapeSampling {
+		modified.NewBody, err = completionapi.WithTape(modified.NewBody)
+	}
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}

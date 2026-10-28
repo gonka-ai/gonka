@@ -308,6 +308,20 @@ func ExecuteValidation(
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
 ) (ValidationResult, error) {
+	return executeValidation(ctx, inferenceID, promptPayload, responsePayload, execute,
+		claimedInputTokens, claimedOutputTokens, logprobsMode, false)
+}
+
+func executeValidation(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	responsePayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
+	tape bool,
+) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
 		promptPayload,
@@ -345,6 +359,9 @@ func ExecuteValidation(
 		delete(requestMap, "enforced_tokens")
 	} else {
 		requestMap["enforced_tokens"] = enforcedTokens
+	}
+	if tape {
+		completionapi.SetTape(requestMap)
 	}
 	requestMap["stream"] = false
 	requestMap["skip_special_tokens"] = false
@@ -455,6 +472,9 @@ func ExecuteValidation(
 		}
 	}
 
+	if tape {
+		return tapeResult(respBodyBytes, len(enforcedTokens.Tokens), baseResult)
+	}
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 
