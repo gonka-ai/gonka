@@ -29,6 +29,7 @@ type InferenceCompletionStore interface {
 func (s *Session) SetInferenceCompletionStore(store InferenceCompletionStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.flushPendingSignaturesLocked()
 	s.completionStore = store
 	s.completionDurabilityErr = nil
 	s.completionJournal = nil

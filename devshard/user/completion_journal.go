@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"devshard/logging"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -136,7 +137,7 @@ func (s *Session) persistComposedDiffLocked(ctx context.Context, rec types.DiffR
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	w := storage.CompletionWrite{Resolved: resolvedCompletionIDs(applied)}
+	w := storage.CompletionWrite{Resolved: resolvedCompletionIDs(applied), Signatures: s.pendingSignatures}
 	staged := s.stagedCompletion
 	if staged != nil && staged.Nonce == rec.Nonce {
 		data, err := json.Marshal(staged)
@@ -153,8 +154,24 @@ func (s *Session) persistComposedDiffLocked(ctx context.Context, rec types.DiffR
 	if errors.Is(err, storage.ErrCompletionConflict) {
 		return fmt.Errorf("%w: %v", ErrInferenceCompletionConflict, err)
 	}
-	if err == nil && w.Add != nil {
-		s.stagedCompletion = nil
+	if err == nil {
+		if w.Add != nil {
+			s.stagedCompletion = nil
+		}
+		s.pendingSignatures = nil
 	}
 	return err
+}
+
+// flushPendingSignaturesLocked writes the signatures still waiting for a diff commit. A failure is logged and the
+// rows stay pending: the hosts can hand them out again. Caller holds s.mu.
+func (s *Session) flushPendingSignaturesLocked() {
+	if s.completionJournal == nil || len(s.pendingSignatures) == 0 {
+		return
+	}
+	if err := s.completionJournal.AddSignatures(s.escrowID, s.pendingSignatures); err != nil {
+		logging.Warn("failed to persist signatures", "escrow_id", s.escrowID, "count", len(s.pendingSignatures), "error", err)
+		return
+	}
+	s.pendingSignatures = nil
 }

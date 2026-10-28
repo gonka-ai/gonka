@@ -19,6 +19,13 @@ type CompletionEntry struct {
 	Data  []byte
 }
 
+// SignatureRow is one host's state signature at a nonce, for one of its slots.
+type SignatureRow struct {
+	Nonce uint64
+	Slot  uint32
+	Sig   []byte
+}
+
 // CompletionWrite is the journal side of a diff write.
 type CompletionWrite struct {
 	// Add, when set, is the obligation of the Start this diff carries.
@@ -27,6 +34,9 @@ type CompletionWrite struct {
 	SameAdd func(stored []byte) bool
 	// Resolved are the nonces whose Finish or Timeout this diff applies.
 	Resolved []uint64
+	// Signatures are host state signatures received since the last write. A lost one is fetched from its host again,
+	// so they ride on the diff's commit instead of taking one of their own.
+	Signatures []SignatureRow
 }
 
 // CompletionJournal keeps the gateway's completion journal in the session storage, next to the diffs it guards, so
@@ -41,6 +51,8 @@ type CompletionJournal interface {
 	// w.Add.Nonce is replaced while that nonce has no diff (nothing was dispatched under it); once the nonce has a
 	// diff, a row SameAdd rejects fails the write with ErrCompletionConflict.
 	AppendDiffWithCompletions(escrowID string, rec types.DiffRecord, w CompletionWrite) error
+	// AddSignatures stores rows in one transaction.
+	AddSignatures(escrowID string, rows []SignatureRow) error
 }
 
 var _ CompletionJournal = (*SQLite)(nil)
@@ -125,12 +137,44 @@ func (s *SQLite) AppendDiffWithCompletions(escrowID string, rec types.DiffRecord
 	if _, err := tx.Exec(`UPDATE sessions SET latest_nonce = MAX(latest_nonce, ?) WHERE escrow_id = ?`, rec.Nonce, escrowID); err != nil {
 		return fmt.Errorf("update latest_nonce: %w", err)
 	}
+	if err := addSignaturesSQLiteTx(tx, escrowID, w.Signatures); err != nil {
+		return err
+	}
 	for _, nonce := range w.Resolved {
 		if _, err := tx.Exec(`DELETE FROM inference_completions WHERE escrow_id = ? AND nonce = ?`, escrowID, nonce); err != nil {
 			return fmt.Errorf("delete resolved completion %d: %w", nonce, err)
 		}
 	}
 	return tx.Commit()
+}
+
+func (s *SQLite) AddSignatures(escrowID string, rows []SignatureRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	tx, err := p.writeDB.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := addSignaturesSQLiteTx(tx, escrowID, rows); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func addSignaturesSQLiteTx(tx *sql.Tx, escrowID string, rows []SignatureRow) error {
+	for _, row := range rows {
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO signatures (escrow_id, nonce, slot_id, sig) VALUES (?, ?, ?, ?)`,
+			escrowID, row.Nonce, row.Slot, row.Sig); err != nil {
+			return fmt.Errorf("insert sig: %w", err)
+		}
+	}
+	return nil
 }
 
 func putCompletionSQLiteTx(tx *sql.Tx, escrowID string, entry CompletionEntry, same func([]byte) bool) error {

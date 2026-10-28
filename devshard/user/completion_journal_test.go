@@ -132,3 +132,31 @@ func TestSessionJournalFailedStartLeavesNoObligation(t *testing.T) {
 	s.mu.Unlock()
 	require.Nil(t, staged)
 }
+
+func TestSessionJournalWritesHostSignaturesWithTheNextDiff(t *testing.T) {
+	s, db := sessionOnSQLite(t)
+	s.UseSessionCompletionJournal(nil)
+	_, err := s.SendInference(context.Background(), completionParams())
+	require.NoError(t, err)
+	held := s.Signatures()[1]
+	require.NotEmpty(t, held)
+	stored, err := db.GetSignatures("escrow-1", 1)
+	require.NoError(t, err)
+	require.Empty(t, stored, "a host signature took a commit of its own")
+
+	require.NoError(t, s.SendPendingDiff(context.Background()))
+	stored, err = db.GetSignatures("escrow-1", 1)
+	require.NoError(t, err)
+	require.Equal(t, held, stored)
+}
+
+func TestSessionJournalFlushesHostSignaturesOnRetire(t *testing.T) {
+	s, db := sessionOnSQLite(t)
+	s.UseSessionCompletionJournal(nil)
+	_, err := s.SendInference(context.Background(), completionParams())
+	require.NoError(t, err)
+	require.NoError(t, s.FlushSnapshot())
+	stored, err := db.GetSignatures("escrow-1", 1)
+	require.NoError(t, err)
+	require.Equal(t, s.Signatures()[1], stored)
+}
