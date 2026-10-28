@@ -260,15 +260,22 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 	if _, err := inferencetypes.CanonicalAccAddress(msg.Creator); err != nil {
 		return err
 	}
+	governanceModels := make(map[string]struct{})
 	for _, validation := range msg.Validations {
-		if validation == nil || validation.ModelId == "" || !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {
+		if validation == nil || validation.ModelId == "" {
 			return inferencetypes.ErrInvalidModel
+		}
+		if _, seen := governanceModels[validation.ModelId]; !seen {
+			if !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {
+				return inferencetypes.ErrInvalidModel
+			}
+			governanceModels[validation.ModelId] = struct{}{}
 		}
 		target, err := inferencetypes.CanonicalAccAddress(validation.ParticipantAddress)
 		if err != nil {
 			return sdkerrors.ErrInvalidAddress.Wrap("validation target is not canonical")
 		}
-		if _, found := ppd.inferenceKeeper.GetParticipant(ctx, target.String()); !found {
+		if found, err := ppd.inferenceKeeper.Participants.Has(ctx, target); err != nil || !found {
 			return inferencetypes.ErrParticipantNotFound
 		}
 		hasCommit, err := ppd.inferenceKeeper.HasPoCV2StoreCommit(ctx, msg.PocStageStartBlockHeight, target.String(), validation.ModelId)
