@@ -149,7 +149,7 @@ func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, err
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signer: %w", err)
 	}
-	verifier := signing.NewSecp256k1Verifier()
+	verifier := newSessionVerifier(signing.NewSecp256k1Verifier())
 
 	store, err := storage.NewSQLite(cfg.StoragePath)
 	if err != nil {
@@ -191,7 +191,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signer: %w", err)
 	}
-	verifier := signing.NewSecp256k1Verifier()
+	verifier := newSessionVerifier(signing.NewSecp256k1Verifier())
 
 	routePrefix := devshardpkg.NormalizeRoutePrefix(cfg.RoutePrefix)
 	sessionVersion, err := devshardpkg.VersionForRoutePrefix(routePrefix)
@@ -343,6 +343,18 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	session.SetHeightSyncPeerTips(sharedPeerTips)
 
 	return session, sm, nil
+}
+
+// sessionRecoveryCacheSize bounds the recovered signer addresses one session
+// keeps. A receipt or a Finish is checked again within the same diff cycle, so
+// the cache only has to cover the signatures of a few seconds of traffic.
+const sessionRecoveryCacheSize = 1024
+
+// newSessionVerifier is the verifier a session and its state machine share:
+// the same receipt and Finish signatures are checked on receipt, as evidence
+// and when the diff applies, and each recovery costs a secp256k1 operation.
+func newSessionVerifier(inner signing.Verifier) signing.Verifier {
+	return signing.NewCachingVerifier(inner, sessionRecoveryCacheSize)
 }
 
 // hostLookupOpenWait bounds how long opening a session waits for its hosts'
