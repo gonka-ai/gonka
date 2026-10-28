@@ -100,6 +100,22 @@ func runPocPeriodAnte(t *testing.T, decorator PocPeriodValidationDecorator, ctx 
 	return nextCalled, err
 }
 
+// runPocAnteWithCap runs the pre-signature filter, then the post-signature cap check.
+func runPocAnteWithCap(t *testing.T, k inferencemodulekeeper.Keeper, decorator PocPeriodValidationDecorator, ctx sdk.Context, msgs ...sdk.Msg) (bool, error) {
+	t.Helper()
+	nextCalled := false
+	final := func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		nextCalled = true
+		return ctx, nil
+	}
+	capCheck := NewPocValidationCapDecorator(&k, testMsgCodec(t))
+	next := func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		return capCheck.AnteHandle(ctx, tx, simulate, final)
+	}
+	_, err := decorator.AnteHandle(ctx, testFeeTx{msgs: msgs}, false, next)
+	return nextCalled, err
+}
+
 func TestPocPeriodValidationDecorator_RejectsNonParticipant(t *testing.T) {
 	testCases := []struct {
 		name string
@@ -233,7 +249,7 @@ func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndReachedCap(t *testing.
 		ValidatedWeight:             1,
 	}))
 
-	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(signer))
+	nextCalled, err = runPocAnteWithCap(t, k, decorator, ctx, pocValidationsMsg(signer))
 	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
 	require.False(t, nextCalled)
 }
@@ -426,4 +442,79 @@ func TestPocPeriodValidationDecorator_StoreCommitRecheckModelOverlap(t *testing.
 	nextCalled, err = runPocPeriodAnte(t, decorator, recheckCtx, storeCommitMsg(signer, "test-model", 12))
 	require.NoError(t, err)
 	require.True(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_CapAdmitsPositiveThatCanReclaim(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(testutil.Executor2), inferencetypes.Participant{
+		Index:   testutil.Executor2,
+		Address: testutil.Executor2,
+	}))
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor2,
+		PocStageStartBlockHeight: 100,
+		Count:                    100,
+		RootHash:                 make([]byte, 32),
+		ModelId:                  "test-model",
+	}))
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = inferencetypes.DefaultEpochValidationParams()
+	}
+	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetPocValidationV2(ctx, inferencetypes.PoCValidationV2{
+		ParticipantAddress:          testutil.Executor2,
+		ValidatorParticipantAddress: signer,
+		PocStageStartBlockHeight:    100,
+		ModelId:                     "test-model",
+		ValidatedWeight:             -1,
+	}))
+
+	// A -1 at the cap has nothing to reclaim.
+	negative := pocValidationsMsg(signer)
+	negative.Validations[0].ValidatedWeight = -1
+	nextCalled, err := runPocAnteWithCap(t, k, decorator, ctx, negative)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	// A +1 at the cap reaches the handler, which evicts the signer's own -1.
+	nextCalled, err = runPocAnteWithCap(t, k, decorator, ctx, pocValidationsMsg(signer))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
+func TestPocValidationCapDecorator_MsgExecScannedOnlyWhenGrantChecked(t *testing.T) {
+	k, ctx, _ := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	seedLiveValidationShape(t, k, ctx, signer)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = inferencetypes.DefaultEpochValidationParams()
+	}
+	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetPocValidationV2(ctx, inferencetypes.PoCValidationV2{
+		ParticipantAddress:          testutil.Executor,
+		ValidatorParticipantAddress: signer,
+		PocStageStartBlockHeight:    100,
+		ModelId:                     "test-model",
+		ValidatedWeight:             1,
+	}))
+	exec := authztypes.NewMsgExec(sdk.MustAccAddressFromBech32(testutil.Executor2), []sdk.Msg{pocValidationsMsg(signer)})
+	capCheck := NewPocValidationCapDecorator(&k, testMsgCodec(t))
+	next := func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) { return ctx, nil }
+
+	// Not fee-exempt: the grant was not checked, so the inner signer's rows are not read.
+	_, err = capCheck.AnteHandle(ctx, testFeeTx{msgs: []sdk.Msg{&exec}}, false, next)
+	require.NoError(t, err)
+
+	// Fee-exempt: the grant was checked; nothing to reclaim, so the batch is rejected.
+	dutyCtx := ctx.WithValue(networkDutyFeeBypassKey{}, true)
+	_, err = capCheck.AnteHandle(dutyCtx, testFeeTx{msgs: []sdk.Msg{&exec}}, false, next)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
 }

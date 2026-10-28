@@ -246,6 +246,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// proven they signed the transaction before we read grant storage.
 		// CheckTx-only and only for network-duty fee-bypassed txs.
 		NewMsgExecAuthorizationDecorator(options.Codec, options.AuthzKeeper),
+		NewPocValidationCapDecorator(options.InferenceKeeper, options.Codec),
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),

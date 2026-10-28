@@ -266,7 +266,11 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 		return err
 	}
 	if stored >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-		return inferencetypes.ErrIllegalState.Wrap("signer stage cap reached")
+		// A +1 may reclaim the signer's own -1; PocValidationCapDecorator checks
+		// that after signature verification.
+		if !hasPositiveValidation(msg) {
+			return inferencetypes.ErrIllegalState.Wrap("signer stage cap reached")
+		}
 	}
 	for _, validation := range msg.Validations {
 		if validation == nil || validation.ModelId == "" || !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {
@@ -328,4 +332,82 @@ func (ppd PocPeriodValidationDecorator) msgCodec() (codec.Codec, error) {
 		return ppd.cdc, nil
 	}
 	return nil, sdkerrors.ErrInvalidRequest.Wrap("codec is required for PoC sender check")
+}
+
+func hasPositiveValidation(msg *inferencetypes.MsgSubmitPocValidationsV2) bool {
+	for _, v := range msg.Validations {
+		if v != nil && v.ValidatedWeight > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// PocValidationCapDecorator runs after signature verification: at the signer
+// stage cap a +1 batch passes only if the signer has a -1 row to reclaim.
+type PocValidationCapDecorator struct {
+	inferenceKeeper *inferencemodulekeeper.Keeper
+	cdc             codec.Codec
+}
+
+func NewPocValidationCapDecorator(ik *inferencemodulekeeper.Keeper, cdc codec.Codec) PocValidationCapDecorator {
+	return PocValidationCapDecorator{inferenceKeeper: ik, cdc: cdc}
+}
+
+func (d PocValidationCapDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if simulate || !ctx.IsCheckTx() || d.inferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+	for _, msg := range tx.GetMsgs() {
+		if exec, ok := msg.(*authztypes.MsgExec); ok && d.cdc != nil {
+			// The grant is checked only for fee-exempt txs; others pay in DeliverTx.
+			if !IsNetworkDutyBypassed(ctx) {
+				continue
+			}
+			for _, inner := range exec.Msgs {
+				var unwrapped sdk.Msg
+				if err := d.cdc.UnpackAny(inner, &unwrapped); err != nil {
+					return ctx, err
+				}
+				if err := d.check(ctx, unwrapped); err != nil {
+					return ctx, err
+				}
+			}
+			continue
+		}
+		if err := d.check(ctx, msg); err != nil {
+			return ctx, err
+		}
+	}
+	return next(ctx, tx, simulate)
+}
+
+func (d PocValidationCapDecorator) check(ctx sdk.Context, msg sdk.Msg) error {
+	m, ok := msg.(*inferencetypes.MsgSubmitPocValidationsV2)
+	if !ok || !hasPositiveValidation(m) {
+		return nil
+	}
+	params, err := d.inferenceKeeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	signer, err := inferencetypes.CanonicalAccAddress(m.Creator)
+	if err != nil {
+		return err
+	}
+	stored, err := d.inferenceKeeper.CountPocValidationsV2ForValidator(ctx, m.PocStageStartBlockHeight, signer)
+	if err != nil {
+		return err
+	}
+	if stored < params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
+		return nil
+	}
+	canEvict, err := d.inferenceKeeper.HasNonPositiveValidationV2ForSigner(ctx, m.PocStageStartBlockHeight, signer)
+	if err != nil {
+		return err
+	}
+	if !canEvict {
+		return inferencetypes.ErrIllegalState.Wrap("signer stage cap reached")
+	}
+	return nil
 }
