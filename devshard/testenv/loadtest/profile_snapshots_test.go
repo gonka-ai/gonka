@@ -2,6 +2,8 @@ package loadtest
 
 import (
 	"context"
+	"debug/elf"
+	"encoding/binary"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -120,4 +122,45 @@ func TestSnapshotScenarioValidation(t *testing.T) {
 			require.Error(t, c.Validate())
 		}
 	}
+}
+
+// Test flow:
+// 1. Run the host snapshot script against a fake /proc with no devshardd process, as when the child cannot start.
+// 2. Check it fails and reports how many children it found.
+func TestHostSnapshotReportsChildCount(t *testing.T) {
+	proc := filepath.Join(t.TempDir(), "proc")
+	require.NoError(t, os.MkdirAll(filepath.Join(proc, "7"), 0755))
+	require.NoError(t, os.WriteFile(filepath.Join(proc, "7", "comm"), []byte("versiond\n"), 0600))
+	body, err := exec.Command("sh", "-c", hostSnapshotScript, "snapshot", "0", proc, "heap").CombinedOutput()
+	require.Error(t, err)
+	require.Contains(t, string(body), "expected exactly one devshardd child, found 0")
+}
+
+// Test flow:
+// 1. Write minimal ELF headers for x86-64 and aarch64 binaries.
+// 2. Check the child binary check passes when the binary matches the Docker server arch.
+// 3. Check it fails, naming both arches, when they differ, and fails on a non-ELF file.
+func TestCheckChildBinaryArch(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, machine elf.Machine) string {
+		header := make([]byte, 64)
+		copy(header, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+		binary.LittleEndian.PutUint16(header[16:], uint16(elf.ET_EXEC))
+		binary.LittleEndian.PutUint16(header[18:], uint16(machine))
+		binary.LittleEndian.PutUint32(header[20:], 1)
+		binary.LittleEndian.PutUint16(header[52:], 64)
+		path := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(path, header, 0o755))
+		return path
+	}
+	amd64 := write("amd64", elf.EM_X86_64)
+	arm64 := write("arm64", elf.EM_AARCH64)
+	require.NoError(t, checkChildBinaryArch(amd64, "amd64"))
+	require.NoError(t, checkChildBinaryArch(arm64, "arm64"))
+	err := checkChildBinaryArch(amd64, "arm64")
+	require.ErrorContains(t, err, "amd64")
+	require.ErrorContains(t, err, "Docker runs arm64")
+	text := filepath.Join(dir, "text")
+	require.NoError(t, os.WriteFile(text, []byte("not elf"), 0o644))
+	require.Error(t, checkChildBinaryArch(text, "arm64"))
 }

@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "messages[2].tool_call_id: is required",
+  "status": "rejected"
+}

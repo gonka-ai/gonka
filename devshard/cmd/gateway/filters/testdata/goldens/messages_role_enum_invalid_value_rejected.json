@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "messages[0].role has unsupported value \"pirate\"",
+  "status": "rejected"
+}

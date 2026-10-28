@@ -112,7 +112,7 @@ func TestTheSameReceiptSeenAgainIsNotVerifiedAgain(t *testing.T) {
 		Receipt:     signedExecutorReceipt(t, session, hosts, nonce, confirmedAt),
 		ConfirmedAt: confirmedAt,
 	}
-	session.confirmStartOnReceipt(nonce, receipt)
+	session.confirmStartOnReceipt(-1, nonce, receipt)
 	require.Equal(t, int32(1), recoverer.calls.Load(), "the first copy is the one that is verified")
 
 	final := *receipt
@@ -132,8 +132,8 @@ func TestTheSameReceiptSeenAgainIsNotVerifiedAgain(t *testing.T) {
 func TestAResponseWithoutAReceiptQueuesNothing(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 
-	session.confirmStartOnReceipt(1, &host.HostResponse{})
-	session.confirmStartOnReceipt(1, nil)
+	session.confirmStartOnReceipt(-1, 1, &host.HostResponse{})
+	session.confirmStartOnReceipt(-1, 1, nil)
 
 	require.Empty(t, pendingConfirmStarts(session))
 }
@@ -173,7 +173,7 @@ func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{
+	session.confirmStartOnReceipt(-1, prepared.Nonce(), &host.HostResponse{
 		Receipt: signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 0),
 	})
 	require.Empty(t, pendingConfirmStarts(session), "a receipt with no confirmation time must not be queued")
@@ -190,10 +190,10 @@ func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{
+	session.confirmStartOnReceipt(-1, prepared.Nonce(), &host.HostResponse{
 		Receipt: signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 1000), ConfirmedAt: 1000,
 	})
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt")})
+	session.confirmStartOnReceipt(-1, prepared.Nonce(), &host.HostResponse{Receipt: []byte("receipt")})
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
 	require.Equal(t, "execution", reason,
@@ -237,7 +237,7 @@ func TestAReceiptEndsTheRefusalWait(t *testing.T) {
 		}()
 		synctest.Wait()
 		confirmedAt := time.Now().Unix()
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{
+		session.confirmStartOnReceipt(-1, nonce, &host.HostResponse{
 			Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
 		})
 		synctest.Wait()
@@ -259,7 +259,7 @@ func TestAForgedReceiptDoesNotEndTheRefusalWait(t *testing.T) {
 			done <- session.sleepRefusal(ctx, nonce, time.Now(), time.Now().Add(time.Minute), nil)
 		}()
 		synctest.Wait()
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("forged"), ConfirmedAt: time.Now().Unix()})
+		session.confirmStartOnReceipt(-1, nonce, &host.HostResponse{Receipt: []byte("forged"), ConfirmedAt: time.Now().Unix()})
 		synctest.Wait()
 		select {
 		case <-done:
@@ -291,7 +291,7 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 		{"stream receipt", func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) {
 			t.Helper()
 			confirmedAt := time.Now().Unix()
-			session.confirmStartOnReceipt(nonce, &host.HostResponse{
+			session.confirmStartOnReceipt(-1, nonce, &host.HostResponse{
 				Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
 			})
 		}},
@@ -376,7 +376,7 @@ func TestAReceiptWithoutAStampDoesNotEndTheRefusalWait(t *testing.T) {
 			done <- session.sleepRefusal(context.Background(), nonce, time.Now(), time.Now().Add(time.Minute), nil)
 		}()
 		synctest.Wait()
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{Receipt: []byte("receipt")})
+		session.confirmStartOnReceipt(-1, nonce, &host.HostResponse{Receipt: []byte("receipt")})
 		synctest.Wait()
 		select {
 		case <-done:
@@ -385,7 +385,7 @@ func TestAReceiptWithoutAStampDoesNotEndTheRefusalWait(t *testing.T) {
 		}
 
 		confirmedAt := time.Now().Unix()
-		session.confirmStartOnReceipt(nonce, &host.HostResponse{
+		session.confirmStartOnReceipt(-1, nonce, &host.HostResponse{
 			Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
 		})
 		synctest.Wait()
@@ -408,7 +408,7 @@ func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
 		}()
 		synctest.Wait()
 		confirmedAt := time.Now().Unix()
-		session.confirmStartOnReceipt(other, &host.HostResponse{
+		session.confirmStartOnReceipt(-1, other, &host.HostResponse{
 			Receipt: signedExecutorReceipt(t, session, hosts, other, confirmedAt), ConfirmedAt: confirmedAt,
 		})
 		synctest.Wait()

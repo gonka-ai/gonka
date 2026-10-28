@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-9","object":"chat.completion.chunk","created":9,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"content":"ok"},"logprobs":{"content":[{"token":"ok","logprob":-0.01}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-9","broken":true,"logprobs":{"content":[{"token":"partial","logprob":-0.02}]
+
+data: [DONE]
+

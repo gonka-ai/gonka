@@ -272,7 +272,9 @@ func SelectTransport(httpClient *HTTPClient, hostAddress string, endpoints Endpo
 func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra *ClientConfig) PeerConnConfig {
 	maxConns := RPCMaxConnsPerPeerFromEnv()
 	var adoption *PeerRPCAdoption
+	chatCompressMinBytes := 0
 	if extra != nil {
+		chatCompressMinBytes = extra.ChatCompressMinBytes
 		if extra.RPCMaxConnsPerPeer > 0 {
 			maxConns = extra.RPCMaxConnsPerPeer
 		}
@@ -289,14 +291,15 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 	}
 	grpc := RPCH2GRPCEnabled(os.Getenv(envRPCH2GRPC)) && dial.H2URL != ""
 	return PeerConnConfig{
-		BaseURL:      base,
-		RoutePrefix:  httpClient.RoutePrefix(),
-		DoorEscrowID: httpClient.escrowID,
-		HostAddress:  strings.TrimSpace(hostAddress),
-		Signer:       httpClient.signer,
-		MaxConns:     maxConns,
-		Adoption:     adoption,
-		DialSet:      dial,
-		GRPC:         grpc,
+		BaseURL:              base,
+		RoutePrefix:          httpClient.RoutePrefix(),
+		DoorEscrowID:         httpClient.escrowID,
+		HostAddress:          strings.TrimSpace(hostAddress),
+		Signer:               httpClient.signer,
+		MaxConns:             maxConns,
+		Adoption:             adoption,
+		DialSet:              dial,
+		GRPC:                 grpc,
+		ChatCompressMinBytes: chatCompressMinBytes,
 	}
 }

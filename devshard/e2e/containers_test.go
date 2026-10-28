@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,8 @@ type e2eEnv struct {
 	clientURL   string
 	statsURL    string
 
+	gateway          testcontainers.Container
+	mockChain        testcontainers.Container
 	images           e2eImages
 	hostURLs         []string
 	hostControlURLs  []string
@@ -61,6 +65,21 @@ type containerSpec struct {
 	waitLog           string
 	waitLogOccurrence int
 	mounts            []mount.Mount
+	files             []testcontainers.ContainerFile
+}
+
+const (
+	// One source for both the stand and the assertions that read what the stand configured.
+	e2eHostCount    = 3
+	e2eMaxTokensCap = 4096
+)
+
+// standModel is the routed model the stand serves; the escrow and the client body have to name the same one.
+func standModel(opts e2eEnvOptions) string {
+	if opts.model == "" {
+		return defaultStandModel
+	}
+	return opts.model
 }
 
 type e2eEnvOptions struct {
@@ -70,6 +89,22 @@ type e2eEnvOptions struct {
 	hostEnvOverrides        map[int]map[string]string
 	mockChainEnv            map[string]string
 	devshardctlEnvOverrides map[string]string
+
+	// runGateway drives the stack with cmd/gateway in place of devshardctl. The two cannot run side by
+	// side: both would open the same escrow and advance the same nonce sequence.
+	runGateway          bool
+	gatewayEnvOverrides map[string]string
+	// mockChainParams patches the chain's escrow params first: a session takes its deadlines when opened.
+	mockChainParams map[string]any
+	// gatewayVolumeName keeps storage across a restart; without it Docker recreates the dir empty.
+	gatewayVolumeName string
+
+	// model routes the whole stand at one routed model id, so a test can reach a filter profile.
+	model string
+
+	mockChainAliases []string
+	mockChainFiles   []testcontainers.ContainerFile
+	gatewayFiles     []testcontainers.ContainerFile
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -111,13 +146,18 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	t.Cleanup(func() { env.terminate(context.Background(), t) })
 
 	mockChain := env.startContainer(ctx, t, containerSpec{
-		name:    mockChainAlias,
-		image:   images.mockChain,
-		port:    "9090/tcp",
-		aliases: []string{mockChainAlias},
-		env:     opts.mockChainEnv,
-		waitLog: "mock-chain gRPC listening",
+		name:       mockChainAlias,
+		image:      images.mockChain,
+		port:       "9090/tcp",
+		aliases:    append([]string{mockChainAlias}, opts.mockChainAliases...),
+		env:        opts.mockChainEnv,
+		extraPorts: []string{"9191/tcp"},
+		waitLog:    "mock-chain gRPC listening",
+		files:      opts.mockChainFiles,
 	})
+	if len(opts.mockChainParams) > 0 {
+		patchMockChainParams(ctx, t, mockChain, opts.mockChainParams)
+	}
 
 	postgres := env.startContainer(ctx, t, containerSpec{
 		name:    postgresAlias,
@@ -137,7 +177,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		waitLogOccurrence: 2,
 	})
 
-	env.hostURLs = make([]string, 3)
+	env.hostURLs = make([]string, e2eHostCount)
 	env.hostControlURLs = make([]string, len(env.hostURLs))
 	for i := range env.hostURLs {
 		env.hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
@@ -149,6 +189,14 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.hostControlURLs[i] = containerURL(ctx, t, env.startHostWithEnv(ctx, t, i, opts.hostEnvOverrides[i]), "8080/tcp")
 	}
 
+	if opts.runGateway {
+		env.mockChain = mockChain
+		env.startGateway(ctx, t, opts)
+		require.NotNil(t, mockChain)
+		require.NotNil(t, postgres)
+		return env
+	}
+
 	devshardctlEnv := map[string]string{
 		"DEVSHARD_E2E":           "1",
 		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
@@ -158,8 +206,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
 		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
 		"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
-		"DEVSHARD_MODEL":         "stub-model",
-		"GATEWAY_MAX_TOKENS_CAP": "4096",
+		"DEVSHARD_MODEL":         standModel(opts),
+		"GATEWAY_MAX_TOKENS_CAP": strconv.Itoa(e2eMaxTokensCap),
 		"DEVSHARD_STATS_PORT":    "9091",
 		// Hosts are Docker DNS names that resolve to private IPs.
 		// Production leaves this unset so the dial-time SSRF guard stays on.
@@ -194,6 +242,90 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)
 	return env
+}
+
+// startGateway runs cmd/gateway against the same hosts and the same mock chain devshardctl uses, so a
+// scenario written for one binary describes the same network for the other.
+func (e *e2eEnv) startGateway(ctx context.Context, t *testing.T, opts e2eEnvOptions) {
+	t.Helper()
+	gatewayEnv := map[string]string{
+		"DEVSHARDS_JSON":         fmt.Sprintf(`[{"id":%q,"model":%q,"private_key_env":"GATEWAY_ESCROW_KEY"}]`, defaultEscrowID, standModel(opts)),
+		"GATEWAY_ESCROW_KEY":     testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
+		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
+		"DEVSHARD_STORAGE_DIR":   "/tmp/gateway",
+		"GATEWAY_MAX_TOKENS_CAP": "4096",
+		"DEVSHARD_PORT":          "8080",
+		// Off in production, on here: it is the only surface that says what became of each nonce.
+		"DEVSHARD_STATS_ENABLED":          "true",
+		"DEVSHARD_STATS_PORT":             "9091",
+		"DEVSHARD_STATS_SNAPSHOT_SECONDS": "3600",
+		// Hosts are Docker DNS names that resolve to private IPs.
+		// Production leaves this unset so the dial-time SSRF guard stays on.
+		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		// On in production, off here: the stand's hosts have no catalog and no oracle, so no session
+		// could seed a tip. The cadence itself is left on, as devshardctl runs it.
+		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
+		// The stand runs no node manager, so governance is read from the mock chain.
+		"DEVSHARD_PARAMS_SOURCE": "chain",
+	}
+	for k, v := range opts.gatewayEnvOverrides {
+		gatewayEnv[k] = v
+	}
+	spec := containerSpec{
+		name:       gatewayName,
+		image:      e.images.gateway,
+		port:       "8080/tcp",
+		extraPorts: []string{"9091/tcp"},
+		aliases:    []string{gatewayName},
+		env:        gatewayEnv,
+		// /metrics, not /v1/status: the kill switch turns that route off and the wait would never end.
+		waitPath: "/metrics",
+		files:    opts.gatewayFiles,
+	}
+	if opts.gatewayVolumeName == "" {
+		spec.tmpfs = map[string]string{"/tmp": "rw"}
+	} else {
+		spec.mounts = []mount.Mount{{Type: mount.TypeVolume, Source: opts.gatewayVolumeName, Target: "/tmp"}}
+		t.Cleanup(func() { removeDockerVolumes(context.Background(), t, []string{opts.gatewayVolumeName}) })
+	}
+	e.gateway = e.startContainer(ctx, t, spec)
+	e.readGatewayURLs(ctx, t)
+}
+
+// restartGateway restarts the same container, so the storage the ledger snapshotted into survives.
+func (e *e2eEnv) restartGateway(ctx context.Context, t *testing.T) {
+	t.Helper()
+	require.NotNil(t, e.gateway, "no gateway container: this scenario did not ask for one")
+	testutil.DebugLogf(t, "restarting %s", gatewayName)
+	require.NoError(t, e.gateway.Stop(ctx, nil), "stop %s", gatewayName)
+	require.NoError(t, e.gateway.Start(ctx), "start %s", gatewayName)
+	// Docker reassigns published ports on start, so the pre-restart URLs point at a dead socket.
+	e.readGatewayURLs(ctx, t)
+}
+
+func (e *e2eEnv) readGatewayURLs(ctx context.Context, t *testing.T) {
+	t.Helper()
+	host, err := e.gateway.Host(ctx)
+	require.NoError(t, err)
+	port, err := e.gateway.MappedPort(ctx, "8080/tcp")
+	require.NoError(t, err)
+	e.clientURL = "http://" + host + ":" + port.Port()
+	ledgerPort, err := e.gateway.MappedPort(ctx, "9091/tcp")
+	require.NoError(t, err)
+	e.statsURL = "http://" + host + ":" + ledgerPort.Port()
+	testutil.DebugLogf(t, "gateway client URL: %s, nonce ledger URL: %s", e.clientURL, e.statsURL)
+}
+
+func patchMockChainParams(ctx context.Context, t *testing.T, mockChain testcontainers.Container, params map[string]any) {
+	t.Helper()
+	host, err := mockChain.Host(ctx)
+	require.NoError(t, err)
+	port, err := mockChain.MappedPort(ctx, "9191/tcp")
+	require.NoError(t, err)
+	testutil.PostJSON(t, &http.Client{Timeout: testutil.DefaultRequestTimeout},
+		"http://"+host+":"+port.Port()+"/testenv/params", params)
 }
 
 func hostName(index int) string {
@@ -310,7 +442,12 @@ func containerURL(ctx context.Context, t *testing.T, container testcontainers.Co
 
 func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {
 	t.Helper()
-	name := hostName(index)
+	e.stopContainer(ctx, t, hostName(index))
+}
+
+// stopContainer terminates one container by name and forgets it.
+func (e *e2eEnv) stopContainer(ctx context.Context, t *testing.T, name string) {
+	t.Helper()
 	testutil.DebugLogf(t, "stopping %s", name)
 	for i := range e.containers {
 		if e.containers[i].name != name {
@@ -321,6 +458,12 @@ func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {
 		return
 	}
 	t.Fatalf("container %s not found", name)
+}
+
+// stopMockChain silences the chain so the observer stops refreshing its snapshot.
+func (e *e2eEnv) stopMockChain(ctx context.Context, t *testing.T) {
+	t.Helper()
+	e.stopContainer(ctx, t, mockChainAlias)
 }
 
 func (e *e2eEnv) restartAllHosts(ctx context.Context, t *testing.T) {
@@ -359,6 +502,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			Networks:       []string{e.networkName},
 			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
 			Tmpfs:          spec.tmpfs,
+			Files:          spec.files,
 			HostConfigModifier: func(hostConfig *container.HostConfig) {
 				hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
 			},

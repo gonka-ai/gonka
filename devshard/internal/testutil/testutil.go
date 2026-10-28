@@ -61,7 +61,7 @@ func mustCanonicalPromptHash(prompt []byte) [32]byte {
 	return arr
 }
 
-func MustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
+func MustGenerateKey(t testing.TB) *signing.Secp256k1Signer {
 	t.Helper()
 	s, err := signing.GenerateKey()
 	require.NoError(t, err)

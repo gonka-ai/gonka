@@ -1,48 +1,11 @@
 package user
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
-
-	"devshard/host"
-	"devshard/signing"
-	"devshard/types"
 )
-
-func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, confirmedAt int64) uint64 {
-	t.Helper()
-	nonce := prepareNonce(t, session)
-	record, tracked := session.sm.GetInference(nonce)
-	require.True(t, tracked)
-	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
-		InferenceId: nonce,
-		PromptHash:  record.PromptHash,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   record.StartedAt,
-		EscrowId:    session.escrowID,
-		ConfirmedAt: confirmedAt,
-	})
-	require.NoError(t, err)
-	signature, err := hosts[record.ExecutorSlot].Sign(receipt)
-	require.NoError(t, err)
-
-	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
-		Nonce: nonce, Receipt: signature, ConfirmedAt: confirmedAt,
-	}, nonce))
-	_, err = session.sendPendingDiff(context.Background(), nil, nil)
-	require.NoError(t, err)
-
-	started, tracked := session.sm.GetInference(nonce)
-	require.True(t, tracked)
-	require.Equal(t, types.StatusStarted, started.Status, "the fixture must reach the status it is named for")
-	return nonce
-}
 
 // Test flow:
 //  1. Start an inference whose executor receipt has landed in the record.
@@ -76,4 +39,35 @@ func TestTimeoutDeadlineKeepsARecordWithoutTheStampRefused(t *testing.T) {
 
 	require.Equal(t, "refused", reason)
 	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second+TimeoutBuffer), deadline)
+}
+
+// Test flow:
+//  1. Ask for the deadline of a nonce no record tracks.
+//  2. Expect a refusal deadline counted from the send time.
+func TestTimeoutDeadlineJudgesAnUntrackedNonceByTheSendTime(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	sendTime := time.Now()
+
+	reason, deadline := session.TimeoutDeadline(9999, sendTime)
+
+	require.Equal(t, "refused", reason)
+	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second+TimeoutBuffer), deadline)
+}
+
+// Test flow:
+//  1. Prepare an inference and give the session memory a confirmation stamp the record does not carry yet.
+//  2. Expect an execution deadline counted from that stamp.
+func TestTimeoutDeadlineFallsBackToTheSessionMemory(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	nonce := prepareNonce(t, session)
+	confirmedAt := time.Now().Unix()
+
+	session.mu.Lock()
+	session.nonceStates[nonce] = &nonceOutcome{confirmedAt: confirmedAt}
+	session.mu.Unlock()
+
+	reason, deadline := session.TimeoutDeadline(nonce, time.Now())
+
+	require.Equal(t, "execution", reason)
+	require.Equal(t, time.Unix(confirmedAt, 0).Add(time.Duration(session.sm.Config().ExecutionTimeout)*time.Second+TimeoutBuffer), deadline)
 }

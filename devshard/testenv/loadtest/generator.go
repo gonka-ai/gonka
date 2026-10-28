@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -38,6 +39,11 @@ type RequestResult struct {
 	Status            int           `json:"status"`
 	Outcome           string        `json:"outcome"`
 	Error             string        `json:"error,omitempty"`
+	Model             string        `json:"model,omitempty"`
+	Stream            bool          `json:"stream,omitempty"`
+	MaxTokens         int64         `json:"max_tokens,omitempty"`
+	// StreamOutcome classifies a streamed response, one of the stream* values.
+	StreamOutcome string `json:"stream_outcome,omitempty"`
 }
 
 type Summary struct {
@@ -50,13 +56,16 @@ type Summary struct {
 	Completed               int             `json:"completed"`
 	Failed                  int             `json:"failed"`
 	Dropped                 int             `json:"dropped_by_generator"`
+	Behind                  int             `json:"generator_behind,omitempty"`
 	ErrorRate               float64         `json:"error_rate"`
+	DroppedRate             float64         `json:"dropped_rate"`
 	P50                     time.Duration   `json:"p50_latency"`
 	P95                     time.Duration   `json:"p95_latency"`
 	FailureArtifactsOmitted int             `json:"failure_artifacts_omitted,omitempty"`
 	Results                 []RequestResult `json:"-"`
 	LatencyWindows          []LatencyWindow `json:"latency_windows"`
 	LatencyWindowInterval   string          `json:"latency_window_interval"`
+	StreamOutcomes          map[string]int  `json:"stream_outcomes,omitempty"`
 }
 
 // Windows group requests by start time; drops are included in offered RPS,
@@ -84,7 +93,7 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 		return Summary{}, err
 	}
 	if cfg.Client == nil {
-		cfg.Client = defaultHTTPClient(cfg.Scenario.Workload.MaxInFlight)
+		cfg.Client = defaultHTTPClient(cfg.Scenario.Workload.MaxInFlight, cfg.Scenario.RequestTimeout())
 	}
 	if cfg.OutputDir == "" {
 		return Summary{}, fmt.Errorf("output directory is required")
@@ -198,15 +207,9 @@ func runClosedLoop(ctx context.Context, cfg GeneratorConfig, deadline time.Time,
 }
 
 func runRateProfile(ctx context.Context, cfg GeneratorConfig, started, deadline time.Time, sequence *atomic.Uint64, record func(RequestResult)) {
-	profile := cfg.Scenario.Workload.Traffic
 	permits := make(chan struct{}, cfg.Scenario.Workload.MaxInFlight)
 	var requests sync.WaitGroup
-	nextArrival := started
-
-	for {
-		if !waitForArrival(ctx, nextArrival) || !time.Now().Before(deadline) {
-			break
-		}
+	send := func(time.Time) {
 		index := sequence.Add(1)
 		select {
 		case permits <- struct{}{}:
@@ -219,11 +222,45 @@ func runRateProfile(ctx context.Context, cfg GeneratorConfig, started, deadline 
 		default:
 			record(droppedRequest(cfg.Scenario, index))
 		}
-
-		rate := profile.RPSAt(time.Since(started), cfg.Scenario.Duration())
-		nextArrival = time.Now().Add(time.Duration(float64(time.Second) / rate))
 	}
+	miss := func(slot time.Time) { record(behindRequest(cfg.Scenario, sequence.Add(1), slot)) }
+	paceArrivals(ctx, cfg.Scenario.Workload.Traffic, cfg.Scenario.Duration(), started, deadline, rateClock{now: time.Now, wait: waitForArrival}, send, miss)
 	requests.Wait()
+}
+
+// rateClock is the time source of the rate loop; tests drive a fake one.
+type rateClock struct {
+	now  func() time.Time
+	wait func(ctx context.Context, at time.Time) bool
+}
+
+// maxCatchUp bounds how far behind a late wake-up still sends its slots, so a
+// long stall releases at most one second's worth of arrivals at once.
+const maxCatchUp = time.Second
+
+// paceArrivals schedules each slot from the previous slot, not from the wake-up,
+// so late ticks catch up. Every slot before the deadline goes to send or, when
+// it is more than maxCatchUp behind or left at the deadline, to miss.
+func paceArrivals(ctx context.Context, profile TrafficProfile, workload time.Duration, started, deadline time.Time, clock rateClock, send, miss func(slot time.Time)) {
+	slot := started
+	following := func(slot time.Time) time.Time {
+		return slot.Add(time.Duration(float64(time.Second) / profile.RPSAt(slot.Sub(started), workload)))
+	}
+	for slot.Before(deadline) {
+		if !clock.wait(ctx, slot) {
+			return
+		}
+		now := clock.now()
+		for slot.Before(deadline) && (now.Sub(slot) > maxCatchUp || !now.Before(deadline)) {
+			miss(slot)
+			slot = following(slot)
+		}
+		if !slot.Before(deadline) {
+			return
+		}
+		send(slot)
+		slot = following(slot)
+	}
 }
 
 func waitForArrival(ctx context.Context, at time.Time) bool {
@@ -253,13 +290,26 @@ func droppedRequest(scenario Scenario, index uint64) RequestResult {
 	}
 }
 
-func defaultHTTPClient(concurrency int) *http.Client {
+// generatorBehind is the Error of a planned arrival the generator never offered
+// because it fell behind its schedule; it counts as dropped_by_generator.
+const generatorBehind = "generator_behind"
+
+func behindRequest(scenario Scenario, index uint64, slot time.Time) RequestResult {
+	return RequestResult{
+		RequestID: fmt.Sprintf("%s-%d-%06d", scenario.Scenario, scenario.Seed, index),
+		StartedAt: slot.UTC(),
+		Outcome:   "dropped_by_generator",
+		Error:     generatorBehind,
+	}
+}
+
+func defaultHTTPClient(concurrency int, timeout time.Duration) *http.Client {
 	connections := concurrency * 2
 	if connections < 2 {
 		connections = 2
 	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy:               http.ProxyFromEnvironment,
 			MaxIdleConns:        connections,
@@ -277,12 +327,8 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	defer func() {
 		result.Duration = time.Since(started)
 	}()
-	request := cfg.Scenario.Workload.Request
-	stream := request.Stream
+	spec := sampleRequest(cfg.Scenario, index)
 	var messages []Message
-	model := request.Model
-	maxTokens := int64(request.MaxTokens)
-	var temperature float64
 	if cfg.Replay != nil {
 		sample, sampleIndex, ok := cfg.Replay.Select(index)
 		if !ok {
@@ -291,26 +337,30 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 			return result
 		}
 		result.SampleIndex = &sampleIndex
-		model = sample.Model
-		stream = sample.Stream
-		temperature = sample.Temperature
-		maxTokens = sample.MaxTokens
+		spec = requestSpec{Model: sample.Model, Stream: sample.Stream, MaxTokens: sample.MaxTokens}
+		if sample.Temperature != 0 {
+			temperature := sample.Temperature
+			spec.Temperature = &temperature
+		}
 		messages = make([]Message, len(sample.Messages))
 		for i, message := range sample.Messages {
 			messages[i] = Message{Role: message.Role, Content: message.Content}
 		}
 		result.SampleFingerprint = replay.Fingerprint(sample.Model, sample.Messages)
 	} else {
-		messages = append([]Message(nil), request.Messages...)
+		messages = append([]Message(nil), spec.Messages...)
 		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
 	}
+	result.Model, result.Stream, result.MaxTokens = spec.Model, spec.Stream, spec.MaxTokens
 	body, err := json.Marshal(struct {
 		Model       string    `json:"model"`
 		Stream      bool      `json:"stream,omitempty"`
-		Temperature float64   `json:"temperature,omitempty"`
+		Temperature *float64  `json:"temperature,omitempty"`
+		Logprobs    bool      `json:"logprobs,omitempty"`
+		TopLogprobs int       `json:"top_logprobs,omitempty"`
 		Messages    []Message `json:"messages"`
 		MaxTokens   int64     `json:"max_tokens,omitempty"`
-	}{Model: model, Stream: stream, Temperature: temperature, Messages: messages, MaxTokens: maxTokens})
+	}{Model: spec.Model, Stream: spec.Stream, Temperature: spec.Temperature, Logprobs: spec.Logprobs, TopLogprobs: spec.TopLogprobs, Messages: messages, MaxTokens: spec.MaxTokens})
 	if err != nil {
 		result.Error = err.Error()
 		result.Outcome = "error"
@@ -335,6 +385,20 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	}
 	defer resp.Body.Close()
 	result.Status = resp.StatusCode
+	if spec.Stream && resp.StatusCode == cfg.Scenario.Assertions.Requests.HTTPStatus {
+		stream := readSSE(resp.Body)
+		result.StreamOutcome = stream.Outcome
+		if stream.Outcome != streamCompleted {
+			result.Outcome = "error"
+			result.Error = stream.Outcome
+			if stream.Err != nil {
+				result.Error += ": " + stream.Err.Error()
+			}
+			return result
+		}
+		result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
+		return result
+	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		result.Error = err.Error()
@@ -346,7 +410,7 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 		result.Error = string(responseBody)
 		return result
 	}
-	if err := validateGatewayResponse(responseBody, stream); err != nil {
+	if err := validateGatewayResponse(responseBody); err != nil {
 		result.Outcome = "error"
 		result.Error = err.Error()
 		return result
@@ -355,25 +419,43 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	return result
 }
 
-func validateGatewayResponse(body []byte, stream bool) error {
-	if !stream {
-		var payload struct {
-			Choices []json.RawMessage `json:"choices"`
-		}
-		if err := json.Unmarshal(body, &payload); err != nil {
-			return err
-		}
-		if len(payload.Choices) == 0 {
-			return fmt.Errorf("response has no choices")
-		}
-		return nil
+func validateGatewayResponse(body []byte) error {
+	var payload struct {
+		Choices []json.RawMessage `json:"choices"`
 	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return err
+	}
+	if len(payload.Choices) == 0 {
+		return fmt.Errorf("response has no choices")
+	}
+	return nil
+}
 
-	scanner := bufio.NewScanner(bytes.NewReader(body))
+// Stream outcome classes. Only streamCompleted counts as a successful request.
+const (
+	streamCompleted     = "completed"
+	streamEmpty         = "empty_stream"
+	streamPartial       = "partial"
+	streamErrorEnvelope = "error_envelope"
+)
+
+type sseResult struct {
+	Outcome      string
+	Chunks       int
+	ContentChars int
+	Err          error
+}
+
+// readSSE consumes a chat-completion stream. completed needs content and
+// [DONE]; empty_stream is a clean end with no content; partial is a stream
+// cut or garbled before [DONE]; error_envelope is an in-stream error event.
+func readSSE(body io.Reader) sseResult {
+	var result sseResult
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	sawChoice := false
 	sawDone := false
-	for scanner.Scan() {
+	for !sawDone && scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if !strings.HasPrefix(line, "data:") {
 			continue
@@ -384,25 +466,104 @@ func validateGatewayResponse(body []byte, stream bool) error {
 			continue
 		}
 		var chunk struct {
-			Choices []json.RawMessage `json:"choices"`
+			Error   json.RawMessage `json:"error"`
+			Choices []struct {
+				Text  string `json:"text"`
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return fmt.Errorf("decode streaming response: %w", err)
+			result.Outcome, result.Err = streamPartial, fmt.Errorf("decode chunk %d: %w", result.Chunks+1, err)
+			return result
 		}
-		if len(chunk.Choices) > 0 {
-			sawChoice = true
+		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+			result.Outcome, result.Err = streamErrorEnvelope, fmt.Errorf("%s", chunk.Error)
+			return result
+		}
+		result.Chunks++
+		for _, choice := range chunk.Choices {
+			result.ContentChars += len(choice.Delta.Content) + len(choice.Text)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return err
+	switch {
+	case scanner.Err() != nil:
+		result.Outcome, result.Err = streamPartial, scanner.Err()
+	case !sawDone:
+		result.Outcome, result.Err = streamPartial, fmt.Errorf("stream ended before [DONE] after %d chunks", result.Chunks)
+	case result.ContentChars == 0:
+		result.Outcome, result.Err = streamEmpty, fmt.Errorf("stream finished with no content after %d chunks", result.Chunks)
+	default:
+		result.Outcome = streamCompleted
 	}
-	if !sawChoice {
-		return fmt.Errorf("streaming response has no choices")
+	return result
+}
+
+// requestSpec is the sampled body of one generated request.
+type requestSpec struct {
+	Model       string
+	Stream      bool
+	MaxTokens   int64
+	Temperature *float64
+	Logprobs    bool
+	TopLogprobs int
+	Messages    []Message
+}
+
+// sampleRequest draws the request for one sequence index. The draw depends
+// only on the seed and the index, so a rerun sends the same mix.
+func sampleRequest(scenario Scenario, index uint64) requestSpec {
+	request := scenario.Workload.Request
+	spec := requestSpec{Model: request.Model, Stream: request.Stream, MaxTokens: int64(request.MaxTokens), Messages: request.Messages}
+	mix := request.Mix
+	if mix == nil {
+		return spec
 	}
-	if !sawDone {
-		return fmt.Errorf("streaming response has no [DONE]")
+	rng := rand.New(rand.NewPCG(uint64(scenario.Seed), index))
+	streamDraw, logprobsDraw := rng.Float64(), rng.Float64()
+	if mix.StreamRatio > 0 {
+		spec.Stream = streamDraw < mix.StreamRatio
 	}
-	return nil
+	if logprobsDraw < mix.LogprobsRatio {
+		spec.Logprobs = true
+		spec.TopLogprobs = mix.TopLogprobs
+	}
+	if choice, ok := pickWeighted(rng, mix.MaxTokens); ok {
+		spec.MaxTokens = int64(choice)
+	}
+	if choice, ok := pickWeighted(rng, mix.Temperature); ok {
+		spec.Temperature = &choice
+	}
+	if choice, ok := pickWeighted(rng, mix.Prompts); ok {
+		spec.Messages = choice
+	}
+	if choice, ok := pickWeighted(rng, mix.Models); ok {
+		spec.Model = choice
+	}
+	return spec
+}
+
+// pickWeighted always consumes one draw so each dimension keeps its place in
+// the random sequence whether or not earlier dimensions are configured.
+func pickWeighted[T any](rng *rand.Rand, choices []Weighted[T]) (T, bool) {
+	draw := rng.Float64()
+	var zero T
+	total := 0.0
+	for _, choice := range choices {
+		total += choice.Weight
+	}
+	if total <= 0 {
+		return zero, false
+	}
+	target := draw * total
+	for _, choice := range choices {
+		if target < choice.Weight {
+			return choice.Value, true
+		}
+		target -= choice.Weight
+	}
+	return choices[len(choices)-1].Value, true
 }
 
 func summarize(scenario Scenario, started time.Time, duration time.Duration, results []RequestResult) Summary {
@@ -419,10 +580,22 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 		}
 		if result.Outcome == "dropped_by_generator" {
 			summary.Dropped++
+			if result.Error == generatorBehind {
+				summary.Behind++
+			}
+		}
+		if result.StreamOutcome != "" {
+			if summary.StreamOutcomes == nil {
+				summary.StreamOutcomes = map[string]int{}
+			}
+			summary.StreamOutcomes[result.StreamOutcome]++
 		}
 	}
+	if attempted := summary.Requests - summary.Dropped; attempted > 0 {
+		summary.ErrorRate = float64(attempted-summary.Completed) / float64(attempted)
+	}
 	if summary.Requests > 0 {
-		summary.ErrorRate = float64(summary.Failed) / float64(summary.Requests)
+		summary.DroppedRate = float64(summary.Dropped) / float64(summary.Requests)
 	}
 	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
 	summary.P50 = percentile(latencies, 0.50)

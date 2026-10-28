@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "chat_template_kwargs: forbidden key (overrides apply_hf_chat_template positional argument): \"chat_template\"",
+  "status": "rejected"
+}

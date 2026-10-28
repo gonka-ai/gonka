@@ -1,0 +1,38 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "q"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "c1",
+            "type": "function",
+            "function": {
+              "name": "f",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "valid",
+        "tool_call_id": "c1"
+      },
+      {
+        "role": "tool",
+        "content": "orphan",
+        "tool_call_id": "never_emitted"
+      }
+    ]
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

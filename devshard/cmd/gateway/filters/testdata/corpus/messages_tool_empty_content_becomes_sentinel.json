@@ -1,0 +1,33 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 2+2?"
+      },
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+              "name": "web_search",
+              "arguments": "{\"query\":\"2+2\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "content": "",
+        "tool_call_id": "call_1"
+      }
+    ]
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

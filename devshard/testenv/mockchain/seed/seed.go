@@ -241,7 +241,9 @@ func FromFile(f *config.File) (*store.Store, error) {
 			EpochIndex: epoch,
 			ModelId:    eg.ModelID,
 			ModelSnapshot: &inferencetypes.Model{
-				Id: eg.ModelID,
+				Id:       eg.ModelID,
+				HfRepo:   eg.HfRepo,
+				HfCommit: eg.HfCommit,
 				ValidationThreshold: &inferencetypes.Decimal{
 					Value:    val,
 					Exponent: exponent,

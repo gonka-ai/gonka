@@ -1,0 +1,10 @@
+{
+  "models": [],
+  "filters": {
+    "thinking": "normalize",
+    "thinking_template_key": "enable_thinking",
+    "reasoning_effort": { "mode": "forward" },
+    "tools": "allow",
+    "parallel_tool_calls": "keep"
+  }
+}

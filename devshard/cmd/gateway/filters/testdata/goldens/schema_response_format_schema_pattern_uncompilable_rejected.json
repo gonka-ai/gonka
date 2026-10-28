@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.json_schema.schema: schema pattern is not a valid regular expression: error parsing regexp: missing closing ): `(`",
+  "status": "rejected"
+}

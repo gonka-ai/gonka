@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "chat_template_kwargs: invalid wrapper shape: must be an object",
+  "status": "rejected"
+}
