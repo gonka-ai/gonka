@@ -443,7 +443,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	// inference. The loop waits for router catalog admission before the
 	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
 	if deps.completionStore != nil {
-		session.SetInferenceCompletionStore(deps.completionStore)
+		session.UseSessionCompletionJournal(deps.completionStore)
 	}
 	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
@@ -961,7 +961,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		return
 	}
 	if rt.session != nil && g.store != nil {
-		rt.session.SetInferenceCompletionStore(g.store)
+		rt.session.UseSessionCompletionJournal(g.store)
 	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate

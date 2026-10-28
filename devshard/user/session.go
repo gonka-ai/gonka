@@ -367,7 +367,11 @@ type Session struct {
 	finalizeInFlight        atomic.Bool
 	completionStore         InferenceCompletionStore
 	completionDurabilityErr error
-	activeInferenceSends    int
+	// completionJournal is set when the journal lives in the session storage: a Start's obligation is then
+	// staged in stagedCompletion and written by the Start's own diff commit.
+	completionJournal    storage.CompletionJournal
+	stagedCompletion     *InferenceCompletion
+	activeInferenceSends int
 
 	// Retry settings for signature collection (handles transient host failures during finalize).
 	signatureCollectMaxRetries  int
@@ -1361,11 +1365,11 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+		if err := s.persistComposedDiffLocked(ctx, types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
-		}); err != nil {
+		}, vd.Applied); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
