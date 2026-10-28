@@ -129,6 +129,8 @@ func NewEventListener(
 		&DevshardEscrowSettledEventHandler{},
 		&MaintenanceScheduledEventHandler{},
 		&MaintenanceCanceledEventHandler{},
+		&WarmKeyGrantedEventHandler{},
+		&WarmKeyRevokedEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
@@ -349,6 +351,8 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 			el.handleBLSEvents(event, workerName)
 			// BeginBlock maintenance_canceled (e.g. maintenance_disabled) is not in TxsResults.
 			el.handleMaintenanceLifecycleEvents(event, workerName)
+			// EndBlock warm_key_revoked (expiry) is not in TxsResults either.
+			el.handleWarmKeyExpiryEvents(event, workerName)
 		}
 
 		// Parse the event into NewBlockInfo

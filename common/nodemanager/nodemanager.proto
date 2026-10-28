@@ -110,6 +110,10 @@ enum HostEventKind {
   HOST_EVENT_KIND_ESCROW_SETTLED = 4;
   HOST_EVENT_KIND_MAINTENANCE_SCHEDULED = 5;
   HOST_EVENT_KIND_MAINTENANCE_CANCELED = 6;
+  // Warm-key log changes of every participant (not filtered by the local
+  // participant: a host needs the keys of every peer in its escrows).
+  HOST_EVENT_KIND_WARM_KEY_GRANTED = 7;
+  HOST_EVENT_KIND_WARM_KEY_REVOKED = 8;
 }
 
 message GetHostEventsRequest {
@@ -131,6 +135,19 @@ message HostEvent {
   // Exactly one payload set per kind:
   EscrowPayload escrow = 12;
   MaintenancePayload maintenance = 13;
+  WarmKeyPayload warm_key = 14;
+}
+
+// WarmKeyPayload mirrors one entry of the chain's warm-key log as the module
+// emitted it: a grant (height = granted_at_height, end empty) or an end
+// (height = revoked_at_height, end = REVOKED / REPLACED / EXPIRED).
+message WarmKeyPayload {
+  string granter = 1;
+  string grantee = 2;
+  uint64 grant_id = 3;
+  int64 height = 4;
+  int64 expires_at_unix = 5;
+  string end = 6;
 }
 
 message EscrowPayload {

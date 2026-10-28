@@ -39,6 +39,8 @@ func testListenerWithRing(t *testing.T, opts ...EventListenerOption) (*EventList
 			&DevshardEscrowSettledEventHandler{},
 			&MaintenanceScheduledEventHandler{},
 			&MaintenanceCanceledEventHandler{},
+			&WarmKeyGrantedEventHandler{},
+			&WarmKeyRevokedEventHandler{},
 		},
 	}
 	for _, opt := range opts {
@@ -147,8 +149,8 @@ func TestHostEvents_MaintenanceScheduledAndCanceled(t *testing.T) {
 	}), el))
 
 	require.NoError(t, (&MaintenanceCanceledEventHandler{}).Handle(txEvent(map[string][]string{
-		"maintenance_canceled.reservation_id": {"9"},
-		"maintenance_canceled.participant":    {"host-a"},
+		"maintenance_canceled.reservation_id":  {"9"},
+		"maintenance_canceled.participant":     {"host-a"},
 		"maintenance_canceled.credit_restored": {"50"},
 	}), el))
 
@@ -230,4 +232,66 @@ func TestHostEvents_IngestVisibleViaGetHostEvents(t *testing.T) {
 	require.False(t, resp.Unchanged)
 	require.Len(t, resp.Events, 1)
 	require.Equal(t, uint64(6), resp.Events[0].Escrow.EscrowId)
+}
+
+// Test flow:
+//  1. Feed a transaction with two warm_key_granted entries (a grant and the replacement it ended) and a block
+//     with an EndBlock expiry, to a listener without a participant filter.
+//  2. Assert one host event per entry in order, with the granter, grantee, id, height, expiration and end, and
+//     that a malformed grant_id is reported.
+func TestHostEvents_WarmKey_AppendsEveryEntry(t *testing.T) {
+	el, ring := testListenerWithRing(t)
+	require.True(t, el.hasHandler(txEvent(map[string][]string{"warm_key_granted.grant_id": {"1"}})))
+	require.True(t, el.hasHandler(txEvent(map[string][]string{"warm_key_revoked.grant_id": {"1"}})))
+
+	tx := txEvent(map[string][]string{
+		"warm_key_revoked.granter":    {"gonka1cold"},
+		"warm_key_revoked.grantee":    {"gonka1old"},
+		"warm_key_revoked.grant_id":   {"1"},
+		"warm_key_revoked.height":     {"500"},
+		"warm_key_revoked.end":        {"WARM_KEY_LOG_END_REPLACED"},
+		"warm_key_granted.granter":    {"gonka1cold"},
+		"warm_key_granted.grantee":    {"gonka1old"},
+		"warm_key_granted.grant_id":   {"2"},
+		"warm_key_granted.height":     {"500"},
+		"warm_key_granted.expires_at": {"1700000000"},
+	})
+	for _, h := range el.eventHandlers {
+		if h.CanHandle(tx) {
+			require.NoError(t, h.Handle(tx, el))
+		}
+	}
+	// Handlers run in registration order (granted, then revoked); entries
+	// of different ids are independent, so the order between kinds does not
+	// matter to the copy.
+	got := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted, apiconfig.HostEventKindWarmKeyRevoked})
+	require.Len(t, got.Events, 2)
+	require.Equal(t, apiconfig.HostEventKindWarmKeyGranted, got.Events[0].Kind)
+	require.Equal(t, &apiconfig.WarmKeyPayload{Granter: "gonka1cold", Grantee: "gonka1old", GrantID: 2, Height: 500, ExpiresAtUnix: 1700000000}, got.Events[0].WarmKey)
+	require.Equal(t, apiconfig.HostEventKindWarmKeyRevoked, got.Events[1].Kind)
+	require.Equal(t, &apiconfig.WarmKeyPayload{Granter: "gonka1cold", Grantee: "gonka1old", GrantID: 1, Height: 500, End: "WARM_KEY_LOG_END_REPLACED"}, got.Events[1].WarmKey)
+
+	block := &chainevents.JSONRPCResponse{Result: chainevents.Result{
+		Data: chainevents.Data{Type: newBlockEventType},
+		Events: map[string][]string{
+			"warm_key_revoked.granter":  {"gonka1cold"},
+			"warm_key_revoked.grantee":  {"gonka1old"},
+			"warm_key_revoked.grant_id": {"2"},
+			"warm_key_revoked.height":   {"900"},
+			"warm_key_revoked.end":      {"WARM_KEY_LOG_END_EXPIRED"},
+		},
+	}}
+	el.handleWarmKeyExpiryEvents(block, "test")
+	got = ring.Since(2, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyRevoked})
+	require.Len(t, got.Events, 1)
+	require.Equal(t, "WARM_KEY_LOG_END_EXPIRED", got.Events[0].WarmKey.End)
+	require.Equal(t, int64(900), got.Events[0].WarmKey.Height)
+
+	bad := txEvent(map[string][]string{
+		"warm_key_granted.granter":  {"gonka1cold"},
+		"warm_key_granted.grantee":  {"gonka1new"},
+		"warm_key_granted.grant_id": {"x"},
+		"warm_key_granted.height":   {"1"},
+	})
+	require.Error(t, (&WarmKeyGrantedEventHandler{}).Handle(bad, el))
 }

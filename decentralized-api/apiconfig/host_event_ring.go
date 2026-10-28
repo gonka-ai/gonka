@@ -10,24 +10,37 @@ import (
 type HostEventKind int32
 
 const (
-	HostEventKindUnspecified           HostEventKind = 0
-	HostEventKindEscrowCreated         HostEventKind = 3
-	HostEventKindEscrowSettled         HostEventKind = 4
-	HostEventKindMaintenanceScheduled  HostEventKind = 5
-	HostEventKindMaintenanceCanceled   HostEventKind = 6
+	HostEventKindUnspecified          HostEventKind = 0
+	HostEventKindEscrowCreated        HostEventKind = 3
+	HostEventKindEscrowSettled        HostEventKind = 4
+	HostEventKindMaintenanceScheduled HostEventKind = 5
+	HostEventKindMaintenanceCanceled  HostEventKind = 6
+	HostEventKindWarmKeyGranted       HostEventKind = 7
+	HostEventKindWarmKeyRevoked       HostEventKind = 8
 )
+
+// WarmKeyPayload is the warm-key-log body of a HostEvent: one grant or one
+// end of a grant, as the inference module emitted it.
+type WarmKeyPayload struct {
+	Granter       string
+	Grantee       string
+	GrantID       uint64
+	Height        int64
+	ExpiresAtUnix int64
+	End           string
+}
 
 // EscrowPayload is the escrow-specific body of a HostEvent.
 type EscrowPayload struct {
-	EscrowID   uint64
-	EpochIndex uint64
-	ModelID    string
-	Creator    string
-	Amount     string
-	Settler    string
+	EscrowID    uint64
+	EpochIndex  uint64
+	ModelID     string
+	Creator     string
+	Amount      string
+	Settler     string
 	TotalPayout string
-	Fees       string
-	Remainder  string
+	Fees        string
+	Remainder   string
 }
 
 // MaintenancePayload is the maintenance-specific body of a HostEvent.
@@ -46,6 +59,7 @@ type HostEvent struct {
 	ObservedAtUnix int64
 	Escrow         *EscrowPayload
 	Maintenance    *MaintenancePayload
+	WarmKey        *WarmKeyPayload
 }
 
 // HostEventSince is the result of HostEventRing.Since.
