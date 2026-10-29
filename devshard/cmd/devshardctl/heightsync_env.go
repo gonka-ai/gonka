@@ -27,6 +27,8 @@ import (
 	"devshard/state"
 	"devshard/transport"
 	"devshard/user"
+
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 )
 
 const (
@@ -209,6 +211,39 @@ func seedGatewayTrustedDAPI(ctx context.Context, oracle blocks.BlockOracle, src 
 // observeGatewayCometHeader hands a Comet NewBlock to the verifier, which
 // writes it into the map once its commit checks out. Without a verifier the
 // websocket header is written unverified.
+// gatewayCometHooks subscribes warm-key queries on the same client as NewBlock.
+func gatewayCometHooks(setConnected func(bool), onHeader func(*blocks.Header), poller *hostevents.Poller) tipcache.CometHooks {
+	return tipcache.CometHooks{
+		OnConnected: func() {
+			if setConnected != nil {
+				setConnected(true)
+			}
+			if poller != nil {
+				poller.OnCometConnected()
+			}
+		},
+		OnDisconnected: func() {
+			if setConnected != nil {
+				setConnected(false)
+			}
+		},
+		OnHeader: func(h *blocks.Header) {
+			if poller != nil && h != nil {
+				poller.NoteCometHeight(h.Height)
+			}
+			if onHeader != nil {
+				onHeader(h)
+			}
+		},
+		OnEvent: func(result ctypes.ResultEvent) {
+			if poller != nil {
+				poller.OfferCometWarm(hostevents.WarmKeysFromResult(result))
+			}
+		},
+		ExtraQueries: hostevents.WarmKeyQueries(),
+	}
+}
+
 func observeGatewayCometHeader(h *blocks.Header) {
 	if hsSt == nil {
 		return
@@ -296,15 +331,6 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC, storageDir 
 			cometHeader: observeGatewayCometHeader,
 			closer:      closer,
 		}
-		if rpc != "" {
-			if err := tipcache.StartCometWithHooks(feedCtx, rpc, cache, tipcache.CometHooks{
-				OnConnected:    func() { fo.SetCometConnected(true) },
-				OnDisconnected: func() { fo.SetCometConnected(false) },
-				OnHeader:       observeGatewayCometHeader,
-			}); err != nil {
-				slog.Warn("height-sync comet feed", "err", err, "rpc", rpc)
-			}
-		}
 		addr := strings.TrimSpace(os.Getenv("NODE_MANAGER_ADDR"))
 		slog.Info(hostevents.TrustedWarmKeyMessage(addr), "node_manager_addr", addr)
 		trustDAPI := nmClient != nil && !cometTrusted
@@ -324,6 +350,15 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC, storageDir 
 			verifier.SetOnDAPIFailure(poller.DAPIBlockRejected)
 		}
 		hsSt.poller = poller
+		if rpc != "" {
+			if err := tipcache.StartCometWithHooks(feedCtx, rpc, cache, gatewayCometHooks(
+				fo.SetCometConnected,
+				observeGatewayCometHeader,
+				poller,
+			)); err != nil {
+				slog.Warn("height-sync comet feed", "err", err, "rpc", rpc)
+			}
+		}
 		go poller.Run(feedCtx)
 		slog.Info("height sync chain follower enabled",
 			"node_manager", nmOracle != nil, "direct_chain", chainOracle != nil, "comet_rpc", rpc)

@@ -889,19 +889,12 @@ func TestPoller_ResetReloadsWarmKeys(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("needs_reset did not arrive")
 	}
-	fetch.setErr(errors.New("down"))
-	_, err = warm.LiveWarmKeys("cold")
-	require.Error(t, err)
-	require.Greater(t, fetch.calls.Load(), before)
-	fetch.setErr(nil)
-	fetch.setEntry(bridge.WarmKeyEntry{
-		Granter: "cold", ID: 1, Grantee: "reloaded",
-		ExpiresAtUnix: time.Now().Add(time.Hour).Unix(),
-	})
+	require.Equal(t, before, fetch.calls.Load(), "needs_reset does not read every granter")
 	got, err = warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Equal(t, "reloaded", got[0].Grantee)
+	require.Equal(t, "warm", got[0].Grantee)
+	require.Greater(t, fetch.calls.Load(), before)
 	cancel()
 }
 

@@ -14,37 +14,39 @@ import (
 	gogoproto "github.com/cosmos/gogoproto/proto"
 
 	"common/chainoracle/blocks/observer"
+	"devshard/hostevents"
 )
 
 const (
 	defaultReconnectDelay = 5 * time.Second
 	subscriberID          = "devshardd"
 	subscriptionBuffer    = 100
+	newBlockQuery         = "tm.event='NewBlock'"
 )
 
-// subscription holds a CometBFT query and one or more type-erased dispatch
-// functions. Multiple handlers for the same query share a single WS
-// subscription: CometBFT's HTTP client keeps only one channel per query
+// subscription holds a CometBFT query, one parse, and one or more handlers.
+// Multiple handlers for the same query share a single WS subscription:
+// CometBFT's HTTP client keeps only one channel per query
 // (subscriptions[query] = outc), so a second Subscribe for the same query
-// would overwrite the first and silently drop its handlers.
+// would overwrite the first and silently drop its handlers. A delivery is
+// parsed once and that value is passed to every handler.
 type subscription struct {
 	query    string
-	handlers []func(ctx context.Context, result ctypes.ResultEvent)
+	parse    func(ctypes.ResultEvent) (any, bool)
+	handlers []func(ctx context.Context, parsed any)
 }
 
-// Subscribe registers a typed subscription on l. parse is called for every
+// Subscribe registers a typed subscription on l. parse is called once per
 // matching ResultEvent; if it returns false the event is silently skipped.
 // handle is called with the parsed value. All registrations must happen before
 // Start is called.
 //
 // Handlers that share the same query are coalesced onto one CometBFT
-// subscription and invoked in registration order.
+// subscription. They use the parse from the first registration and run in
+// registration order.
 func Subscribe[T any](l *Listener, query string, parse func(ctypes.ResultEvent) (T, bool), handle func(context.Context, T)) {
-	handler := func(ctx context.Context, result ctypes.ResultEvent) {
-		v, ok := parse(result)
-		if ok {
-			handle(ctx, v)
-		}
+	handler := func(ctx context.Context, parsed any) {
+		handle(ctx, parsed.(T))
 	}
 	for i := range l.subs {
 		if l.subs[i].query == query {
@@ -53,9 +55,30 @@ func Subscribe[T any](l *Listener, query string, parse func(ctypes.ResultEvent) 
 		}
 	}
 	l.subs = append(l.subs, subscription{
-		query:    query,
-		handlers: []func(context.Context, ctypes.ResultEvent){handler},
+		query: query,
+		parse: func(result ctypes.ResultEvent) (any, bool) {
+			v, ok := parse(result)
+			if !ok {
+				return nil, false
+			}
+			return v, true
+		},
+		handlers: []func(context.Context, any){handler},
 	})
+}
+
+// dispatch parses result once and calls every handler with that value.
+func (s subscription) dispatch(ctx context.Context, result ctypes.ResultEvent) {
+	if s.parse == nil {
+		return
+	}
+	parsed, ok := s.parse(result)
+	if !ok {
+		return
+	}
+	for _, h := range s.handlers {
+		h(ctx, parsed)
+	}
 }
 
 // Listener subscribes to chain events via CometBFT WebSocket and dispatches
@@ -97,7 +120,37 @@ func (l *Listener) OnDevshardEscrowSettled(h DevshardEscrowSettledHandler) {
 // OnNewBlock registers a handler called for each newly committed block.
 // Multiple OnNewBlock registrations share one CometBFT subscription.
 func (l *Listener) OnNewBlock(h NewBlockHandler) {
-	Subscribe(l, "tm.event='NewBlock'", parseNewBlockEvent, h)
+	Subscribe(l, newBlockQuery, parseNewBlockEvent, h)
+}
+
+// OnWarmKeyTx registers both warm-key queries on this listener. CometBFT
+// keeps one channel per query, and run dials one WebSocket for every query
+// on the listener.
+func (l *Listener) OnWarmKeyTx(h func(context.Context, ctypes.ResultEvent)) {
+	if l == nil || h == nil {
+		return
+	}
+	pass := func(result ctypes.ResultEvent) (ctypes.ResultEvent, bool) {
+		return result, true
+	}
+	for _, q := range hostevents.WarmKeyQueries() {
+		Subscribe(l, q, pass, h)
+	}
+}
+
+// ListenWarmKeys registers the warm-key queries and a NewBlock handler that
+// reads EndBlock expiries. Both share the listener's single socket.
+func (l *Listener) ListenWarmKeys(p *hostevents.Poller) {
+	if l == nil || p == nil {
+		return
+	}
+	l.OnWarmKeyTx(func(_ context.Context, result ctypes.ResultEvent) {
+		p.OfferCometWarm(hostevents.WarmKeysFromResult(result))
+	})
+	l.OnNewBlock(func(_ context.Context, e NewBlockEvent) {
+		p.NoteCometHeight(e.BlockHeight)
+		p.OfferCometWarm(hostevents.WarmKeysFromABCI(e.FinalizeEvents, e.BlockHeight))
+	})
 }
 
 // OnReady registers a callback invoked with true after all subscriptions are
@@ -151,28 +204,74 @@ func (l *Listener) run(ctx context.Context) error {
 	}
 	defer client.Stop() //nolint:errcheck
 
-	errCh := make(chan error, len(l.subs))
+	return l.serve(ctx, client)
+}
 
+// eventSubscriber is the CometBFT subscribe call. Tests pass a fake; run passes the HTTP client.
+type eventSubscriber interface {
+	Subscribe(ctx context.Context, subscriber, query string, outCapacity ...int) (<-chan ctypes.ResultEvent, error)
+}
+
+// subscribeOrder puts NewBlock and the escrow queries ahead of the warm-key
+// queries. A later refusal then cannot drop a subscription that already succeeded.
+func (l *Listener) subscribeOrder() []subscription {
+	block := -1
+	var required, warm []subscription
+	for i := range l.subs {
+		sub := l.subs[i]
+		switch {
+		case sub.query == newBlockQuery:
+			block = i
+		case warmKeyQuery(sub.query):
+			warm = append(warm, sub)
+		default:
+			required = append(required, sub)
+		}
+	}
+	out := make([]subscription, 0, len(l.subs))
+	if block >= 0 {
+		out = append(out, l.subs[block])
+	}
+	out = append(out, required...)
+	out = append(out, warm...)
+	return out
+}
+
+func warmKeyQuery(query string) bool {
+	for _, q := range hostevents.WarmKeyQueries() {
+		if q == query {
+			return true
+		}
+	}
+	return false
+}
+
+// serve subscribes in subscribeOrder. A refused warm-key query is logged and
+// skipped. A refused NewBlock or escrow query returns, and Start dials again.
+func (l *Listener) serve(ctx context.Context, client eventSubscriber) error {
+	errCh := make(chan error, len(l.subs))
 	queries := make([]string, 0, len(l.subs))
-	for _, sub := range l.subs {
-		queries = append(queries, sub.query)
+	for _, sub := range l.subscribeOrder() {
 		ch, err := client.Subscribe(ctx, subscriberID, sub.query, subscriptionBuffer)
 		if err != nil {
+			if warmKeyQuery(sub.query) {
+				slog.Warn("chain events: warm-key subscribe refused, continuing",
+					"rpc", l.rpcURL, "query", sub.query, "err", err)
+				continue
+			}
 			slog.Warn("chain events: subscribe failed", "rpc", l.rpcURL, "query", sub.query, "err", err)
 			return fmt.Errorf("subscribe %q: %w", sub.query, err)
 		}
-		handlers := sub.handlers
-		q := sub.query
+		queries = append(queries, sub.query)
+		sub := sub
 		go func() {
 			for {
 				result, ok := <-ch
 				if !ok {
-					errCh <- fmt.Errorf("subscription closed: %s", q)
+					errCh <- fmt.Errorf("subscription closed: %s", sub.query)
 					return
 				}
-				for _, h := range handlers {
-					h(ctx, result)
-				}
+				sub.dispatch(ctx, result)
 			}
 		}()
 	}
@@ -212,6 +311,11 @@ func parseTxEvent[T txEventParser[T]](result ctypes.ResultEvent) (out T, ok bool
 	return
 }
 
+// marshalBlockHeader encodes a Comet header. Tests replace it to count calls.
+var marshalBlockHeader = func(h cmttypes.Header) ([]byte, error) {
+	return gogoproto.Marshal(h.ToProto())
+}
+
 // parseNewBlockEvent extracts height, hash, time, and chain id from a
 // NewBlock ResultEvent.
 func parseNewBlockEvent(result ctypes.ResultEvent) (NewBlockEvent, bool) {
@@ -226,16 +330,17 @@ func parseNewBlockEvent(result ctypes.ResultEvent) (NewBlockEvent, bool) {
 		slog.Warn("chain events: NewBlock missing block payload", "query", result.Query)
 		return NewBlockEvent{}, false
 	}
-	raw, err := gogoproto.Marshal(data.Block.Header.ToProto())
+	raw, err := marshalBlockHeader(data.Block.Header)
 	if err != nil {
 		slog.Warn("chain events: NewBlock header marshal failed", "query", result.Query, "err", err)
 	}
 	return NewBlockEvent{
-		BlockHeight: hdr.Height,
-		BlockHash:   hdr.BlockHash,
-		Time:        hdr.Time,
-		ChainID:     hdr.ChainID,
-		Header:      raw,
+		BlockHeight:    hdr.Height,
+		BlockHash:      hdr.BlockHash,
+		Time:           hdr.Time,
+		ChainID:        hdr.ChainID,
+		Header:         raw,
+		FinalizeEvents: append([]abci.Event(nil), data.ResultFinalizeBlock.Events...),
 	}, true
 }
 

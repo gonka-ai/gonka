@@ -66,6 +66,9 @@ type NewBlockEvent struct {
 	ChainID     string
 	// Header is the protobuf-encoded tendermint Header (cmtproto.Header).
 	Header []byte
+	// FinalizeEvents is ResultFinalizeBlock.Events. EndBlock warm-key
+	// expiries are in this slice; they are not transactions.
+	FinalizeEvents []abci.Event
 }
 
 // DevshardEscrowCreatedHandler is called for each devshard_escrow_created event received.

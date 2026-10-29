@@ -141,6 +141,11 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)
+		if ready {
+			if p := manager.HostEventPoller(); p != nil {
+				p.OnCometConnected()
+			}
+		}
 	})
 	var adminServer appHTTPServer
 	if admin != nil {
@@ -412,7 +417,8 @@ func buildHostManager(
 		store.Start()
 	}
 
-	startPoller := startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, manager.HeaderTimes(), manager.SetHostEventPoller, closers)
+	poller, startPoller := startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, manager.HeaderTimes(), manager.SetHostEventPoller, closers)
+	chainRuntime.chainEvents.ListenWarmKeys(poller)
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
@@ -468,7 +474,7 @@ func startHostEventsWarm(
 	headers *headertime.Source,
 	attachPoller func(*hostevents.Poller),
 	closers *closeStack,
-) func() {
+) (*hostevents.Poller, func()) {
 	if queryBridge == nil {
 		queryBridge = chainBridge
 	}
@@ -489,30 +495,30 @@ func startHostEventsWarm(
 	}
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	return func() {
+	slog.Info("hostevents: starting poller", "node_manager_addr", cfg.NodeManagerAddr, "escrow", cfg.HostEventsEnabled)
+	cfgPoll := hostevents.PollerConfig{
+		Config:         hostevents.Config{Log: slog.Default()},
+		Source:         headers,
+		IncludeEscrow:  cfg.HostEventsEnabled,
+		BlocksVerified: true,
+		Escrow:         sink,
+		Warm:           chainBridge.WarmKeys(),
+		Holes:          holes,
+	}
+	if mlClient != nil {
+		cfgPoll.Client = mlClient.NodeManagerClient()
+	}
+	p := hostevents.NewPoller(cfgPoll)
+	if attachPoller != nil {
+		attachPoller(p)
+	}
+	return p, func() {
 		closers.Add(func() {
 			cancel()
 			<-done
 		})
 		go func() {
 			defer close(done)
-			slog.Info("hostevents: starting poller", "node_manager_addr", cfg.NodeManagerAddr, "escrow", cfg.HostEventsEnabled)
-			cfgPoll := hostevents.PollerConfig{
-				Config:         hostevents.Config{Log: slog.Default()},
-				Source:         headers,
-				IncludeEscrow:  cfg.HostEventsEnabled,
-				BlocksVerified: true,
-				Escrow:         sink,
-				Warm:           chainBridge.WarmKeys(),
-				Holes:          holes,
-			}
-			if mlClient != nil {
-				cfgPoll.Client = mlClient.NodeManagerClient()
-			}
-			p := hostevents.NewPoller(cfgPoll)
-			if attachPoller != nil {
-				attachPoller(p)
-			}
 			p.Run(hostCtx)
 		}()
 	}

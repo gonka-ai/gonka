@@ -35,9 +35,10 @@ type ChainBridge struct {
 	settlementProposedHandler  func(escrowID string, stateRoot []byte, nonce uint64) error
 	settlementFinalizedHandler func(escrowID string) error
 
-	// warmKeys is the host's copy of the chain's warm-key log: filled from
-	// the chain on first use, kept current by dapi host events, reloaded
-	// after HostWarmKeyRefresh as a backstop.
+	// warmKeys is the host's copy of the chain's warm-key log. dapi writes it
+	// when the feed lists warm keys; otherwise the process Comet socket does.
+	// WarmKeyLog is the per-granter catch-up, and HostWarmKeyRefresh is the
+	// backstop when both feeds are quiet.
 	warmKeys *bridge.WarmKeyLogCopy
 }
 
