@@ -2,6 +2,7 @@ package hostevents
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -46,8 +47,8 @@ type PollerConfig struct {
 	// Escrow receives escrow and, when set, warm-key events.
 	Escrow Sink
 	// Warm is the warm-key log copy. The gateway applies events here. devshardd's
-	// escrow sink applies them, and this copy is reset on needs_reset when the
-	// sink does not own it.
+	// escrow sink applies them too. A gap resets completeness. The next read
+	// of a granter loads that granter.
 	Warm *bridge.WarmKeyLogCopy
 	// Holes fills heights the feed skipped. Nil leaves misses to the map's
 	// existing filler.
@@ -93,10 +94,12 @@ type HeaderTimeView struct {
 // Poller is the one GetHostEvents loop.
 type Poller struct {
 	PollerConfig
-	blockLive     atomic.Bool
-	suppressUntil atomic.Int64
-	blockWatch    time.Time
-	epochs        epochWindow
+	blockLive       atomic.Bool
+	warmLive        atomic.Bool
+	lastCometHeight atomic.Int64
+	suppressUntil   atomic.Int64
+	blockWatch      time.Time
+	epochs          epochWindow
 }
 
 // NewPoller returns a poller. Run owns the loop.
@@ -268,6 +271,7 @@ func (p *Poller) Run(ctx context.Context) {
 	if err := p.Config.applyDefaults(); err != nil {
 		if p.Client == nil {
 			p.setBlockLive(false)
+			p.setWarmLive(false)
 			p.installFloor()
 			p.installHoles()
 			p.wait(ctx)
@@ -282,6 +286,7 @@ func (p *Poller) Run(ctx context.Context) {
 	p.installHoles()
 	if p.Client == nil {
 		p.setBlockLive(false)
+		p.setWarmLive(false)
 		p.wait(ctx)
 		return
 	}
@@ -323,6 +328,7 @@ func (p *Poller) Run(ctx context.Context) {
 				if !gaveUp {
 					gaveUp = true
 					p.setBlockLive(false)
+					p.setWarmLive(false)
 					p.fallback()
 					p.Log.Info("hostevents: GetHostEvents Unimplemented; using fallbacks")
 				}
@@ -331,6 +337,7 @@ func (p *Poller) Run(ctx context.Context) {
 			}
 			if status.Code(err) == codes.Unavailable {
 				p.setBlockLive(false)
+				p.setWarmLive(false)
 				backoff = nextBackoff(backoff, p.ErrorBackoffMin, p.ErrorBackoffMax)
 				p.Log.Warn("hostevents: feed unavailable", "err", err, "cursor", cursor, "backoff", backoff)
 				continue
@@ -352,6 +359,7 @@ func (p *Poller) Run(ctx context.Context) {
 			p.LoadMap.Replace(resp.GetEscrowLoad(), p.Clock.Now())
 		}
 		p.noteFeed(resp)
+		p.noteWarm(resp)
 		if resp.GetGeneration() != 0 {
 			generation = resp.GetGeneration()
 		}
@@ -469,10 +477,102 @@ func (p *Poller) installFloor() {
 func (p *Poller) fallback() {
 	if p.IncludeEscrow && p.Escrow != nil {
 		p.Escrow.RehydrateOpenEscrows()
-		return
 	}
 	if p.Warm != nil {
 		p.Warm.Reset()
+	}
+}
+
+// WarmFeedLive reports whether the last GetHostEvents answer listed both
+// warm-key kinds. It does not gate the Comet socket: that socket always
+// applies. A quiet stretch with no grant stays live.
+func (p *Poller) WarmFeedLive() bool {
+	if p == nil {
+		return false
+	}
+	return p.warmLive.Load()
+}
+
+func (p *Poller) setWarmLive(live bool) {
+	if p == nil {
+		return
+	}
+	prev := p.warmLive.Load()
+	if prev == live {
+		return
+	}
+	p.warmLive.Store(live)
+	if p.Log != nil {
+		if live {
+			p.Log.Info("hostevents: warm feed live")
+		} else {
+			p.Log.Info("hostevents: warm feed not live")
+		}
+	}
+	if prev && !live && p.Warm != nil {
+		p.Warm.Reset()
+	}
+}
+
+func (p *Poller) noteWarm(resp *gen.GetHostEventsResponse) {
+	p.setWarmLive(supportsWarm(resp.GetSupportedKinds()))
+}
+
+func supportsWarm(kinds []gen.HostEventKind) bool {
+	var grant, revoke bool
+	for _, k := range kinds {
+		switch k {
+		case gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED:
+			grant = true
+		case gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED:
+			revoke = true
+		}
+	}
+	return grant && revoke
+}
+
+// OfferCometWarm applies warm-key entries from the process Comet socket.
+// dapi being the live writer does not drop them. Apply is idempotent, and an
+// ended id stays ended.
+func (p *Poller) OfferCometWarm(entries []bridge.WarmKeyEntry) {
+	if p == nil || len(entries) == 0 {
+		return
+	}
+	for _, e := range entries {
+		_ = p.applyWarm(e, slog.LevelDebug)
+	}
+}
+
+// OnCometConnected marks the copy incomplete after the socket connects or
+// reconnects. The next read of a granter loads that granter. It does not
+// query the chain itself.
+func (p *Poller) OnCometConnected() {
+	if p == nil || p.Warm == nil {
+		return
+	}
+	p.Warm.Reset()
+}
+
+// NoteCometHeight records a NewBlock height from this process's Comet socket.
+// The first height is not a gap. A later height more than one above the last
+// resets the warm-key copy and does not read the chain. The next read of a
+// granter loads that granter.
+func (p *Poller) NoteCometHeight(height int64) {
+	if p == nil || height <= 0 {
+		return
+	}
+	for {
+		prev := p.lastCometHeight.Load()
+		if height <= prev {
+			return
+		}
+		if !p.lastCometHeight.CompareAndSwap(prev, height) {
+			continue
+		}
+		if prev > 0 && height > prev+1 && p.Warm != nil {
+			p.Warm.Reset()
+		}
+		return
 	}
 }
 
@@ -572,15 +672,15 @@ func (p *Poller) dispatchOne(ev *gen.HostEvent) error {
 		if !ok {
 			return nil
 		}
-		return p.applyWarm(entry)
+		return p.applyWarm(entry, slog.LevelInfo)
 	default:
 		return nil
 	}
 }
 
-func (p *Poller) applyWarm(entry bridge.WarmKeyEntry) error {
+func (p *Poller) applyWarm(entry bridge.WarmKeyEntry, level slog.Level) error {
 	if p.Log != nil {
-		p.Log.Info("hostevents: warm-key",
+		p.Log.Log(context.Background(), level, "hostevents: warm-key",
 			"granter", entry.Granter,
 			"grantee", entry.Grantee,
 			"grant_id", entry.ID,

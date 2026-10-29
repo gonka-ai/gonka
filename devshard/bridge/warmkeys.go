@@ -302,12 +302,41 @@ func (c *WarmKeyLogCopy) NoteMiss(granter string) {
 
 // Reset forgets completeness: every granter is reloaded from the chain on
 // its next use. Called when the host-events stream resets, because events
-// may have been lost in the gap.
+// may have been lost in the gap. Entries already stored stay; an ended id
+// is not revived by a later load.
 func (c *WarmKeyLogCopy) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, g := range c.granters {
 		g.complete = false
+	}
+}
+
+// KnownGranters returns the granters the copy has already seen, in order.
+// A granter that has never been applied or loaded is absent.
+func (c *WarmKeyLogCopy) KnownGranters() []string {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]string, 0, len(c.granters))
+	for g := range c.granters {
+		out = append(out, g)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ReloadKnown reads WarmKeyLog once per granter already in the copy.
+// A failed read leaves the stored entries in place and does not mark the
+// granter complete, so the miss is not cached as "not a grant".
+func (c *WarmKeyLogCopy) ReloadKnown() {
+	if c == nil {
+		return
+	}
+	for _, g := range c.KnownGranters() {
+		_ = c.load(g, false)
 	}
 }
 

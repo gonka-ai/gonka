@@ -17,7 +17,7 @@ Two separate clients each do part of it:
 | Client | Where it runs | What it does |
 |---|---|---|
 | `failover.Oracle` | devshardd always (when a NodeManager or chain client exists). Gateway only when `DEVSHARD_GATEWAY_CHAIN_ORACLE` is on. | Synchronous `Latest` / `At`. Order is the Comet tip cache, then dapi `GetBlockHeader` (one height), then chain `GetLatestBlock` / `GetBlockByHeight`. A miss outside the last 100 heights is a dummy header. `Subscribe` on the NodeManager client is refused. |
-| `hostevents.Run` / `Poller` | devshardd and the gateway. `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds on devshardd. | One async `GetHostEvents` loop for blocks, warm keys, and, on devshardd, escrow. `Unimplemented` keeps the loop and uses the fallbacks. `needs_reset` reloads open escrows when they are subscribed and drops warm-key completeness so the next use reads `WarmKeyLog`. The first request sends `after_height` once. |
+| `hostevents.Run` / `Poller` | devshardd and the gateway. `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds on devshardd. | One async `GetHostEvents` loop for blocks, warm keys, and, on devshardd, escrow. `Unimplemented` keeps the loop and uses the fallbacks. `needs_reset` reloads open escrows when they are subscribed and resets warm-key completeness. The Comet socket applies warm keys whether or not dapi is up. The next read of a granter loads that granter. The first request sends `after_height` once. |
 
 The gateway starts that poller from `initGatewayHeightSync`, including when `NODE_MANAGER_ADDR` is empty. When it has a Comet URL, its live blocks come from `tipcache.StartCometWithHooks`. devshardd's live blocks come from `chainEvents.OnNewBlock` → `ObserveChainHeader`. Both sockets stay. The poller does not open another Comet subscription.
 
@@ -54,9 +54,9 @@ That covers the grant-cache note's acceptance criteria: a grant that was invisib
 
 - dapi does not re-query `GranteesByMessageType` for a miss set.
 - There is no every-10th-block recheck of accepted booleans. An end is a `WARM_KEY_REVOKED` event, or a later `WarmKeyLog` read.
-- The gateway runs the poller without the escrow sink. It applies warm-key events to its bridge's copy, which reloads from `WarmKeyLog` when the poll is down.
+- The gateway runs the poller without the escrow sink. It applies warm-key events to its bridge's copy. The process's Comet subscription applies as well, including while dapi is up. A gap resets the copy, and the next read of a granter loads that granter.
 
-The piece the grant-cache note still asks for, and this library provides, is the shared wake: block height and warm-key events on the same long-poll, on both binaries, with the chain log as the fallback when that poll is down.
+The piece the grant-cache note still asks for, and this library provides, is the shared wake: block height and warm-key events on the same long-poll, on both binaries, with the Comet subscription as the live fallback when that poll is down.
 
 ## Fit with async header time
 
@@ -246,7 +246,7 @@ One poller on devshardd and on the gateway. One cursor, one `GetHostEvents` loop
 | Kind | Who subscribes | Fallback when dapi has no live feed |
 |---|---|---|
 | `BLOCK` | both | the process's Comet `NewBlock`, then header-only reads for holes |
-| `WARM_KEY_GRANTED`, `WARM_KEY_REVOKED` | both | `WarmKeyLog` (the reload the copy already does) |
+| `WARM_KEY_GRANTED`, `WARM_KEY_REVOKED` | both | the process's Comet subscription always applies; `WarmKeyLog` loads one granter on the next read after a gap |
 | escrow created / settled | devshardd only | rehydrate open escrows, lazy create |
 | maintenance | neither in this library | stays the gateway's own concern, unchanged |
 
@@ -261,7 +261,7 @@ On devshardd, `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds from 
 - After a normal response it sends the returned cursor and generation.
 - After `needs_reset` it sends the returned `next_cursor` and generation, with `after_height = 0`. It then runs the fallbacks for the skipped range:
   - escrow rehydrate
-  - a warm-key reload on next use
+  - a warm-key catch-up: reset completeness, then one `WarmKeyLog` read for the granter the next check asks for. The same reset runs on Comet connect, on `warmLive` flipping to false, and when a NewBlock is more than one height above the last one seen on that socket. The first NewBlock is not a gap. The Comet subscription keeps applying
   - the `Filler` for block holes between `HighWater()` and the first `BLOCK` that arrives
 - Before the first poll, devshardd runs `RehydrateOpenEscrows` once, which covers escrows created before `after_height`.
 - Every sink accepts a replay as a no-op: warming a warm escrow, settling a settled one, applying a warm-key event already in the copy.
@@ -348,6 +348,7 @@ devshardd skips this check. Its dapi is the same host's, so its block sink write
 7. **Gateway verification.** Self-check, a pending buffer for the map window, a downward link from the trusted tip through dapi's headers, and one commit check only for a block at or above that tip.
 8. **Testenv feed.** mock-dapi serves `BLOCK` and the cursor rule, mock-chain signs a commit the gateway can anchor, and the gateway's `NODE_MANAGER_ADDR` is that mock.
 9. **Testenv scenarios.** The block-feed stack scenarios in `testenv/docs/scenarios.md`, suite `citest-block-feed`: live heights, catch-up after restart, stall uses Comet, one reset, warm key from dapi, gateway drops a bad header.
+10. **Warm-key client.** One client on both binaries, the same shape as height listening: the process's existing Comet socket always applies, and dapi `GetHostEvents` applies too when a host is set and the feed lists both warm-key kinds. A gap resets the copy. `WarmKeyLog` loads the granter the next check asks for. No second WebSocket and no `block_results` walk on the host or the gateway. devshardd subscribes NewBlock and escrow before the warm-key queries. A refused warm-key `Subscribe` leaves that listener up. A Comet apply logs at debug. The dapi apply stays at info. devshardd parses each NewBlock once and passes that event, including its height, to every handler.
 
 Out of this plan: refusal from `started_at`, execution from `time(confirm stamp)`, and the verifier's 60 second map wait.
 
@@ -377,7 +378,7 @@ Out of this plan: refusal from `started_at`, execution from `time(confirm stamp)
 - An old dapi (empty `supported_kinds`, or no `BLOCK` for three block intervals), and a stalled one (`Unavailable`), do not block the block map. Comet or header reads fill it. Warm-key events from that dapi are still applied.
 - On devshardd, a Comet or chain hash replaces a different dapi hash for the same height, and the replacement is logged.
 - On the gateway, no dapi block reaches the map before it links down from a trusted header. A catch-up below the tip uses dapi's headers for that walk and does not read `BlockchainInfo` for heights dapi supplied. A forged dapi header is rejected, logged, and switches blocks to the fallback.
-- With no dapi, devshardd and the gateway still fill the block map from Comet or header reads, and the warm-key copy from `WarmKeyLog`. Backfill does not call `GetBlockByHeight`.
+- With no dapi, devshardd and the gateway still fill the block map from Comet or header reads, and the warm-key copy from the Comet subscription, with `WarmKeyLog` as catch-up. Backfill does not call `GetBlockByHeight`.
 
 **Client**
 - devshardd opens one `GetHostEvents` loop, also when `DEVSHARD_HOST_EVENTS_ENABLED` is off. The gateway opens the same loop without the escrow kinds.
