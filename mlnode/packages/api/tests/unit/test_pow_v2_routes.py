@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from fastapi.testclient import TestClient
 
 from api.app import app
+from api.inference.pow_v2_routes import StatTestModel
 
 
 @pytest.fixture
@@ -429,3 +430,9 @@ class TestStatTestForwarding:
             forwarded = self._post(client, {"dist_threshold": 0.41, "p_mismatch": 0.1, "p_value_threshold": 0.05})
         assert forwarded == {"dist_threshold": 0.41, "p_mismatch": 0.1, "fraud_threshold": 0.01}
         assert "p_value_threshold" in caplog.text
+
+    def test_non_string_keys_are_ignored(self, caplog):
+        with caplog.at_level("WARNING", logger="api.inference.pow_v2_routes"):
+            model = StatTestModel.model_validate({1: 2, "bad": 3, "fraud_threshold": 0.05})
+        assert model.fraud_threshold == 0.05
+        assert "'1'" in caplog.text and "'bad'" in caplog.text

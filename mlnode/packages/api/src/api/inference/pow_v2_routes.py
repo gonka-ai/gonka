@@ -62,7 +62,7 @@ class StatTestModel(BaseModel):
     @classmethod
     def _warn_unknown_fields(cls, data):
         if isinstance(data, dict):
-            unknown = sorted(set(data) - set(cls.model_fields))
+            unknown = sorted(str(key) for key in set(data) - set(cls.model_fields))
             if unknown:
                 logger.warning(
                     "stat_test: ignoring unknown fields %s; known fields are %s",
