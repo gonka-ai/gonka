@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/observer"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
@@ -18,9 +19,11 @@ const (
 )
 
 // CometHooks reports subscription liveness to failover.Oracle.
+// OnHeader receives each NewBlock header after it is stored in the tip cache.
 type CometHooks struct {
 	OnConnected    func()
 	OnDisconnected func()
+	OnHeader       func(*blocks.Header)
 }
 
 // StartComet feeds c from CometBFT tm.event='NewBlock' until ctx is cancelled.
@@ -101,6 +104,9 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks
 			hdr, ok := observer.HeaderFromNewBlock(data)
 			if ok {
 				c.Observe(hdr)
+				if hooks.OnHeader != nil {
+					hooks.OnHeader(hdr)
+				}
 			}
 		}
 	}

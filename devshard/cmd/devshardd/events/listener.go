@@ -11,6 +11,7 @@ import (
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
+	gogoproto "github.com/cosmos/gogoproto/proto"
 
 	"common/chainoracle/blocks/observer"
 )
@@ -225,11 +226,16 @@ func parseNewBlockEvent(result ctypes.ResultEvent) (NewBlockEvent, bool) {
 		slog.Warn("chain events: NewBlock missing block payload", "query", result.Query)
 		return NewBlockEvent{}, false
 	}
+	raw, err := gogoproto.Marshal(data.Block.Header.ToProto())
+	if err != nil {
+		slog.Warn("chain events: NewBlock header marshal failed", "query", result.Query, "err", err)
+	}
 	return NewBlockEvent{
 		BlockHeight: hdr.Height,
 		BlockHash:   hdr.BlockHash,
 		Time:        hdr.Time,
 		ChainID:     hdr.ChainID,
+		Header:      raw,
 	}, true
 }
 

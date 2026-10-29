@@ -48,8 +48,9 @@ type Config struct {
 	// after its sink call fails. Past the bound the loop skips it so one wedged
 	// escrow cannot stall the whole stream.
 	MaxDispatchAttempts int
-	// LoadMap, when set, is updated on every non-error GetHostEvents response
-	// (including unchanged / timeout) with the response's escrow_load snapshot.
+	// LoadMap, when set and the subscribe set includes escrow kinds, is replaced
+	// on every non-error GetHostEvents response, including an unchanged timeout,
+	// with that response's escrow_load snapshot.
 	LoadMap *LoadMap
 }
 

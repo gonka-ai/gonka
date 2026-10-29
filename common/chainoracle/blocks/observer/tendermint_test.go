@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,4 +89,27 @@ func TestOracle_ObserveHex(t *testing.T) {
 	h, err := o.At(context.Background(), 5)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0x0a, 0x0b}, h.BlockHash)
+}
+
+func TestNewTendermintBlockchainInfoTimesOut(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		srv.CloseClientConnections()
+		srv.Close()
+	})
+
+	o, err := NewTendermint(TendermintConfig{RPCURL: srv.URL, RPCTimeout: time.Second})
+	require.NoError(t, err)
+
+	start := time.Now()
+	_, err = o.BlockchainInfo(context.Background(), 1, 20)
+	require.Error(t, err)
+	require.Less(t, time.Since(start), 3*time.Second, "BlockchainInfo returns within the client timeout")
 }

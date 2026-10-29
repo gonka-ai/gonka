@@ -4,11 +4,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/event_listener/chainevents"
-
-	"github.com/productscience/inference/x/inference/types"
 )
 
 // The inference module emits these on every change of its warm-key log
@@ -29,7 +26,7 @@ func (e *WarmKeyGrantedEventHandler) CanHandle(event *chainevents.JSONRPCRespons
 }
 
 func (e *WarmKeyGrantedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	return appendWarmKeyEvents(el, event.Result.Events, warmKeyGrantedEvent, apiconfig.HostEventKindWarmKeyGranted)
+	return nil
 }
 
 type WarmKeyRevokedEventHandler struct{}
@@ -41,39 +38,28 @@ func (e *WarmKeyRevokedEventHandler) CanHandle(event *chainevents.JSONRPCRespons
 }
 
 func (e *WarmKeyRevokedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	return appendWarmKeyEvents(el, event.Result.Events, warmKeyRevokedEvent, apiconfig.HostEventKindWarmKeyRevoked)
+	return nil
 }
 
-// handleWarmKeyExpiryEvents ingests the EndBlock-emitted warm_key_revoked
-// (end = EXPIRED). Tx-path ends are handled by WarmKeyRevokedEventHandler via
-// BlockObserver.
+// handleWarmKeyExpiryEvents used to append EndBlock expiries from the NewBlock
+// socket. The host-event feed reads those from BlockResults instead.
 func (el *EventListener) handleWarmKeyExpiryEvents(event *chainevents.JSONRPCResponse, workerName string) {
-	if len(event.Result.Events[warmKeyRevokedEvent+".grant_id"]) == 0 {
-		return
-	}
-	if err := appendWarmKeyEvents(el, event.Result.Events, warmKeyRevokedEvent, apiconfig.HostEventKindWarmKeyRevoked); err != nil {
-		logging.Error("Failed to process warm-key expiry events", types.EventProcessing,
-			"error", err, "worker", workerName)
-	}
 }
 
-// appendWarmKeyEvents appends one host event per attribute set of prefix. A
-// block (or a transaction with several grants) carries the attributes as
-// parallel lists, index i of each belonging to the same entry. Nothing is
-// filtered by participant: a host needs the keys of every peer in its groups.
-func appendWarmKeyEvents(el *EventListener, ev map[string][]string, prefix string, kind apiconfig.HostEventKind) error {
-	if el.hostEvents == nil {
-		return nil
-	}
+func parseWarmKeyEvents(ev map[string][]string, prefix string, kind apiconfig.HostEventKind) ([]apiconfig.HostEvent, error) {
 	ids := ev[prefix+".grant_id"]
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	out := make([]apiconfig.HostEvent, 0, len(ids))
 	for i := range ids {
 		payload, err := warmKeyPayloadAt(ev, prefix, i)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		el.hostEvents.Append(apiconfig.HostEvent{Kind: kind, WarmKey: payload})
+		out = append(out, apiconfig.HostEvent{Kind: kind, WarmKey: payload})
 	}
-	return nil
+	return out, nil
 }
 
 func warmKeyPayloadAt(ev map[string][]string, prefix string, i int) (*apiconfig.WarmKeyPayload, error) {
