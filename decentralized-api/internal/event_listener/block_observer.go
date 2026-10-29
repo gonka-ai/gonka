@@ -8,8 +8,8 @@ import (
 
 	"context"
 	"decentralized-api/cosmosclient"
-
 	"sync/atomic"
+	"time"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -27,6 +27,8 @@ type BlockObserver struct {
 	lastProcessedBlockHeight atomic.Int64
 	lastQueriedBlockHeight   atomic.Int64
 	currentBlockHeight       atomic.Int64
+	earliestBlock            atomic.Int64
+	earliestUnixNano         atomic.Int64
 	ConfigManager            *apiconfig.ConfigManager
 	Queue                    *UnboundedQueue[*chainevents.JSONRPCResponse]
 	caughtUp                 atomic.Bool
@@ -39,6 +41,11 @@ type BlockObserver struct {
 	// progress (lastProcessedBlockHeight) still advances for every block.
 	// A nil filter preserves the legacy behavior of enqueuing every event.
 	relevanceFilter func(*chainevents.JSONRPCResponse) bool
+	// results caches recent BlockResults so the handler walk and the host-event
+	// feed share one node read when they are at the same height.
+	results *blockResultsCache
+	// feedNotify wakes HostEventFeed. Nil when the feed is not running.
+	feedNotify chan struct{}
 }
 
 // SetRelevanceFilter installs a predicate used to drop irrelevant tx events at
@@ -51,6 +58,8 @@ func (bo *BlockObserver) SetRelevanceFilter(filter func(*chainevents.JSONRPCResp
 // TmHTTPClient abstracts the subset of RPC methods we need
 type TmHTTPClient interface {
 	BlockResults(ctx context.Context, height *int64) (*coretypes.ResultBlockResults, error)
+	Header(ctx context.Context, height *int64) (*coretypes.ResultHeader, error)
+	BlockchainInfo(ctx context.Context, minHeight, maxHeight int64) (*coretypes.ResultBlockchainInfo, error)
 	Status(ctx context.Context) (*coretypes.ResultStatus, error)
 }
 
@@ -115,10 +124,64 @@ func (bo *BlockObserver) updateStatus(newHeight int64, caughtUp bool) {
 	}
 	bo.currentBlockHeight.Store(newHeight)
 	bo.caughtUp.Store(caughtUp)
+	wake(bo.notify)
+	wake(bo.feedNotify)
+}
+
+// noteLatest raises the observer tip when HTTP status is ahead of NewBlock.
+// A lower or equal height is ignored so a stale status cannot rewind the tip.
+func (bo *BlockObserver) noteLatest(height int64) {
+	if bo == nil || height <= 0 {
+		return
+	}
+	for {
+		prev := bo.currentBlockHeight.Load()
+		if height <= prev {
+			return
+		}
+		if bo.currentBlockHeight.CompareAndSwap(prev, height) {
+			wake(bo.notify)
+			wake(bo.feedNotify)
+			return
+		}
+	}
+}
+
+// noteEarliest records the node's earliest retained height. The host-event
+// feed reads it instead of calling Status on every walk.
+func (bo *BlockObserver) noteEarliest(height int64) {
+	if bo == nil {
+		return
+	}
+	if height <= 0 {
+		height = 1
+	}
+	bo.earliestBlock.Store(height)
+	bo.earliestUnixNano.Store(time.Now().UnixNano())
+}
+
+func (bo *BlockObserver) freshEarliest(maxAge time.Duration) (int64, bool) {
+	if bo == nil {
+		return 0, false
+	}
+	at := bo.earliestUnixNano.Load()
+	if at == 0 || time.Since(time.Unix(0, at)) > maxAge {
+		return 0, false
+	}
+	h := bo.earliestBlock.Load()
+	if h <= 0 {
+		return 0, false
+	}
+	return h, true
+}
+
+func wake(ch chan struct{}) {
+	if ch == nil {
+		return
+	}
 	select {
-	case bo.notify <- struct{}{}:
+	case ch <- struct{}{}:
 	default:
-		// already notified; coalesce
 	}
 }
 
@@ -209,7 +272,7 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 		logging.Warn("BlockObserver tmClient is nil, skipping", types.EventProcessing)
 		return false
 	}
-	res, err := bo.tmClient.BlockResults(ctx, &height)
+	res, err := bo.blockResults(ctx, height)
 	if err != nil || res == nil {
 		logging.Warn("Failed to fetch BlockResults", types.EventProcessing, "height", height, "error", err)
 		return false
@@ -266,6 +329,16 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 		return false
 	}
 	return true
+}
+
+func (bo *BlockObserver) blockResults(ctx context.Context, height int64) (*coretypes.ResultBlockResults, error) {
+	if bo.results != nil {
+		return bo.results.Get(ctx, height)
+	}
+	if bo.tmClient == nil {
+		return nil, nil
+	}
+	return bo.tmClient.BlockResults(ctx, &height)
 }
 
 // enqueue sends an item to the (possibly bounded) queue while honoring context

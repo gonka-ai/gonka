@@ -37,8 +37,32 @@ type Server struct {
 	phaseTracker  *chainphase.ChainPhaseTracker
 	runtimeConfig *runtimeconfig.Server
 	hostEvents    *apiconfig.HostEventRing
+	hostLog       HostEventLog
+	hostStatus    HostEventStatus
 	escrowLoad    *broker.EscrowLoadTracker
 	blockOracle   blocks.BlockOracle
+}
+
+// HostEventLog is the durable catch-up window behind the ring.
+// Reads do not take the writer lock.
+type HostEventLog interface {
+	Read(ctx context.Context, afterSeq uint64, kinds []apiconfig.HostEventKind, limit int) (rows []apiconfig.HostEvent, generation uint64, err error)
+	ResolveBlock(ctx context.Context, height int64) (seq uint64, found bool, generation uint64, err error)
+	Oldest(ctx context.Context) (seq uint64, empty bool, generation uint64, err error)
+	// FeedHead is the last committed sequence and the store generation.
+	// empty is true when this writer has no rows; seq is then 0.
+	// GetHostEvents uses it while the ring has not been restored.
+	FeedHead(ctx context.Context) (seq, generation uint64, empty bool, err error)
+}
+
+// HostEventStatus is the feed cursor. EmittedHeight 0 means nothing has been committed.
+// TipHeight is the node height. Stalled is the feed's stall flag.
+// RingRestored is false while boot has not loaded the ring from the store.
+type HostEventStatus interface {
+	Stalled() bool
+	EmittedHeight() int64
+	TipHeight() int64
+	RingRestored() bool
 }
 
 // ServerOption configures optional Server dependencies.
@@ -47,6 +71,16 @@ type ServerOption func(*Server)
 // WithHostEventRing enables GetHostEvents. Without it the RPC returns FailedPrecondition.
 func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
 	return func(s *Server) { s.hostEvents = ring }
+}
+
+// WithHostEventLog reads catch-up pages from the store when the cursor is older than the ring.
+func WithHostEventLog(log HostEventLog) ServerOption {
+	return func(s *Server) { s.hostLog = log }
+}
+
+// WithHostEventStatus supplies emitted height, chain tip, and the stall flag.
+func WithHostEventStatus(st HostEventStatus) ServerOption {
+	return func(s *Server) { s.hostStatus = st }
 }
 
 // WithEscrowLoadTracker attaches the per-escrow acquire rate tracker used to

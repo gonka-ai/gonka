@@ -70,6 +70,14 @@ func (f *fakeInferenceClient) PreservedNodesSnapshot(context.Context, *inference
 	panic("not implemented")
 }
 
+func (f *fakeInferenceClient) WarmKeyEntry(context.Context, *inferencetypes.QueryWarmKeyEntryRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyEntryResponse, error) {
+	panic("not implemented")
+}
+
+func (f *fakeInferenceClient) WarmKeyLog(context.Context, *inferencetypes.QueryWarmKeyLogRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyLogResponse, error) {
+	panic("not implemented")
+}
+
 var _ chain.InferenceClient = (*fakeInferenceClient)(nil)
 
 func TestChainFetcher_FetchSnapshot(t *testing.T) {
