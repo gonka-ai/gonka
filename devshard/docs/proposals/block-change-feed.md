@@ -2,7 +2,7 @@
 
 **Status:** Draft / plan
 **Related:** [async-header-time-timeout.md](async-header-time-timeout.md), [warm-key-grant-cache.md](warm-key-grant-cache.md), [block-change-feed-concerns.md](block-change-feed-concerns.md) (fixes adopted here), [block-change-feed-plan.md](../block-change-feed-plan.md) (implementation steps), `GetHostEvents` ring, `BlockObserver`, `headertime.Source`, `WarmKeyLogCopy`
-**Scope:** One async library on devshardd and the gateway. It long-polls the host-event ring for block changes and warm-key events, writes blocks into the existing `headertime.Source`, catches up from a height through that ring's store, and falls back to the chain when dapi is absent or stalled. dapi fills the ring from one ordered feed loop, one height at a time. The gateway checks commit signatures on every dapi block before using it.
+**Scope:** One async library on devshardd and the gateway. It long-polls the host-event ring for block changes and warm-key events, writes blocks into the existing `headertime.Source`, catches up from a height through that ring's store, and falls back to the chain when dapi is absent or stalled. dapi fills the ring from one ordered feed loop, one height at a time. `NODE_MANAGER_ADDR` on the gateway is optional and trusted when set. Comet headers are still commit-checked. The header-time map is optional.
 
 This is a plan. It does not change code by itself.
 
@@ -17,15 +17,15 @@ Two separate clients each do part of it:
 | Client | Where it runs | What it does |
 |---|---|---|
 | `failover.Oracle` | devshardd always (when a NodeManager or chain client exists). Gateway only when `DEVSHARD_GATEWAY_CHAIN_ORACLE` is on. | Synchronous `Latest` / `At`. Order is the Comet tip cache, then dapi `GetBlockHeader` (one height), then chain `GetLatestBlock` / `GetBlockByHeight`. A miss outside the last 100 heights is a dummy header. `Subscribe` on the NodeManager client is refused. |
-| `hostevents.Run` | devshardd only, and only when `DEVSHARD_HOST_EVENTS_ENABLED` is on. | Async long-poll of `GetHostEvents` (escrow, warm key). `Unimplemented` stops the loop. Chain is not the next source of the stream. `needs_reset` reloads open escrows and drops the warm-key copy so the next use reads `WarmKeyLog`. It starts at cursor 0, which replays the whole retained window. |
+| `hostevents.Run` / `Poller` | devshardd and the gateway. `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds on devshardd. | One async `GetHostEvents` loop for blocks, warm keys, and, on devshardd, escrow. `Unimplemented` keeps the loop and uses the fallbacks. `needs_reset` reloads open escrows when they are subscribed and drops warm-key completeness so the next use reads `WarmKeyLog`. The first request sends `after_height` once. |
 
-The gateway does not call `hostevents.Run`, and it often has no `NODE_MANAGER_ADDR`. When it has a Comet URL, its live blocks come from `tipcache.StartCometWithHooks`. devshardd's live blocks come from `chainEvents.OnNewBlock` → `ObserveChainHeader`. Both sockets stay. This plan adds a reader in front of them. It does not open a second Comet subscription.
+The gateway starts that poller from `initGatewayHeightSync`, including when `NODE_MANAGER_ADDR` is empty. When it has a Comet URL, its live blocks come from `tipcache.StartCometWithHooks`. devshardd's live blocks come from `chainEvents.OnNewBlock` → `ObserveChainHeader`. Both sockets stay. The poller does not open another Comet subscription.
 
-Both binaries already have a block map, `headertime.Source`, which maps height → (hash, time in ms):
-- devshardd builds it with `headertime.New(oracle)` in `devshardd/session/heightsync.go`.
-- The gateway builds it in `gatewayHeaderTimeSource`. With a Comet RPC, the gateway's source uses `observer.NewTendermint` with `VerifyCommits: true`, so its header times are commit-verified.
+Both binaries have one block map, `headertime.Source`, which maps height → (hash, time in ms, source, verified):
+- devshardd builds it with `headertime.New` in `devshardd/session/heightsync.go` and passes that instance to session state and `ObserveChainHeader`.
+- The gateway builds it in `gatewayHeaderTimeSource` and passes that instance to `gatewayHeaderTimes`. The map is optional. With a Comet RPC and a successful seed, one `observer.NewTendermint` with `VerifyCommits: true` is the filler and the verifier for the Comet `OnHeader` hook and live dapi `BLOCK` events. If Comet seed failed and `NODE_MANAGER_ADDR` is set, dapi latest is trusted instead.
 
-Today `Source` is filled only by fetch-on-miss through that oracle. `Source.Observe` is not called in production code, and the Comet sockets above write `tipcache`, not `Source`.
+`Source` does not hold a block oracle. On devshardd the Comet socket writes it, and when a Comet RPC is set the poller installs a header-only filler. On the gateway the verifier writes it. Otherwise a miss still uses `OracleFiller`. That filler reports `dapi` when the oracle stored the height from a dapi BLOCK, and on the gateway a verified dapi origin is not relabeled `chain` for the same hash.
 
 On dapi, the ring is written today from two unordered paths:
 
@@ -54,7 +54,7 @@ That covers the grant-cache note's acceptance criteria: a grant that was invisib
 
 - dapi does not re-query `GranteesByMessageType` for a miss set.
 - There is no every-10th-block recheck of accepted booleans. An end is a `WARM_KEY_REVOKED` event, or a later `WarmKeyLog` read.
-- The gateway never enters `hostevents.Run`. Its bridge has the copy, so it only sees grants through the chain query.
+- The gateway runs the poller without the escrow sink. It applies warm-key events to its bridge's copy, which reloads from `WarmKeyLog` when the poll is down.
 
 The piece the grant-cache note still asks for, and this library provides, is the shared wake: block height and warm-key events on the same long-poll, on both binaries, with the chain log as the fallback when that poll is down.
 
@@ -129,7 +129,7 @@ Rules:
 - **A failure stops the feed at H.** A failed `BlockResults`, `Header`, epoch lookup, or store write stops the feed at H. Nothing after H is appended, H is not skipped, and the generation does not change. The handler walk keeps running. The feed retries H with backoff and catches up in order when the read or the store recovers.
 - **Only pruning starts a new generation.** The feed does not use the 500-block jump. It starts a new generation at the tip in two cases: the node no longer has `emitted_height + 1` (`EarliestBlockHeight` is above it), or the store is missing or unreadable at boot. A fresh generation starts at the tip with no backfill.
 - **Rows carry a writer.** Every store table has a `writer` column set to the participant address. Every append, read, `BLOCK(height)` resolve, load, and prune filters on it. Dapis of different participants can share one database with independent sequences, generations, and retention.
-- **One process per writer.** On Postgres, the feed holds a session advisory lock, keyed by a hash of `writer`, on one dedicated connection kept for its lifetime. If that connection drops, the feed stalls, takes the lock again on a new connection, and reloads its state. A second dapi with the same `writer` cannot take the lock, does not run the feed, and reports it as stalled. On SQLite, the database is a local file and is not shared.
+- **One process per writer.** On Postgres, the feed holds a session advisory lock, keyed by a hash of `writer`, on one dedicated connection kept for its lifetime. Reads use the pool at `REPEATABLE READ` so `Load` and `Head` see one commit. If that connection drops, the feed stalls, takes the lock again on a new connection, and reloads its state. Reload continues in the same generation only when the store matches the ring. A height the store already emitted is returned only when that generation and the first stored sequence match the ring; otherwise the feed starts a new generation. A second dapi with the same `writer` cannot take the lock, does not run the feed, and reports it as stalled. On SQLite, writes use a dedicated `sql.Conn` and reads use a pool of 4. The database is a local file and is not shared.
 
 ---
 
@@ -145,7 +145,7 @@ The memory ring grows from 4096 slots to 40960, ten times larger. With full head
 - prune by epoch
 - load the hot tail (the last 40960 rows), the saved generation, `next_seq`, `emitted_height`, and the oldest retained sequence number
 
-Two implementations, SQLite and Postgres. The process picks one through the same factory configuration `statsstorage` already uses.
+Two implementations, SQLite and Postgres. The process picks SQLite or Postgres from `DAPI_HOST_EVENTS_STORE` (empty is SQLite). An unknown backend fails startup.
 
 Every kind is stored: block, warm key, escrow, and maintenance. Rows whose `epoch_index` is older than `current_epoch − 4` are deleted. The extra epoch is a margin for a boundary block. On startup the store's head is checked against the head marker. If it passes, the hot tail is loaded into the memory ring, the generation, `next_seq`, and `emitted_height` are restored, and the feed resumes at `emitted_height + 1`. Heights missed while dapi was down are therefore appended in order, and a client inside the hot tail does not see `needs_reset`.
 
@@ -158,9 +158,12 @@ Every kind is stored: block, warm key, escrow, and maintenance. Rows whose `epoc
 | Request | Read starts after |
 |---|---|
 | `cursor > 0` | `cursor`. `after_height` is ignored. |
+| `cursor = 0`, `after_height = X > 0`, `emitted_height = 0` | nothing: `Unavailable`. `next_cursor` is unset. The client retries this request. |
 | `cursor = 0`, `after_height = X > 0`, `X < emitted_height`, `BLOCK(X)` stored | the sequence number of `BLOCK(X)` |
-| `cursor = 0`, `after_height = X > 0`, `X < emitted_height`, no `BLOCK(X)` row (pruned, or below this generation's first height) | nothing: `needs_reset` with `next_cursor = head` |
-| `cursor = 0`, `after_height = X ≥ emitted_height` | head. New heights arrive live. |
+| `cursor = 0`, `after_height = X > 0`, `X + 1` is this generation's first height | the oldest retained event of this generation |
+| `cursor = 0`, `after_height = X > 0`, `X < emitted_height`, no `BLOCK(X)` row (pruned, or below this generation's first height − 1) | nothing: `needs_reset` with `next_cursor = head` |
+| `cursor = 0`, `after_height = X = emitted_height`, and a height has been committed | the sequence number of `BLOCK(X)` when that row is stored, otherwise head |
+| `cursor = 0`, `after_height = X > emitted_height`, and a height has been committed | head. The client is ahead of this feed. |
 | `cursor = 0`, `after_height = 0` | the oldest retained event (today's behavior, kept for old clients) |
 
 Because `after_height` is ignored once there is a cursor, the runner's dispatch retry (`cursor = seq − 1`) keeps working.
@@ -169,15 +172,15 @@ Because `after_height` is ignored once there is a cursor, the runner's dispatch 
 
 **Read path.** The waiter is registered before the read, with the same `longpoll.Wait` as today:
 
-- Start inside the memory ring: answer from the ring.
+- Start inside the memory ring: answer from the ring. If the ring wraps between `Bounds` and `SincePage`, answer from the store when the generation still matches.
 - Start older than the ring, inside the store: answer from the store, up to the captured head. The store holds every row the ring holds, so one store read covers the gap between the store and the ring. Do not wait.
-- Caught up: hold until the next appended event or `max_wait_seconds`.
+- Caught up: hold until the next appended event or `max_wait_seconds`. Start is resolved once per request. A wake or timeout re-read uses that sequence and ignores `after_height`.
 
 **`needs_reset`** is returned for:
 - a generation change
 - a cursor above head
 - a cursor older than the store
-- an `after_height` with no `BLOCK` row, because it was pruned or is below this generation's first height
+- an `after_height` with no `BLOCK` row, because it was pruned or is below this generation's first height − 1
 
 Every `needs_reset` has no events, the current `generation`, and `next_cursor` = the head captured before the read. The client continues from that cursor with `after_height = 0` and fills what it skipped from the chain. Its next request is inside the window by construction, so a reset cannot repeat.
 
@@ -187,11 +190,11 @@ A client that resent the same `after_height` would loop. That happens for exampl
 
 **`EscrowLoad`.** The snapshot is attached only when the subscribe set includes an escrow kind, so the gateway and non-escrow catch-up pages do not carry it. It is not attached to `Unavailable` errors.
 
-**Stall.** While the feed is stalled (a failing store, or another dapi holds the lock), or `emitted_height` is more than 3 blocks behind the node tip:
+**Stall.** While the feed is stalled (a failing store, or another dapi holds the lock), or `emitted_height` is more than 3 blocks behind the node tip (`NewBlock`, or the sync checker's `LatestBlockHeight` when that is higher):
 
 - A request with committed events after its cursor gets them.
-- A request that would otherwise wait gets `codes.Unavailable`.
-- A failing store read also returns `Unavailable`.
+- A request that would otherwise wait gets `codes.Unavailable`. A long-poll that times out still at that cursor does too.
+- A failing store read also returns `Unavailable`. A client cancel or deadline on that read returns that status instead.
 
 The client keeps its cursor and generation, and uses its fallbacks until the feed recovers in the same generation. Stopping only the feed, rather than dapi or the ring's content, keeps clients from rebuilding state when the store comes back.
 
@@ -209,14 +212,14 @@ The `headertime.New(oracle)` calls go away. `tipcache` and `failover.Oracle` sta
 **Writers.**
 - The poller's block sink is the primary writer when dapi has a live feed.
 - The process's Comet socket also writes, in every state.
-- A `Filler` fills holes and misses with header-only reads: Comet `/header`, or `BlockchainInfo` in batches of 20. `GetBlockByHeight` (whole blocks with transactions) and `GetBlockHeader` are not used.
+- A `Filler` fills holes and misses with header-only reads: Comet `/header`, or `BlockchainInfo` in batches of 20. Each batch has its own deadline (`DefaultFetchTimeout × 4`). The observer RPC client uses `rpchttp.NewWithTimeout` (10 s). `GetBlockByHeight` (whole blocks with transactions) and `GetBlockHeader` are not used.
 
 A miss asks the `Filler` with today's 250 ms wait. `Source` no longer holds a `blocks.BlockOracle`. A dummy header is never stored.
 
 **Entries** record a `source` (dapi, comet, chain) and a `verified` flag.
 
 For a height that is already present:
-- Same hash: the entry stays, and its `source` and `verified` are upgraded if the new write ranks higher.
+- Same hash: the entry stays, and its `source` and `verified` are upgraded if the new write ranks higher. On the gateway a verified dapi origin ranks with chain, so a filler read of the same hash does not relabel it.
 - Different hash on devshardd: a Comet or chain write replaces a dapi entry, and the replacement is logged and counted. Otherwise the existing entry stays.
 - Different hash on the gateway: every entry there is verified, so this means two verified headers disagree. The existing entry stays, and the conflict is logged at error.
 
@@ -226,7 +229,7 @@ Three-epoch retention is dapi's store only.
 
 **Read helpers.**
 - `HighWater()` is the highest height with no gap below it, down to the floor.
-- `BlockInterval()` is the median of the last 20 header-time gaps, or a configured default until 20 entries exist.
+- `BlockInterval()` is the median of the last 20 header-time gaps, or a configured default until 20 entries exist, when no two heights are consecutive, or when that median is 0.
 
 ---
 
@@ -254,7 +257,7 @@ On devshardd, `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds from 
 `failover.Oracle` stays the synchronous height-sync lookup. This library does not replace it and does not depend on `DEVSHARD_GATEWAY_CHAIN_ORACLE`.
 
 **Cursor.**
-- At process start, the poller sends `cursor = 0`, `generation = 0`, and `after_height = max(Source.HighWater(), floor)`. This is the only request that carries `after_height`.
+- At process start, the poller sends `cursor = 0`, `generation = 0`, and `after_height = max(Source.HighWater(), floor)` when that is positive. On the gateway, an empty map with dapi configured sends start-at-head, never `after_height = 0`. This is the only request that carries `after_height`.
 - After a normal response it sends the returned cursor and generation.
 - After `needs_reset` it sends the returned `next_cursor` and generation, with `after_height = 0`. It then runs the fallbacks for the skipped range:
   - escrow rehydrate
@@ -263,27 +266,28 @@ On devshardd, `DEVSHARD_HOST_EVENTS_ENABLED` only removes the escrow kinds from 
 - Before the first poll, devshardd runs `RehydrateOpenEscrows` once, which covers escrows created before `after_height`.
 - Every sink accepts a replay as a no-op: warming a warm escrow, settling a settled one, applying a warm-key event already in the copy.
 
-**Trust in the gateway's dapi.** The gateway applies dapi's warm-key events as received, with no chain check. `NODE_MANAGER_ADDR` on a gateway must name a dapi the gateway operator trusts, because a grant from it makes `VerifyWarmKey` accept that key. This is documented with the gateway's configuration and logged at startup. Blocks are still signature-checked (below), because header times feed timeout decisions a counterparty can dispute.
+**Trust in the gateway's dapi.** `NODE_MANAGER_ADDR` is optional. Unset means dapi is never used and the header-time map is not filled from it. When set, that dapi is trusted: a grant makes `VerifyWarmKey` accept the key, and if Comet seed failed the gateway asks dapi for the latest height and stores it as verified. This is documented with the gateway's configuration and logged at startup. Comet headers are still signature-checked. The map is optional: a lookup can fill a missing height on demand.
 
 **`EscrowLoad`.**
 - The poller keeps the `LoadMap` hook and replaces the map only when it subscribes to escrow kinds, so the gateway, or devshardd with the flag off, never blanks it.
 - `Unavailable` leaves the last snapshot in place. Its `deliveredAt` shows its age.
 - No production code wires `LoadMap` today.
 
-**When dapi has no live block feed.** The client treats dapi this way, and writes blocks from the fallback, when any of these is true:
+**When dapi has no live block feed.** `blockLive` is whether dapi is the primary `BLOCK` writer into `Source`. Comet and the filler always run. The poller reports not-live, and does not consume dapi `BLOCK`s, when any of these is true:
 
 - `NODE_MANAGER_ADDR` is unset, or the RPC is `Unimplemented`
 - `supported_kinds` is empty or does not contain `BLOCK` (an old dapi)
 - the RPC returns `Unavailable` (a stalled feed)
 - the poll succeeds but no `BLOCK` event arrives for three `BlockInterval()` (a syncing node, or a dapi that silently drops the kind)
+- on the gateway, a dapi header failed verification within the last 5 minutes (the only case that still delivers `BLOCK`s)
 
-Warm-key and escrow events from a successful poll are still applied. When `BLOCK` events resume, dapi is the primary writer again.
+Warm-key and escrow events from a successful poll are still applied. When `BLOCK` events resume and suppress has expired, dapi is the primary writer again. Operators read `block_feed_live` on the gateway debug route and on `devshard_hostevents_block_feed_live`.
 
-**Startup.** The gateway starts the poller from `initGatewayHeightSync`, even when `NODE_MANAGER_ADDR` is empty. devshardd starts it next to `startHostEventsWarm`, outside that function's early return for a disabled flag.
+**Startup.** The gateway starts the poller from `initGatewayHeightSync`, even when `NODE_MANAGER_ADDR` is empty. An empty address never dials dapi. Seed is Comet `Trusted()` when that works, otherwise dapi `GetBlockHeader(0)`. devshardd starts the poller next to `startHostEventsWarm`, outside that function's early return for a disabled flag.
 
 ### Gateway: commit-signature checks on dapi blocks
 
-A block from dapi must not lower the gateway's verification bar. The gateway's `observer.Oracle` becomes the verifier for every block source: dapi `BLOCK`, the Comet socket, and `Filler` reads. It publishes only verified headers into `Source`.
+When Comet seed succeeded, live dapi `BLOCK` events go through the gateway's `observer.Oracle` so they do not lower the Comet verification bar. Comet `NewBlock` and filler reads use the same verifier. If Comet seed failed, this check is skipped and dapi is trusted (see **No Comet seed** below).
 
 For each dapi `BLOCK(H)`:
 
@@ -292,7 +296,7 @@ For each dapi `BLOCK(H)`:
    - its height is H
    - its time in milliseconds equals `header_time_unix_ms`
    - its chain id is the gateway's chain id
-2. **Pending.** Keep every self-checked header from `floor` to the tip. `floor` is the map window from above. A header below the floor is not stored, and headers below a floor that has moved up are dropped. There is no fixed cap. Until the trusted tip is known, headers are held and the floor is applied once it is.
+2. **Pending.** Keep every self-checked header from `floor` to the tip. `floor` is the map window from above. A header below the floor is not stored, and headers below a floor that has moved up are dropped. There is no fixed cap. The poller does not offer pages until a trusted tip exists (Comet seed, or dapi latest).
 3. **Anchor.** The gateway's verifier has no saved trust point, so on boot the trusted block is the tip from its own RPC. Commit signatures can be checked only forward from that block.
    - A pending height at or above the trusted tip goes on the verifier's coalescing queue, and `verifiedAt` checks its commit. A Comet tip on the same height uses that queue, so dapi does not add a second check.
    - Heights below the tip are not sent to `verifiedAt`. The tip is already their anchor.
@@ -304,9 +308,9 @@ One commit check covers a page only at the live tip, where the page's newest hei
 
 After a restart, heights below the tip are not usable until the pages that connect them to the tip have arrived. That wait replaces about one `BlockchainInfo` call per 20 heights.
 
-**Failures.** A self-check failure drops that event. A broken link, or an anchor whose hash differs from dapi's header at the same height, drops that header and every pending header below the break. The RPC fills the hole. The failure is logged at error. The client treats dapi as having no live block feed for 5 minutes, and still applies dapi's warm-key events.
+**Failures.** A self-check failure drops that event. A broken link, or an anchor whose hash differs from dapi's header at the same height, drops that header and every pending header below the break. The RPC fills the hole. The failure is logged at error and counted in `devshard_hostevents_dapi_blocks_rejected_total`. The client treats dapi as having no live block feed for 5 minutes, and still applies dapi's warm-key events.
 
-**No RPC.** A gateway with neither a Comet RPC nor a chain RPC cannot verify, so it does not write dapi blocks and logs an error at startup.
+**No Comet seed.** If Comet `Trusted()` fails and `NODE_MANAGER_ADDR` is set, the gateway asks dapi for the latest height and treats it as trusted. If the URL is unset, dapi is never used.
 
 devshardd skips this check. Its dapi is the same host's, so its block sink writes entries as verified.
 
@@ -335,14 +339,17 @@ devshardd skips this check. Its dapi is the same host's, so its block sink write
    - `needs_reset` with `next_cursor = head`, and `Unavailable` while stalled.
    - `EscrowLoad` only for escrow subscribers.
 5. **Block map.**
-   - `headertime.Source` as the single store, with entry source and verified flag, the conflict rule, a `Filler` miss path, the floor window, `HighWater`, and `BlockInterval`.
+   - `headertime.Source` as the single store, with entry source and verified flag, the conflict rule, a `Filler` miss path, the epoch floor (keep current and previous epoch), persisted catch-up, `HighWater`, and `BlockInterval`.
 6. **Shared client.**
    - One poller with a sink per kind, and the cursor policy, with `after_height` sent once per process.
    - The `LoadMap` hook, and the trusted-dapi rule for the gateway.
    - The no-feed rules, including `Unavailable`, and idempotent sinks.
    - Run on devshardd, independent of the host-events flag, and on the gateway.
 7. **Gateway verification.** Self-check, a pending buffer for the map window, a downward link from the trusted tip through dapi's headers, and one commit check only for a block at or above that tip.
-8. **Leave for the timeout design.** Refusal from `started_at`, execution from `time(confirm stamp)`, the verifier's 60 second map wait.
+8. **Testenv feed.** mock-dapi serves `BLOCK` and the cursor rule, mock-chain signs a commit the gateway can anchor, and the gateway's `NODE_MANAGER_ADDR` is that mock.
+9. **Testenv scenarios.** The block-feed stack scenarios in `testenv/docs/scenarios.md`, suite `citest-block-feed`: live heights, catch-up after restart, stall uses Comet, one reset, warm key from dapi, gateway drops a bad header.
+
+Out of this plan: refusal from `started_at`, execution from `time(confirm stamp)`, and the verifier's 60 second map wait.
 
 ---
 

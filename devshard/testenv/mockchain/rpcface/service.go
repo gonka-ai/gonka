@@ -12,8 +12,8 @@ import (
 	"github.com/cometbft/cometbft/libs/log"
 	"github.com/cometbft/cometbft/rpc/core"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
-	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	rpcserver "github.com/cometbft/cometbft/rpc/jsonrpc/server"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	cmttypes "github.com/cometbft/cometbft/types"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -39,6 +39,7 @@ type Service struct {
 	blockInterval      time.Duration
 	blockIntervalDelta time.Duration
 	blockSeed          int64
+	signed             *signedBlocks
 
 	mu       sync.Mutex
 	started  bool
@@ -67,6 +68,16 @@ func NewService(st *store.Store, config Config) (*Service, error) {
 		Config:   *cmtCfg.RPC,
 	}
 
+	signed, err := newSignedBlocks(st.GetChainID())
+	if err != nil {
+		_ = bus.Stop()
+		return nil, err
+	}
+	if err := signed.ensureThrough(st.GetBlockHeight()); err != nil {
+		_ = bus.Stop()
+		return nil, err
+	}
+
 	return &Service{
 		store:              st,
 		bus:                bus,
@@ -74,6 +85,7 @@ func NewService(st *store.Store, config Config) (*Service, error) {
 		blockInterval:      interval,
 		blockIntervalDelta: config.BlockIntervalDelta,
 		blockSeed:          config.BlockSeed,
+		signed:             signed,
 	}, nil
 }
 
@@ -123,7 +135,14 @@ func (s *Service) PublishEscrowSettled(id uint64, settler string, totalPayout, f
 }
 
 func (s *Service) publishNewBlock(height int64) error {
-	return s.bus.PublishEventNewBlock(newBlockEvent(s.store.GetChainID(), height))
+	if err := s.signed.ensureThrough(height); err != nil {
+		return err
+	}
+	ev, err := s.signed.newBlockEvent(height)
+	if err != nil {
+		return err
+	}
+	return s.bus.PublishEventNewBlock(ev)
 }
 
 func (s *Service) runBlockTicker(ctx context.Context) {
@@ -159,10 +178,11 @@ func (s *Service) routes() map[string]*rpcserver.RPCFunc {
 			func(_ *rpctypes.Context) (*ctypes.ResultStatus, error) { return statusHandler(st) },
 			"",
 		),
-		"block": rpcserver.NewRPCFunc(
-			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultBlock, error) { return blockHandler(st, height) },
-			"height",
-		),
+		"block":      rpcserver.NewRPCFunc(s.blockRPC, "height"),
+		"header":     rpcserver.NewRPCFunc(s.headerRPC, "height"),
+		"commit":     rpcserver.NewRPCFunc(s.commitRPC, "height"),
+		"validators": rpcserver.NewRPCFunc(s.validatorsRPC, "height,page,per_page"),
+		"blockchain": rpcserver.NewRPCFunc(s.blockchainRPC, "minHeight,maxHeight"),
 	}
 }
 

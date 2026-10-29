@@ -64,6 +64,8 @@ type NewBlockEvent struct {
 	BlockHash   []byte
 	Time        time.Time
 	ChainID     string
+	// Header is the protobuf-encoded tendermint Header (cmtproto.Header).
+	Header []byte
 }
 
 // DevshardEscrowCreatedHandler is called for each devshard_escrow_created event received.

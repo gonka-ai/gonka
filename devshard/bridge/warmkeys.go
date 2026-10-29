@@ -451,6 +451,12 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 // window rather than once per escrow.
 var sharedWarmKeyCopies sync.Map // chain.InferenceClient (comparable) -> *WarmKeyLogCopy
 
+// WarmKeyCopyFor returns the process-wide warm-key copy for client.
+// A nil client returns a copy that accepts events and does not query the chain.
+func WarmKeyCopyFor(client *chain.Client) *WarmKeyLogCopy {
+	return sharedWarmKeyCopy(client)
+}
+
 func sharedWarmKeyCopy(client *chain.Client) *WarmKeyLogCopy {
 	if client == nil {
 		return NewWarmKeyLogCopy(nil, 0)

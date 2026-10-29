@@ -11,6 +11,7 @@ import (
 
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
+	"devshard/testenv/mockdapi"
 
 	"github.com/stretchr/testify/require"
 )
@@ -36,6 +37,30 @@ func TriggerEscrowCreatedHostEvent(t *testing.T, client *http.Client, mockDapiHT
 func SetEscrowQueryFault(t *testing.T, client *http.Client, mockDapiHTTP string, faulted bool) {
 	t.Helper()
 	postTestenvJSON(t, client, mockDapiHTTP+"/testenv/escrow-query-fault", adminface.EscrowQueryFaultRequest{Faulted: faulted})
+}
+
+// StallHostEvents toggles mock-dapi GetHostEvents Unavailable.
+func StallHostEvents(t *testing.T, client *http.Client, mockDapiHTTP string, stalled bool) {
+	t.Helper()
+	postTestenvJSON(t, client, mockDapiHTTP+"/testenv/host-events/stall", mockdapi.StallRequest{Stalled: stalled})
+}
+
+// BumpHostEventGeneration starts a new mock-dapi host-event generation.
+func BumpHostEventGeneration(t *testing.T, client *http.Client, mockDapiHTTP string) {
+	t.Helper()
+	postTestenvJSON(t, client, mockDapiHTTP+"/testenv/host-events/generation", map[string]any{})
+}
+
+// PostHostEventWarmKey appends a grant (empty End) or revoke (non-empty End).
+func PostHostEventWarmKey(t *testing.T, client *http.Client, mockDapiHTTP string, req mockdapi.WarmKeyRequest) {
+	t.Helper()
+	postTestenvJSON(t, client, mockDapiHTTP+"/testenv/host-events/warm-key", req)
+}
+
+// PostHostEventBlock appends a BLOCK, including a header that does not hash to hash.
+func PostHostEventBlock(t *testing.T, client *http.Client, mockDapiHTTP string, req mockdapi.BlockAppendRequest) {
+	t.Helper()
+	postTestenvJSON(t, client, mockDapiHTTP+"/testenv/host-events/block", req)
 }
 
 func postTestenvJSON(t *testing.T, client *http.Client, url string, payload any) {
