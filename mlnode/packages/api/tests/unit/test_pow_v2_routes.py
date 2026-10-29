@@ -382,3 +382,50 @@ class TestStatusAggregation:
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "GENERATING"
+
+
+class TestStatTestForwarding:
+    REQUEST = {
+        "block_hash": "0xabc",
+        "block_height": 1,
+        "public_key": "pk",
+        "node_id": 0,
+        "node_count": 1,
+        "nonces": [0],
+        "params": {"model": "m", "seq_len": 64},
+        "wait": True,
+    }
+
+    def _post(self, client, stat_test):
+        captured = []
+
+        async def mock_post(url, json=None, timeout=None):
+            captured.append(json)
+            return make_mock_response(200, {"status": "completed", "request_id": "uuid", "artifacts": []})
+
+        with patch('api.proxy.vllm_client') as mock_client:
+            mock_client.post = AsyncMock(side_effect=mock_post)
+            response = client.post("/api/v1/inference/pow/generate", json={**self.REQUEST, "stat_test": stat_test})
+
+        assert response.status_code == 200
+        assert len(captured) == 1
+        return captured[0]["stat_test"]
+
+    @patch('api.proxy.vllm_backend_ports', [5001])
+    @patch('api.proxy.vllm_healthy', {5001: True})
+    @patch('api.proxy.pow_generate_rr_index', 0)
+    def test_chain_values_reach_backend(self, client, caplog):
+        sent = {"dist_threshold": 0.41, "p_mismatch": 0.1, "fraud_threshold": 0.05}
+        with caplog.at_level("WARNING", logger="api.inference.pow_v2_routes"):
+            forwarded = self._post(client, sent)
+        assert forwarded == sent
+        assert "unknown fields" not in caplog.text
+
+    @patch('api.proxy.vllm_backend_ports', [5001])
+    @patch('api.proxy.vllm_healthy', {5001: True})
+    @patch('api.proxy.pow_generate_rr_index', 0)
+    def test_unknown_field_is_logged_and_dropped(self, client, caplog):
+        with caplog.at_level("WARNING", logger="api.inference.pow_v2_routes"):
+            forwarded = self._post(client, {"dist_threshold": 0.41, "p_mismatch": 0.1, "p_value_threshold": 0.05})
+        assert forwarded == {"dist_threshold": 0.41, "p_mismatch": 0.1, "fraud_threshold": 0.01}
+        assert "p_value_threshold" in caplog.text

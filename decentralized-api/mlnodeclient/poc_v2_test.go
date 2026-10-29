@@ -106,10 +106,16 @@ func TestShouldAbstain_NanAndComparedNothing(t *testing.T) {
 }
 
 func TestStatTestParamsFromChain_AlphaReachesMLNodeAsFraudThreshold(t *testing.T) {
-	body, err := json.Marshal(StatTestParamsFromChain(&types.PoCStatTestParams{PValueThreshold: types.DecimalFromFloat(0.02)}))
+	body, err := json.Marshal(StatTestParamsFromChain(&types.PoCStatTestParams{
+		DistThreshold:   types.DecimalFromFloat(0.41),
+		PMismatch:       types.DecimalFromFloat(0.2),
+		PValueThreshold: types.DecimalFromFloat(0.02),
+	}))
 	require.NoError(t, err)
 	var wire map[string]float64
 	require.NoError(t, json.Unmarshal(body, &wire))
+	require.Len(t, wire, 3)
+	require.InDelta(t, 0.41, wire["dist_threshold"], 1e-9)
+	require.InDelta(t, 0.2, wire["p_mismatch"], 1e-9)
 	require.InDelta(t, 0.02, wire["fraud_threshold"], 1e-9)
-	require.NotContains(t, wire, "p_value_threshold")
 }
