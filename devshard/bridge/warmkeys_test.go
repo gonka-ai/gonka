@@ -12,16 +12,21 @@ import (
 
 // fakeWarmKeyFetcher is a chain whose log the test edits directly.
 type fakeWarmKeyFetcher struct {
-	mu      sync.Mutex
-	logs    map[string][]WarmKeyEntry
-	err     error
-	fetches int
+	mu        sync.Mutex
+	logs      map[string][]WarmKeyEntry
+	byGranter map[string]int
+	err       error
+	fetches   int
 }
 
 func (f *fakeWarmKeyFetcher) FetchWarmKeyLog(_ context.Context, granter string) ([]WarmKeyEntry, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fetches++
+	if f.byGranter == nil {
+		f.byGranter = make(map[string]int)
+	}
+	f.byGranter[granter]++
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -56,6 +61,18 @@ func (f *fakeWarmKeyFetcher) count() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.fetches
+}
+
+func (f *fakeWarmKeyFetcher) setErr(err error) {
+	f.mu.Lock()
+	f.err = err
+	f.mu.Unlock()
+}
+
+func (f *fakeWarmKeyFetcher) granterFetches(granter string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byGranter[granter]
 }
 
 // Test flow:
@@ -310,4 +327,46 @@ func (c *WarmKeyLogCopy) idle() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return len(c.loading) == 0
+}
+
+// Test flow:
+//  1. Apply grants for two granters and reload, then fail the chain and reload again, then reset and reload while the chain is down.
+//  2. Assert each reload reads once per known granter and never a stranger, a failed read keeps the stored grant, and a failed read after reset is an error rather than an empty log.
+func TestWarmKeyLogCopy_ReloadKnownOncePerGranter(t *testing.T) {
+	chain := &fakeWarmKeyFetcher{}
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	chain.set("other", WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	cp := NewWarmKeyLogCopy(chain, time.Hour)
+	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	cp.Apply(WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	require.Equal(t, []string{"cold", "other"}, cp.KnownGranters())
+
+	before := chain.count()
+	cp.ReloadKnown()
+	require.Equal(t, before+2, chain.count())
+	require.Equal(t, 1, chain.granterFetches("cold"))
+	require.Equal(t, 1, chain.granterFetches("other"))
+	require.Zero(t, chain.granterFetches("stranger"))
+
+	chain.setErr(errors.New("down"))
+	cp.ReloadKnown()
+	require.Equal(t, before+4, chain.count())
+	live, err := cp.LiveWarmKeys("cold")
+	require.NoError(t, err)
+	require.Len(t, live, 1)
+	require.Equal(t, "warm", live[0].Grantee)
+	ok, err := IsWarmKeyLive(cp, "cold", "warm", time.Now())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, before+4, chain.count(), "LiveWarmKeys and IsWarmKeyLive do not start another read while the copy is complete")
+
+	cp.Reset()
+	cp.ReloadKnown()
+	_, err = cp.LiveWarmKeys("cold")
+	require.Error(t, err)
+	cached, found, err := cp.WarmKeyEntry("cold", 1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "warm", cached.Grantee)
+	require.Zero(t, chain.granterFetches("stranger"))
 }

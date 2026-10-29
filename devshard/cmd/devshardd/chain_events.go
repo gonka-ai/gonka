@@ -7,6 +7,7 @@ import (
 	"common/chain"
 	chainbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
+	"devshard/hostevents"
 
 	chaintypes "github.com/productscience/inference/x/inference/types"
 )
@@ -66,6 +67,15 @@ func (b *chainEventBridge) OnNewBlock(h events.NewBlockHandler) {
 
 func (b *chainEventBridge) OnReady(h func(bool)) {
 	b.listener.OnReady(h)
+}
+
+// ListenWarmKeys adds the warm-key queries to the listener devshardd already
+// uses for NewBlock and escrow. Call it before Start.
+func (b *chainEventBridge) ListenWarmKeys(p *hostevents.Poller) {
+	if b == nil || b.listener == nil {
+		return
+	}
+	b.listener.ListenWarmKeys(p)
 }
 
 func (b *chainEventBridge) Start(ctx context.Context) error {

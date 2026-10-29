@@ -16,12 +16,18 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/observer"
+	"devshard/bridge"
 	"devshard/chainoracle/blocks/headertime"
+	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/hostevents"
 	"devshard/internal/testutil"
 	"devshard/transport"
 	"devshard/user"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 )
 
 func resetHeightSyncForTest() {
@@ -437,4 +443,34 @@ func TestGatewayDebugHeightSync_HeaderTimeBlockFeedLive(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.False(t, body.HeaderTime.BlockFeedLive)
 	require.Equal(t, uint64(0), body.HeaderTime.HighWater)
+}
+
+func TestGatewayCometHooks_WarmQueriesOnTheHeightSocket(t *testing.T) {
+	warm := bridge.NewWarmKeyLogCopy(nil, time.Hour)
+	p := hostevents.NewPoller(hostevents.PollerConfig{Warm: warm})
+	var connected atomic.Bool
+	hooks := gatewayCometHooks(func(up bool) { connected.Store(up) }, nil, p)
+	require.Equal(t, hostevents.WarmKeyQueries(), hooks.ExtraQueries)
+	require.Equal(t, append([]string{"tm.event='NewBlock'"}, hostevents.WarmKeyQueries()...), tipcache.SubscribeQueries(hooks))
+
+	hooks.OnConnected()
+	require.True(t, connected.Load())
+	hooks.OnEvent(ctypes.ResultEvent{Data: cmttypes.EventDataTx{TxResult: abci.TxResult{
+		Height: 20,
+		Result: abci.ExecTxResult{Events: []abci.Event{{
+			Type: "warm_key_granted",
+			Attributes: []abci.EventAttribute{
+				{Key: "granter", Value: "cold"},
+				{Key: "grantee", Value: "warm"},
+				{Key: "grant_id", Value: "4"},
+				{Key: "height", Value: "20"},
+			},
+		}}},
+	}}})
+	e, found, err := warm.WarmKeyEntry("cold", 4)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "warm", e.Grantee)
+	hooks.OnDisconnected()
+	require.False(t, connected.Load())
 }
