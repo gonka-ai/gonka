@@ -274,9 +274,17 @@ func TestHostEventStore_PostgresResolveBlockUsesPartialIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), "SET enable_seqscan = off")
 	require.NoError(t, err)
+	// On a small table a bitmap scan of host_events_height is cheaper than an index
+	// scan of the partial index, even when kind is inlined. Index scans are what
+	// show that the partial predicate matched.
+	_, err = conn.ExecContext(t.Context(), "SET enable_bitmapscan = off")
+	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), "PREPARE resolve_block AS "+s.q(resolveBlockSelect()))
 	require.NoError(t, err)
-	rows, err := conn.QueryContext(t.Context(), "EXPLAIN EXECUTE resolve_block($1, $2)", s.writer, int64(10))
+	// EXPLAIN is a utility statement. pgx's extended protocol describes it as taking
+	// no parameters, so the prepared statement's arguments have to be inlined.
+	lit := "'" + strings.ReplaceAll(s.writer, "'", "''") + "'"
+	rows, err := conn.QueryContext(t.Context(), fmt.Sprintf("EXPLAIN EXECUTE resolve_block(%s, %d)", lit, 10))
 	require.NoError(t, err)
 	defer rows.Close()
 	var plan strings.Builder
