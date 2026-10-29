@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -20,6 +21,11 @@ var (
 	pendingUpgrade   *apiconfig.UpgradePlan
 	upgradeInfoPath  = "../data/upgrade-info.json"
 	upgradeWaitDone  chan struct{}
+	// cosmovisorShutdownWait is how long to stay up after publishing
+	// upgrade-info.json. Cosmovisor polls every 300ms and kills this process
+	// as soon as CheckUpdate sees the file; the binary download starts only
+	// after that. Past this deadline the poller is not going to stop us.
+	cosmovisorShutdownWait = 30 * time.Second
 )
 
 func ProcessNewBlockEvent(
@@ -185,12 +191,18 @@ func CheckForUpgrade(configManager *apiconfig.ConfigManager) bool {
 // FinishUpgradeForCosmovisor blocks until cosmovisor terminates this process
 // (SIGKILL by default, or SIGTERM when DAEMON_SHUTDOWN_GRACE is configured).
 // CheckForUpgrade has already published upgrade-info.json. Exiting on our own
-// triggers WaitForUpgradeOrExit's CheckUpdate in parallel with MonitorUpdate.
+// while MonitorUpdate is inside CheckUpdate makes WaitForUpgradeOrExit's
+// second CheckUpdate treat the new plan as already current.
+//
+// If no signal arrives within cosmovisorShutdownWait, the poller's in-flight
+// check has finished without taking the upgrade, so this returns and the
+// caller exits. That is cosmovisor's fallback when the app dies before the
+// watcher sees the file.
 func FinishUpgradeForCosmovisor() {
 	if _, ok := consumePendingUpgrade(); !ok {
 		return
 	}
-	logging.Info("Waiting for cosmovisor to relaunch", types.Upgrades)
+	logging.Info("Waiting for cosmovisor to relaunch", types.Upgrades, "timeout", cosmovisorShutdownWait)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sigCh)
@@ -199,9 +211,14 @@ func FinishUpgradeForCosmovisor() {
 	done := upgradeWaitDone
 	pendingUpgradeMu.Unlock()
 
+	timer := time.NewTimer(cosmovisorShutdownWait)
+	defer timer.Stop()
+
 	select {
 	case <-sigCh:
 	case <-done:
+	case <-timer.C:
+		logging.Error("Cosmovisor did not terminate the process before timeout; exiting so the supervisor can retry", types.Upgrades, "timeout", cosmovisorShutdownWait)
 	}
 }
 
@@ -249,6 +266,14 @@ func writeUpgradeInfo(path string, plan apiconfig.UpgradePlan) error {
 	}
 	tmpPath := tmp.Name()
 	if _, err := tmp.Write(jsonData); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	// Flush before close so the bytes are durable before rename. A crash
+	// between rename and writeback can leave upgrade-info.json empty or
+	// partial, and CheckUpdate panics on invalid JSON.
+	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpPath)
 		return err

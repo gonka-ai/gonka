@@ -169,3 +169,28 @@ merged_node_config: true
 		t.Fatal("FinishUpgradeForCosmovisor waited without a published upgrade file")
 	}
 }
+
+func TestFinishUpgradeForCosmovisorReturnsOnTimeout(t *testing.T) {
+	pendingUpgradeMu.Lock()
+	upgradeWaitDone = nil
+	pendingUpgradeMu.Unlock()
+
+	stagePendingUpgrade(apiconfig.UpgradePlan{Name: "v0.0.1test", Height: 263})
+	old := cosmovisorShutdownWait
+	cosmovisorShutdownWait = 30 * time.Millisecond
+	t.Cleanup(func() {
+		cosmovisorShutdownWait = old
+		consumePendingUpgrade()
+	})
+
+	done := make(chan struct{})
+	go func() {
+		FinishUpgradeForCosmovisor()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("FinishUpgradeForCosmovisor did not return after the cosmovisor wait timed out")
+	}
+}
