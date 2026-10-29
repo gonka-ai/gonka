@@ -257,16 +257,8 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 	if len(msg.Validations) > params.GetEpochValidationParams().ValidationsPerMessageLimit() {
 		return inferencetypes.ErrIllegalState.Wrap("too many validations in one message")
 	}
-	signer, err := inferencetypes.CanonicalAccAddress(msg.Creator)
-	if err != nil {
+	if _, err := inferencetypes.CanonicalAccAddress(msg.Creator); err != nil {
 		return err
-	}
-	stored, err := ppd.inferenceKeeper.CountPocValidationsV2ForValidator(ctx, msg.PocStageStartBlockHeight, signer)
-	if err != nil {
-		return err
-	}
-	if stored >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-		return inferencetypes.ErrIllegalState.Wrap("signer stage cap reached")
 	}
 	for _, validation := range msg.Validations {
 		if validation == nil || validation.ModelId == "" || !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {

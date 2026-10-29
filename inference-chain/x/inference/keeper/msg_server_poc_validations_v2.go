@@ -120,13 +120,6 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 	}
 
 	validator := creatorAddr.String()
-	storedForSigner, err := k.CountPocValidationsV2ForValidator(ctx, startBlockHeight, creatorAddr)
-	if err != nil {
-		return nil, err
-	}
-	if storedForSigner >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-		return nil, sdkerrors.Wrap(types.ErrIllegalState, "signer stage cap reached")
-	}
 
 	// Process each validation - skip failures, don't fail entire batch.
 	// A proposer can include a transaction CheckTx would have dropped. Skipping
@@ -190,14 +183,6 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 
-		if storedForSigner >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-			k.LogWarn("[SubmitPocValidationsV2] signer stage cap reached, skipping rest", types.PoC,
-				"validator", validator,
-				"stage", startBlockHeight,
-				"stored", storedForSigner)
-			break
-		}
-
 		// Check for duplicate submission (prevents vote flipping)
 		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, participant, modelID, validator)
 		if err != nil {
@@ -235,7 +220,6 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		}
 
 		storedCount++
-		storedForSigner++
 		k.LogInfo("[SubmitPocValidationsV2] Validation stored", types.PoC,
 			"validator", validator,
 			"participant", participant,

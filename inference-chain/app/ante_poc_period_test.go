@@ -219,7 +219,7 @@ func overRawWeightDistribution(creator string) *inferencetypes.MsgMLNodeWeightDi
 	}
 }
 
-func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndReachedCap(t *testing.T) {
+func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndAcceptsLaterBatch(t *testing.T) {
 	k, ctx, decorator := setupPocPeriodAnte(t)
 	signer := testutil.Creator
 	seedLiveValidationShape(t, k, ctx, signer)
@@ -230,13 +230,6 @@ func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndReachedCap(t *testing.
 	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
 	require.False(t, nextCalled)
 
-	params, err := k.GetParams(ctx)
-	require.NoError(t, err)
-	if params.EpochValidationParams == nil {
-		params.EpochValidationParams = inferencetypes.DefaultEpochValidationParams()
-	}
-	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
-	require.NoError(t, k.SetParams(ctx, params))
 	require.NoError(t, k.SetPocValidationV2(ctx, inferencetypes.PoCValidationV2{
 		ParticipantAddress:          testutil.Executor,
 		ValidatorParticipantAddress: signer,
@@ -246,8 +239,8 @@ func TestPocPeriodValidationDecorator_RejectsEmptyBatchAndReachedCap(t *testing.
 	}))
 
 	nextCalled, err = runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg(signer))
-	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
-	require.False(t, nextCalled)
+	require.NoError(t, err)
+	require.True(t, nextCalled)
 }
 
 func TestPocPeriodValidationDecorator_RejectsTooManyValidations(t *testing.T) {

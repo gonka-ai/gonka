@@ -52,12 +52,15 @@ const (
 	gasSubmitPocValidationsV2 = uint64(250_000)
 
 	// PoCV2StoreCommit linear formula used when the fee tree has not been
-	// loaded yet. WARN: gasPoCV2Base mirrors FeeParams.base_validation_gas
-	// (default 500K), gasPoCV2PerCount mirrors FeeParams.gas_per_poc_count
-	// (default 100). If governance bumps either, retune both — OOG retry
-	// will limp along but at the cost of wasted block time.
-	gasPoCV2Base     = uint64(600_000) // 500K base + 50K sdk + 50% headroom
+	// loaded yet. WARN: gasPoCV2Base mirrors FeeParams period base
+	// (default 500K), gasPoCV2PerCount mirrors gas_per_unit (default 100),
+	// and gasPoCV2PerNewKey mirrors the StoreCommit static rule. If governance bumps
+	// any of them, retune — OOG retry will limp along but at the cost of
+	// wasted block time.
+	gasPoCV2Base     = uint64(600_000) // 500K base + 20% headroom
 	gasPoCV2PerCount = uint64(150)     // 100 on-chain + 50%
+	// 50% headroom on StoreCommitGasPerNewKey, same ratio as gas_per_unit.
+	gasPoCV2PerNewKey = inferencetypes.StoreCommitGasPerNewKey + inferencetypes.StoreCommitGasPerNewKey/2
 
 	// Intrinsic StoreCommit/authz floor when the fee tree is loaded. The
 	// tree period-base and rate×delta are a surcharge on top of this, not
@@ -118,8 +121,11 @@ type StoreCommitGas struct {
 	// Static fallback: DAPI-padded tree leaves (100→150, 500k→600k).
 	HasRate    bool
 	HasBase    bool
+	HasNewKey  bool
 	PaddedRate uint64
 	PaddedBase uint64
+	// Padded StoreCommit static gas. Charged once per id absent from Prev.
+	PaddedNewKey uint64
 
 	// Measured path: once-per-stage dummy Simulate.
 	HasMeasured       bool
@@ -127,6 +133,7 @@ type StoreCommitGas struct {
 	MeasuredEntries   uint // dummy entry count; more entries → static
 	ChainRate         uint64
 	ChainBase         uint64
+	ChainNewKey       uint64
 }
 
 // HardwareDiffGas is the static extra-bytes formula. A successful Simulate
@@ -164,6 +171,20 @@ func (h GasHints) storeCommitStaticBase() uint64 {
 		return gasPoCV2Base
 	}
 	return sc.PaddedBase
+}
+
+func (h GasHints) storeCommitStaticNewKey() uint64 {
+	sc := h.StoreCommit
+	if sc.HasNewKey {
+		return sc.PaddedNewKey
+	}
+	if h.FeeTreeLoaded {
+		return 0
+	}
+	if sc.PaddedNewKey == 0 {
+		return gasPoCV2PerNewKey
+	}
+	return sc.PaddedNewKey
 }
 
 // estimateMsgGas returns the gas estimate for a single message.
@@ -212,6 +233,8 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 	case *inferencetypes.MsgDeclarePoCIntent:
 		return gasDeclarePoCIntent, true
 	case *inferencetypes.MsgSubmitNewParticipant:
+		// DAPI does not broadcast this message. The chain charges creation
+		// gas. This floor only keeps the authz permission list covered.
 		return gasSubmitNewParticipant, true
 	case *inferencetypes.MsgSubmitNewUnfundedParticipant:
 		return gasSubmitNewUnfundedParticipant, true
@@ -297,10 +320,10 @@ func hardwareNodesSize(participant string, nodeMap map[string]*inferencetypes.Ha
 func estimateStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHints) uint64 {
 	sc := hints.StoreCommit
 	if useMeasuredStoreCommitGas(m, hints) {
-		extra := storeCommitSurcharge(m, sc.ChainRate, sc.ChainBase, sc.Prev)
+		extra := storeCommitSurcharge(m, sc.ChainRate, sc.ChainBase, sc.ChainNewKey, sc.Prev)
 		return applySimulateHeadroom(saturatingAdd(sc.MeasuredIntrinsic, extra), hints.TxGasMultiplier)
 	}
-	extra := storeCommitSurcharge(m, hints.storeCommitStaticRate(), hints.storeCommitStaticBase(), sc.Prev)
+	extra := storeCommitSurcharge(m, hints.storeCommitStaticRate(), hints.storeCommitStaticBase(), hints.storeCommitStaticNewKey(), sc.Prev)
 	if hints.FeeTreeLoaded {
 		return saturatingAdd(gasStoreCommitIntrinsic, extra)
 	}
@@ -329,8 +352,9 @@ func storeCommitEntryCount(m *inferencetypes.MsgPoCV2StoreCommit) uint {
 	return n
 }
 
-func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base uint64, prev map[string]uint32) uint64 {
+func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base, gasPerNew uint64, prev map[string]uint32) uint64 {
 	var delta uint64
+	seenNew := make(map[string]struct{})
 	for _, e := range m.Entries {
 		if e == nil {
 			continue
@@ -340,11 +364,16 @@ func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base uint
 			if e.Count > p {
 				delta += uint64(e.Count - p)
 			}
-		} else {
-			delta += uint64(e.Count)
+			continue
 		}
+		delta += uint64(e.Count)
+		if _, dup := seenNew[e.ModelId]; dup {
+			continue
+		}
+		seenNew[e.ModelId] = struct{}{}
 	}
 	extra := saturatingMul(delta, rate)
+	extra = saturatingAdd(extra, saturatingMul(uint64(len(seenNew)), gasPerNew))
 	// Chain charges period base once per participant+stage
 	// (len(existingByModel)==0), not once per new model in this payload.
 	if len(prev) == 0 {
@@ -354,14 +383,16 @@ func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base uint
 }
 
 // StoreCommitIntrinsicFromSim peels the dummy commit's chain surcharge
-// (period base + rate×dummyCount) off Simulate gasUsed. Dummy is count=1
-// per local model on an empty stage. Returns false if the peel would
+// (period base + rate×dummyCount + gasPerNew×dummyCount) off Simulate
+// gasUsed. Dummy is count=1 per local model on an empty stage, so each
+// dummy entry is also a new commit key. Returns false if the peel would
 // underflow — caller keeps the static formula.
-func StoreCommitIntrinsicFromSim(simUsed, rate, base, dummyCount uint64) (uint64, bool) {
+func StoreCommitIntrinsicFromSim(simUsed, rate, base, gasPerNew, dummyCount uint64) (uint64, bool) {
 	if simUsed == 0 || dummyCount == 0 {
 		return 0, false
 	}
 	extra := saturatingAdd(base, saturatingMul(rate, dummyCount))
+	extra = saturatingAdd(extra, saturatingMul(gasPerNew, dummyCount))
 	if simUsed <= extra {
 		return 0, false
 	}
