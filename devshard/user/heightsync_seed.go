@@ -673,6 +673,9 @@ func fanHeightSeed(ctx context.Context, targets []seedTarget) []seedOutcome {
 	return fanHeightSeedUntil(ctx, targets, func(int) bool { return false })
 }
 
+// fanHeightSeedUntil seeds targets concurrently and returns the outcomes in
+// once isEnough holds for the anchored count, or every target answered; it
+// cancels the rest and waits for them before returning.
 func fanHeightSeedUntil(ctx context.Context, targets []seedTarget, isEnough func(seeded int) bool) []seedOutcome {
 	ctx, cancel := context.WithCancel(ctx)
 	results := make(chan seedOutcome, len(targets))

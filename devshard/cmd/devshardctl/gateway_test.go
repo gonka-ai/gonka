@@ -26,7 +26,6 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
-	"common/completionapi"
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
@@ -3349,11 +3348,11 @@ func TestNormalizeChatRequestDefaultsAndCapsMaxTokens(t *testing.T) {
 	require.EqualValues(t, 3_072, req.MaxTokens)
 	require.Contains(t, string(body), `"max_tokens":3072`)
 
-	floor := completionapi.MinTokensFloor
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	explicitMaxTokens := 64
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"messages":[{"role":"user","content":"hello"}]}`))

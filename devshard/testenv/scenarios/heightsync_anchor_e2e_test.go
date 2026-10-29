@@ -2306,10 +2306,14 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	clientOracle := staticOracleWith(100, xHash)
 	st := setupFourHostHTTPHeightSyncWithOracles(t, hostOracles, clientOracle)
 	seedHTTPSession(t, st.Session)
+	opened := st.Session.HeightSeedStatus()
+	require.GreaterOrEqual(t, opened.Seeded*2, opened.Slots,
+		"seed returns once half the roster has an anchor")
 	require.Eventually(t, func() bool {
 		status := st.Session.HeightSeedStatus()
 		return status.Slots > 0 && status.Seeded == status.Slots
-	}, 5*time.Second, 5*time.Millisecond, "the full-roster seed sweep must anchor every host before nonce 1")
+	}, 5*time.Second, 10*time.Millisecond,
+		"the background sweep anchors the slots quorum went without")
 
 	for nonce := 1; nonce <= 4; nonce++ {
 		_, err := st.Session.SendInference(ctx, params)
@@ -2325,7 +2329,7 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	for nonce := 1; nonce <= 4; nonce++ {
 		prefix := strings.ToLower(strings.TrimSpace(userReq[nonce-1].kv["block_hash_prefix"]))
 		require.Equal(t, x1Prefix, prefix,
-			"session-open seed makes X+1 MaxFresh before nonce 1 (nonce=%d)", nonce)
+			"after the sweep, X+1 is MaxFresh for nonce %d", nonce)
 	}
 	switchNonce := 1
 

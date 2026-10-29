@@ -81,10 +81,45 @@ run_ok tag --ref-name release/devshard/v4.1.1
 assert_eq "$(field devshard_version "$got")" v4.1.1 "v4.1.1 stripped"
 assert_eq "$(field release_body_line "$got")" "devshardd v4.1.1 protocol v4 binary stamp v4.1.1" "v4.1.1 body"
 
+run_ok tag --ref-name release/devshard/v6.0.0-rc1
+assert_eq "$(field mode "$got")" host "v6.0.0-rc1 mode"
+assert_eq "$(field build_inference_chain "$got")" false "v6.0.0-rc1 chain"
+assert_eq "$(field build_devshardd "$got")" true "v6.0.0-rc1 host"
+assert_eq "$(field make_devshard_version "$got")" v6 "v6.0.0-rc1 make slot"
+assert_eq "$(field devshard_protocol_version "$got")" v6 "v6.0.0-rc1 protocol"
+assert_eq "$(field devshard_version "$got")" v6 "v6.0.0-rc1 stripped"
+assert_eq "$(field devshard_binary_version "$got")" v6.0.0-rc1 "v6.0.0-rc1 binary"
+assert_eq "$(field release_name "$got")" "Devshard Release v6.0.0-rc1" "v6.0.0-rc1 name"
+assert_eq "$(field release_tag "$got")" "devshard/v6.0.0-rc1" "v6.0.0-rc1 tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v6 protocol v6 binary stamp v6.0.0-rc1 release candidate 1" "v6.0.0-rc1 body"
+
+run_ok tag --ref-name release/devshard/v4.1.0-rc2
+assert_eq "$(field devshard_version "$got")" v4.1 "v4.1.0-rc2 stripped"
+assert_eq "$(field devshard_binary_version "$got")" v4.1.0-rc2 "v4.1.0-rc2 binary"
+assert_eq "$(field release_name "$got")" "Devshard Release v4.1.0-rc2" "v4.1.0-rc2 name"
+assert_eq "$(field release_tag "$got")" "devshard/v4.1.0-rc2" "v4.1.0-rc2 tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v4.1 protocol v4 binary stamp v4.1.0-rc2 release candidate 2" "v4.1.0-rc2 body"
+
+run_ok tag --ref-name release/v0.2.16-devshard-v6.0.0-rc1
+assert_eq "$(field mode "$got")" host "chain-shaped rc mode"
+assert_eq "$(field devshard_binary_version "$got")" v6.0.0-rc1 "chain-shaped rc binary"
+assert_eq "$(field release_tag "$got")" "devshard/v6.0.0-rc1" "chain-shaped rc tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v6 protocol v6 binary stamp v6.0.0-rc1 release candidate 1" "chain-shaped rc body"
+
+run_ok tag --ref-name release/devshard/v4.1.1-rc10
+assert_eq "$(field devshard_version "$got")" v4.1.1 "v4.1.1-rc10 keeps patch"
+assert_eq "$(field release_body_line "$got")" "devshardd v4.1.1 protocol v4 binary stamp v4.1.1-rc10 release candidate 10" "v4.1.1-rc10 body"
+
 run_ok leftover-from-ref --ref-name release/devshard/v4.1.0
 assert_eq "${got//$'\n'/}" v4.1.0 "leftover-from-ref short host tag"
+run_ok leftover-from-ref --ref-name release/devshard/v6.0.0-rc1
+assert_eq "${got//$'\n'/}" v6.0.0-rc1 "leftover-from-ref short rc tag"
 run_ok leftover-from-ref --ref-name release/v0.2.15-devshard-v5.0.0
 assert_eq "${got//$'\n'/}" v5.0.0 "leftover-from-ref chain-shaped host tag"
+run_ok leftover-from-ref --ref-name release/v0.2.16-devshard-v6.0.0-rc1
+assert_eq "${got//$'\n'/}" v6.0.0-rc1 "leftover-from-ref chain-shaped rc tag"
+run_ok leftover-from-ref --ref-name release/v0.2.16-rc1-devshard-v6.0.0-rc2
+assert_eq "${got//$'\n'/}" v6.0.0-rc2 "leftover-from-ref chain rc and host rc"
 assert_fail "chain tag is not leftover" leftover-from-ref --ref-name release/v0.2.15
 assert_fail "short leftover-from-ref" leftover-from-ref --ref-name release/devshard/v4.1
 
@@ -108,13 +143,32 @@ assert_eq "$(field release_name "$got")" "Devshard Release v5.1.0" "release name
 run_ok docker-tag --ref-name release/v0.2.15-rc1-devshard-v5.0.0 --owner gonka-ai --registry ghcr.io
 assert_eq "$(field image_tag "$got")" 0.2.15-rc1-devshard-v5 "rc stays in chain slice"
 
+run_ok docker-tag --ref-name release/v0.2.16-devshard-v6.0.0-rc1 --owner gonka-ai
+assert_eq "$(field leftover "$got")" v6.0.0-rc1 "docker rc leftover"
+assert_eq "$(field leftover_major "$got")" v6 "docker rc major ignores candidate"
+assert_eq "$(field chain_version "$got")" v0.2.16 "docker rc chain"
+assert_eq "$(field image_tag "$got")" 0.2.16-devshard-v6-rc1 "docker image tag keeps candidate"
+assert_eq "$(field release_name "$got")" "Devshard Release v6.0.0-rc1" "docker rc release name"
+assert_eq "$(field release_tag "$got")" "devshard/v6.0.0-rc1" "docker rc release tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v6 protocol v6 binary stamp v6.0.0-rc1 release candidate 1" "docker rc body"
+assert_eq "$(field image_versiond "$got")" "ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6-rc1" "docker rc versiond image"
+
+run_ok docker-tag --ref-name release/v0.2.16-rc1-devshard-v6.0.0-rc2 --owner gonka-ai
+assert_eq "$(field chain_version "$got")" v0.2.16-rc1 "docker keeps chain candidate"
+assert_eq "$(field image_tag "$got")" 0.2.16-rc1-devshard-v6-rc2 "docker keeps both candidates"
+assert_eq "$(field release_body_line "$got")" "devshardd v6 protocol v6 binary stamp v6.0.0-rc2 release candidate 2" "docker host candidate body"
+
 assert_fail "short host tag has no chain version" docker-tag --ref-name release/devshard/v5.0.0 --owner gonka-ai
 assert_fail "chain tag is not docker-tag" docker-tag --ref-name release/v0.2.15 --owner gonka-ai
 
 assert_fail "v4.1 leftover" tag --ref-name release/devshard/v4.1
-assert_fail "rc leftover" tag --ref-name release/devshard/v4.1.0-rc1
+assert_fail "bare rc" tag --ref-name release/devshard/v4.1.0-rc
+assert_fail "rc zero" tag --ref-name release/devshard/v4.1.0-rc0
+assert_fail "rc leading zero" tag --ref-name release/devshard/v4.1.0-rc01
+assert_fail "rc uppercase" tag --ref-name release/devshard/v4.1.0-RC1
 assert_fail "short leftover on chain-shaped tag" tag --ref-name release/v0.2.14-devshard-v4
 assert_fail "junk after leftover" tag --ref-name release/v0.2.14-devshard-v4.0.0-extra
+assert_fail "junk after rc" tag --ref-name release/v0.2.14-devshard-v4.0.0-rc1-extra
 
 assert_fail "no boxes" dispatch \
 	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd false
@@ -146,6 +200,15 @@ assert_eq "$(field make_devshard_version "$got")" v4 "dispatch make slot uses pr
 assert_eq "$(field release_name "$got")" "Devshard Release v4.1.0" "dispatch same name as tag leftover"
 assert_eq "$(field release_tag "$got")" "devshard/v4.1.0" "dispatch same tag as leftover"
 assert_eq "$(field release_body_line "$got")" "devshardd v4.1 protocol v4 binary stamp v4.1.0" "dispatch body"
+
+run_ok dispatch \
+	--build-inference-chain false --build-dapi false --build-edge-api false --build-devshardd true \
+	--devshard-version v6 --devshard-protocol-version v6 --devshard-binary-version v6.0.0-rc1
+assert_eq "$(field devshard_binary_version "$got")" v6.0.0-rc1 "dispatch rc binary"
+assert_eq "$(field make_devshard_version "$got")" v6 "dispatch rc make slot uses protocol input"
+assert_eq "$(field release_name "$got")" "Devshard Release v6.0.0-rc1" "dispatch rc name"
+assert_eq "$(field release_tag "$got")" "devshard/v6.0.0-rc1" "dispatch rc tag"
+assert_eq "$(field release_body_line "$got")" "devshardd v6 protocol v6 binary stamp v6.0.0-rc1 release candidate 1" "dispatch rc body"
 
 run_ok dispatch \
 	--build-inference-chain true --build-dapi true --build-edge-api false --build-devshardd false \

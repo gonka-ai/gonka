@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"common/completionapi"
-
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/limits"
@@ -114,7 +112,7 @@ func TestPushedMembershipIsWhatMakesTheGatewayRouteAtAll(t *testing.T) {
 
 	assignment, err := router.Pick(context.Background(), scheduler.RequestProfile{
 		Model:  wiredModel,
-		Params: user.InferenceParams{Model: wiredModel, Prompt: []byte(`{"messages":[]}`), InputLength: 15, MaxTokens: completionapi.MinTokensFloor},
+		Params: user.InferenceParams{Model: wiredModel, Prompt: []byte(`{"messages":[]}`), InputLength: 15, MaxTokens: testutil.TestMaxTokens},
 	})
 	if err != nil {
 		t.Fatalf("Pick = %v, want an assignment; a zero escrow weight scores every candidate +Inf", err)

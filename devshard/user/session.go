@@ -1491,6 +1491,12 @@ func (s *Session) SetChainMaxNonce(maxNonce uint32) {
 	s.chainMaxNonce.Store(maxNonce)
 }
 
+// NonceCapReached reports that the session can compose no more active work,
+// timeout votes included, until finalization.
+func (s *Session) NonceCapReached() bool {
+	return s.nonceCapReached()
+}
+
 func (s *Session) nonceCapReached() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

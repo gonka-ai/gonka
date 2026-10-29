@@ -51,7 +51,7 @@ func TestWaitForPendingLosersReturnsWhenSendIgnoresCancel(t *testing.T) {
 	}
 
 	start := time.Now()
-	e.waitForPendingLosers(context.Background(), winner.nonce, []*inflight{winner, loser})
+	e.waitForPendingLosers(context.Background(), winner.nonce, []*inflight{winner, loser}, defaultParams())
 	elapsed := time.Since(start)
 
 	require.Equal(t, int64(1), cancelCalls.Load(), "loser must be cancelled after the grace window")
@@ -84,7 +84,7 @@ func TestGoTrackedRaceCleanupReleasesBarrierAfterHungLoserJoin(t *testing.T) {
 	}
 
 	e.goTrackedRaceCleanup(context.Background(), func(ctx context.Context) {
-		e.waitForPendingLosers(ctx, winner.nonce, []*inflight{winner, loser})
+		e.waitForPendingLosers(ctx, winner.nonce, []*inflight{winner, loser}, defaultParams())
 	})
 
 	require.Equal(t, int64(1), started.Load())

@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/registry"
 	"devshard/host"
+	"devshard/state"
 	"devshard/types"
 	"devshard/user"
 )
@@ -176,6 +177,7 @@ func TestWarmupWithoutALedgerRecordsNothingAndDoesNotPanic(t *testing.T) {
 // Test flow:
 //  1. Parse the probe's fixed prompt body.
 //  2. Assert its declared `max_tokens` matches `probeMaxTokens`, the amount the warmup actually reserves.
+//  3. Assert the probe's params reserve exactly `state.MinReservationTokens`, the same output budget devshardctl's PoC probe reserves.
 func TestABurnedNonceAndAWarmupProbeAgreeOnTheirTokenFloor(t *testing.T) {
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
@@ -186,6 +188,9 @@ func TestABurnedNonceAndAWarmupProbeAgreeOnTheirTokenFloor(t *testing.T) {
 	if body.MaxTokens != probeMaxTokens {
 		t.Errorf("probePrompt max_tokens = %d, reservation = %d: a host refuses a probe declaring less than it reserved",
 			body.MaxTokens, probeMaxTokens)
+	}
+	if params := probeParams("qwen", 1); params.MaxTokens != state.MinReservationTokens {
+		t.Errorf("probe MaxTokens = %d, want state.MinReservationTokens %d", params.MaxTokens, state.MinReservationTokens)
 	}
 }
 

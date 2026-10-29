@@ -611,7 +611,7 @@ GLOBAL_BURST=${GLOBAL_BURST:-5000}
 
 # Gonka API (Standard/Punisher)
 # Default: 10r/m + 600 burst = 1 hr recovery
-GONKA_API_RATE_LIMIT_VAL=${GONKA_API_RATE_LIMIT_RPS:-10}
+GONKA_API_RATE_LIMIT_VAL=${GONKA_API_RATE_LIMIT_RPM:-10}
 # Dedicated budget for the public mlnode metrics federation endpoint:
 # separated from api_zone so scraping consumers (Prometheus/Grafana) do not
 # compete with inference/API clients for the same bucket.

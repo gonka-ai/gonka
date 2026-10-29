@@ -19,6 +19,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// replayResponseTokens is the length of the replayed responses these tests build.
+const replayResponseTokens = 64
+
 // Test flow:
 // 1. Validate an output for a request with max_tokens 1 and capture the replay.
 // 2. The replay keeps max_tokens 1 and carries no min_tokens.
@@ -574,7 +577,7 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 }
 
 func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) {
-	n := int(completionapi.MinTokensFloor)
+	n := int(replayResponseTokens)
 	var capturedBody []byte
 	exec := func(_ context.Context, body []byte) (*http.Response, error) {
 		capturedBody = body
@@ -604,7 +607,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 }
 
 func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T) {
-	payload := responsePayloadTokens(int(completionapi.MinTokensFloor), "stop", "")
+	payload := responsePayloadTokens(int(replayResponseTokens), "stop", "")
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -677,7 +680,7 @@ func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
 func TestExecuteValidation_TokenInflationWithinTolerance_Passes(t *testing.T) {
 	// Claimed output is 3 tokens above validation replay — within ±3 tolerance.
 	// Floor-length responses keep the original at the min_tokens floor.
-	n := int(completionapi.MinTokensFloor)
+	n := int(replayResponseTokens)
 	validatorResponse := responsePayloadTokensWithUsage(n, 100, 100)
 	original := responsePayloadTokens(n, "stop", "")
 	result, err := ExecuteValidation(
@@ -847,7 +850,7 @@ func grammarPrefix(n int, logprob float64) []float64 {
 }
 
 func TestExecuteValidation_StreamedReplayWithNaNTailMatchesHonestExecutor(t *testing.T) {
-	positions := replayPositions(grammarPrefix(20, -0.1), int(completionapi.MinTokensFloor)-20)
+	positions := replayPositions(grammarPrefix(20, -0.1), int(replayResponseTokens)-20)
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -862,7 +865,7 @@ func TestExecuteValidation_StreamedReplayWithNaNTailMatchesHonestExecutor(t *tes
 }
 
 func TestExecuteValidation_StreamedReplayWithNaNTailScoresForgedPrefix(t *testing.T) {
-	tail := int(completionapi.MinTokensFloor) - 40
+	tail := int(replayResponseTokens) - 40
 	executor := replayPositions(grammarPrefix(40, -0.1), tail)
 	validator := replayPositions(grammarPrefix(40, -6.0), tail)
 	result, err := ExecuteValidation(
@@ -877,7 +880,7 @@ func TestExecuteValidation_StreamedReplayWithNaNTailScoresForgedPrefix(t *testin
 }
 
 func TestExecuteValidation_StreamedReplayFailuresAreErrors(t *testing.T) {
-	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 0)
+	positions := replayPositions(grammarPrefix(int(replayResponseTokens), -0.1), 0)
 	cases := map[string][]byte{
 		"error event": replaySSE(positions[:3], true, true, `{"error":{"message":"engine dead","type":"InternalServerError","code":500}}`),
 		"no done":     replaySSE(positions, true, false, ""),
@@ -912,7 +915,7 @@ func TestExecuteValidation_StreamedReplayErrorEventIsNotAnEmptySentinelVerdict(t
 }
 
 func TestExecuteValidation_StreamedReplayErrorEventKeepsNonStreamVerdicts(t *testing.T) {
-	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 0)
+	positions := replayPositions(grammarPrefix(int(replayResponseTokens), -0.1), 0)
 	cases := []struct {
 		name    string
 		event   string
@@ -947,7 +950,7 @@ func TestExecuteValidation_StreamedReplayErrorEventKeepsNonStreamVerdicts(t *tes
 }
 
 func TestExecuteValidation_StreamedReplayIgnoresSSECommentsAndFields(t *testing.T) {
-	positions := replayPositions(grammarPrefix(int(completionapi.MinTokensFloor), -0.1), 4)
+	positions := replayPositions(grammarPrefix(int(replayResponseTokens), -0.1), 4)
 	events := strings.Split(strings.TrimSpace(string(replaySSE(positions, true, true, ""))), "\n\n")
 	var sb strings.Builder
 	sb.WriteString(": keepalive\r\n\r\n")

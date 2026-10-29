@@ -43,7 +43,7 @@ type HTTPSessionConfig struct {
 	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
 	DisableHeightSyncHeartbeat bool
 	// OpenAbsentHostsAsDeadSlots opens the session when a group member is absent from the chain, its slot failing every
-	// call with ErrHostAbsentFromChain, instead of failing the open with bridge.ErrParticipantNotFound.
+	// call with ErrHostAbsentFromChain, instead of a lazy slot that looks the host up again on every use.
 	OpenAbsentHostsAsDeadSlots bool
 	StepTimer                  StepTimer
 	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
@@ -272,10 +272,8 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			return absentHostClient{address: addr}, nil
 		}
 		if err != nil {
-			if !errors.Is(err, bridge.ErrParticipantNotFound) {
-				logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
-					"escrow", cfg.EscrowID, "participant", addr, "error", err)
-			}
+			logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
+				"escrow", cfg.EscrowID, "participant", addr, "error", err)
 			return nil, err
 		}
 		httpClient := transport.NewHTTPClient(strings.TrimSpace(info.URL), cfg.EscrowID, signer,
@@ -372,9 +370,10 @@ var hostLookupOpenWait = transport.DefaultLazyWait
 // openHostClients builds one client per distinct participant in group. A
 // participant whose lookup fails transiently, publishes no URL, or outlasts
 // hostLookupOpenWait does not fail the session: it gets a lazyHostClient that
-// resolves on use, which the gateway's chat picker skips until then.
-// bridge.ErrParticipantNotFound is a definitive chain answer and still fails
-// the open, so the gateway parks the escrow until the participant appears.
+// resolves on use, which the gateway's chat picker skips until then. A
+// participant absent from the chain (bridge.ErrParticipantNotFound) opens the
+// same way, so the escrow serves on the rest of its group and takes the host
+// back once the chain lists it again.
 func openHostClients(escrowID string, group []types.SlotAssignment, build func(addr string) (HostClient, error)) (map[string]HostClient, error) {
 	lazies := make(map[string]*transport.Lazy[HostClient], len(group))
 	for _, slot := range group {
@@ -397,14 +396,6 @@ func openHostClients(escrowID string, group []types.SlotAssignment, build func(a
 	}
 	wg.Wait()
 
-	for _, l := range lazies {
-		if _, err := l.Failure(); errors.Is(err, bridge.ErrParticipantNotFound) {
-			for _, l := range lazies {
-				l.Close()
-			}
-			return nil, err
-		}
-	}
 	out := make(map[string]HostClient, len(lazies))
 	var unresolved []string
 	for addr, l := range lazies {

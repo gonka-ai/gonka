@@ -8,14 +8,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"common/completionapi"
-
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
 	"devshard/host"
+	"devshard/state"
 	"devshard/user"
 )
 
@@ -23,7 +22,7 @@ const (
 	probeTimeout   = 2 * time.Minute
 	catchUpTimeout = 2 * time.Minute
 	budget         = 20 * time.Minute
-	probeMaxTokens = uint64(completionapi.MinTokensFloor)
+	probeMaxTokens = uint64(state.MinReservationTokens)
 )
 
 var probePrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, probeMaxTokens)
