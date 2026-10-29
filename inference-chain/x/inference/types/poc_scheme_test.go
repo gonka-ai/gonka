@@ -73,3 +73,38 @@ func TestDecodeDefaultsIndependent(t *testing.T) {
 	require.NotEqual(t, first.StatTest, second.StatTest)
 	require.NotEqual(t, first.DynamicCoefficient, second.DynamicCoefficient)
 }
+
+func TestPocParamsValidateStatTestRanges(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(p *PocParams)
+		errMsg string
+	}{
+		{"global zero alpha", func(p *PocParams) { p.StatTest.PValueThreshold = DecimalFromFloat(0) }, "poc_params.stat_test.p_value_threshold must be positive"},
+		{"global alpha one", func(p *PocParams) { p.StatTest.PValueThreshold = DecimalFromFloat(1) }, "poc_params.stat_test.p_value_threshold must be less than 1"},
+		{"global zero p_mismatch", func(p *PocParams) { p.StatTest.PMismatch = DecimalFromFloat(0) }, "poc_params.stat_test.p_mismatch must be positive"},
+		{"global zero dist_threshold", func(p *PocParams) { p.StatTest.DistThreshold = DecimalFromFloat(0) }, "poc_params.stat_test.dist_threshold must be positive"},
+		{"model zero alpha", func(p *PocParams) {
+			p.Models[0].StatTest = DefaultPoCStatTestParams()
+			p.Models[0].StatTest.PValueThreshold = DecimalFromFloat(0)
+		}, "poc_params.models[0].stat_test.p_value_threshold must be positive"},
+		{"scheme zero alpha", func(p *PocParams) { p.Models[0].Schemes[0].StatTest.PValueThreshold = DecimalFromFloat(0) }, "poc_params.models[0].schemes[0].stat_test.p_value_threshold must be positive"},
+		{"scheme negative p_mismatch", func(p *PocParams) { p.Models[0].Schemes[0].StatTest.PMismatch = DecimalFromFloat(-0.1) }, "poc_params.models[0].schemes[0].stat_test.p_mismatch must be positive"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := DefaultPocParams()
+			require.NoError(t, p.Validate())
+			tc.mutate(p)
+			require.ErrorContains(t, p.Validate(), tc.errMsg)
+		})
+	}
+}
+
+func TestPocParamsValidateStatTestUnset(t *testing.T) {
+	p := DefaultPocParams()
+	p.StatTest = nil
+	p.Models[0].StatTest = &PoCStatTestParams{}
+	p.Models[0].Schemes[0].StatTest = nil
+	require.NoError(t, p.Validate())
+}

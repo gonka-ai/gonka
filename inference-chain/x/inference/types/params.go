@@ -1059,14 +1059,25 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	if err := p.StatTest.validate("poc_params.stat_test"); err != nil {
+		return err
+	}
 	requiredSchemes, err := activePocSchemes(p)
 	if err != nil {
 		return err
 	}
 	seen := make(map[string]bool)
-	for _, model := range p.GetModelConfigs() {
+	for i, model := range p.GetModelConfigs() {
 		if model == nil {
 			return fmt.Errorf("poc_params.models cannot contain nil entries")
+		}
+		if err := model.StatTest.validate(fmt.Sprintf("poc_params.models[%d].stat_test", i)); err != nil {
+			return err
+		}
+		for j, block := range model.GetSchemes() {
+			if err := block.GetStatTest().validate(fmt.Sprintf("poc_params.models[%d].schemes[%d].stat_test", i, j)); err != nil {
+				return err
+			}
 		}
 		if model.ModelId != "" {
 			if seen[model.ModelId] {
@@ -1093,6 +1104,37 @@ func (p *PocParams) Validate() error {
 					i,
 				)
 			}
+		}
+	}
+	return nil
+}
+
+func (s *PoCStatTestParams) validate(prefix string) error {
+	if s == nil {
+		return nil
+	}
+	if s.DistThreshold != nil {
+		if _, err := validatePositiveDecimal(prefix+".dist_threshold", s.DistThreshold); err != nil {
+			return err
+		}
+	}
+	fractions := []struct {
+		name  string
+		value *Decimal
+	}{
+		{prefix + ".p_mismatch", s.PMismatch},
+		{prefix + ".p_value_threshold", s.PValueThreshold},
+	}
+	for _, field := range fractions {
+		if field.value == nil {
+			continue
+		}
+		dec, err := validatePositiveDecimal(field.name, field.value)
+		if err != nil {
+			return err
+		}
+		if dec.GTE(sdkmath.LegacyOneDec()) {
+			return fmt.Errorf("%s must be less than 1, got %s", field.name, dec.String())
 		}
 	}
 	return nil
