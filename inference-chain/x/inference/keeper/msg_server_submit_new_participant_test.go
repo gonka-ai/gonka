@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"testing"
 
+	storetypes "cosmossdk.io/store/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -219,4 +220,55 @@ func TestReproduceConsensusFailure(t *testing.T) {
 	pubKey := &ed25519.PubKey{Key: pubKeyBytes}
 	address := pubKey.Address() // This operation might fail with wrong size key
 	t.Logf("If we got here, key created address: %v", address)
+}
+
+func TestSubmitNewParticipant_ChargesCreationGasOnce(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupOnboarding)
+	fp.Groups = append(fp.Groups, &types.FeeGroup{
+		Name:        types.FeeGroupOnboarding,
+		MinGasPrice: 1,
+		Msgs: []*types.MsgGasRule{{
+			TypeUrl: sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{}),
+			Func: &types.MsgGasRule_Static{
+				Static: &types.StaticParams{Gas: types.NewParticipantGas},
+			},
+		}},
+	})
+	require.NoError(t, fp.Validate())
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	rec := newExtraGasRecorder()
+	createCtx := ctx.WithGasMeter(rec)
+	_, err = ms.SubmitNewParticipant(createCtx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Executor,
+		Url:     "https://first.example",
+	})
+	require.NoError(t, err)
+	require.Equal(t, storetypes.Gas(types.NewParticipantGas), rec.extra)
+
+	recUpdate := newExtraGasRecorder()
+	_, err = ms.SubmitNewParticipant(ctx.WithGasMeter(recUpdate), &types.MsgSubmitNewParticipant{
+		Creator: testutil.Executor,
+		Url:     "https://updated.example",
+	})
+	require.NoError(t, err)
+	require.Equal(t, storetypes.Gas(0), recUpdate.extra)
+	saved, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, "https://updated.example", saved.InferenceUrl)
+
+	tight := storetypes.NewGasMeter(100)
+	require.Panics(t, func() {
+		_, _ = ms.SubmitNewParticipant(ctx.WithGasMeter(tight), &types.MsgSubmitNewParticipant{
+			Creator: testutil.Executor2,
+			Url:     "https://second.example",
+		})
+	})
+	_, found = k.GetParticipant(ctx, testutil.Executor2)
+	require.False(t, found)
 }

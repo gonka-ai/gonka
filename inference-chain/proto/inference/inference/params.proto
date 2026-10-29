@@ -51,9 +51,6 @@ message EpochValidationParams {
   uint32 max_positive_distribution_rows = 1;
   // max_validations_per_message rejects one fee-exempt validation batch.
   uint32 max_validations_per_message = 2;
-  // max_validations_per_signer_per_stage stops further stores once this
-  // signer already has this many rows for the stage.
-  uint32 max_validations_per_signer_per_stage = 3;
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.
@@ -563,9 +560,15 @@ message MsgGasRule {
     StoredDeltaParams stored_delta = 3 [(amino.oneof_name) = "inference/MsgGasRule/StoredDelta"];
     StoredBytesParams stored_bytes = 4 [(amino.oneof_name) = "inference/MsgGasRule/StoredBytes"];
     RepeatedLenParams repeated_len = 5 [(amino.oneof_name) = "inference/MsgGasRule/RepeatedLen"];
+    StaticParams static = 6 [(amino.oneof_name) = "inference/MsgGasRule/Static"];
   }
 }
 
+// Prices the growth of one stored unsigned field. gas_per_unit is the only
+// rate. items, value_field, id_field, and scope_fields name that field and
+// its row. A newly inserted id is not a change of value_field: price it with
+// a second rule on the same type_url whose func is static. The handler
+// multiplies static.gas by how many of those ids were not stored yet.
 message StoredDeltaParams {
   option (gogoproto.equal) = true;
   uint64 gas_per_unit = 1;
@@ -588,4 +591,10 @@ message RepeatedLenParams {
   option (gogoproto.equal) = true;
   uint64 gas_per_unit = 1;
   string field = 2;
+}
+
+message StaticParams {
+  option (gogoproto.equal) = true;
+  // Extra gas for one unit the handler decides to charge. 0 = rule present but free.
+  uint64 gas = 1;
 }

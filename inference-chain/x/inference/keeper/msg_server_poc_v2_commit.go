@@ -21,6 +21,7 @@ type pocV2CommitUpdate struct {
 	modelID    string
 	entry      *types.PoCV2CommitEntry
 	countDelta uint64
+	isNew      bool
 }
 
 // PoCV2StoreCommit handles submission of off-chain artifact store commits.
@@ -96,12 +97,12 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		return nil, err
 	}
 
-	updates, totalCountDelta, err := k.buildPoCV2CommitUpdates(ctx, currentBlockHeight, msg.Entries, existingByModel)
+	updates, totalCountDelta, newCommitKeyCount, err := k.buildPoCV2CommitUpdates(ctx, currentBlockHeight, msg.Entries, existingByModel)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := k.ChargeExtraGas(ctx, addr, msg, totalCountDelta, len(existingByModel) == 0); err != nil {
+	if err := k.ChargeStoreCommitGas(ctx, addr, msg, totalCountDelta, newCommitKeyCount, len(existingByModel) == 0); err != nil {
 		return nil, err
 	}
 
@@ -179,15 +180,16 @@ func (k msgServer) buildPoCV2CommitUpdates(
 	currentBlockHeight int64,
 	entries []*types.PoCV2CommitEntry,
 	existingByModel map[string]types.PoCV2StoreCommit,
-) ([]pocV2CommitUpdate, uint64, error) {
+) ([]pocV2CommitUpdate, uint64, uint64, error) {
 	updates := make([]pocV2CommitUpdate, 0, len(entries))
 	seenModelIDs := make(map[string]struct{}, len(entries))
 	var totalCountDelta uint64
+	var newCommitKeyCount uint64
 
 	for _, entry := range entries {
 		if entry != nil && entry.ModelId != "" {
 			if _, dup := seenModelIDs[entry.ModelId]; dup {
-				return nil, 0, sdkerrors.Wrap(
+				return nil, 0, 0, sdkerrors.Wrap(
 					types.ErrIllegalState,
 					fmt.Sprintf("duplicate model_id %q in one commit", entry.ModelId),
 				)
@@ -196,16 +198,22 @@ func (k msgServer) buildPoCV2CommitUpdates(
 		}
 		update, err := k.buildPoCV2CommitUpdate(ctx, currentBlockHeight, existingByModel, entry)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, 0, err
 		}
 		if totalCountDelta+update.countDelta < totalCountDelta {
-			return nil, 0, sdkerrors.Wrap(types.ErrIllegalState, "total count delta overflow")
+			return nil, 0, 0, sdkerrors.Wrap(types.ErrIllegalState, "total count delta overflow")
 		}
 		totalCountDelta += update.countDelta
+		if update.isNew {
+			if newCommitKeyCount == ^uint64(0) {
+				return nil, 0, 0, sdkerrors.Wrap(types.ErrIllegalState, "new commit key count overflow")
+			}
+			newCommitKeyCount++
+		}
 		updates = append(updates, update)
 	}
 
-	return updates, totalCountDelta, nil
+	return updates, totalCountDelta, newCommitKeyCount, nil
 }
 
 func (k msgServer) buildPoCV2CommitUpdate(
@@ -236,7 +244,9 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	}
 
 	countDelta := uint64(entry.Count)
+	isNew := true
 	if existing, found := existingByModel[modelID]; found {
+		isNew = false
 		if existing.CommitBlockHeight == currentBlockHeight {
 			return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, "only one commit per block allowed")
 		}
@@ -259,6 +269,7 @@ func (k msgServer) buildPoCV2CommitUpdate(
 		modelID:    modelID,
 		entry:      entry,
 		countDelta: countDelta,
+		isNew:      isNew,
 	}, nil
 }
 
@@ -306,6 +317,14 @@ func checkedMul(a, b uint64) (uint64, bool) {
 		return 0, true
 	}
 	return result, false
+}
+
+// checkedAdd returns a+b and true if the addition overflows uint64.
+func checkedAdd(a, b uint64) (uint64, bool) {
+	if a > ^uint64(0)-b {
+		return 0, true
+	}
+	return a + b, false
 }
 
 // MLNodeWeightDistribution handles submission of per-node weight distribution.

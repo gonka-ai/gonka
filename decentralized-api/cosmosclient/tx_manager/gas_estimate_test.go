@@ -78,25 +78,28 @@ func TestEstimateMsgGas_DefaultFallback(t *testing.T) {
 }
 
 // TestEstimateMsgGas_PoCV2_LinearInCount asserts the on-chain formula is
-// mirrored: gas should grow base + sum(entry.Count) * per_count.
+// mirrored: gas should grow base + sum(entry.Count)*per_count + new keys.
 func TestEstimateMsgGas_PoCV2_LinearInCount(t *testing.T) {
 	zero := &inferencetypes.MsgPoCV2StoreCommit{}
 	require.Equal(t, gasPoCV2Base, estimateMsgGas(zero), "no entries = base only")
 
 	for _, count := range []uint32{1, 100, 10_000, 1_000_000} {
 		msg := &inferencetypes.MsgPoCV2StoreCommit{
-			Entries: []*inferencetypes.PoCV2CommitEntry{{Count: count}},
+			Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m", Count: count}},
 		}
-		want := gasPoCV2Base + uint64(count)*gasPoCV2PerCount
+		want := gasPoCV2Base + uint64(count)*gasPoCV2PerCount + gasPoCV2PerNewKey
 		require.Equal(t, want, estimateMsgGas(msg),
-			"count=%d should yield base + count*per_count", count)
+			"count=%d should yield base + count*per_count + one new key", count)
 	}
 
-	// Multi-entry: per_count applies to summed Count.
 	multi := &inferencetypes.MsgPoCV2StoreCommit{
-		Entries: []*inferencetypes.PoCV2CommitEntry{{Count: 100}, {Count: 200}, {Count: 300}},
+		Entries: []*inferencetypes.PoCV2CommitEntry{
+			{ModelId: "m1", Count: 100},
+			{ModelId: "m2", Count: 200},
+			{ModelId: "m3", Count: 300},
+		},
 	}
-	want := gasPoCV2Base + uint64(600)*gasPoCV2PerCount
+	want := gasPoCV2Base + uint64(600)*gasPoCV2PerCount + 3*gasPoCV2PerNewKey
 	require.Equal(t, want, estimateMsgGas(multi))
 }
 
@@ -105,7 +108,7 @@ func TestEstimateStoreCommitGas_UsesDeltaNotTotal(t *testing.T) {
 		Entries: []*inferencetypes.PoCV2CommitEntry{{ModelId: "m1", Count: 200}},
 	}
 	first := estimateMsgGasHinted(msg, GasHints{})
-	require.Equal(t, gasPoCV2Base+200*gasPoCV2PerCount, first)
+	require.Equal(t, gasPoCV2Base+200*gasPoCV2PerCount+gasPoCV2PerNewKey, first)
 
 	second := estimateMsgGasHinted(msg, GasHints{StoreCommit: StoreCommitGas{Prev: map[string]uint32{"m1": 100}}})
 	require.Equal(t, uint64(100)*gasPoCV2PerCount, second, "unhinted second commit uses delta 100, not total 200")
@@ -167,6 +170,11 @@ func TestFeeTreeLoad_ZeroGasIsOptOutNotDefault(t *testing.T) {
 	fp := inferencetypes.DefaultFeeParams()
 	fp.Groups[0].Msgs[0].Base.Gas = 0
 	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = 0
+	for _, rule := range fp.Groups[0].Msgs {
+		if s := rule.GetStatic(); s != nil {
+			s.Gas = 0
+		}
+	}
 
 	c := newFeeTreeCache()
 	c.Load(fp)
@@ -190,12 +198,32 @@ func TestFeeTreeLoad_DefaultStoreCommitHeadroom(t *testing.T) {
 	h := c.hints()
 	require.Equal(t, uint64(150), h.StoreCommit.PaddedRate)
 	require.Equal(t, uint64(600_000), h.StoreCommit.PaddedBase)
+	require.False(t, h.StoreCommit.HasNewKey)
+	require.Equal(t, uint64(0), h.StoreCommit.PaddedNewKey)
 	require.Equal(t, uint64(100), h.StoreCommit.ChainRate)
 	require.Equal(t, uint64(500_000), h.StoreCommit.ChainBase)
-	rate, base, loaded := c.RawStoreCommitLeaf()
+	require.Equal(t, uint64(0), h.StoreCommit.ChainNewKey)
+	rate, base, gasPerNew, loaded := c.RawStoreCommitLeaf()
 	require.True(t, loaded)
 	require.Equal(t, uint64(100), rate)
 	require.Equal(t, uint64(500_000), base)
+	require.Equal(t, uint64(0), gasPerNew)
+}
+
+func TestFeeTreeLoad_StoreCommitStaticHeadroom(t *testing.T) {
+	fp := inferencetypes.DefaultFeeParams()
+	fp.Groups[0].Msgs = append(fp.Groups[0].Msgs, &inferencetypes.MsgGasRule{
+		TypeUrl: sdk.MsgTypeURL(&inferencetypes.MsgPoCV2StoreCommit{}),
+		Func: &inferencetypes.MsgGasRule_Static{
+			Static: &inferencetypes.StaticParams{Gas: inferencetypes.StoreCommitGasPerNewKey},
+		},
+	})
+	c := newFeeTreeCache()
+	c.Load(fp)
+	h := c.hints()
+	require.True(t, h.StoreCommit.HasNewKey)
+	require.Equal(t, gasPoCV2PerNewKey, h.StoreCommit.PaddedNewKey)
+	require.Equal(t, inferencetypes.StoreCommitGasPerNewKey, h.StoreCommit.ChainNewKey)
 }
 
 func TestFeeTreeLoad_MeasuredIntrinsicSurvivesLoad(t *testing.T) {
@@ -531,19 +559,27 @@ func TestApplySimulateHeadroom(t *testing.T) {
 }
 
 func TestStoreCommitIntrinsicFromSim(t *testing.T) {
-	got, ok := StoreCommitIntrinsicFromSim(605_100, 100, 500_000, 1)
+	got, ok := StoreCommitIntrinsicFromSim(605_100, 100, 500_000, 0, 1)
 	require.True(t, ok)
 	require.Equal(t, uint64(105_000), got)
 
-	got, ok = StoreCommitIntrinsicFromSim(605_200, 100, 500_000, 2)
+	got, ok = StoreCommitIntrinsicFromSim(605_200, 100, 500_000, 0, 2)
 	require.True(t, ok)
 	require.Equal(t, uint64(105_000), got)
 
-	_, ok = StoreCommitIntrinsicFromSim(0, 100, 500_000, 1)
+	got, ok = StoreCommitIntrinsicFromSim(605_100+inferencetypes.StoreCommitGasPerNewKey, 100, 500_000, inferencetypes.StoreCommitGasPerNewKey, 1)
+	require.True(t, ok)
+	require.Equal(t, uint64(105_000), got, "new-key charge is peeled with the count surcharge")
+
+	got, ok = StoreCommitIntrinsicFromSim(605_200+2*inferencetypes.StoreCommitGasPerNewKey, 100, 500_000, inferencetypes.StoreCommitGasPerNewKey, 2)
+	require.True(t, ok)
+	require.Equal(t, uint64(105_000), got)
+
+	_, ok = StoreCommitIntrinsicFromSim(0, 100, 500_000, 0, 1)
 	require.False(t, ok)
-	_, ok = StoreCommitIntrinsicFromSim(500_000, 100, 500_000, 1)
+	_, ok = StoreCommitIntrinsicFromSim(500_000, 100, 500_000, 0, 1)
 	require.False(t, ok, "used == extra must not produce zero intrinsic")
-	_, ok = StoreCommitIntrinsicFromSim(605_100, 100, 500_000, 0)
+	_, ok = StoreCommitIntrinsicFromSim(605_100, 100, 500_000, 0, 0)
 	require.False(t, ok)
 }
 
@@ -610,15 +646,17 @@ func TestEstimateStoreCommitGas_PeriodBaseIsStageWide(t *testing.T) {
 	got := estimateMsgGasHinted(msgB, GasHints{
 		FeeTreeLoaded: true,
 		StoreCommit: StoreCommitGas{
-			HasRate:    true,
-			PaddedRate: 100,
-			HasBase:    true,
-			PaddedBase: 500_000,
-			Prev:       map[string]uint32{"m1": 50},
+			HasRate:      true,
+			PaddedRate:   100,
+			HasBase:      true,
+			PaddedBase:   500_000,
+			HasNewKey:    true,
+			PaddedNewKey: 70,
+			Prev:         map[string]uint32{"m1": 50},
 		},
 	})
-	require.Equal(t, gasStoreCommitIntrinsic+10*100, got,
-		"new model in a stage that already has a commit must not add period base")
+	require.Equal(t, gasStoreCommitIntrinsic+10*100+70, got,
+		"a new model pays the key charge and not the stage period base")
 }
 
 func TestEstimateStoreCommitGas_MeasuredFallsBackWhenMoreEntriesThanDummy(t *testing.T) {
@@ -643,10 +681,74 @@ func TestEstimateStoreCommitGas_MeasuredFallsBackWhenMoreEntriesThanDummy(t *tes
 		},
 	}
 	// Static fallback: intrinsic floor + padded extra (first of stage).
+	// HasNewKey is unset, so a loaded tree contributes no key charge here.
 	perMsg := gasStoreCommitIntrinsic + 600_000 + 20*150
 	require.Equal(t, perMsg, estimateMsgGasHinted(msg, hints))
 	require.Equal(t, txOverheadGas+perMsg, estimateBatchGas([]sdk.Msg{msg}, 0, hints),
 		"entry-count fallback must keep txOverheadGas; measured batch skip does not apply")
+}
+
+func TestEstimateStoreCommitGas_NewKeyThenCountUpdate(t *testing.T) {
+	hints := GasHints{
+		FeeTreeLoaded: true,
+		StoreCommit: StoreCommitGas{
+			HasRate:      true,
+			PaddedRate:   10,
+			HasBase:      true,
+			PaddedBase:   1_000,
+			HasNewKey:    true,
+			PaddedNewKey: 50,
+		},
+	}
+	first := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{
+			{ModelId: "m1", Count: 4},
+			{ModelId: "m2", Count: 6},
+		},
+	}
+	require.Equal(t, gasStoreCommitIntrinsic+1_000+10*10+2*50, estimateMsgGasHinted(first, hints))
+
+	later := hints
+	later.StoreCommit.Prev = map[string]uint32{"m1": 4}
+	mixed := &inferencetypes.MsgPoCV2StoreCommit{
+		Entries: []*inferencetypes.PoCV2CommitEntry{
+			{ModelId: "m1", Count: 7},
+			{ModelId: "m2", Count: 6},
+			{ModelId: "m2", Count: 9},
+		},
+	}
+	// m1 delta 3, m2 is new once even though the payload repeats it.
+	require.Equal(t, gasStoreCommitIntrinsic+3*10+6*10+9*10+50, estimateMsgGasHinted(mixed, later))
+}
+
+func TestEstimateStoreCommitGas_ActivationNewKeysFitBatchLimit(t *testing.T) {
+	const models = 32
+	entries := make([]*inferencetypes.PoCV2CommitEntry, models)
+	for i := range entries {
+		entries[i] = &inferencetypes.PoCV2CommitEntry{ModelId: "model-" + string(rune('a'+i)), Count: 10_000}
+	}
+	msg := &inferencetypes.MsgPoCV2StoreCommit{Entries: entries}
+	hints := GasHints{
+		FeeTreeLoaded: true,
+		StoreCommit: StoreCommitGas{
+			HasRate:      true,
+			PaddedRate:   gasPoCV2PerCount,
+			HasBase:      true,
+			PaddedBase:   gasPoCV2Base,
+			HasNewKey:    true,
+			PaddedNewKey: gasPoCV2PerNewKey,
+		},
+	}
+	got := estimateBatchGas([]sdk.Msg{msg}, 0, hints)
+	require.Less(t, got, uint64(BatchGasLimit))
+	// At 1 ngonka per gas this is the fee. 10 gonka is the default allowance.
+	require.Less(t, got, uint64(10_000_000_000))
+}
+
+func TestEstimateNewParticipantGas_OmitsCreationSurcharge(t *testing.T) {
+	msg := &inferencetypes.MsgSubmitNewParticipant{}
+	require.Equal(t, gasSubmitNewParticipant, estimateMsgGas(msg))
+	require.Equal(t, gasSubmitNewParticipant, estimateMsgGasHinted(msg, GasHints{FeeTreeLoaded: true}))
 }
 
 func TestIsStoreCommitOnly(t *testing.T) {

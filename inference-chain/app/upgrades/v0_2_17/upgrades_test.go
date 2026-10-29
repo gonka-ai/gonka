@@ -15,6 +15,81 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.17", UpgradeName)
 }
 
+func TestUpdateEpochFeeGroup_WritesActivationPrice(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	storeURL := sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{})
+	kept := make([]*types.MsgGasRule, 0, len(fp.Groups[0].Msgs))
+	for _, rule := range fp.Groups[0].Msgs {
+		if rule.TypeUrl == storeURL && rule.GetStatic() != nil {
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	fp.Groups[0].Msgs = kept
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, updateEpochFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	_, rules := updated.FeeParams.RulesForTypeURL(storeURL)
+	var delta *types.MsgGasRule
+	var static *types.StaticParams
+	for _, rule := range rules {
+		if rule.GetStoredDelta() != nil {
+			delta = rule
+		}
+		if s := rule.GetStatic(); s != nil {
+			static = s
+			require.Nil(t, rule.Base)
+		}
+	}
+	require.NotNil(t, delta)
+	require.NotNil(t, static)
+	require.Equal(t, types.StoreCommitGasPerNewKey, static.Gas)
+	require.Equal(t, uint64(100), delta.GetStoredDelta().GasPerUnit)
+	require.Equal(t, uint64(500_000), delta.Base.Gas)
+	require.NoError(t, updated.FeeParams.Validate())
+}
+
+func TestEnableOnboardingFeeGroup_TurnsOnGroupAndCreationGas(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = types.DefaultFeeParams()
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, enableOnboardingFeeGroup(ctx, k))
+	require.NoError(t, enableOnboardingFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Contains(t, updated.FeeParams.EnabledFeeGroups, types.FeeGroupOnboarding)
+	group := updated.FeeParams.GroupByName(types.FeeGroupOnboarding)
+	require.NotNil(t, group)
+	require.Equal(t, uint64(1), group.MinGasPrice)
+	_, rule := updated.FeeParams.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{}))
+	require.NotNil(t, rule)
+	require.Equal(t, types.NewParticipantGas, rule.GetStatic().GetGas())
+	require.Equal(t, uint64(1), updated.FeeParams.EnabledPayingPrice([]sdk.Msg{&types.MsgSubmitNewParticipant{}}, types.IsNetworkDuty))
+	_, rules := updated.FeeParams.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	var staticGas, base uint64
+	for _, rule := range rules {
+		if s := rule.GetStatic(); s != nil {
+			staticGas = s.Gas
+		}
+		if rule.GetStoredDelta() != nil && rule.Base != nil {
+			base = rule.Base.Gas
+		}
+	}
+	require.Equal(t, uint64(500_000), base)
+	require.Equal(t, uint64(0), staticGas)
+}
+
 func TestEnableWasmFeeGroup_AddsWasmBesideExistingGroups(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	params, err := k.GetParams(ctx)
