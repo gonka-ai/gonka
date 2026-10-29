@@ -189,26 +189,35 @@ func TestRun_NeedsResetRehydrates(t *testing.T) {
 	<-done
 }
 
-func TestRun_UnimplementedStops(t *testing.T) {
+func TestRun_UnimplementedDoesNotStop(t *testing.T) {
 	srv := &fakeHostEventsServer{}
-	srv.SetHandlers(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		return nil, status.Error(codes.Unimplemented, "method GetHostEvents not implemented")
 	})
 	client := dialFake(t, srv)
 	sink := &recordingSink{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	start := time.Now()
-	hostevents.Run(ctx, hostevents.Config{
-		Client:        client,
-		ServerMaxWait: time.Second,
-	}, sink)
-	require.Less(t, time.Since(start), 1500*time.Millisecond)
-	w, s, r := sink.snapshot()
-	require.Empty(t, w)
-	require.Empty(t, s)
-	require.Zero(t, r)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:          client,
+			ServerMaxWait:   50 * time.Millisecond,
+			ErrorBackoffMin: time.Millisecond,
+			ErrorBackoffMax: 2 * time.Millisecond,
+		}, sink)
+	}()
+	require.Eventually(t, func() bool {
+		_, _, n := sink.snapshot()
+		return n >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unimplemented stopped the loop only after cancel")
+	}
 }
 
 func TestRun_UpdatesLoadMapOnUnchanged(t *testing.T) {

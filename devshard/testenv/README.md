@@ -30,7 +30,7 @@ Go packages under `devshard/testenv/` — what each one is for:
 | **`mockopenai/`** | Fake ML node library: minimal OpenAI HTTP API used by production `devshardd` after `AcquireMLNode`. |
 | **`gatewayphase/`** | Tiny HTTP stubs for devshardctl’s **chain epoch phase** poller (`ChainPhaseGate`): `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
 | **`keymaterial/`** | Builds deterministic Cosmos **file keyrings** from config host keys so devshardd can sign txs in containers (`KEYRING_DIR`, `KEY_NAME`). |
-| **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), Phase 9 adversarial A1–A5 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
+| **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), block-change feed (`make citest-block-feed`), Phase 9 adversarial A1–A5 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
 
 Production binaries (`devshardd`, `devshardctl`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
 
@@ -224,6 +224,7 @@ cd devshard/testenv
 make build-devshardd
 make citest-stack                  # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
+make citest-block-feed            # block-change feed (rebuilds devshardd)
 make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
 # or: ./scripts/run-stack-citest.sh

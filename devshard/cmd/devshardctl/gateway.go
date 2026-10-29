@@ -1597,7 +1597,10 @@ func (g *Gateway) handleDebugHeightSync(w http.ResponseWriter, r *http.Request) 
 		}
 		escrows = append(escrows, rt.heightSyncView())
 	}
-	writeJSON(w, map[string]any{"escrows": escrows})
+	writeJSON(w, map[string]any{
+		"escrows":     escrows,
+		"header_time": gatewayHeaderTimeView(),
+	})
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {

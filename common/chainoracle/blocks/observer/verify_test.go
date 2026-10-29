@@ -1,7 +1,6 @@
 package observer
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -11,172 +10,16 @@ import (
 
 	"common/chainoracle/blocks"
 
-	"github.com/cometbft/cometbft/crypto/tmhash"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
-	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
-	"github.com/cometbft/cometbft/version"
 	"github.com/stretchr/testify/require"
 )
 
-const signedChainID = "gonka-verify"
-
-type signedChain struct {
-	t       *testing.T
-	vals    *cmttypes.ValidatorSet
-	privs   []cmttypes.PrivValidator
-	base    time.Time
-	mu      sync.Mutex
-	headers map[int64]*cmttypes.SignedHeader
-	tip     int64
-
-	tamperTime   map[int64]bool
-	forgeCommits map[int64]bool
-	commitCalls  atomic.Int64
-	batchCalls   atomic.Int64
-}
+const signedChainID = SignedChainID
 
 func newSignedChain(t *testing.T, tip int64) *signedChain {
-	vals, privs := cmttypes.RandValidatorSet(4, 10)
-	c := &signedChain{
-		t: t, vals: vals, privs: privs,
-		base:         time.Now().Add(-time.Hour).UTC().Truncate(time.Millisecond),
-		headers:      make(map[int64]*cmttypes.SignedHeader),
-		tamperTime:   make(map[int64]bool),
-		forgeCommits: make(map[int64]bool),
-	}
-	c.grow(tip)
-	return c
-}
-
-func (c *signedChain) blockTime(height int64) time.Time {
-	return c.base.Add(time.Duration(height) * 5 * time.Second)
-}
-
-func (c *signedChain) grow(tip int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for h := c.tip + 1; h <= tip; h++ {
-		var last cmttypes.BlockID
-		if prev, ok := c.headers[h-1]; ok {
-			last = prev.Commit.BlockID
-		}
-		c.headers[h] = c.sign(h, last, c.vals, c.privs)
-	}
-	if tip > c.tip {
-		c.tip = tip
-	}
-}
-
-func (c *signedChain) sign(height int64, last cmttypes.BlockID, vals *cmttypes.ValidatorSet, privs []cmttypes.PrivValidator) *cmttypes.SignedHeader {
-	return c.signWithNext(height, last, vals, privs, vals)
-}
-
-func (c *signedChain) signWithNext(height int64, last cmttypes.BlockID, vals *cmttypes.ValidatorSet, privs []cmttypes.PrivValidator, next *cmttypes.ValidatorSet) *cmttypes.SignedHeader {
-	hdr := &cmttypes.Header{
-		Version:            cmtversion.Consensus{Block: version.BlockProtocol},
-		ChainID:            signedChainID,
-		Height:             height,
-		Time:               c.blockTime(height),
-		LastBlockID:        last,
-		LastCommitHash:     tmhash.Sum([]byte("last-commit")),
-		DataHash:           tmhash.Sum([]byte("data")),
-		ValidatorsHash:     vals.Hash(),
-		NextValidatorsHash: next.Hash(),
-		ConsensusHash:      tmhash.Sum([]byte("consensus")),
-		AppHash:            tmhash.Sum([]byte("app")),
-		LastResultsHash:    tmhash.Sum([]byte("results")),
-		EvidenceHash:       tmhash.Sum([]byte("evidence")),
-		ProposerAddress:    vals.Validators[0].Address,
-	}
-	blockID := cmttypes.BlockID{Hash: hdr.Hash(), PartSetHeader: cmttypes.PartSetHeader{Total: 1, Hash: tmhash.Sum([]byte("parts"))}}
-	sigs := make([]cmttypes.CommitSig, len(vals.Validators))
-	for i, v := range vals.Validators {
-		vote := &cmttypes.Vote{
-			Type: cmtproto.PrecommitType, Height: height, Round: 0, BlockID: blockID,
-			Timestamp: hdr.Time, ValidatorAddress: v.Address, ValidatorIndex: int32(i),
-		}
-		pb := vote.ToProto()
-		var signer cmttypes.PrivValidator
-		for _, pv := range privs {
-			pk, err := pv.GetPubKey()
-			require.NoError(c.t, err)
-			if bytes.Equal(pk.Address(), v.Address) {
-				signer = pv
-			}
-		}
-		require.NotNil(c.t, signer)
-		require.NoError(c.t, signer.SignVote(signedChainID, pb))
-		vote.Signature = pb.Signature
-		sigs[i] = vote.CommitSig()
-	}
-	return &cmttypes.SignedHeader{Header: hdr, Commit: &cmttypes.Commit{Height: height, Round: 0, BlockID: blockID, Signatures: sigs}}
-}
-
-func (c *signedChain) Header(_ context.Context, height *int64) (*ctypes.ResultHeader, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	h := c.tip
-	if height != nil {
-		h = *height
-	}
-	sh, ok := c.headers[h]
-	if !ok {
-		return nil, errors.New("height must be less than or equal to the current blockchain height")
-	}
-	return &ctypes.ResultHeader{Header: sh.Header}, nil
-}
-
-func (c *signedChain) Commit(_ context.Context, height *int64) (*ctypes.ResultCommit, error) {
-	c.commitCalls.Add(1)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	h := c.tip
-	if height != nil {
-		h = *height
-	}
-	sh, ok := c.headers[h]
-	if !ok {
-		return nil, errors.New("height must be less than or equal to the current blockchain height")
-	}
-	if c.forgeCommits[h] {
-		forgedVals, forgedPrivs := cmttypes.RandValidatorSet(4, 10)
-		forged := c.sign(h, sh.LastBlockID, forgedVals, forgedPrivs)
-		return &ctypes.ResultCommit{SignedHeader: *forged}, nil
-	}
-	return &ctypes.ResultCommit{SignedHeader: *sh, CanonicalCommit: true}, nil
-}
-
-func (c *signedChain) Validators(_ context.Context, height *int64, page, perPage *int) (*ctypes.ResultValidators, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if height != nil && c.forgeCommits[*height] {
-		return nil, errors.New("validators withheld")
-	}
-	return &ctypes.ResultValidators{BlockHeight: *height, Validators: c.vals.Copy().Validators, Count: c.vals.Size(), Total: c.vals.Size()}, nil
-}
-
-func (c *signedChain) BlockchainInfo(_ context.Context, minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error) {
-	c.batchCalls.Add(1)
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if maxHeight > c.tip {
-		maxHeight = c.tip
-	}
-	if minHeight > maxHeight {
-		return nil, errors.New("min height can't be greater than max height")
-	}
-	res := &ctypes.ResultBlockchainInfo{LastHeight: c.tip}
-	for h := maxHeight; h >= minHeight; h-- {
-		sh := c.headers[h]
-		hdr := *sh.Header
-		if c.tamperTime[h] {
-			hdr.Time = hdr.Time.Add(-time.Second)
-		}
-		res.BlockMetas = append(res.BlockMetas, &cmttypes.BlockMeta{BlockID: sh.Commit.BlockID, Header: hdr})
-	}
-	return res, nil
+	t.Helper()
+	return NewSignedChain(tip)
 }
 
 type memStore struct {
@@ -273,6 +116,29 @@ func TestVerifiedAtProvesNewHeightsWithCommitSignatures(t *testing.T) {
 
 	_, err = o.At(ctx, 131)
 	require.ErrorIs(t, err, blocks.ErrHeaderNotFound, "a height the chain has not produced is not found")
+}
+
+func TestVerifiedAtPublishesTrustedHeaderOnce(t *testing.T) {
+	c := newSignedChain(t, 200)
+	o := verifyingOracle(c, nil)
+	var n atomic.Int32
+	o.SetPublish(func(h *blocks.Header, _ bool) {
+		if h.Height == 200 {
+			n.Add(1)
+		}
+	})
+	ctx := context.Background()
+	trusted, err := o.Trusted(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(200), trusted.Height)
+	require.Equal(t, int32(1), n.Load())
+
+	for i := 0; i < 100; i++ {
+		h, err := o.At(ctx, 150+int64(i%51))
+		require.NoError(t, err)
+		require.NotNil(t, h)
+	}
+	require.Equal(t, int32(1), n.Load(), "100 At calls for stored heights publish the trusted header once")
 }
 
 func TestVerifiedAtWalksOlderHeightsDownTheHashChain(t *testing.T) {

@@ -67,6 +67,7 @@ Docker stack behavior and adversarial citests:
 make -C devshard ci-testenv-integration
 # or stepwise from testenv/:
 make build-devshardd && make citest-stack && make citest-adversarial
+make citest-block-feed            # block-change feed (no chat; own runner; TestBlockFeed_*)
 ```
 
 gRPC-only gateway transport (G1–G2, G4; see [`chain-transport-consolidation.md`](../testenv/docs/chain-transport-consolidation.md)):

@@ -55,6 +55,7 @@ type lightVerifier struct {
 	mu          sync.Mutex
 	trusted     *cmttypes.SignedHeader
 	trustedVals *cmttypes.ValidatorSet
+	trustedH    atomic.Int64
 	pinned      *TrustPoint
 }
 
@@ -71,12 +72,17 @@ func newLightVerifier(rpc lightRPC, trustingPeriod time.Duration) *lightVerifier
 }
 
 func (v *lightVerifier) trustedHeight() int64 {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if v.trusted == nil {
-		return 0
+	return v.trustedH.Load()
+}
+
+func (v *lightVerifier) setTrusted(sh *cmttypes.SignedHeader, vals *cmttypes.ValidatorSet) {
+	v.trusted = sh
+	v.trustedVals = vals
+	if sh == nil {
+		v.trustedH.Store(0)
+		return
 	}
-	return v.trusted.Height
+	v.trustedH.Store(sh.Height)
 }
 
 func (v *lightVerifier) signedHeader(ctx context.Context, height *int64) (*cmttypes.SignedHeader, error) {
@@ -190,7 +196,7 @@ func (v *lightVerifier) bootstrapLocked(ctx context.Context) error {
 			return fmt.Errorf("%w: the node's block %d does not match the trust point", ErrUnverifiedHeader, h)
 		}
 		if !light.HeaderExpired(sh, v.trustingPeriod, v.now()) {
-			v.trusted, v.trustedVals = sh, vals
+			v.setTrusted(sh, vals)
 			return nil
 		}
 		v.pinned = nil
@@ -199,7 +205,7 @@ func (v *lightVerifier) bootstrapLocked(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	v.trusted, v.trustedVals = sh, vals
+	v.setTrusted(sh, vals)
 	v.persistLocked()
 	return nil
 }
@@ -256,7 +262,7 @@ func (v *lightVerifier) verifyForwardLocked(ctx context.Context, height int64) (
 	err = light.Verify(v.trusted, v.trustedVals, sh, vals, v.trustingPeriod, v.now(), v.maxClockDrift, light.DefaultTrustLevel)
 	var expired light.ErrOldHeaderExpired
 	if errors.As(err, &expired) {
-		v.trusted, v.trustedVals = nil, nil
+		v.setTrusted(nil, nil)
 		if berr := v.bootstrapLocked(ctx); berr != nil {
 			return nil, berr
 		}
@@ -280,7 +286,7 @@ func (v *lightVerifier) verifyForwardLocked(ctx context.Context, height int64) (
 	if err != nil {
 		return nil, fmt.Errorf("%w: height %d: %v", ErrUnverifiedHeader, height, err)
 	}
-	v.trusted, v.trustedVals = sh, vals
+	v.setTrusted(sh, vals)
 	v.persistLocked()
 	return sh.Header, nil
 }

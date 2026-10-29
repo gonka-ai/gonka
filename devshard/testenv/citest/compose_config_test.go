@@ -83,3 +83,16 @@ func TestGeneratedComposeConfigValid(t *testing.T) {
 		t.Fatalf("overlay compose services missing proxy:\n%s", ovOut)
 	}
 }
+
+func TestListCitestTargetsIncludesBlockFeed(t *testing.T) {
+	cmd := exec.Command("make", "-s", "list-citest-targets")
+	cmd.Dir = ".."
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("make list-citest-targets: %v\n%s", err, out)
+	}
+	got := string(out)
+	if !strings.Contains(got, "citest-block-feed\n") && !strings.Contains(got, "citest-block-feed\r\n") {
+		t.Fatalf("list-citest-targets missing citest-block-feed:\n%s", got)
+	}
+}

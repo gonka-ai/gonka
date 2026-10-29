@@ -33,6 +33,7 @@ import (
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -108,6 +109,7 @@ type HostManager struct {
 	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	headerTimes      *headertime.Source
+	hostEvents       *hostevents.Poller
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
