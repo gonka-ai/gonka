@@ -135,7 +135,7 @@ jobs:
         if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       - name: Build chain upgrade zips
         if: steps.skip.outputs.skip != 'true' && (steps.meta.outputs.build_inference_chain == 'true' || steps.meta.outputs.build_dapi == 'true' || steps.meta.outputs.build_edge_api == 'true')

@@ -22,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       # Only do aggressive cleanup on trusted pushes
       - name: Free up disk space on runner
