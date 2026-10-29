@@ -52,16 +52,22 @@ func (k Keeper) SigningHistory(ctx context.Context, req *types.QuerySigningHisto
 
 	var signingRequests []types.ThresholdSigningRequest
 
-	// Use pagination helper for efficient iteration
-	pageRes, err := query.Paginate(signingStore, req.Pagination, func(key []byte, value []byte) error {
+	// FilteredPaginate applies the epoch/status filters before the page
+	// limit, so a page holds up to Limit matching requests and count_total
+	// counts matches. query.Paginate counted every stored request against
+	// the limit, returning empty pages with a next_key for filtered queries.
+	pageRes, err := query.FilteredPaginate(signingStore, req.Pagination, func(key []byte, value []byte, accumulate bool) (bool, error) {
 		var signingRequest types.ThresholdSigningRequest
 		if err := k.cdc.Unmarshal(value, &signingRequest); err != nil {
-			return err
+			return false, err
 		}
 
 		// Apply filters
 		if !k.matchesFilters(&signingRequest, req) {
-			return nil // Skip this request
+			return false, nil // Skip this request
+		}
+		if !accumulate {
+			return true, nil
 		}
 
 		// Rehydrate PartialSignatures from sub-keys. The base struct is
@@ -70,12 +76,12 @@ func (k Keeper) SigningHistory(ctx context.Context, req *types.QuerySigningHisto
 		// an empty slice to API consumers.
 		partials, err := k.ListThresholdPartialSignatures(sdkCtx, signingRequest.RequestId)
 		if err != nil {
-			return fmt.Errorf("list partial sigs for request %x: %w", signingRequest.RequestId, err)
+			return false, fmt.Errorf("list partial sigs for request %x: %w", signingRequest.RequestId, err)
 		}
 		signingRequest.PartialSignatures = partials
 
 		signingRequests = append(signingRequests, signingRequest)
-		return nil
+		return true, nil
 	})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "failed to paginate signing requests: %s", err.Error())
