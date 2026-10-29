@@ -211,7 +211,7 @@ func TestMLNodeWeightDistribution_HandlerRejectsPositiveRowOverflow(t *testing.T
 	require.False(t, stored.Found)
 }
 
-func TestSubmitPocValidationsV2_StageCapStoresOnlyTheFirstVote(t *testing.T) {
+func TestSubmitPocValidationsV2_StoresBothPolaritiesAndKeepsMessageLimit(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
 	params, err := k.GetParams(sdkCtx)
@@ -226,7 +226,6 @@ func TestSubmitPocValidationsV2_StageCapStoresOnlyTheFirstVote(t *testing.T) {
 	if params.EpochValidationParams == nil {
 		params.EpochValidationParams = types.DefaultEpochValidationParams()
 	}
-	params.EpochValidationParams.MaxValidationsPerSignerPerStage = 1
 	require.NoError(t, k.SetParams(sdkCtx, params))
 	k.SetEffectiveEpochIndex(sdkCtx, 0)
 	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
@@ -245,41 +244,143 @@ func TestSubmitPocValidationsV2_StageCapStoresOnlyTheFirstVote(t *testing.T) {
 	}
 	seedPocValidationSnapshot(t, k, sdkCtx, 100, testutil.Validator, testPoCModelID)
 
-	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+	ms := keeper.NewMsgServerImpl(k)
+	_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
 		PocStageStartBlockHeight: 100,
 		Validations: []*types.PoCValidationEntryV2{
 			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: 1},
-			{ParticipantAddress: testutil.Executor2, ModelId: testPoCModelID, ValidatedWeight: 1},
+			{ParticipantAddress: testutil.Executor2, ModelId: testPoCModelID, ValidatedWeight: -1},
 		},
 	})
 	require.NoError(t, err)
 
-	first, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, testutil.Validator)
+	positive, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor, testPoCModelID, testutil.Validator)
 	require.NoError(t, err)
-	require.True(t, first)
-	second, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
+	require.True(t, positive)
+	negative, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
 	require.NoError(t, err)
-	require.False(t, second)
+	require.True(t, negative, "+1 must not consume a quota that blocks a later -1")
 
-	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator2)
+	seedPocValidationSnapshot(t, k, sdkCtx, 100, testutil.Validator2, testPoCModelID)
+	_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator2,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor, ModelId: testPoCModelID, ValidatedWeight: -1},
+		},
+	})
+	require.NoError(t, err)
+	_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator2,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{ParticipantAddress: testutil.Executor2, ModelId: testPoCModelID, ValidatedWeight: 1},
+		},
+	})
+	require.NoError(t, err)
+	laterPositive, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator2)
+	require.NoError(t, err)
+	require.True(t, laterPositive, "-1 must not consume a quota that blocks a later +1")
+
+	_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
 		PocStageStartBlockHeight: 100,
 		Validations:              nil,
 	})
 	require.ErrorIs(t, err, types.ErrIllegalState)
 
-	_, err = keeper.NewMsgServerImpl(k).SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+	tooMany := make([]*types.PoCValidationEntryV2, types.MaxValidationsPerMessage+1)
+	_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
 		Creator:                  testutil.Validator,
 		PocStageStartBlockHeight: 100,
-		Validations: []*types.PoCValidationEntryV2{
-			{ParticipantAddress: testutil.Executor2, ModelId: testPoCModelID, ValidatedWeight: 1},
-		},
+		Validations:              tooMany,
 	})
-	require.ErrorIs(t, err, types.ErrIllegalState)
-	stillAbsent, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Executor2, testPoCModelID, testutil.Validator)
+	require.ErrorContains(t, err, "too many validations")
+}
+
+func TestSubmitPocValidationsV2_StoresManyRowsIncludingNegative(t *testing.T) {
+	const rows = types.MaxValidationsPerMessage*4 + 1 // 513
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+	params, err := k.GetParams(sdkCtx)
 	require.NoError(t, err)
-	require.False(t, stillAbsent)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = types.DefaultEpochValidationParams()
+	}
+	require.NoError(t, k.SetParams(sdkCtx, params))
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	k.SetModel(sdkCtx, &types.Model{Id: testPoCModelID})
+	seedPocValidationSnapshot(t, k, sdkCtx, 100, testutil.Validator, testPoCModelID)
+
+	targets := make([]string, rows)
+	for i := range targets {
+		raw := make(sdk.AccAddress, 20)
+		raw[0] = 0x21
+		raw[17] = byte(i >> 16)
+		raw[18] = byte(i >> 8)
+		raw[19] = byte(i)
+		targets[i] = raw.String()
+		registerPoCParticipant(t, k, sdkCtx, targets[i])
+		require.NoError(t, k.SetPoCV2StoreCommit(sdkCtx, types.PoCV2StoreCommit{
+			ParticipantAddress:       targets[i],
+			PocStageStartBlockHeight: 100,
+			Count:                    10,
+			RootHash:                 make([]byte, 32),
+			ModelId:                  testPoCModelID,
+		}))
+	}
+
+	ms := keeper.NewMsgServerImpl(k)
+	for start := 0; start < rows; start += types.MaxValidationsPerMessage {
+		end := start + types.MaxValidationsPerMessage
+		if end > rows {
+			end = rows
+		}
+		batch := make([]*types.PoCValidationEntryV2, 0, end-start)
+		for _, target := range targets[start:end] {
+			weight := int64(1)
+			if start+len(batch) == rows-1 {
+				weight = -1
+			}
+			batch = append(batch, &types.PoCValidationEntryV2{
+				ParticipantAddress: target,
+				ModelId:            testPoCModelID,
+				ValidatedWeight:    weight,
+			})
+		}
+		_, err = ms.SubmitPocValidationsV2(sdkCtx, &types.MsgSubmitPocValidationsV2{
+			Creator:                  testutil.Validator,
+			PocStageStartBlockHeight: 100,
+			Validations:              batch,
+		})
+		require.NoError(t, err)
+	}
+
+	grouped, err := k.GetPoCValidationsV2ByStage(sdkCtx, 100)
+	require.NoError(t, err)
+	stored := 0
+	var lastWeight int64
+	for _, validations := range grouped {
+		for _, validation := range validations {
+			stored++
+			if validation.ParticipantAddress == targets[rows-1] {
+				lastWeight = validation.ValidatedWeight
+			}
+		}
+	}
+	require.Equal(t, rows, stored)
+	require.Equal(t, int64(-1), lastWeight, "the last stored row is a -1")
 }
 
 func TestSubmitPocValidationsV2_SnapshotVoterEligibilityAndGuardian(t *testing.T) {

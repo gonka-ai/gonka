@@ -63,7 +63,7 @@ func (k msgServer) PoCChallengeStoreCommit(goCtx context.Context, msg *types.Msg
 	if err != nil {
 		return nil, err
 	}
-	updates, _, err := k.buildPoCV2CommitUpdates(goCtx, height, msg.Entries, existingByModel)
+	updates, _, _, err := k.buildPoCV2CommitUpdates(goCtx, height, msg.Entries, existingByModel)
 	if err != nil {
 		return nil, err
 	}
