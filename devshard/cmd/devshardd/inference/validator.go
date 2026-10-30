@@ -121,13 +121,17 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
-	result, err := commonvalidation.ExecuteValidation(
+	executeValidation, path := commonvalidation.ExecuteValidation, "/v1/chat/completions"
+	if tapeSampling {
+		executeValidation, path = commonvalidation.ExecuteTapeValidation, commonvalidation.TapeReplayPath
+	}
+	result, err := executeValidation(
 		ctx,
 		inferenceID,
 		promptPayload,
 		responsePayload,
 		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body)
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, path, body)
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
@@ -247,6 +251,8 @@ func evaluateValidationResult(
 			return false, err
 		}
 		return commonvalidation.SimilarityPassesThreshold(r.Value, threshold), nil
+	case *commonvalidation.TapeValidationResult:
+		return r.IsSuccessful(), nil
 	case *commonvalidation.DifferentLengthValidationResult,
 		*commonvalidation.DifferentTokensValidationResult,
 		*commonvalidation.InvalidInferenceResult:
@@ -256,12 +262,12 @@ func evaluateValidationResult(
 	}
 }
 
-func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID, path string, body []byte) (*http.Response, error) {
 	if v.executeML != nil {
 		return v.executeML(ctx, model, escrowID, body)
 	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
-		url := endpoint + "/v1/chat/completions"
+		url := endpoint + path
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
