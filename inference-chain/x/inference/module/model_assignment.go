@@ -646,6 +646,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	currentEpochData := NewEpochMLNodeData()
 	previousEpochData := NewEpochMLNodeData()
 	participantVotingPowers := make(map[string]map[string]int64)
+	carriedNodes := make(map[string]map[string]map[string]struct{})
 
 	subGroupDataByModel, liveSetsByModel, subErr := ma.keeper.GetLiveSubGroupsForCurrentEpoch(ctx)
 	if subErr != nil {
@@ -687,6 +688,13 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 			prevSubData, foundPrev := ma.keeper.GetEpochGroupData(ctx, previousEpochIndex, modelId)
 			if foundPrev {
 				for _, vw := range prevSubData.ValidationWeights {
+					dedupedNodes, _ := dedupMLNodesById(vw.MlNodes)
+					if nodeIds := carriedNodeIds(currentEpochData.GetForParticipant(modelId, vw.MemberAddress), dedupedNodes); len(nodeIds) > 0 {
+						if carriedNodes[modelId] == nil {
+							carriedNodes[modelId] = make(map[string]map[string]struct{})
+						}
+						carriedNodes[modelId][vw.MemberAddress] = nodeIds
+					}
 					// EpochPerformanceSummary persists across reward claims (SettleAmount does not),
 					// so this check remains stable no matter how many blocks after settlement the
 					// sampler runs.
@@ -694,14 +702,13 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 					if !found || summary.RewardedCoins == 0 {
 						continue
 					}
-					dedupedNodes, _ := dedupMLNodesById(vw.MlNodes)
 					previousEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
 				}
 			}
 		}
 	}
 
-	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, liveRootTotalWeight, anchorHeight, guardianSet, participantVotingPowers)
+	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, liveRootTotalWeight, anchorHeight, guardianSet, participantVotingPowers, carriedNodes)
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
@@ -794,6 +801,7 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 	anchorHeight int64,
 	guardianSet map[string]bool,
 	participantVotingPowers map[string]map[string]int64,
+	carriedNodes map[string]map[string]map[string]struct{},
 ) *EpochMLNodeData {
 	allParticipantsHashStr := currentEpochData.GetAllParticipantsHash()
 
@@ -802,7 +810,6 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 
 	eligibleNodesData := NewEpochMLNodeData()
 	for _, modelId := range currentEpochData.Models() {
-		nonVotingVPForModel := int64(0)
 		modelView := currentEpochData.ForModel(modelId)
 		participantVotingPowersPerModel := participantVotingPowers[modelId]
 		thresholds := ma.calculateThresholds(modelView, participantVotingPowersPerModel, liveRootTotalWeight)
@@ -811,65 +818,148 @@ func (ma *ModelAssigner) filterEligibleMLNodes(
 			"participant_min_node_weights", thresholds.participantMinNodeWeights,
 			"global_max_node_weight", thresholds.globalMaxNodeWeight)
 
-		participantNodes := currentEpochData.GetForModel(modelId)
-		sortedParticipantAddrs := sortedKeys(participantNodes)
-
-		// Build eligible set for this model using per-model thresholds
-		var filteredParticipantAddrs []string
-		for _, addr := range sortedParticipantAddrs {
-			if guardianSet[addr] {
-				continue
-			}
-			nodes := filterNodesByThresholds(participantNodes[addr], addr, thresholds)
-			if len(nodes) > 0 {
-				filteredParticipantAddrs = append(filteredParticipantAddrs, addr)
-			}
+		selection := modelEligibilityInput{
+			modelId:                modelId,
+			upcomingEpoch:          upcomingEpoch,
+			previousEpochData:      previousEpochData,
+			participantNodes:       currentEpochData.GetForModel(modelId),
+			thresholds:             thresholds,
+			guardianSet:            guardianSet,
+			participantVotingPower: participantVotingPowersPerModel,
+			maxNonVotingVP:         maxNonVotingVP,
+			allParticipantsHash:    allParticipantsHashStr,
+			anchorHeight:           anchorHeight,
 		}
-
-		// Sample N/2+1 participants with history for rotation (deterministic per epoch+anchor+model)
-		eligibleParticipantsPerModel := ma.sampleEligibleParticipantsWithHistory(
-			filteredParticipantAddrs,
-			previousEpochData,
-			modelId,
-			upcomingEpoch,
-			allParticipantsHashStr,
-			anchorHeight,
-		)
-
-		for _, participantAddr := range eligibleParticipantsPerModel {
-			currentNodes := participantNodes[participantAddr]
-			filteredNodes := filterNodesByThresholds(currentNodes, participantAddr, thresholds)
-
-			var participantModelWeight int64
-			for _, n := range currentNodes {
-				if n != nil {
-					participantModelWeight += n.PocWeight
-				}
-			}
-			participantVP := participantVotingPowersPerModel[participantAddr]
-			eligibleParticipantModelWeight := int64(0)
-
-			for _, node := range filteredNodes {
-				eligibleParticipantModelWeight += node.PocWeight
-
-				canAllocate, updatedNonVotingVP := canAllocateParticipantNode(
-					eligibleParticipantModelWeight,
-					participantModelWeight,
-					nonVotingVPForModel,
-					participantVP,
-					maxNonVotingVP,
-				)
-				if !canAllocate {
-					ma.LogInfo("Stopped adding nodes due to voting constraint", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "voting_constraint_limit", "participant", participantAddr, "model_id", modelId, "non_voting_vp_for_model", nonVotingVPForModel, "max_non_voting_vp", maxNonVotingVP)
-					break
-				}
-				nonVotingVPForModel = updatedNonVotingVP
-				eligibleNodesData.Append(modelId, participantAddr, node)
-			}
+		carried := carriedNodes[modelId]
+		selected := ma.selectEligibleNodesForModel(selection, carried)
+		if len(selected) == 0 && len(carried) > 0 {
+			ma.LogInfo("No preservable nodes outside the previous carry, allowing carried nodes", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext,
+				"step", "carried_nodes_fallback", "model_id", modelId)
+			selected = ma.selectEligibleNodesForModel(selection, nil)
+		}
+		for _, candidate := range selected {
+			eligibleNodesData.Append(modelId, candidate.participantAddr, candidate.node)
 		}
 	}
 
 	return eligibleNodesData
+}
+
+type modelEligibilityInput struct {
+	modelId                string
+	upcomingEpoch          types.Epoch
+	previousEpochData      *EpochMLNodeData
+	participantNodes       map[string][]*types.MLNodeInfo
+	thresholds             thresholdSet
+	guardianSet            map[string]bool
+	participantVotingPower map[string]int64
+	maxNonVotingVP         int64
+	allParticipantsHash    string
+	anchorHeight           int64
+}
+
+type eligibleNodeCandidate struct {
+	participantAddr string
+	node            *types.MLNodeInfo
+}
+
+func (ma *ModelAssigner) selectEligibleNodesForModel(in modelEligibilityInput, carried map[string]map[string]struct{}) []eligibleNodeCandidate {
+	var filteredParticipantAddrs []string
+	for _, addr := range sortedKeys(in.participantNodes) {
+		if in.guardianSet[addr] {
+			continue
+		}
+		if len(preservableNodes(in.participantNodes[addr], addr, in.thresholds, carried[addr])) > 0 {
+			filteredParticipantAddrs = append(filteredParticipantAddrs, addr)
+		}
+	}
+
+	// Sample N/2+1 participants with history for rotation (deterministic per epoch+anchor+model)
+	eligibleParticipantsPerModel := ma.sampleEligibleParticipantsWithHistory(
+		filteredParticipantAddrs,
+		in.previousEpochData,
+		in.modelId,
+		in.upcomingEpoch,
+		in.allParticipantsHash,
+		in.anchorHeight,
+	)
+
+	var selected []eligibleNodeCandidate
+	nonVotingVPForModel := int64(0)
+	for _, participantAddr := range eligibleParticipantsPerModel {
+		currentNodes := in.participantNodes[participantAddr]
+		filteredNodes := preservableNodes(currentNodes, participantAddr, in.thresholds, carried[participantAddr])
+
+		var participantModelWeight int64
+		for _, n := range currentNodes {
+			if n != nil {
+				participantModelWeight += n.PocWeight
+			}
+		}
+		participantVP := in.participantVotingPower[participantAddr]
+		eligibleParticipantModelWeight := int64(0)
+
+		for _, node := range filteredNodes {
+			eligibleParticipantModelWeight += node.PocWeight
+
+			canAllocate, updatedNonVotingVP := canAllocateParticipantNode(
+				eligibleParticipantModelWeight,
+				participantModelWeight,
+				nonVotingVPForModel,
+				participantVP,
+				in.maxNonVotingVP,
+			)
+			if !canAllocate {
+				ma.LogInfo("Stopped adding nodes due to voting constraint", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "voting_constraint_limit", "participant", participantAddr, "model_id", in.modelId, "non_voting_vp_for_model", nonVotingVPForModel, "max_non_voting_vp", in.maxNonVotingVP)
+				break
+			}
+			nonVotingVPForModel = updatedNonVotingVP
+			selected = append(selected, eligibleNodeCandidate{participantAddr: participantAddr, node: node})
+		}
+	}
+	return selected
+}
+
+func preservableNodes(nodes []*types.MLNodeInfo, participantAddr string, thresholds thresholdSet, carried map[string]struct{}) []*types.MLNodeInfo {
+	return filterNodesByThresholds(withoutCarriedNodes(nodes, carried), participantAddr, thresholds)
+}
+
+func carriedNodeIds(currentNodes, previousNodes []*types.MLNodeInfo) map[string]struct{} {
+	if len(currentNodes) == 0 || len(previousNodes) == 0 {
+		return nil
+	}
+	previousWeights := make(map[string]int64, len(previousNodes))
+	for _, node := range previousNodes {
+		if node != nil && node.PocWeight > 0 {
+			previousWeights[node.NodeId] = node.PocWeight
+		}
+	}
+	var carried map[string]struct{}
+	for _, node := range currentNodes {
+		if node == nil || node.PocWeight <= 0 {
+			continue
+		}
+		if weight, ok := previousWeights[node.NodeId]; ok && weight == node.PocWeight {
+			if carried == nil {
+				carried = make(map[string]struct{})
+			}
+			carried[node.NodeId] = struct{}{}
+		}
+	}
+	return carried
+}
+
+func withoutCarriedNodes(nodes []*types.MLNodeInfo, carried map[string]struct{}) []*types.MLNodeInfo {
+	if len(carried) == 0 {
+		return nodes
+	}
+	out := make([]*types.MLNodeInfo, 0, len(nodes))
+	for _, node := range nodes {
+		if _, ok := carried[node.NodeId]; !ok {
+			out = append(out, node)
+		}
+	}
+	return out
 }
 
 // canAllocateParticipantNode updates non-voting VP if this node would make all
