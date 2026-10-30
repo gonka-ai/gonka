@@ -5,15 +5,20 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 )
 
 // maxWarmKeyLogExecDepth bounds the MsgExec nesting the decorator walks. The
-// ante handler refuses nested MsgExec, so one level is what reaches here;
-// the bound only keeps the walk finite if that changes.
-const maxWarmKeyLogExecDepth = 2
+// CheckTx ante handler refuses nested MsgExec, but a proposer can include a
+// deeper nesting in a block, so a nesting past the bound fails the
+// transaction rather than letting a grant or revoke escape the log.
+const maxWarmKeyLogExecDepth = 8
+
+// errWarmKeyLogExecTooDeep is a MsgExec nested past maxWarmKeyLogExecDepth.
+var errWarmKeyLogExecTooDeep = sdkerrors.ErrInvalidRequest.Wrap("warm-key log: MsgExec nested too deep")
 
 // WarmKeyLogDecorator mirrors authz grants and revokes of the warm-key marker
 // into the inference module's warm-key log. It runs after the messages
@@ -79,7 +84,7 @@ func (d WarmKeyLogDecorator) record(ctx sdk.Context, msg sdk.Msg, depth int) err
 		return err
 	case *authz.MsgExec:
 		if depth >= maxWarmKeyLogExecDepth {
-			return nil
+			return errWarmKeyLogExecTooDeep
 		}
 		for _, innerAny := range m.Msgs {
 			var inner sdk.Msg
