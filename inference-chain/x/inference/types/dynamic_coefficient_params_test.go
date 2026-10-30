@@ -78,6 +78,12 @@ func TestDynamicCoefficientParamsValidate(t *testing.T) {
 		require.ErrorContains(t, params.Validate(), "must be positive")
 	})
 
+	t.Run("weight scale factor must be positive", func(t *testing.T) {
+		params := testDynamicPocParams()
+		params.DynamicCoefficientParams.WeightScaleFactor = &Decimal{Value: 0, Exponent: 0}
+		require.ErrorContains(t, params.Validate(), "weight_scale_factor must be positive")
+	})
+
 	t.Run("disabled model may omit config", func(t *testing.T) {
 		params := testDynamicPocParams()
 		params.Models = append(params.Models, &PoCModelConfig{

@@ -180,6 +180,13 @@ func Calculate(
 	if err != nil {
 		return nil, err
 	}
+	weightScaleFactor := mathsdk.LegacyOneDec()
+	if params.WeightScaleFactor != nil {
+		weightScaleFactor, err = positiveDecimal("dynamic weight_scale_factor", params.WeightScaleFactor)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	modelIDs := make([]string, 0, len(configs))
 	for modelID := range configs {
@@ -230,7 +237,7 @@ func Calculate(
 		effectiveValue := diluted(
 			base, coeffMin, config.TargetShareBps,
 			currentNormalized[modelID], currentTotal,
-		)
+		).Mul(weightScaleFactor)
 		effectiveEncoded, effectiveValue, err := encodeDecimal(effectiveValue)
 		if err != nil {
 			return nil, err
@@ -559,6 +566,7 @@ func cloneParams(params *types.DynamicCoefficientParams) *types.DynamicCoefficie
 		StepMax:           cloneDecimal(params.StepMax),
 		BootstrapStepMax:  cloneDecimal(params.BootstrapStepMax),
 		BootstrapShareBps: params.BootstrapShareBps,
+		WeightScaleFactor: cloneDecimal(params.WeightScaleFactor),
 	}
 }
 
