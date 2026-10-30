@@ -20,6 +20,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/golang/protobuf/proto"
@@ -958,7 +959,7 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 	if resp.Code != 0 {
 		logging.Error("Broadcast failed", types.Messages, "code", resp.Code, "rawLog", resp.RawLog,
 			"tx_id", id, "msgCount", len(msgs), "attempt", attempt, "gasWanted", gasWanted)
-		logFeeRelatedHint(resp.RawLog)
+		logFeeRelatedHint(resp)
 	} else {
 		// Surface OOG-retry recoveries so we can spot when the static gas
 		// table needs re-tuning. attempt > 0 means a previous broadcast
@@ -977,6 +978,9 @@ const (
 	feeGrantHint = "Fee-grant from cold to warm key is missing or expired. Run " +
 		"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' " +
 		"to refresh the authz grants AND the feegrant allowance in one transaction."
+	feeGrantSpentHint = "Fee-grant from cold to warm key cannot cover this fee (spend limit used up). Run " +
+		"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' " +
+		"to refresh the feegrant allowance."
 	insufficientFeeHint = "Transaction fees are below an enabled fee-group price. Inspect " +
 		"FeeParams.enabled_fee_groups, the matching groups[].min_gas_price, DAPI fee-tree refresh, " +
 		"and the cold-to-warm feegrant balance/expiration. Global min_gas_price_ngonka stays 0 and " +
@@ -985,21 +989,54 @@ const (
 		"account (cold key if authz/feegrant). CheckTx rejected this broadcast."
 )
 
-// logFeeRelatedHint inspects a tx broadcast error message and logs an
-// actionable hint when the failure is fee-related.
-func logFeeRelatedHint(rawLog string) {
-	for _, hint := range feeRelatedHints(rawLog) {
-		logging.Error(hint, types.Messages, "rawLog", rawLog)
+// logFeeRelatedHint inspects a failed tx broadcast and logs an actionable
+// hint when the failure is fee-related.
+func logFeeRelatedHint(resp *sdk.TxResponse) {
+	for _, hint := range feeRelatedHints(resp) {
+		logging.Error(hint, types.Messages, "code", resp.Code, "codespace", resp.Codespace, "rawLog", resp.RawLog)
 	}
 }
 
-func feeRelatedHints(rawLog string) []string {
+// feeHintsByCode maps the SDK's registered (codespace, code) errors to hints.
+var feeHintsByCode = []struct {
+	err interface {
+		Codespace() string
+		ABCICode() uint32
+	}
+	hint string
+}{
+	{feegrant.ErrFeeLimitExpired, feeGrantHint},
+	{feegrant.ErrNoAllowance, feeGrantHint},
+	{feegrant.ErrFeeLimitExceeded, feeGrantSpentHint},
+	{sdkerrors.ErrInsufficientFee, insufficientFeeHint},
+	{sdkerrors.ErrInsufficientFunds, insufficientFundsHint},
+}
+
+// feeRelatedHints matches on codespace and code; the rawLog text match is
+// only a fallback for codes without a fee-specific error (a missing grant is
+// sdk ErrNotFound, code 38).
+func feeRelatedHints(resp *sdk.TxResponse) []string {
+	if resp == nil || resp.Code == 0 {
+		return nil
+	}
+	for _, c := range feeHintsByCode {
+		if resp.Codespace == c.err.Codespace() && resp.Code == c.err.ABCICode() {
+			return []string{c.hint}
+		}
+	}
+	return feeHintsFromText(resp.RawLog)
+}
+
+func feeHintsFromText(rawLog string) []string {
 	if rawLog == "" {
 		return nil
 	}
 	var hints []string
 	if containsAny(rawLog, "fee-grant not found", "fee allowance", "feegrant: not found") {
 		hints = append(hints, feeGrantHint)
+	}
+	if containsAny(rawLog, "fee limit exceeded") {
+		hints = append(hints, feeGrantSpentHint)
 	}
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
 		hints = append(hints, insufficientFeeHint)

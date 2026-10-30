@@ -8,9 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"cosmossdk.io/x/feegrant"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
 	natssrv "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
@@ -450,14 +452,24 @@ func TestRequeueIntegration_MultipleRequeues(t *testing.T) {
 }
 
 func TestFeeRelatedHints(t *testing.T) {
-	assert.Empty(t, feeRelatedHints(""))
-	assert.Empty(t, feeRelatedHints("out of gas"))
+	assert.Empty(t, feeRelatedHints(nil))
+	assert.Empty(t, feeRelatedHints(&sdk.TxResponse{}))
+	assert.Empty(t, feeRelatedHints(failedTx(sdkerrors.ErrOutOfGas, "out of gas")))
 
-	grant := feeRelatedHints("feegrant: not found")
+	grant := feeRelatedHints(&sdk.TxResponse{Code: 38, Codespace: "sdk", RawLog: "fee-grant not found: not found"})
 	require.Len(t, grant, 1)
 	assert.Contains(t, grant[0], "grant-ml-ops-permissions")
 
-	fee := feeRelatedHints("insufficient fee: got 0ngonka, required at least 10ngonka")
+	expired := feeRelatedHints(failedTx(feegrant.ErrFeeLimitExpired, "basic allowance: fee allowance expired"))
+	require.Len(t, expired, 1)
+	assert.Equal(t, grant[0], expired[0])
+
+	spent := feeRelatedHints(failedTx(feegrant.ErrFeeLimitExceeded, "gonka1cold does not allow to pay fees for gonka1warm: basic allowance: fee limit exceeded"))
+	require.Len(t, spent, 1)
+	assert.Contains(t, spent[0], "spend limit")
+	assert.Contains(t, spent[0], "grant-ml-ops-permissions")
+
+	fee := feeRelatedHints(failedTx(sdkerrors.ErrInsufficientFee, "insufficient fee: got 0ngonka, required at least 10ngonka"))
 	require.Len(t, fee, 1)
 	assert.Contains(t, fee[0], "enabled_fee_groups")
 	assert.Contains(t, fee[0], "groups[].min_gas_price")
@@ -466,11 +478,33 @@ func TestFeeRelatedHints(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(fee[0]), "set min_gas_price_ngonka")
 	assert.NotContains(t, fee[0], "DAPI_CHAIN_NODE")
 
-	funds := feeRelatedHints("spendable balance 105000000ngonka is smaller than 10000000000ngonka: insufficient funds")
+	funds := feeRelatedHints(failedTx(sdkerrors.ErrInsufficientFunds, "spendable balance 105000000ngonka is smaller than 10000000000ngonka: insufficient funds"))
 	require.Len(t, funds, 1)
 	assert.Contains(t, funds[0], "spendable")
 	assert.Contains(t, funds[0], "CheckTx")
 	assert.NotContains(t, funds[0], "will not send")
+}
+
+func TestFeeRelatedHints_CodeWinsOverText(t *testing.T) {
+	// A renamed SDK message still yields the hint from codespace and code.
+	spent := feeRelatedHints(failedTx(feegrant.ErrFeeLimitExceeded, "basic allowance: spend limit reached"))
+	require.Len(t, spent, 1)
+	assert.Contains(t, spent[0], "spend limit")
+
+	// The text of an unrelated code does not pull a fee hint in.
+	assert.Equal(t, []string{insufficientFundsHint},
+		feeRelatedHints(failedTx(sdkerrors.ErrInsufficientFunds, "insufficient funds; fee limit exceeded")))
+
+	// Unknown codespace or code falls back to the text.
+	assert.Equal(t, []string{feeGrantSpentHint},
+		feeRelatedHints(&sdk.TxResponse{Code: 99, Codespace: "custom", RawLog: "basic allowance: fee limit exceeded"}))
+}
+
+func failedTx(err interface {
+	Codespace() string
+	ABCICode() uint32
+}, rawLog string) *sdk.TxResponse {
+	return &sdk.TxResponse{Code: err.ABCICode(), Codespace: err.Codespace(), RawLog: rawLog}
 }
 
 func TestSimFactory_SetsTimeoutAndGas(t *testing.T) {
