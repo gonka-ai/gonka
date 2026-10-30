@@ -777,6 +777,7 @@ func validateParamDecimalExponents(p Params) error {
 			{"poc_params.dynamic_coefficient_params.step_min", dynamic.GetStepMin()},
 			{"poc_params.dynamic_coefficient_params.step_max", dynamic.GetStepMax()},
 			{"poc_params.dynamic_coefficient_params.bootstrap_step_max", dynamic.GetBootstrapStepMax()},
+			{"poc_params.dynamic_coefficient_params.weight_scale_factor", dynamic.GetWeightScaleFactor()},
 		}
 		for _, field := range dynamicFields {
 			if err := check(field.name, field.value); err != nil {
@@ -1117,6 +1118,14 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 	}
 	if stepMax.GT(bootstrapStepMax) {
 		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
+	}
+	if params.WeightScaleFactor != nil {
+		if _, err := validatePositiveDecimal(
+			"poc_params.dynamic_coefficient_params.weight_scale_factor",
+			params.WeightScaleFactor,
+		); err != nil {
+			return err
+		}
 	}
 
 	// Shares sum for the regular scheme. A scheme block that has a coefficient
