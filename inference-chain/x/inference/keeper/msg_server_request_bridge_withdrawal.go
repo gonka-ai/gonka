@@ -53,6 +53,11 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, err
 	}
 
+	// Tokens sent to a bridge contract read back as a deposit credited to whoever submits the withdrawal.
+	if k.IsBridgeContractAddress(ctx, bridgeWrappedTokenContract.ChainId, msg.DestinationAddress) {
+		return nil, fmt.Errorf("destination address %s is a bridge contract for chain: %s", msg.DestinationAddress, bridgeWrappedTokenContract.ChainId)
+	}
+
 	// 4. Get chain ID for request identification
 	chainID := ctx.ChainID()
 

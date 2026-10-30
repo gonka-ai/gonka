@@ -108,3 +108,30 @@ func TestMsgServer_RequestBridgeWithdrawal_Behavior(t *testing.T) {
 	_, err := ms.RequestBridgeWithdrawal(ctx, msg)
 	require.Error(t, err)
 }
+
+func TestMsgServer_RequestBridgeWithdrawal_RejectsBridgeAsDestination(t *testing.T) {
+	k, _, ctx, _ := setupKeeperWithMocks(t)
+
+	creator := sdk.AccAddress([]byte("contract_addr______")).String()
+	bridge := "0x972a7a92d92796a98801a8818bcf91f1648f2f68"
+	mockWK := mockWasmKeeper{
+		GetContractInfoFn: func(ctx context.Context, contractAddress sdk.AccAddress) *wasmtypes.ContractInfo {
+			return &wasmtypes.ContractInfo{CodeID: 1, Creator: creator, Admin: creator, Label: "test"}
+		},
+	}
+	ms := keeper.NewMsgServerWithWasmKeeper(k, mockWK)
+	k.SetWrappedTokenContract(sdk.UnwrapSDKContext(ctx), types.BridgeWrappedTokenContract{
+		ChainId:                "ethereum",
+		ContractAddress:        "0x4444444444444444444444444444444444444444",
+		WrappedContractAddress: creator,
+	})
+	k.SetBridgeContractAddress(sdk.UnwrapSDKContext(ctx), types.BridgeContractAddress{ChainId: "ethereum", Address: bridge})
+
+	_, err := ms.RequestBridgeWithdrawal(ctx, &types.MsgRequestBridgeWithdrawal{
+		Creator:                  creator,
+		Amount:                   "500",
+		DestinationAddress:       "0x972a7A92D92796a98801A8818bcF91f1648f2F68",
+		DestinationBridgeAddress: bridge,
+	})
+	require.ErrorContains(t, err, "is a bridge contract")
+}

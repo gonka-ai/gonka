@@ -59,6 +59,11 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		return nil, err
 	}
 
+	// WGNK minted to a bridge contract reads back as a deposit and releases the GNK to whoever submits the mint.
+	if k.IsBridgeContractAddress(ctx, msg.ChainId, msg.DestinationAddress) {
+		return nil, fmt.Errorf("destination address %s is a bridge contract for chain: %s", msg.DestinationAddress, msg.ChainId)
+	}
+
 	// 3. Parse amount and create coins
 	amountInt, ok := math.NewIntFromString(msg.Amount)
 	if !ok {
