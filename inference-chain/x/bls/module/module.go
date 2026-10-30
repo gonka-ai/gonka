@@ -178,6 +178,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.Logger().Error("Failed to process threshold signing completion retries", "error", err)
 	}
 
+	if err := am.keeper.PruneDKGSubKeys(sdkCtx); err != nil {
+		am.keeper.Logger().Error("Failed to prune DKG sub-keys", "error", err)
+	}
+
 	return nil
 }
 
