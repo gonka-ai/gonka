@@ -28,6 +28,10 @@ type GeneratorConfig struct {
 	OutputDir  string
 	Client     *http.Client
 	Replay     *replay.Selector
+	// ReplayModel overrides captured model IDs for single-model external gateways.
+	ReplayModel string
+	// HTTPStatusOnly skips JSON/SSE response validation for remote runs.
+	HTTPStatusOnly bool
 }
 
 type RequestResult struct {
@@ -43,7 +47,8 @@ type RequestResult struct {
 	Stream            bool          `json:"stream,omitempty"`
 	MaxTokens         int64         `json:"max_tokens,omitempty"`
 	// StreamOutcome classifies a streamed response, one of the stream* values.
-	StreamOutcome string `json:"stream_outcome,omitempty"`
+	StreamOutcome     string `json:"stream_outcome,omitempty"`
+	ResponseReadError string `json:"response_read_error,omitempty"`
 }
 
 type Summary struct {
@@ -347,6 +352,9 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 			messages[i] = Message{Role: message.Role, Content: message.Content}
 		}
 		result.SampleFingerprint = replay.Fingerprint(sample.Model, sample.Messages)
+		if cfg.ReplayModel != "" {
+			spec.Model = cfg.ReplayModel
+		}
 	} else {
 		messages = append([]Message(nil), spec.Messages...)
 		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
@@ -385,6 +393,15 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	}
 	defer resp.Body.Close()
 	result.Status = resp.StatusCode
+	if cfg.HTTPStatusOnly && resp.StatusCode == cfg.Scenario.Assertions.Requests.HTTPStatus {
+		// Consume the body for latency/connection reuse, but a truncated body does
+		// not change a successful HTTP-status-only assertion.
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			result.ResponseReadError = err.Error()
+		}
+		result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
+		return result
+	}
 	if spec.Stream && resp.StatusCode == cfg.Scenario.Assertions.Requests.HTTPStatus {
 		stream := readSSE(resp.Body)
 		result.StreamOutcome = stream.Outcome

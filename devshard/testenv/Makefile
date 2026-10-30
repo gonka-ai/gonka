@@ -34,13 +34,33 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
+LOAD_DATASET ?=
+
 ifeq ($(strip $(SCENARIO)),)
 loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
 	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
 	@false
 else
 loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
+endif
+
+.PHONY: loadtest-remote
+ifeq ($(strip $(SCENARIO)),)
+loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest-remote SCENARIO=normal-load"
+	@false
+else
+loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
+	@set -euo pipefail; \
+	if [[ -f .env.remote-load ]]; then \
+		set -a; source ./.env.remote-load; set +a; \
+	fi; \
+	: "$${GONKA_API_KEY:?Set GONKA_API_KEY in .env.remote-load or the environment}"; \
+	: "$${GONKA_BASE:?Set GONKA_BASE in .env.remote-load or the environment}"; \
+	: "$${GONKA_MODEL:?Set GONKA_MODEL in .env.remote-load or the environment}"; \
+	export GONKA_API_KEY GONKA_BASE GONKA_MODEL; \
+	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
 endif
 
 .PHONY: loadtest-prodlike
