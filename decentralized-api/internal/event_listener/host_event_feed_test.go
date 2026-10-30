@@ -37,8 +37,8 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 				"reservation_id", "11", "participant", "host-a", "credit_refunded", "20", "reason", "maintenance_disabled"),
 			abciEvent(maintenanceCanceledEvent, blockModeBegin,
 				"reservation_id", "99", "participant", "someone-else", "credit_refunded", "1"),
-			abciEvent(warmKeyRevokedEvent, blockModeEnd,
-				"granter", "gonka1cold", "grantee", "gonka1old", "grant_id", "99", "height", "40", "end", "WARM_KEY_LOG_END_EXPIRED"),
+			abciEvent(warmKeyGrantedEvent, blockModeEnd,
+				"granter", "gonka1gov", "grantee", "gonka1warm", "grant_id", "7", "height", "40", "expires_at", "1800000000"),
 		},
 		TxsResults: []*abcitypes.ExecTxResult{
 			{Events: []abcitypes.Event{abciEvent(escrowCreatedEvent, "", "escrow_id", "not-a-number")}},
@@ -66,6 +66,7 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 		apiconfig.HostEventKindWarmKeyGranted,
 		apiconfig.HostEventKindWarmKeyRevoked,
 		apiconfig.HostEventKindMaintenanceCanceled,
+		apiconfig.HostEventKindWarmKeyGranted,
 		apiconfig.HostEventKindBlock,
 	}, kindsOf(got))
 	require.Equal(t, "maintenance_disabled", got[0].Maintenance.Reason)
@@ -77,6 +78,8 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 	require.Equal(t, uint64(1), got[4].WarmKey.GrantID)
 	require.Equal(t, "WARM_KEY_LOG_END_REVOKED", got[4].WarmKey.End)
 	require.Equal(t, uint64(2), got[5].Maintenance.ReservationID)
+	require.Equal(t, uint64(7), got[6].WarmKey.GrantID)
+	require.Equal(t, int64(1800000000), got[6].WarmKey.ExpiresAtUnix)
 
 	block := got[len(got)-1].Block
 	hdr := rpc.headers[height]

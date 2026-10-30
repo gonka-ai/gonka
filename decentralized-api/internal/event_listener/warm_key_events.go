@@ -8,9 +8,10 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 )
 
-// The inference module emits these from transactions that change its warm-key
-// log (inference-chain/x/inference/keeper/warm_key_log.go). Expiration is
-// expires_at on the grant. The chain does not emit an expiry event.
+// The inference module emits these when authz saves or deletes a warm-key
+// grant (inference-chain/x/inference/keeper/warm_key_log.go). A transaction
+// carries them in its events. Gov execution carries them on EndBlock.
+// Expiration is expires_at on the grant. The chain does not emit an expiry event.
 const (
 	warmKeyGrantedEvent = "warm_key_granted"
 	warmKeyRevokedEvent = "warm_key_revoked"
