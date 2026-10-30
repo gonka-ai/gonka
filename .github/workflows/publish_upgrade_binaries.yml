@@ -147,14 +147,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p public-html/v2/inferenced public-html/v2/dapi public-html/v2/edge-api
+          # BLST_PORTABLE=1: upgrade binaries must also start on x86-64 CPUs without ADX
+          # (non-portable blst exits with SIGILL in blst_cgo_init there).
           if [ "$BUILD_INFERENCE_CHAIN" = true ]; then
-            make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+            make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64 BLST_PORTABLE=1
           fi
           if [ "$BUILD_DAPI" = true ]; then
-            make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+            make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64 BLST_PORTABLE=1
           fi
           if [ "$BUILD_EDGE_API" = true ]; then
-            make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+            make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64 BLST_PORTABLE=1
           fi
 
       - name: Build devshardd release zip
@@ -166,7 +168,8 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x .github/scripts/devshard-release-meta.sh
-          make devshardd-release
+          # BLST_PORTABLE=1: same reason as the chain zips above.
+          make devshardd-release BLST_PORTABLE=1
           .github/scripts/devshard-release-meta.sh check-stamps \
             --binary ./build/devshardd \
             --protocol "$DEVSHARD_VERSION" \
