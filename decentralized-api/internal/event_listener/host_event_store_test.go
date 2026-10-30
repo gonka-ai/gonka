@@ -119,7 +119,7 @@ func TestHostEventStore_PayloadIsProtobuf(t *testing.T) {
 			Kind:           apiconfig.HostEventKindWarmKeyGranted,
 			ObservedAtUnix: 13,
 			WarmKey: &apiconfig.WarmKeyPayload{
-				Granter: "cold", Grantee: "warm", GrantID: 2, Height: 8, ExpiresAtUnix: 99, End: "EXPIRED",
+				Granter: "cold", Grantee: "warm", GrantID: 2, Height: 8, ExpiresAtUnix: 99,
 			},
 		},
 		{

@@ -8,10 +8,9 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 )
 
-// The inference module emits these on every change of its warm-key log
-// (inference-chain/x/inference/keeper/warm_key_log.go). Grants and revokes
-// come from transactions; an expiry comes from EndBlock, which the NewBlock
-// path handles through handleWarmKeyExpiryEvents.
+// The inference module emits these from transactions that change its warm-key
+// log (inference-chain/x/inference/keeper/warm_key_log.go). Expiration is
+// expires_at on the grant. The chain does not emit an expiry event.
 const (
 	warmKeyGrantedEvent = "warm_key_granted"
 	warmKeyRevokedEvent = "warm_key_revoked"
@@ -39,11 +38,6 @@ func (e *WarmKeyRevokedEventHandler) CanHandle(event *chainevents.JSONRPCRespons
 
 func (e *WarmKeyRevokedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	return nil
-}
-
-// handleWarmKeyExpiryEvents used to append EndBlock expiries from the NewBlock
-// socket. The host-event feed reads those from BlockResults instead.
-func (el *EventListener) handleWarmKeyExpiryEvents(event *chainevents.JSONRPCResponse, workerName string) {
 }
 
 func parseWarmKeyEvents(ev map[string][]string, prefix string, kind apiconfig.HostEventKind) ([]apiconfig.HostEvent, error) {

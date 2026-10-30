@@ -1039,7 +1039,8 @@ func (x *BlockPayload) GetHeader() []byte {
 
 // WarmKeyPayload mirrors one entry of the chain's warm-key log as the module
 // emitted it: a grant (height = granted_at_height, end empty) or an end
-// (height = revoked_at_height, end = REVOKED / REPLACED / EXPIRED).
+// (height = revoked_at_height, end = REVOKED / REPLACED). Expiration is
+// expires_at_unix on the grant; the chain does not emit an expiry event.
 type WarmKeyPayload struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Granter       string                 `protobuf:"bytes,1,opt,name=granter,proto3" json:"granter,omitempty"`

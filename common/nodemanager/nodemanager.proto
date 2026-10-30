@@ -161,7 +161,8 @@ message BlockPayload {
 
 // WarmKeyPayload mirrors one entry of the chain's warm-key log as the module
 // emitted it: a grant (height = granted_at_height, end empty) or an end
-// (height = revoked_at_height, end = REVOKED / REPLACED / EXPIRED).
+// (height = revoked_at_height, end = REVOKED / REPLACED). Expiration is
+// expires_at_unix on the grant; the chain does not emit an expiry event.
 message WarmKeyPayload {
   string granter = 1;
   string grantee = 2;

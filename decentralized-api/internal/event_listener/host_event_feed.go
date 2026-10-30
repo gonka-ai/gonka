@@ -708,7 +708,7 @@ type pendingEvent struct {
 func (f *HostEventFeed) eventsForHeight(ctx context.Context, res *coretypes.ResultBlockResults) []apiconfig.HostEvent {
 	var pending []pendingEvent
 	for _, ev := range res.FinalizeBlockEvents {
-		if eventMode(ev) != blockModeBegin {
+		if eventMode(ev) != blockModeBegin || warmKeyBlockEvent(ev.Type) {
 			continue
 		}
 		pending = append(pending, f.parseABCI(ev)...)
@@ -722,7 +722,7 @@ func (f *HostEventFeed) eventsForHeight(ctx context.Context, res *coretypes.Resu
 		}
 	}
 	for _, ev := range res.FinalizeBlockEvents {
-		if eventMode(ev) != blockModeEnd {
+		if eventMode(ev) != blockModeEnd || warmKeyBlockEvent(ev.Type) {
 			continue
 		}
 		pending = append(pending, f.parseABCI(ev)...)
@@ -736,6 +736,14 @@ func (f *HostEventFeed) eventsForHeight(ctx context.Context, res *coretypes.Resu
 		out = append(out, p.ev)
 	}
 	return out
+}
+
+// warmKeyBlockEvent reports a warm-key event carried on the block itself.
+// Grant and revoke are transaction events. An EndBlock warm_key_revoked was
+// the chain expiry signal; the chain does not emit it, and the feed does not
+// forward one if it is present.
+func warmKeyBlockEvent(eventType string) bool {
+	return eventType == warmKeyGrantedEvent || eventType == warmKeyRevokedEvent
 }
 
 func (f *HostEventFeed) parseABCI(ev abcitypes.Event) []pendingEvent {

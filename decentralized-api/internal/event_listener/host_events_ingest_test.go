@@ -137,10 +137,10 @@ func TestHostEvents_ParsersReadPayloads(t *testing.T) {
 		"warm_key_revoked.grantee":  {"gonka1old"},
 		"warm_key_revoked.grant_id": {"2"},
 		"warm_key_revoked.height":   {"900"},
-		"warm_key_revoked.end":      {"WARM_KEY_LOG_END_EXPIRED"},
+		"warm_key_revoked.end":      {"WARM_KEY_LOG_END_REVOKED"},
 	}, warmKeyRevokedEvent, apiconfig.HostEventKindWarmKeyRevoked)
 	require.NoError(t, err)
-	require.Equal(t, "WARM_KEY_LOG_END_EXPIRED", revoked[0].WarmKey.End)
+	require.Equal(t, "WARM_KEY_LOG_END_REVOKED", revoked[0].WarmKey.End)
 	require.Equal(t, int64(900), revoked[0].WarmKey.Height)
 
 	_, err = parseWarmKeyEvents(map[string][]string{
@@ -206,17 +206,6 @@ func TestHostEvents_HandlersAndNewBlockDoNotAppend(t *testing.T) {
 			Events: map[string][]string{
 				"maintenance_canceled.reservation_id": {"11"},
 				"maintenance_canceled.participant":    {"host-a"},
-			},
-		},
-	}, "test")
-	el.handleWarmKeyExpiryEvents(&chainevents.JSONRPCResponse{
-		Result: chainevents.Result{
-			Data: chainevents.Data{Type: newBlockEventType},
-			Events: map[string][]string{
-				"warm_key_revoked.grant_id": {"2"},
-				"warm_key_revoked.granter":  {"gonka1cold"},
-				"warm_key_revoked.grantee":  {"gonka1old"},
-				"warm_key_revoked.height":   {"900"},
 			},
 		},
 	}, "test")

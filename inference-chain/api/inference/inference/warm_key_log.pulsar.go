@@ -759,7 +759,8 @@ const (
 	// The granter granted the same grantee again (MsgGrant on a live pair); the
 	// new grant is the entry with the next id.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED WarmKeyLogEnd = 2
-	// The grant's expiration passed; the module ended the entry in EndBlock.
+	// Not written. Expiration is expires_at_unix on the grant. The module does
+	// not end the entry and does not emit an event when that time passes.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED WarmKeyLogEnd = 3
 )
 
@@ -810,8 +811,9 @@ func (WarmKeyLogEnd) EnumDescriptor() ([]byte, []int) {
 // from granter to grantee, as the module recorded it.
 //
 // The log is append-only: an entry is created when the grant appears and is
-// ended, never deleted, when the grant is revoked, replaced or expires. The
-// answer to "entry id of granter" therefore never changes, so devshard hosts
+// ended, never deleted, when the grant is revoked or replaced. Expiration is
+// expires_at_unix; it is not an end and not an event. The answer to "entry
+// id of granter" therefore never changes, so devshard hosts
 // that ask at different times, or long after the grant ended, all read the
 // same record. Ids increase per granter from 1, so a grant that replaces
 // another in the same block still orders after it.
