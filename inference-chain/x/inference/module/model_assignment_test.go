@@ -685,6 +685,158 @@ func TestSamplePreservedForEpisode_FiltersDeadSubGroupMembers(t *testing.T) {
 	require.False(t, preserved["participant-dead"], "dead subgroup member must be filtered out before sampling")
 }
 
+func TestAvailableForPreservation(t *testing.T) {
+	modelID := "model-a"
+	nodes := []*types.MLNodeInfo{
+		{NodeId: "live", PocWeight: 10},
+		{NodeId: "removed", PocWeight: 10},
+		{NodeId: "failed", PocWeight: 10},
+		{NodeId: "stopped", PocWeight: 10},
+		{NodeId: "other-model", PocWeight: 10},
+		{NodeId: "poc", PocWeight: 10},
+	}
+	hw := &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{
+		{LocalId: "live", Status: types.HardwareNodeStatus_INFERENCE, Models: []string{modelID}},
+		{LocalId: "failed", Status: types.HardwareNodeStatus_FAILED, Models: []string{modelID}},
+		{LocalId: "stopped", Status: types.HardwareNodeStatus_STOPPED, Models: []string{modelID}},
+		{LocalId: "other-model", Status: types.HardwareNodeStatus_INFERENCE, Models: []string{"model-b"}},
+		{LocalId: "poc", Status: types.HardwareNodeStatus_POC, Models: []string{modelID}},
+	}}
+
+	available, dropped := availableForPreservation(nodes, modelID, hw)
+	ids := make([]string, 0, len(available))
+	for _, n := range available {
+		ids = append(ids, n.NodeId)
+	}
+	require.Equal(t, []string{"live", "poc"}, ids)
+	require.Equal(t, []string{"removed", "failed", "stopped", "other-model"}, dropped)
+
+	// No inventory record (bootstrap): nothing is filtered, as in setModelsForParticipants.
+	available, dropped = availableForPreservation(nodes, modelID, nil)
+	require.Len(t, available, len(nodes))
+	require.Empty(t, dropped)
+}
+
+// TestSamplePreservedForEpisode_SkipsNodesRemovedFromHardware: a host removes a node
+// (DELETE from its API node list -> MsgSubmitHardwareDiff.Removed) or the node is
+// reported FAILED before the PoC. The node is still in the current epoch group, but it
+// must not be preserved: it would carry its weight into the next epoch without serving.
+// Removed nodes are the smallest here, so the smallest-first allocator would pick them
+// first without the filter.
+func TestSamplePreservedForEpisode_SkipsNodesRemovedFromHardware(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-hw-filter-test"
+
+	participants := make([]*types.ActiveParticipant, 0, 6)
+	subgroupWeights := make([]*types.ValidationWeight, 0, 6)
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, 6)
+	hardware := make(map[string]*types.HardwareNodes, 6)
+	for i := 0; i < 6; i++ {
+		addr := fmt.Sprintf("participant-%d", i)
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-gone", addr), PocWeight: 5},
+			{NodeId: fmt.Sprintf("%s-failed", addr), PocWeight: 6},
+			{NodeId: fmt.Sprintf("%s-live1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-live2", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{
+			MemberAddress: addr,
+			MlNodes:       nodes,
+		})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
+		// "-gone" is absent from the inventory.
+		hardware[addr] = &types.HardwareNodes{Participant: addr, HardwareNodes: []*types.HardwareNode{
+			{LocalId: fmt.Sprintf("%s-failed", addr), Status: types.HardwareNodeStatus_FAILED, Models: []string{modelID}},
+			{LocalId: fmt.Sprintf("%s-live1", addr), Status: types.HardwareNodeStatus_INFERENCE, Models: []string{modelID}},
+			{LocalId: fmt.Sprintf("%s-live2", addr), Status: types.HardwareNodeStatus_INFERENCE, Models: []string{modelID}},
+		}}
+	}
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		hardwareNodes:    hardware,
+		governanceModels: []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData:   map[string]map[uint64]types.EpochGroupData{modelID: {0: {ValidationWeights: subgroupWeights}}},
+		perfSummaries:    perfSummaries,
+		params:           &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+	}
+
+	assigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	preservedLive := 0
+	for anchor := int64(1000); anchor < 1020; anchor++ {
+		snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, anchor)
+		require.NoError(t, err)
+		for _, mp := range snapshot.ModelPreservedNodes {
+			for _, pp := range mp.Participants {
+				for _, id := range pp.NodeIds {
+					require.NotContains(t, id, "-gone", "node removed from hardware inventory must not be preserved (anchor %d)", anchor)
+					require.NotContains(t, id, "-failed", "FAILED node must not be preserved (anchor %d)", anchor)
+					preservedLive++
+				}
+			}
+		}
+	}
+	require.Greater(t, preservedLive, 0, "live nodes must still be preserved; otherwise the assertions above are vacuous")
+}
+
+// TestSamplePreservedForEpisode_AllNodesRemoved: when no node of the model is available
+// the snapshot is empty and every node goes through regular PoC. The allocator never
+// falls back to unavailable nodes.
+func TestSamplePreservedForEpisode_AllNodesRemoved(t *testing.T) {
+	ctx := context.Background()
+	modelID := "model-all-removed-test"
+
+	participants := make([]*types.ActiveParticipant, 0, 4)
+	subgroupWeights := make([]*types.ValidationWeight, 0, 4)
+	perfSummaries := make(map[string]map[uint64]types.EpochPerformanceSummary, 4)
+	hardware := make(map[string]*types.HardwareNodes, 4)
+	for i := 0; i < 4; i++ {
+		addr := fmt.Sprintf("participant-%d", i)
+		nodes := []*types.MLNodeInfo{
+			{NodeId: fmt.Sprintf("%s-n1", addr), PocWeight: 10},
+			{NodeId: fmt.Sprintf("%s-n2", addr), PocWeight: 10},
+		}
+		subgroupWeights = append(subgroupWeights, &types.ValidationWeight{
+			MemberAddress: addr,
+			MlNodes:       nodes,
+		})
+		participants = append(participants, &types.ActiveParticipant{
+			Index:   addr,
+			Models:  []string{modelID},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: nodes}},
+		})
+		perfSummaries[addr] = map[uint64]types.EpochPerformanceSummary{
+			0: {ParticipantId: addr, EpochIndex: 0, RewardedCoins: 1},
+		}
+		hardware[addr] = &types.HardwareNodes{Participant: addr}
+	}
+
+	mockKeeper := &mockKeeperForModelAssigner{
+		hardwareNodes:    hardware,
+		governanceModels: []types.Model{{Id: modelID, ThroughputPerNonce: 1000, VRam: 32}},
+		epochGroupData:   map[string]map[uint64]types.EpochGroupData{modelID: {0: {ValidationWeights: subgroupWeights}}},
+		perfSummaries:    perfSummaries,
+		params:           &types.Params{EpochParams: &types.EpochParams{PocSlotAllocation: &types.Decimal{Value: 5, Exponent: -1}}},
+	}
+
+	assigner := NewModelAssigner(mockKeeper, mockLogger{})
+	epoch := types.Epoch{Index: 1}
+	mockKeeper.populateSubgroupsFromParticipants(epoch.Index, participants)
+
+	snapshot, err := assigner.SamplePreservedForEpisode(ctx, epoch, 777)
+	require.NoError(t, err)
+	require.Empty(t, collectPreservedParticipants(snapshot))
+}
+
 func TestSamplePreservedForEpisode_AnchorInfluencesSelection(t *testing.T) {
 	ctx := context.Background()
 	modelID := "model-anchor-test"
