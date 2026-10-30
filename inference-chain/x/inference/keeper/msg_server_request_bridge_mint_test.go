@@ -57,3 +57,24 @@ func TestMsgServer_RequestBridgeMint_Behavior(t *testing.T) {
 	_, err := ms.RequestBridgeMint(ctx, msg)
 	require.Error(t, err)
 }
+
+func TestMsgServer_RequestBridgeMint_RejectsBridgeAsDestination(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	signer, _ := sdk.AccAddressFromBech32(testutil.Creator)
+	mocks.AccountKeeper.EXPECT().HasAccount(wctx, signer).Return(true).AnyTimes()
+	mocks.BankViewKeeper.EXPECT().SpendableCoin(wctx, signer, types.BaseCoin).Return(sdk.NewCoin(types.BaseCoin, math.NewInt(1000))).AnyTimes()
+
+	bridge := "0x972a7a92d92796a98801a8818bcf91f1648f2f68"
+	k.SetBridgeContractAddress(wctx, types.BridgeContractAddress{ChainId: "ethereum", Address: bridge})
+
+	_, err := ms.RequestBridgeMint(ctx, &types.MsgRequestBridgeMint{
+		Creator:                  testutil.Creator,
+		Amount:                   "100",
+		DestinationAddress:       "0x972a7A92D92796a98801A8818bcF91f1648f2F68",
+		ChainId:                  "ethereum",
+		DestinationBridgeAddress: bridge,
+	})
+	require.ErrorContains(t, err, "is a bridge contract")
+}
