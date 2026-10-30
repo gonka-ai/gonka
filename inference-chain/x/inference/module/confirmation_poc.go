@@ -17,6 +17,10 @@ import (
 
 var pocDeviationCoeff = decimal.New(909, -3)
 
+// confirmationReadingTolerance absorbs per-event measurement noise (~2% per reading),
+// so the minimum over several events does not trim honest hosts.
+var confirmationReadingTolerance = decimal.New(95, -2)
+
 var loadChallengeSkipTargets = defaultLoadChallengeSkipTargets
 
 func defaultLoadChallengeSkipTargets(k keeper.Keeper, ctx context.Context, epochIndex uint64) (map[string]struct{}, error) {
@@ -477,7 +481,7 @@ func (am AppModule) evaluateConfirmation(
 		skipAddrs[addr] = struct{}{}
 	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs, confirmationReadingTolerance)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -511,6 +515,7 @@ func (am AppModule) evaluateConfirmation(
 
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
+// A reading within tolerance of the expected weight counts as full before min-take.
 // Participants in skipAddrs (e.g. active maintenance) are left untouched: no
 // ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
@@ -518,6 +523,7 @@ func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
 	measured, preserved, totalExpected map[string]int64,
 	skipAddrs map[string]struct{},
+	tolerance decimal.Decimal,
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
 	for i, vw := range epochGroupData.ValidationWeights {
@@ -529,14 +535,22 @@ func foldEventReadings(
 		if totalExpected[addr] == 0 {
 			continue
 		}
-		if reading < vw.ConfirmationWeight {
-			epochGroupData.ValidationWeights[i].ConfirmationWeight = reading
+		if credited := creditedReading(reading, totalExpected[addr], tolerance); credited < vw.ConfirmationWeight {
+			epochGroupData.ValidationWeights[i].ConfirmationWeight = credited
 			updated = true
 		}
 
 		ratios[addr] = computeRatio(reading, totalExpected[addr])
 	}
 	return updated, ratios
+}
+
+// creditedReading raises a reading within tolerance of totalExpected to totalExpected.
+func creditedReading(reading, totalExpected int64, tolerance decimal.Decimal) int64 {
+	if reading < totalExpected && decimal.NewFromInt(reading).GreaterThanOrEqual(decimal.NewFromInt(totalExpected).Mul(tolerance)) {
+		return totalExpected
+	}
+	return reading
 }
 
 func computeRatio(reading, totalExpected int64) *types.Decimal {

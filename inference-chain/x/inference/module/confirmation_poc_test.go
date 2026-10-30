@@ -281,6 +281,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 10}, // preservedHere
 		map[string]int64{addr: 11}, // formation-time expected
 		nil,
+		confirmationReadingTolerance,
 	)
 	require.False(t, updated, "honest reading equal to initial must not lower ConfirmationWeight")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -294,6 +295,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 11},
 		nil,
+		confirmationReadingTolerance,
 	)
 	require.False(t, updated, "honest reading with rotated preservation must also stay at 11")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -307,6 +309,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 11},
 		nil,
+		confirmationReadingTolerance,
 	)
 	require.True(t, updated, "dishonest event must lower ConfirmationWeight")
 	require.Equal(t, int64(5), initial.ValidationWeights[0].ConfirmationWeight)
@@ -335,6 +338,7 @@ func TestFoldEventReadings_AllPreservedZeroMeasuredIsNotPenalized(t *testing.T) 
 		map[string]int64{addr: 100}, // every one of their nodes was preserved this event
 		map[string]int64{addr: 100},
 		nil,
+		confirmationReadingTolerance,
 	)
 
 	require.False(t, updated)
@@ -360,6 +364,7 @@ func TestFoldEventReadings_EmptyEventKeepsRatioAtOne(t *testing.T) {
 		map[string]int64{},
 		map[string]int64{},
 		nil,
+		confirmationReadingTolerance,
 	)
 
 	require.False(t, updated)
@@ -386,6 +391,7 @@ func TestFoldEventReadings_MaintenanceExemptSkipsWeightAndRatio(t *testing.T) {
 		map[string]int64{maint: 0, other: 0},
 		map[string]int64{maint: 100, other: 50},
 		map[string]struct{}{maint: {}},
+		confirmationReadingTolerance,
 	)
 
 	require.True(t, updated, "online host with poor reading must still be folded")
@@ -478,4 +484,27 @@ func requireRatioEqual(t *testing.T, got *types.Decimal, numerator, denominator 
 	require.NotNil(t, got)
 	expected := decimal.NewFromInt(numerator).Div(decimal.NewFromInt(denominator))
 	require.True(t, got.ToDecimal().Equal(expected), "got=%s expected=%s", got.ToDecimal().String(), expected.String())
+}
+
+// Readings within measurement noise of the expected weight keep ConfirmationWeight full;
+// a real shortfall still lowers it to the reading.
+func TestFoldEventReadings_NoiseToleranceKeepsHonestFull(t *testing.T) {
+	addr := "participant1"
+	egd := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: 1000, ConfirmationWeight: 1000},
+		},
+	}
+	expected := map[string]int64{addr: 1000}
+
+	for _, measured := range []int64{980, 1012, 951} {
+		updated, _ := foldEventReadings(egd, map[string]int64{addr: measured}, map[string]int64{}, expected, nil, confirmationReadingTolerance)
+		require.False(t, updated, "reading %d is within noise of 1000", measured)
+		require.Equal(t, int64(1000), egd.ValidationWeights[0].ConfirmationWeight)
+	}
+
+	updated, _ := foldEventReadings(egd, map[string]int64{addr: 949}, map[string]int64{}, expected, nil, confirmationReadingTolerance)
+	require.True(t, updated)
+	require.Equal(t, int64(949), egd.ValidationWeights[0].ConfirmationWeight)
 }
