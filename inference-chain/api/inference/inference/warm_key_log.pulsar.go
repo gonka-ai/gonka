@@ -828,7 +828,8 @@ type WarmKeyLogEntry struct {
 	GrantedAtHeight int64  `protobuf:"varint,4,opt,name=granted_at_height,json=grantedAtHeight,proto3" json:"granted_at_height,omitempty"`
 	// 0 while the entry is live.
 	RevokedAtHeight int64 `protobuf:"varint,5,opt,name=revoked_at_height,json=revokedAtHeight,proto3" json:"revoked_at_height,omitempty"`
-	// Unix seconds; 0 when the grant has no expiration.
+	// Unix nanoseconds; 0 when the grant has no expiration.
+	// Expired when strictly before the block time, as in authz Expiration.Before.
 	ExpiresAtUnix int64         `protobuf:"varint,6,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
 	End           WarmKeyLogEnd `protobuf:"varint,7,opt,name=end,proto3,enum=inference.inference.WarmKeyLogEnd" json:"end,omitempty"`
 }

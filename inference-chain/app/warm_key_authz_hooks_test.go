@@ -52,7 +52,7 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 		entries := warmKeyEntries(t, testApp, granter)
 		require.Len(t, entries, 1)
 		require.Equal(t, grantee.String(), entries[0].Grantee)
-		require.Equal(t, expires.Unix(), entries[0].ExpiresAtUnix)
+		require.Equal(t, expires.UnixNano(), entries[0].ExpiresAtUnix)
 		require.Equal(t, inferencetypes.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[0].End)
 
 		again, err := authz.NewMsgGrant(granter, grantee, authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL), nil)
@@ -175,11 +175,11 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 		require.Nil(t, warmKeyAuth(t, testApp, grantee, granter))
 		var ended inferencetypes.WarmKeyLogEntry
 		for _, entry := range warmKeyEntries(t, testApp, granter) {
-			if entry.Grantee == grantee.String() && entry.ExpiresAtUnix == expires.Unix() {
+			if entry.Grantee == grantee.String() && entry.ExpiresAtUnix == expires.UnixNano() {
 				ended = entry
 			}
 		}
-		require.Equal(t, expires.Unix(), ended.ExpiresAtUnix)
+		require.Equal(t, expires.UnixNano(), ended.ExpiresAtUnix)
 		require.Equal(t, inferencetypes.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, ended.End)
 	})
 

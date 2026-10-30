@@ -60,7 +60,7 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 
 	if live, found, err := k.liveWarmKeyEntry(ctx, granter, grantee); err != nil {
 		return types.WarmKeyLogEntry{}, err
-	} else if found && warmKeyExpired(live, sdkCtx.BlockTime().Unix()) {
+	} else if found && warmKeyExpired(live, sdkCtx.BlockTime().UnixNano()) {
 		// The index row outlived the grant. Authz already dropped it. Do not
 		// end the log entry as REPLACED and do not emit warm_key_revoked.
 		if err := k.WarmKeyLive.Remove(ctx, collections.Join(granter, grantee)); err != nil {
@@ -86,7 +86,7 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 		GrantedAtHeight: height,
 	}
 	if expiration != nil {
-		entry.ExpiresAtUnix = expiration.Unix()
+		entry.ExpiresAtUnix = expiration.UnixNano()
 	}
 	if err := k.WarmKeyLogEntriesMap.Set(ctx, collections.Join(granter, nextID), entry); err != nil {
 		return types.WarmKeyLogEntry{}, err
@@ -120,14 +120,17 @@ func (k Keeper) RecordWarmKeyRevoke(ctx context.Context, granter, grantee sdk.Ac
 		return false, err
 	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	if warmKeyExpired(live, sdkCtx.BlockTime().Unix()) {
+	if warmKeyExpired(live, sdkCtx.BlockTime().UnixNano()) {
 		return false, k.WarmKeyLive.Remove(ctx, collections.Join(granter, grantee))
 	}
 	return true, k.endWarmKeyEntry(ctx, live, sdkCtx.BlockHeight(), types.WarmKeyLogEnd_WARM_KEY_LOG_END_REVOKED)
 }
 
+// warmKeyExpired reports whether the grant's expiration is strictly before now.
+// now and ExpiresAtUnix are unix nanoseconds. The boundary matches authz,
+// which drops a grant only when Expiration.Before(blockTime).
 func warmKeyExpired(entry types.WarmKeyLogEntry, now int64) bool {
-	return entry.ExpiresAtUnix != 0 && entry.ExpiresAtUnix <= now
+	return entry.ExpiresAtUnix != 0 && entry.ExpiresAtUnix < now
 }
 
 // SeedWarmKeyLog fills an empty log from the authz grants that exist at the

@@ -132,12 +132,17 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	// Warm-key log (devshard key rotation): entries by (granter, id), the next
-	// id per granter, and the live entry id per (granter, grantee).
-	WarmKeyLogPrefix       = collections.NewPrefix(114)
-	WarmKeyLogNextIDPrefix = collections.NewPrefix(115)
-	WarmKeyLivePrefix      = collections.NewPrefix(116)
-	ParamsKey                      = []byte("p_inference")
+	// Warm-key log (devshard key rotation): entries by (granter, id) and the
+	// live entry id per (granter, grantee).
+	WarmKeyLogPrefix  = collections.NewPrefix(114)
+	WarmKeyLivePrefix = collections.NewPrefix(116)
+	// 115 is ASCII 's'. Developer stats are raw keys "stats/...", so a
+	// numeric counter there makes SeedWarmKeyLog decode those protobufs as
+	// uint64 and fail the upgrade. The counter uses the ignite string prefix
+	// instead, and 115 stays unused.
+	WarmKeyLogNextIDPrefix = collections.NewPrefix("WarmKeyLogNextID/value/")
+
+	ParamsKey = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

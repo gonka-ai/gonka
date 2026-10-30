@@ -34,7 +34,8 @@ message WarmKeyLogEntry {
   int64 granted_at_height = 4;
   // 0 while the entry is live.
   int64 revoked_at_height = 5;
-  // Unix seconds; 0 when the grant has no expiration.
+  // Unix nanoseconds; 0 when the grant has no expiration.
+  // Expired when strictly before the block time, as in authz Expiration.Before.
   int64 expires_at_unix = 6;
   WarmKeyLogEnd end = 7;
 }

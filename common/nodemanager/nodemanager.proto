@@ -168,6 +168,7 @@ message WarmKeyPayload {
   string grantee = 2;
   uint64 grant_id = 3;
   int64 height = 4;
+  // Unix nanoseconds; 0 when the grant has no expiration.
   int64 expires_at_unix = 5;
   string end = 6;
 }
