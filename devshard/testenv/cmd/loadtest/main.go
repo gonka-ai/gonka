@@ -59,7 +59,11 @@ func main() {
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
-	scenario, err := loadtest.LoadScenario(*scenarioPath)
+	loadScenario := loadtest.LoadScenario
+	if *loadDataset != "" {
+		loadScenario = loadtest.LoadDatasetScenario
+	}
+	scenario, err := loadScenario(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
 	}

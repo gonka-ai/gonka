@@ -581,6 +581,48 @@ workload:
       models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
 ```
 
+Common fixed fields (`messages`, `max_tokens`, `temperature`, `stream`,
+`logprobs`, and `top_logprobs`) can be overridden inside each `models` entry.
+Each model may also have its own parameter `mix`:
+
+```yaml
+workload:
+  request:
+    messages: [{role: user, content: "common prompt"}]
+    max_tokens: 128
+    stream: false
+    mix:
+      models:
+        - value: model-a
+          weight: 70
+          # Inherits the common prompt and parameters.
+        - value: model-b
+          weight: 30
+          messages: [{role: user, content: "explain escrow in detail"}]
+          max_tokens: 1024
+          temperature: 0
+          stream: true
+          mix:
+            max_tokens: [{value: 512, weight: 80}, {value: 1024, weight: 20}]
+            stream_ratio: 0.5
+            prompts:
+              - {value: [{role: user, content: "explain escrow"}], weight: 60}
+              - {value: [{role: user, content: "explain validation"}], weight: 40}
+```
+
+Precedence is common fixed fields, common parameter mix, model fixed fields,
+then the model's local parameter mix. Missing fields inherit the previous
+value; explicit `false`, `temperature: 0`, and ratios of `0` override it.
+Local mixes support `stream_ratio`, `logprobs_ratio`, `top_logprobs`,
+`max_tokens`, `temperature`, and `prompts`; nested `models` are rejected.
+The short `{value: model-a, weight: 70}` format remains supported. Model IDs
+must be unique, and weights must be positive and finite.
+
+For a single model, keep using `request.model` with fixed parameters or a
+common mix. When `mix.models` is present, it supplies all selectable model IDs
+and `request.model` is not selected separately. Common `messages` may be
+omitted if every model supplies messages or a local prompt mix.
+
 With more than one mix model the runner creates one escrow and epoch group per
 model, as for replay datasets. Streamed responses are classified per request in
 `requests.jsonl` (`stream_outcome`) and counted in `summary.json`
@@ -718,10 +760,36 @@ go run ./cmd/loadtest \
 ```
 
 Each line contains `model`, `stream`, `temperature`, `max_tokens`,
-`messages`, and `response`. The runner loads the complete file into memory,
-selects samples pseudo-randomly with replacement using `seed`, and registers
-every unique captured model before starting the Gateway. There is no separate
-model flag.
+`messages`, and `response`; `logprobs` and `top_logprobs` are also supported.
+The runner loads the complete file into memory and groups samples by `model`.
+YAML determines the selectable models: `request.model` for one model, or
+`request.mix.models` and its weights for several. For example, a dataset
+containing `model-a` and `model-b` can use:
+
+```yaml
+workload:
+  request:
+    mix:
+      models:
+        - {value: model-a, weight: 70}
+        - {value: model-b, weight: 30}
+```
+
+For each request the generator first chooses a model by the YAML weights, then
+selects a row uniformly with replacement from that model's samples using
+`seed`. Dataset row counts do not affect the model weights. The selected row
+supplies the complete request; YAML prompts, parameters, and parameter mixes
+do not override it. Explicit `temperature: 0` is preserved, and an omitted
+temperature stays omitted. YAML messages may be omitted when `-load-dataset`
+is supplied.
+
+Every configured model must have at least one dataset row. Otherwise the
+runner returns `dataset has no samples for configured model "model-b"` before
+starting the stack. Extra dataset models are ignored for traffic and runtime
+registration, with a log message. Unlike the previous replay behavior, dataset
+models are no longer registered automatically: declare them in YAML first.
+In the command above, `normal-load.yaml` selects `test-model`, so the dataset
+must include `test-model` or the scenario must be updated to its actual IDs.
 
 Mock ML does not choose an independent response. It looks up the response by
 the selected request fingerprint, so concurrent and speculative requests stay
@@ -729,7 +797,7 @@ associated with the correct fixture. Request selections and fingerprints are
 recorded in `requests.jsonl`; replay hits and misses are included in
 `ml-stats.json` and the terminal summary.
 
-Dataset replay can create one initial escrow per unique model. Keep this in
+Dataset replay creates one initial escrow per configured YAML model. Keep this in
 mind when interpreting escrow IDs and when designing an escrow-rotation run.
 
 ## Gateway and drain settings

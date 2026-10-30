@@ -140,7 +140,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if opts.MetricsInterval != 0 && opts.MetricsInterval < 100*time.Millisecond {
 		return result, fmt.Errorf("metrics interval must be at least 100ms")
 	}
-	scenario, err := LoadScenario(opts.ScenarioPath)
+	scenario, err := loadScenario(opts.ScenarioPath, opts.LoadDataset != "")
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -151,8 +151,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err != nil {
 			return RunResult{}, err
 		}
+		replayModels = scenario.RequestModels()
+		if err := validateDatasetModels(scenario, dataset); err != nil {
+			return RunResult{}, err
+		}
 		replaySelector = replay.NewSelector(dataset, scenario.Seed)
-		replayModels = dataset.Models()
 	}
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
 		return RunResult{}, fmt.Errorf("create result directory: %w", err)
@@ -582,6 +585,23 @@ func baseRunnerConfig(testenvDir string) (*config.File, error) {
 	return cfg, nil
 }
 
+// validateDatasetModels runs before any stack or output directory is created.
+func validateDatasetModels(scenario Scenario, dataset *replay.Dataset) error {
+	configured := map[string]bool{}
+	for _, model := range scenario.RequestModels() {
+		if !dataset.HasModel(model) {
+			return fmt.Errorf("dataset has no samples for configured model %q", model)
+		}
+		configured[model] = true
+	}
+	for _, model := range dataset.Models() {
+		if !configured[model] {
+			log.Printf("loadtest: ignoring dataset model %q: not configured in YAML", model)
+		}
+	}
+	return nil
+}
+
 func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles map[string]Profile, replayEnabled bool, replayModels []string, build *Build) error {
 	cfg, err := baseRunnerConfig(testenvDir)
 	if err != nil {
@@ -612,8 +632,9 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		if err := configureReplayModels(cfg, replayModels); err != nil {
 			return err
 		}
-	} else if models := scenario.RequestModels(); len(models) > 1 {
-		// A multi-model mix needs one escrow and epoch group per model, as replay does.
+	} else {
+		models := scenario.RequestModels()
+		// Register the YAML model IDs even for a single non-default model.
 		if err := configureReplayModels(cfg, models); err != nil {
 			return err
 		}

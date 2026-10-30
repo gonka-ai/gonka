@@ -28,7 +28,9 @@ type Response struct {
 type Sample struct {
 	Model       string    `json:"model"`
 	Stream      bool      `json:"stream"`
-	Temperature float64   `json:"temperature"`
+	Temperature *float64  `json:"temperature"`
+	Logprobs    bool      `json:"logprobs"`
+	TopLogprobs int       `json:"top_logprobs"`
 	MaxTokens   int64     `json:"max_tokens"`
 	Messages    []Message `json:"messages"`
 	Response    Response  `json:"response"`
@@ -36,6 +38,7 @@ type Sample struct {
 
 type Dataset struct {
 	samples       []Sample
+	byModel       map[string][]int
 	byFingerprint map[string]int
 	byMessages    map[string]int
 }
@@ -48,6 +51,7 @@ func LoadFile(path string) (*Dataset, error) {
 	defer file.Close()
 
 	dataset := &Dataset{
+		byModel:       make(map[string][]int),
 		byFingerprint: make(map[string]int),
 		byMessages:    make(map[string]int),
 	}
@@ -73,10 +77,12 @@ func LoadFile(path string) (*Dataset, error) {
 		}
 		messageFingerprint := MessagesFingerprint(sample.Messages)
 		if _, exists := dataset.byMessages[messageFingerprint]; exists {
-			return nil, fmt.Errorf("replay file line %d: duplicate messages fingerprint %s", line, messageFingerprint)
+			dataset.byMessages[messageFingerprint] = -1 // Ambiguous across models; disable the alias fallback.
+		} else {
+			dataset.byMessages[messageFingerprint] = len(dataset.samples)
 		}
 		dataset.byFingerprint[fingerprint] = len(dataset.samples)
-		dataset.byMessages[messageFingerprint] = len(dataset.samples)
+		dataset.byModel[sample.Model] = append(dataset.byModel[sample.Model], len(dataset.samples))
 		dataset.samples = append(dataset.samples, cloneSample(sample))
 	}
 	if err := scanner.Err(); err != nil {
@@ -130,7 +136,7 @@ func (d *Dataset) Lookup(model string, messages []Message) (Sample, int, bool) {
 	if !ok {
 		index, ok = d.byMessages[MessagesFingerprint(messages)]
 	}
-	if !ok {
+	if !ok || index < 0 {
 		return Sample{}, 0, false
 	}
 	return cloneSample(d.samples[index]), index, true
@@ -147,17 +153,38 @@ func NewSelector(dataset *Dataset, seed int64) *Selector {
 	return &Selector{dataset: dataset, seed: seed}
 }
 
+// HasModel reports whether the dataset has at least one sample for a model.
+func (d *Dataset) HasModel(model string) bool { return d != nil && len(d.byModel[model]) > 0 }
+
+// SelectModel samples only the requested model, keeping the original dataset index.
+func (s *Selector) SelectModel(model string, requestIndex uint64) (Sample, int, bool) {
+	if s == nil || s.dataset == nil {
+		return Sample{}, 0, false
+	}
+	indices := s.dataset.byModel[model]
+	if len(indices) == 0 {
+		return Sample{}, 0, false
+	}
+	index := indices[s.selectionIndex(requestIndex, len(indices))]
+	sample, ok := s.dataset.Sample(index)
+	return sample, index, ok
+}
+
 func (s *Selector) Select(requestIndex uint64) (Sample, int, bool) {
 	if s == nil || s.dataset == nil || s.dataset.Len() == 0 {
 		return Sample{}, 0, false
 	}
+	index := s.selectionIndex(requestIndex, s.dataset.Len())
+	sample, ok := s.dataset.Sample(index)
+	return sample, index, ok
+}
+
+func (s *Selector) selectionIndex(requestIndex uint64, count int) int {
 	var seed [16]byte
 	binary.BigEndian.PutUint64(seed[:8], uint64(s.seed))
 	binary.BigEndian.PutUint64(seed[8:], requestIndex)
 	digest := sha256.Sum256(seed[:])
-	index := int(binary.BigEndian.Uint64(digest[:8]) % uint64(s.dataset.Len()))
-	sample, ok := s.dataset.Sample(index)
-	return sample, index, ok
+	return int(binary.BigEndian.Uint64(digest[:8]) % uint64(count))
 }
 
 func Fingerprint(model string, messages []Message) string {
@@ -198,5 +225,9 @@ func validateSample(sample Sample) error {
 
 func cloneSample(sample Sample) Sample {
 	sample.Messages = append([]Message(nil), sample.Messages...)
+	if sample.Temperature != nil {
+		value := *sample.Temperature
+		sample.Temperature = &value
+	}
 	return sample
 }

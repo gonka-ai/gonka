@@ -3,6 +3,7 @@ package loadtest
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -212,24 +213,41 @@ type TrafficStage struct {
 }
 
 type Request struct {
-	Model     string      `yaml:"model"`
-	Stream    bool        `yaml:"stream"`
-	MaxTokens int         `yaml:"max_tokens"`
-	Messages  []Message   `yaml:"messages"`
-	Timeout   string      `yaml:"timeout"`
-	Mix       *RequestMix `yaml:"mix"`
+	Model       string      `yaml:"model"`
+	Stream      bool        `yaml:"stream"`
+	MaxTokens   int         `yaml:"max_tokens"`
+	Temperature *float64    `yaml:"temperature"`
+	Logprobs    bool        `yaml:"logprobs"`
+	TopLogprobs int         `yaml:"top_logprobs"`
+	Messages    []Message   `yaml:"messages,omitempty"`
+	Timeout     string      `yaml:"timeout"`
+	Mix         *RequestMix `yaml:"mix"`
 }
 
 // RequestMix draws per-request parameters from weighted choices. Each
 // dimension left empty falls back to the fixed request fields.
 type RequestMix struct {
-	StreamRatio   float64               `yaml:"stream_ratio"`
-	LogprobsRatio float64               `yaml:"logprobs_ratio"`
-	TopLogprobs   int                   `yaml:"top_logprobs"`
+	StreamRatio   *float64              `yaml:"stream_ratio"`
+	LogprobsRatio *float64              `yaml:"logprobs_ratio"`
+	TopLogprobs   *int                  `yaml:"top_logprobs"`
 	MaxTokens     []Weighted[int]       `yaml:"max_tokens"`
 	Temperature   []Weighted[float64]   `yaml:"temperature"`
 	Prompts       []Weighted[[]Message] `yaml:"prompts"`
-	Models        []Weighted[string]    `yaml:"models"`
+	Models        []ModelRequest        `yaml:"models"`
+}
+
+// ModelRequest overrides common request fields after selecting a model by weight.
+// A nested mix varies parameters only within this model; nested models are forbidden.
+type ModelRequest struct {
+	Value       string      `yaml:"value"`
+	Weight      float64     `yaml:"weight"`
+	Messages    []Message   `yaml:"messages,omitempty"`
+	MaxTokens   *int        `yaml:"max_tokens"`
+	Temperature *float64    `yaml:"temperature"`
+	Stream      *bool       `yaml:"stream"`
+	Logprobs    *bool       `yaml:"logprobs"`
+	TopLogprobs *int        `yaml:"top_logprobs"`
+	Mix         *RequestMix `yaml:"mix"`
 }
 
 type Weighted[T any] struct {
@@ -308,11 +326,20 @@ type Profile struct {
 }
 
 func LoadScenario(path string) (Scenario, error) {
+	return loadScenario(path, false)
+}
+
+// LoadDatasetScenario allows messages to come entirely from the replay dataset.
+func LoadDatasetScenario(path string) (Scenario, error) {
+	return loadScenario(path, true)
+}
+
+func loadScenario(path string, dataset bool) (Scenario, error) {
 	var scenario Scenario
 	if err := loadYAML(path, &scenario); err != nil {
 		return Scenario{}, err
 	}
-	if err := scenario.Validate(); err != nil {
+	if err := scenario.validate(dataset); err != nil {
 		return Scenario{}, fmt.Errorf("scenario %s: %w", path, err)
 	}
 	return scenario, nil
@@ -362,6 +389,10 @@ func protocolTimeoutSeconds(value string) (int64, error) {
 }
 
 func (s Scenario) Validate() error {
+	return s.validate(false)
+}
+
+func (s Scenario) validate(dataset bool) error {
 	if s.SchemaVersion != "v1" || strings.TrimSpace(s.Scenario) == "" {
 		return fmt.Errorf("schema_version must be v1 and scenario must be set")
 	}
@@ -478,10 +509,7 @@ func (s Scenario) Validate() error {
 		}
 		previousEnd = start + length
 	}
-	if s.Workload.Request.Model == "" || len(s.Workload.Request.Messages) == 0 {
-		return fmt.Errorf("request model and messages are required")
-	}
-	if err := s.Workload.Request.validate(); err != nil {
+	if err := s.Workload.Request.validate(dataset); err != nil {
 		return err
 	}
 	if s.Assertions.Requests.ErrorRate < 0 || s.Assertions.Requests.ErrorRate > 1 {
@@ -646,52 +674,117 @@ func (s Scenario) validateCases() error {
 	return nil
 }
 
-func (r Request) validate() error {
+func (r Request) validate(dataset bool) error {
 	if r.Timeout != "" {
 		timeout, err := time.ParseDuration(r.Timeout)
 		if err != nil || timeout <= 0 {
 			return fmt.Errorf("workload.request.timeout must be a positive duration")
 		}
 	}
-	mix := r.Mix
+	if r.MaxTokens < 0 || !validTemperature(r.Temperature) || r.TopLogprobs < 0 || r.TopLogprobs > 20 {
+		return fmt.Errorf("workload.request: max_tokens must be non-negative, temperature between 0 and 2, and top_logprobs between 0 and 20")
+	}
+	if err := r.Mix.validate("workload.request.mix", true); err != nil {
+		return err
+	}
+	if r.Mix == nil || len(r.Mix.Models) == 0 {
+		if strings.TrimSpace(r.Model) == "" {
+			return fmt.Errorf("request model and messages are required")
+		}
+		if !dataset && !hasMessages(r.Messages, r.Mix) {
+			return fmt.Errorf("request model and messages are required")
+		}
+	} else {
+		for i, model := range r.Mix.Models {
+			if !dataset && !hasMessages(model.Messages, model.Mix) && !hasMessages(r.Messages, r.Mix) {
+				return fmt.Errorf("workload.request.mix.models[%d]: messages are required", i)
+			}
+		}
+	}
+	if r.Messages != nil && !validMessages(r.Messages) {
+		return fmt.Errorf("workload.request.messages must contain non-empty roles and content")
+	}
+	return nil
+}
+
+func hasMessages(messages []Message, mix *RequestMix) bool {
+	return len(messages) > 0 || (mix != nil && len(mix.Prompts) > 0)
+}
+
+func validMessages(messages []Message) bool {
+	if len(messages) == 0 {
+		return false
+	}
+	for _, message := range messages {
+		if strings.TrimSpace(message.Role) == "" || message.Content == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validTemperature(v *float64) bool { return v == nil || (!math.IsNaN(*v) && *v >= 0 && *v <= 2) }
+func validRatio(v *float64) bool       { return v == nil || (!math.IsNaN(*v) && *v >= 0 && *v <= 1) }
+func validTopLogprobs(v *int) bool     { return v == nil || (*v >= 0 && *v <= 20) }
+
+func (mix *RequestMix) validate(path string, allowModels bool) error {
 	if mix == nil {
 		return nil
 	}
-	if mix.StreamRatio < 0 || mix.StreamRatio > 1 || mix.LogprobsRatio < 0 || mix.LogprobsRatio > 1 {
-		return fmt.Errorf("workload.request.mix stream_ratio and logprobs_ratio must be between 0 and 1")
+	if !validRatio(mix.StreamRatio) || !validRatio(mix.LogprobsRatio) {
+		return fmt.Errorf("%s stream_ratio and logprobs_ratio must be between 0 and 1", path)
 	}
-	if mix.TopLogprobs < 0 || mix.TopLogprobs > 20 {
-		return fmt.Errorf("workload.request.mix.top_logprobs must be between 0 and 20")
+	if !validTopLogprobs(mix.TopLogprobs) {
+		return fmt.Errorf("%s.top_logprobs must be between 0 and 20", path)
 	}
-	if err := validateWeights("max_tokens", mix.MaxTokens, func(v int) bool { return v > 0 }); err != nil {
+	if err := validateWeights(path+".max_tokens", mix.MaxTokens, func(v int) bool { return v > 0 }); err != nil {
 		return err
 	}
-	if err := validateWeights("temperature", mix.Temperature, func(v float64) bool { return v >= 0 && v <= 2 }); err != nil {
+	if err := validateWeights(path+".temperature", mix.Temperature, func(v float64) bool { return validTemperature(&v) }); err != nil {
 		return err
 	}
-	if err := validateWeights("prompts", mix.Prompts, func(v []Message) bool {
-		for _, message := range v {
-			if message.Role == "" || message.Content == "" {
-				return false
-			}
+	if err := validateWeights(path+".prompts", mix.Prompts, validMessages); err != nil {
+		return err
+	}
+	if !allowModels && len(mix.Models) > 0 {
+		return fmt.Errorf("%s.models: nested models are not supported", path)
+	}
+	seen := map[string]bool{}
+	total := 0.0
+	for i, model := range mix.Models {
+		field := fmt.Sprintf("%s.models[%d]", path, i)
+		if strings.TrimSpace(model.Value) == "" || seen[model.Value] || !validWeight(model.Weight) {
+			return fmt.Errorf("%s: requires a unique model and a positive finite weight", field)
 		}
-		return len(v) > 0
-	}); err != nil {
-		return err
+		seen[model.Value] = true
+		total += model.Weight
+		if (model.Messages != nil && !validMessages(model.Messages)) || (model.MaxTokens != nil && *model.MaxTokens <= 0) || !validTemperature(model.Temperature) || !validTopLogprobs(model.TopLogprobs) {
+			return fmt.Errorf("%s: invalid messages, max_tokens, temperature or top_logprobs", field)
+		}
+		if err := model.Mix.validate(field+".mix", false); err != nil {
+			return err
+		}
 	}
-	seenModels := map[string]bool{}
-	return validateWeights("models", mix.Models, func(v string) bool {
-		valid := strings.TrimSpace(v) != "" && !seenModels[v]
-		seenModels[v] = true
-		return valid
-	})
+	if math.IsInf(total, 0) {
+		return fmt.Errorf("%s.models: total weight must be finite", path)
+	}
+	return nil
 }
 
-func validateWeights[T any](name string, choices []Weighted[T], valid func(T) bool) error {
+func validWeight(weight float64) bool {
+	return weight > 0 && !math.IsInf(weight, 0) && !math.IsNaN(weight)
+}
+
+func validateWeights[T any](path string, choices []Weighted[T], valid func(T) bool) error {
+	total := 0.0
 	for i, choice := range choices {
-		if choice.Weight <= 0 || !valid(choice.Value) {
-			return fmt.Errorf("workload.request.mix.%s[%d]: requires a valid value and a positive weight", name, i)
+		if !validWeight(choice.Weight) || !valid(choice.Value) {
+			return fmt.Errorf("%s[%d]: requires a valid value and a positive finite weight", path, i)
 		}
+		total += choice.Weight
+	}
+	if math.IsInf(total, 0) {
+		return fmt.Errorf("%s: total weight must be finite", path)
 	}
 	return nil
 }

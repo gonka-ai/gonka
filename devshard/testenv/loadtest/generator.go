@@ -330,24 +330,23 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	spec := sampleRequest(cfg.Scenario, index)
 	var messages []Message
 	if cfg.Replay != nil {
-		sample, sampleIndex, ok := cfg.Replay.Select(index)
+		sample, sampleIndex, ok := cfg.Replay.SelectModel(spec.Model, index)
 		if !ok {
 			result.Error = "replay selector has no samples"
 			result.Outcome = "error"
 			return result
 		}
 		result.SampleIndex = &sampleIndex
-		spec = requestSpec{Model: sample.Model, Stream: sample.Stream, MaxTokens: sample.MaxTokens}
-		if sample.Temperature != 0 {
-			temperature := sample.Temperature
-			spec.Temperature = &temperature
-		}
+		spec = requestSpec{Model: sample.Model, Stream: sample.Stream, MaxTokens: sample.MaxTokens, Temperature: sample.Temperature, Logprobs: sample.Logprobs, TopLogprobs: sample.TopLogprobs}
 		messages = make([]Message, len(sample.Messages))
 		for i, message := range sample.Messages {
 			messages[i] = Message{Role: message.Role, Content: message.Content}
 		}
 		result.SampleFingerprint = replay.Fingerprint(sample.Model, sample.Messages)
 	} else {
+		if !spec.Logprobs {
+			spec.TopLogprobs = 0
+		}
 		messages = append([]Message(nil), spec.Messages...)
 		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
 	}
@@ -515,19 +514,56 @@ type requestSpec struct {
 // only on the seed and the index, so a rerun sends the same mix.
 func sampleRequest(scenario Scenario, index uint64) requestSpec {
 	request := scenario.Workload.Request
-	spec := requestSpec{Model: request.Model, Stream: request.Stream, MaxTokens: int64(request.MaxTokens), Messages: request.Messages}
-	mix := request.Mix
-	if mix == nil {
+	spec := requestSpec{Model: request.Model, Stream: request.Stream, MaxTokens: int64(request.MaxTokens), Messages: request.Messages, Temperature: request.Temperature, Logprobs: request.Logprobs, TopLogprobs: request.TopLogprobs}
+	if request.Mix == nil {
 		return spec
 	}
 	rng := rand.New(rand.NewPCG(uint64(scenario.Seed), index))
-	streamDraw, logprobsDraw := rng.Float64(), rng.Float64()
-	if mix.StreamRatio > 0 {
-		spec.Stream = streamDraw < mix.StreamRatio
+	applyRequestMix(&spec, request.Mix, rng)
+	// Preserve the existing seeded draws for the global mix, then apply model-specific overrides.
+	choices := make([]Weighted[int], len(request.Mix.Models))
+	for i, model := range request.Mix.Models {
+		choices[i] = Weighted[int]{Value: i, Weight: model.Weight}
 	}
-	if logprobsDraw < mix.LogprobsRatio {
-		spec.Logprobs = true
-		spec.TopLogprobs = mix.TopLogprobs
+	if selected, ok := pickWeighted(rng, choices); ok {
+		model := request.Mix.Models[selected]
+		spec.Model = model.Value
+		if model.Messages != nil {
+			spec.Messages = model.Messages
+		}
+		if model.MaxTokens != nil {
+			spec.MaxTokens = int64(*model.MaxTokens)
+		}
+		if model.Temperature != nil {
+			spec.Temperature = model.Temperature
+		}
+		if model.Stream != nil {
+			spec.Stream = *model.Stream
+		}
+		if model.Logprobs != nil {
+			spec.Logprobs = *model.Logprobs
+		}
+		if model.TopLogprobs != nil {
+			spec.TopLogprobs = *model.TopLogprobs
+		}
+		applyRequestMix(&spec, model.Mix, rng)
+	}
+	return spec
+}
+
+func applyRequestMix(spec *requestSpec, mix *RequestMix, rng *rand.Rand) {
+	if mix == nil {
+		return
+	}
+	streamDraw, logprobsDraw := rng.Float64(), rng.Float64()
+	if mix.StreamRatio != nil {
+		spec.Stream = streamDraw < *mix.StreamRatio
+	}
+	if mix.LogprobsRatio != nil {
+		spec.Logprobs = logprobsDraw < *mix.LogprobsRatio
+	}
+	if mix.TopLogprobs != nil {
+		spec.TopLogprobs = *mix.TopLogprobs
 	}
 	if choice, ok := pickWeighted(rng, mix.MaxTokens); ok {
 		spec.MaxTokens = int64(choice)
@@ -538,10 +574,6 @@ func sampleRequest(scenario Scenario, index uint64) requestSpec {
 	if choice, ok := pickWeighted(rng, mix.Prompts); ok {
 		spec.Messages = choice
 	}
-	if choice, ok := pickWeighted(rng, mix.Models); ok {
-		spec.Model = choice
-	}
-	return spec
 }
 
 // pickWeighted always consumes one draw so each dimension keeps its place in
