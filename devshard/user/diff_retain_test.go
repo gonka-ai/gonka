@@ -339,20 +339,36 @@ func TestSession_InlineCatchUpIsAtMostOneChunk(t *testing.T) {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	_, ok, err := session.inlineCatchUpLocked(0, n)
-	require.NoError(t, err)
+	_, ok := session.inlineCatchUpLocked(0, n)
 	require.False(t, ok, "a host at 0 is more than one chunk behind the tip")
 
-	diffs, ok, err := session.inlineCatchUpLocked(0, catchUpChunkSize)
-	require.NoError(t, err)
+	diffs, ok := session.inlineCatchUpLocked(0, catchUpChunkSize)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 1, catchUpChunkSize)
 
 	session.hostSyncNonce[0] = 60
-	diffs, ok, err = session.inlineCatchUpLocked(0, n)
-	require.NoError(t, err)
+	diffs, ok = session.inlineCatchUpLocked(0, n)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 61, n)
+}
+
+func TestSession_InlineCatchUpBelowTheRetainedSuffixIsLeftToTheSend(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = 30
+	composeEmptyDiffs(t, session, n)
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	for i := range session.group {
+		session.hostSyncNonce[i] = n
+	}
+	session.dropDiffPrefixLocked()
+	session.hostSyncNonce[0] = n - 20
+	require.Greater(t, session.firstRetainedNonceLocked(), uint64(n-19))
+
+	diffs, ok := session.inlineCatchUpLocked(0, n)
+	require.False(t, ok, "a chunk that starts in the store is read at send, not under the lock")
+	require.Empty(t, diffs)
 }
 
 func TestSession_InferenceToAFarBehindHostCatchesUpInChunksFirst(t *testing.T) {

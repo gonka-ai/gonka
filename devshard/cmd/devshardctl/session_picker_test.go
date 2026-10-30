@@ -152,10 +152,7 @@ func TestPicker_PrepareErrorWhileGhostingDrainsQueue(t *testing.T) {
 	require.Equal(t, 0, ghost.total(), "failed ghost prepare must not dispatch")
 }
 
-// A catch-up read can fail after the ghost MsgStart is already committed.
-// That burn must not fail the queue: the nonce moved, and the queued
-// request was never chosen.
-func TestPicker_CommittedGhostPrepareErrorKeepsQueue(t *testing.T) {
+func TestPicker_GhostForARewoundHostKeepsItsPreparedInferenceWhenTheStoreFails(t *testing.T) {
 	session, store := pickerSessionWithStore(t)
 	ctx := context.Background()
 	for range 3 {
@@ -182,10 +179,13 @@ func TestPicker_CommittedGhostPrepareErrorKeepsQueue(t *testing.T) {
 	res := waitReply(t, req, 2*time.Second)
 	require.NoError(t, res.err)
 	require.NotNil(t, res.prepared)
-	require.Greater(t, res.prepared.Nonce(), next, "the failed ghost still spent its nonce")
+	require.Greater(t, res.prepared.Nonce(), next)
 	require.NotEqual(t, hostIdx, res.prepared.HostIdx())
-	require.Equal(t, 0, ghost.total(), "a prepare error returns before the ghost is recorded")
-	require.Greater(t, session.Nonce(), next)
+	require.Equal(t, 1, ghost.total(), "the ghost burn reaches the ghost path with its prepared inference")
+	ghost.mu.Lock()
+	require.Equal(t, []uint64{next}, ghost.nonces)
+	require.Equal(t, []int{hostIdx}, ghost.hosts)
+	ghost.mu.Unlock()
 }
 
 type failDiffReadStore struct {

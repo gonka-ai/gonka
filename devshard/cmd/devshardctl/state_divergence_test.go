@@ -34,16 +34,19 @@ func TestStateDivergence_LocalRootFailureRecordsNoSample(t *testing.T) {
 	cases := []struct {
 		name    string
 		err     error
+		sendErr error
 		samples int
 	}{
 		{name: "local root unavailable", err: fmt.Errorf("process response: %w", user.ErrLocalRootUnavailable), samples: 0},
+		{name: "local catch-up read", sendErr: fmt.Errorf("catch up host 0 before nonce 7: %w", user.ErrLocalCatchUpRead), samples: 0},
+		{name: "generic send error", sendErr: errors.New("send to host 0: connection refused"), samples: 1},
 		{name: "state hash mismatch", err: fmt.Errorf("process response: %w", types.ErrStateHashMismatch), samples: 0},
 		{name: "generic process error", err: errors.New("process response: malformed terminal chunk"), samples: 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			redundancy := &Redundancy{perf: NewPerfTracker(nil)}
-			inf := &inflight{hostIdx: 0, nonce: 7, sendTime: time.Now(), processErr: tc.err}
+			inf := &inflight{hostIdx: 0, nonce: 7, sendTime: time.Now(), processErr: tc.err, err: tc.sendErr}
 
 			redundancy.recordSampleOnce(inf, user.InferenceParams{InputLength: 1}, false)
 
