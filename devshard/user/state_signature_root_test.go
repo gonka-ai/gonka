@@ -15,7 +15,6 @@ import (
 	"devshard/storage"
 	"devshard/types"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 )
 
 type countingStateSignatureVerifier struct {
@@ -30,7 +29,7 @@ func (v *countingStateSignatureVerifier) RecoverAddress(message, signature []byt
 
 func signRootForTest(t *testing.T, signer *signing.Secp256k1Signer, escrowID string, nonce uint64, root []byte) []byte {
 	t.Helper()
-	data, err := proto.Marshal(&types.StateSignatureContent{StateRoot: root, EscrowId: escrowID, Nonce: nonce})
+	data, err := types.CanonicalSignedBytes(&types.StateSignatureContent{StateRoot: root, EscrowId: escrowID, Nonce: nonce})
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -39,7 +38,7 @@ func signRootForTest(t *testing.T, signer *signing.Secp256k1Signer, escrowID str
 
 func signSessionHostRootForTest(t *testing.T, session *Session, hostIdx int, nonce uint64, root []byte) []byte {
 	t.Helper()
-	data, err := proto.Marshal(&types.StateSignatureContent{StateRoot: root, EscrowId: session.escrowID, Nonce: nonce})
+	data, err := types.CanonicalSignedBytes(&types.StateSignatureContent{StateRoot: root, EscrowId: session.escrowID, Nonce: nonce})
 	require.NoError(t, err)
 	sig, err := session.clients[hostIdx].(*InProcessClient).Host.Signer().Sign(data)
 	require.NoError(t, err)
