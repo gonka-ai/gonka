@@ -53,7 +53,7 @@ var defaultReconciliationConfig = MlNodeReconciliationConfig{
 // Mock implementations using minimal interfaces
 type MockOffChainValidator struct{}
 
-func (m *MockOffChainValidator) PrepareValidationNodes() {}
+func (m *MockOffChainValidator) PrepareValidationNodes() bool { return true }
 
 func (m *MockOffChainValidator) ValidateAll(pocStartBlockHeight int64, pocStartBlockHash string) {}
 
