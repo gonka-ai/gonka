@@ -17,10 +17,11 @@ const maxWarmKeyLogExecDepth = 2
 
 // WarmKeyLogDecorator mirrors authz grants and revokes of the warm-key marker
 // into the inference module's warm-key log. It runs after the messages
-// executed, in FinalizeBlock only, and only for a transaction whose messages
-// all succeeded, so the log records exactly the grants authz stored. A
-// failure to record fails the transaction, which reverts the grant with it:
-// the log and authz never disagree.
+// executed, for a transaction whose messages all succeeded, so the log records
+// exactly the grants authz stored. Simulation does the same writes on its
+// discarded cache: the gas meter has to see them, or the estimate is short of
+// what FinalizeBlock charges. CheckTx does not execute messages. A failure to
+// record fails the transaction, which reverts the grant with it.
 type WarmKeyLogDecorator struct {
 	cdc    codec.Codec
 	keeper *inferencekeeper.Keeper
@@ -31,7 +32,7 @@ func NewWarmKeyLogDecorator(cdc codec.Codec, k *inferencekeeper.Keeper) WarmKeyL
 }
 
 func (d WarmKeyLogDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, success bool, next sdk.PostHandler) (sdk.Context, error) {
-	if !success || simulate || ctx.ExecMode() != sdk.ExecModeFinalize {
+	if !success || !warmKeyLogMeters(ctx.ExecMode()) {
 		return next(ctx, tx, simulate, success)
 	}
 	for _, msg := range tx.GetMsgs() {
@@ -40,6 +41,13 @@ func (d WarmKeyLogDecorator) PostHandle(ctx sdk.Context, tx sdk.Tx, simulate, su
 		}
 	}
 	return next(ctx, tx, simulate, success)
+}
+
+// warmKeyLogMeters reports the modes that execute messages and charge gas for
+// them. Finalize persists the log. Simulate charges the same writes and drops
+// the cache.
+func warmKeyLogMeters(mode sdk.ExecMode) bool {
+	return mode == sdk.ExecModeFinalize || mode == sdk.ExecModeSimulate
 }
 
 func (d WarmKeyLogDecorator) record(ctx sdk.Context, msg sdk.Msg, depth int) error {

@@ -92,8 +92,9 @@ func TestWarmKeyLogDecoratorWalksMsgExec(t *testing.T) {
 }
 
 // Test flow:
-//  1. Run the decorator on a marker grant in CheckTx mode, in simulation, and with success=false.
-//  2. Assert nothing is recorded in any of the three.
+//  1. Run the decorator on a marker grant in CheckTx, in simulation, and with success=false.
+//  2. Assert CheckTx and the failed transaction record nothing. Simulation does the same
+//     writes as finalize, so the gas meter sees them. The SDK discards that cache.
 func TestWarmKeyLogDecoratorRecordsOnlyFinalizedSuccess(t *testing.T) {
 	d, ctx, entries := newWarmKeyLogTestDecorator(t)
 	granter, grantee := postTestAddr(1), postTestAddr(2)
@@ -103,9 +104,13 @@ func TestWarmKeyLogDecoratorRecordsOnlyFinalizedSuccess(t *testing.T) {
 
 	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeCheck), tx, false, true, passThrough)
 	require.NoError(t, err)
-	_, err = d.PostHandle(ctx, tx, true, true, passThrough)
-	require.NoError(t, err)
-	_, err = d.PostHandle(ctx, tx, false, false, passThrough)
-	require.NoError(t, err)
 	require.Empty(t, entries(granter))
+
+	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeSimulate), tx, true, true, passThrough)
+	require.NoError(t, err)
+	require.Len(t, entries(granter), 1)
+
+	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeFinalize), tx, false, false, passThrough)
+	require.NoError(t, err)
+	require.Len(t, entries(granter), 1)
 }
