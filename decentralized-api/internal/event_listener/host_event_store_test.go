@@ -18,6 +18,8 @@ import (
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -440,7 +442,12 @@ type liveEpoch struct {
 
 func (e *liveEpoch) LatestEpoch() (uint64, int64, bool) { return e.idx, e.start, true }
 
-func (e *liveEpoch) EpochStart(context.Context, uint64) (int64, error) { return e.start, nil }
+func (e *liveEpoch) EpochStart(_ context.Context, index uint64) (int64, error) {
+	if index != e.idx {
+		return 0, status.Errorf(codes.NotFound, "missing epoch %d", index)
+	}
+	return e.start, nil
+}
 
 func TestHostEventStore_SQLiteSynchronousFull(t *testing.T) {
 	dir := t.TempDir()
@@ -1022,7 +1029,7 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		s := open(t, "read-writer")
 		_, err := s.AppendHeight(t.Context(), 1, 5, heightRows(1, 5), at(s, 1, 0))
 		require.NoError(t, err)
-		_, err = s.AppendHeight(t.Context(), 2, 6, heightRows(2, 6), at(s, 4, 1))
+		_, err = s.AppendHeight(t.Context(), 2, 8, heightRows(2, 8), at(s, 4, 1))
 		require.NoError(t, err)
 		seq, found, _, err := s.ResolveBlock(t.Context(), 2)
 		require.NoError(t, err)

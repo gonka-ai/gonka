@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"runtime"
 	"strconv"
 	"sync"
@@ -24,6 +23,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
@@ -744,9 +745,64 @@ func (m mapEpochs) EpochStart(ctx context.Context, index uint64) (int64, error) 
 	}
 	st, ok := m.starts[index]
 	if !ok {
-		return 0, fmt.Errorf("missing epoch %d", index)
+		return 0, status.Errorf(codes.NotFound, "missing epoch %d", index)
 	}
 	return st, nil
+}
+
+func TestEpochBook_LabelReadsANewerEpochFromTheChain(t *testing.T) {
+	book := &epochBook{src: mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		starts: map[uint64]int64{4: 400, 5: 500},
+	}}
+	ctx := context.Background()
+
+	got, err := book.label(ctx, 350)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), got)
+
+	got, err = book.label(ctx, 400)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), got)
+
+	got, err = book.label(ctx, 500)
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), got)
+}
+
+func TestEpochBook_LabelRetriesWhenTheNextEpochQueryFails(t *testing.T) {
+	book := &epochBook{src: mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		errOn: map[uint64]error{4: errors.New("epoch down")},
+	}}
+	_, err := book.label(context.Background(), 400)
+	require.Error(t, err)
+}
+
+func TestHostEventFeed_LabelsTheEpochTheChainHasStarted(t *testing.T) {
+	epochs := mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		starts: map[uint64]int64{4: 400},
+	}
+	f, _, ring := newTestFeed(t, newFeedRPC(), epochs, nil)
+	f.bo.updateStatus(400, true)
+	f.emitted.Store(398)
+	f.walk(t.Context())
+
+	got := ringEvents(t, ring)
+	require.Equal(t, []int64{399, 400}, heightsOf(got))
+	require.Equal(t, uint64(3), got[0].Block.EpochIndex)
+	require.Equal(t, uint64(4), got[1].Block.EpochIndex)
+
+	f, _, ring = newTestFeed(t, newFeedRPC(), mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		errOn: map[uint64]error{4: errors.New("epoch down")},
+	}, nil)
+	f.bo.updateStatus(400, true)
+	f.emitted.Store(399)
+	f.walk(t.Context())
+	require.Empty(t, ringEvents(t, ring))
+	require.Equal(t, int64(399), f.emitted.Load())
 }
 
 type scriptEscrow struct {

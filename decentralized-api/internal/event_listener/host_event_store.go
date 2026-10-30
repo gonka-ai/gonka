@@ -609,7 +609,9 @@ func (s *dbStore) Prune(ctx context.Context, currentEpoch uint64) (err error) {
 	}
 	s.mu.Lock()
 	s.pruneCalls++
-	if currentEpoch < 4 {
+	// Keep the current epoch and the two before it. currentEpoch-2 is the
+	// oldest row that stays. The chain has already removed that epoch's escrows.
+	if currentEpoch < 2 {
 		s.mu.Unlock()
 		return nil
 	}
@@ -629,7 +631,7 @@ func (s *dbStore) Prune(ctx context.Context, currentEpoch uint64) (err error) {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM host_events WHERE writer = ? AND epoch_index < ?`), s.writer, currentEpoch-4); err != nil {
+	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM host_events WHERE writer = ? AND epoch_index < ?`), s.writer, currentEpoch-2); err != nil {
 		return err
 	}
 	return tx.Commit()
