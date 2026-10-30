@@ -207,6 +207,7 @@ func TestRunGenerator_ReplaysRandomSamplesWithoutMutatingPrompts(t *testing.T) {
 	defer server.Close()
 
 	scenario := testScenario()
+	scenario.Workload.Request.Model = "replay-model"
 	scenario.Workload.Duration = "30ms"
 	summary, err := RunGenerator(context.Background(), GeneratorConfig{
 		GatewayURL: server.URL,
@@ -333,16 +334,16 @@ func TestReadSSEOutcomeClasses(t *testing.T) {
 func mixScenario() Scenario {
 	scenario := testScenario()
 	scenario.Workload.Request.Mix = &RequestMix{
-		StreamRatio:   0.5,
-		LogprobsRatio: 0.5,
-		TopLogprobs:   5,
+		StreamRatio:   testPtr(0.5),
+		LogprobsRatio: testPtr(0.5),
+		TopLogprobs:   testPtr(5),
 		MaxTokens:     []Weighted[int]{{Value: 32, Weight: 40}, {Value: 128, Weight: 35}, {Value: 512, Weight: 20}, {Value: 2048, Weight: 5}},
 		Temperature:   []Weighted[float64]{{Value: 0, Weight: 50}, {Value: 0.7, Weight: 50}},
 		Prompts: []Weighted[[]Message]{
 			{Value: []Message{{Role: "user", Content: "short"}}, Weight: 1},
 			{Value: []Message{{Role: "system", Content: "be brief"}, {Role: "user", Content: "long"}}, Weight: 1},
 		},
-		Models: []Weighted[string]{{Value: "model-a", Weight: 70}, {Value: "model-b", Weight: 30}},
+		Models: []ModelRequest{{Value: "model-a", Weight: 70}, {Value: "model-b", Weight: 30}},
 	}
 	return scenario
 }
@@ -418,9 +419,9 @@ func TestRunGenerator_StreamOutcomes(t *testing.T) {
 	defer server.Close()
 
 	scenario := mixScenario()
-	scenario.Workload.Request.Mix.StreamRatio = 1
+	scenario.Workload.Request.Mix.StreamRatio = testPtr(float64(1))
 	scenario.Workload.Request.Mix.Temperature = []Weighted[float64]{{Value: 0, Weight: 1}}
-	scenario.Workload.Request.Mix.LogprobsRatio = 1
+	scenario.Workload.Request.Mix.LogprobsRatio = testPtr(float64(1))
 	scenario.Workload.Traffic = TrafficProfile{Type: "constant", RPS: 400}
 	scenario.Workload.Duration = "50ms"
 	summary, err := RunGenerator(context.Background(), GeneratorConfig{GatewayURL: server.URL, Scenario: scenario, OutputDir: t.TempDir()})
@@ -547,3 +548,5 @@ func TestSummarizeCountsGeneratorBehindAsNeverSent(t *testing.T) {
 	require.InDelta(t, 0.75, summary.DroppedRate, 1e-9)
 	require.InDelta(t, 0.0, summary.ErrorRate, 1e-9)
 }
+
+func testPtr[T any](value T) *T { return &value }
