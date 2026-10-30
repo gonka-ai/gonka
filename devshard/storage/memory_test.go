@@ -50,6 +50,18 @@ func TestMemory_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, NewMemory())
 }
 
+func TestMemory_OwnFinishes(t *testing.T) {
+	runOwnFinishes(t, NewMemory())
+}
+
+func TestManaged_OwnFinishes(t *testing.T) {
+	runOwnFinishes(t, NewManagedStorage(NewMemory(), 3, nil))
+}
+
+func TestObsRepairGate_OwnFinishes(t *testing.T) {
+	runOwnFinishes(t, NewObsRepairGate(NewManagedStorage(NewHybridStorage(NewMemory()), 3, nil)))
+}
+
 func TestMemory_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, NewMemory())
 }

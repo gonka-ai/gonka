@@ -46,6 +46,7 @@ func (h *Host) CatchUpFromStore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	defer h.reloadOwnFinishes()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	current := h.sm.LatestNonce()
@@ -111,6 +112,7 @@ func (h *Host) applyDurablePagesLocked(ctx context.Context, from, to uint64, err
 			}
 			if !logged {
 				logged = true
+				h.ownFinishReloadDue.Store(true)
 				args := []any{
 					"subsystem", "host",
 					"escrow_id", h.escrowID,
