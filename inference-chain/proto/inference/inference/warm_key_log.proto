@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// WarmKeyLogEnd says how a warm-key log entry ended. NONE is a live entry.
+enum WarmKeyLogEnd {
+  WARM_KEY_LOG_END_NONE = 0;
+  // The granter revoked the grant (MsgRevoke).
+  WARM_KEY_LOG_END_REVOKED = 1;
+  // The granter granted the same grantee again (MsgGrant on a live pair); the
+  // new grant is the entry with the next id.
+  WARM_KEY_LOG_END_REPLACED = 2;
+  // Not written. Expiration is expires_at_unix on the grant. The module does
+  // not end the entry and does not emit an event when that time passes.
+  WARM_KEY_LOG_END_EXPIRED = 3;
+}
+
+// WarmKeyLogEntry is one grant of the warm-key marker (WarmKeyGrantMarkerTypeURL)
+// from granter to grantee, as the module recorded it.
+//
+// The log is append-only: an entry is created when the grant appears and is
+// ended, never deleted, when the grant is revoked or replaced. Expiration is
+// expires_at_unix; it is not an end and not an event. The answer to "entry
+// id of granter" therefore never changes, so devshard hosts
+// that ask at different times, or long after the grant ended, all read the
+// same record. Ids increase per granter from 1, so a grant that replaces
+// another in the same block still orders after it.
+message WarmKeyLogEntry {
+  string granter = 1;
+  uint64 id = 2;
+  string grantee = 3;
+  int64 granted_at_height = 4;
+  // 0 while the entry is live.
+  int64 revoked_at_height = 5;
+  // Unix nanoseconds; 0 when the grant has no expiration.
+  // Expired when strictly before the block time, as in authz Expiration.Before.
+  int64 expires_at_unix = 6;
+  WarmKeyLogEnd end = 7;
+}
