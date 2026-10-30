@@ -1,7 +1,6 @@
 package types
 
 import (
-	"google.golang.org/protobuf/proto"
 	"bytes"
 	"fmt"
 	"sort"
@@ -9,6 +8,7 @@ import (
 	"testing"
 
 	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"devshard/signing"
@@ -432,5 +432,20 @@ func TestCanonicalSignedBytes_StateSignatureContentMatchesProtoMarshal(t *testin
 	}
 	if !bytes.Equal(canonical, plain) {
 		t.Fatalf("CanonicalSignedBytes != proto.Marshal for StateSignatureContent:\n  canonical=%x\n  plain=%x", canonical, plain)
+	}
+}
+
+func TestCanonicalSignedBytes_StateSignatureContentHasNoMapOrRepeatedFields(t *testing.T) {
+	md := (&StateSignatureContent{}).ProtoReflect().Descriptor()
+	for i := 0; i < md.Fields().Len(); i++ {
+		fd := md.Fields().Get(i)
+		switch {
+		case fd.IsMap():
+			t.Fatalf("StateSignatureContent field %s is a map; CanonicalSignedBytes must stay byte-identical to plain proto.Marshal because this message is a secp256k1 preimage in the empty domain", fd.FullName())
+		case fd.Cardinality() == protoreflect.Repeated:
+			t.Fatalf("StateSignatureContent field %s is repeated; CanonicalSignedBytes must stay byte-identical to plain proto.Marshal because this message is a secp256k1 preimage in the empty domain", fd.FullName())
+		case fd.Kind() == protoreflect.MessageKind:
+			t.Fatalf("StateSignatureContent field %s is a message type; CanonicalSignedBytes must stay byte-identical to plain proto.Marshal because this message is a secp256k1 preimage in the empty domain", fd.FullName())
+		}
 	}
 }
