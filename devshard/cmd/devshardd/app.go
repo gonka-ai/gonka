@@ -12,6 +12,7 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/observer"
 	"common/httpguard"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
@@ -19,6 +20,7 @@ import (
 	"common/vocabulary"
 	devshardpkg "devshard"
 	shardbridge "devshard/bridge"
+	"devshard/chainoracle/blocks/headertime"
 	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
@@ -139,6 +141,11 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	chainRuntime.chainEvents.OnReady(func(ready bool) {
 		lifecycle.SetReady(ready)
 		manager.SetCometConnected(ready)
+		if ready {
+			if p := manager.HostEventPoller(); p != nil {
+				p.OnCometConnected()
+			}
+		}
 	})
 	var adminServer appHTTPServer
 	if admin != nil {
@@ -358,6 +365,7 @@ func buildHostManager(
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}
+	manager.AttachHeaderTimeCache(ctx, filepath.Join(cfg.DataDir, headertime.SQLiteFileName))
 	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
@@ -409,7 +417,8 @@ func buildHostManager(
 		store.Start()
 	}
 
-	startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, closers)
+	poller, startPoller := startHostEventsWarm(ctx, cfg, chainBridge, hostInfoCached, mlClient, store, manager.HandleSettlementFinalized, instanceAddr, manager.HeaderTimes(), manager.SetHostEventPoller, closers)
+	chainRuntime.chainEvents.ListenWarmKeys(poller)
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
@@ -442,15 +451,17 @@ func buildHostManager(
 			"chain_id", e.ChainID)
 		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
 	})
+	// Latest header first. chainEvents.Start subscribes after buildHostManager returns.
+	manager.SeedHeaderTimes(ctx)
+	startPoller()
 
 	return manager, nil
 }
 
 // startHostEventsWarm registers directory warm on chain escrow-created
-// (the websocket already fetched the escrow) and, when enabled, the DAPI
-// GetHostEvents long-poll. Neither path starts a host or stamps a runtime
-// version. Disabled long-poll is a no-op against an old dapi that returns
-// Unimplemented; lazy escrow create remains the fallback for never-warmed ids.
+// and starts the shared host-event poller. DEVSHARD_HOST_EVENTS_ENABLED
+// only removes the escrow kinds. The poller, block sink, and warm-key sink
+// run either way. Neither path starts a host or stamps a runtime version.
 func startHostEventsWarm(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -460,33 +471,57 @@ func startHostEventsWarm(
 	store devshardstorage.Storage,
 	onSettled func(escrowID string) error,
 	localAddr string,
+	headers *headertime.Source,
+	attachPoller func(*hostevents.Poller),
 	closers *closeStack,
-) {
+) (*hostevents.Poller, func()) {
 	if queryBridge == nil {
 		queryBridge = chainBridge
 	}
-	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr).withWarmKeys(chainBridge.WarmKeys())
 	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
 		return sink.WarmFromInfo(&info)
 	})
 	if !cfg.HostEventsEnabled {
-		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false); chain create events still warm escrow_cache")
-		return
+		slog.Info("hostevents: escrow kinds omitted (DEVSHARD_HOST_EVENTS_ENABLED=false); block and warm-key polls still run")
+	}
+	var holes hostevents.HoleReader
+	if rpc := cfg.Node.ChainRpcUrl; rpc != "" {
+		if o, err := observer.NewTendermint(observer.TendermintConfig{RPCURL: rpc}); err != nil {
+			slog.Warn("hostevents: header reader unavailable", "err", err, "rpc", rpc)
+		} else {
+			holes = o
+		}
 	}
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
-	closers.Add(func() {
-		cancel()
-		<-done
-	})
-	go func() {
-		defer close(done)
-		slog.Info("hostevents: starting escrow long-poll warm", "node_manager_addr", cfg.NodeManagerAddr)
-		hostevents.Run(hostCtx, hostevents.Config{
-			Client: mlClient.NodeManagerClient(),
-			Log:    slog.Default(),
-		}, sink)
-	}()
+	slog.Info("hostevents: starting poller", "node_manager_addr", cfg.NodeManagerAddr, "escrow", cfg.HostEventsEnabled)
+	cfgPoll := hostevents.PollerConfig{
+		Config:         hostevents.Config{Log: slog.Default()},
+		Source:         headers,
+		IncludeEscrow:  cfg.HostEventsEnabled,
+		BlocksVerified: true,
+		Escrow:         sink,
+		Warm:           chainBridge.WarmKeys(),
+		Holes:          holes,
+	}
+	if mlClient != nil {
+		cfgPoll.Client = mlClient.NodeManagerClient()
+	}
+	p := hostevents.NewPoller(cfgPoll)
+	if attachPoller != nil {
+		attachPoller(p)
+	}
+	return p, func() {
+		closers.Add(func() {
+			cancel()
+			<-done
+		})
+		go func() {
+			defer close(done)
+			p.Run(hostCtx)
+		}()
+	}
 }
 
 const availabilitySeedTimeout = 3 * time.Second

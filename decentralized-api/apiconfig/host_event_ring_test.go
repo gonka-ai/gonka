@@ -228,3 +228,96 @@ func TestHostEventRing_EmptySubscribeReturnsNoEvents(t *testing.T) {
 	require.Empty(t, got.Events)
 	require.Equal(t, uint64(2), got.NextCursor)
 }
+
+func TestHostEventRing_DefaultCapacityDropsOldest(t *testing.T) {
+	require.Equal(t, 40960, apiconfig.DefaultHostEventRingCapacity)
+	require.Equal(t, 1000, apiconfig.MaxHostEventsPage)
+
+	r := apiconfig.NewHostEventRing(0, 1)
+	n := apiconfig.DefaultHostEventRingCapacity
+	for i := 0; i < n; i++ {
+		r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	}
+	got := r.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.False(t, got.Reset)
+	require.Len(t, got.Events, n)
+	require.Equal(t, uint64(1), got.Events[0].Seq)
+	require.Equal(t, uint64(n), got.Events[n-1].Seq)
+
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	got = r.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.False(t, got.Reset)
+	require.Len(t, got.Events, n)
+	require.Equal(t, uint64(2), got.Events[0].Seq, "oldest event is dropped")
+	require.Equal(t, uint64(n+1), got.Events[n-1].Seq)
+}
+
+func TestHostEventRing_AppendBatchAssignsSeqAndWakesOnce(t *testing.T) {
+	r := apiconfig.NewHostEventRing(8, 1)
+	ch, release := r.Subscribe([]apiconfig.HostEventKind{
+		apiconfig.HostEventKindEscrowCreated,
+		apiconfig.HostEventKindBlock,
+	})
+	defer release()
+
+	got := r.AppendBatch([]apiconfig.HostEvent{
+		{Kind: apiconfig.HostEventKindEscrowCreated, Escrow: &apiconfig.EscrowPayload{EscrowID: 1}},
+		{Kind: apiconfig.HostEventKindMaintenanceScheduled, Maintenance: &apiconfig.MaintenancePayload{ReservationID: 2}},
+		{Kind: apiconfig.HostEventKindBlock, Block: &apiconfig.BlockPayload{Height: 6}},
+	})
+	require.Equal(t, []uint64{1, 2, 3}, []uint64{got[0].Seq, got[1].Seq, got[2].Seq})
+	require.Equal(t, uint64(3), r.Head())
+
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("AppendBatch must wake a matching waiter once")
+	}
+}
+
+func TestHostEventRing_AppendBatchWrapsAtCapacity(t *testing.T) {
+	r := apiconfig.NewHostEventRing(2, 1)
+	got := r.AppendBatch([]apiconfig.HostEvent{
+		{Kind: apiconfig.HostEventKindEscrowCreated},
+		{Kind: apiconfig.HostEventKindEscrowCreated},
+		{Kind: apiconfig.HostEventKindEscrowCreated},
+	})
+	require.Equal(t, []uint64{1, 2, 3}, []uint64{got[0].Seq, got[1].Seq, got[2].Seq})
+	page := r.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.Len(t, page.Events, 2)
+	require.Equal(t, uint64(2), page.Events[0].Seq)
+	require.Equal(t, uint64(3), page.Events[1].Seq)
+}
+
+func TestHostEventRing_SmallCapacityStillWraps(t *testing.T) {
+	r := apiconfig.NewHostEventRing(2, 1)
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+
+	got := r.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.Len(t, got.Events, 2)
+	require.Equal(t, uint64(2), got.Events[0].Seq)
+	require.Equal(t, uint64(3), got.Events[1].Seq)
+}
+
+func TestHostEventRing_SinceOmitsUnsubscribedBlock(t *testing.T) {
+	r := apiconfig.NewHostEventRing(8, 1)
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated, Escrow: &apiconfig.EscrowPayload{EscrowID: 1}})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindBlock, Block: &apiconfig.BlockPayload{Height: 10}})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowSettled, Escrow: &apiconfig.EscrowPayload{EscrowID: 1}})
+
+	got := r.Since(0, 1, []apiconfig.HostEventKind{
+		apiconfig.HostEventKindEscrowCreated,
+		apiconfig.HostEventKindEscrowSettled,
+	})
+	require.False(t, got.Reset)
+	require.Len(t, got.Events, 2)
+	require.Equal(t, apiconfig.HostEventKindEscrowCreated, got.Events[0].Kind)
+	require.Equal(t, apiconfig.HostEventKindEscrowSettled, got.Events[1].Kind)
+	require.Equal(t, uint64(3), got.NextCursor)
+
+	withBlock := r.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindBlock})
+	require.Len(t, withBlock.Events, 1)
+	require.Equal(t, int64(10), withBlock.Events[0].Block.Height)
+}

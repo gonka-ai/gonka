@@ -8,8 +8,9 @@ import (
 )
 
 // LoadMap stores the latest escrow_load snapshot from GetHostEvents.
-// Every successful long-poll response (event change or timeout) replaces the
-// map; idle escrows are already omitted by dapi.
+// The poller replaces it on every successful response when escrow kinds are
+// subscribed. Idle escrows are already omitted by dapi. An empty snapshot
+// blanks the map.
 type LoadMap struct {
 	mu          sync.RWMutex
 	byEscrow    map[uint64]float64

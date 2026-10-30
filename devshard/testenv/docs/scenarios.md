@@ -40,6 +40,7 @@ make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
 make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-block-feed            # block-change feed (rebuilds devshardd)
 make citest-ml-nodes              # multi mock-openai pool + per-node fault
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
@@ -91,6 +92,12 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **Block feed, live** | mock-dapi `BLOCK` reaches the gateway map and both versiond hosts | `TestBlockFeed_LiveHeights` |
+| **Block feed, catch-up** | A restarted gateway sends `after_height` once and reaches the tip | `TestBlockFeed_CatchupAfterRestart` |
+| **Block feed, stall** | `Unavailable` fills the next height from Comet; the following height comes from dapi again | `TestBlockFeed_StallUsesComet` |
+| **Block feed, reset** | A new mock generation causes one `needs_reset` | `TestBlockFeed_ResetOnce` |
+| **Block feed, warm key** | A grant and a revoke from mock-dapi apply on the gateway and on devshardd | `TestBlockFeed_WarmKeyFromDapi` |
+| **Block feed, bad header** | The gateway drops a `BLOCK` whose header does not hash to `hash`; devshardd stores it | `TestBlockFeed_GatewayDropsBadHeader` |
 | **ML node pool** | N mock-openai instances behind mock-dapi `AcquireMLNode`; a fault on one node leaves the others healthy | `TestMLNodePool_PerNodeFault` |
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
 | **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
@@ -910,6 +917,74 @@ hands them out through real `AcquireMLNode` node ids.
 
 ---
 
+## Block feed
+
+**Status:** Landed. [block-change-feed-plan.md](../../docs/block-change-feed-plan.md) step 9. Tests: `citest/block_feed_test.go`.
+
+**What we test:** mock-dapi is a live `GetHostEvents` feed. `BLOCK` updates the header-time map on the gateway and on both devshardd hosts. The gateway checks the header before it stores it. devshardd stores its own dapi's block as verified.
+
+**Mock support** (step 8):
+
+- mock-chain signs each block with one testenv validator, so the gateway can anchor its tip.
+- mock-dapi appends `BLOCK` from that header and answers `after_height`, `supported_kinds`, and pages of 1000.
+- `NODE_MANAGER_ADDR` on `devshardctl` is mock-dapi. `DEVSHARD_NODE_MANAGER_ADDR` stays.
+- Admin: `POST /testenv/host-events/stall`, `/generation`, `/warm-key`, `/block`. `POST /testenv/host-events/escrow-created` stays.
+- Gateway `GET /v1/debug/heightsync` includes `header_time` (`high_water`, `tip_height`, `tip_origin`, `tip_verified`, `block_feed_live`).
+- Poller logs: `hostevents: GetHostEvents` (`after_height`, `cursor`), `hostevents: needs_reset`, `hostevents: warm-key`, `header_time: applied` (`height`, `origin`, `verified`, plus the map tip fields).
+
+**How:** six tests, one stack each, no chat. Suite `make citest-block-feed` (`-run '^TestBlockFeed_'`), its own runner via `list-citest-targets`.
+
+### Live heights — `TestBlockFeed_LiveHeights`
+
+1. Boot the standard stack.
+2. Advance mock-chain.
+3. Read gateway `header_time`. `high_water` is that tip, `tip_origin` is `dapi`, `tip_verified` is true.
+4. versiond-0 and versiond-1 each log `header_time: applied` for that height with `origin=dapi` and `verified=true`.
+
+**Pass criteria:** both hosts and the gateway name the same tip, from dapi, verified.
+
+### Catch-up after restart — `TestBlockFeed_CatchupAfterRestart`
+
+1. Boot, advance mock-chain, wait until the gateway `high_water` is that tip.
+2. Restart `devshardctl` and re-read Docker-assigned gateway ports (`RestartService` remaps them).
+3. Wait until `high_water` is the tip again.
+
+**Pass criteria:** the new process logs one request with a non-zero `after_height` and no `needs_reset`.
+
+### Stall uses Comet — `TestBlockFeed_StallUsesComet`
+
+1. `POST /testenv/host-events/stall` and advance one block.
+2. Gateway `tip_origin` is `comet` and `high_water` includes that height.
+3. `POST /testenv/host-events/warm-key` with a grant while the stall is on.
+4. Clear the stall and advance one block.
+
+**Pass criteria:** the stalled height stays `comet`; the next height is `dapi`. The grant is applied on the next successful poll.
+
+### One reset — `TestBlockFeed_ResetOnce`
+
+1. `POST /testenv/host-events/generation`, wait for one `needs_reset`, then advance one block.
+2. Read the gateway log and `header_time`.
+
+**Pass criteria:** one `needs_reset`, then a poll at the returned cursor with `after_height = 0`. A second `needs_reset` fails the test. `high_water` reaches the new tip.
+
+### Warm key from dapi — `TestBlockFeed_WarmKeyFromDapi`
+
+1. `POST /testenv/host-events/warm-key` with a grant.
+2. `POST /testenv/host-events/warm-key` with that grant's revoke.
+
+**Pass criteria:** the gateway log records the grantee and then the revoke, with no chain warm-key read. devshardd logs the same two events.
+
+### Gateway drops a bad header — `TestBlockFeed_GatewayDropsBadHeader`
+
+1. Note gateway `high_water`.
+2. `POST /testenv/host-events/block` with a header that does not hash to `hash`.
+
+**Pass criteria:** gateway `high_water` does not move to that height and the log contains the self-check failure (`dapi header rejected`). devshardd logs `header_time: applied` for that height.
+
+**Run:** `make citest-block-feed` (or `-run '^TestBlockFeed_'`). `make citest-escrow-longpoll` stays the escrow-warm regression and must still pass against this mock.
+
+---
+
 ## Chaining vs. parallelism
 
 Every full-stack citest boots a Docker Compose stack that pins a **fixed subnet
@@ -942,12 +1017,12 @@ pattern and **no `t.Parallel()`**.
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
   `A1–A5`, the observability suite (`O1`, correlation, disposition, payload capture,
-  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
-  long-poll warm**.
+  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, **escrow
+  long-poll warm**, and **block feed** (`TestBlockFeed_*`).
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  `citest-ml-nodes`, `citest-escrow-longpoll`, `citest-block-feed`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,
@@ -956,7 +1031,9 @@ pattern and **no `t.Parallel()`**.
   parallel with other *groups*, it must **not** share a stack (or run in the same
   `-run` batch) with another scenario that chats its escrow, or the "first
   inference binds from cache" assertion is invalidated. Keep it in its own
-  `citest-escrow-longpoll` target.
+  `citest-escrow-longpoll` target. **Block feed** stays in `citest-block-feed`
+  and does not share that stack: it never chats, and the escrow-warm test
+  must be the first bind.
 
 To parallelize on a single host, parameterize `network.subnet` / `base_ip` per
 stack (e.g. derive from a worker index); it is hard-coded today.

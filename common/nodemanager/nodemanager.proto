@@ -106,14 +106,21 @@ message ApprovedVersion {
 // Values 1–2 are reserved for a possible future EPOCH/PARAMS fold; unused in v1.
 enum HostEventKind {
   HOST_EVENT_KIND_UNSPECIFIED = 0;
+  reserved 1, 2;
   HOST_EVENT_KIND_ESCROW_CREATED = 3;
   HOST_EVENT_KIND_ESCROW_SETTLED = 4;
   HOST_EVENT_KIND_MAINTENANCE_SCHEDULED = 5;
   HOST_EVENT_KIND_MAINTENANCE_CANCELED = 6;
+  // Warm-key log changes of every participant (not filtered by the local
+  // participant: a host needs the keys of every peer in its escrows).
+  HOST_EVENT_KIND_WARM_KEY_GRANTED = 7;
+  HOST_EVENT_KIND_WARM_KEY_REVOKED = 8;
+  // One committed block. Appended last among the host events of its height.
+  HOST_EVENT_KIND_BLOCK = 9;
 }
 
 message GetHostEventsRequest {
-  // Last applied global seq; 0 = live from now (no replay of retained events).
+  // Last applied global seq; 0 replays from the oldest retained event.
   uint64 cursor = 1;
   // 0 = immediate reply; >0 = long-poll up to N seconds (server-capped).
   uint32 max_wait_seconds = 2;
@@ -122,6 +129,11 @@ message GetHostEventsRequest {
   // Last generation from a prior response; 0 = first poll / unknown.
   // Mismatch with the server boot nonce yields reset=true.
   uint64 generation = 4;
+  // Last block height the client has applied. 0 means the client did not pass
+  // a height. Read only when cursor is 0: below emitted_height starts after
+  // BLOCK(X), equal to emitted_height starts after BLOCK(emitted), above it
+  // starts at head.
+  uint64 after_height = 5;
 }
 
 message HostEvent {
@@ -131,6 +143,32 @@ message HostEvent {
   // Exactly one payload set per kind:
   EscrowPayload escrow = 12;
   MaintenancePayload maintenance = 13;
+  WarmKeyPayload warm_key = 14;
+  BlockPayload block = 15;
+}
+
+// BlockPayload is one committed block. hash and header_time_unix_ms repeat
+// data inside header so a host can use the block without decoding it.
+// header is the protobuf-encoded tendermint Header (cmtproto.Header).
+message BlockPayload {
+  int64 height = 1;
+  // Raw block hash, 32 bytes. Not hex.
+  bytes hash = 2;
+  int64 header_time_unix_ms = 3;
+  uint64 epoch_index = 4;
+  bytes header = 5;
+}
+
+// WarmKeyPayload mirrors one entry of the chain's warm-key log as the module
+// emitted it: a grant (height = granted_at_height, end empty) or an end
+// (height = revoked_at_height, end = REVOKED / REPLACED / EXPIRED).
+message WarmKeyPayload {
+  string granter = 1;
+  string grantee = 2;
+  uint64 grant_id = 3;
+  int64 height = 4;
+  int64 expires_at_unix = 5;
+  string end = 6;
 }
 
 message EscrowPayload {
@@ -170,6 +208,8 @@ message GetHostEventsResponse {
   // (no acquires in the last 30m) are omitted. Full replace each response;
   // independent of the event cursor. Empty until dapi attributes escrow_id.
   repeated EscrowLoad escrow_load = 7;
+  // Every kind this process emits. Empty on a server built before this field.
+  repeated HostEventKind supported_kinds = 8;
 }
 
 message EscrowLoad {

@@ -2,6 +2,8 @@ package mockdapi
 
 import (
 	"context"
+	"errors"
+	"math"
 	"sync"
 	"time"
 
@@ -17,43 +19,135 @@ import (
 // hostEventsMaxWaitCap bounds server-side long-poll duration in the mock.
 const hostEventsMaxWaitCap = 30 * time.Second
 
-// hostEventRing is a minimal append-only log of host events with a subscribe /
-// notify registry for the GetHostEvents long-poll. It mirrors the production
-// dapi HostEventRing semantics scoped to what the escrow long-poll warm scenario
-// needs (escrow-created events feeding the devshardd escrow long-poll warm).
+// maxHostEventsPage is the most events one GetHostEvents response may hold.
+const maxHostEventsPage = 1000
+
+var errHostEventsNoHeight = errors.New("no height committed")
+
+// hostEventRing is an in-memory append-only log that answers the production
+// GetHostEvents cursor table. It is not a store.
 type hostEventRing struct {
-	mu         sync.Mutex
-	generation uint64
-	events     []*gen.HostEvent
-	nextSeq    uint64
-	waiters    map[chan struct{}]struct{}
+	mu          sync.Mutex
+	generation  uint64
+	events      []*gen.HostEvent
+	nextSeq     uint64
+	emitted     int64
+	firstHeight int64
+	blockSeq    map[int64]uint64
+	stalled     bool
+	waiters     map[chan struct{}]struct{}
 }
 
 func newHostEventRing() *hostEventRing {
 	return &hostEventRing{
 		generation: uint64(time.Now().UnixNano()),
 		nextSeq:    1,
+		blockSeq:   make(map[int64]uint64),
 		waiters:    make(map[chan struct{}]struct{}),
 	}
+}
+
+func (r *hostEventRing) headLocked() uint64 {
+	if r.nextSeq == 0 {
+		return 0
+	}
+	return r.nextSeq - 1
+}
+
+func (r *hostEventRing) wakeLocked() {
+	for ch := range r.waiters {
+		close(ch)
+		delete(r.waiters, ch)
+	}
+}
+
+func (r *hostEventRing) appendLocked(ev *gen.HostEvent) uint64 {
+	ev.Seq = r.nextSeq
+	r.nextSeq++
+	if ev.ObservedAtUnix == 0 {
+		ev.ObservedAtUnix = time.Now().Unix()
+	}
+	r.events = append(r.events, ev)
+	r.wakeLocked()
+	return ev.Seq
 }
 
 // AppendEscrowCreated records an escrow-created event and wakes waiters.
 func (r *hostEventRing) AppendEscrowCreated(p *gen.EscrowPayload) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ev := &gen.HostEvent{
-		Seq:            r.nextSeq,
-		Kind:           gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
-		ObservedAtUnix: time.Now().Unix(),
-		Escrow:         p,
+	return r.appendLocked(&gen.HostEvent{
+		Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
+		Escrow: p,
+	})
+}
+
+// AppendWarmKey records a grant or a revoke and wakes waiters.
+func (r *hostEventRing) AppendWarmKey(p *gen.WarmKeyPayload) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	kind := gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED
+	if p != nil && p.GetEnd() != "" {
+		kind = gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED
 	}
-	r.nextSeq++
-	r.events = append(r.events, ev)
-	for ch := range r.waiters {
-		close(ch)
-		delete(r.waiters, ch)
+	return r.appendLocked(&gen.HostEvent{
+		Kind:    kind,
+		WarmKey: p,
+	})
+}
+
+// AppendBlock records BLOCK(H) and raises emitted_height. Wakes waiters.
+func (r *hostEventRing) AppendBlock(p *gen.BlockPayload) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seq := r.appendLocked(&gen.HostEvent{
+		Kind:  gen.HostEventKind_HOST_EVENT_KIND_BLOCK,
+		Block: p,
+	})
+	if p != nil && p.GetHeight() > 0 {
+		h := p.GetHeight()
+		if _, ok := r.blockSeq[h]; !ok {
+			r.blockSeq[h] = seq
+		}
+		if r.firstHeight == 0 {
+			r.firstHeight = h
+		}
+		if h > r.emitted {
+			r.emitted = h
+		}
 	}
-	return ev.Seq
+	return seq
+}
+
+// SetStalled makes GetHostEvents return Unavailable until cleared.
+func (r *hostEventRing) SetStalled(stalled bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.stalled = stalled
+	if !stalled {
+		r.wakeLocked()
+	}
+}
+
+func (r *hostEventRing) Stalled() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.stalled
+}
+
+// BumpGeneration starts a new generation at the current tip with no rows below it.
+func (r *hostEventRing) BumpGeneration() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.generation++
+	if r.generation == 0 {
+		r.generation = 1
+	}
+	r.events = nil
+	r.blockSeq = make(map[int64]uint64)
+	r.firstHeight = 0
+	r.wakeLocked()
+	return r.generation
 }
 
 func (r *hostEventRing) subscribe() (<-chan struct{}, func()) {
@@ -68,29 +162,85 @@ func (r *hostEventRing) subscribe() (<-chan struct{}, func()) {
 	}
 }
 
-// since returns subscribed events with seq > cursor plus the head seq and
-// generation. reset is true on generation mismatch or a cursor ahead of head.
-func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKind]struct{}) (evs []*gen.HostEvent, head, generation uint64, reset bool) {
+type hostEventPage struct {
+	Events     []*gen.HostEvent
+	NextCursor uint64
+	Generation uint64
+	Reset      bool
+	Resolved   uint64
+}
+
+func (r *hostEventRing) startAt(cursor, afterHeight uint64) (start uint64, reset bool, err error) {
+	head := r.headLocked()
+	if cursor > 0 {
+		return cursor, false, nil
+	}
+	if afterHeight == 0 {
+		return 0, false, nil
+	}
+	if r.emitted == 0 {
+		return 0, false, errHostEventsNoHeight
+	}
+	if afterHeight > uint64(math.MaxInt64) || int64(afterHeight) > r.emitted {
+		return head, false, nil
+	}
+	if seq, ok := r.blockSeq[int64(afterHeight)]; ok {
+		return seq, false, nil
+	}
+	if r.firstHeight > 0 && int64(afterHeight)+1 == r.firstHeight {
+		return 0, false, nil
+	}
+	if int64(afterHeight) == r.emitted {
+		return head, false, nil
+	}
+	return 0, true, nil
+}
+
+func (r *hostEventRing) collect(cursor, clientGen, afterHeight uint64, want map[gen.HostEventKind]struct{}) (hostEventPage, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	head = r.nextSeq - 1
-	generation = r.generation
+	head := r.headLocked()
+	out := hostEventPage{
+		NextCursor: head,
+		Generation: r.generation,
+		Resolved:   cursor,
+	}
 	if clientGen != 0 && clientGen != r.generation {
-		return nil, head, generation, true
+		out.Reset = true
+		return out, nil
 	}
-	if cursor > head {
-		return nil, head, generation, true
+	start, reset, err := r.startAt(cursor, afterHeight)
+	out.Resolved = start
+	if err != nil {
+		return out, err
 	}
+	if reset {
+		out.Reset = true
+		out.NextCursor = head
+		return out, nil
+	}
+	if start > head {
+		out.Reset = true
+		return out, nil
+	}
+	var evs []*gen.HostEvent
 	for _, ev := range r.events {
-		if ev.Seq <= cursor {
+		if ev.Seq <= start {
 			continue
 		}
 		if _, ok := want[ev.Kind]; !ok {
 			continue
 		}
 		evs = append(evs, ev)
+		if len(evs) >= maxHostEventsPage {
+			out.Events = evs
+			out.NextCursor = ev.Seq
+			return out, nil
+		}
 	}
-	return evs, head, generation, false
+	out.Events = evs
+	out.NextCursor = head
+	return out, nil
 }
 
 // nodeManagerServer augments the chainoracle params NodeManager (GetRuntimeConfig
@@ -158,6 +308,27 @@ func (s *nodeManagerServer) ProveBlockPath(ctx context.Context, req *gen.ProveBl
 	return nmrpc.ProveBlockPath(ctx, s.blocks, req)
 }
 
+func mockSupportedKinds() []gen.HostEventKind {
+	return []gen.HostEventKind{
+		gen.HostEventKind_HOST_EVENT_KIND_BLOCK,
+		gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+		gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED,
+		gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
+		gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+	}
+}
+
+func (s *nodeManagerServer) hostEventsResponse(page hostEventPage, unchanged, needsReset bool) *gen.GetHostEventsResponse {
+	return &gen.GetHostEventsResponse{
+		Unchanged:      unchanged,
+		Events:         page.Events,
+		NextCursor:     page.NextCursor,
+		Generation:     page.Generation,
+		NeedsReset:     needsReset,
+		SupportedKinds: mockSupportedKinds(),
+	}
+}
+
 // GetHostEvents implements the NodeManager long-poll over the mock ring.
 func (s *nodeManagerServer) GetHostEvents(ctx context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 	if s.ring == nil {
@@ -172,22 +343,51 @@ func (s *nodeManagerServer) GetHostEvents(ctx context.Context, req *gen.GetHostE
 	}
 	cursor := req.GetCursor()
 	clientGen := req.GetGeneration()
+	afterHeight := req.GetAfterHeight()
 	maxWait := clampMockHostEventsMaxWait(req.GetMaxWaitSeconds())
+	var start uint64
+	haveStart := false
 
 	for {
-		wake, release := s.ring.subscribe()
-		evs, head, generation, reset := s.ring.since(cursor, clientGen, want)
-		if reset {
-			release()
-			return &gen.GetHostEventsResponse{NeedsReset: true, NextCursor: head, Generation: generation}, nil
+		if s.ring.Stalled() {
+			return nil, status.Error(codes.Unavailable, "host events: stalled")
 		}
-		if len(evs) > 0 {
-			release()
-			return &gen.GetHostEventsResponse{Events: evs, NextCursor: head, Generation: generation}, nil
+		var wake <-chan struct{}
+		var release func()
+		if maxWait > 0 {
+			wake, release = s.ring.subscribe()
+		}
+		cur, after := cursor, afterHeight
+		if haveStart {
+			cur = start
+			after = 0
+		}
+		page, err := s.ring.collect(cur, clientGen, after, want)
+		if err != nil {
+			if release != nil {
+				release()
+			}
+			if errors.Is(err, errHostEventsNoHeight) {
+				return nil, status.Error(codes.Unavailable, "host events: no height committed")
+			}
+			return nil, status.Error(codes.Unavailable, err.Error())
+		}
+		if !haveStart {
+			start = page.Resolved
+			haveStart = true
+			afterHeight = 0
+		}
+		if page.Reset || len(page.Events) > 0 || page.NextCursor > start {
+			if release != nil {
+				release()
+			}
+			return s.hostEventsResponse(page, len(page.Events) == 0 && !page.Reset, page.Reset), nil
 		}
 		if maxWait <= 0 {
-			release()
-			return &gen.GetHostEventsResponse{Unchanged: true, NextCursor: head, Generation: generation}, nil
+			if release != nil {
+				release()
+			}
+			return s.hostEventsResponse(page, true, false), nil
 		}
 		select {
 		case <-ctx.Done():
@@ -195,17 +395,19 @@ func (s *nodeManagerServer) GetHostEvents(ctx context.Context, req *gen.GetHostE
 			return nil, status.FromContextError(ctx.Err()).Err()
 		case <-wake:
 			release()
-			// Woken by an append; loop and re-read since the cursor.
 		case <-time.After(maxWait):
 			release()
-			evs2, head2, gen2, reset2 := s.ring.since(cursor, clientGen, want)
-			if reset2 {
-				return &gen.GetHostEventsResponse{NeedsReset: true, NextCursor: head2, Generation: gen2}, nil
+			if s.ring.Stalled() {
+				return nil, status.Error(codes.Unavailable, "host events: stalled")
 			}
-			if len(evs2) > 0 {
-				return &gen.GetHostEventsResponse{Events: evs2, NextCursor: head2, Generation: gen2}, nil
+			page2, err := s.ring.collect(start, clientGen, 0, want)
+			if err != nil {
+				if errors.Is(err, errHostEventsNoHeight) {
+					return nil, status.Error(codes.Unavailable, "host events: no height committed")
+				}
+				return nil, status.Error(codes.Unavailable, err.Error())
 			}
-			return &gen.GetHostEventsResponse{Unchanged: true, NextCursor: head2, Generation: gen2}, nil
+			return s.hostEventsResponse(page2, len(page2.Events) == 0 && !page2.Reset, page2.Reset), nil
 		}
 	}
 }
