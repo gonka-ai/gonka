@@ -1435,3 +1435,111 @@ mod tests {
         assert!(from_json::<Empty>(br"{}").is_ok());
     }
 }
+
+#[cfg(test)]
+mod tier_boundary_tests {
+    use super::*;
+    use crate::state::{calculate_multi_tier_purchase, PricingConfig};
+    use cosmwasm_std::testing::{mock_dependencies, mock_env, MockApi, MockQuerier, MockStorage};
+    use cosmwasm_std::{coins, Addr, MessageInfo, OwnedDeps};
+
+    // Default pricing: $0.025 base, 3M GNK per tier, 1.3x. Tier 1 costs 32_500 micro-USD
+    // per GNK, which does not divide 1e9, so tier positions stop being whole micro-USD.
+    const TIER: u128 = 3_000_000_000_000_000;
+
+    fn default_pricing() -> PricingConfig {
+        PricingConfig {
+            base_price_usd: Uint256::from(25_000u128),
+            tokens_per_tier: Uint256::from(TIER),
+            tier_multiplier: Uint256::from(1300u128),
+        }
+    }
+
+    fn buy(
+        deps: &mut OwnedDeps<MockStorage, MockApi, MockQuerier>,
+        micro_usd: u128,
+    ) -> Result<Response, ContractError> {
+        let info = MessageInfo {
+            sender: Addr::unchecked("buyer"),
+            funds: coins(micro_usd, "ibc/USDT"),
+        };
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::PurchaseWithNative {},
+        )
+    }
+
+    #[test]
+    fn test_purchase_crossing_from_tier_one_into_tier_two() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let admin = deps.api.addr_make("admin").to_string();
+        let info = MessageInfo {
+            sender: Addr::unchecked(&admin),
+            funds: vec![],
+        };
+        let msg = InstantiateMsg {
+            admin: Some(admin),
+            daily_limit_bp: Some(Uint256::from(10_000u128)),
+            base_price_usd: None,
+            tokens_per_tier: None,
+            tier_multiplier: None,
+            total_supply: Some(Uint256::from(120_000_000_000_000_000u128)),
+            native_denom: Some("ngonka".to_string()),
+        };
+        instantiate(deps.as_mut(), env.clone(), info, msg).unwrap();
+        deps.querier.bank.update_balance(
+            env.contract.address.clone(),
+            coins(120_000_000_000_000_000, "ngonka"),
+        );
+
+        // $75,000 buys tier 0 exactly; one micro-USD more is an ordinary tier 1 purchase.
+        buy(&mut deps, 75_000_000_000).unwrap();
+        buy(&mut deps, 1).unwrap();
+
+        // $100,000 crosses into tier 2 and must be accepted in full.
+        let res = buy(&mut deps, 100_000_000_000);
+        assert!(res.is_ok(), "crossing purchase rejected: {:?}", res.err());
+    }
+
+    #[test]
+    fn test_purchase_possible_when_tier_remainder_is_below_one_micro_usd() {
+        let c = default_pricing();
+        let (first, _, _, _, _) =
+            calculate_multi_tier_purchase(Uint256::from(1u128), Uint256::from(TIER), &c);
+        let sold = Uint256::from(TIER) + first;
+        // The largest purchase that stays inside tier 1 leaves a remainder of 1 ngonka.
+        let left = Uint256::from(2 * TIER) - sold;
+        let fits = left * Uint256::from(32_500u128) / Uint256::from(1_000_000_000u128);
+        let (bought, spent, _, end, _) = calculate_multi_tier_purchase(fits, sold, &c);
+        assert_eq!((spent, end), (fits, 1));
+        let sold = sold + bought;
+        assert_eq!(Uint256::from(2 * TIER) - sold, Uint256::one());
+
+        for usd in [1u128, 1_000_000, 100_000_000_000] {
+            let (tokens, spent, _, end, _) =
+                calculate_multi_tier_purchase(Uint256::from(usd), sold, &c);
+            assert_eq!(spent, Uint256::from(usd));
+            assert!(!tokens.is_zero());
+            assert_eq!(end, 2);
+        }
+    }
+
+    #[test]
+    fn test_paying_the_rest_of_a_tier_buys_exactly_the_rest() {
+        let c = default_pricing();
+        let (tokens, spent, _, end, _) =
+            calculate_multi_tier_purchase(Uint256::from(75_000_000_000u128), Uint256::zero(), &c);
+        assert_eq!(tokens, Uint256::from(TIER));
+        assert_eq!((spent, end), (Uint256::from(75_000_000_000u128), 1));
+
+        let sold = Uint256::from(TIER + 30_769);
+        let left = Uint256::from(2 * TIER) - sold;
+        let cost = (left * Uint256::from(32_500u128) + Uint256::from(999_999_999u128))
+            / Uint256::from(1_000_000_000u128);
+        let (tokens, spent, _, end, _) = calculate_multi_tier_purchase(cost, sold, &c);
+        assert_eq!((tokens, spent, end), (left, cost, 2));
+    }
+}
