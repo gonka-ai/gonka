@@ -197,11 +197,20 @@ func (b *ChainBridge) modelSnapshot(ctx context.Context, epochID uint64, modelID
 
 // VerifyWarmKey reports whether warmAddress holds a live warm-key grant from
 // validatorAddress, from the log copy. It is the local-admission answer
-// (transport membership, unbound payload fetches, repair); a key becomes a
-// consensus actor only through a MsgWarmKeyBind confirmed against the same
-// log.
+// (transport membership, unbound payload fetches, repair). Diff application
+// uses ConsensusWarmKey, which does not consult the clock.
 func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
 	return bridge.IsWarmKeyLive(b.warmKeys, validatorAddress, warmAddress, time.Now())
+}
+
+// ConsensusWarmKey reports whether warmAddress is named by a grant from
+// validatorAddress that the log has not ended. Expiration is ignored, so two
+// hosts applying the same diff agree when their clocks differ.
+func (b *ChainBridge) ConsensusWarmKey(warmAddress, validatorAddress string) (bool, error) {
+	if b == nil || b.warmKeys == nil {
+		return false, fmt.Errorf("warm-key log: copy is nil")
+	}
+	return b.warmKeys.HasUnendedGrant(validatorAddress, warmAddress)
 }
 
 // -- MainnetBridge notification methods --

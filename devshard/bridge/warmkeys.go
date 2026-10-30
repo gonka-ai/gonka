@@ -185,6 +185,11 @@ const (
 	// up within this.
 	warmKeyEntryWait = 30 * time.Second
 	warmKeyEntryPoll = 2 * time.Second
+	// warmKeyRetryMin and warmKeyRetryMax bound the background retry of a
+	// failed log read. The delay doubles on each failure and resets when a
+	// read succeeds.
+	warmKeyRetryMin = warmKeyMissRefresh
+	warmKeyRetryMax = time.Minute
 )
 
 // WarmKeyLogCopy is an in-memory copy of the chain's warm-key log, one
@@ -195,10 +200,16 @@ type WarmKeyLogCopy struct {
 	fetch        WarmKeyLogFetcher
 	refreshAfter time.Duration
 	now          func() time.Time
+	// after runs f once d has passed. It schedules the retry of a failed read.
+	after func(d time.Duration, f func())
 
 	mu       sync.Mutex
 	granters map[string]*granterLog
 	loading  map[string]chan struct{}
+	// resetGen advances on every Reset. A load marks its granter complete
+	// only when this is still the generation the load started in, so a
+	// snapshot fetched before the reset cannot restore completeness.
+	resetGen uint64
 }
 
 type granterLog struct {
@@ -209,7 +220,12 @@ type granterLog struct {
 	attemptedAt time.Time
 	// complete is false until the granter's whole log was read from the
 	// chain; Apply alone (events for a granter never loaded) leaves holes.
+	// Reset clears it again; loadedAt stays, so the entries keep answering.
 	complete bool
+	// retryArmed is set while a retry of a failed read is scheduled, so a
+	// granter has at most one. retryDelay is the delay that retry used.
+	retryArmed bool
+	retryDelay time.Duration
 }
 
 // NewWarmKeyLogCopy returns an empty copy over fetch. refreshAfter <= 0 uses
@@ -222,6 +238,7 @@ func NewWarmKeyLogCopy(fetch WarmKeyLogFetcher, refreshAfter time.Duration) *War
 		fetch:        fetch,
 		refreshAfter: refreshAfter,
 		now:          time.Now,
+		after:        func(d time.Duration, f func()) { time.AfterFunc(d, f) },
 		granters:     make(map[string]*granterLog),
 		loading:      make(map[string]chan struct{}),
 	}
@@ -303,13 +320,49 @@ func (c *WarmKeyLogCopy) NoteMiss(granter string) {
 // Reset forgets completeness: every granter is reloaded from the chain on
 // its next use. Called when the host-events stream resets, because events
 // may have been lost in the gap. Entries already stored stay; an ended id
-// is not revived by a later load.
+// is not revived by a later load. A granter loaded before keeps answering
+// from those entries while its reload runs in the background.
 func (c *WarmKeyLogCopy) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resetGen++
 	for _, g := range c.granters {
 		g.complete = false
+		g.attemptedAt = time.Time{}
 	}
+}
+
+// HasUnendedGrant reports whether warm is named by a grant from cold that the
+// log has not ended. Expiration is not part of the answer: hosts applying the
+// same diff must agree when their clocks sit on opposite sides of it.
+func (c *WarmKeyLogCopy) HasUnendedGrant(cold, warm string) (bool, error) {
+	if c == nil {
+		return false, fmt.Errorf("warm-key log: copy is nil")
+	}
+	entries, err := c.loaded(cold)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if e.Grantee == warm && !e.Ended() {
+			return true, nil
+		}
+	}
+	c.NoteMiss(cold)
+	return false, nil
+}
+
+// ApplyWarmKeyCheck is the state-machine resolver. It uses ConsensusWarmKey
+// when the bridge has it, so diff application ignores grant expiration.
+// VerifyWarmKey stays the local-admission check, which still uses the clock.
+func ApplyWarmKeyCheck(b MainnetBridge) func(warmAddress, validatorAddress string) (bool, error) {
+	type consensusWarmKey interface {
+		ConsensusWarmKey(warmAddress, validatorAddress string) (bool, error)
+	}
+	if c, ok := b.(consensusWarmKey); ok {
+		return c.ConsensusWarmKey
+	}
+	return b.VerifyWarmKey
 }
 
 // KnownGranters returns the granters the copy has already seen, in order.
@@ -348,12 +401,30 @@ func (c *WarmKeyLogCopy) apply(e WarmKeyEntry) {
 		g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
 		c.granters[e.Granter] = g
 	}
-	if have, ok := g.entries[e.ID]; ok && have.Ended() && !e.Ended() {
-		// An end is final; an older "granted" event replayed after it must
-		// not revive the entry.
-		return
+	if have, ok := g.entries[e.ID]; ok {
+		if have.Ended() && !e.Ended() {
+			// An end is final; an older "granted" event replayed after it must
+			// not revive the entry.
+			return
+		}
+		if e.Ended() {
+			e = mergeWarmKeyEnd(have, e)
+		}
 	}
 	g.entries[e.ID] = e
+}
+
+// mergeWarmKeyEnd keeps the grant fields a revoke event does not carry.
+// The event names the end height and the reason. The grant height and the
+// expiration stay as they were recorded.
+func mergeWarmKeyEnd(have, end WarmKeyEntry) WarmKeyEntry {
+	if end.GrantedAtHeight == 0 {
+		end.GrantedAtHeight = have.GrantedAtHeight
+	}
+	if end.ExpiresAtUnix == 0 {
+		end.ExpiresAtUnix = have.ExpiresAtUnix
+	}
+	return end
 }
 
 func (c *WarmKeyLogCopy) cached(granter string, id uint64) (WarmKeyEntry, bool) {
@@ -367,26 +438,28 @@ func (c *WarmKeyLogCopy) cached(granter string, id uint64) (WarmKeyEntry, bool) 
 	return e, ok
 }
 
-// loaded returns a snapshot of granter's entries, loading the log first when
-// the copy has none, and starting a background reload when it is stale.
+// loaded returns a snapshot of granter's entries. A granter never read in
+// full is loaded first. A granter read before answers from its entries, and
+// a background reload starts when it is stale or was Reset.
 func (c *WarmKeyLogCopy) loaded(granter string) ([]WarmKeyEntry, error) {
 	c.mu.Lock()
 	g := c.granters[granter]
-	complete := g != nil && g.complete
-	// A stale copy reloads in the background, at most once per
-	// warmKeyMissRefresh whether or not the last attempt succeeded, so a
-	// failing chain does not turn every lookup into a query.
-	stale := complete && c.now().Sub(g.loadedAt) > c.refreshAfter && c.now().Sub(g.attemptedAt) > warmKeyMissRefresh
-	if stale {
-		g.attemptedAt = c.now()
+	now := c.now()
+	held := g != nil && !g.loadedAt.IsZero()
+	// A background reload runs at most once per warmKeyMissRefresh whether
+	// or not the last attempt succeeded, so a failing chain does not turn
+	// every lookup into a query.
+	due := held && (!g.complete || now.Sub(g.loadedAt) > c.refreshAfter) && now.Sub(g.attemptedAt) > warmKeyMissRefresh
+	if due {
+		g.attemptedAt = now
 	}
 	c.mu.Unlock()
 
-	if !complete {
+	if !held {
 		if err := c.load(granter, false); err != nil {
 			return nil, err
 		}
-	} else if stale {
+	} else if due {
 		go func() { _ = c.load(granter, true) }()
 	}
 
@@ -418,6 +491,7 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 		return nil
 	}
 	c.mu.Lock()
+	startedGen := c.resetGen
 	if wait, ok := c.loading[granter]; ok {
 		c.mu.Unlock()
 		<-wait
@@ -454,11 +528,16 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), warmKeyFetchTimeout)
 	entries, err := c.fetch.FetchWarmKeyLog(ctx, granter)
 	cancel()
-	if err != nil {
-		return err
-	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if err != nil {
+		c.retryLocked(granter)
+		return err
+	}
+	if c.resetGen != startedGen {
+		c.retryLocked(granter)
+		return errWarmKeyLogReset
+	}
 	g := c.granters[granter]
 	if g == nil {
 		g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
@@ -472,8 +551,47 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	}
 	g.complete = true
 	g.loadedAt = c.now()
+	g.retryDelay = 0
 	return nil
 }
+
+// retryLocked schedules one background reload of granter after a failed
+// read, unless one is already scheduled. The delay doubles from
+// warmKeyRetryMin to warmKeyRetryMax. The caller holds c.mu.
+func (c *WarmKeyLogCopy) retryLocked(granter string) {
+	g := c.granters[granter]
+	if g == nil || g.retryArmed || c.after == nil {
+		return
+	}
+	g.retryDelay = nextWarmKeyRetry(g.retryDelay)
+	g.retryArmed = true
+	c.after(g.retryDelay, func() {
+		c.mu.Lock()
+		g.retryArmed = false
+		fresh := g.complete && c.now().Sub(g.loadedAt) <= c.refreshAfter
+		if !fresh {
+			g.attemptedAt = c.now()
+		}
+		c.mu.Unlock()
+		if !fresh {
+			_ = c.load(granter, true)
+		}
+	})
+}
+
+func nextWarmKeyRetry(cur time.Duration) time.Duration {
+	if cur <= 0 {
+		return warmKeyRetryMin
+	}
+	if next := 2 * cur; next < warmKeyRetryMax {
+		return next
+	}
+	return warmKeyRetryMax
+}
+
+// errWarmKeyLogReset is a load whose snapshot was read before Reset. The
+// granter stays incomplete, and a retry reads it again.
+var errWarmKeyLogReset = errors.New("warm-key log reset during load")
 
 // sharedWarmKeyCopies gives every bridge built on the same chain client one
 // copy, so a gateway with many escrows reloads each granter once per refresh

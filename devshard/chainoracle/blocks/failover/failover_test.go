@@ -322,6 +322,34 @@ func TestOracle_NMUnavailableBackoffThenChain(t *testing.T) {
 	require.Equal(t, int64(2), chain.calls.Load())
 }
 
+// Test flow:
+//  1. Keep dapi GetBlockHeader down while chain serves, and step the clock past each backoff.
+//  2. Assert dapi is tried again after 1m, then after 5m, and every 5m from then on.
+func TestOracle_NMBackoffRetriesDAPIEvery5m(t *testing.T) {
+	nm := &recOracle{err: status.Error(codes.Unavailable, "dapi down")}
+	chain := &recOracle{hdr: chainHdr()}
+	o := failover.New(nil, nm, chain)
+	now := time.Now()
+	o.SetNow(func() time.Time { return now })
+
+	_, err := o.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), nm.calls.Load())
+
+	for i, wait := range []time.Duration{time.Minute, 5 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
+		now = now.Add(wait - time.Second)
+		_, err = o.Latest(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, int64(i+1), nm.calls.Load(), "dapi stays in backoff before %s", wait)
+
+		now = now.Add(2 * time.Second)
+		_, err = o.Latest(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, int64(i+2), nm.calls.Load(), "dapi is tried first again after %s", wait)
+		now = now.Add(-time.Second)
+	}
+}
+
 func TestOracle_NMNotFoundBackoffThenChain(t *testing.T) {
 	nm := &recOracle{err: blocks.ErrHeaderNotFound}
 	chain := &recOracle{hdr: chainHdr()}
@@ -388,7 +416,7 @@ func TestOracle_AtNotFoundDoesNotBackoffLatest(t *testing.T) {
 	require.Equal(t, int64(2), nm.calls.Load(), "At miss must not put Latest GetBlockHeader in backoff")
 }
 
-func TestOracle_NMUnimplementedReprobesEvery15m(t *testing.T) {
+func TestOracle_NMUnimplementedReprobesEvery5m(t *testing.T) {
 	nm := &recOracle{err: blocks.ErrHeaderRPCUnimplemented}
 	chain := &recOracle{hdr: chainHdr()}
 	o := failover.New(nil, nm, chain)
@@ -404,13 +432,13 @@ func TestOracle_NMUnimplementedReprobesEvery15m(t *testing.T) {
 	h, err = o.Latest(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, int64(99), h.Height)
-	require.Equal(t, int64(1), nm.calls.Load(), "Unimplemented must skip GetBlockHeader until 15m")
+	require.Equal(t, int64(1), nm.calls.Load(), "Unimplemented must skip GetBlockHeader until 5m")
 
 	o.SetNow(func() time.Time { return now.Add(failover.NMUnimplementedReprobe + time.Second) })
 	h, err = o.Latest(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, int64(99), h.Height)
-	require.Equal(t, int64(2), nm.calls.Load(), "one re-probe after 15m")
+	require.Equal(t, int64(2), nm.calls.Load(), "one re-probe after 5m")
 
 	nm.err = nil
 	nm.hdr = nmHdr()

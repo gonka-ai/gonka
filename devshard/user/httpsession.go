@@ -277,7 +277,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	// Check if there is an existing session to recover from.
 	_, metaErr := sqlStore.GetSessionMeta(cfg.EscrowID)
 	if metaErr == nil {
-		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
+		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(bridge.ApplyWarmKeyCheck(cfg.Bridge))
 		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
 			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
 		)
@@ -321,7 +321,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier, sqlStore,
-		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey), state.WithVersion(sessionVersion))...,
+		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(cfg.Bridge)), state.WithVersion(sessionVersion))...,
 	)
 	if err != nil {
 		closeHostClients(hostClientsFromCache(clientCache))
