@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -35,6 +36,30 @@ func withPairwisePolicyForTest(t *testing.T) {
 		PairwiseABSparseSampleThreshold = savedABSparseSampleThreshold
 		pairwiseABRandom = savedABRandom
 	})
+}
+
+// Test flow:
+//  1. Fill twenty participant pairs' rings past their capacity so each wraps.
+//  2. Count the allocations of the speedup cutoff the router asks for on every decision.
+//  3. Require fewer allocations than pairs, so no pair's ring is copied or its timestamps formatted.
+func TestSpeedupCutoffDoesNotCopyEveryPairRing(t *testing.T) {
+	tracker := NewPairwiseTracker()
+	now := time.Now()
+	for pair := range 20 {
+		for sample := range 15 {
+			tracker.add(PairwiseComparison{
+				Timestamp: now.Add(time.Duration(sample) * time.Second), Model: "m", ShapeBucket: requestShapeBucket(100),
+				ParticipantA: fmt.Sprintf("a-%d", pair), ParticipantB: fmt.Sprintf("b-%d", pair),
+				ATotalMs: 1000, BTotalMs: 2000, RatioAToB: 2,
+			})
+		}
+	}
+
+	allocations := testing.AllocsPerRun(50, func() {
+		_, _ = tracker.SpeedupCutoff("m", 100)
+	})
+
+	require.Less(t, allocations, float64(20))
 }
 
 func TestPairwiseTrackerRecordsRequestComparisons(t *testing.T) {

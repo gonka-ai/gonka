@@ -6,9 +6,13 @@ COPY common/ /src/common
 COPY inference-chain/ /src/inference-chain
 WORKDIR /src/devshard
 COPY devshard/go.mod devshard/go.sum ./
-RUN go mod download
+ENV GOPROXY=https://proxy.golang.org,direct
+RUN --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
+    sh -c 'n=0; until go mod download; do n=$((n+1)); [ "$n" -ge 8 ] && exit 1; echo "go mod download retry $n"; sleep $((n*8)); done'
 COPY devshard/ .
-RUN CGO_ENABLED=0 go build -o /mockchain ./testenv/cmd/mockchain
+RUN --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
+    --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -o /mockchain ./testenv/cmd/mockchain
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates wget

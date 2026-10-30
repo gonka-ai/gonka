@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	_ "modernc.org/sqlite"
 )
@@ -44,6 +45,34 @@ func HasSQLiteSessions(storeDir string) (bool, error) {
 		return false, fmt.Errorf("count escrow_epoch: %w", err)
 	}
 	return count > 0, nil
+}
+
+// NewestSQLiteEpoch returns the highest epoch among storeDir's epoch_<N>.db
+// files; found is false when the directory holds none.
+func NewestSQLiteEpoch(storeDir string) (uint64, bool, error) {
+	entries, err := os.ReadDir(storeDir)
+	if err != nil {
+		return 0, false, err
+	}
+	var newest uint64
+	found := false
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		match := epochFileRegex.FindStringSubmatch(entry.Name())
+		if match == nil {
+			continue
+		}
+		epochID, parseErr := strconv.ParseUint(match[1], 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		if !found || epochID > newest {
+			newest, found = epochID, true
+		}
+	}
+	return newest, found, nil
 }
 
 // HasSQLiteArtifacts reports whether storeDir contains files that could belong

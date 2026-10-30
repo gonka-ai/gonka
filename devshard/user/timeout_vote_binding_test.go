@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -31,7 +30,7 @@ type slotClaimingVerifier struct {
 }
 
 func (m *slotClaimingVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
-	data, err := proto.Marshal(&types.TimeoutVoteContent{
+	data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 		EscrowId:    m.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
@@ -261,7 +260,7 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	signVote := func(s *signing.Secp256k1Signer, slot uint32) *types.TimeoutVote {
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 			EscrowId: "escrow-1", InferenceId: 1,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})
@@ -310,7 +309,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 	t.Run("dropped", func(t *testing.T) {
 		f := newTimeoutVoteFixture(t)
 		f.dropHostReceipts()
-		data, err := proto.Marshal(&types.TimeoutVoteContent{
+		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
 			EscrowId: "escrow-1", InferenceId: 1,
 			Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Accept: true,
 		})

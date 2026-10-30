@@ -32,6 +32,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | **`validation_rate`** | Consensus-sensitive; snapshotted at escrow create (default **5000** bps when unset) |
 | **`vote_threshold_factor`** → `VoteThreshold` | Snapshotted at escrow create; derived at bind: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
+| **`refusal_timeout`**, **`execution_timeout`** | Snapshotted at escrow create; `0` → compiled default (60 / 1920). `execution_timeout` is folded into the auto-seal Finished clock gate and both gate host timeout votes, so host and gateway must map them identically |
 | `settled`, `model_id`, `amount` | Operational / display; gateway wires `model_id` into runtime routing at bind |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach governance defaults to `EscrowInfo`. `bridge.SessionConfigAtBind` maps the escrow row into `SessionConfig`.
@@ -42,14 +43,14 @@ The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does 
 
 | Field | Consumer | Notes |
 |-------|----------|--------|
-| `refusal_timeout`, `execution_timeout` | devshardctl proxy (`InferenceTimeouts` when wired) | Per inference attempt; not in state root |
+| `refusal_timeout`, `execution_timeout` (governance params) | devshardctl proxy (`InferenceTimeouts` when wired) | Per inference attempt for the live proxy deadline; the consensus copies are the per-escrow lane A fields above |
 | `max_nonce` | `MaxNonceProvider` | Host accept/reject gate |
 | `devshard_requests_enabled` | `AvailabilityTracker` | 503 when disabled |
 | `logprobs_mode` | Validation path | |
 | `approved_versions` | versiond / routing | Child process policy; **only updated while long-poll is active** (see adaptive section) |
 | `current_epoch_id` | Prune, availability | Epoch transitions wake long-poll or chain refresh |
 
-`SessionConfig` still carries default `RefusalTimeout` / `ExecutionTimeout` for host timeout verification and `/status` display; live proxy inference uses the lane C provider when configured.
+`SessionConfig` carries the lane A `RefusalTimeout` / `ExecutionTimeout` (compiled defaults only when the escrow row has zeros) for host timeout verification and `/status` display; live proxy inference uses the lane C provider when configured.
 
 **Protocol version** (`StateRootAndProtocolVersion`) equals the session bind tag:
 `approved_versions.name` for versiond routes, or `v1` for `/v1/devshard`. See [upgrade.md](./upgrade.md).
@@ -65,6 +66,23 @@ The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does 
 | `QueryAccountByAddress` | Per address pubkey |
 
 `bindGraceDefaults`, `DevshardDefaults`, and nested `QueryParams` on `GetEscrow` are **removed** — all session consensus fields come from lane A on the escrow row.
+
+### Chain settlement only (not on `RuntimeConfig`)
+
+`DevshardEscrowParams.apply_sampled_pass_count` is consumed at
+`MsgSettleDevshardEscrow`. It is **off** by default (genesis and v0.2.16 write
+`false`) and ignored for **DERIVED** names. Devshardd / dapi do not load it.
+Governance can turn it **on** for **SAMPLED** names with `MsgUpdateParams`
+(full params replace — keep every existing escrow field):
+
+```json
+"devshard_escrow_params": {
+  "...all existing escrow fields...": "...",
+  "apply_sampled_pass_count": true
+}
+```
+
+See [upgrade.md Settlement pass_count](./upgrade.md#settlement-pass_count).
 
 ---
 
@@ -210,6 +228,7 @@ Implementation details: [params-provider-adaptive-plan.md](./params-provider-ada
 | `max_nonce` | **Moved** | `MaxNonceProvider` |
 | `refusal_timeout`, `execution_timeout` | **Moved** | Live proxy + long-poll snapshot |
 | Escrow fees (`create_devshard_fee`, `fee_per_nonce`) | On-chain escrow | Lane A — not on `RuntimeConfig` |
+| `apply_sampled_pass_count` | Chain settlement only | **Off** by default. Ignored for DERIVED names. Off keeps derived SPRT on SAMPLED names and logs sampled; `true` applies sampled. See [upgrade.md](./upgrade.md#settlement-pass_count) |
 
 | Still direct chain | Why |
 |--------------------|-----|

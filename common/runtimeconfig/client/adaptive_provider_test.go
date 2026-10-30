@@ -112,6 +112,85 @@ func (c *fakeClock) timerArmedAfter(d time.Duration, afterID uint64) (uint64, bo
 	return found, ok
 }
 
+// nextTimerAfter reports the soonest timer armed after afterID.
+func (c *fakeClock) nextTimerAfter(afterID uint64) (id uint64, d time.Duration, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var best *fakeTimer
+	for _, timer := range c.timers {
+		if timer.id <= afterID {
+			continue
+		}
+		if best == nil || timer.deadline.Before(best.deadline) || (timer.deadline.Equal(best.deadline) && timer.id < best.id) {
+			cp := *timer
+			best = &cp
+		}
+	}
+	if best == nil {
+		return 0, 0, false
+	}
+	d = best.deadline.Sub(c.now)
+	if d < 0 {
+		d = 0
+	}
+	return best.id, d, true
+}
+
+// advanceNextTimer waits until a timer is armed after afterID and fires it.
+func (c *fakeClock) advanceNextTimer(t *testing.T, afterID uint64) uint64 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		id, d, ok := c.nextTimerAfter(afterID)
+		if ok {
+			c.Advance(d)
+			return id
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for a timer armed after id %d", afterID)
+	return 0
+}
+
+// waitNextTimer waits until a timer is armed after afterID and leaves it pending.
+func (c *fakeClock) waitNextTimer(t *testing.T, afterID uint64) uint64 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		id, _, ok := c.nextTimerAfter(afterID)
+		if ok {
+			return id
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timeout waiting for a timer armed after id %d", afterID)
+	return 0
+}
+
+// stepClockUntilSource advances one armed interval at a time until the
+// supervisor reports want. Advance fires only timers that already exist, so a
+// single jump of GRPCStale can run the stale check before a queued poll error
+// is counted and then drop the rescheduled tick. Waiting for the next arm
+// leaves the supervisor a gap in which that error is recorded.
+func stepClockUntilSource(t *testing.T, clock *fakeClock, p AdaptiveProvider, interval time.Duration, want string) {
+	t.Helper()
+	var armed uint64
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if p.ActiveSource() == want {
+			return
+		}
+		id, ok := clock.timerArmedAfter(interval, armed)
+		if !ok {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		armed = id
+		clock.Advance(interval)
+	}
+	t.Fatalf("timeout waiting for active source %q (got %q)", want, p.ActiveSource())
+}
+
 // scriptNMClient returns scripted errors or configs per call index.
 type scriptNMClient struct {
 	gen.NodeManagerClient
@@ -295,10 +374,7 @@ func TestAdaptive_FailoverOnGRPCStale(t *testing.T) {
 	waitForHeight(t, p, 20)
 	waitActiveSource(t, p, SourceActiveGRPC, time.Second)
 
-	clock.Advance(cfg.GRPCStale + cfg.StaleCheckInterval)
-	time.Sleep(50 * time.Millisecond)
-
-	waitActiveSource(t, p, SourceActiveChain, 3*time.Second)
+	stepClockUntilSource(t, clock, p, cfg.StaleCheckInterval, SourceActiveChain)
 	snap := waitChainHeight(t, p, 200)
 	assert.Equal(t, uint64(9), snap.CurrentEpochID)
 }
@@ -366,7 +442,12 @@ func TestAdaptive_OnlyOneRunnerApplies(t *testing.T) {
 }
 
 func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
-	clock := newFakeClock(time.Unix(0, 0))
+	// Supervisor timers and the gRPC runner's error backoff must not share a
+	// clock. Stepping the stale interval would otherwise release that backoff,
+	// and the following ok apply would clear the error count before GRPCStale
+	// elapses.
+	sup := newFakeClock(time.Unix(0, 0))
+	grpcClock := newFakeClock(time.Unix(0, 0))
 	okAt50 := func() (*gen.GetRuntimeConfigResponse, error) {
 		return &gen.GetRuntimeConfigResponse{
 			Config: TestRuntimeConfigProto(50, 3, "raw"),
@@ -398,7 +479,8 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cfg := adaptiveTestConfig(t, clock, client, fetcher)
+	cfg := adaptiveTestConfig(t, sup, client, fetcher)
+	cfg.GRPC.Clock = grpcClock
 	p, err := NewAdaptive(ctx, cfg)
 	require.NoError(t, err)
 	cleanupAdaptive(t, cancel, p)
@@ -406,15 +488,16 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	waitForHeight(t, p, 20)
 	waitActiveSource(t, p, SourceActiveGRPC, time.Second)
 
-	clock.Advance(cfg.GRPCStale + cfg.StaleCheckInterval)
-	time.Sleep(30 * time.Millisecond)
-	waitActiveSource(t, p, SourceActiveChain, 3*time.Second)
+	// Boot probe, the height-20 apply, then both scripted Unavailable polls.
+	// Leave the runner parked on grpcClock so the ok handlers stay for the
+	// failback probes.
+	waitCalls(t, client, 3)
+	grpcClock.advanceNextTimer(t, 0)
+	waitCalls(t, client, 4)
+	grpcClock.waitNextTimer(t, 0)
 
-	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
-	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
-	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
+	stepClockUntilSource(t, sup, p, cfg.StaleCheckInterval, SourceActiveChain)
+	stepClockUntilSource(t, sup, p, cfg.GRPCReprobe, SourceActiveGRPC)
 	waitForHeight(t, p, 50)
 }
 
@@ -476,8 +559,8 @@ func TestAdaptive_FailbackHysteresis_NeedsConsecutiveProbes(t *testing.T) {
 			func() (*gen.GetRuntimeConfigResponse, error) {
 				return nil, status.Error(codes.Unimplemented, "not implemented")
 			},
-			ok,  // reprobe 1 — streak 1, still chain
-			fail, // reprobe 2 — reset streak
+			ok,     // reprobe 1 — streak 1, still chain
+			fail,   // reprobe 2 — reset streak
 			ok, ok, // reprobes 3–4 — failback to gRPC
 		},
 	}

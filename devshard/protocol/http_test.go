@@ -72,6 +72,7 @@ const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
 	cfg := transport.DefaultClientConfig()
+	cfg.AllowRetiredHTTPSession = true
 	cfg.RoutePrefix = httpTestRoutePrefix
 	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
 }
@@ -97,6 +98,14 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 // sig accumulation, and mempool sink wired together.
 // Optional cfgs override the default SessionConfig.
 func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...types.SessionConfig) *httpTestEnv {
+	t.Helper()
+	return setupHTTPEnvWiring(t, numHosts, balance, grace, true, cfgs...)
+}
+
+// setupHTTPEnvWiring is setupHTTPEnv with the host signature verifier
+// optional. devshardd never passes host.WithVerifier, so hostVerifier=false is
+// the production wiring.
+func setupHTTPEnvWiring(t *testing.T, numHosts int, balance, grace uint64, hostVerifier bool, cfgs ...types.SessionConfig) *httpTestEnv {
 	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
@@ -129,8 +138,11 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		}))
 		stores[i] = store
 
-		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,
-			host.WithGrace(grace), host.WithStorage(store), host.WithVerifier(verifier))
+		hostOpts := []host.HostOption{host.WithGrace(grace), host.WithStorage(store)}
+		if hostVerifier {
+			hostOpts = append(hostOpts, host.WithVerifier(verifier))
+		}
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, hostOpts...)
 		require.NoError(t, err)
 		hosts[i] = h
 
@@ -163,7 +175,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		for j, c := range clients {
 			peers[j] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	// Wire gossip instances with host-authenticated peers and sig accumulation.
@@ -551,21 +563,22 @@ func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
 	env := setupHTTPEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), prepared.Nonce())
 	executorIdx := prepared.HostIdx()
 	require.Equal(t, 1, executorIdx)
+	diffs := env.session.Diffs()
+	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
+	require.NoError(t, err)
 
-	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "reachable executor receipt should recover instead of timing out")
-	require.Equal(t, "refused", result.Reason)
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
 	require.NotNil(t, findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
 		"executor should queue recovery MsgConfirmStart after challenge")
 
-	diffs := env.session.Diffs()
+	diffs = env.session.Diffs()
 	require.GreaterOrEqual(t, len(diffs), 2)
-	require.NotNil(t, findConfirmStart(diffs[len(diffs)-1].Txs, prepared.Nonce()),
+	require.NotNil(t, findConfirmStart(diffs[1].Txs, prepared.Nonce()),
 		"recovery MsgConfirmStart from challenge should land in the next user diff")
 }
 
@@ -573,16 +586,16 @@ func TestHTTP_RefusedTimeoutRecoveryDeduplicatesAcrossVerifierRejects(t *testing
 	env := setupHTTPEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), prepared.Nonce())
-
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	diffs := env.session.Diffs()
+	_, err = env.hosts[prepared.HostIdx()].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 	require.NoError(t, err)
 
-	diffs := env.session.Diffs()
-	require.GreaterOrEqual(t, len(diffs), 2)
-	recovery := diffs[len(diffs)-1]
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
+
+	recovery := confirmDiff(t, env.session.Diffs(), prepared.Nonce())
 	require.Equal(t, 1, countConfirmStart(recovery.Txs, prepared.Nonce()),
 		"multiple verifier rejects must not duplicate the executor ConfirmStart in the recovery diff")
 }
@@ -598,12 +611,12 @@ func TestHTTP_RefusedTimeoutRecoveryIgnoresUnrelatedMempool(t *testing.T) {
 		}}},
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 			InferenceId:  999,
-			ResponseHash: []byte("other-response"),
+			ResponseHash: []byte("other-response"), ServedHash: testutil.TestServedHash,
 		}}},
 	}
 	session, _ := setupHTTPRecoveryVerifierSession(t, env, unrelated)
 
-	prepared, err := session.PrepareInference(defaultParams())
+	prepared, err := session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	beforeDiffs := len(session.Diffs())
 
@@ -625,7 +638,7 @@ func TestHTTP_ExecutionTimeoutDoesNotUseConfirmStartRecovery(t *testing.T) {
 	ctx := context.Background()
 	session, recoverySource := setupHTTPRecoveryVerifierSession(t, env, nil)
 
-	prepared, err := session.PrepareInference(defaultParams())
+	prepared, err := session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
 	receipt, _, err := env.hosts[executorIdx].ChallengeReceipt(ctx, prepared.Nonce(), refusedPayload(), session.Diffs())
@@ -652,9 +665,12 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 	env := setupHTTPEnv(t, 5, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
+	diffs := env.session.Diffs()
+	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
+	require.NoError(t, err)
 	challenged := make(chan struct{}, 1)
 	slowExecutor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
@@ -684,6 +700,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 	t.Cleanup(slowExecutor.Close)
 
 	slowCfg := transport.DefaultClientConfig()
+	slowCfg.AllowRetiredHTTPSession = true
 	slowCfg.RoutePrefix = httpTestRoutePrefix
 	slowCfg.VerifyTimeout = 100 * time.Millisecond
 	slowClient := transport.NewHTTPClient(slowExecutor.URL, "escrow-1", env.userSigner, slowCfg)
@@ -694,7 +711,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 			peers[i] = c
 		}
 		peers[executorIdx] = slowClient
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
@@ -715,7 +732,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		for i, c := range env.clients {
 			peers[i] = c
 		}
-		srv.SetPeerClients(peers)
+		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
 	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
@@ -730,7 +747,7 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 	env := setupHTTPEnv(t, 3, 1000000, 100, config)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
 
@@ -754,14 +771,15 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "executor finish in mempool must reject execution timeout")
-	require.Empty(t, recovery, "execution-timeout rejection should not publish refused-start recovery")
+	require.Nil(t, findConfirmStart(recovery, prepared.Nonce()), "execution-timeout rejection must not carry the receipt")
+	require.NotNil(t, findFinish(recovery, prepared.Nonce()), "the verified finish is what the user sequences")
 }
 
 func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
 	env := setupHTTPEnv(t, 1, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
 
@@ -775,12 +793,13 @@ func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
 		Receipt:     receipt,
 		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
 	}, prepared.Nonce()))
-	require.NoError(t, env.session.SendPendingDiff(ctx))
-	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
-
+	// executeAsync queues Finish after ChallengeReceipt returns. The publish
+	// response copies the mempool once, so the finish must already be there.
 	require.Eventually(t, func() bool {
 		return findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()) != nil
 	}, 5*time.Second, 20*time.Millisecond)
+	require.NoError(t, env.session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 	require.NotNil(t, findFinish(env.session.PendingTxs(), prepared.Nonce()),
 		"ConfirmStart publish response must pull FinishInference from executor mempool into session pending txs")
 
@@ -796,7 +815,7 @@ func TestHTTP_ExecutionTimeoutAfterFinishPulledPendingDoesNotTimeout(t *testing.
 	env := setupHTTPEnv(t, 1, 1000000, 100, config)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
 
@@ -810,18 +829,20 @@ func TestHTTP_ExecutionTimeoutAfterFinishPulledPendingDoesNotTimeout(t *testing.
 		Receipt:     receipt,
 		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
 	}, prepared.Nonce()))
-	require.NoError(t, env.session.SendPendingDiff(ctx))
-	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
-
+	// executeAsync queues Finish after ChallengeReceipt returns. The publish
+	// response copies the mempool once, so the finish must already be there.
 	require.Eventually(t, func() bool {
 		return findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()) != nil
 	}, 5*time.Second, 20*time.Millisecond)
+	require.NoError(t, env.session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 	require.NotNil(t, findFinish(env.session.PendingTxs(), prepared.Nonce()),
 		"test setup expects FinishInference to be pending before timeout handling starts")
 
 	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
 	require.NoError(t, err, "pending FinishInference should be published instead of timing out the started inference")
-	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, "nonce_closed", result.DetailReason)
+	require.Empty(t, result.Reason, "the closing finish lands before the deadline")
 	require.Equal(t, types.StatusFinished, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 }
 
@@ -863,11 +884,10 @@ func TestHTTP_StateRecovery(t *testing.T) {
 	// GET diffs from the host that stored them. At least one host should have diffs.
 	var storedDiffs int
 	for _, c := range env.clients {
-		diffs, err := c.GetDiffs(ctx, 1, lastNonce)
-		if err != nil {
-			continue
-		}
-		storedDiffs += len(diffs)
+		_ = c.GetDiffPages(ctx, 1, lastNonce, func(page []types.Diff) error {
+			storedDiffs += len(page)
+			return nil
+		})
 	}
 	require.True(t, storedDiffs > 0, "at least one host should have stored diffs")
 }
@@ -1328,17 +1348,18 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	env := setupHTTPEnv(t, 3, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), prepared.Nonce())
 	executorIdx := prepared.HostIdx()
-
-	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
-	require.NoError(t, err, "rejected refused-timeout must recover by publishing ConfirmStart")
-
 	diffs := env.session.Diffs()
-	require.GreaterOrEqual(t, len(diffs), 2)
-	recovery := diffs[len(diffs)-1]
+	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
+	require.NoError(t, err)
+
+	handleRecoveredRefusal(t, env.session, prepared.Nonce())
+
+	diffs = env.session.Diffs()
+	recovery := confirmDiff(t, diffs, 1)
 	require.Equal(t, 1, countConfirmStart(recovery.Txs, 1), "recovery diff must carry exactly one ConfirmStart for inference 1")
 	got := findConfirmStart(recovery.Txs, 1)
 	require.NotNil(t, got)
@@ -1384,9 +1405,12 @@ func TestHTTP_T2_OmittedConfirmStart_VotingVerifiersRetainPoolCopy(t *testing.T)
 	env := setupHTTPEnv(t, 3, 1000000, 100)
 	ctx := context.Background()
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
+	diffs := env.session.Diffs()
+	_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
+	require.NoError(t, err)
 
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
@@ -1443,6 +1467,38 @@ func refusedPayload() *host.InferencePayload {
 		MaxTokens:   p.MaxTokens,
 		StartedAt:   p.StartedAt,
 	}
+}
+
+// handleRecoveredRefusal runs a refused timeout whose receipt recovers. When
+// the executor already finished, the recovery or a queued finish closes the
+// record. Otherwise the started record waits on the execution deadline, so the
+// wait is bounded and ends canceled.
+func handleRecoveredRefusal(t *testing.T, session *user.Session, nonce uint64) user.TimeoutResult {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), refusedPayload())
+	rec := session.StateMachine().SnapshotState().Inferences[nonce]
+	if err == nil {
+		require.Equal(t, types.StatusFinished, rec.Status, "%+v", result)
+		return result
+	}
+	require.ErrorIs(t, err, context.DeadlineExceeded, "a recovered receipt is not a timeout failure")
+	require.Equal(t, "context_canceled", result.DetailReason)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	return result
+}
+
+// confirmDiff returns the first diff carrying the inference's ConfirmStart.
+func confirmDiff(t *testing.T, diffs []types.Diff, inferenceID uint64) types.Diff {
+	t.Helper()
+	for _, d := range diffs {
+		if findConfirmStart(d.Txs, inferenceID) != nil {
+			return d
+		}
+	}
+	require.FailNow(t, "no diff carries ConfirmStart", "inference %d", inferenceID)
+	return types.Diff{}
 }
 
 func findConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {

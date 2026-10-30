@@ -30,6 +30,28 @@ func TestSignRepairRequest_RoundTrip(t *testing.T) {
 	require.NoError(t, VerifyRepairRequest(v, req, signer.Address()))
 }
 
+func TestVerifyRepairRequestAllowed_WarmKey(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	req := testRepairRequest()
+	req.RequesterSlot = 1
+	require.NoError(t, SignRepairRequest(warm, req))
+
+	v := signing.NewSecp256k1Verifier()
+	require.Error(t, VerifyRepairRequest(v, req, cold.Address()), "exact match against cold must fail")
+
+	actors := signing.SlotActors{
+		SlotKeys: map[uint32]string{0: cold.Address(), 1: cold.Address()},
+		WarmKeys: map[uint32]string{0: warm.Address()},
+	}
+	require.NoError(t, VerifyRepairRequestAllowed(v, req, actors))
+
+	resp := &RepairResponse{Outcome: RepairOutcomeHeight, ObservedHeight: 510}
+	require.NoError(t, SignRepairResponse(warm, resp))
+	require.Error(t, VerifyRepairResponse(v, resp, cold.Address()))
+	require.NoError(t, VerifyRepairResponseAllowed(v, resp, 1, actors))
+}
+
 func TestSignRepairResponse_RoundTrip(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	ackSigner := testutil.MustGenerateKey(t)
