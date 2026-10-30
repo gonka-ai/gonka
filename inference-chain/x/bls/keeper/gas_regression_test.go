@@ -44,6 +44,7 @@ func makeDealerPart(address string) *types.DealerPartStorage {
 	return &types.DealerPartStorage{
 		DealerAddress:     address,
 		Commitments:       commitments,
+		ConstantTermPok:   admittedPoK(),
 		ParticipantShares: participantShares,
 	}
 }

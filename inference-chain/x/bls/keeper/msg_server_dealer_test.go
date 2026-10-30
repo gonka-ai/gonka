@@ -65,19 +65,19 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
+	commitments, pok := dealerCommitmentsWithPoK(t, epochID, dealerAddr, 1)
+
 	// Create test message
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
-		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
-		},
+		Creator:     dealerAddr,
+		EpochId:     epochID,
+		Commitments: commitments,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
 			{EncryptedShares: [][]byte{dummyEncryptedShare(2)}},
 			{EncryptedShares: [][]byte{dummyEncryptedShare(3)}},
 		},
+		ConstantTermPok: pok,
 	}
 
 	// Execute
@@ -96,6 +96,7 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	require.NotNil(t, dealerPart)
 	assert.Equal(t, dealerAddr, dealerPart.DealerAddress)
 	assert.Equal(t, msg.Commitments, dealerPart.Commitments)
+	assert.Equal(t, msg.ConstantTermPok, dealerPart.ConstantTermPok)
 	assert.Len(t, dealerPart.ParticipantShares, 3)
 
 	// Verify participant shares were stored correctly
@@ -467,16 +468,15 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
+	commitments, pok := dealerCommitmentsWithPoK(t, epochID, dealerAddr, 1)
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
-		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
-		},
+		Creator:     dealerAddr,
+		EpochId:     epochID,
+		Commitments: commitments,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
 		},
+		ConstantTermPok: pok,
 	}
 
 	// Execute
@@ -512,4 +512,77 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	}
 	assert.True(t, epochAttr, "Event should contain epoch_id")
 	assert.True(t, dealerAttr, "Event should contain dealer_address")
+}
+
+func TestSubmitDealerPart_RejectsInvalidConstantTermPoK(t *testing.T) {
+	const epochID = uint64(1)
+	const dealerAddr = "dealer1"
+
+	setup := func(t *testing.T) (keeper.Keeper, types.MsgServer, context.Context) {
+		k, ms, goCtx := setupMsgServerDealer(t)
+		ctx := sdk.UnwrapSDKContext(goCtx)
+		k.SetEpochBLSData(ctx, types.EpochBLSData{
+			EpochId:                   epochID,
+			ITotalSlots:               1,
+			TSlotsDegree:              1,
+			DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+			DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+			Participants: []types.BLSParticipantInfo{{
+				Address:            dealerAddr,
+				Secp256K1PublicKey: []byte("pubkey1"),
+				PercentageWeight:   math.LegacyNewDec(100),
+				SlotStartIndex:     0,
+				SlotEndIndex:       0,
+			}},
+			DealerParts: []*types.DealerPartStorage{
+				{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+			},
+		})
+		return k, ms, goCtx
+	}
+
+	commitments, pok := dealerCommitmentsWithPoK(t, epochID, dealerAddr, 1)
+	otherEpochCommitments, otherEpochPoK := dealerCommitmentsWithPoK(t, epochID+1, dealerAddr, 1)
+
+	cases := map[string]struct {
+		commitments [][]byte
+		pok         []byte
+	}{
+		"missing":     {commitments, nil},
+		"other epoch": {otherEpochCommitments, otherEpochPoK},
+		"other proof": {commitments, otherEpochPoK},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			k, ms, goCtx := setup(t)
+			_, err := ms.SubmitDealerPart(goCtx, &types.MsgSubmitDealerPart{
+				Creator:     dealerAddr,
+				EpochId:     epochID,
+				Commitments: tc.commitments,
+				EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+					{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+				},
+				ConstantTermPok: tc.pok,
+			})
+			require.ErrorContains(t, err, "invalid constant term proof of knowledge")
+
+			stored, err := k.GetEpochBLSData(sdk.UnwrapSDKContext(goCtx), epochID)
+			require.NoError(t, err)
+			require.Empty(t, stored.DealerParts[0].GetDealerAddress())
+		})
+	}
+
+	t.Run("valid", func(t *testing.T) {
+		_, ms, goCtx := setup(t)
+		_, err := ms.SubmitDealerPart(goCtx, &types.MsgSubmitDealerPart{
+			Creator:     dealerAddr,
+			EpochId:     epochID,
+			Commitments: commitments,
+			EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+				{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+			},
+			ConstantTermPok: pok,
+		})
+		require.NoError(t, err)
+	})
 }
