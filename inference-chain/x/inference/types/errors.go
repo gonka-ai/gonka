@@ -104,4 +104,5 @@ var (
 	ErrPoCChallengeCapExceeded = sdkerrors.Register(ModuleName, 1202, "network PoC challenge cap exceeded")
 	ErrPoCChallengeWindow      = sdkerrors.Register(ModuleName, 1204, "PoC challenge cannot be created in this window")
 	ErrInvalidBridgeKeyLink    = sdkerrors.Register(ModuleName, 1205, "invalid bridge key link")
+	ErrPoCChallengeSnapshotMissing = sdkerrors.Register(ModuleName, 1206, "PoC validation snapshot for the challenge vote window not found")
 )
