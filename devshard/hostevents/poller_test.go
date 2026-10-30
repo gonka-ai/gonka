@@ -894,7 +894,8 @@ func TestPoller_ResetReloadsWarmKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Equal(t, "warm", got[0].Grantee)
-	require.Greater(t, fetch.calls.Load(), before)
+	require.Eventually(t, func() bool { return fetch.calls.Load() > before }, time.Second, time.Millisecond,
+		"the next read reloads the granter in the background")
 	cancel()
 }
 

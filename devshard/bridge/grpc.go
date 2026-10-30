@@ -148,14 +148,23 @@ func (b *GRPCBridge) GetValidationThreshold(epochID uint64, modelID string) (*De
 }
 
 // VerifyWarmKey reports whether warmAddress holds a live warm-key grant from
-// validatorAddress, from the log copy. It is the local-admission answer; a
-// key becomes a consensus actor only through a MsgWarmKeyBind the hosts
-// confirm against the same log.
+// validatorAddress, from the log copy. It is the local-admission answer.
+// Diff application uses ConsensusWarmKey, which does not consult the clock.
 func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
 	if b == nil || b.warmKeys == nil {
 		return false, fmt.Errorf("grpc bridge: chain client is nil")
 	}
 	return IsWarmKeyLive(b.warmKeys, validatorAddress, warmAddress, time.Now())
+}
+
+// ConsensusWarmKey reports whether warmAddress is named by a grant from
+// validatorAddress that the log has not ended. Expiration is ignored, so two
+// hosts applying the same diff agree when their clocks differ.
+func (b *GRPCBridge) ConsensusWarmKey(warmAddress, validatorAddress string) (bool, error) {
+	if b == nil || b.warmKeys == nil {
+		return false, fmt.Errorf("grpc bridge: chain client is nil")
+	}
+	return b.warmKeys.HasUnendedGrant(validatorAddress, warmAddress)
 }
 
 func (b *GRPCBridge) OnEscrowCreated(_ EscrowInfo) error {

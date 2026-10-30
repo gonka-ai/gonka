@@ -102,6 +102,7 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 	warm.Apply(bridge.WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "kept", ExpiresAtUnix: exp})
 	warm.Apply(bridge.WarmKeyEntry{Granter: "other", ID: 1, Grantee: "kept", ExpiresAtUnix: exp})
 	phase := atomic.Int32{}
+	unimplemented := atomic.Int32{}
 	srv := &fakeHostEventsServer{}
 	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		switch phase.Load() {
@@ -124,6 +125,7 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 		case 4:
 			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: 1, SupportedKinds: blockKinds()}, nil
 		case 5:
+			unimplemented.Add(1)
 			return nil, status.Error(codes.Unimplemented, "old")
 		case 6:
 			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: 1, SupportedKinds: bothWarmKinds()}, nil
@@ -159,7 +161,7 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 	require.Zero(t, fetch.granter("stranger"))
 	_, err := warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Equal(t, coldBefore+1, fetch.granter("cold"))
+	require.Eventually(t, func() bool { return fetch.granter("cold") == coldBefore+1 }, time.Second, time.Millisecond)
 	require.Equal(t, otherBefore, fetch.granter("other"), "a granter nobody asked for is not read")
 	p.OfferCometWarm([]bridge.WarmKeyEntry{{Granter: "cold", ID: 8, Grantee: "comet", GrantedAtHeight: 31, ExpiresAtUnix: exp}})
 	require.Eventually(t, func() bool {
@@ -173,6 +175,7 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 	_, found = liveGrant(warm, "cold", 9)
 	require.True(t, found)
 
+	beforeOmitted := fetch.granter("cold")
 	phase.Store(4)
 	require.Eventually(t, func() bool { return !p.WarmFeedLive() }, 2*time.Second, 10*time.Millisecond)
 	p.OfferCometWarm([]bridge.WarmKeyEntry{{Granter: "cold", ID: 10, Grantee: "omitted", GrantedAtHeight: 33, ExpiresAtUnix: exp}})
@@ -180,16 +183,22 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 		_, found := liveGrant(warm, "cold", 10)
 		return found
 	}, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return fetch.granter("cold") == beforeOmitted+1 }, time.Second, time.Millisecond,
+		"the read after the gap reloads in the background")
 
 	beforeUnimpl := fetch.granter("cold")
 	phase.Store(5)
-	require.Eventually(t, func() bool { return !p.WarmFeedLive() }, 2*time.Second, 10*time.Millisecond)
+	// The second Unimplemented request is sent only after the first answer,
+	// and the fallback reset it starts, were handled.
+	require.Eventually(t, func() bool { return unimplemented.Load() >= 2 }, 2*time.Second, time.Millisecond)
+	require.False(t, p.WarmFeedLive())
 	require.Equal(t, beforeUnimpl, fetch.granter("cold"))
 	p.OfferCometWarm([]bridge.WarmKeyEntry{{Granter: "cold", ID: 11, Grantee: "old-dapi", GrantedAtHeight: 34, ExpiresAtUnix: exp}})
 	require.Eventually(t, func() bool {
 		_, found := liveGrant(warm, "cold", 11)
 		return found
 	}, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return fetch.granter("cold") == beforeUnimpl+1 }, time.Second, time.Millisecond)
 
 	phase.Store(6)
 	require.Eventually(t, func() bool { return p.WarmFeedLive() }, 2*time.Second, 10*time.Millisecond)
@@ -205,8 +214,8 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 	fetch.setErr(status.Error(codes.Unavailable, "log down"))
 	phase.Store(4)
 	require.Eventually(t, func() bool { return !p.WarmFeedLive() }, 2*time.Second, 10*time.Millisecond)
-	_, err = warm.LiveWarmKeys("cold")
-	require.Error(t, err)
+	_, held := liveGrant(warm, "cold", 7)
+	require.True(t, held, "a failed WarmKeyLog read leaves the held grant answering")
 	cached, found, err := warm.WarmKeyEntry("cold", 7)
 	require.NoError(t, err)
 	require.True(t, found)
@@ -234,7 +243,7 @@ func TestNoteCometHeight_JumpResetsWithoutReading(t *testing.T) {
 	require.Equal(t, before, fetch.granter("cold"), "the height jump does not read the chain")
 	_, err = warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Equal(t, before+1, fetch.granter("cold"))
+	require.Eventually(t, func() bool { return fetch.granter("cold") == before+1 }, time.Second, time.Millisecond)
 	_, err = warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
 	require.Equal(t, before+1, fetch.granter("cold"))
@@ -254,7 +263,7 @@ func TestOnCometConnected_ResetsWithoutReading(t *testing.T) {
 	require.Equal(t, before, fetch.granter("cold"))
 	_, err = warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Equal(t, before+1, fetch.granter("cold"))
+	require.Eventually(t, func() bool { return fetch.granter("cold") == before+1 }, time.Second, time.Millisecond)
 }
 
 func TestPoller_UnavailableDoesNotRehydrateEscrow(t *testing.T) {
