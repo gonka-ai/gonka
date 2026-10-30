@@ -136,6 +136,14 @@ func TestSQLite_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestSQLite(t))
 }
 
+func TestSQLite_OwnFinishes(t *testing.T) {
+	runOwnFinishes(t, newTestSQLite(t))
+}
+
+func TestHybrid_OwnFinishesRoutesToOwner(t *testing.T) {
+	runOwnFinishes(t, NewHybridStorage(newTestSQLite(t)))
+}
+
 func TestSQLite_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, newTestSQLite(t))
 }

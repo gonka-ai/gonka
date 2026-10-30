@@ -206,6 +206,10 @@ type Host struct {
 	// this host applied MsgFinishInference. Used when validation later finds
 	// the live record gone (sealed/drained). Not part of consensus.
 	finishObs map[uint64]inferenceFinishObs
+
+	ownFinishWrites       sync.WaitGroup
+	ownFinishStoreMissing atomic.Bool
+	ownFinishReloadDue    atomic.Bool
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -298,6 +302,9 @@ func NewHost(
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
 	h.installOwedValidations()
+	if sm.LatestNonce() > 0 {
+		h.reloadOwnFinishes()
+	}
 	return h, nil
 }
 
@@ -358,6 +365,7 @@ func (h *Host) Close() {
 		h.validationLifecycleMu.Unlock()
 		h.validationWorkers.Wait()
 	})
+	h.ownFinishWrites.Wait()
 }
 
 // HostMempool returns the host's mempool. Use this to construct a
@@ -727,6 +735,8 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	h.mu.Unlock()
+
+	h.reloadOwnFinishesIfDue()
 
 	if body := h.resolveStoredResponse(ctx, &receiptOutcome); body != nil {
 		cachedBody = body
@@ -1335,12 +1345,11 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 	finishMsg.ProposerSig = proposerSig
 
-	h.mempool.Add(MempoolEntry{
-		Tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-			FinishInference: finishMsg,
-		}},
-		ProposedAt: diffNonce,
-	})
+	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: finishMsg,
+	}}
+	h.mempool.Add(MempoolEntry{Tx: finishTx, ProposedAt: diffNonce})
+	h.persistOwnFinishAsync(inferenceID, finishTx)
 	if result.PartialResponse {
 		reason := observability.Reason(result.PartialResponseReason)
 		if reason == "" {

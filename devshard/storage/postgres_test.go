@@ -180,6 +180,9 @@ func TestPostgres_MarkFinalized_LastFinalized(t *testing.T) {
 func TestPostgres_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestPostgres(t))
 }
+func TestPostgres_OwnFinishes(t *testing.T) {
+	runOwnFinishes(t, newTestPostgres(t))
+}
 func TestPostgres_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, newTestPostgres(t))
 }

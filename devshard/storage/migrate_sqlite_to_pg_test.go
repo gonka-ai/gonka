@@ -200,3 +200,21 @@ func TestQuarantineSQLiteArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, arts)
 }
+
+func TestMigrateSQLiteSessions_OwnFinishes(t *testing.T) {
+	src, err := NewSQLite(t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = src.Close() })
+
+	require.NoError(t, src.CreateSession(paramsForEpoch("esc-a", 3)))
+	require.NoError(t, src.AppendDiff("esc-a", makeDiffRecord(1)))
+	require.NoError(t, src.SaveOwnFinish("esc-a", 1, []byte("finish-1")))
+
+	dest := NewMemory()
+	_, err = MigrateSQLiteSessions(src, dest)
+	require.NoError(t, err)
+
+	got, err := dest.LoadOwnFinishes("esc-a", []uint64{1})
+	require.NoError(t, err)
+	require.Equal(t, map[uint64][]byte{1: []byte("finish-1")}, got)
+}
