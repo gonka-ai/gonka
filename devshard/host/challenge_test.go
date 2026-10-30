@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -65,9 +67,30 @@ type challengeFixture struct {
 	sealGrace uint32
 }
 
-// bodyWithPositions is a stored body with one generated position: what an
-// honest executor keeps, since its devshardd forces logprobs on every request.
-var bodyWithPositions = []byte(`{"events":["data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"logprobs\":{\"content\":[{\"token\":\"a\",\"logprob\":-0.1,\"top_logprobs\":[{\"token\":\"a\",\"logprob\":-0.1}]}]}}]}","data: [DONE]"]}`)
+// bodyWithPositions is a stored body with the 40 generated positions the
+// fixture claims: what an honest executor keeps, since its devshardd forces
+// logprobs on every request.
+var bodyWithPositions = storedBody(strings.Repeat("a", 40), 40)
+
+// storedBody is a streamed envelope of one chunk carrying content and n
+// generated positions, as the executor stores it.
+func storedBody(content string, n int) []byte {
+	positions := make([]any, n)
+	for i := range positions {
+		positions[i] = map[string]any{"token": "64", "logprob": -0.1, "top_logprobs": []any{map[string]any{"token": "64", "logprob": -0.1}}}
+	}
+	chunk, err := json.Marshal(map[string]any{"id": "x", "choices": []any{map[string]any{
+		"index": 0, "delta": map[string]any{"content": content}, "logprobs": map[string]any{"content": positions},
+	}}})
+	if err != nil {
+		panic(err)
+	}
+	body, err := json.Marshal(map[string]any{"events": []string{"data: " + string(chunk), "data: [DONE]"}})
+	if err != nil {
+		panic(err)
+	}
+	return body
+}
 
 const challengeEscrow = "escrow-1"
 
@@ -401,10 +424,13 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 func TestVerifyChallenge_EmptyStream(t *testing.T) {
 	withChallengeTiming(t, time.Millisecond, 5*time.Second)
 	// logit_bias on a byte fragment: tokens are generated, the text is empty.
-	withPositions := []byte(`{"events":["data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"logprobs\":{\"content\":[{\"token\":\"\\\\xe2\",\"logprob\":-0.1,\"top_logprobs\":[{\"token\":\"\\\\xe2\",\"logprob\":-0.1}]}]}}]}","data: [DONE]"]}`)
+	withPositions := storedBody("", 40)
 	noPositions := []byte(`{"events":["data: {\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"logprobs\":null}]}","data: [DONE]"]}`)
-	require.Equal(t, 1, generatedPositions(withPositions))
-	require.Zero(t, generatedPositions(noPositions))
+	for body, want := range map[string]uint64{string(withPositions): 40, string(noPositions): 0} {
+		answer, err := parseServedAnswer([]byte(body))
+		require.NoError(t, err)
+		require.Equal(t, want, answer.positions)
+	}
 
 	cases := map[string]struct {
 		fetch     devshard.ChallengeFetch
@@ -618,4 +644,131 @@ func TestVerifyChallenge_ModelBurnEmptyIsNoFault(t *testing.T) {
 			requireVoteSignedBy(t, f.hosts[0], answer)
 		})
 	}
+
+	t.Run("kimi empty answer cannot exceed max tokens", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.KimiK26ModelID, 40)
+		fetch := devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchFetched, Response: noPositions,
+			Request: []byte(`{"model":"moonshotai/Kimi-K2.6","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)}
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{fetch}}, 60)
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED, answer.Fault)
+		require.Equal(t, types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, answer.Check)
+		require.Equal(t, int64(39), answer.Deviation)
+	})
+
+	t.Run("kimi empty answer within max tokens is no fault", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.KimiK26ModelID, 40)
+		fetch := devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchFetched, Response: noPositions,
+			Request: []byte(`{"model":"moonshotai/Kimi-K2.6","messages":[{"role":"user","content":"hi"}],"max_tokens":40}`)}
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{fetch}}, 60)
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, answer.Fault)
+		requireVoteSignedBy(t, f.hosts[0], answer)
+	})
+
+	// The exception is the empty body only: a Kimi body with positions is
+	// held to them like any other model's.
+	t.Run("kimi with positions past the claim slack", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.KimiK26ModelID, 40)
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: storedBody("a", 36)}}}, 60)
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED, answer.Fault)
+		require.Equal(t, types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, answer.Check)
+		require.Equal(t, int64(4), answer.Deviation)
+	})
+
+	// An event the gateway skips as unreadable does not empty the body: the
+	// positions of the other events still hold the claim.
+	t.Run("kimi with an unreadable event", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.KimiK26ModelID, 40)
+		var envelope struct {
+			Events []string `json:"events"`
+		}
+		require.NoError(t, json.Unmarshal(storedBody("a", 36), &envelope))
+		envelope.Events = append([]string{`data: {"choices":[{"index":"0"}]}`, ": comment"}, envelope.Events...)
+		body, err := json.Marshal(envelope)
+		require.NoError(t, err)
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: body}}}, 60)
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED, answer.Fault)
+		require.Equal(t, types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, answer.Check)
+	})
+
+	// A body that cannot be read at all is not the empty answer the
+	// exception is for.
+	t.Run("kimi with an unreadable body", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.KimiK26ModelID, 40)
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: []byte("not json")}}}, 60)
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM, answer.Fault)
+	})
+}
+
+// busyRenderer answers busy for its first busy counts, then counts turns and
+// prompts as given.
+type busyRenderer struct {
+	busy          atomic.Int32
+	calls         atomic.Int32
+	output, input uint64
+}
+
+func (r *busyRenderer) Serves(string) bool { return true }
+
+func (r *busyRenderer) CountPrompt(context.Context, string, []byte) (uint64, string, error) {
+	r.calls.Add(1)
+	if r.busy.Add(-1) >= 0 {
+		return 0, RenderSourceMLNode, errRenderBusy
+	}
+	return r.input, RenderSourceMLNode, nil
+}
+
+func (r *busyRenderer) CountTurn(context.Context, string, []byte, map[string]any) (uint64, string, error) {
+	r.calls.Add(1)
+	if r.busy.Add(-1) >= 0 {
+		return 0, RenderSourceMLNode, errRenderBusy
+	}
+	return r.output, RenderSourceMLNode, nil
+}
+
+// Test flow:
+//  1. Challenge a GLM-5.3 inference whose voter has no ML node free for its first counts, as during PoC.
+//  2. Require the voter to count the fetched body again inside the window and vote once a node counts, without
+//     fetching the body again.
+//  3. With no node free until the window closes, require no vote, rejected as render_busy, not no_render.
+func TestVerifyChallenge_ABusyMLNodeIsCountedAgainInsideTheWindow(t *testing.T) {
+	withChallengeTiming(t, time.Millisecond, 5*time.Second)
+	fetched := devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchFetched, Response: storedBody("a", 40),
+		Request: []byte(`{"model":"zai-org/GLM-5.3-Flash","messages":[{"role":"user","content":"hi"}],"max_tokens":256}`)}
+
+	t.Run("a node frees up inside the window", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.GLM53FlashModelID, 40)
+		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{fetched}}
+		h := f.voter(t, 0, fetcher, 60)
+		renderer := &busyRenderer{output: 40, input: 80}
+		renderer.busy.Store(3)
+		h.renderer = renderer
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Empty(t, answer.RejectCause)
+		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, answer.Fault)
+		require.Equal(t, int32(1), fetcher.calls.Load(), "the body is fetched once")
+		require.Greater(t, renderer.calls.Load(), int32(3))
+	})
+
+	t.Run("no node until the window closes", func(t *testing.T) {
+		f := newChallengeFixtureFor(t, types.GLM53FlashModelID, 40)
+		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{fetched}}, 1)
+		renderer := &busyRenderer{}
+		renderer.busy.Store(1 << 30)
+		h.renderer = renderer
+		answer, err := h.VerifyChallenge(context.Background(), 1)
+		require.NoError(t, err)
+		require.Equal(t, ChallengeRejectRenderBusy, answer.RejectCause)
+		require.Empty(t, answer.Signature)
+	})
 }

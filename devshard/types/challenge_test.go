@@ -47,3 +47,34 @@ func TestChallengeWindow(t *testing.T) {
 		t.Fatalf("grace 2min: %v, want 1m", got)
 	}
 }
+
+// Every value of the challenge enums has a label of its own, so a value added to the proto without one
+// does not fold into another in the metrics.
+func TestChallengeLabelsCoverEveryValue(t *testing.T) {
+	labels := func(t *testing.T, names map[int32]string, label func(int32) string, fallback string) {
+		t.Helper()
+		seen := map[string]string{}
+		for value, name := range names {
+			got := label(value)
+			if got == fallback && value != 0 {
+				t.Errorf("%s has no label", name)
+			}
+			if other, ok := seen[got]; ok {
+				t.Errorf("%s and %s share the label %q", name, other, got)
+			}
+			seen[got] = name
+		}
+		if got := label(int32(len(names) + 100)); got != fallback {
+			t.Errorf("unknown value labelled %q, want %q", got, fallback)
+		}
+	}
+	t.Run("reason", func(t *testing.T) {
+		labels(t, ChallengeReason_name, func(v int32) string { return ChallengeReasonLabel(ChallengeReason(v)) }, "unspecified")
+	})
+	t.Run("fault", func(t *testing.T) {
+		labels(t, ChallengeFault_name, func(v int32) string { return ChallengeFaultLabel(ChallengeFault(v)) }, "unknown")
+	})
+	t.Run("check", func(t *testing.T) {
+		labels(t, ChallengeCheck_name, func(v int32) string { return ChallengeCheckLabel(ChallengeCheck(v)) }, "unknown")
+	})
+}

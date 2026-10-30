@@ -75,6 +75,11 @@ type FaultConfig struct {
 	UsagePromptTokens     int
 	PadEmptyChunks        int
 	DropTokens            bool
+	// ServeRecording names a recorded sample of the request's model whose
+	// answer an execution gets in place of the one its request picks: an
+	// engine that streams tokens the request did not ask for. Like the usage
+	// knobs it leaves validation replays alone.
+	ServeRecording string
 }
 
 // ShouldFail deterministically selects requests for a configured failure
@@ -110,11 +115,14 @@ type FaultPatch struct {
 	PadEmptyChunks        *int `json:"pad_empty_chunks,omitempty"`
 
 	DropTokens *bool `json:"drop_tokens,omitempty"`
+	// Empty turns serve_recording off.
+	ServeRecording *string `json:"serve_recording,omitempty"`
 
-	// Seed, when set, scopes the patch's usage, padding and drop_tokens
-	// knobs to the requests that carry this seed, so concurrent requests
-	// can each get their own; the other knobs of such a patch are ignored.
-	// A seed patch with all of them zero removes the seed's knobs.
+	// Seed, when set, scopes the patch's usage, padding, drop_tokens and
+	// serve_recording knobs to the requests that carry this seed, so
+	// concurrent requests can each get their own; the other knobs of such a
+	// patch are ignored. A seed patch with all of them zero removes the
+	// seed's knobs.
 	Seed *int `json:"seed,omitempty"`
 }
 
@@ -160,6 +168,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.DropTokens != nil {
 		dst.DropTokens = *p.DropTokens
+	}
+	if p.ServeRecording != nil {
+		dst.ServeRecording = *p.ServeRecording
 	}
 }
 

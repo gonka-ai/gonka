@@ -449,15 +449,15 @@ func TestCollectChallengeVotes_CutsALongRejectCause(t *testing.T) {
 		types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND, responseHash, executorAddr, verifiers, time.Now().Add(30*time.Millisecond))
 	require.Equal(t, 2, unanswered)
 	require.NotEmpty(t, causes)
-	for _, cause := range causes {
-		require.LessOrEqual(t, len(cause), 200+len("…"), "a line of the cause is kept, not the body")
-		require.True(t, strings.HasPrefix(cause, "xxx"), "the head of the cause is kept")
+	for _, reject := range causes {
+		require.LessOrEqual(t, len(reject.Cause), 200+len("…"), "a line of the cause is kept, not the body")
+		require.True(t, strings.HasPrefix(reject.Cause, "xxx"), "the head of the cause is kept")
 	}
 }
 
 // A vote whose signature does not recover to the host that answered is
 // dropped: the state machine would reject the whole MsgChallenge for it. The
-// honest NONE vote still lands, and the record stays Finished and paid.
+// remaining ask is cancelled when it cannot change the outcome; the record stays Finished and paid.
 func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 	fastChallengeReask(t)
 	session, hosts, nonce, execIdx, responseHash := finishedChallengeSession(t)
@@ -472,9 +472,7 @@ func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 			forger = i
 		}
 	}
-	session.clients[honest] = &scriptedChallengeClient{HostClient: session.clients[honest], answers: []*transport.VerifyChallengeResponse{
-		signedChallengeAnswer(t, hosts[honest], nonce, uint32(honest), types.ChallengeFault_CHALLENGE_FAULT_NONE, responseHash),
-	}}
+	session.clients[honest] = &scriptedChallengeClient{HostClient: session.clients[honest]}
 	session.clients[forger] = &scriptedChallengeClient{HostClient: session.clients[forger], answers: []*transport.VerifyChallengeResponse{
 		signedChallengeAnswer(t, hosts[execIdx], nonce, uint32(forger), types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH, responseHash),
 	}}
@@ -483,16 +481,15 @@ func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 	result, err := session.RunChallenge(context.Background(), nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM)
 	require.NoError(t, err)
 	require.False(t, result.Invalidated)
-	require.Len(t, result.Votes, 1)
-	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, result.Votes[0].Fault)
+	require.Empty(t, result.Votes)
 	require.Zero(t, result.Faults)
-	require.Equal(t, 1, result.Unanswered)
-	require.Equal(t, uint32(1), result.UnansweredWeight, "the dropped vote counts as unanswered, with its slot weight")
+	require.Equal(t, 2, result.Unanswered)
+	require.Equal(t, uint32(2), result.UnansweredWeight, "the dropped vote and cancelled ask count as unanswered")
 
 	st := session.StateMachine().SnapshotState()
 	require.Equal(t, types.StatusFinished, st.Inferences[nonce].Status)
-	require.True(t, st.Inferences[nonce].UsageChallenged)
-	require.Equal(t, balanceBefore, st.Balance, "NONE leaves the payout standing")
+	require.False(t, st.Inferences[nonce].UsageChallenged)
+	require.Equal(t, balanceBefore, st.Balance, "no accepted votes leave the payout standing")
 }
 
 // A host still pending at the gateway deadline and a host that cannot vote
@@ -549,8 +546,9 @@ func TestCollectChallengeVotes_PendingAtDeadlineAndRejects(t *testing.T) {
 		// threshold any more), so the other ask may be cancelled before it
 		// answers and then drains as an error without a cause.
 		require.NotEmpty(t, causes)
-		for _, cause := range causes {
-			require.Equal(t, "unchecked", cause)
+		for _, reject := range causes {
+			require.Equal(t, "unchecked", reject.Cause)
+			require.NotEqual(t, execIdx, reject.HostIdx, "the executor is not asked")
 		}
 	})
 }
@@ -907,7 +905,12 @@ func TestCollectChallengeVotes_ResourceExhaustedWaitsForRetryAfter(t *testing.T)
 				}
 				// A fault from each voter: with NONE the first answer would settle the
 				// outcome and the second host would not be asked again at all.
-				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", testCase.err)},
+				sourceErr := testCase.err.(*connect.Error)
+				clientErr := connect.NewError(sourceErr.Code(), sourceErr.Unwrap())
+				if retryAfter := sourceErr.Meta().Get("Retry-After"); retryAfter != "" {
+					clientErr.Meta().Set("Retry-After", retryAfter)
+				}
+				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", clientErr)},
 					answers: []*transport.VerifyChallengeResponse{
 						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
 					}}

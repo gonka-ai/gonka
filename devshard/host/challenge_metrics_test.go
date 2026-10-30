@@ -13,7 +13,7 @@ import (
 	"devshard/types"
 )
 
-// A kept verdict is counted once by its fault; asking again returns the kept
+// A kept verdict is counted once by its fault and check; asking again returns the kept
 // vote without counting it a second time.
 func TestVerifyChallenge_CountsKeptVotesByFault(t *testing.T) {
 	withChallengeTiming(t, time.Millisecond, 5*time.Second)
@@ -21,6 +21,7 @@ func TestVerifyChallenge_CountsKeptVotesByFault(t *testing.T) {
 	fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchMismatch}}}
 	h := f.voter(t, 0, fetcher, 60)
 	before := promtest.ToFloat64(observability.ChallengeVoteCounter("hash_mismatch"))
+	beforeCheck := promtest.ToFloat64(observability.ChallengeVoteCheckCounter("hash"))
 
 	for range 2 {
 		answer, err := h.VerifyChallenge(context.Background(), 1)
@@ -28,4 +29,5 @@ func TestVerifyChallenge_CountsKeptVotesByFault(t *testing.T) {
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH, answer.Fault)
 	}
 	require.Equal(t, 1.0, promtest.ToFloat64(observability.ChallengeVoteCounter("hash_mismatch"))-before)
+	require.Equal(t, 1.0, promtest.ToFloat64(observability.ChallengeVoteCheckCounter("hash"))-beforeCheck, "and once by its check")
 }

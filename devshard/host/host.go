@@ -211,6 +211,11 @@ type Host struct {
 	finishObs map[uint64]inferenceFinishObs
 
 	challenges challengeVoter
+	// renderer counts usage for challenge votes; nil = this host does not
+	// vote on a challenge that needs a count.
+	renderer ChallengeRenderer
+	// binaryVersion is this devshardd's build, logged with each vote.
+	binaryVersion string
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.

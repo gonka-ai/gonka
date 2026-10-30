@@ -183,12 +183,15 @@ const (
 )
 
 // ChallengeFetch is the result of one fetch attempt. Response is set only
-// for ChallengeFetchFetched. ExecutorSide marks a ChallengeFetchRetry whose
-// cause is the executor's (no answer, rate limit, not attached) rather than
-// this host's.
+// for ChallengeFetchFetched, with Request: the body the executor's ML node
+// was sent, rebuilt from the prompt payload whose hash the Finish signed, or
+// nil when it cannot be rebuilt. ExecutorSide marks a ChallengeFetchRetry
+// whose cause is the executor's (no answer, rate limit, not attached) rather
+// than this host's.
 type ChallengeFetch struct {
 	Outcome      ChallengeFetchOutcome
 	Response     []byte
+	Request      []byte
 	ExecutorSide bool
 	Cause        string
 }

@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"common/chain"
+	"common/completionapi"
 	commonvalidation "common/validation"
 
 	devshardpkg "devshard"
@@ -19,8 +20,11 @@ import (
 func (v *Validator) FetchChallengePayload(ctx context.Context, req devshardpkg.ValidateRequest) devshardpkg.ChallengeFetch {
 	inferenceID := strconv.FormatUint(req.InferenceID, 10)
 	epochID := resolveValidationEpoch(v.phase, req.EpochID)
-	_, response, err := v.fetchPayloadsFor(ctx, req, inferenceID, epochID)
+	prompt, response, err := v.fetchPayloadsFor(ctx, req, inferenceID, epochID)
 	fetch := classifyChallengeFetch(ctx, v.phase, epochID, response, err)
+	if fetch.Outcome == devshardpkg.ChallengeFetchFetched {
+		fetch.Request = v.executedRequest(prompt, req.InferenceID)
+	}
 	if !v.voteFalseOnFetchFailure {
 		// The same switch replay reads: with it off, replay casts no vote on
 		// a payload the executor failed to keep, to hand over, or to sign
@@ -35,6 +39,21 @@ func (v *Validator) FetchChallengePayload(ctx context.Context, req devshardpkg.V
 		}
 	}
 	return fetch
+}
+
+// executedRequest rebuilds the body the executor's ML node got for a prompt
+// payload, as executeInference does: the inference id as the default seed and
+// the chain's logprobs mode. nil when the payload does not rewrite.
+func (v *Validator) executedRequest(prompt []byte, inferenceID uint64) []byte {
+	mode := ""
+	if v.chainParams != nil {
+		mode = v.chainParams.LogprobsMode()
+	}
+	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(withoutUsageCountUnsafeFields(prompt), int32(inferenceID), mode)
+	if err != nil {
+		return nil
+	}
+	return modified.NewBody
 }
 
 // FetchChallengePayload passes through to the wrapped engine. A challenge

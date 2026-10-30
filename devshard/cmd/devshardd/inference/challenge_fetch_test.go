@@ -157,3 +157,48 @@ func TestFetchChallengePayload_FetchedBodyAndLease(t *testing.T) {
 	got = leased.FetchChallengePayload(context.Background(), devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
 	require.Equal(t, devshardpkg.ChallengeFetchFetched, got.Outcome, "a challenge fetch takes no validation lease")
 }
+
+// Test flow:
+//  1. Run an execution of a prompt payload and capture the body its ML node is sent.
+//  2. Fetch the same payload for a challenge.
+//  3. Require the fetch to carry that body byte for byte: the voters count the request the engine
+//     answered, with the seed and logprobs mode the executor added and without the logit_bias and
+//     bad_words and allowed_token_ids the executor dropped.
+func TestFetchChallengePayload_CarriesTheExecutedRequest(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":16,"stream":true,"min_tokens":4,"logit_bias":{"159":100},"bad_words":["hi"],"allowed_token_ids":[159],"truncate_prompt_tokens":1}`)
+	validator := newFaultTestValidator(10, true, func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+		return prompt, []byte(`{"events":[]}`), nil
+	}, nil, nil)
+
+	var executed []byte
+	errStop := errors.New("captured")
+	_, err := executeInference(context.Background(), devshardpkg.ExecuteRequest{InferenceID: 42, EscrowID: "e", Model: "m", Prompt: prompt},
+		&memoryPayloads{}, 10, func(_ context.Context, _ string, body []byte) (*http.Response, error) {
+			executed = body
+			return nil, errStop
+		}, validator.chainParams, true, fixedVocabularySize(0))
+	require.ErrorIs(t, err, errStop)
+	require.NotEmpty(t, executed)
+	require.NotContains(t, string(executed), "logit_bias")
+	require.NotContains(t, string(executed), "bad_words")
+	require.NotContains(t, string(executed), "allowed_token_ids")
+	require.NotContains(t, string(executed), "truncate_prompt_tokens")
+	require.Contains(t, string(executed), `"min_tokens":4`)
+
+	got := validator.FetchChallengePayload(context.Background(), devshardpkg.ValidateRequest{InferenceID: 42, EpochID: 10})
+	require.Equal(t, devshardpkg.ChallengeFetchFetched, got.Outcome)
+	require.Equal(t, string(executed), string(got.Request))
+
+	failed := newFaultTestValidator(10, true, func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+		return nil, nil, errors.New("executor gone")
+	}, nil, nil)
+	require.Nil(t, failed.FetchChallengePayload(context.Background(), devshardpkg.ValidateRequest{InferenceID: 42, EpochID: 10}).Request)
+}
+
+// A prompt without token forcing reaches the ML node rewrite unchanged, byte for byte.
+func TestWithoutUsageCountUnsafeFieldsKeepsOtherPrompts(t *testing.T) {
+	for _, prompt := range []string{`{"messages":[],"logit_bias_note":1}`, `not json`, `[1]`} {
+		require.Equal(t, prompt, string(withoutUsageCountUnsafeFields([]byte(prompt))))
+	}
+	require.JSONEq(t, `{"messages":[]}`, string(withoutUsageCountUnsafeFields([]byte(`{"messages":[],"logit_bias":{},"bad_words":null,"allowed_token_ids":[159],"truncate_prompt_tokens":1}`))))
+}

@@ -65,8 +65,33 @@ func ChallengeReasonLabel(reason ChallengeReason) string {
 		return "stream_unbound"
 	case ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM:
 		return "empty_stream"
+	case ChallengeReason_CHALLENGE_REASON_OUTPUT_ABOVE_BYTES:
+		return "output_above_bytes"
+	case ChallengeReason_CHALLENGE_REASON_INPUT_ABOVE_BYTES:
+		return "input_above_bytes"
+	case ChallengeReason_CHALLENGE_REASON_UNMEASURED:
+		return "unmeasured"
 	default:
 		return "unspecified"
+	}
+}
+
+// ChallengeCheckLabel is the metric and log label of the check behind a
+// vote's fault; a NONE vote names none.
+func ChallengeCheckLabel(check ChallengeCheck) string {
+	switch check {
+	case ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED:
+		return "unspecified"
+	case ChallengeCheck_CHALLENGE_CHECK_HASH:
+		return "hash"
+	case ChallengeCheck_CHALLENGE_CHECK_POSITIONS:
+		return "positions"
+	case ChallengeCheck_CHALLENGE_CHECK_RENDERED_OUTPUT:
+		return "rendered_output"
+	case ChallengeCheck_CHALLENGE_CHECK_RENDERED_INPUT:
+		return "rendered_input"
+	default:
+		return "unknown"
 	}
 }
 

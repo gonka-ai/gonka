@@ -1,0 +1,295 @@
+{
+  "defaults": {
+    "seed": 1234,
+    "max_tokens": 5000,
+    "top_logprobs": 5
+  },
+  "toolsets": {
+    "weather_docs": [
+      {"type": "function", "function": {"name": "get_weather", "description": "Weather forecast for a city",
+        "parameters": {"type": "object", "properties": {"city": {"type": "string"}, "days": {"type": "integer"}},
+                       "required": ["city"]}}},
+      {"type": "function", "function": {"name": "search_docs", "description": "Search internal documents",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "filters": {"type": "object"}},
+                       "required": ["query"]}}}
+    ]
+  },
+  "modes": {
+    "deepseek-ai/DeepSeek-V4-Flash-0731": {
+      "thinking": {"chat_template_kwargs": {"thinking": true}},
+      "chat": {"chat_template_kwargs": {"thinking": false}, "answer": {"reasoning": null}}
+    }
+  },
+  "cases": [
+    {
+      "name": "plain_short",
+      "description": "Short English answer, no reasoning, no tools.",
+      "messages": [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}],
+      "answer": {"content": "The capital of France is Paris."},
+      "answer_by_model": {"MiniMaxAI/MiniMax-M2.7": {"reasoning": "Simple geography question; the answer is Paris."}}
+    },
+    {
+      "name": "long_mixed",
+      "description": "Long answer mixing code, Russian, CJK and emoji (incl. ZWJ sequences and flags).",
+      "messages": [{"role": "user", "content": "Show a Fibonacci function, explain it in Russian, add a Chinese greeting and some emoji."}],
+      "answer": {
+        "reasoning": "The user wants code, a Russian explanation, a Chinese greeting and emoji. I will keep each part short.",
+        "content": "Here is a Python example:\n\n```python\ndef fib(n: int) -> int:\n    a, b = 0, 1\n    for _ in range(n):\n        a, b = b, a + b\n    return a\n\nprint([fib(i) for i in range(10)])\n```\n\nПо-русски: функция возвращает n-е число Фибоначчи. Каждое следующее число равно сумме двух предыдущих, поэтому последовательность растёт экспоненциально — примерно как φⁿ/√5.\n\n中文问候：你好，世界！今天天气很好，我们一起学习编程吧。日本語も少し：こんにちは。한국어: 안녕하세요.\n\nEmoji: 🚀✨🔥 👨‍👩‍👧‍👦 🇫🇷🇯🇵 👍🏽 ❤️‍🔥 🧑‍💻\n\n| n | fib(n) |\n|---|--------|\n| 10 | 55 |\n| 20 | 6765 |\n| 30 | 832040 |\n\nMath: ∑ᵢ fib(i) = fib(n+2) − 1; tabs\tand  double  spaces stay as they are."
+      }
+    },
+    {
+      "name": "reasoning_content",
+      "description": "Reasoning followed by a short content answer.",
+      "messages": [{"role": "user", "content": "Is 221 a prime number? Think first, then answer briefly."}],
+      "answer": {
+        "reasoning": "221 = 13 * 17, so it has divisors other than 1 and itself. Check: 13 * 17 = 221. Yes.",
+        "content": "No. 221 is not prime: 221 = 13 × 17."
+      }
+    },
+    {
+      "name": "tool_one",
+      "description": "One tool call with string and integer arguments.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "What will the weather be in Paris over the next three days?"}],
+      "answer": {
+        "reasoning": "I should call the weather tool for Paris with a three day window.",
+        "content": "",
+        "tool_calls": [{"name": "get_weather", "arguments": {"city": "Paris", "days": 3}}]
+      }
+    },
+    {
+      "name": "tool_two_object_arg",
+      "description": "Two tool calls, the second with a nested object argument.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "Get the Berlin weather and find our docs about devshard settlement."}],
+      "answer": {
+        "reasoning": "Two lookups are needed: weather and a document search with filters.",
+        "content": "",
+        "tool_calls": [
+          {"name": "get_weather", "arguments": {"city": "Berlin"}},
+          {"name": "search_docs", "arguments": {"query": "devshard escrow settlement", "filters": {"year": 2026, "tags": ["gonka", "vllm"]}}}
+        ]
+      }
+    },
+    {
+      "name": "cut_max_tokens_content",
+      "description": "Long content answer cut by max_tokens outside any tool call (finish_reason=length).",
+      "messages": [{"role": "user", "content": "Write a few paragraphs about the history of Paris."}],
+      "max_tokens": 48,
+      "answer": {
+        "reasoning": "A short history overview.",
+        "content": "Paris began as a settlement of the Parisii, a Celtic tribe, on the Île de la Cité around the third century BC. The Romans conquered it in 52 BC and called it Lutetia. In the Middle Ages it became the seat of the Capetian kings and one of the largest cities in Europe, home to Notre-Dame and the University of Paris. The Revolution of 1789 began here, and in the nineteenth century Haussmann rebuilt the centre with wide boulevards."
+      }
+    },
+    {
+      "name": "cut_in_string_arg",
+      "description": "Two tool calls cut by max_tokens inside the string argument 'query'.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "Check the Madrid weather and search the docs for settlement rules."}],
+      "cut": {"after_text": "escrow"},
+      "answer": {
+        "reasoning": "Two lookups: weather first, then a document search.",
+        "content": "",
+        "tool_calls": [
+          {"name": "get_weather", "arguments": {"city": "Madrid"}},
+          {"name": "search_docs", "arguments": {"query": "devshard escrow settlement rules", "filters": {"year": 2026, "tags": ["gonka"]}}}
+        ]
+      }
+    },
+    {
+      "name": "cut_in_object_arg",
+      "description": "Two tool calls cut by max_tokens inside the non-string (object) argument 'filters'.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "Check the Rome weather and search the 2026 docs tagged gonka and vllm."}],
+      "cut": {"after_text": "2026"},
+      "answer": {
+        "reasoning": "Two lookups: weather, then a filtered document search.",
+        "content": "",
+        "tool_calls": [
+          {"name": "get_weather", "arguments": {"city": "Rome"}},
+          {"name": "search_docs", "arguments": {"query": "release notes", "filters": {"year": 2026, "tags": ["gonka", "vllm"]}}}
+        ]
+      }
+    },
+    {
+      "name": "stop_string",
+      "description": "Answer that hits a client stop string; text after it is generated but never served.",
+      "messages": [{"role": "user", "content": "Name the capital of Italy, then stop."}],
+      "stop": ["###"],
+      "answer": {
+        "reasoning": "The capital of Italy is Rome.",
+        "content": "The capital of Italy is Rome.### This continuation is generated by the model but cut by the stop string and never reaches the client."
+      }
+    },
+    {
+      "name": "whitespace_padded",
+      "description": "Answer with about 2 KB of space/tab padding between two words.",
+      "messages": [{"role": "user", "content": "Reply with the word yes, a lot of whitespace, and the word done."}],
+      "answer": {
+        "reasoning": "The user wants padding made of whitespace.",
+        "content": ["yes", {"repeat": " \t", "times": 1024}, "done"]
+      }
+    },
+    {
+      "name": "forced_fragment",
+      "description": "Client forces one single-byte fragment token with logit_bias; the honest generation is that token max_tokens times.",
+      "messages": [{"role": "user", "content": "Say anything you like, in any language."}],
+      "max_tokens": 256,
+      "forced": {"id_by_model": {"deepseek-ai/DeepSeek-V4-Flash-0731": 159, "MiniMaxAI/MiniMax-M2.7": 224, "zai-org/GLM-5.3-Flash": 94}, "bias": 100,
+                 "expect_by_model": {"MiniMaxAI/MiniMax-M2.7": {"leading_content": "<think>",
+                   "reason": {"why": "MiniMaxM2AppendThinkReasoningParser.extract_reasoning_streaming prepends <think> to the delta when previous_token_ids is empty, so the first position carries content <think> and renders as 1 token"},
+                   "source": {"module": "vllm.reasoning.minimax_m2_reasoning_parser", "qualname": "MiniMaxM2AppendThinkReasoningParser.extract_reasoning_streaming", "needle": "delta_text = \"<think>\" + delta_text"}}}},
+      "answer": {"content": ""},
+      "tolerance_finding": "client-forced fragments render to nothing"
+    },
+    {
+      "name": "utf8_tail_cut",
+      "description": "Answer ending in a multi-byte character the tokenizer splits into byte tokens, cut by max_tokens inside that character.",
+      "messages": [{"role": "user", "content": "Name one rare Unicode symbol and end your reply with it."}],
+      "cut": {"utf8_tail": {"candidates": ["\ud80c\udc00", "\ud83e\udee8", "\ud840\udc00", "\ud835\udd18", "\ud800\udf48", "\ud83d\udf32", "\u2fd5", "\ua9c1"], "max_partial": 3}},
+      "answer": {"reasoning": "Pick a rare symbol and put it last.", "content": "Here is a rare symbol:"}
+    },
+    {
+      "name": "system_prompt",
+      "description": "System message before the user turn.",
+      "messages": [{"role": "system", "content": "You are a terse assistant. Answer in one sentence."},
+                   {"role": "user", "content": "What does a block explorer show?"}],
+      "answer": {"reasoning": "Keep it to one sentence.", "content": "Blocks, transactions and account balances of a chain."}
+    },
+    {
+      "name": "hist_reasoning",
+      "description": "Earlier assistant turn carries its reasoning under reasoning, then a new user question.",
+      "messages": [{"role": "user", "content": "What is 2+2?"},
+                   {"role": "assistant", "content": "The answer is 4.", "reasoning": "The user asks for two plus two. Adding two and two gives four, so I answer 4."},
+                   {"role": "user", "content": "And 3+3?"}],
+      "answer": {"reasoning": "Three plus three is six.", "content": "6."}
+    },
+    {
+      "name": "hist_reasoning_content",
+      "description": "Earlier assistant turn carries its reasoning under reasoning_content, then a new user question.",
+      "messages": [{"role": "user", "content": "What is 2+2?"},
+                   {"role": "assistant", "content": "The answer is 4.", "reasoning_content": "The user asks for two plus two. Adding two and two gives four, so I answer 4."},
+                   {"role": "user", "content": "And 3+3?"}],
+      "answer": {"reasoning": "Three plus three is six.", "content": "6."}
+    },
+    {
+      "name": "hist_three_rounds",
+      "description": "Three earlier rounds, each assistant turn with reasoning, then a new user question.",
+      "messages": [{"role": "user", "content": "Name a prime below 10."},
+                   {"role": "assistant", "content": "7.", "reasoning": "Primes below 10 are 2, 3, 5, 7. Pick 7."},
+                   {"role": "user", "content": "Another one?"},
+                   {"role": "assistant", "content": "5.", "reasoning": "Already said 7. Next is 5."},
+                   {"role": "user", "content": "And their sum?"},
+                   {"role": "assistant", "content": "12.", "reasoning": "7 + 5 = 12."},
+                   {"role": "user", "content": "Is that sum prime?"}],
+      "answer": {"reasoning": "12 = 2 * 6, not prime.", "content": "No, 12 is not prime."}
+    },
+    {
+      "name": "hist_tool_loop",
+      "description": "Assistant called a tool with reasoning, the tool answered; the model now writes the final answer.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "What will the weather be in Paris tomorrow?"},
+                   {"role": "assistant", "content": "", "reasoning": "I should call the weather tool for Paris for one day.",
+                    "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Paris\", \"days\": 1}"}}]},
+                   {"role": "tool", "tool_call_id": "call_1", "content": "{\"city\": \"Paris\", \"forecast\": [{\"day\": 1, \"high_c\": 18, \"low_c\": 11, \"sky\": \"cloudy\"}]}"}],
+      "answer": {"reasoning": "The tool says cloudy, 18 high, 11 low.", "content": "Cloudy tomorrow in Paris, 11 to 18 °C."}
+    },
+    {
+      "name": "split_bytes_25",
+      "description": "Same text as split_bytes_*, 25% of the multi-byte tokens spelled as single-byte tokens (a sampler may emit it; render counts it canonically).",
+      "messages": [{"role": "user", "content": "Write a short paragraph about the history of Paris (variant 25)."}],
+      "split": {"fraction": 0.25},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "A short history overview.", "content": "Paris began as a settlement of the Parisii, a Celtic tribe, on the Île de la Cité around the third century BC. The Romans conquered it in 52 BC and called it Lutetia. In the Middle Ages it became the seat of the Capetian kings and one of the largest cities in Europe, home to Notre-Dame and the University of Paris."}
+    },
+    {
+      "name": "split_bytes_50",
+      "description": "Same text as split_bytes_*, 50% of the multi-byte tokens spelled as single-byte tokens (a sampler may emit it; render counts it canonically).",
+      "messages": [{"role": "user", "content": "Write a short paragraph about the history of Paris (variant 50)."}],
+      "split": {"fraction": 0.5},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "A short history overview.", "content": "Paris began as a settlement of the Parisii, a Celtic tribe, on the Île de la Cité around the third century BC. The Romans conquered it in 52 BC and called it Lutetia. In the Middle Ages it became the seat of the Capetian kings and one of the largest cities in Europe, home to Notre-Dame and the University of Paris."}
+    },
+    {
+      "name": "split_bytes_75",
+      "description": "Same text as split_bytes_*, 75% of the multi-byte tokens spelled as single-byte tokens (a sampler may emit it; render counts it canonically).",
+      "messages": [{"role": "user", "content": "Write a short paragraph about the history of Paris (variant 75)."}],
+      "split": {"fraction": 0.75},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "A short history overview.", "content": "Paris began as a settlement of the Parisii, a Celtic tribe, on the Île de la Cité around the third century BC. The Romans conquered it in 52 BC and called it Lutetia. In the Middle Ages it became the seat of the Capetian kings and one of the largest cities in Europe, home to Notre-Dame and the University of Paris."}
+    },
+    {
+      "name": "split_bytes_100",
+      "description": "Same text as split_bytes_*, 100% of the multi-byte tokens spelled as single-byte tokens (a sampler may emit it; render counts it canonically).",
+      "messages": [{"role": "user", "content": "Write a short paragraph about the history of Paris."}],
+      "split": {"fraction": 1.0},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "A short history overview.", "content": "Paris began as a settlement of the Parisii, a Celtic tribe, on the Île de la Cité around the third century BC. The Romans conquered it in 52 BC and called it Lutetia. In the Middle Ages it became the seat of the Capetian kings and one of the largest cities in Europe, home to Notre-Dame and the University of Paris."}
+    },
+    {
+      "name": "split_bytes_100_mixed",
+      "description": "Russian, CJK and emoji answer with every multi-byte token spelled as single-byte tokens.",
+      "messages": [{"role": "user", "content": "Explain Fibonacci in Russian, greet in Chinese, add emoji."}],
+      "split": {"fraction": 1.0},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "Short mixed-language answer.", "content": "По-русски: функция возвращает n-е число Фибоначчи. 中文问候：你好，世界！Emoji: 🚀✨🔥 👍🏽"}
+    },
+    {
+      "name": "guided_json",
+      "description": "response_format json_schema; the answer is the JSON object, canonically tokenized.",
+      "messages": [{"role": "user", "content": "Give Paris as JSON with city, population and landmarks."}],
+      "extra_body": {"response_format": {"type": "json_schema", "json_schema": {"name": "city", "schema": {"type": "object", "properties": {"city": {"type": "string"}, "population": {"type": "integer"}, "landmarks": {"type": "array", "items": {"type": "string"}}}, "required": ["city", "population", "landmarks"]}}}},
+      "answer": {"reasoning": "Fill the schema for Paris.", "content": "{\"city\": \"Paris\", \"population\": 2102650, \"landmarks\": [\"Eiffel Tower\", \"Louvre\", \"Notre-Dame\"]}"}
+    },
+    {
+      "name": "guided_json_split_100",
+      "description": "guided_json with every multi-byte token spelled as single-byte tokens (grammar-forced spelling, worst case).",
+      "messages": [{"role": "user", "content": "Give Paris as JSON with city, population and landmarks (byte-split variant)."}],
+      "extra_body": {"response_format": {"type": "json_schema", "json_schema": {"name": "city", "schema": {"type": "object", "properties": {"city": {"type": "string"}, "population": {"type": "integer"}, "landmarks": {"type": "array", "items": {"type": "string"}}}, "required": ["city", "population", "landmarks"]}}}},
+      "split": {"fraction": 1.0},
+      "tolerance_finding": "non-canonical split exceeds tolerance",
+      "answer": {"reasoning": "Fill the schema for Paris.", "content": "{\"city\": \"Paris\", \"population\": 2102650, \"landmarks\": [\"Eiffel Tower\", \"Louvre\", \"Notre-Dame\"]}"}
+    },
+    {
+      "name": "forced_control",
+      "description": "Control for forced_fragment: the same request without logit_bias, max_tokens 256.",
+      "messages": [{"role": "user", "content": "Say anything you like, in any language."}],
+      "max_tokens": 256,
+      "answer": {"reasoning": "Anything goes; one friendly sentence.", "content": "Hello! Today is a good day to learn something new."}
+    },
+    {
+      "name": "stop_string_256",
+      "description": "Client stop string of 256 bytes, the gateway maximum; text after it is generated but never served.",
+      "messages": [{"role": "user", "content": "Name the capital of Italy, then stop."}],
+      "stop": ["<<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><"],
+      "answer": {"reasoning": "The capital of Italy is Rome.", "content": "The capital of Italy is Rome.<<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>><<end-of-answer>>< This continuation is cut by the stop string."}
+    },
+    {
+      "name": "min_tokens_short",
+      "tolerance_finding": "min_tokens padding exceeds tolerance",
+      "description": "Client min_tokens 64 with a short answer: end of turn is masked, the model pads with single newlines inside the answer (templates such as GLM strip the ends) up to 64 tokens.",
+      "messages": [{"role": "user", "content": "What is the capital of France? Answer in one sentence."}],
+      "extra_body": {"min_tokens": 64},
+      "split": {"fraction": 1.0, "only": "whitespace"},
+      "answer": {"reasoning": "Simple geography question; the answer is Paris.", "content": ["The capital of France is Paris.", {"repeat": "\n", "times": 64}, "That is all."]}
+    },
+    {
+      "name": "min_tokens_tool",
+      "tolerance_finding": "min_tokens padding exceeds tolerance",
+      "description": "Client min_tokens 64 with one short tool call: newlines before the call bring the turn to 64 tokens.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "What will the weather be in Paris over the next three days?"}],
+      "extra_body": {"min_tokens": 64},
+      "split": {"fraction": 1.0, "only": "whitespace"},
+      "answer": {"reasoning": "I should call the weather tool for Paris with a three day window.", "content": ["Checking the forecast.", {"repeat": "\n", "times": 48}, "Calling the weather tool."], "tool_calls": [{"name": "get_weather", "arguments": {"city": "Paris", "days": 3}}]}
+    },
+    {
+      "name": "tool_choice_required",
+      "description": "Client tool_choice required; the gateway rewrites it to auto before the ML node.",
+      "tools": "weather_docs",
+      "messages": [{"role": "user", "content": "What will the weather be in Paris over the next three days? Use the tool."}],
+      "extra_body": {"tool_choice": "required"},
+      "answer": {"reasoning": "I should call the weather tool for Paris with a three day window.", "content": "", "tool_calls": [{"name": "get_weather", "arguments": {"city": "Paris", "days": 3}}]}
+    }
+  ]
+}

@@ -81,6 +81,16 @@ type ChallengeResult struct {
 	// ReplayFirst is set when a replay vote reached the record before the
 	// challenge tx did: the replay flow owns the record now.
 	ReplayFirst bool
+	// Rejects holds the hosts that answered with a reject cause instead of
+	// a vote.
+	Rejects []ChallengeReject
+}
+
+// ChallengeReject is a host's answer without a vote: the host index and the
+// reject cause, cut to maxChallengeRejectCause.
+type ChallengeReject struct {
+	HostIdx int
+	Cause   string
 }
 
 type challengeMark struct {
@@ -313,10 +323,11 @@ func (s *Session) RunChallenge(ctx context.Context, nonce uint64, reason types.C
 	}
 	responseHash := append([]byte(nil), rec.ResponseHash...)
 	executorAddr := s.sm.SlotAddress(rec.ExecutorSlot)
-	votes, unanswered, unansweredWeight, _ := s.CollectChallengeVotes(ctx, nonce, reason, responseHash, executorAddr, s.ChallengeVerifiers(), s.challengeAskDeadline(time.Now()))
+	votes, unanswered, unansweredWeight, rejects := s.CollectChallengeVotes(ctx, nonce, reason, responseHash, executorAddr, s.ChallengeVerifiers(), s.challengeAskDeadline(time.Now()))
 	result.Votes = votes
 	result.Unanswered = unanswered
 	result.UnansweredWeight = unansweredWeight
+	result.Rejects = rejects
 	result.Faults = s.challengeFaultWeight(votes)
 	if ctx.Err() != nil {
 		// Cancelled, not settled: a MsgChallenge below the threshold would
@@ -405,7 +416,7 @@ func (s *Session) CollectChallengeVotes(
 	executorAddr string,
 	verifiers map[int]ChallengeVerifier,
 	deadline time.Time,
-) (votes []*types.ChallengeVote, unanswered int, unansweredWeight uint32, rejectCauses []string) {
+) (votes []*types.ChallengeVote, unanswered int, unansweredWeight uint32, rejects []ChallengeReject) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -432,6 +443,7 @@ func (s *Session) CollectChallengeVotes(
 		vote        *types.ChallengeVote
 		rejectCause string
 		err         error
+		idx         int
 		addr        string
 	}
 	results := make(chan answer, len(asked))
@@ -439,11 +451,11 @@ func (s *Session) CollectChallengeVotes(
 		go func(av addrVerifier) {
 			resp, err := s.askChallengeUntilAnswered(ctx, av.idx, av.addr, av.verifier, nonce, reason, deadline)
 			if err != nil {
-				results <- answer{err: err, addr: av.addr}
+				results <- answer{err: err, idx: av.idx, addr: av.addr}
 				return
 			}
 			if len(resp.Signature) == 0 {
-				results <- answer{rejectCause: cutChallengeRejectCause(resp.RejectCause), addr: av.addr}
+				results <- answer{rejectCause: cutChallengeRejectCause(resp.RejectCause), idx: av.idx, addr: av.addr}
 				return
 			}
 			vote := &types.ChallengeVote{
@@ -454,10 +466,10 @@ func (s *Session) CollectChallengeVotes(
 				Signature: resp.Signature,
 			}
 			if err := s.verifyChallengeVote(nonce, responseHash, vote, av.addr); err != nil {
-				results <- answer{err: err, addr: av.addr}
+				results <- answer{err: err, idx: av.idx, addr: av.addr}
 				return
 			}
-			results <- answer{vote: vote, addr: av.addr}
+			results <- answer{vote: vote, idx: av.idx, addr: av.addr}
 		}(av)
 	}
 	var faultWeight uint32
@@ -483,7 +495,7 @@ func (s *Session) CollectChallengeVotes(
 			unanswered++
 			unansweredWeight += weight
 			if res.rejectCause != "" {
-				rejectCauses = append(rejectCauses, res.rejectCause)
+				rejects = append(rejects, ChallengeReject{HostIdx: res.idx, Cause: res.rejectCause})
 			}
 			logging.Info("challenge_vote_rejected", "subsystem", "challenge", "escrow", s.escrowID, "nonce", nonce,
 				"host", shortAddress(res.addr), "reject_cause", res.rejectCause)
@@ -501,7 +513,7 @@ func (s *Session) CollectChallengeVotes(
 			cancel()
 		}
 	}
-	return votes, unanswered, unansweredWeight, rejectCauses
+	return votes, unanswered, unansweredWeight, rejects
 }
 
 var errChallengeStillPending = errors.New("host still fetching at the gateway deadline")

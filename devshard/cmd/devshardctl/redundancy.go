@@ -547,6 +547,7 @@ type Redundancy struct {
 	picker               *sessionPicker
 	stopped              atomic.Bool
 	participantLimiter   *ParticipantRequestLimiter
+	noRenderStrike       bool // strike a no_render voter (DEVSHARD_GATEWAY_NO_RENDER_STRIKE)
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
 	stateRewoundAt       map[string]time.Time // when each participant's one catch-up replay was spent
@@ -938,6 +939,16 @@ type inflight struct {
 	participantClassifyBytes *atomic.Int64
 
 	usageComplTokens atomic.Int64
+	// textBytes, toolCalls and toolArguments count the text, calls and top-level call arguments
+	// of the first choice's deltas, for the byte bound the served binding puts on the claim.
+	// toolCallIndexes, written by the attempt's writer only, holds what the last two count.
+	textBytes       atomic.Uint64
+	toolCalls       atomic.Uint64
+	toolArguments   atomic.Uint64
+	toolCallIndexes toolCallSet
+	// textLost marks an attempt whose classify buffer dropped part of an event, so its text was
+	// not all counted.
+	textLost atomic.Bool
 
 	// clientWriteNanos is the time the relay has stood in writes to the
 	// gateway's client; clientWriteSince is the start of the write in
@@ -1536,6 +1547,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 		}
 		// Cap hit: classify the raw chunk best-effort (incomplete fragments won't parse).
 		rw.dropClassify()
+		rw.inf.textLost.Store(true)
 		return p
 	}
 
@@ -1550,6 +1562,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	}
 	if !rw.replaceClassify(p[lastNL+1:]) {
 		rw.dropClassify()
+		rw.inf.textLost.Store(true)
 	}
 	return parseable
 }
@@ -1562,6 +1575,9 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 	// One pass answers both: a chunk carries a couple of tokens, so judging only the first would miss an
 	// answer that merely opens with a numeric one, and asking twice would decode the same event twice.
 	scan := scanSSEChunk(parseable)
+	rw.inf.textBytes.Add(scan.TextBytes)
+	rw.inf.toolCalls.Store(rw.inf.toolCallIndexes.add(scan.ToolCallIndexes))
+	rw.inf.toolArguments.Store(rw.inf.toolCallIndexes.addArguments(scan.ToolCallArguments))
 	if !rw.inf.logprobsDecoded && scan.LogprobsFound {
 		rw.inf.logprobsDecoded = scan.LogprobsDecoded
 	}
@@ -4876,7 +4892,11 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 		if inf.resp == nil {
 			return
 		}
-		inf.processErr = e.session.ProcessResponse(inf.hostIdx, inf.resp, inf.nonce)
+		if inf.prepared != nil {
+			inf.processErr = e.session.ProcessPreparedResponse(inf.prepared, inf.resp)
+		} else {
+			inf.processErr = e.session.ProcessResponse(inf.hostIdx, inf.resp, inf.nonce)
+		}
 	})
 	return inf.processErr
 }

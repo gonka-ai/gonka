@@ -26,6 +26,10 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
 | 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
 | 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
+| 400 `truncate_prompt_tokens is not supported` | prompt truncation breaks the output token count | [#reject-truncate-prompt](#reject-truncate-prompt) |
+| 400 `allowed_token_ids is not supported` | token restrictions break the network's output token count | [#reject-token-bans](#reject-token-bans) |
+| 400 `banning tokens is not supported` on `bad_words` | token bans break the network's output token count | [#reject-token-bans](#reject-token-bans) |
+| 400 `logit_bias is not supported` | biases break the network's output token count | [#reject-logit-bias](#reject-logit-bias) |
 | 400 `tools[N].function.parameters: serialized size exceeded` | one tool's `parameters` schema is over 64 KiB | [#reject-oversized-tool-schema](#reject-oversized-tool-schema) |
 | `thinking_token_budget` forced to `0` on Kimi-K2.6 with small `max_tokens` | content-headroom guard | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
 | Empty `content` / `finish_reason=length` on Kimi-K2.6 | thinking ate the budget | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
@@ -482,6 +486,34 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **Why**: vLLM rejects these with type errors at the engine boundary, producing opaque upstream 400s. The gateway type-checks them up front against the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm) so the client gets an immediate, field-named error instead of a backend round-trip.
 
 **Fix (client-side)**: send each field with its declared type — booleans for the flags, non-negative integers for `seed` / `min_tokens`, strings for `stop` / `bad_words` elements.
+
+---
+
+### #reject-token-bans
+
+**What**: HTTP 400 `banning tokens is not supported by the Gonka network` on a `bad_words` list with a non-blank entry. Blank entries are stripped and an empty list is dropped. A negative `logit_bias` weight bans a token too; `logit_bias` is rejected whole ([#reject-logit-bias](#reject-logit-bias)).
+
+**Why**: hosts check each other's output token counts by re-tokenizing the answer text. A ban makes an honest model spell the same text from smaller tokens, so its count can exceed twice the re-tokenized count, and the check would take the honest answer for an inflated one. Rejecting the ban is safer than stripping it, which would return text the client asked never to see. Penalties for repeated tokens (`frequency_penalty`, `presence_penalty`, `repetition_penalty`) ban nothing and pass; the client defaults (`0`, `0`, `1`) are neutral anyway.
+
+**Fix (client-side)**: remove `bad_words` or `allowed_token_ids`. The latter restricts the sampler to named tokens and is rejected when non-empty; an empty list is dropped. To steer the model away from a word, say so in the prompt, or filter the answer on the client.
+
+---
+
+### #reject-truncate-prompt
+
+**What**: HTTP 400 when `truncate_prompt_tokens` is non-null. A null value is dropped.
+
+**Why**: output token checks subtract the render of an empty assistant turn from the render of the served turn. Truncating both renders can give them the same length even when the answer has generated tokens, making an honest count look inflated.
+
+**Fix (client-side)**: remove `truncate_prompt_tokens` and shorten the request before sending it when necessary.
+
+### #reject-logit-bias
+
+**What**: HTTP 400 `logit_bias is not supported by the Gonka network` on a `logit_bias` object with any entry, whatever its weight. An empty object is dropped.
+
+**Why**: hosts check each other's output token counts against the answer text. A negative weight is a ban ([#reject-token-bans](#reject-token-bans)). A positive weight can force a token that is one byte of a multi-byte character: such tokens decode to no text, so an honest answer of `max_tokens` of them would look inflated to every check. A weight between them changes which tokens the model picks and so how it spells the text, with the same risk on a smaller scale. The reasoning models of OpenAI and Azure OpenAI reject `logit_bias` as well [[OpenAI-8]](references.md#openai).
+
+**Fix (client-side)**: remove `logit_bias`. To steer the answer, say so in the prompt, use `stop`, or use `response_format` for a fixed format.
 
 ---
 

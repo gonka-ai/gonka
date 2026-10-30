@@ -78,6 +78,30 @@ func TestApplyDiff_Challenge_FaultsAboveThresholdInvalidate(t *testing.T) {
 	require.Equal(t, uint64(10000), after.Balance, "the escrow gets back every unit reserved")
 }
 
+// The state machine tallies the fault and does not read the check, so a
+// usage vote of any check settles the same way.
+func TestApplyDiff_Challenge_RenderedUsageVotesInvalidate(t *testing.T) {
+	sm, user, hosts, before := finishedForChallenge(t)
+	votes := []*types.ChallengeVote{
+		testutil.SignChallengeVote(t, hosts[0], "escrow-1", 1, 0, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED,
+			types.ChallengeCheck_CHALLENGE_CHECK_RENDERED_OUTPUT, 90, testutil.TestResponseHash),
+		testutil.SignChallengeVote(t, hosts[2], "escrow-1", 1, 2, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED,
+			types.ChallengeCheck_CHALLENGE_CHECK_RENDERED_INPUT, 40, testutil.TestResponseHash),
+		testutil.SignChallengeVote(t, hosts[3], "escrow-1", 1, 3, types.ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED,
+			types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, 4, testutil.TestResponseHash),
+		testutil.SignChallengeVote(t, hosts[4], "escrow-1", 1, 4, types.ChallengeFault_CHALLENGE_FAULT_NONE,
+			types.ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED, 0, testutil.TestResponseHash),
+	}
+	require.NoError(t, applyChallengeDiff(t, sm, user, &types.MsgChallenge{InferenceId: 1, Votes: votes}))
+
+	after := sm.SnapshotState()
+	rec := after.Inferences[1]
+	require.Equal(t, types.StatusInvalidated, rec.Status, "three usage faults are above the threshold of 2")
+	require.Equal(t, before.Balance+rec.ActualCost, after.Balance)
+	require.Equal(t, before.HostStats[1].Invalid+1, after.HostStats[1].Invalid)
+	require.Equal(t, before.HostStats[1].Cost-rec.ActualCost, after.HostStats[1].Cost)
+}
+
 func TestApplyDiff_Challenge_InvalidateWithdrawsSampledPasses(t *testing.T) {
 	sm, user, hosts, _ := finishedForChallenge(t)
 	nonce := sm.SnapshotState().LatestNonce + 1

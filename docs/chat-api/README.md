@@ -37,7 +37,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `frequency_penalty` | float | 0.0 | clamp `[-2, 2]`; see [Kimi override](kimi-k2.6.md#parameter-overrides) for force-rewrite | [[OpenAI-1]](references.md#openai) |
 | `presence_penalty` | float | 0.0 | clamp `[-2, 2]`; see [Kimi override](kimi-k2.6.md#parameter-overrides) for force-rewrite | [[OpenAI-1]](references.md#openai) |
 | `repetition_penalty` | float | 1.0 | clamp `>2` → `2`; reject `≤0` (must be `>0` — [why](troubleshooting.md#reject-out-of-range-sampling)); vLLM extension | [[vLLM-1]](references.md#vllm) |
-| `logit_bias` | object | — | ≤1024 entries; value range `[-100, 100]` | [[OpenAI-1]](references.md#openai) |
+| `logit_bias` | object | — | any entry: reject; an empty object is dropped ([why](troubleshooting.md#reject-logit-bias)) | [[OpenAI-1]](references.md#openai), [[OpenAI-8]](references.md#openai) |
 | `max_tokens` | int | — | clamp; not raised, a short budget is kept as sent | [[OpenAI-1]](references.md#openai) |
 | `max_completion_tokens` | int | — | alias for max_tokens | [[OpenAI-1]](references.md#openai) |
 | `stream` | bool | false | pass-through | [[OpenAI-1]](references.md#openai) |
@@ -70,7 +70,9 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `thinking_config` | object | — | silent-strip ([why](troubleshooting.md#strip-thinking_config)) | — |
 | `think` | bool | — | silent-strip ([why](troubleshooting.md#strip-think)) | — |
 | `min_tokens` | int | — | vLLM extension; kept only when the caller sends it (clamped ≤`max_tokens`), never injected; **dropped** on grammar-constrained requests (`response_format` `json_object`/`json_schema`/`structural_tag`, `structured_outputs`, `tool_choice` `required` or named): masking EOS after the grammar completes leaves no valid token; applied identically on inference and validation replay | [[vLLM-1]](references.md#vllm) |
-| `bad_words` | string array | — | vLLM extension; ≤64 entries × 128 B per entry | [[vLLM-1]](references.md#vllm) |
+| `truncate_prompt_tokens` | integer | — | vLLM extension; non-null: reject ([why](troubleshooting.md#reject-truncate-prompt)) | [[vLLM-1]](references.md#vllm) |
+| `allowed_token_ids` | integer array | — | vLLM extension; non-empty: reject; empty list is dropped ([why](troubleshooting.md#reject-token-bans)) | [[vLLM-1]](references.md#vllm) |
+| `bad_words` | string array | — | vLLM extension; blank entries stripped, an empty list dropped; any other entry bans tokens: reject ([why](troubleshooting.md#reject-token-bans)) | [[vLLM-1]](references.md#vllm) |
 | `stop_token_ids` | int array | — | vLLM extension; every id must be an integer inside the routed model's vocabulary, else 400: with `min_tokens` set, vLLM masks stop-token logits and an out-of-vocab id CUDA-asserts the node | [[vLLM-1]](references.md#vllm) |
 | `skip_special_tokens` | bool | — | vLLM extension; must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)) | [[vLLM-1]](references.md#vllm) |
 | `detokenize` | bool | — | vLLM extension; must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)) | [[vLLM-1]](references.md#vllm) |

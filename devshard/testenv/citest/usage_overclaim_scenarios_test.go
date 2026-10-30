@@ -47,7 +47,7 @@ import (
 // no Finish to inflate; the design leaves it to replay for a vision model.
 
 // usageScenarioReplayFile holds the ML node 3.1.0 recordings (vLLM fork 71ee49c4d).
-var usageScenarioReplayFile = filepath.Join("..", "mockopenai", "testdata", "vllm_recorded_mlnode310.jsonl")
+var usageScenarioReplayFile = filepath.Join("..", "mockopenai", "testdata", "vllm_recorded_mlnode310.jsonl.gz")
 
 // usageScenarioModel is the model of every row: one escrow serves one model.
 const usageScenarioModel = "zai-org/GLM-5.3-Flash"
@@ -127,8 +127,8 @@ type usageRecording struct {
 func (r usageRecording) String() string { return r.build + "/" + r.model + "/" + r.name }
 
 // landedPRs are the PRs of gonka-ai/gonka#2000 whose cells the test
-// asserts: PR 1 of the three.
-var landedPRs = map[int]bool{1: true}
+// asserts: PR 1 and PR 2 of the three.
+var landedPRs = map[int]bool{1: true, 2: true}
 
 // cell is one expected cell of the design's table and the PR of
 // gonka-ai/gonka#2000 that brings it. The zero cell is today's behaviour,
@@ -180,6 +180,9 @@ type usageScenario struct {
 	executor  string
 	shape     string
 	recording usageRecording
+	// omit are the fields the client leaves out of the recording's client
+	// request.
+	omit []string
 	// mlNode is what the executor's ML node does to the recorded answer.
 	mlNode mockopenai.FaultPatch
 	// cut closes the connections between the gateway and the hosts after
@@ -215,8 +218,9 @@ const (
 	bodyReplaced
 )
 
-func intKnob(v int) *int    { return &v }
-func boolKnob(v bool) *bool { return &v }
+func intKnob(v int) *int          { return &v }
+func boolKnob(v bool) *bool       { return &v }
+func stringKnob(v string) *string { return &v }
 
 var usageScenarios = []usageScenario{
 	{
@@ -336,21 +340,12 @@ var usageScenarios = []usageScenario{
 		replayVerdict: "pass",
 	},
 	{
-		// logit_bias +100 on a token that is one byte of a UTF-8 sequence
-		// and decodes to nothing alone: 256 honest tokens, no text. For the
-		// voters the content is the generated logprob positions the stored
-		// body keeps (one per token, its token field the id), not the decoded
-		// text, so they find all 256 and keep the payment.
-		id: "E2", executor: "honest", shape: "client logit_bias +100 on a single-byte fragment, tokens but no text",
-		recording:     usageRecording{"mlnode310", usageScenarioModel, "forced_fragment"},
-		want:          usageWant{gateway: inPR(1, reasonEmpty), voters: inPR(1, faultNone)},
-		replayVerdict: "pass",
-	},
-	{
 		// The executor's signed Finish is applied, the stream carries no
 		// text, and no host has the stored answer for the whole window.
 		id: "E3", executor: "inflating", shape: "signed Finish, empty stream, no stored body",
 		recording: usageRecording{"mlnode310", usageScenarioModel, "forced_fragment"},
+		omit:      []string{"logit_bias"},
+		mlNode:    mockopenai.FaultPatch{ServeRecording: stringKnob("forced_fragment")},
 		body:      bodyRemoved,
 		want: usageWant{gateway: inPR(1, reasonEmpty), voters: inPR(1, faultUnavailable),
 			payment: inPR(1, paymentLost), invalid: inPR(1, invalidUp), replay: inPR(1, replayNone)},
@@ -364,6 +359,20 @@ var usageScenarios = []usageScenario{
 		mlNode:    mockopenai.FaultPatch{DropTokens: boolKnob(true)},
 		want: usageWant{gateway: inPR(1, reasonEmpty), voters: inPR(1, faultEmpty),
 			payment: inPR(1, paymentLost), invalid: inPR(1, invalidUp), replay: inPR(1, replayNone)},
+	},
+	{
+		// The forced_fragment answer (256 single-byte fragment tokens that
+		// decode to no text) to its request without the logit_bias: the
+		// stored body keeps the 256 positions, but nothing in the signed
+		// request makes an honest engine stream them (to this request it
+		// gives the forced_control answer). The positions alone match the
+		// claim, so PR 1's voters vote NONE; the rendered output is empty.
+		id: "E3", executor: "inflating", shape: "signed Finish, empty stream, fragment positions without logit_bias",
+		recording: usageRecording{"mlnode310", usageScenarioModel, "forced_fragment"},
+		omit:      []string{"logit_bias"},
+		mlNode:    mockopenai.FaultPatch{ServeRecording: stringKnob("forced_fragment")},
+		want: usageWant{gateway: inPR(1, reasonEmpty), voters: inPR(2, faultInflated),
+			payment: inPR(2, paymentLost), invalid: inPR(2, invalidUp), replay: inPR(2, replayNone)},
 	},
 }
 
@@ -430,6 +439,19 @@ func TestUsageOverclaimScenarios(t *testing.T) {
 	metricsURL := harness.GatewayMetricsURL(eps)
 	metricsBefore := harness.ParseMetricsText(harness.FetchMetricsText(t, client, metricsURL))
 	mockBefore := harness.GetMockOpenAIStats(t, client, eps.MockOpenAIHTTP)
+	// Row E2 of the design, an honest client forcing a single-byte fragment
+	// with logit_bias +100 (tokens that decode to no text), no longer reaches
+	// an executor: the gateway rejects logit_bias.
+	t.Run("E2 honest: client logit_bias +100 on a single-byte fragment is rejected", func(t *testing.T) {
+		before := harness.GetMockOpenAIStats(t, client, eps.MockOpenAIHTTP)
+		forced := recordedSample(t, dataset, usageRecording{"mlnode310", usageScenarioModel, "forced_fragment"})
+		resp, err := postGatewayChatRawSoft(client, eps.GatewayHTTP, clientRequestWithSeed(t, forced, seedBase-1, nil))
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusBadRequest, resp.Status)
+		assert.Contains(t, string(resp.Body), "logit_bias is not supported")
+		after := harness.GetMockOpenAIStats(t, client, eps.MockOpenAIHTTP)
+		assert.Equal(t, before.RequestsReceived, after.RequestsReceived, "no ML node was asked")
+	})
 	runs := make([]*usageRun, len(usageScenarios))
 	phase := time.Now()
 	for i, row := range usageScenarios {
@@ -584,7 +606,7 @@ type usageRun struct {
 
 func recordedSample(t *testing.T, dataset *replay.Dataset, rec usageRecording) replay.Sample {
 	t.Helper()
-	require.Equal(t, "vllm_recorded_"+rec.build+".jsonl", filepath.Base(usageScenarioReplayFile), "one build per stack")
+	require.Equal(t, "vllm_recorded_"+rec.build+".jsonl.gz", filepath.Base(usageScenarioReplayFile), "one build per stack")
 	for i := 0; i < dataset.Len(); i++ {
 		sample, ok := dataset.Sample(i)
 		require.True(t, ok)
@@ -598,13 +620,17 @@ func recordedSample(t *testing.T, dataset *replay.Dataset, rec usageRecording) r
 }
 
 // clientRequestWithSeed is the recording's client request under its own
-// seed. The seed stays out of the recording's key, so the ML node still
-// answers with the recording, while the gateway's response cache, keyed by
-// the client body, sees a new request for every row.
-func clientRequestWithSeed(t *testing.T, sample replay.Sample, seed int) []byte {
+// seed, less the omitted fields. The seed stays out of the recording's key,
+// so the ML node still answers with the recording, while the gateway's
+// response cache, keyed by the client body, sees a new request for every row.
+func clientRequestWithSeed(t *testing.T, sample replay.Sample, seed int, omit []string) []byte {
 	t.Helper()
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(sample.ClientRequest, &body))
+	for _, field := range omit {
+		require.Contains(t, body, field, "%s: client request field to omit", sample.Name)
+		delete(body, field)
+	}
 	body["seed"] = seed
 	out, err := json.Marshal(body)
 	require.NoError(t, err)
@@ -633,7 +659,7 @@ func driveUsageScenario(t *testing.T, stack *harness.Stack, cfg *config.File, ep
 	}
 
 	harness.Step(t, "%s: stream %s through the gateway", row.id, row.recording)
-	body := clientRequestWithSeed(t, sample, run.seed)
+	body := clientRequestWithSeed(t, sample, run.seed, row.omit)
 	var resp harness.GatewayChatHTTPResult
 	start := time.Now()
 	var cutAt time.Time
@@ -712,6 +738,11 @@ func driveUsageScenario(t *testing.T, stack *harness.Stack, cfg *config.File, ep
 	require.NotEqual(t, "pending", rec.Status, "inference %d never started", obs.nonce)
 	require.NotEqual(t, "started", rec.Status, "inference %d never finished", obs.nonce)
 	run.finished = time.Now()
+	if row.mlNode.ServeRecording != nil {
+		// The in-process check replays the recording's own request, and the
+		// row's executor was not asked that request.
+		return
+	}
 	obs.replayVerdict = replayVerdictToday(t, eps.MockOpenAIHTTP, sample, run.seed, rec.InputTokens, rec.OutputTokens)
 }
 

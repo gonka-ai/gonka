@@ -667,6 +667,42 @@ func (l *ParticipantRequestLimiter) observeEscrowLookupLimited(participantKey, m
 	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
 }
 
+// ObserveNoRenderForModel is a voter that answered a usage challenge with
+// no_render: it could not count the record it was asked about. It is a
+// strike like a refused escrow lookup, and the strike threshold puts the
+// host in the probe quarantine.
+func (l *ParticipantRequestLimiter) ObserveNoRenderForModel(participantKey, modelID string) {
+	if participantKey == "" {
+		return
+	}
+	now := time.Now()
+	l.lock()
+	defer l.unlock()
+
+	state := l.ensureStateLocked(participantKey, now)
+	l.clearExpiredQuarantineIfAnyLocked(participantKey, state, now)
+	state, ok := l.participants[participantKey]
+	if !ok {
+		state = l.ensureStateLocked(participantKey, now)
+	}
+	if l.inQuarantineLocked(state, now) {
+		return
+	}
+	l.addModelLocked(state, modelID)
+	state.failureStrikes++
+	if state.failureStrikes >= l.failureStrikeThreshold {
+		l.applyQuarantineLocked(participantKey, modelID, now.Add(l.httpThrottleQuarantine), now, participantQuarantineProbe)
+		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), "no_render_quarantine", QuarantinePayloadStats{})
+		log.Printf("participant_limit_no_render_quarantine participant_key=%s model_id=%q strikes=%d threshold=%d",
+			participantKey, normalizeModelID(modelID), state.failureStrikes, l.failureStrikeThreshold)
+		l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
+		return
+	}
+	log.Printf("participant_limit_no_render participant_key=%s model_id=%q strikes=%d threshold=%d",
+		participantKey, normalizeModelID(modelID), state.failureStrikes, l.failureStrikeThreshold)
+	l.persistThrottledStateLocked(participantKey, state, participantStatusTransport)
+}
+
 // ObserveTransportFailure records that a request to this host never received an
 // HTTP response. Only inference-path failures (/chat/completions) trigger
 // quarantine. EOF-style inference failures require consecutive strikes; other

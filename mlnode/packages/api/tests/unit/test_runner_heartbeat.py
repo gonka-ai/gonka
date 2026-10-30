@@ -347,3 +347,33 @@ async def test_manager_watcher_does_not_block_event_loop():
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
+
+
+@pytest.mark.parametrize(
+    "vllm_version, expected",
+    [
+        ("0.30.0", True),
+        ("0.30.0+cpu", True),
+        ("0.32.1", True),
+        ("0.25.1", False),
+        ("0.28.1.dev5", False),
+        (None, False),
+        ("garbage", False),
+    ],
+)
+def test_runner_adds_scale_out_by_vllm_version(monkeypatch, vllm_version, expected):
+    monkeypatch.setattr(runner_mod, "_query_vllm_version", lambda python_path: vllm_version)
+    runner = VLLMRunner(model="dummy-model")
+    assert ("--enable-scale-out" in runner.additional_args) is expected
+
+
+@pytest.mark.parametrize("flag", ["--enable-scale-out", "--no-enable-scale-out"])
+def test_runner_keeps_explicit_scale_out_flag(monkeypatch, flag):
+    monkeypatch.setattr(runner_mod, "_query_vllm_version", lambda python_path: "0.30.0")
+    runner = VLLMRunner(model="dummy-model", additional_args=[flag])
+    assert runner.additional_args.count(flag) == 1
+    assert "--enable-scale-out" not in runner.additional_args or flag == "--enable-scale-out"
+
+
+def test_query_vllm_version_missing_interpreter_is_unknown():
+    assert runner_mod._query_vllm_version("/nonexistent/python") is None

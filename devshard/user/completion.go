@@ -178,6 +178,22 @@ func (s *Session) resolveAppliedCompletionsLocked(txs []*types.DevshardTx) {
 	}
 }
 
+func resolvedCompletionIDs(txs []*types.DevshardTx) []uint64 {
+	var ids []uint64
+	for _, tx := range txs {
+		var id uint64
+		if fi := tx.GetFinishInference(); fi != nil {
+			id = fi.InferenceId
+		} else if timeout := tx.GetTimeoutInference(); timeout != nil {
+			id = timeout.InferenceId
+		}
+		if id != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func (s *Session) guardCompletion(ctx context.Context) error {
 	s.mu.Lock()
 	store, active, durabilityErr := s.completionStore, s.activeInferenceSends, s.completionDurabilityErr
@@ -217,6 +233,9 @@ func (s *Session) guardCompletion(ctx context.Context) error {
 			}
 			return fmt.Errorf("%w: nonce %d has no completion evidence", ErrInferenceCompletionPending, entry.Nonce)
 		}
+		if s.sm.Phase() != types.PhaseActive {
+			return fmt.Errorf("%w: nonce %d has no applied completion", ErrInferenceCompletionPending, entry.Nonce)
+		}
 		if s.timeoutUnarmed(entry.Nonce) {
 			if err := store.DeleteInferenceCompletion(s.escrowID, entry.Nonce); err != nil {
 				return fmt.Errorf("%w: clear unanchored nonce %d: %v", ErrInferenceCompletionPending, entry.Nonce, err)
@@ -226,12 +245,39 @@ func (s *Session) guardCompletion(ctx context.Context) error {
 		if err := host.VerifyPayload(&entry.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 			return fmt.Errorf("%w: nonce %d retry payload: %v", ErrInferenceCompletionPending, entry.Nonce, err)
 		}
+		// Keep a ready result for the first finalization diff. Composition checks
+		// the actually applied subset before it persists the phase transition.
+		if s.queuedFinishRidesNextDiff(entry.Nonce) {
+			continue
+		}
 		result, retryErr := s.HandleTimeout(retryCtx, entry.Nonce, time.Unix(0, entry.PreparedAt), &entry.Payload)
 		if !s.completionResolved(entry.Nonce) {
 			return fmt.Errorf("%w: nonce %d timeout %s/%s: %v", ErrInferenceCompletionPending, entry.Nonce, result.Outcome, result.DetailReason, retryErr)
 		}
 		if err := store.DeleteInferenceCompletion(s.escrowID, entry.Nonce); err != nil {
 			return fmt.Errorf("%w: clear nonce %d: %v", ErrInferenceCompletionPending, entry.Nonce, err)
+		}
+	}
+	return nil
+}
+
+// checkFinalizingCompletionsLocked rejects a preview that would start
+// finalization without applying every outstanding completion. Caller holds s.mu.
+func (s *Session) checkFinalizingCompletionsLocked(applied []*types.DevshardTx) error {
+	if s.completionStore == nil {
+		return nil
+	}
+	entries, err := s.completionStore.ListInferenceCompletions(s.escrowID)
+	if err != nil {
+		return fmt.Errorf("%w: load escrow %s completion journal: %v", ErrInferenceCompletionPending, s.escrowID, err)
+	}
+	resolved := make(map[uint64]struct{})
+	for _, id := range resolvedCompletionIDs(applied) {
+		resolved[id] = struct{}{}
+	}
+	for _, entry := range entries {
+		if _, ok := resolved[entry.Nonce]; !ok && !s.completionResolved(entry.Nonce) {
+			return fmt.Errorf("%w: nonce %d is not completed by the finalization diff", ErrInferenceCompletionPending, entry.Nonce)
 		}
 	}
 	return nil

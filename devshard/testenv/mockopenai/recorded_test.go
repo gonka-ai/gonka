@@ -21,19 +21,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The testdata/vllm_recorded_*.jsonl files hold answers recorded from vLLM serving code on
+// The testdata/vllm_recorded_*.jsonl.gz files hold answers recorded from vLLM serving code on
 // CPU: the token sequence of a known assistant turn fed through vLLM's output processor and its
 // chat stream and non-stream generators, with the model's chat template, reasoning and tool
 // parsers. Logprob values and alternative ids are synthetic; token ids, bytes, chunk boundaries,
 // deltas, finish reasons and usage are vLLM's. One file per build, since builds answer the same
-// request differently, and each sample names its variant and vLLM commit in "build". The set
-// here is mlnode310 (vLLM fork 71ee49c4d): GLM-5.3-Flash, and two DeepSeek-V4-Flash recordings
-// of one prompt under different request fields.
-const primaryRecordedFile = "testdata/vllm_recorded_mlnode310.jsonl"
+// request differently, and each sample names its variant and vLLM commit in "build". The builds
+// are ML node 3.1.0 (vLLM fork 71ee49c4d), 3.0.16 (vLLM 0.25.1 with fork be6059424) and 4.0.0
+// (vLLM 0.30.0 with fork 8219a3e2e), each for GLM-5.3-Flash, DeepSeek-V4-Flash and MiniMax-M2.7;
+// GLM-5.3-Flash does not start on 3.0.16. The files are gzip-compressed JSONL, written by
+// testenv/cmd/replayfixture from the testenv/fixturegen recordings.
+const primaryRecordedFile = "testdata/vllm_recorded_mlnode310.jsonl.gz"
 
 func recordedFiles(t *testing.T) []string {
 	t.Helper()
-	files, err := filepath.Glob("testdata/vllm_recorded_*.jsonl")
+	files, err := filepath.Glob("testdata/vllm_recorded_*.jsonl.gz")
 	require.NoError(t, err)
 	require.Contains(t, files, primaryRecordedFile)
 	return files
@@ -68,7 +70,7 @@ func forEachRecording(t *testing.T, check func(t *testing.T, srv *httptest.Serve
 	t.Helper()
 	for _, file := range recordedFiles(t) {
 		srv := newRecordedServer(t, file, mockopenai.FaultConfig{})
-		build := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "vllm_recorded_"), ".jsonl")
+		build := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(file), "vllm_recorded_"), ".jsonl.gz")
 		for _, sample := range loadRecordedSamples(t, file) {
 			t.Run(build+"/"+sample.Model+"/"+sample.Name, func(t *testing.T) { check(t, srv, sample) })
 		}
@@ -730,6 +732,59 @@ func TestRecordedReplay_SeedScopesUsageKnobs(t *testing.T) {
 	patch(map[string]any{"seed": 7, "usage_completion_tokens": 0})
 	_, raw = postChat(t, srv.URL, withSeed(7))
 	require.Equal(t, honest, recordedUsage(t, servedChunks(t, raw)))
+}
+
+// Test flow:
+// 1. Drop the logit_bias from the forced-fragment request: the forced_control recording answers it.
+// 2. Name the fragment recording for the request's seed and require the execution to stream it byte for byte.
+// 3. Require a validation replay of the same request and a cleared knob to get the control answer again.
+func TestRecordedReplay_ServeRecordingStreamsNamedAnswer(t *testing.T) {
+	var fragment, control replay.Sample
+	samples := loadRecordedSamples(t, primaryRecordedFile)
+	for _, sample := range samples {
+		if sample.Name == "forced_fragment" {
+			fragment = sample
+			break
+		}
+	}
+	require.NotNil(t, fragment.Recorded, "no forced_fragment recording")
+	for _, sample := range samples {
+		if sample.Name == "forced_control" && sample.Model == fragment.Model {
+			control = sample
+		}
+	}
+	require.NotNil(t, control.Recorded, "no forced_control recording of %s", fragment.Model)
+	srv := newRecordedServer(t, primaryRecordedFile, mockopenai.FaultConfig{})
+	patch := func(body map[string]any) {
+		data, err := json.Marshal(body)
+		require.NoError(t, err)
+		resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(data))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		_ = resp.Body.Close()
+	}
+	unbiased := rewriteRequest(t, fragment.Request, func(request map[string]any) {
+		require.Contains(t, request, "logit_bias")
+		delete(request, "logit_bias")
+		request["seed"] = 7
+	})
+	resp, raw := postChat(t, srv.URL, unbiased)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, string(sseBody(control.Recorded.Stream, true)), string(raw), "the request without its logit_bias")
+
+	patch(map[string]any{"seed": 7, "serve_recording": fragment.Name})
+	resp, raw = postChat(t, srv.URL, unbiased)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, string(sseBody(fragment.Recorded.Stream, true)), string(raw))
+	replayRequest := rewriteRequest(t, unbiased, func(request map[string]any) {
+		request["enforced_tokens"] = map[string]any{"tokens": []map[string]any{{"token": "1"}}}
+	})
+	_, raw = postChat(t, srv.URL, replayRequest)
+	require.Equal(t, string(sseBody(control.Recorded.Stream, true)), string(raw), "a validation replay got the named recording")
+
+	patch(map[string]any{"seed": 7, "serve_recording": ""})
+	_, raw = postChat(t, srv.URL, unbiased)
+	require.Equal(t, string(sseBody(control.Recorded.Stream, true)), string(raw))
 }
 
 // The knobs are runtime faults like the others: POST /testenv/fault sets them and zero clears them.

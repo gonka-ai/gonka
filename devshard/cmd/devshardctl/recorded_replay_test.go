@@ -29,7 +29,7 @@ const recordedLogprobsMode = "processed_logprobs"
 // 3. Validate the stored response with the validator's replay and require it to pass.
 func TestGatewayForwardedClientRequestHitsRecordedReplay(t *testing.T) {
 	withForceUpstreamStreaming(t, true)
-	files, err := filepath.Glob("../../testenv/mockopenai/testdata/vllm_recorded_*.jsonl")
+	files, err := filepath.Glob("../../testenv/mockopenai/testdata/vllm_recorded_*.jsonl.gz")
 	require.NoError(t, err)
 	require.NotEmpty(t, files)
 	for _, file := range files {
@@ -39,13 +39,17 @@ func TestGatewayForwardedClientRequestHitsRecordedReplay(t *testing.T) {
 		require.NoError(t, err)
 		ml := httptest.NewServer(srv.Handler())
 		t.Cleanup(ml.Close)
-		build := strings.TrimSuffix(filepath.Base(file), ".jsonl")
+		build := strings.TrimSuffix(filepath.Base(file), ".jsonl.gz")
 		for i := 0; i < dataset.Len(); i++ {
 			sample, ok := dataset.Sample(i)
 			require.True(t, ok)
 			t.Run(build+"/"+sample.Model+"/"+sample.Name, func(t *testing.T) {
 				require.NotEmpty(t, sample.ClientRequest, "recording keeps no client request")
 				forwarded, _, err := upstreamChatRequestPipeline().Normalize(sample.ClientRequest, false, defaultOutputTokenLimits(), sample.Model)
+				if biasedFragments(t, sample.Request) {
+					require.ErrorContains(t, err, "logit_bias is not supported", "the gateway rejects the forcing request")
+					return
+				}
 				require.NoError(t, err)
 				executed, err := completionapi.ModifyRequestBodyWithLogprobsMode(forwarded, 77, recordedLogprobsMode)
 				require.NoError(t, err)
