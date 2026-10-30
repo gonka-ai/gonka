@@ -1,6 +1,7 @@
 package poc
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -20,6 +21,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
 
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -129,6 +131,45 @@ type modelSamplingData struct {
 
 func hasModelList(snapshotFound bool, modelSampling map[string]*modelSamplingData) bool {
 	return snapshotFound && len(modelSampling) > 0
+}
+
+// canVoteInModel mirrors the chain's stage voter eligibility: a vote from a signer
+// without voting power in the model is dropped, unless the signer is a guardian.
+func canVoteInModel(modelVotingPowers map[string]map[string]int64, modelID, validator string, guardian bool) bool {
+	return guardian || modelVotingPowers[modelID][validator] > 0
+}
+
+// splitByVotingPower keeps the work whose vote the chain would store and returns
+// the early-share keys of the rest.
+func splitByVotingPower(items []participantWork, modelVotingPowers map[string]map[string]int64, validator string, guardian bool) ([]participantWork, []string) {
+	kept := make([]participantWork, 0, len(items))
+	var dropped []string
+	for _, item := range items {
+		if canVoteInModel(modelVotingPowers, item.modelId, validator, guardian) {
+			kept = append(kept, item)
+		} else {
+			dropped = append(dropped, earlyShareKey(item.address, item.modelId))
+		}
+	}
+	return kept, dropped
+}
+
+// isGuardianAddress compares address bytes, so it does not depend on the
+// process-wide bech32 prefix config.
+func isGuardianAddress(params *types.GenesisGuardianParams, accAddress string) bool {
+	if params == nil {
+		return false
+	}
+	_, own, err := bech32.DecodeAndConvert(accAddress)
+	if err != nil {
+		return false
+	}
+	for _, opAddr := range params.GuardianAddresses {
+		if _, b, err := bech32.DecodeAndConvert(opAddr); err == nil && bytes.Equal(b, own) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildValidationCallbackURL(callbackBase, modelID string) string {
@@ -450,16 +491,25 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		})
 	}
 
+	// Pairs the chain would drop our vote for still feed the early-share guard.
+	var guardOnlyKeys []string
+	if authoritativeModelAllowlist {
+		guardian := isGuardianAddress(paramsResp.Params.GenesisGuardianParams, v.validatorAddress)
+		workItems, guardOnlyKeys = splitByVotingPower(workItems, modelVotingPowers, v.validatorAddress, guardian)
+	}
+	skippedNoVotingPower := len(guardOnlyKeys)
+
 	if validationSlots > 0 || snapshotFound {
 		logging.Info("OffChainValidator: filtered work items before validation", types.PoC,
 			"totalCommits", len(commitsResp.Commits),
 			"assignedToUs", len(workItems),
 			"skippedNotAssigned", skippedNotAssigned,
 			"skippedExcludedModel", skippedExcludedModel,
+			"skippedNoVotingPower", skippedNoVotingPower,
 		)
 	}
 
-	if len(workItems) == 0 {
+	if len(workItems) == 0 && len(guardOnlyKeys) == 0 {
 		logging.Warn("OffChainValidator: no valid work items", types.PoC)
 		return
 	}
@@ -473,6 +523,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		assigned := make(map[string]bool, len(workItems))
 		for _, item := range workItems {
 			assigned[earlyShareKey(item.address, item.modelId)] = true
+		}
+		for _, key := range guardOnlyKeys {
+			assigned[key] = true
 		}
 		// A confirmation PoC (CPoC) run is identified by an active confirmation
 		// event during the inference phase whose trigger height matches this
@@ -490,6 +543,12 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				samplingBlockHash: samplingBlockHash,
 			}
 		}
+	}
+
+	if len(workItems) == 0 {
+		logging.Info("OffChainValidator: no voting power in any committed model, nothing to validate", types.PoC,
+			"skippedNoVotingPower", skippedNoVotingPower)
+		return
 	}
 
 	v.executeValidation(pocStageStartBlockHeight, samplingBlockHash, pocStartBlockHash, pocParams, sampleSize, nodes, workItems, gr, false)
