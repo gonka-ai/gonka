@@ -43,7 +43,7 @@ type StatusFunc func() (*coretypes.ResultStatus, error)
 type SetHeightFunc func(blockHeight int64) error
 
 type pocValidator interface {
-	PrepareValidationNodes()
+	PrepareValidationNodes() bool
 	ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string)
 	ValidateOpenChallenges()
 	// MaybeCaptureEarlyShare is invoked once per synced block to let the
@@ -422,6 +422,15 @@ func (d *OnNewBlockDispatcher) refreshModelValidationThresholds(epoch uint64) {
 	d.lastThresholdEpoch = epoch
 }
 
+func (d *OnNewBlockDispatcher) startValidation(validateAll func()) {
+	if !d.offChainValidator.PrepareValidationNodes() {
+		logging.Warn("Skipping PoC validation, nodes were not stopped before dispatch", types.PoC)
+		return
+	}
+	go validateAll()
+	go d.offChainValidator.ValidateOpenChallenges()
+}
+
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epochState chainphase.EpochState) {
 	//To work for tests
 	if d.nodeBroker == nil {
@@ -484,19 +493,15 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 	if epochContext.IsStartOfPoCValidationStage(blockHeight) {
 		logging.Info("DapiStage:IsStartOfPoCValidationStage", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "pocStartBlockHeight", epochContext.PocStartBlockHeight)
 		pocStartBlockHeight := epochContext.PocStartBlockHeight
-		go func() {
-			d.offChainValidator.PrepareValidationNodes()
-			go func() {
-				pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
-				if err != nil {
-					logging.Error("Failed to get PoC start block hash", types.PoC,
-						"pocStartBlockHeight", pocStartBlockHeight, "error", err)
-					return
-				}
-				d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
-			}()
-			go d.offChainValidator.ValidateOpenChallenges()
-		}()
+		go d.startValidation(func() {
+			pocStartBlockHash, err := d.nodeBroker.GetChainBridge().GetBlockHash(pocStartBlockHeight)
+			if err != nil {
+				logging.Error("Failed to get PoC start block hash", types.PoC,
+					"pocStartBlockHeight", pocStartBlockHeight, "error", err)
+				return
+			}
+			d.offChainValidator.ValidateAll(pocStartBlockHeight, pocStartBlockHash)
+		})
 	}
 
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
@@ -592,11 +597,9 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 				"trigger_height", event.TriggerHeight,
 				"poc_seed_block_hash", event.PocSeedBlockHash)
 
-			go func() {
-				d.offChainValidator.PrepareValidationNodes()
-				go d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
-				go d.offChainValidator.ValidateOpenChallenges()
-			}()
+			go d.startValidation(func() {
+				d.offChainValidator.ValidateAll(event.TriggerHeight, event.PocSeedBlockHash)
+			})
 		}
 
 		// End of event - return to inference
