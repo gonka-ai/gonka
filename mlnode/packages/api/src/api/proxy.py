@@ -189,7 +189,8 @@ async def _pick_vllm_backend() -> int:
 async def _release_vllm_backend(port: int):
     """Release a vLLM backend connection."""
     async with vllm_pick_lock:
-        vllm_counts[port] -= 1
+        if vllm_counts.get(port, 0) > 0:
+            vllm_counts[port] -= 1
 
 
 def get_healthy_backends() -> List[int]:
@@ -298,7 +299,9 @@ def setup_vllm_proxy(backend_ports: List[int]):
     vllm_backend_ports = backend_ports
     vllm_setup_generation += 1
     vllm_counts = {p: 0 for p in vllm_backend_ports}
+    vllm_healthy.clear()
     vllm_healthy.update({p: False for p in vllm_backend_ports})
+    poc_status_by_port.clear()
     poc_status_by_port.update({p: "" for p in vllm_backend_ports})
     logger.info("vLLM proxy setup with %d backends: %s", len(backend_ports), backend_ports)
     logger.debug("vLLM backend ports: %s", vllm_backend_ports)
