@@ -139,6 +139,8 @@ type Broker struct {
 	nodes                map[string]*NodeWithState
 	mu                   sync.RWMutex
 	curMaxNodesNum       atomic.Uint64
+	pocNodeNumbersMu     sync.Mutex
+	pocNodeNumbers       *pocNodeNumbers
 	nextRegistrationSeq  atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
@@ -1111,6 +1113,9 @@ func (b *Broker) reconcileIfSynced(triggerMsg string) {
 
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	blockHeight := epochState.CurrentBlock.Height
+	if err := b.preparePoCNodeNumberingRollout(context.Background(), &epochState); err != nil {
+		logging.Error("Cannot prepare PoC node numbering rollout", types.PoC, "error", err, "blockHeight", blockHeight)
+	}
 
 	// Phase 1: Cancel outdated tasks
 	type capturedCancel struct {
@@ -1205,7 +1210,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			continue
 		}
 
-		// TODO: we should make reindexing as some indexes might be skipped
+		// Retain global numbering for the first stage after installing the hotfix.
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command from the node that passed the seq check,
 		// not the pre-recheck snapshot (that snapshot can be a deleted registration).
@@ -1218,6 +1223,22 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			int(totalNumNodes),
 			epochState.ActiveConfirmationPoCEvent,
 		)
+		if start, ok := cmd.(StartPoCNodeCommandV2); ok && !start.WindDown {
+			if err := b.assignPoCNodeNumber(ctx, id, currentPoCParams, &start); err != nil {
+				if errors.Is(err, errPoCNodeNumberRolloutStage) {
+					logging.Info("Deferring PoC start during node-numbering rollout stage", types.PoC,
+						"node_id", id, "height", currentPoCParams.startPoCBlockHeight)
+					cancel()
+					b.clearReconcileIfSeq(id, capturedSeq)
+					continue
+				}
+				logging.Error("Cannot allocate PoC node number", types.PoC, "node_id", id, "error", err)
+				cancel()
+				b.clearReconcileIfSeq(id, capturedSeq)
+				continue
+			}
+			cmd = start
+		}
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", stateForCmd.IntendedStatus, "target_poc_status", stateForCmd.PocIntendedStatus, "blockHeight", blockHeight)
@@ -1309,10 +1330,18 @@ func (b *Broker) resolvePoCModelForNode(
 	nodeModels map[string]ModelArgs,
 	params *pocParams,
 ) (apiconfig.PoCModelConfigCache, bool) {
+	return resolvePoCModelForNodeWithFilter(nodeState, nodeModels, params, b.pocModelFilter(params))
+}
+
+func resolvePoCModelForNodeWithFilter(
+	nodeState *NodeState,
+	nodeModels map[string]ModelArgs,
+	params *pocParams,
+	allowed map[string]bool,
+) (apiconfig.PoCModelConfigCache, bool) {
 	if nodeState == nil || params == nil || len(params.models) == 0 {
 		return apiconfig.PoCModelConfigCache{}, false
 	}
-	allowed := b.pocModelFilter(params)
 
 	if len(nodeState.EpochMLNodes) == 1 {
 		for modelID := range nodeState.EpochMLNodes {
