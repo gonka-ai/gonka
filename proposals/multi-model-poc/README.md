@@ -10,7 +10,7 @@ POC phases:
 > Validation and inference theoretically can be done in parallel.
 
 
-Current security model required >2/3 of **total network consensus weight** to vote "valid". Without delegation, an attacker needs >2/3 of total network weight to corrupt any (and all) host's validation.
+The current security model requires more than `validation_vote_threshold_bps / 10000` of **total network consensus weight** (5000 bps, a strict majority, since v0.2.14; 2/3 before) to vote "valid". Without delegation, an attacker needs more than that share of total network weight to corrupt any (and all) host's validation.
 
 The bitcoin-style part of reward distributed proportionally to this weight. On early phase it's main motivation as inference is much cheaper. 
 
@@ -40,7 +40,7 @@ This proposal sets the goal to maintain same style of POC validation - every hos
 
 To define the process of adding new models to the chain, this proposal allows serving models which are not approved by governance, without inference validation and without gaining consensus power from serving such models. It also defines the process how a model approved by governance becomes eligible for consensus weight.  
 
-> Slot-based validation works the same way: for each model group, only the proportion of total slots that the group's voting power covers is sampled from that group's members. The remaining slots are not reassigned and count as abstention. Acceptance still requires >2/3 of the full global slot count. Slot assignment uses $votingPower$ (delegation-resolved), not raw $consensusWeight$.
+> Slot-based validation works the same way: for each model group, only the proportion of total slots that the group's voting power covers is sampled from that group's members. The remaining slots are not reassigned and count as abstention. Acceptance still requires more than `validation_vote_threshold_bps / 10000` of the full global slot count. Slot assignment uses $votingPower$ (delegation-resolved), not raw $consensusWeight$.
 
 
 ### Terms
@@ -111,14 +111,15 @@ Within a group, inference requests are distributed according to $pocWeight_S(gro
 
 **Validation rule**: Host $p$'s PoC result in eligible $group_i$ is accepted if:
 
-$$\frac{\sum_{v \text{ votes valid for } p} votingPower_S(group_i, v)}{\sum_{q} consensusWeight_S(q)} > \frac{2}{3}$$
+$$\frac{\sum_{v \text{ votes valid for } p} votingPower_S(group_i, v)}{\sum_{q} consensusWeight_S(q)} > \theta$$
 
 - Numerator: sum of $votingPower_S(group_i, v)$ from all validators $v$ who approved $p$
 - Denominator: total network consensus weight (all hosts, all groups)
+- $\theta$: `validation_vote_threshold_bps` / 10000 (`PocParams`; default and mainnet value 5000, i.e. a strict majority; an unset 0 is read as 5000). Before v0.2.14 this threshold was a hard-coded 2/3; the v0.2.14 upgrade made it a parameter and set 5000.
 
-If valid votes do not exceed `2/3`, and invalid votes also do not exceed `2/3`, the existing guardian tiebreak rule applies.
+If valid votes do not exceed $\theta$, and invalid votes also do not exceed $\theta$, the existing guardian tiebreak rule applies.
 
-Hosts not in the group and not delegating effectively vote against approval. Delegation is therefore essential for any group whose direct members hold less than 2/3 of total network weight.
+Hosts not in the group and not delegating effectively vote against approval. Delegation is therefore essential for any group whose direct members hold less than $\theta$ of total network weight.
 
 **Voting power details**:
 - Number of MLNodes does not matter -- 1 MLNode or 100 MLNodes yields the same vote power
@@ -140,7 +141,7 @@ The three tx-driven records (DELEGATE, REFUSE, INTENT) are mutually exclusive pe
 
 Participation is not enforced at the tx layer. Hosts that submit no commit and store no tx record resolve as NONE. Before $penaltyStartEpoch(group_i)$, all penalties for that group are skipped, giving hosts time to prepare. Starting at $penaltyStartEpoch(group_i)$, REFUSE, NONE, and bootstrap penalties apply.
 
-This incentivizes >2/3 of total consensus weight to participate in PoC validation for every governance-approved group.
+This incentivizes enough of total consensus weight to participate in PoC validation for every governance-approved group to reach the acceptance threshold.
 
 ### Unregistered Models
 
@@ -188,7 +189,7 @@ An additional layer of protection in case validation within a group is compromis
 
 ### Validation rule
 
-Host `p`'s PoC result in group `i` is accepted when `sum(votingPower of approvers) / totalNetworkWeight > 2/3`. If neither valid nor invalid votes reach 2/3, the guardian tiebreak rule from pre-multi-model PoC applies: the decision passes only if every voting guardian agrees unanimously. Hosts not in the group and not delegating effectively abstain, which counts against acceptance.
+Host `p`'s PoC result in group `i` is accepted when `sum(votingPower of approvers) / totalNetworkWeight > validation_vote_threshold_bps / 10000` (default 5000). If neither valid nor invalid votes exceed that threshold, the guardian tiebreak rule from pre-multi-model PoC applies: the decision passes only if every voting guardian agrees unanimously. Hosts not in the group and not delegating effectively abstain, which counts against acceptance.
 
 ### ActiveParticipant and EpochGroupData
 
@@ -242,11 +243,11 @@ Broker resolves which model a node generates PoC for via `resolvePoCModelForNode
 
 ### Slot sampling
 
-In slot mode, the system computes how many of the global `validation_slots` belong to a model: `floor(modelVotingPower / totalNetworkWeight * validation_slots)`. The remaining global slots stay empty and behave as abstention. Approval still requires `>2/3` of the full global slot count. Slot assignment uses `votingPower` (delegation-resolved). When slot mode is disabled, approval uses model-local delegated voting power against total network weight.
+In slot mode, the system computes how many of the global `validation_slots` belong to a model: `floor(modelVotingPower / totalNetworkWeight * validation_slots)`. The remaining global slots stay empty and behave as abstention. Approval still requires more than `validation_vote_threshold_bps / 10000` of the full global slot count. Slot assignment uses `votingPower` (delegation-resolved). When slot mode is disabled, approval uses model-local delegated voting power against total network weight.
 
 ### Weight formation
 
-Two calculators handle different concerns. `PoCWeightCalculator` validates individual PoC results (>2/3 acceptance threshold, slot sampling, guardian tiebreak) and produces raw per-model `pocWeight`. It has no knowledge of cross-model aggregation, delegation economics, or eligibility. `DelegationWeightCalculator` operates after model assignment: it determines eligible groups, applies group caps, computes aggregated `consensusWeight`, resolves participation modes, and computes per-model voting powers. This separation keeps PoC validation independent from the multi-model policy layer.
+Two calculators handle different concerns. `PoCWeightCalculator` validates individual PoC results (`validation_vote_threshold_bps` acceptance threshold, slot sampling, guardian tiebreak) and produces raw per-model `pocWeight`. It has no knowledge of cross-model aggregation, delegation economics, or eligibility. `DelegationWeightCalculator` operates after model assignment: it determines eligible groups, applies group caps, computes aggregated `consensusWeight`, resolves participation modes, and computes per-model voting powers. This separation keeps PoC validation independent from the multi-model policy layer.
 
 The epoch formation pipeline in `onEndOfPoCValidationStage`:
 
@@ -312,7 +313,7 @@ The initial model is exempt from the group cap through `initial_model_id`. Confi
 
 ## Appendix A: Delegation-based Attack and Protection
 
-**Attack:** Host accumulates >2/3 $votingPower$ via delegation, validates fake participant claiming large weight, gains consensus control.
+**Attack:** Host accumulates $votingPower$ above the acceptance threshold (`validation_vote_threshold_bps`, default >1/2 of total network weight) via delegation, validates fake participant claiming large weight, gains consensus control.
 
 **Protection option:** Cap weight from each group by members' proven weight elsewhere.
 
@@ -326,4 +327,4 @@ For clarity: "other eligible groups" refers to consensus weight already earned f
 - $f$ is a governance parameter
 - Delegation affects $votingPower$ but not the cap (cap is PoC-weight-based)
 
-This bounds the damage from fake participants: even if they pass validation, their weight contribution is limited by real members' stake in other groups. The cap is a secondary defense; validation (>2/3 of network weight) remains the primary one.
+This bounds the damage from fake participants: even if they pass validation, their weight contribution is limited by real members' stake in other groups. The cap is a secondary defense; validation (more than `validation_vote_threshold_bps / 10000` of network weight) remains the primary one.
