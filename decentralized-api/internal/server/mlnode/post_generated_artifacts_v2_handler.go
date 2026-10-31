@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"common/logging"
 	"common/utils"
@@ -73,7 +74,7 @@ func (s *Server) postGeneratedArtifacts(ctx echo.Context, scheme types.PocScheme
 	s.artifactStore.ActivateStage(stageHeight)
 
 	var nodeId string
-	if ctx.Path() == "/v2/poc-batches/:model_id/m/generated" {
+	if strings.HasSuffix(ctx.Path(), "/m/generated") {
 		nodeId, err = s.broker.PoCNodeID(ctx.Request().Context(), stageHeight, modelID, body.NodeId)
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
