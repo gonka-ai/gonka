@@ -3,7 +3,7 @@ import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from common.logger import create_logger
 from api.proxy import (
@@ -57,6 +57,18 @@ class StatTestModel(BaseModel):
     dist_threshold: float = 0.02
     p_mismatch: float = 0.001
     fraud_threshold: float = 0.01
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_unknown_fields(cls, data):
+        if isinstance(data, dict):
+            unknown = sorted(str(key) for key in set(data) - set(cls.model_fields))
+            if unknown:
+                logger.warning(
+                    "stat_test: ignoring unknown fields %s; known fields are %s",
+                    unknown, sorted(cls.model_fields),
+                )
+        return data
 
 
 class PoCGenerateRequest(BaseModel):
