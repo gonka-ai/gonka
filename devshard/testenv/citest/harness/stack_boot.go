@@ -13,6 +13,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// BootMixedVersiondStack is the §8.2 no-proxy mixed fleet: versiond-0 pinned
+// to baselineImage (0.2.15-v5), versiond-1 and versiond-router left on this
+// tree. One shared router, same escrow, HTTP/1.1 on :8080.
+func BootMixedVersiondStack(t *testing.T, prefix, baselineImage string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	PinVersiondServiceImage(t, stack.ComposePath, "versiond-0", baselineImage)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootProxyOverlayStack is §8.3: default compose plus docker-compose.proxy.yml.
+// The pooled InferenceUrl is http://proxy:8080; peer RPC and JSON share it.
+func BootProxyOverlayStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	t.Setenv(config.ProxyOverlayEnv, "1")
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	stack.PrepareProxyOverlay(t)
+	cfg := stack.LoadConfig(t)
+	pinProxyOverlayIP(t, stack, cfg)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 // BootStack renders the 2×versiond citest config, starts compose, and returns handles.
 func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
@@ -182,6 +215,65 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	obs := stack.ObservabilityHostEndpoints(t)
 	obs.StartedAt = started
 	return stack, cfg, stack.Endpoints(t, cfg), obs
+}
+
+// BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
+// (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
+// Ghost disposition citests probe-quarantine one identity and leave the other
+// healthy; a 2-host HA-only stack cannot, because both hosts share one
+// participant.
+func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 4})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	started := time.Now()
+	stack.UpWithObservability(t, cfg)
+	obs := stack.ObservabilityHostEndpoints(t)
+	obs.StartedAt = started
+	return stack, cfg, stack.Endpoints(t, cfg), obs
+}
+
+// BootPayloadCaptureStack boots an observability stack with DEVSHARD_LOG_PAYLOADS*
+// enabled for the payload-capture citests. level should be "full" (testenv only)
+// so partial response bodies appear on the payload_captured line.
+func BootPayloadCaptureStack(t *testing.T, prefix, level string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+	t.Helper()
+	if level == "" {
+		level = "full"
+	}
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	EnablePayloadCapture(t, stack, level)
+	started := time.Now()
+	stack.UpWithObservability(t, cfg)
+	obs := stack.ObservabilityHostEndpoints(t)
+	obs.StartedAt = started
+	return stack, cfg, stack.Endpoints(t, cfg), obs
+}
+
+// BootMLNodePoolStack boots a 2-host stack with N mock-openai instances.
+func BootMLNodePoolStack(t *testing.T, prefix string, mlNodes int) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	if mlNodes < 2 {
+		t.Fatalf("BootMLNodePoolStack requires mlNodes >= 2, got %d", mlNodes)
+	}
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2, MLNodes: mlNodes})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	require.Equal(t, mlNodes, cfg.ResolvedMLNodes())
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
 // WaitStackHealthy polls the chain, dapi, router catalog, and gateway boundaries.

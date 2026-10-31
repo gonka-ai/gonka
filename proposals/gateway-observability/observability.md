@@ -1,5 +1,12 @@
 # Proposal: Devshard Gateway Observability
 
+**Related — request forensics (traces + logs):**
+[devshard/docs/gateway-tracing.md](../../devshard/docs/gateway-tracing.md)
+explains how `trace_id` joins gateway → host spans with Loki lines, how
+overscheduling appears as sibling attempt spans, and why the accounting
+tracker promotes late dispositions (`unfinished_refused` / `unfinished_execution`) on the
+5-minute snapshot, so the disposition log and span carry that key when the nonce leaves `Live`.
+
 ## Summary
 
 `devshardctl` gateway mode is the reliability layer in front of devshards. It
@@ -63,8 +70,11 @@ Deferred from Core V1:
   targets, not emitted metrics in the current implementation.
 - Decode-token histograms and token/s calculations that require actual output
   token plumbing.
-- Lifecycle database, request drilldown APIs, OTEL/Jaeger traces,
-  Loki-derived panels, and offline protocol-analysis exports.
+- Lifecycle database, request drilldown APIs, and offline protocol-analysis
+  exports. Trace/log correlation (OTel + Tempo/Loki) is tracked separately in
+  [gateway-tracing.md](../../devshard/docs/gateway-tracing.md) — not part of
+  this metrics-first V1, but the path from disposition spikes into concrete
+  requests.
 
 TODO: review naming across gateway metrics, dashboard labels, and docs for
 `slot`, `nonce`, `diff`, `decision`, `attempt`, and `vote`. In particular,

@@ -94,6 +94,9 @@ services:
     stop_grace_period: 3m
     restart: unless-stopped
 
+  # nginx (proxy/ image). JSON and chain /chain-grpc/ only. Peer /rpc/ over
+  # HTTP/2 is recognised in band by join's proxy-router on the same public
+  # ports; here it is Connect over HTTP/1.1. Do not grpc_pass that path.
   proxy:
     container_name: ${KEY_NAME}-proxy
     image: ghcr.io/product-science/proxy:latest

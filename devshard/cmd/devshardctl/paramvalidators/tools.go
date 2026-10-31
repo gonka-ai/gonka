@@ -19,11 +19,12 @@ var (
 
 // ToolsValidator: OpenAI tool contract + cross-field tool_choice cleanup. Each tool must
 // declare `type: "function"` and `function.name`; `function.parameters` is bounded via
-// SchemaBounds. Also handles tool_choice defaulting: drops both fields when tools=[],
-// writes DefaultToolChoice when tool_choice is absent. tool_choice == "required" is coerced
-// to DefaultToolChoice (network policy: "required" is temporarily disabled -- restore here
-// when re-enabling). Per-model overrides (e.g. Kimi K2.6 → "none") are wired in the catalog
-// via ModelScopedParameterHandler, not here, so this validator stays model-agnostic.
+// SchemaBounds. Also handles tool_choice defaulting: drops tool_choice and parallel_tool_calls
+// when tools is absent or [], writes DefaultToolChoice when tool_choice is absent.
+// tool_choice == "required" is coerced to DefaultToolChoice (network policy: "required" is
+// temporarily disabled -- restore here when re-enabling). Per-model overrides (e.g. Kimi
+// K2.6 → "none") are wired in the catalog via ModelScopedParameterHandler, not here, so this
+// validator stays model-agnostic.
 type ToolsValidator struct {
 	MaxDepth      int
 	MaxSize       int
@@ -36,13 +37,9 @@ type ToolsValidator struct {
 }
 
 func (v ToolsValidator) Validate(vctx ValidatorContext) error {
-	// "required" temporarily disabled: collapse to the default so the downstream behavior
-	// matches the no-tool_choice case rather than 400-ing the client.
-	if vctx.Document["tool_choice"] == "required" {
-		vctx.Document["tool_choice"] = v.DefaultToolChoice
-	}
 	raw, exists := vctx.Document["tools"]
 	if !exists {
+		dropToolControls(vctx.Document)
 		return nil
 	}
 	arr, ok := raw.([]any)
@@ -51,8 +48,13 @@ func (v ToolsValidator) Validate(vctx ValidatorContext) error {
 	}
 	if len(arr) == 0 {
 		delete(vctx.Document, "tools")
-		delete(vctx.Document, "tool_choice")
+		dropToolControls(vctx.Document)
 		return nil
+	}
+	// "required" temporarily disabled: collapse to the default so the downstream behavior
+	// matches the no-tool_choice case rather than 400-ing the client.
+	if vctx.Document["tool_choice"] == "required" {
+		vctx.Document["tool_choice"] = v.DefaultToolChoice
 	}
 	if _, hasChoice := vctx.Document["tool_choice"]; !hasChoice {
 		if v.DefaultToolChoice != "" {
@@ -102,4 +104,10 @@ func (v ToolsValidator) Validate(vctx ValidatorContext) error {
 		}
 	}
 	return nil
+}
+
+// dropToolControls removes fields that only mean something next to tools; vLLM 400s a tool_choice sent without them.
+func dropToolControls(document map[string]any) {
+	delete(document, "tool_choice")
+	delete(document, "parallel_tool_calls")
 }

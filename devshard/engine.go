@@ -124,6 +124,10 @@ var ErrValidationLeaseAbandoned = errors.New("validation lease abandoned")
 // else owns the work. Callers that release the lease should also back off.
 var ErrValidationLeaseTTLExceeded = errors.New("elapsed since acquire exceeds lease TTL")
 
+// ErrValidationDeferred leaves the obligation retryable when local credits are
+// exhausted. It must never mark a lease skipped.
+var ErrValidationDeferred = errors.New("validation deferred: no credit")
+
 // ErrValidationSkipped signals that a validation attempt was deliberately
 // abandoned without producing a MsgValidation or MsgValidationVote.
 // The canonical trigger is the executor returning 404 for the payload
@@ -141,6 +145,17 @@ type InferenceEngine interface {
 // Implemented by dapi using existing broker + completionapi.
 type ValidationEngine interface {
 	Validate(ctx context.Context, req ValidateRequest) (*ValidateResult, error)
+}
+
+// ValidationAvailability optionally lets schedulers avoid work without credits.
+type ValidationAvailability interface {
+	CanValidate(model string) bool
+}
+
+// CanValidate is a scheduling hint; execution must still reserve a credit.
+func CanValidate(v ValidationEngine, model string) bool {
+	gate, ok := v.(ValidationAvailability)
+	return !ok || gate.CanValidate(model)
 }
 
 // ValidationCompletionRecorder can be implemented by validation engines that

@@ -894,7 +894,8 @@ ORDER BY claimed_at DESC;
 
 #### 2.6b. Stale reclaim (`TestValidationLeaseRaceStaleReclaim`)
 
-Default `DEVSHARD_VALIDATION_LEASE_TTL` is **30m** — only with a shortened TTL.
+Default `DEVSHARD_VALIDATION_LEASE_TTL` is **32m**, matching the ML HTTP timeout.
+Use a shortened TTL for this test.
 
 1. Set e.g. `DEVSHARD_VALIDATION_LEASE_TTL=15s` and
    `DEVSHARD_VALIDATION_RETRY_INTERVAL=5s` on **all** HA versiond children;

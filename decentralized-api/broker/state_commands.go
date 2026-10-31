@@ -356,6 +356,17 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			continue
 		}
 
+		// The poll read PrevStatus, then the query ran. Reconciliation can
+		// move the node in that gap. A STOPPED result from UNKNOWN must not
+		// replace a POC transition that already landed.
+		if node.State.CurrentStatus != update.PrevStatus {
+			logging.Info("Skipping status update: node left the observed status", types.Nodes,
+				"node_id", nodeId,
+				"update.prev_status", update.PrevStatus.String(),
+				"node.State.CurrentStatus", node.State.CurrentStatus)
+			continue
+		}
+
 		if node.State.StatusTimestamp.After(update.Timestamp) {
 			logging.Info("Skipping status update: older than current", types.Nodes, "node_id", nodeId)
 			continue
