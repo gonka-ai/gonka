@@ -1,11 +1,13 @@
 package user
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/types"
 )
@@ -63,4 +65,28 @@ func TestSession_LiveCursorDropsTheDiffPrefix(t *testing.T) {
 
 	require.False(t, session.RewindHostCatchUp(1, "host lost the escrow"),
 		"host 1 is already at the trimmed start")
+}
+
+// Test flow:
+//  1. Build a session without a store whose diffs run 1..3, and move every host cursor to 2 so the prefix through nonce 2 is dropped.
+//  2. Process host 0's final response at nonce 2, the nonce its receipt already moved its cursor to, carrying the session's own root there.
+//  3. Assert it verifies: the slowest cursor's root is kept, so a late response at that cursor is not taken for a state mismatch.
+func TestSession_AFinalResponseAtTheDroppedFloorStillVerifies(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	root := bytes.Repeat([]byte{7}, 32)
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	for nonce := uint64(1); nonce <= 3; nonce++ {
+		session.diffs = append(session.diffs, types.Diff{Nonce: nonce, PostStateRoot: bytes.Repeat([]byte{byte(nonce)}, 32)})
+	}
+	session.diffs[1].PostStateRoot = root
+	session.nonce = 3
+	for i := range 3 {
+		session.hostSyncNonce[i] = 2
+	}
+	session.dropDiffPrefixLocked()
+	require.Equal(t, uint64(3), session.diffs[0].Nonce)
+
+	require.NoError(t, session.processResponse(0, &host.HostResponse{Nonce: 2, StateHash: root}, 2))
 }

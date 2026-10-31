@@ -30,15 +30,23 @@ func (s *Session) syncLaggingHostsLocked() {
 
 func (s *Session) syncLaggingHost(ctx context.Context, hostIdx int) {
 	defer s.laggingSyncs.Done()
-	hostMu := s.hostCatchUpLock(hostIdx)
-	if !hostMu.TryLock() {
+	turn := s.hostCatchUpLock(hostIdx)
+	if !turn.tryTake() {
 		return
 	}
-	defer hostMu.Unlock()
+	defer turn.give()
+	refusal := s.hostCatchUpRefusal(hostIdx)
+	if refusal.standing(s.clock()) != nil {
+		return
+	}
 	s.mu.Lock()
 	through := s.nonce
 	s.mu.Unlock()
-	if err := s.sendCatchUpThrough(ctx, hostIdx, s.getFinalizeClients()[hostIdx], through); err != nil {
+	client, release := s.finalizeClient(hostIdx)
+	defer release()
+	err := s.sendCatchUpThrough(ctx, hostIdx, client, through)
+	refusal.record(ctx, err, s.clock())
+	if err != nil {
 		logging.Debug("lagging host sync did not reach the host", "subsystem", "session",
 			"escrow", s.escrowID, "host", hostIdx, "through", through, "error", err)
 	}

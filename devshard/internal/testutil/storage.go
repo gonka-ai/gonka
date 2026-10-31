@@ -11,7 +11,7 @@ import (
 
 // MustMemoryStore opens an in-memory devshard store with a session row for tests.
 func MustMemoryStore(
-	t *testing.T,
+	t testing.TB,
 	escrowID string,
 	creatorAddr string,
 	config types.SessionConfig,

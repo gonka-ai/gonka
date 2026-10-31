@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "structured_outputs.grammar: nesting depth exceeded: 201 \u003e 200",
+  "status": "rejected"
+}

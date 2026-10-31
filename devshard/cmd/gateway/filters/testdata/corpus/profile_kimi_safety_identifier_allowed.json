@@ -1,0 +1,15 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "safety_identifier": "hashed-user-abc"
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "moonshotai/Kimi-K2.6"
+}

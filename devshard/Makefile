@@ -18,6 +18,7 @@ GATEWAY_MOCKENV_JUNIT_REPORT ?= mockenv-junit-report.xml
 DEVSHARD_E2E_MOCK_CHAIN_IMAGE ?= devshard-mock-chain:local
 DEVSHARD_E2E_HOST_IMAGE ?= devshard-host:local
 DEVSHARD_E2E_DEVSHARDCTL_IMAGE ?= devshardctl:local
+DEVSHARD_E2E_GATEWAY_IMAGE ?= devshard-gateway:local
 DEVSHARD_E2E_POSTGRES_IMAGE ?= postgres:18.1-bookworm
 # Pin e2e host+ctl protocol stamp to "dev" so images stay aligned without
 # bumping this on every release protocol version change.
@@ -84,6 +85,10 @@ e2e-images:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain ..
 	$(DOCKER_BUILD) --build-arg DEVSHARD_VERSION=$(DEVSHARD_E2E_VERSION) -t $(DEVSHARD_E2E_HOST_IMAGE) -f Dockerfile.host ..
 	$(DOCKER_BUILD) --build-arg DEVSHARD_VERSION=$(DEVSHARD_E2E_VERSION) --target devshardctl-runtime -t $(DEVSHARD_E2E_DEVSHARDCTL_IMAGE) -f Dockerfile ..
+	# The gateway owns how its own image is built; the stack only says which tag it wants.
+	$(MAKE) -C cmd/gateway image GATEWAY_VERSION=$(DEVSHARD_E2E_VERSION) \
+		GATEWAY_IMAGE=$(firstword $(subst :, ,$(DEVSHARD_E2E_GATEWAY_IMAGE))) \
+		GATEWAY_STAGE_TAG=$(lastword $(subst :, ,$(DEVSHARD_E2E_GATEWAY_IMAGE)))
 
 e2e-test:
 	docker compose -f docker-compose.e2e.yml run --rm e2e-test

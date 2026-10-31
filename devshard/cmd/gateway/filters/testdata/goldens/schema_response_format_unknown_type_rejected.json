@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.type: missing or unsupported: \"banana\" is not supported (allowed: text, json_object, json_schema)",
+  "status": "rejected"
+}

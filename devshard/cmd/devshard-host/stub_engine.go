@@ -29,12 +29,17 @@ func stubInferenceEngineFromEnv() (devshardpkg.InferenceEngine, error) {
 		responseHash := sha256.Sum256(body)
 		servedHash, err := stub.HashServedView(body)
 		if err != nil {
-			return nil, err
+			servedHash = responseHash[:]
 		}
 		stubEngine.ResponseBody = body
 		stubEngine.ResponseHash = responseHash[:]
 		stubEngine.ServedHash = servedHash
 	}
+	echoRequest, err := e2econfig.StringFromEnv(e2econfig.StubInferenceEchoRequestEnv)
+	if err != nil {
+		return nil, err
+	}
+	stubEngine.EchoRequest = echoRequest != ""
 	return stubEngine, nil
 }
 

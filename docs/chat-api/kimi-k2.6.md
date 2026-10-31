@@ -29,7 +29,7 @@ Infrastructure-level constraints that must hold BEFORE this route is served — 
 | `safety_identifier` | strip | **pass-through** (string, ≤512 B) | Moonshot consumes the field for abuse tracking on their hosted backend [[Moonshot-1]](references.md#moonshot) |
 | `frequency_penalty` | clamp [-2, 2] | **force-rewrite to `0.0`** | Moonshot's K2.6 wire accepts only `0.0`; model-side constraint [[Moonshot-1]](references.md#moonshot) |
 | `presence_penalty` | clamp [-2, 2] | **force-rewrite to `0.0`** | same as above [[Moonshot-1]](references.md#moonshot) |
-| `max_tokens` / `max_completion_tokens` | pass-through (capped) | **floor to 16** | Below 16 the model emits only `</think>` (vLLM strips it as a special token) — see [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn). PR [#1227](https://github.com/gonka-ai/gonka/pull/1227). |
+| `max_tokens` / `max_completion_tokens` | pass-through (capped) | global floor | Below 16 the model emits only `</think>` (vLLM strips it as a special token) — see [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn). PR [#1227](https://github.com/gonka-ai/gonka/pull/1227). The global `max_tokens` floor sits far above 16, so the burn is out of reach on this route. |
 | `tools[].function.strict` | (silent-strip in universal via `ToolsValidator`) | silent-strip — vLLM `kimi_k2` parser ignores | [[vLLM-1]](references.md#vllm) |
 
 ## Native extensions

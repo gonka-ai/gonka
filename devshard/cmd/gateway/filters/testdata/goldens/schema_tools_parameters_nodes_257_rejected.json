@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "tools[0].function.parameters: node count exceeded: limit 256",
+  "status": "rejected"
+}
