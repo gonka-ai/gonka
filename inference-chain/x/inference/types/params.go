@@ -120,6 +120,60 @@ const (
 	DefaultPoCChallengeMaxActiveChallenges uint32 = 4
 )
 
+// Epoch-validation admission defaults. Each number is a per-participant cap,
+// not a chain total. Live values are EpochValidationParams, set by genesis
+// and by the v0.2.17 upgrade, then changed with MsgUpdateParams.
+const (
+	// DefaultMaxPositiveDistributionRows caps positive weight rows stored
+	// for one participant and one model. Epoch 427's largest stored
+	// distribution had 39 such rows.
+	DefaultMaxPositiveDistributionRows = 256
+	// MaxValidationsPerMessage rejects one fee-exempt validation batch.
+	// One observed signer stored at most 40 votes in an epoch.
+	MaxValidationsPerMessage = 128
+)
+
+// DefaultEpochValidationParams is the governance value written at genesis
+// and by the v0.2.17 upgrade.
+func DefaultEpochValidationParams() *EpochValidationParams {
+	return &EpochValidationParams{
+		MaxPositiveDistributionRows: DefaultMaxPositiveDistributionRows,
+		MaxValidationsPerMessage:    MaxValidationsPerMessage,
+	}
+}
+
+// PositiveDistributionRowLimit is the governed cap on stored positive
+// distribution rows for one participant and one model. A missing or zero
+// value uses the default so stored params from before the field existed
+// keep the same cap.
+func (p *EpochValidationParams) PositiveDistributionRowLimit() int {
+	if p == nil || p.MaxPositiveDistributionRows == 0 {
+		return DefaultMaxPositiveDistributionRows
+	}
+	return int(p.MaxPositiveDistributionRows)
+}
+
+// ValidationsPerMessageLimit is the governed cap on one validation batch.
+func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
+	if p == nil || p.MaxValidationsPerMessage == 0 {
+		return MaxValidationsPerMessage
+	}
+	return int(p.MaxValidationsPerMessage)
+}
+
+func (p *EpochValidationParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaxPositiveDistributionRows == 0 {
+		return fmt.Errorf("epoch_validation_params.max_positive_distribution_rows must be greater than 0")
+	}
+	if p.MaxValidationsPerMessage == 0 {
+		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
+	}
+	return nil
+}
+
 // DefaultMinPunishableSegmentBlocks is the voted-segment floor. A clipped
 // challenge window shorter than this rotates without evaluate.
 // Same-block / minimum clipped duration is max(cutoff,1)+stage+exchange-1.
@@ -216,11 +270,12 @@ func DefaultParams() Params {
 			// Note: proto encoding does not preserve empty-vs-nil for repeated fields; keep nil to match round-trips.
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
-		DevshardEscrowParams: DefaultDevshardEscrowParams(),
-		MaintenanceParams:    DefaultMaintenanceParams(),
-		DelegationParams:     DefaultDelegationParams(),
-		FeeParams:            DefaultFeeParams(),
-		PocChallengeParams:   DefaultPoCChallengeParams(),
+		DevshardEscrowParams:  DefaultDevshardEscrowParams(),
+		MaintenanceParams:     DefaultMaintenanceParams(),
+		DelegationParams:      DefaultDelegationParams(),
+		FeeParams:             DefaultFeeParams(),
+		PocChallengeParams:    DefaultPoCChallengeParams(),
+		EpochValidationParams: DefaultEpochValidationParams(),
 	}
 }
 
@@ -282,7 +337,7 @@ func DefaultPocParams() *PocParams {
 		PocDataPruningEpochThreshold: 1,
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
-		SeqLen:                       256,                     // Sequence length for PoC
+		SeqLen:                       1024,                    // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
 		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
@@ -301,15 +356,18 @@ func DefaultPoCStatTestParams() *PoCStatTestParams {
 func DefaultPoCModelConfig() *PoCModelConfig {
 	return &PoCModelConfig{
 		ModelId:           "",
-		SeqLen:            256,
-		StatTest:          DefaultPoCStatTestParams(),
 		PenaltyStartEpoch: 0,
-		DynamicCoefficient: &DynamicCoefficientModelConfig{
-			CoeffMin:           DecimalFromFloat(1.0),
-			CoeffMax:           DecimalFromFloat(1.0),
-			RelativeDifficulty: DecimalFromFloat(1.0),
-			TargetShareBps:     10000,
-		},
+		Schemes: []*PocSchemeParams{{
+			Scheme:   PocScheme_POC_SCHEME_PREFILL,
+			SeqLen:   1024,
+			StatTest: DefaultPoCStatTestParams(),
+			DynamicCoefficient: &DynamicCoefficientModelConfig{
+				CoeffMin:           DecimalFromFloat(1.0),
+				CoeffMax:           DecimalFromFloat(1.0),
+				RelativeDifficulty: DecimalFromFloat(1.0),
+				TargetShareBps:     10000,
+			},
+		}, DefaultDecodeScheme()},
 	}
 }
 
@@ -669,6 +727,42 @@ func validateParamDecimalExponents(p Params) error {
 				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
 			)
 		}
+		for j, block := range model.GetSchemes() {
+			if block == nil {
+				continue
+			}
+			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d]", i, j)
+			if dynamic := block.GetDynamicCoefficient(); dynamic != nil {
+				modelFields = append(modelFields,
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.coeff_min", dynamic.GetCoeffMin()},
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.coeff_max", dynamic.GetCoeffMax()},
+					struct {
+						name  string
+						value *Decimal
+					}{prefix + ".dynamic_coefficient.relative_difficulty", dynamic.GetRelativeDifficulty()},
+				)
+			}
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.dist_threshold", block.GetStatTest().GetDistThreshold()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_mismatch", block.GetStatTest().GetPMismatch()},
+				struct {
+					name  string
+					value *Decimal
+				}{prefix + ".stat_test.p_value_threshold", block.GetStatTest().GetPValueThreshold()},
+			)
+		}
 		for _, field := range modelFields {
 			if err := check(field.name, field.value); err != nil {
 				return err
@@ -929,6 +1023,12 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.EpochValidationParams != nil {
+		if err := p.EpochValidationParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -943,6 +1043,10 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	requiredSchemes, err := activePocSchemes(p)
+	if err != nil {
+		return err
+	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {
 		if model == nil {
@@ -954,9 +1058,12 @@ func (p *PocParams) Validate() error {
 			}
 			seen[model.ModelId] = true
 		}
-		if model.SeqLen < 0 {
-			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
+		if err := model.validateSchemeBlocks(requiredSchemes); err != nil {
+			return err
 		}
+	}
+	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && p.PocScheme == PocScheme_POC_SCHEME_DECODE && len(p.GetModelConfigs()) == 0 {
+		return fmt.Errorf("DECODE requires at least one model with a DECODE scheme block")
 	}
 	if p.DynamicCoefficientParams != nil {
 		if err := p.validateDynamicCoefficientParams(); err != nil {
@@ -1012,46 +1119,62 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
 	}
 
+	// Shares sum for the regular scheme. A scheme block that has a coefficient
+	// is that scheme's config. Until v0.2.17, PREFILL still reads the model
+	// field v0.2.16 wrote.
 	var targetTotal uint64
 	for i, model := range p.Models {
-		config := model.GetDynamicCoefficient()
-		if config == nil {
+		if model == nil {
 			continue
 		}
-
-		coeffMin, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i),
-			config.CoeffMin,
-		)
-		if err != nil {
-			return err
+		for j, block := range model.GetSchemes() {
+			if block == nil || block.DynamicCoefficient == nil {
+				continue
+			}
+			prefix := fmt.Sprintf("poc_params.models[%d].schemes[%d].dynamic_coefficient", i, j)
+			if err := validateDynamicCoefficientConfig(prefix, block.DynamicCoefficient, params.TargetZoneBps); err != nil {
+				return err
+			}
 		}
-		coeffMax, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i),
-			config.CoeffMax,
-		)
-		if err != nil {
-			return err
+		if model.DynamicCoefficient != nil {
+			prefix := fmt.Sprintf("poc_params.models[%d].dynamic_coefficient", i)
+			if err := validateDynamicCoefficientConfig(prefix, model.DynamicCoefficient, params.TargetZoneBps); err != nil {
+				return err
+			}
 		}
-		if coeffMin.GT(coeffMax) {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.coeff_min must be <= coeff_max", i)
+		if config := model.DynamicCoefficientFor(p.PocScheme); config != nil {
+			targetTotal += uint64(config.TargetShareBps)
 		}
-		if _, err := validatePositiveDecimal(
-			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i),
-			config.RelativeDifficulty,
-		); err != nil {
-			return err
-		}
-		if config.TargetShareBps > 10000 {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be <= 10000", i)
-		}
-		if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
-			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be greater than target_zone_bps", i)
-		}
-		targetTotal += uint64(config.TargetShareBps)
 	}
 	if targetTotal != 10000 {
 		return fmt.Errorf("poc_params dynamic target shares must sum to 10000 bps, got %d", targetTotal)
+	}
+	return nil
+}
+
+func validateDynamicCoefficientConfig(prefix string, config *DynamicCoefficientModelConfig, targetZoneBps uint32) error {
+	if config == nil {
+		return fmt.Errorf("%s cannot be nil", prefix)
+	}
+	coeffMin, err := validatePositiveDecimal(prefix+".coeff_min", config.CoeffMin)
+	if err != nil {
+		return err
+	}
+	coeffMax, err := validatePositiveDecimal(prefix+".coeff_max", config.CoeffMax)
+	if err != nil {
+		return err
+	}
+	if coeffMin.GT(coeffMax) {
+		return fmt.Errorf("%s.coeff_min must be <= coeff_max", prefix)
+	}
+	if _, err := validatePositiveDecimal(prefix+".relative_difficulty", config.RelativeDifficulty); err != nil {
+		return err
+	}
+	if config.TargetShareBps > 10000 {
+		return fmt.Errorf("%s.target_share_bps must be <= 10000", prefix)
+	}
+	if config.TargetShareBps > 0 && config.TargetShareBps <= targetZoneBps {
+		return fmt.Errorf("%s.target_share_bps must be greater than target_zone_bps", prefix)
 	}
 	return nil
 }

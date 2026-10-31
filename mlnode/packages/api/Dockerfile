@@ -1,8 +1,10 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
-ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v4-cu13-hopper-blackwell@sha256:82877b425fd8f3c156446452665ef59f371d26d527cc4b65ea592d30500b86da
+ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.30.0-poc-91099f9-e6988c0@sha256:70320ede0db27ce6c2c3ee73bc7397e3953b936ac93606296b9c0e184188cd5e
 ARG MLNODE_RELEASE_VERSION=unknown
+ARG EXPECTED_VLLM_VERSION=0.30.0
 FROM ${VLLM_BASE_IMAGE} AS base
+ARG EXPECTED_VLLM_VERSION
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -13,7 +15,8 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     checkinstall \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade "setuptools<81" wheel pip \
+    && pip install --upgrade "setuptools<81" pip \
+    && pip install --upgrade --ignore-installed wheel \
     && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
     && tar -xzf openssl-1.1.1u.tar.gz \
     && cd openssl-1.1.1u \
@@ -27,13 +30,18 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
 ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
 
+# gonka-poc over the one in VLLM_BASE_IMAGE (e6988c0): v0.2.1 adds #32, as in 4.0.0-sigma2.
+ARG GONKA_POC_REF=v0.2.1
+RUN pip install --no-cache-dir --no-deps --force-reinstall \
+    "gonka-poc @ https://github.com/gonka-ai/gonka-vllm-plugins/archive/refs/tags/${GONKA_POC_REF}.tar.gz"
+
 RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/cuda/lib64/libnvrtc.so \
     && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/lib/libnvrtc.so \
     && ldconfig \
-    && python3 -c "import vllm; assert vllm.__version__.startswith('0.25.1')" \
-    && python3 -c "from gonka_poc.worker import PoCWorkerExtension; from vllm.v1.worker.gpu.sample.replay import ReplayState"
+    && python3 -c "import vllm; assert vllm.__version__.startswith('${EXPECTED_VLLM_VERSION}'), vllm.__version__" \
+    && python3 -c "from gonka_poc.worker import PoCWorkerExtension; import vllm.envs as e; assert not e.VLLM_USE_V2_MODEL_RUNNER"
 
 ################################################################################
 FROM base AS builder
@@ -95,7 +103,7 @@ COPY packages/common/src /app/packages/common/src
 ENV PYTHONPATH="/app:/app/packages/api/src" \
     MLNODE_RELEASE_VERSION="${MLNODE_RELEASE_VERSION}" \
     LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}" \
-    MLNODE_VLLM_MODULE="gonka_poc.entrypoint.api_router" \
+    MLNODE_VLLM_MODULE="vllm.entrypoints.openai.api_server" \
     TRITON_PTXAS_PATH="/usr/local/cuda/bin/ptxas" \
     VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
     VLLM_RUNNER_TIMEOUT=3600

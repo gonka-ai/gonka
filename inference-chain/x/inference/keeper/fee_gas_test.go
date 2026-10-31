@@ -22,10 +22,26 @@ func newExtraGasRecorder() *extraGasRecorder {
 }
 
 func (r *extraGasRecorder) ConsumeGas(amount storetypes.Gas, descriptor string) {
-	if descriptor == "fee_group_period_base" || descriptor == "fee_group_extra" {
+	if descriptor == "fee_group_period_base" || descriptor == "fee_group_extra" || descriptor == "fee_group_new_participant" {
 		r.extra += amount
 	}
 	r.GasMeter.ConsumeGas(amount, descriptor)
+}
+
+func ensureStoreCommitStatic(fp *types.FeeParams) *types.StaticParams {
+	_, rules := fp.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	for _, rule := range rules {
+		if s := rule.GetStatic(); s != nil {
+			return s
+		}
+	}
+	group := fp.GroupByName(types.FeeGroupEpoch)
+	rule := &types.MsgGasRule{
+		TypeUrl: sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}),
+		Func:    &types.MsgGasRule_Static{Static: &types.StaticParams{}},
+	}
+	group.Msgs = append(group.Msgs, rule)
+	return rule.GetStatic()
 }
 
 func enableEpochRates(fp *types.FeeParams, storeCommitBase, storeCommitPer, hdPerByte uint64) {
@@ -277,6 +293,37 @@ func TestChargeMessageRuleGas_RepeatedLenWithoutHandlerQty(t *testing.T) {
 	rec := newExtraGasRecorder()
 	require.NoError(t, k.ChargeMessageRuleGas(ctx.WithGasMeter(rec), msg))
 	require.Equal(t, storetypes.Gas(14), rec.extra)
+}
+
+func TestChargeStoreCommitGas_OverflowAndSponsorAddress(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	enableEpochRates(fp, 1_000, 10, 0)
+	ensureStoreCommitStatic(fp).Gas = 7
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	msg := &types.MsgPoCV2StoreCommit{PocStageStartBlockHeight: 100}
+	creator := sdk.AccAddress("creatoraddr________")
+	sponsor := sdk.AccAddress("thirdpartygranter___")
+
+	rec := newExtraGasRecorder()
+	require.NoError(t, k.ChargeStoreCommitGas(ctx.WithGasMeter(rec), creator, msg, 4, 2, true))
+	require.Equal(t, storetypes.Gas(1_000+40+14), rec.extra)
+
+	recSponsor := newExtraGasRecorder()
+	require.NoError(t, k.ChargeStoreCommitGas(ctx.WithGasMeter(recSponsor), sponsor, msg, 4, 2, true))
+	require.Equal(t, rec.extra, recSponsor.extra, "a feegrant sponsor does not change the metered charge")
+
+	require.Error(t, k.ChargeStoreCommitGas(ctx, creator, msg, ^uint64(0), 1, false))
+
+	ensureStoreCommitStatic(fp).Gas = 0
+	require.NoError(t, k.SetParams(ctx, params))
+	recZero := newExtraGasRecorder()
+	require.NoError(t, k.ChargeStoreCommitGas(ctx.WithGasMeter(recZero), creator, msg, 4, 3, false))
+	require.Equal(t, storetypes.Gas(40), recZero.extra, "zero static gas charges only the count delta")
 }
 
 func TestChargeMessageRuleGas_StoreCommitStoredDeltaNoops(t *testing.T) {

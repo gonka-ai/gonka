@@ -70,7 +70,7 @@ func (s *commitWorkerQueryServer) MLNodeWeightDistribution(_ context.Context, re
 	}, nil
 }
 
-func newCommitWorkerQueryClient(t *testing.T, server *commitWorkerQueryServer) (types.QueryClient, func()) {
+func newCommitWorkerQueryClient(t *testing.T, server types.QueryServer) (types.QueryClient, func()) {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
@@ -1307,6 +1307,34 @@ func TestCommitWorker_SubmitWeightDistribution_UpdatesLastAttemptOnNoOp(t *testi
 	mockRecorder.AssertExpectations(t)
 }
 
+func TestOmitZeroWeights_DropsRoundedZeros(t *testing.T) {
+	got, err := omitZeroWeights([]*types.MLNodeWeight{
+		{NodeId: "a", Weight: 0},
+		{NodeId: "b", Weight: 33},
+		{NodeId: "c", Weight: 0},
+		{NodeId: "d", Weight: 7},
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []*types.MLNodeWeight{
+		{NodeId: "b", Weight: 33},
+		{NodeId: "d", Weight: 7},
+	}, got)
+}
+
+func TestGetWeightDistribution_OmitsFlooredZero(t *testing.T) {
+	weights, err := getWeightDistribution(map[string]uint32{
+		"small": 1,
+		"big":   10000,
+	}, 100)
+	assert.NoError(t, err)
+	assertWeightSum(t, weights, 100)
+	for _, weight := range weights {
+		assert.NotZero(t, weight.Weight)
+	}
+	assert.Len(t, weights, 1)
+	assert.Equal(t, "big", weights[0].NodeId)
+}
+
 func TestGetWeightDistribution_ExactMatch(t *testing.T) {
 	distribution := map[string]uint32{
 		"node1": 100,
@@ -1546,6 +1574,7 @@ type storeCommitCalibratorRecorder struct {
 	clears            int
 	rate              uint64
 	base              uint64
+	gasPerNew         uint64
 	loaded            bool
 }
 
@@ -1565,8 +1594,8 @@ func (r *storeCommitCalibratorRecorder) ClearStoreCommitIntrinsic() {
 	r.intrinsic = 0
 }
 
-func (r *storeCommitCalibratorRecorder) StoreCommitRawLeaf() (uint64, uint64, bool) {
-	return r.rate, r.base, r.loaded
+func (r *storeCommitCalibratorRecorder) StoreCommitRawLeaf() (uint64, uint64, uint64, bool) {
+	return r.rate, r.base, r.gasPerNew, r.loaded
 }
 
 func TestCommitWorker_CalibrateStoreCommitGas_PeelsDummySimOnce(t *testing.T) {
