@@ -31,23 +31,26 @@ func EvidenceSequence(rec *types.InferenceRecord, confirm, tx *types.DevshardTx)
 // close, so the two share their checks. Verifiers call this. The gateway calls
 // CheckEvidenceCached, which is the same function with the resolver off.
 //
-// Nothing is mutated and no warm key is bound: WarmKeys is part of the state
-// root. A key the executor slot has not bound goes to the resolver, without
-// sm.mu held.
+// Nothing is mutated and no warm key is bound: the history changes only
+// through diffs. A key the history does not cover goes to the grant source,
+// without sm.mu held.
 func (sm *StateMachine) CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardTx) error {
 	return sm.checkEvidence(rec, txs, true)
 }
 
-// CheckEvidenceCached is CheckEvidence with the resolver off. The gateway calls
-// this while holding the session lock. A key the executor slot has not bound
+// CheckEvidenceCached is CheckEvidence with the grant source off. The gateway
+// calls this while holding the session lock. A key the history does not cover
 // fails, and the call makes no bridge request.
 func (sm *StateMachine) CheckEvidenceCached(rec *types.InferenceRecord, txs ...*types.DevshardTx) error {
 	return sm.checkEvidence(rec, txs, false)
 }
 
-// unboundSigner is a recovered key that only the resolver can admit.
+// unboundSigner is a recovered warm key the grant source has the last word
+// on: one the history does not cover (admitted only if the source has a live
+// grant) or one it does (refused only if the source has seen the grant end).
 type unboundSigner struct {
 	recovered, expected string
+	bound               bool
 	err                 error
 }
 
@@ -57,6 +60,12 @@ func (sm *StateMachine) checkEvidence(rec *types.InferenceRecord, txs []*types.D
 		return err
 	}
 	for _, u := range unbound {
+		if u.bound {
+			if sm.WarmKeyGrantEnded(u.recovered, u.expected) {
+				return u.err
+			}
+			continue
+		}
 		if !sm.CheckWarmKey(u.recovered, u.expected) {
 			return u.err
 		}
@@ -76,18 +85,24 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 		return nil, fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, rec.ExecutorSlot)
 	}
 	var unbound []unboundSigner
-	// The apply-path SlotActors check, with the resolver deferred: a slot with
-	// its own binding accepts only that key, as apply does.
-	allowed := func(slot uint32, recovered string) bool {
-		if sm.hostSignerCachedLocked(slot, recovered) {
+	// The apply-path SlotActors check, with the grant source deferred: a key
+	// the history covers (or revoked) is decided here, as apply decides it;
+	// any other key is collected and asked of the grant source after the
+	// lock is released.
+	actors := sm.consensusActorsLocked()
+	if resolve {
+		actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+			unbound = append(unbound, unboundSigner{recovered: recovered, expected: expected})
 			return true
 		}
-		if _, bound := sm.state.WarmKeys[slot]; bound || !resolve {
+		actors.RefuseWarm = func(_ uint32, recovered, expected string) bool {
+			if recovered != expected {
+				unbound = append(unbound, unboundSigner{recovered: recovered, expected: expected, bound: true})
+			}
 			return false
 		}
-		unbound = append(unbound, unboundSigner{recovered: recovered, expected: expected})
-		return true
 	}
+	allowed := actors.Allows
 
 	status := rec.Status
 	var inferenceID uint64

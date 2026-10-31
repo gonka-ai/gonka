@@ -36,6 +36,9 @@ type escrowWarmSink struct {
 	log       *slog.Logger
 	onSettled func(escrowID string) error
 	localAddr string
+	// warmKeys is the host's copy of the chain's warm-key log; nil when the
+	// bridge keeps none (tests).
+	warmKeys *bridge.WarmKeyLogCopy
 
 	mu            sync.Mutex
 	lastRehydrate time.Time
@@ -46,6 +49,22 @@ func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, lo
 		log = slog.Default()
 	}
 	return &escrowWarmSink{bridge: b, store: store, log: log, onSettled: onSettled, localAddr: localAddr}
+}
+
+// withWarmKeys gives the sink the copy that warm-key events feed.
+func (s *escrowWarmSink) withWarmKeys(cp *bridge.WarmKeyLogCopy) *escrowWarmSink {
+	s.warmKeys = cp
+	return s
+}
+
+// OnWarmKeyEvent applies one warm-key log entry to the copy. The copy is
+// append-only, so an entry is only ever added or ended.
+func (s *escrowWarmSink) OnWarmKeyEvent(entry bridge.WarmKeyEntry) error {
+	if s.warmKeys == nil {
+		return nil
+	}
+	s.warmKeys.Apply(entry)
+	return nil
 }
 
 // WarmEscrow fetches escrow metadata from chain and caches it for lazy bind.
@@ -147,6 +166,11 @@ func (s *escrowWarmSink) OnEscrowSettled(escrowID string) error {
 // Warm cache rows are deliberately not rebuilt here: lazy bind still falls back
 // to a live chain fetch, and subsequent escrow-created events refill them.
 func (s *escrowWarmSink) RehydrateOpenEscrows() {
+	// Events may have been lost in the gap: every granter's copy is reloaded
+	// from the chain on its next use.
+	if s.warmKeys != nil {
+		s.warmKeys.Reset()
+	}
 	if s.store == nil {
 		return
 	}

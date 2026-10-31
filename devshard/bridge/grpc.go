@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"common/chain"
@@ -14,32 +13,48 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
-
-// warmKeyQueryTimeout bounds a single grantee lookup. WarmKeyResolver has no
-// context parameter, so the deadline has to be applied here.
-const warmKeyQueryTimeout = 10 * time.Second
-
 // hostInfoQueryTimeout bounds a single Participant lookup. GetHostInfo has no
 // context parameter, so a stalled chain endpoint would otherwise hold the
 // caller forever.
 const hostInfoQueryTimeout = 10 * time.Second
 
-type warmCacheKey struct {
-	host string
-	warm string
-}
-
 // GRPCBridge implements MainnetBridge query methods via common/chain gRPC.
-// Notification and action methods return ErrNotImplemented.
+// Notification and action methods return ErrNotImplemented. Its warm-key
+// answers come from the chain's warm-key log through a copy shared by every
+// bridge on the same client (WarmKeys).
 type GRPCBridge struct {
-	client    *chain.Client
-	warmCache sync.Map // warmCacheKey -> bool
+	client   *chain.Client
+	warmKeys *WarmKeyLogCopy
 }
 
 // NewGRPCBridge creates a bridge backed by an existing chain gRPC client.
 func NewGRPCBridge(client *chain.Client) *GRPCBridge {
-	return &GRPCBridge{client: client}
+	return &GRPCBridge{client: client, warmKeys: sharedWarmKeyCopy(client)}
+}
+
+// WarmKeys is the bridge's grant source: the copy of the chain's warm-key
+// log.
+func (b *GRPCBridge) WarmKeys() *WarmKeyLogCopy {
+	if b == nil {
+		return nil
+	}
+	return b.warmKeys
+}
+
+// LiveWarmKeys implements WarmKeyGrantSource.
+func (b *GRPCBridge) LiveWarmKeys(granter string) ([]WarmKeyEntry, error) {
+	if b == nil || b.warmKeys == nil {
+		return nil, fmt.Errorf("grpc bridge: chain client is nil")
+	}
+	return b.warmKeys.LiveWarmKeys(granter)
+}
+
+// WarmKeyEntry implements WarmKeyGrantSource.
+func (b *GRPCBridge) WarmKeyEntry(granter string, id uint64) (WarmKeyEntry, bool, error) {
+	if b == nil || b.warmKeys == nil {
+		return WarmKeyEntry{}, false, fmt.Errorf("grpc bridge: chain client is nil")
+	}
+	return b.warmKeys.WarmKeyEntry(granter, id)
 }
 
 // NewGRPCBridgeFromURL dials grpcURL and returns a bridge on direct gRPC only.
@@ -132,37 +147,15 @@ func (b *GRPCBridge) GetValidationThreshold(epochID uint64, modelID string) (*De
 	}, nil
 }
 
+// VerifyWarmKey reports whether warmAddress holds a live warm-key grant from
+// validatorAddress, from the log copy. It is the local-admission answer; a
+// key becomes a consensus actor only through a MsgWarmKeyBind the hosts
+// confirm against the same log.
 func (b *GRPCBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
-	if b == nil || b.client == nil {
+	if b == nil || b.warmKeys == nil {
 		return false, fmt.Errorf("grpc bridge: chain client is nil")
 	}
-	key := warmCacheKey{host: validatorAddress, warm: warmAddress}
-	if cached, ok := b.warmCache.Load(key); ok {
-		return cached.(bool), nil
-	}
-
-	// Callers reach this from state-machine apply while holding session locks,
-	// so an unresponsive node must not stall the escrow indefinitely.
-	ctx, cancel := context.WithTimeout(context.Background(), warmKeyQueryTimeout)
-	defer cancel()
-	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(ctx,
-		&inferencetypes.QueryGranteesByMessageTypeRequest{
-			GranterAddress: validatorAddress,
-			MessageTypeUrl: warmKeyMsgTypeGRPC,
-		})
-	if err != nil {
-		return false, fmt.Errorf("GranteesByMessageType: %w", err)
-	}
-
-	found := false
-	for _, g := range resp.GetGrantees() {
-		if g.GetAddress() == warmAddress {
-			found = true
-			break
-		}
-	}
-	b.warmCache.Store(key, found)
-	return found, nil
+	return IsWarmKeyLive(b.warmKeys, validatorAddress, warmAddress, time.Now())
 }
 
 func (b *GRPCBridge) OnEscrowCreated(_ EscrowInfo) error {

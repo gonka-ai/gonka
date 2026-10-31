@@ -297,18 +297,22 @@ func (s *Server) isAllowedSender(addr string) bool {
 	return s.isWarmKeySender(addr)
 }
 
-// isWarmKeySender checks if addr is a known warm key (from state) or can be
-// verified via bridge for any group member. Cached by the bridge implementation.
+// isWarmKeySender checks if addr is a warm key of a group member: bound in
+// the history, or holding a live grant according to the bridge's copy of the
+// chain's warm-key log. A bound key whose grant the bridge has seen end is
+// refused even before the sequencer revokes it; a bridge that cannot answer
+// leaves the history's verdict in place.
 func (s *Server) isWarmKeySender(addr string) bool {
-	if s.host.IsWarmKeyAddress(addr) {
-		return true
-	}
-
-	// Bridge fallback for gossip bootstrap.
 	if s.bridge == nil {
-		return false
+		return s.host.IsWarmKeyAddress(addr)
 	}
 	seen := make(map[string]bool, len(s.host.Group()))
+	// boundUnanswered is set when the history binds addr to a validator
+	// whose grants the bridge could not report: that binding stands. A
+	// binding whose validator the bridge did answer for, without a live
+	// grant, is refused; a lookup failure for an unrelated validator says
+	// nothing about it.
+	boundUnanswered := false
 	for _, slot := range s.host.Group() {
 		if seen[slot.ValidatorAddress] {
 			continue
@@ -318,8 +322,11 @@ func (s *Server) isWarmKeySender(addr string) bool {
 		if err == nil && ok {
 			return true
 		}
+		if err != nil && s.host.WarmKeyBoundTo(addr, slot.ValidatorAddress) {
+			boundUnanswered = true
+		}
 	}
-	return false
+	return boundUnanswered
 }
 
 // isOwner returns true if addr is the session owner (escrow creator).
@@ -975,7 +982,16 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 	if err != nil {
 		return ErrGossipInvalidStateSig
 	}
-	if !s.host.SlotActors().Allows(req.SlotID, addr) {
+	// A nonce past this host's head may carry bindings this host has not
+	// applied yet, so its signer is admitted the way next-diff messages
+	// are (history plus the grant source) and the notification can start
+	// the catch-up that brings those bindings in. A nonce at or below the
+	// head is judged by the history at that nonce.
+	if req.Nonce > s.host.LatestNonce() {
+		if !s.host.SlotActors().Allows(req.SlotID, addr) && !s.futureSignerGranted(req.SlotID, addr) {
+			return ErrGossipInvalidStateSig
+		}
+	} else if !s.host.SlotActorsAt(req.Nonce).Allows(req.SlotID, addr) {
 		return ErrGossipInvalidStateSig
 	}
 
@@ -989,6 +1005,23 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 		logging.Debug("accumulate gossip sig skipped", "subsystem", "server", "nonce", req.Nonce, "error", err)
 	}
 	return nil
+}
+
+// futureSignerGranted reports whether addr holds a live grant from the slot's
+// validator according to the bridge: a key the history revoked may be bound
+// again by a later grant in diffs this host has not applied, and a
+// notification signed by it has to start that catch-up. Signature
+// accumulation still checks the signer against the recovered history.
+func (s *Server) futureSignerGranted(slotID uint32, addr string) bool {
+	if s.bridge == nil {
+		return false
+	}
+	group := s.host.Group()
+	if int(slotID) >= len(group) {
+		return false
+	}
+	ok, err := s.bridge.VerifyWarmKey(addr, group[slotID].ValidatorAddress)
+	return err == nil && ok
 }
 
 func (s *Server) HandleGossipTxs(c echo.Context) (err error) {

@@ -417,9 +417,14 @@ func TestVerifyFinishProposerSig_CachedWarmKeyDoesNotCallResolver(t *testing.T) 
 	finish.ProposerSig = testutil.SignProposerTx(t, warm, finish)
 
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
-	require.Equal(t, 1, calls, "first miss must consult the resolver")
+	require.Equal(t, 1, calls, "a key the history does not cover consults the grant source")
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
-	require.Equal(t, 1, calls, "cached warm key must take the read-locked path")
+	require.Equal(t, 2, calls, "the grant source never binds, so the next check asks it again")
+
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warm.Address(), 1)})
+	require.NoError(t, err)
+	require.NoError(t, sm.VerifyFinishProposerSig(finish))
+	require.Equal(t, 3, calls, "a bound warm key still asks the grant source, for an end the sequencer has not sequenced")
 }
 
 func TestVerifyFinishProposerSig_ConcurrentWithApplyDiff(t *testing.T) {

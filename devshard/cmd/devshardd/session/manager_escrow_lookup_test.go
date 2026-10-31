@@ -468,7 +468,11 @@ func (b *countingWarmBridge) VerifyWarmKey(addr, granter string) (bool, error) {
 	return addr == b.warm && granter != "", nil
 }
 
-func TestPayloadPeer_WarmDecisionIsCached(t *testing.T) {
+// Test flow:
+//  1. Resolve the same warm peer twice through payloadRoster.
+//  2. Assert each call asks the bridge again: the host keeps no decision of its own, the bridge's copy of the
+//     chain's warm-key log is the cache and it follows grants and revokes.
+func TestPayloadPeer_WarmDecisionIsNotCachedByTheRoster(t *testing.T) {
 	overrideLookupTTL(t, 0)
 	const current = uint64(7)
 	const id = "9160"
@@ -487,10 +491,14 @@ func TestPayloadPeer_WarmDecisionIsCached(t *testing.T) {
 	require.Equal(t, int32(1), inner.warmCalls.Load(), "scan stops at the first matching slot")
 	_, err = mgr.payloadRoster(id, warm)
 	require.NoError(t, err)
-	require.Equal(t, int32(1), inner.warmCalls.Load())
+	require.Equal(t, int32(2), inner.warmCalls.Load())
+
+	inner.warm = ""
+	_, err = mgr.payloadRoster(id, warm)
+	require.ErrorIs(t, err, errPayloadPeerDenied, "a revoke seen by the bridge takes effect on the next call")
 }
 
-func TestPayloadPeer_DenyIsCached(t *testing.T) {
+func TestPayloadPeer_DenyIsNotCached(t *testing.T) {
 	overrideLookupTTL(t, 0)
 	const current = uint64(7)
 	const id = "9161"
@@ -506,8 +514,12 @@ func TestPayloadPeer_DenyIsCached(t *testing.T) {
 	require.ErrorIs(t, err, errPayloadPeerDenied)
 	_, err = mgr.payloadRoster(id, peer)
 	require.ErrorIs(t, err, errPayloadPeerDenied)
-	require.Equal(t, int32(3), inner.warmCalls.Load())
+	require.Equal(t, int32(6), inner.warmCalls.Load(), "three slots asked on each call")
 	require.Equal(t, int32(1), inner.calls.Load())
+
+	inner.warm = peer
+	_, err = mgr.payloadRoster(id, peer)
+	require.NoError(t, err, "a grant seen by the bridge takes effect on the next call")
 }
 
 func TestPayloadPeer_QueryErrorIsNotCached(t *testing.T) {
@@ -530,7 +542,7 @@ func TestPayloadPeer_QueryErrorIsNotCached(t *testing.T) {
 	require.Equal(t, int32(4), inner.warmCalls.Load())
 }
 
-func TestPayloadPeer_ConcurrentWarmScanIsShared(t *testing.T) {
+func TestPayloadPeer_ConcurrentWarmScansEachAskTheBridge(t *testing.T) {
 	overrideLookupLimits(t, 100, 100)
 	overrideLookupTTL(t, 0)
 	const current = uint64(7)
@@ -556,7 +568,7 @@ func TestPayloadPeer_ConcurrentWarmScanIsShared(t *testing.T) {
 	for i := 0; i < n; i++ {
 		require.NoError(t, <-errCh)
 	}
-	require.Equal(t, int32(1), inner.warmCalls.Load())
+	require.Equal(t, int32(n), inner.warmCalls.Load())
 }
 
 func TestPayloadPeer_SlotDoesNotQueryWarmKeys(t *testing.T) {
@@ -602,7 +614,7 @@ func TestPayloadRoster_CreatorOpensDoorButDoesNotServePayload(t *testing.T) {
 	require.ErrorIs(t, err, errPayloadPeerDenied)
 	_, err = mgr.payloadRoster(id, owner)
 	require.ErrorIs(t, err, errPayloadPeerDenied)
-	require.Equal(t, int32(1), inner.warmCalls.Load())
+	require.Equal(t, int32(2), inner.warmCalls.Load(), "the bridge's log copy is asked on every call")
 	require.Equal(t, int32(1), inner.calls.Load())
 	_, err = mgr.store.GetSessionMeta(id)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)

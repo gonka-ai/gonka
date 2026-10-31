@@ -42,7 +42,8 @@ func TestVerifyRepairRequestAllowed_WarmKey(t *testing.T) {
 
 	actors := signing.SlotActors{
 		SlotKeys: map[uint32]string{0: cold.Address(), 1: cold.Address()},
-		WarmKeys: map[uint32]string{0: warm.Address()},
+		History:  signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}},
+		Nonce:    5,
 	}
 	require.NoError(t, VerifyRepairRequestAllowed(v, req, actors))
 

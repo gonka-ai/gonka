@@ -160,10 +160,6 @@ func TestSQLite_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestSQLite(t))
 }
 
-func TestSQLite_WarmKeyDelta(t *testing.T) {
-	runWarmKeyDelta(t, newTestSQLite(t))
-}
-
 func TestSQLite_MarkSettled(t *testing.T) {
 	runMarkSettled(t, newTestSQLite(t))
 }
@@ -196,16 +192,14 @@ func TestSQLite_PersistAcrossReopen(t *testing.T) {
 	require.NoError(t, db1.CreateSession(defaultParams()))
 
 	for i := uint64(1); i <= 10; i++ {
-		delta := map[uint32]string{uint32(i % 3): fmt.Sprintf("warm-%d", i)}
 		err := db1.AppendDiff("escrow-1", types.DiffRecord{
 			Diff: types.Diff{
 				Nonce:   i,
 				UserSig: []byte(fmt.Sprintf("sig-%d", i)),
 			},
-			StateHash:    []byte{byte(i)},
-			Signatures:   map[uint32][]byte{0: {byte(i)}},
-			WarmKeyDelta: delta,
-			CreatedAt:    int64(i * 100),
+			StateHash:  []byte{byte(i)},
+			Signatures: map[uint32][]byte{0: {byte(i)}},
+			CreatedAt:  int64(i * 100),
 		})
 		require.NoError(t, err)
 
@@ -237,9 +231,6 @@ func TestSQLite_PersistAcrossReopen(t *testing.T) {
 		nonce := uint64(i + 1)
 		require.Equal(t, nonce, d.Nonce)
 		require.Equal(t, []byte{byte(nonce)}, d.StateHash)
-		require.NotNil(t, d.WarmKeyDelta)
-		expectedKey := uint32(nonce % 3)
-		require.Equal(t, fmt.Sprintf("warm-%d", nonce), d.WarmKeyDelta[expectedKey])
 
 		// Should have 2 sigs: slot 0 from AppendDiff, slot 1 from AddSignature.
 		require.Len(t, d.Signatures, 2, "nonce %d", nonce)
@@ -551,16 +542,14 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 		require.NoError(t, db1.CreateSession(params))
 
 		for i := uint64(1); i <= diffsPerSession; i++ {
-			warmDelta := map[uint32]string{uint32(i % 5): fmt.Sprintf("warm-%d-%d", s, i)}
 			rec := types.DiffRecord{
 				Diff: types.Diff{
 					Nonce:   i,
 					UserSig: []byte(fmt.Sprintf("sig-%d-%d", s, i)),
 				},
-				StateHash:    []byte{byte(i % 256)},
-				Signatures:   map[uint32][]byte{0: {byte(i % 256)}, 1: {byte((i + 1) % 256)}},
-				WarmKeyDelta: warmDelta,
-				CreatedAt:    int64(i),
+				StateHash:  []byte{byte(i % 256)},
+				Signatures: map[uint32][]byte{0: {byte(i % 256)}, 1: {byte((i + 1) % 256)}},
+				CreatedAt:  int64(i),
 			}
 			require.NoError(t, db1.AppendDiff(escrowID, rec))
 		}
@@ -598,7 +587,6 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 			require.Equal(t, nonce, d.Nonce)
 			require.Equal(t, []byte{byte(nonce % 256)}, d.StateHash)
 			require.Len(t, d.Signatures, 2, "session %s nonce %d", escrowID, nonce)
-			require.NotNil(t, d.WarmKeyDelta)
 		}
 	}
 }

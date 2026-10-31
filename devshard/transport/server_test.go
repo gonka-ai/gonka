@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -418,8 +420,10 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Create warm key binding via confirm start.
-	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	// Bind the warm key in the first diff, then confirm with it.
+	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warmSigner.Address(), 1), testutil.StartTx(1),
+	})
 	_, err = sm.ApplyDiff(diff1)
 	require.NoError(t, err)
 
@@ -789,4 +793,149 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 
 	require.Nil(t, receipt.Receipt, "non-executor should not have receipt")
 	require.False(t, hasInferenceData, "non-executor should not have inference data")
+}
+
+// membershipBridge answers VerifyWarmKey from a script; every other bridge
+// method is unused by the membership check.
+type membershipBridge struct {
+	bridge.MainnetBridge
+	answer func(warm, cold string) (bool, error)
+}
+
+func (b membershipBridge) VerifyWarmKey(warm, cold string) (bool, error) { return b.answer(warm, cold) }
+
+// Test flow:
+//  1. Bind a warm key in the host's state and point the bridge at three answers in turn: live, ended,
+//     unreachable; then ask about a key the state does not bind.
+//  2. Assert membership follows the history unless the bridge has seen the grant end, and admits an unbound key
+//     only when the bridge reports a live grant.
+func TestIsGroupMember_WarmKeyBackstopFollowsTheBridge(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	warmSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
+	}))
+	h, err := host.NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
+	require.NoError(t, err)
+	answer := func(string, string) (bool, error) { return true, nil }
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithBridge(membershipBridge{answer: func(w, c string) (bool, error) { return answer(w, c) }}))
+	require.NoError(t, err)
+
+	stranger := testutil.MustGenerateKey(t)
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "a live grant admits an unbound key")
+	answer = func(string, string) (bool, error) { return false, nil }
+	require.False(t, srv.IsGroupMember(stranger.Address()))
+
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+	require.False(t, srv.IsGroupMember(warmSigner.Address()), "the bridge saw the grant end: refused ahead of the revoke diff")
+	answer = func(string, string) (bool, error) { return false, errors.New("chain down") }
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "an outage leaves the binding in force")
+	answer = func(string, string) (bool, error) { return true, nil }
+	require.True(t, srv.IsGroupMember(warmSigner.Address()))
+}
+
+// Test flow:
+//  1. Two validators A and B; the history binds W to A's slot. The bridge answers "no live grant" for A and
+//     fails for B.
+//  2. Assert W is refused: the failure for B says nothing about A's binding, which the bridge did answer for.
+//     With the answers swapped (A fails, B says no) the binding to A stands.
+func TestIsGroupMember_OutageOnAnotherValidatorDoesNotOverrideARevoke(t *testing.T) {
+	a, b := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	warmSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{a, b})
+	config := testutil.DefaultConfig(2)
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
+	}))
+	h, err := host.NewHost(sm, a, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
+	require.NoError(t, err)
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+
+	failing := b.Address()
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithBridge(membershipBridge{answer: func(_, cold string) (bool, error) {
+		if cold == failing {
+			return false, errors.New("chain down")
+		}
+		return false, nil
+	}}))
+	require.NoError(t, err)
+	require.False(t, srv.IsGroupMember(warmSigner.Address()), "A answered: the grant ended")
+
+	failing = a.Address()
+	require.True(t, srv.IsGroupMember(warmSigner.Address()), "A could not be asked: the binding to A stands")
+}
+
+// Test flow:
+//  1. A host at nonce 1 receives a gossip notification for nonce 3 signed by a warm key its history does not
+//     bind (the binding is in a diff it has not applied), while the bridge reports the key's grant live.
+//  2. Assert the notification passes the signer check (so recovery can fetch the binding), while the same key
+//     signing a nonce at or below the head is refused, and a key the bridge does not know is refused either way.
+func TestServeGossipNonce_AdmitsAFutureNonceByAGrantedKey(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	warmSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	// The host's state machine and the transport share one grant source in
+	// production (the bridge's log copy); here both see the same answer.
+	live := func(w, _ string) (bool, error) { return w == warmSigner.Address(), nil }
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000),
+		state.WithWarmKeyResolver(live))
+	require.NoError(t, err)
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
+	}))
+	h, err := host.NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store), host.WithVerifier(verifier))
+	require.NoError(t, err)
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)}),
+	}})
+	require.NoError(t, err)
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), WithBridge(membershipBridge{answer: live}))
+	require.NoError(t, err)
+
+	sign := func(signer *signing.Secp256k1Signer, nonce uint64) GossipNonceRequest {
+		root := make([]byte, 32)
+		data, err := proto.Marshal(&types.StateSignatureContent{StateRoot: root, EscrowId: "escrow-1", Nonce: nonce})
+		require.NoError(t, err)
+		sig, err := signer.Sign(data)
+		require.NoError(t, err)
+		return GossipNonceRequest{Nonce: nonce, StateHash: root, StateSig: sig, SlotID: 0}
+	}
+	require.NoError(t, srv.ServeGossipNonce(sign(warmSigner, 3)), "a future nonce by a granted key starts recovery")
+	require.ErrorIs(t, srv.ServeGossipNonce(sign(warmSigner, 1)), ErrGossipInvalidStateSig, "nonce 1 is judged by the history at nonce 1")
+	stranger := testutil.MustGenerateKey(t)
+	require.ErrorIs(t, srv.ServeGossipNonce(sign(stranger, 3)), ErrGossipInvalidStateSig)
+
+	// Bind and revoke the key, then re-grant it on chain: peers may have
+	// bound it again in diffs this host has not applied, so a future nonce
+	// signed by it still starts recovery, while nonces at or below the head
+	// follow the history.
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warmSigner.Address(), 1)}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 3, []*types.DevshardTx{testutil.WarmKeyRevokeTx(0, warmSigner.Address(), 1)}),
+	}})
+	require.NoError(t, err)
+	require.NoError(t, srv.ServeGossipNonce(sign(warmSigner, 5)), "a revoked key with a live grant may be bound again ahead")
+	require.ErrorIs(t, srv.ServeGossipNonce(sign(warmSigner, 3)), ErrGossipInvalidStateSig, "revoked at 3")
 }

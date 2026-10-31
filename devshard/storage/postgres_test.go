@@ -306,9 +306,6 @@ func TestPostgres_ValidationCreditHolds(t *testing.T) {
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }
-func TestPostgres_WarmKeyDelta(t *testing.T) {
-	runWarmKeyDelta(t, newTestPostgres(t))
-}
 func TestPostgres_MarkSettled(t *testing.T) {
 	runMarkSettled(t, newTestPostgres(t))
 }

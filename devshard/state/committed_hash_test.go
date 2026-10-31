@@ -168,7 +168,7 @@ func assertCommittedMatchesMarshalPath(t *testing.T, sm *StateMachine) {
 
 	hs := types.HeightSyncEscrowCommitFromState(&st)
 	rest := restHashFromV2Parts(st.Balance, sealedAccBytes32(st.SealedAcc), fromStructs,
-		computeWarmKeysHash(st.WarmKeys), hashHeightSyncEscrow(hs))
+		computeWarmKeysHash(st.WarmKeyHistory), hashHeightSyncEscrow(hs))
 	hostHash, err := computeHostStatsHash(st.HostStats)
 	require.NoError(t, err)
 	want := ComputeStateRootFromRestHash(hostHash, rest, st.Fees, st.Phase, st.StateRootAndProtocolVersion)

@@ -25,7 +25,7 @@ type SettlementPayload struct {
 // BuildSettlement constructs a SettlementPayload from the final escrow state.
 func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint32][]byte, nonce uint64) (*SettlementPayload, error) {
 	acc := sealedAccBytes32(st.SealedAcc)
-	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, types.HeightSyncEscrowCommitFromState(&st))
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeyHistory, types.HeightSyncEscrowCommitFromState(&st))
 	if err != nil {
 		return nil, err
 	}
@@ -43,12 +43,13 @@ func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint3
 
 // VerifySettlement recomputes the state root from the payload, verifies host
 // signatures over it, and checks that the signing quorum meets 2/3+1 of the
-// group size. Returns the verified state root on success.
+// group size. Returns the verified state root on success. A warm signer
+// counts when history binds it to the slot at the settlement nonce.
 func VerifySettlement(
 	payload SettlementPayload,
 	group []types.SlotAssignment,
 	verifier signing.Verifier,
-	warmKeys map[uint32]string,
+	history signing.WarmKeyHistory,
 ) ([]byte, error) {
 	if len(group) == 0 {
 		return nil, fmt.Errorf("empty group")
@@ -85,6 +86,7 @@ func VerifySettlement(
 
 	// 3. Verify each signature and accumulate weight.
 	// One signature per cold address counts for all slots owned by that address.
+	actors := signing.SlotActors{SlotKeys: slotToAddr, History: history, Nonce: payload.Nonce}
 	verified := make(map[string]bool, len(payload.Signatures))
 	totalWeight := uint32(0)
 
@@ -99,9 +101,10 @@ func VerifySettlement(
 			return nil, fmt.Errorf("slot %d not in group", slotID)
 		}
 
-		// Accept if recovered address matches cold key, this slot's bound warm
-		// key, or a sibling slot's binding for the same validator.
-		if !(signing.SlotActors{SlotKeys: slotToAddr, WarmKeys: warmKeys}).Allows(slotID, addr) {
+		// Accept if recovered address matches cold key, a warm key bound to
+		// this slot at the settlement nonce, or a sibling slot's binding for
+		// the same validator.
+		if !actors.Allows(slotID, addr) {
 			return nil, fmt.Errorf("signer %s not in group", addr)
 		}
 
