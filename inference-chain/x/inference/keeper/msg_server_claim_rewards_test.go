@@ -8,10 +8,13 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -1240,7 +1243,9 @@ func TestPayoutClaim_WithSchedule(t *testing.T) {
 	require.True(t, found, "claim recipient entry must remain until pruning")
 }
 
-func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
+// setupVestedClaim prepares a claim of 1000 work + 500 reward coins, both vesting over 180
+// epochs, paid to a scheduled recipient.
+func setupVestedClaim(t *testing.T) (types.MsgServer, sdk.Context, *keepertest.InferenceMocks, string, uint64) {
 	k, ms, ctx, mocks := setupKeeperWithMocks(t)
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
@@ -1295,11 +1300,21 @@ func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
 	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creatorAddr).Return(mockAccount).AnyTimes()
 	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
 
+	return ms, ctx, mocks, recipientStr, seed
+}
+
+func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
+	ms, ctx, mocks, recipientStr, seed := setupVestedClaim(t)
+	epochIndex := uint64(100)
+	vestingEpochs := uint64(180)
+
 	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
 	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
-	// Vesting path: AddVestedRewards must be called with recipientStr (not creator).
-	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(gomock.Any(), recipientStr, gomock.Any(), workCoins, gomock.Any(), gomock.Any()).Return(nil)
-	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(gomock.Any(), recipientStr, gomock.Any(), rewardCoins, gomock.Any(), gomock.Any()).Return(nil)
+	// Vesting path: both payments go to recipientStr (not creator) in one schedule update.
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewardsBatch(gomock.Any(), recipientStr, types.ModuleName, []streamvestingtypes.VestedReward{
+		{Amount: workCoins, VestingEpochs: &vestingEpochs, Memo: "work_coins:" + testutil.Creator + "_vested"},
+		{Amount: rewardCoins, VestingEpochs: &vestingEpochs, Memo: "reward_coins:" + testutil.Creator + "_vested"},
+	}).Return(nil)
 
 	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
 		Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed),
@@ -1307,4 +1322,43 @@ func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1500), resp.Amount)
 	require.Equal(t, "Rewards claimed successfully", resp.Result)
+}
+
+func TestPayoutClaim_VestedRewardFailureIsReportedAsRewardPayment(t *testing.T) {
+	ms, ctx, mocks, recipientStr, seed := setupVestedClaim(t)
+	epochIndex := uint64(100)
+
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewardsBatch(gomock.Any(), recipientStr, types.ModuleName, gomock.Any()).
+		Return(&streamvestingtypes.VestedRewardError{Index: 1, Err: sdkerrors.ErrInsufficientFunds})
+
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
+		Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed),
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), resp.Amount)
+	require.Equal(t, "Reward payment failed, claim can be retried", resp.Result)
+}
+
+func TestPayoutClaim_VestedWorkFailureIsReportedAsWorkPayment(t *testing.T) {
+	for name, batchErr := range map[string]error{
+		"index 0":     &streamvestingtypes.VestedRewardError{Index: 0, Err: sdkerrors.ErrInsufficientFunds},
+		"no index":    sdkerrors.ErrInsufficientFunds,
+		"other error": &streamvestingtypes.VestedRewardError{Index: 0, Err: fmt.Errorf("boom")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ms, ctx, mocks, recipientStr, seed := setupVestedClaim(t)
+			mocks.StreamVestingKeeper.EXPECT().AddVestedRewardsBatch(gomock.Any(), recipientStr, types.ModuleName, gomock.Any()).Return(batchErr)
+
+			resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
+				Creator: testutil.Creator, EpochIndex: 100, Seed: int64(seed),
+			})
+			require.NoError(t, err)
+			require.Equal(t, uint64(0), resp.Amount)
+			if name == "other error" {
+				require.Equal(t, "Error paying participant from escrow, claim can be retried", resp.Result)
+			} else {
+				require.Equal(t, "Insufficient funds for paying participant for work, claim can be retried", resp.Result)
+			}
+		})
+	}
 }

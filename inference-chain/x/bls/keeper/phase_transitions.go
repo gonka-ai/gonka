@@ -23,6 +23,15 @@ func (k Keeper) ProcessDKGPhaseTransitions(ctx sdk.Context) error {
 
 // ProcessDKGPhaseTransitionForEpoch checks a specific epoch's DKG and transitions it if needed
 func (k Keeper) ProcessDKGPhaseTransitionForEpoch(ctx sdk.Context, epochID uint64) error {
+	// Phase and deadlines live in the base record; rehydrate sub-keys only on a transition block.
+	base, err := k.GetEpochBLSDataBase(ctx, epochID)
+	if err != nil {
+		return fmt.Errorf("failed to get EpochBLSData for epoch %d: %w", epochID, err)
+	}
+	if !phaseDeadlineReached(&base, ctx.BlockHeight()) {
+		return nil
+	}
+
 	epochBLSData, err := k.GetEpochBLSData(ctx, epochID)
 	if err != nil {
 		return fmt.Errorf("failed to get EpochBLSData for epoch %d: %w", epochID, err)
@@ -59,6 +68,19 @@ func (k Keeper) ProcessDKGPhaseTransitionForEpoch(ctx sdk.Context, epochID uint6
 	}
 
 	return nil
+}
+
+// phaseDeadlineReached reports whether the epoch is in an active DKG phase whose deadline has passed.
+func phaseDeadlineReached(d *types.EpochBLSData, height int64) bool {
+	switch d.DkgPhase {
+	case types.DKGPhase_DKG_PHASE_DEALING:
+		return height >= d.DealingPhaseDeadlineBlock
+	case types.DKGPhase_DKG_PHASE_VERIFYING:
+		return height >= d.VerifyingPhaseDeadlineBlock
+	case types.DKGPhase_DKG_PHASE_DISPUTING:
+		return height >= d.DisputingPhaseDeadlineBlock
+	}
+	return false
 }
 
 // TransitionToVerifyingPhase transitions a DKG from DEALING phase to either VERIFYING or FAILED based on participation

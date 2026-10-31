@@ -86,6 +86,10 @@ func (k Keeper) PruneConfirmationPoC(ctx context.Context, currentEpochIndex int6
 	if err != nil {
 		return err
 	}
+	return k.pruneConfirmationPoCWithParams(ctx, params, currentEpochIndex)
+}
+
+func (k Keeper) pruneConfirmationPoCWithParams(ctx context.Context, params types.Params, currentEpochIndex int64) error {
 	if params.PocParams == nil || params.EpochParams == nil {
 		return sdkerrors.Wrap(types.ErrIllegalState, "confirmation cleanup requires poc and epoch params")
 	}

@@ -239,7 +239,7 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	if modelID == "" {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
 	}
-	if _, found := k.GetGovernanceModel(ctx, modelID); !found {
+	if !k.IsValidGovernanceModel(ctx, modelID) {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
 	}
 
@@ -375,21 +375,13 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 			return nil, sdkerrors.Wrap(types.ErrPocWrongStartBlockHeight,
 				fmt.Sprintf("confirmation PoC: start block height %d doesn't match event trigger %d", startBlockHeight, activeEvent.TriggerHeight))
 		}
-		confirmParams, err := k.GetParams(ctx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := confirmParams.EpochParams
+		epochParams := params.EpochParams
 		validationEnd := activeEvent.GetValidationEnd(epochParams)
 		if currentBlockHeight > validationEnd {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC validation window closed")
 		}
 	} else {
-		regularParams, err := k.Keeper.GetParams(goCtx)
-		if err != nil {
-			return nil, err
-		}
-		epochParams := regularParams.EpochParams
+		epochParams := params.EpochParams
 		upcomingEpoch, found := k.Keeper.GetUpcomingEpoch(ctx)
 		if !found {
 			return nil, sdkerrors.Wrap(types.ErrUpcomingEpochNotFound, "failed to get upcoming epoch")
@@ -457,7 +449,7 @@ func (k Keeper) CanonicalMLNodeWeightDistribution(
 	}
 	limit := params.GetEpochValidationParams().PositiveDistributionRowLimit()
 	for _, entry := range canonical {
-		if _, found := k.GetGovernanceModel(ctx, entry.ModelId); !found {
+		if !k.IsValidGovernanceModel(ctx, entry.ModelId) {
 			return nil, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", entry.ModelId))
 		}
 		if len(entry.Weights) > limit {
