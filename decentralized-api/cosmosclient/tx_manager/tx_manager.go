@@ -98,7 +98,7 @@ type TxManager interface {
 	SimulateMsgs(msgs []sdk.Msg) (uint64, error)
 	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
 	ClearStoreCommitIntrinsic()
-	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
+	StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool)
 }
 
 type blockTimeTracker struct {
@@ -867,9 +867,9 @@ func (m *manager) ClearStoreCommitIntrinsic() {
 	}
 }
 
-func (m *manager) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+func (m *manager) StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool) {
 	if m.feeTree == nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	return m.feeTree.RawStoreCommitLeaf()
 }
@@ -977,6 +977,9 @@ const (
 	feeGrantHint = "Fee-grant from cold to warm key is missing or expired. Run " +
 		"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' " +
 		"to refresh the authz grants AND the feegrant allowance in one transaction."
+	feeGrantSpentHint = "Fee-grant from cold to warm key cannot cover this fee (spend limit used up). Run " +
+		"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' " +
+		"to refresh the feegrant allowance."
 	insufficientFeeHint = "Transaction fees are below an enabled fee-group price. Inspect " +
 		"FeeParams.enabled_fee_groups, the matching groups[].min_gas_price, DAPI fee-tree refresh, " +
 		"and the cold-to-warm feegrant balance/expiration. Global min_gas_price_ngonka stays 0 and " +
@@ -1000,6 +1003,9 @@ func feeRelatedHints(rawLog string) []string {
 	var hints []string
 	if containsAny(rawLog, "fee-grant not found", "fee allowance", "feegrant: not found") {
 		hints = append(hints, feeGrantHint)
+	}
+	if containsAny(rawLog, "fee limit exceeded") {
+		hints = append(hints, feeGrantSpentHint)
 	}
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
 		hints = append(hints, insufficientFeeHint)

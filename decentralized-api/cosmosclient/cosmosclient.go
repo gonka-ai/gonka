@@ -463,9 +463,9 @@ func (icc *InferenceCosmosClient) ClearStoreCommitIntrinsic() {
 	icc.manager.ClearStoreCommitIntrinsic()
 }
 
-func (icc *InferenceCosmosClient) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+func (icc *InferenceCosmosClient) StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool) {
 	if icc == nil || icc.manager == nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	return icc.manager.StoreCommitRawLeaf()
 }

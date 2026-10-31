@@ -43,7 +43,6 @@ type (
 		PoCValidations collections.Map[collections.Triple[int64, sdk.AccAddress, sdk.AccAddress], types.PoCValidation]
 		// PoC v2 collections
 		PoCValidationsV2             collections.Map[collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]], types.PoCValidationV2]
-		PoCValidationV2Counts        collections.Map[collections.Pair[int64, sdk.AccAddress], uint64]
 		ConfirmationPoCCleanupCursor collections.Item[confirmationCleanupCursor]
 		PoCV2StoreCommits            collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.PoCV2StoreCommit]
 		MLNodeWeightDistributions    collections.Map[collections.Triple[int64, sdk.AccAddress, string], types.MLNodeWeightDistribution]
@@ -244,13 +243,6 @@ func NewKeeper(
 			"poc_validation_v2",
 			collections.TripleKeyCodec(collections.Int64Key, sdk.AccAddressKey, collections.PairKeyCodec(collections.StringKey, sdk.AccAddressKey)),
 			codec.CollValue[types.PoCValidationV2](cdc),
-		),
-		PoCValidationV2Counts: collections.NewMap(
-			sb,
-			types.PoCValidationV2CountPrefix,
-			"poc_validation_v2_count",
-			collections.PairKeyCodec(collections.Int64Key, sdk.AccAddressKey),
-			collections.Uint64Value,
 		),
 		ConfirmationPoCCleanupCursor: collections.NewItem(
 			sb,
