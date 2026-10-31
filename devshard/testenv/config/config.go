@@ -115,6 +115,8 @@ type MockDapiCfg struct {
 	GRPCPort int    `yaml:"grpc_port"`
 	HTTPPort int    `yaml:"http_port"`
 	Host     string `yaml:"host"`
+	// AnnounceVersion makes /versions name versiond.version_name instead of the built-in v2.
+	AnnounceVersion bool `yaml:"announce_version,omitempty"`
 }
 
 // MockOpenAICfg is the listen addresses of cmd/mockopenai.
@@ -135,6 +137,13 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// TTFTP99 and TokenIntervalP99 switch the delays to seeded lognormal draws.
+	TTFTP99          string `yaml:"ttft_p99,omitempty"`
+	TokenIntervalP99 string `yaml:"token_interval_p99,omitempty"`
+	JitterSeed       uint64 `yaml:"jitter_seed,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -149,13 +158,16 @@ type VersiondCfg struct {
 	KeyringPassword          string `yaml:"keyring_password"`
 	DisablePeriodicSnapshots bool   `yaml:"disable_periodic_snapshots,omitempty"`
 	EnableContentionProfiles bool   `yaml:"enable_contention_profiles,omitempty"`
+	// Image runs this prebuilt image instead of building versiond from the checkout.
+	Image string `yaml:"image,omitempty"`
 }
 
 // VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
 type VersiondRouterCfg struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	IP   string `yaml:"ip"`
+	Host  string `yaml:"host"`
+	Port  int    `yaml:"port"`
+	IP    string `yaml:"ip"`
+	Image string `yaml:"image,omitempty"`
 }
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
@@ -164,6 +176,7 @@ type DevshardctlCfg struct {
 	Port      int    `yaml:"port"`
 	StatsPort int    `yaml:"stats_port"`
 	IP        string `yaml:"ip"`
+	Image     string `yaml:"image,omitempty"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
@@ -198,6 +211,8 @@ type HostCfg struct {
 	// so identity count and router-pool membership follow this field rather
 	// than roster position. Empty keeps the 2-of-N default below.
 	KeyName string `yaml:"key_name"`
+	// Env adds or replaces environment variables of this host's container.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -251,10 +266,10 @@ const (
 	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
 	// as they share join's :80/:443. With the overlay on, pooled hosts'
 	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
-	DefaultProxyService = "proxy"
-	DefaultProxyPort    = 8080
-	ProxyOverlayURL     = "http://proxy:8080"
-	ProxyOverlayEnv     = "TESTENV_PROXY_OVERLAY"
+	DefaultProxyService     = "proxy"
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
@@ -739,6 +754,10 @@ func (c *File) Validate() error {
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
 	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
+	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
 		if strings.TrimSpace(node.Name) == "" {
@@ -755,6 +774,9 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

@@ -55,6 +55,7 @@ run-parallel-tests/
 **/target/
 /tmp
 devshard/testenv/baselines/
+devshard/testenv/.env.remote-load
 .worklog
 .worklog
 .worklog

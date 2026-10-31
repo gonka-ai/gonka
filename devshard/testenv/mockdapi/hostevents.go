@@ -108,6 +108,8 @@ type nodeManagerServer struct {
 	mlNodes      []MLNode
 	allocationMu sync.Mutex
 	allocations  map[string]uint64
+	// hosts is nil in unit tests that build the server directly.
+	hosts *hostPools
 }
 
 func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle, omitBlocks bool, configured ...[]MLNode) *nodeManagerServer {
@@ -122,9 +124,31 @@ func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle 
 }
 
 // AcquireMLNode delegates to params.Server (stage logs + lock table) and, when
-// a test-only pool is configured, increments /testenv/ml-allocations.
+// a test-only pool is configured, increments /testenv/ml-allocations. A caller
+// mapped to a host draws only from that host's nodes; a challenged host gets
+// ResourceExhausted, as real dapi answers when every node is in PoC.
 func (s *nodeManagerServer) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	resp, err := s.Server.AcquireMLNode(ctx, req)
+	host := ""
+	if s.hosts != nil {
+		host = s.hosts.hostFor(ctx)
+		if host != "" && s.hosts.challenged(host) {
+			s.hosts.record(host, "", nil, true)
+			return nil, status.Errorf(codes.ResourceExhausted, "mock-dapi: host %s is under PoC challenge", host)
+		}
+	}
+	var resp *gen.AcquireMLNodeResponse
+	var err error
+	if preferred, full := s.hosts.scope(host, req); preferred != nil {
+		resp, err = s.Server.AcquireMLNode(ctx, preferred)
+		if status.Code(err) == codes.ResourceExhausted && full != preferred {
+			resp, err = s.Server.AcquireMLNode(ctx, full)
+		}
+	} else {
+		resp, err = s.Server.AcquireMLNode(ctx, req)
+	}
+	if s.hosts != nil {
+		s.hosts.record(host, resp.GetNodeId(), err, false)
+	}
 	if err != nil || len(s.mlNodes) == 0 {
 		return resp, err
 	}
