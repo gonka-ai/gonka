@@ -108,15 +108,15 @@ already in `config.env` wins. Set the target tags there before the run.
 Non-HA:
 
 ```bash
-export VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.16
-export PROXY_ROUTER_IMAGE=ghcr.io/product-science/proxy-router:0.2.16
-export PROXY_POLICY_IMAGE=ghcr.io/product-science/proxy:0.2.16
+export VERSIOND_IMAGE=ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6
+export PROXY_ROUTER_IMAGE=ghcr.io/gonka-ai/proxy-router:0.2.16-devshard-v6
+export PROXY_POLICY_IMAGE=ghcr.io/gonka-ai/proxy:0.2.16-devshard-v6
 ```
 
 HA adds the fleet image:
 
 ```bash
-export VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router:0.2.16
+export VERSIOND_ROUTER_IMAGE=ghcr.io/gonka-ai/versiond-router:0.2.16-devshard-v6
 ```
 
 `PROXY_ROUTER_IMAGE` is the Compose service named `proxy`. `PROXY_POLICY_IMAGE`
