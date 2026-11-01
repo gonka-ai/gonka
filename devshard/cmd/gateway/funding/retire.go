@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"slices"
 	"time"
+
+	"devshard/cmd/gateway/internal/safemath"
 )
 
 const (
@@ -94,9 +96,9 @@ func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState
 	var fullFree uint64
 	for _, escrow := range routable {
 		if escrow.Money.Full {
-			fullFree = saturatingAdd(fullFree, atModelPrice(state, escrow, escrow.Money.Free))
+			fullFree = safemath.AddSaturatingUint64(fullFree, atModelPrice(state, escrow, escrow.Money.Free))
 		}
 	}
-	wanted := saturatingAdd(uint64(max(state.FullContextSlots, 0)), ceilDivide(subtractFloor(need, fullFree), perEscrow))
+	wanted := safemath.AddSaturatingUint64(uint64(max(state.FullContextSlots, 0)), ceilDivide(subtractFloor(need, fullFree), perEscrow))
 	return uint64(len(routable)) > max(uint64(max(state.TargetCount, 0)), wanted)
 }

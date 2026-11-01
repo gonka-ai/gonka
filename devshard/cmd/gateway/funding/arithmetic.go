@@ -5,23 +5,6 @@ import (
 	"math/bits"
 )
 
-func saturatingAdd(left, right uint64) uint64 {
-	if sum := left + right; sum >= left {
-		return sum
-	}
-	return math.MaxUint64
-}
-
-func saturatingMul(left, right uint64) uint64 {
-	if left == 0 || right == 0 {
-		return 0
-	}
-	if product := left * right; product/left == right {
-		return product
-	}
-	return math.MaxUint64
-}
-
 func subtractFloor(left, right uint64) uint64 {
 	if left < right {
 		return 0

@@ -3,7 +3,6 @@ package escrow
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/funding"
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/cmd/gateway/liquidity"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
@@ -188,12 +188,12 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 		Now:     now,
 	})
 	reading.live = append(reading.live, row.EscrowID)
-	reading.reserved = saturatingAdd(reading.reserved, reservedIn(money.Open))
+	reading.reserved = safemath.AddSaturatingUint64(reading.reserved, reservedIn(money.Open))
 	totals := reading.report.Money
-	totals[liquidity.ClassFree] = saturatingAdd(totals[liquidity.ClassFree], classified.Free)
-	totals[liquidity.ClassReturning] = saturatingAdd(totals[liquidity.ClassReturning], classified.Returning)
-	totals[liquidity.ClassLate] = saturatingAdd(totals[liquidity.ClassLate], classified.Late)
-	totals[liquidity.ClassStuck] = saturatingAdd(totals[liquidity.ClassStuck], classified.Stuck)
+	totals[liquidity.ClassFree] = safemath.AddSaturatingUint64(totals[liquidity.ClassFree], classified.Free)
+	totals[liquidity.ClassReturning] = safemath.AddSaturatingUint64(totals[liquidity.ClassReturning], classified.Returning)
+	totals[liquidity.ClassLate] = safemath.AddSaturatingUint64(totals[liquidity.ClassLate], classified.Late)
+	totals[liquidity.ClassStuck] = safemath.AddSaturatingUint64(totals[liquidity.ClassStuck], classified.Stuck)
 	reading.report.Counts[countStateOf(row, classified)]++
 	reading.state.Escrows = append(reading.state.Escrows, funding.EscrowState{
 		ID: row.EscrowID, Standby: row.RotationRole == RoleReserve, Temp: row.RotationRole == roleTemp,
@@ -262,17 +262,10 @@ func reservedIn(open []types.InferenceRecord) uint64 {
 	var reserved uint64
 	for _, record := range open {
 		if record.Status == types.StatusPending || record.Status == types.StatusStarted {
-			reserved = saturatingAdd(reserved, record.ReservedCost)
+			reserved = safemath.AddSaturatingUint64(reserved, record.ReservedCost)
 		}
 	}
 	return reserved
-}
-
-func saturatingAdd(left, right uint64) uint64 {
-	if sum := left + right; sum >= left {
-		return sum
-	}
-	return math.MaxUint64
 }
 
 func countStateOf(row store.DevshardRecord, money liquidity.Escrow) CountState {

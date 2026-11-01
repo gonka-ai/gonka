@@ -6,11 +6,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/signing"
 )
 
@@ -189,10 +189,7 @@ func (c *TxClient) createCost(amount uint64) uint64 {
 	if c.feeDenom != EscrowDenom {
 		return amount
 	}
-	if amount > math.MaxUint64-c.feeAmount {
-		return math.MaxUint64
-	}
-	return amount + c.feeAmount
+	return safemath.AddSaturatingUint64(amount, c.feeAmount)
 }
 
 // SettleEscrow builds, signs, broadcasts and confirms a MsgSettleDevshardEscrow tx; unlike CreateEscrow it waits for the commit. See README.md, "Transaction encoding".
