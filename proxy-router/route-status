@@ -75,11 +75,27 @@ if ! grep -q '^# pxname,svname,' "$tmpdir/stats"; then
     echo "route-status: HAProxy Runtime API returned invalid show stat output" >&2
     exit 1
 fi
-awk -F, -v backend="$backend" -v server="$server" '
+if ! awk -F, -v backend="$backend" -v server="$server" '
         $1 == backend && $2 == server {
             found = 1
             if ($18 ~ /^UP/) exit 0
             exit 1
         }
         END { if (!found) exit 1 }
+    ' "$tmpdir/stats"; then
+    exit 1
+fi
+
+# Peer RPC is the _rpc twin of this version backend. Its state does not
+# gate admission: while the twin is DOWN (a router generation without the
+# :8081 peer-RPC listen, or no child answering peer-rpc-ok yet) the proxy
+# sends this version's peer RPC to the JSON backend over HTTP/1.1, the one
+# admitted above. The twin's state is reported for the operator.
+rpc_backend="${backend}_rpc"
+awk -F, -v backend="$rpc_backend" -v server="$server" '
+        $1 == backend && $2 == server {
+            print "route-status: peer RPC twin " backend "/" $2 " is " $18 \
+                ($18 ~ /^UP/ ? "" : " (peer RPC takes the HTTP/1.1 path)") > "/dev/stderr"
+        }
     ' "$tmpdir/stats"
+exit 0

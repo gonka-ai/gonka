@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmrpc"
@@ -39,11 +40,22 @@ func (l *Lookup) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	return l.header(ctx, height)
 }
 
+func (l *Lookup) AtWait(ctx context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
+	if height <= 0 {
+		return nil, fmt.Errorf("nmclient: AtWait: %w", blocks.ErrHeaderNotFound)
+	}
+	return l.headerWait(ctx, height, wait)
+}
+
 func (l *Lookup) header(ctx context.Context, height int64) (*blocks.Header, error) {
+	return l.headerWait(ctx, height, 0)
+}
+
+func (l *Lookup) headerWait(ctx context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
 	if l == nil || l.client == nil {
 		return nil, blocks.ErrHeaderNotFound
 	}
-	resp, err := l.client.GetBlockHeader(ctx, &gen.GetBlockHeaderRequest{Height: height})
+	resp, err := l.client.GetBlockHeader(ctx, &gen.GetBlockHeaderRequest{Height: height, WaitMs: wait.Milliseconds()})
 	if err != nil {
 		return nil, mapHeaderErr(err)
 	}
@@ -84,6 +96,8 @@ func mapHeaderErr(err error) error {
 	switch st.Code() {
 	case codes.Unimplemented:
 		return fmt.Errorf("%w: %s", blocks.ErrHeaderRPCUnimplemented, st.Message())
+	case codes.PermissionDenied:
+		return fmt.Errorf("%w: %s", blocks.ErrHeaderUnverified, st.Message())
 	case codes.NotFound, codes.FailedPrecondition:
 		return fmt.Errorf("%w: %s", blocks.ErrHeaderNotFound, st.Message())
 	default:

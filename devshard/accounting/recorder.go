@@ -106,7 +106,12 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		// touches the tallies.
 		var inferenceID uint64
 		verdict := false
-		switch timeout, validation, vote := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(); {
+		statsOnly := false
+		switch timeout, validation, vote, finish, errorMiss := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(), tx.GetFinishInference(), tx.GetErrorMiss(); {
+		case finish != nil:
+			inferenceID, statsOnly = finish.InferenceId, true
+		case errorMiss != nil:
+			inferenceID, statsOnly = errorMiss.InferenceId, true
 		case timeout != nil:
 			inferenceID = timeout.InferenceId
 		case validation != nil:
@@ -115,6 +120,10 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
+			continue
+		}
+		if statsOnly {
+			hostStats = r.appendHostStatsFor(escrowID, inferenceID, state, hostStats)
 			continue
 		}
 		if _, ok := seen[inferenceID]; ok {
@@ -126,6 +135,7 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		seen[inferenceID] = struct{}{}
 		record, ok := state.GetInference(inferenceID)
 		if !ok {
+			hostStats = r.appendHostStatsFor(escrowID, inferenceID, state, hostStats)
 			continue
 		}
 		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
@@ -157,6 +167,22 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 	}
 }
 
+func (r *Recorder) appendHostStatsFor(
+	escrowID string,
+	nonce uint64,
+	state ProtocolView,
+	into map[uint32]*types.HostStats,
+) map[uint32]*types.HostStats {
+	if record, ok := state.GetInference(nonce); ok {
+		return r.appendHostStats(record.ExecutorSlot, state, into)
+	}
+	slots := r.tracker.slotCount(escrowID)
+	if slots == 0 {
+		return into
+	}
+	return r.appendHostStats(AssignedNonceSlot(nonce, uint64(slots)), state, into)
+}
+
 func (r *Recorder) appendHostStats(
 	slot uint32,
 	state ProtocolView,
@@ -179,6 +205,15 @@ func (r *Recorder) appendHostStats(
 // Ghost records a burned nonce. timeoutPending says the caller will raise a timeout on it, which keeps
 // the nonce live long enough to receive that outcome instead of retiring on the burn alone.
 func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
+	r.ghost(context.Background(), escrowID, nonce, reason, quarantine, timeoutPending)
+}
+
+// GhostCtx is Ghost with the span on ctx stored in the same lock as the burn.
+func (r *Recorder) GhostCtx(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
+	r.ghost(ctx, escrowID, nonce, reason, quarantine, timeoutPending)
+}
+
+func (r *Recorder) ghost(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -187,7 +222,7 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 	if noSend == NoSendUnknown {
 		detail = reason
 	}
-	if err := r.tracker.RecordGhost(
+	if err := r.tracker.RecordGhostTraced(
 		escrowID,
 		nonce,
 		r.currentPhase(),
@@ -195,9 +230,19 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 		noSend,
 		detail,
 		timeoutPending,
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
+}
+
+// NoteTrace copies the span on ctx onto the live nonce so a later disposition
+// event can be joined to the attempt that produced it.
+func (r *Recorder) NoteTrace(ctx context.Context, escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil || ctx == nil {
+		return
+	}
+	r.tracker.AttachTrace(escrowID, nonce, TraceRefFromContext(ctx))
 }
 
 // RequestID names the client request a nonce came from, so a later miss or invalid can point at it.
@@ -229,15 +274,25 @@ func (r *Recorder) RequestFinished(escrowID, requestID string) {
 }
 
 func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+	r.realSend(context.Background(), escrowID, nonce, sentAt, quarantine)
+}
+
+// RealSendCtx is RealSend with the span on ctx stored in the same lock as the send.
+func (r *Recorder) RealSendCtx(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+	r.realSend(ctx, escrowID, nonce, sentAt, quarantine)
+}
+
+func (r *Recorder) realSend(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
-	if err := r.tracker.RecordRealSend(
+	if err := r.tracker.RecordRealSendTraced(
 		escrowID,
 		nonce,
 		sentAt,
 		r.currentPhase(),
 		QuarantineFromString(quarantine),
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting real send escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
@@ -307,7 +362,9 @@ func (r *Recorder) TimeoutResult(
 	nonce uint64,
 	kind, action, reason, detailReason, timeoutReason string,
 ) {
-	if r == nil || r.tracker == nil || action == "started" {
+	if r == nil || r.tracker == nil || action == "started" || action == "deferred" || action == "scheduled" {
+		// Scheduled/deferred means a deadline wait was armed; the vote records
+		// the real outcome when it runs. RecordTimeout only accepts real outcomes.
 		return
 	}
 	if action == "skipped" && !timeoutSkipRequiresAccounting(reason) {
@@ -377,6 +434,26 @@ func (r *Recorder) Close() error {
 	return r.tracker.Close()
 }
 
+// TimeoutActionRecorded reports whether a gateway timeout action becomes an
+// accounting fact. Callers that mirror the outcome onto a span consult it too,
+// so the span never claims a dimension the counter does not carry.
+func TimeoutActionRecorded(action, reason string) bool {
+	if action == "started" || action == "deferred" || action == "scheduled" {
+		// Scheduled/deferred means a deadline wait was armed; the vote (or
+		// sweep backup) records the real outcome when it runs.
+		return false
+	}
+	if action != "skipped" {
+		return true
+	}
+	switch reason {
+	case "nonce_already_finished", "empty_stream_without_non_empty_winner":
+		return false
+	default:
+		return true
+	}
+}
+
 func (r *Recorder) Tracker() *Tracker {
 	if r == nil {
 		return nil
@@ -418,6 +495,14 @@ func (r *Recorder) syncAndFlush(escrowID string, phase EscrowPhase, action strin
 	if err := r.tracker.Flush(context.Background()); err != nil {
 		log.Printf("gateway accounting %s flush escrow=%s: %v", action, escrowID, err)
 	}
+}
+
+// DispatchPhase is the phase stamped on the next accounting fact.
+func (r *Recorder) DispatchPhase() Phase {
+	if r == nil {
+		return PhaseNormal
+	}
+	return r.currentPhase()
 }
 
 func (r *Recorder) currentPhase() Phase {

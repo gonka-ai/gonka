@@ -69,25 +69,28 @@ func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 	require.Empty(t, sm.HeightSyncMissingAcks(1), "missing slots are gated until the ack window closes")
 
 	afterDeadline := uint64(500) + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
-	// User stamps do not close ack windows. A host-signed confirm is the
+	// User stamps do not close ack windows. A host-signed finish is the
 	// production clock (stampHeight / LogResidentHeight) that advances hNow.
 	nonce := uint64(len(hosts)) + 1
-	exec := hosts[nonce%uint64(len(hosts))]
-	sig := testutil.SignExecutorReceipt(t, exec, "escrow-1", nonce, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
-		testutil.ReceiptStamp{Height: afterDeadline, Hash: hash})
+	slot := uint32(nonce % uint64(len(hosts)))
+	exec := hosts[slot]
+	sig := testutil.SignExecutorReceipt(t, exec, "escrow-1", nonce, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	finish := &types.MsgFinishInference{
+		InferenceId: nonce, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 10, OutputTokens: 20, ExecutorSlot: slot, EscrowId: "escrow-1",
+		ObservedHeight: afterDeadline, ObservedBlockHash: hash,
+	}
+	finish.ProposerSig = testutil.SignProposerTx(t, exec, finish)
 	_, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{
 		txStart(&types.MsgStartInference{
 			InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-			ObservedHeight: 500, ObservedBlockHash: hash,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		}),
-		txConfirm(&types.MsgConfirmStart{
-			InferenceId: nonce, ExecutorSig: sig, ConfirmedAt: 1000,
-			ObservedHeight: afterDeadline, ObservedBlockHash: hash,
-		}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: nonce, ExecutorSig: sig}),
+		txFinish(finish),
 	})
 	require.NoError(t, err)
-	require.Len(t, applied, 2)
+	require.Len(t, applied, 3)
 
 	rec = sm.HeightSyncTurnRecord(1)
 	require.NotNil(t, rec)
@@ -275,6 +278,7 @@ func TestApplyLocalBestEffort_SiblingWarmAckApplies(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
+	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
 }
 
 func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
@@ -310,7 +314,7 @@ func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
 	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
-	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "applyHeightAck must cache the live binding")
+	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "apply-path identity must cache the live binding")
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
 	vd, err := hostSM.ValidateDiff(d2)
@@ -344,8 +348,7 @@ func TestValidateDiff_SameNonceConfirmThenWarmAck(t *testing.T) {
 	require.NoError(t, err)
 
 	// inference 2 % 3 = 2, matching hosts[2]. Confirm before ack, as compose sorts.
-	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
-		testutil.ReceiptStamp{Height: 50, Hash: hash})
+	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	ack := &types.MsgHeightAck{
 		RefNonce: 1, SlotId: 2, ObservedHeight: 50, ObservedBlockHash: hash,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
@@ -354,10 +357,9 @@ func TestValidateDiff_SameNonceConfirmThenWarmAck(t *testing.T) {
 	candidates := []*types.DevshardTx{
 		txStart(&types.MsgStartInference{
 			InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-			ObservedHeight: 50, ObservedBlockHash: hash,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		}),
-		txConfirm(&types.MsgConfirmStart{InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 1000, ObservedHeight: 50, ObservedBlockHash: hash}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 2, ExecutorSig: execSig}),
 		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
 	}
 	_, applied, err := composer.ApplyLocalBestEffort(2, candidates)
@@ -451,8 +453,11 @@ func TestValidateDiff_SiblingWarmAckFromCachedSiblingSlot(t *testing.T) {
 	require.Len(t, applied, 1)
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
-	_, err = hostSM.ValidateDiff(d2)
+	vd, err := hostSM.ValidateDiff(d2)
 	require.NoError(t, err, "L2 must accept a warm key already bound on a sibling slot")
+	require.NotContains(t, vd.WarmAfter, uint32(1), "sibling acceptance must not write a new binding")
+	require.True(t, hostSM.CommitValidated(vd))
+	require.NotContains(t, hostSM.WarmKeys(), uint32(1))
 }
 
 func dualWarmSMs(t *testing.T, hosts []*signing.Secp256k1Signer, resolver WarmKeyResolver) (composer, hostSM *StateMachine, user *signing.Secp256k1Signer) {

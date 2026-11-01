@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -171,33 +174,85 @@ func TestAFailedEncodeIsNamedForWhatItActuallyHolds(t *testing.T) {
 	}
 }
 
-// The reader prefers the compressed name, so a file left behind under the other setting would
-// outrank a newer write and serve a payload that no longer matches the committed hash.
-func TestStoringAgainUnderTheOtherSettingLeavesNoStaleSibling(t *testing.T) {
+// The first stored payload is the one a finish may already have committed, so a second store keeps
+// it, as Postgres does, and says so. The reader prefers the compressed name, so a file under the
+// other setting counts as stored too.
+func TestStoringAgainKeepsTheFirstPayloadUnderEitherSetting(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
 	if err := NewCompressingFileStorage(dir).Store(ctx, "esc", 7, 1, []byte(`"old"`), []byte(`"old"`)); err != nil {
 		t.Fatalf("first store: %v", err)
 	}
-	plainStore := NewFileStorage(dir)
-	if err := plainStore.Store(ctx, "esc", 7, 1, []byte(`"new"`), []byte(`"new"`)); err != nil {
-		t.Fatalf("second store: %v", err)
+	for _, store := range []*FileStorage{NewFileStorage(dir), NewCompressingFileStorage(dir)} {
+		if err := store.Store(ctx, "esc", 7, 1, []byte(`"new"`), []byte(`"new"`)); !errors.Is(err, ErrAlreadyStored) {
+			t.Fatalf("second store: want ErrAlreadyStored, got %v", err)
+		}
 	}
 
+	plainStore := NewFileStorage(dir)
 	prompt, response, err := plainStore.Retrieve(ctx, "esc", 7, 1)
 	if err != nil {
 		t.Fatalf("retrieve: %v", err)
 	}
-	if string(prompt) != `"new"` || string(response) != `"new"` {
-		t.Fatalf("the superseded payload was served: prompt=%s response=%s", prompt, response)
+	if string(prompt) != `"old"` || string(response) != `"old"` {
+		t.Fatalf("the first payload was replaced: prompt=%s response=%s", prompt, response)
 	}
 
 	escrowDir, err := plainStore.escrowDir("esc", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(escrowDir, "7"+compressedSuffix)); !os.IsNotExist(err) {
-		t.Fatalf("the compressed sibling outlived the write that replaced it: %v", err)
+	entries, err := os.ReadDir(escrowDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "7"+compressedSuffix {
+		t.Fatalf("want only the first payload file, got %v", entries)
+	}
+}
+
+// Of concurrent writers exactly one is stored, and the file is never a mix of two writes.
+func TestConcurrentStoresKeepExactlyOnePayload(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	store := NewFileStorage(dir)
+
+	const writers = 16
+	var wg sync.WaitGroup
+	errs := make([]error, writers)
+	for i := range writers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			body := []byte(fmt.Sprintf(`"writer %d %s"`, i, strings.Repeat("x", 1<<16)))
+			errs[i] = store.Store(ctx, "esc", 9, 1, body, body)
+		}()
+	}
+	wg.Wait()
+
+	stored := 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			stored++
+		case !errors.Is(err, ErrAlreadyStored):
+			t.Fatalf("store: %v", err)
+		}
+	}
+	if stored != 1 {
+		t.Fatalf("want exactly one stored payload, got %d", stored)
+	}
+	prompt, response, err := store.Retrieve(ctx, "esc", 9, 1)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if string(prompt) != string(response) {
+		t.Fatalf("prompt and response come from different writes")
+	}
+	escrowDir, _ := store.escrowDir("esc", 1)
+	entries, _ := os.ReadDir(escrowDir)
+	if len(entries) != 1 {
+		t.Fatalf("temporary files left behind: %v", entries)
 	}
 }

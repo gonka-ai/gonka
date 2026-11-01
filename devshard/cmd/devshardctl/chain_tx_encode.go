@@ -91,6 +91,12 @@ func encodeSettlementHostStats(hs HostStatsJSON) []byte {
 	out = appendVarintField(out, 4, hs.Cost)
 	out = appendVarintField(out, 5, uint64(hs.RequiredValidations))
 	out = appendVarintField(out, 6, uint64(hs.CompletedValidations))
+	if hs.Validated != 0 {
+		out = appendVarintField(out, 7, uint64(hs.Validated))
+	}
+	if hs.Finished != 0 {
+		out = appendVarintField(out, 8, uint64(hs.Finished))
+	}
 	return out
 }
 

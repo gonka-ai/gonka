@@ -36,6 +36,18 @@ func (r *recordingStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) 
 	r.lastMethod = "GetDiffs"
 	return nil, nil
 }
+func (r *recordingStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	r.lastMethod = "GetDiffWires"
+	return nil, nil
+}
+func (r *recordingStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	r.lastMethod = "DiffStateHash"
+	return nil, false, nil
+}
+func (r *recordingStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	r.lastMethod = "DiffSizes"
+	return nil, nil
+}
 func (r *recordingStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	r.lastMethod = "AddSignature"
 	return nil
@@ -91,6 +103,18 @@ func (r *recordingStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint6
 func (r *recordingStorage) ClearValidationObs(escrowID string) error {
 	r.lastMethod = "ClearValidationObs"
 	return nil
+}
+func (r *recordingStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	r.lastMethod = "SetValidationObsRebuildPending"
+	return nil
+}
+func (r *recordingStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	r.lastMethod = "ValidationObsRebuildPending"
+	return false, nil
+}
+func (r *recordingStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	r.lastMethod = "LockValidationObsRebuild"
+	return func() {}, true, nil
 }
 
 func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {

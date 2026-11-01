@@ -3,6 +3,7 @@ x-proxy-policy: &proxy-policy
     ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.16}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
+    - DEVSHARD_RPC_POLICY_HOST=proxy-policy-ingress
     - PROXY_PROTOCOL=true
     - PROXY_PROTOCOL_PEER=proxy-policy-ingress
     - PROXY_POLICY_READINESS_HOST=proxy-policy-app-network
@@ -266,6 +267,8 @@ services:
     image: >-
       ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.16}
     ports:
+      # Peer RPC between hosts shares these two ports with the JSON API;
+      # proxy-router tells them apart by the first bytes of a connection.
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
     environment:
@@ -288,6 +291,9 @@ services:
           - proxy-policy-ingress
     volumes:
       - proxy-router-state:/var/lib/gonka-router
+      # Same host cert nginx uses. The entrypoint concatenates it for the
+      # HTTP/2 bind only when NGINX_MODE is https or both.
+      - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/haproxy/ssl:ro
     restart: unless-stopped
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]

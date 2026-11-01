@@ -16,33 +16,33 @@ import (
 )
 
 const (
-	autoSealTestInferenceSealGraceNonces     = 2
-	autoSealTestInferenceSealGraceSeconds   = 5
-	autoSealTestBaseConfirmedAt     = 10_000
-	autoSealAgreementNumHosts       = 16
-	autoSealAgreementPipelinedCount = 80
+	autoSealTestInferenceSealGraceNonces  = 2
+	autoSealTestInferenceSealGraceSeconds = 5
+	autoSealTestBaseConfirmedAt           = 10_000
+	autoSealAgreementNumHosts             = 16
+	autoSealAgreementPipelinedCount       = 80
 )
 
 type autoSealEnv struct {
-	session   *user.Session
-	hosts     []*host.Host
-	hostSMs   []*state.StateMachine
-	userSM    *state.StateMachine
-	user      *signing.Secp256k1Signer
+	session     *user.Session
+	hosts       []*host.Host
+	hostSMs     []*state.StateMachine
+	userSM      *state.StateMachine
+	user        *signing.Secp256k1Signer
 	hostSigners []*signing.Secp256k1Signer
-	group     []types.SlotAssignment
-	escrowID  string
+	group       []types.SlotAssignment
+	escrowID    string
 }
 
 func autoSealTestConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             0,
-		FeePerNonce:                0,
-		InferenceSealGraceNonces:            autoSealTestInferenceSealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            0,
+		FeePerNonce:               0,
+		InferenceSealGraceNonces:  autoSealTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: autoSealTestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -109,7 +109,7 @@ func assertSMParity(t *testing.T, userSM, hostSM *state.StateMachine, nonce uint
 		hostRec, ok := hostSt.Inferences[id]
 		require.True(t, ok, "nonce %d id %d live on user but missing on host", nonce, id)
 		require.Equal(t, userRec.Status, hostRec.Status, "nonce %d id %d status", nonce, id)
-		require.Equal(t, userRec.ConfirmedAt, hostRec.ConfirmedAt, "nonce %d id %d confirmed_at", nonce, id)
+		require.Equal(t, userRec.ConfirmedAtHeight, hostRec.ConfirmedAtHeight, "nonce %d id %d confirmed_at_height", nonce, id)
 	}
 
 	userRoot, err := userSM.ComputeStateRoot()
@@ -153,23 +153,37 @@ func applySignedDiffToUserAndHost(t *testing.T, env *autoSealEnv, nonce uint64, 
 	return diff
 }
 
-func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint64, confirmedAt int64) {
+func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint64) {
 	t.Helper()
-	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	h, hash, _ := env.userSM.HeightSyncFloorAsOf(startNonce)
+	if h == 0 {
+		hash = nil
+	}
+	start := testutil.StartTx(inferenceID)
+	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = h, hash
+	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{start})
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
+		InferenceId: inferenceID, ExecutorSig: execSig, ObservedHeight: h, ObservedBlockHash: hash,
 	}}}
 	applySignedDiffToUserAndHost(t, env, startNonce+1, []*types.DevshardTx{confirmTx})
+}
+
+func (env *autoSealEnv) raiseFloor(t *testing.T, nonce, height uint64) uint64 {
+	t.Helper()
+	for _, d := range floorDiffs(t, env.user, env.hostSigners[0], nonce, uint64(len(env.group)), height) {
+		applySignedDiffToUserAndHost(t, env, d.Nonce, d.Txs)
+	}
+	return nonce + 2
 }
 
 func (env *autoSealEnv) finishInference(t *testing.T, inferenceID, finishNonce uint64) {
 	t.Helper()
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
-	finishMsg := &types.MsgFinishInference{
+	finishMsg := &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 		InferenceId:  inferenceID,
 		ResponseHash: append([]byte(nil), stub.NewInferenceEngine().ResponseHash...),
 		InputTokens:  80,
@@ -182,10 +196,10 @@ func (env *autoSealEnv) finishInference(t *testing.T, inferenceID, finishNonce u
 	applySignedDiffToUserAndHost(t, env, finishNonce, []*types.DevshardTx{finishTx})
 }
 
-func (env *autoSealEnv) bumpClock(t *testing.T, startNonce uint64, confirmedAt int64) uint64 {
+func (env *autoSealEnv) bumpClock(t *testing.T, startNonce, height uint64) uint64 {
 	t.Helper()
-	inferenceID := startNonce
-	env.startConfirm(t, inferenceID, startNonce, confirmedAt)
+	startNonce = env.raiseFloor(t, startNonce, height)
+	env.startConfirm(t, startNonce, startNonce)
 	return startNonce + 2
 }
 
@@ -202,10 +216,10 @@ func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenc
 	t.Helper()
 	window := len(env.group) * 3 // state.stateClockWindowFactor
 	cfg := env.userSM.Config()
-	required := state.FinishedClockRequiredSeconds(int64(cfg.InferenceSealGraceSeconds), cfg.ExecutionTimeout)
-	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + required + 1
+	required := uint64(state.FinishedClockRequiredSeconds(int64(cfg.InferenceSealGraceSeconds), cfg.ExecutionTimeout))
+	target := uint64(autoSealTestBaseConfirmedAt) + inferenceID + required + 1
 	for bump := 0; bump < window+5; bump++ {
-		startNonce = env.bumpClock(t, startNonce, targetConfirmedAt+int64(bump))
+		startNonce = env.bumpClock(t, startNonce, target+uint64(bump))
 		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {
 			return startNonce
 		}
@@ -224,8 +238,7 @@ func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenc
 func TestProtocol_UserHostApply_AutoSealAgreement_ExplicitClock(t *testing.T) {
 	env := setupAutoSealEnv(t, 5, 1_000_000)
 
-	confirmedAt := int64(autoSealTestBaseConfirmedAt + 1)
-	env.startConfirm(t, 1, 1, confirmedAt)
+	env.startConfirm(t, 1, 1)
 	env.finishInference(t, 1, 3)
 
 	require.Equal(t, types.StatusFinished, env.userSM.SnapshotState().Inferences[1].Status)
@@ -247,7 +260,7 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Sequential(t *testing.T) {
 	params := defaultParams()
 
 	for i := 0; i < autoSealAgreementPipelinedCount; i++ {
-		prepared, err := env.session.PrepareInference(params)
+		prepared, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare inference %d", i+1)
 
 		resp, err := env.session.SendOnly(ctx, prepared, nil, nil)
@@ -275,10 +288,10 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Pipelined(t *testing.T) {
 
 	const pairs = autoSealAgreementPipelinedCount / 2
 	for i := 0; i < pairs; i++ {
-		first, err := env.session.PrepareInference(params)
+		first, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare first inference pair %d", i+1)
 
-		second, err := env.session.PrepareInference(params)
+		second, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "pipeline prepare second inference pair %d", i+1)
 
 		resp1, err := env.session.SendOnly(ctx, first, nil, nil)

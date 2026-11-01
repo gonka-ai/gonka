@@ -345,3 +345,26 @@ func NumericValue(t *testing.T, value any, field string) uint64 {
 		return 0
 	}
 }
+
+// EngineBookkeepingFields are the serving engine's own, which no client may ever be shown.
+var EngineBookkeepingFields = []string{`"token_ids"`, `"prompt_token_ids"`, `"prompt_logprobs"`}
+
+// RequireNoEngineBookkeeping fails when a stream carries fields only the serving engine reads.
+func RequireNoEngineBookkeeping(t *testing.T, stream StreamResponse) {
+	t.Helper()
+	for _, event := range stream.Events {
+		for _, field := range EngineBookkeepingFields {
+			require.NotContains(t, event, field, "engine bookkeeping reached the client: %s", event)
+		}
+	}
+}
+
+// StreamCarries reports whether any data event holds the quoted field.
+func StreamCarries(stream StreamResponse, quotedField string) bool {
+	for _, event := range stream.Events {
+		if strings.Contains(event, quotedField) {
+			return true
+		}
+	}
+	return false
+}
