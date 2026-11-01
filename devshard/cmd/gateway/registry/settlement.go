@@ -33,6 +33,9 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 		defer release()
 		return work(session)
 	}
+	if r.closeInProgress(escrowID) {
+		return fmt.Errorf("%w: escrow %s is closing its session", escrow.ErrDevshardBusy, escrowID)
+	}
 	if r.servingSessions == nil {
 		return fmt.Errorf("escrow %s: no serving session factory", escrowID)
 	}
@@ -41,6 +44,14 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 		return fmt.Errorf("rehydrating serving session for escrow %s: %w", escrowID, err)
 	}
 	return errors.Join(work(session), session.Close())
+}
+
+// closeInProgress reports whether the session still owning the escrow's store is closing, so a second one must wait.
+func (r *Registry) closeInProgress(escrowID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, known := r.settlementEntryLocked(escrowID)
+	return known && entry.closeClaimed
 }
 
 func (r *Registry) openServingSession(ctx context.Context, escrowID string) (EscrowSession, error) {
