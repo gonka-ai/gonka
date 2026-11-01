@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 )
 
 func storedAccessAndKillSwitch(live *harness) {
 	disabled := true
-	live.control.overrides = config.Overrides{ModelAccess: map[string]string{"qwen": config.ModelAccessOpen}, Disabled: &disabled}
+	live.control.overrides = config.Overrides{Tunables: env.Tunables{Disabled: &disabled}, ModelAccess: map[string]string{"qwen": config.ModelAccessOpen}}
 }
 
 // Test flow:

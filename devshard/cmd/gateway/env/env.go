@@ -19,6 +19,7 @@ import (
 
 // Values mirrors every environment variable the gateway reads; nil = unset.
 type Values struct {
+	Tunables
 	Port                       *int64
 	StorageDir                 *string
 	APIKeys                    *string
@@ -39,33 +40,9 @@ type Values struct {
 	TxPollIntervalMS *int64
 	TxPollTimeoutMS  *int64
 
-	DefaultMaxTokens                       *int64
-	MaxTokensCap                           *int64
-	MaxConcurrentRequests                  *int64
-	MaxConcurrentRequestsPer10000Weight    *float64
-	PoCMaxConcurrentRequestsPer10000Weight *float64
-	MaxInputTokensInFlight                 *int64
-	AdmissionQueueWaitMS                   *int64
-	AdmissionQueuePerSlot                  *int64
+	PoCMode *string
 
-	PoCMode             *string
-	Disabled            *bool
-	DisabledMessage     *string
-	DisabledRedirectURL *string
-
-	RotationEnabled                        *bool
-	RotationPrePoCBlocks                   *int64
-	MatchWaitMS                            *int64
-	MaxConsecutiveBurns                    *int64
-	DispatchQueueDepth                     *int64
-	ForceUpstreamStreaming                 *bool
-	LogprobsOptimization                   *bool
-	MaxBufferedResponseBytes               *int64
-	WarmNewEscrows                         *bool
-	RotationSettlementEnabled              *bool
-	RotationPreviousEpochSettlementEnabled *bool
-	RotationModelsJSON                     *string
-	RotationSettleMarginBlocks             *int64
+	DispatchQueueDepth *int64
 
 	ChatCacheMaxBytes *int64
 
@@ -85,16 +62,6 @@ type Values struct {
 	CaptureSampleRate *float64
 	CaptureMaxBytes   *int64
 
-	PerfEWMAHalfLifeSeconds      *int64
-	PerfConsecutiveFailThreshold *int64
-	PerfFailureRateThreshold     *float64
-	PerfFailureRateMinVolume     *float64
-	PerfEjectionBaseSeconds      *int64
-	PerfEjectionMaxSeconds       *int64
-	PerfMaxEjectionFraction      *float64
-	PerfMinAvailableHosts        *int64
-	PerfHostStalenessSeconds     *int64
-
 	HeightSyncEnabled            *bool
 	HeightSyncRequireSeed        *bool
 	HeightSyncChainOracle        *bool
@@ -108,17 +75,7 @@ type Values struct {
 	HostPingTimeoutMS   *int64
 	HostPingConcurrency *int64
 
-	ChainSnapshotMaxAgeSeconds       *int64
 	ChainVersionsPollIntervalSeconds *int64
-
-	EngineReceiptTimeoutMS    *int64
-	EngineFirstTokenFloorMS   *int64
-	EngineFirstTokenCeilingMS *int64
-	EngineInterChunkStallMS   *int64
-	EngineLoserGraceMS        *int64
-
-	EngineMaxConcurrentTimeoutVotes *int64
-	EngineHedgeFirstTokenFloorMS    *int64
 
 	ContentionProfiles *bool
 }

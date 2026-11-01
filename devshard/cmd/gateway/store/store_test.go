@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/filters"
 )
 
@@ -62,7 +63,7 @@ func TestOverridesRoundTripAndEmptyLoad(t *testing.T) {
 	}
 
 	maxTokens := int64(1234)
-	saved := config.Overrides{DefaultMaxTokens: &maxTokens}
+	saved := config.Overrides{Tunables: env.Tunables{DefaultMaxTokens: &maxTokens}}
 	if err := testStore.SaveOverrides(ctx, saved); err != nil {
 		t.Fatalf("SaveOverrides(): %v", err)
 	}
@@ -75,7 +76,7 @@ func TestOverridesRoundTripAndEmptyLoad(t *testing.T) {
 	}
 
 	newTokens := int64(999)
-	if err := testStore.SaveOverrides(ctx, config.Overrides{DefaultMaxTokens: &newTokens}); err != nil {
+	if err := testStore.SaveOverrides(ctx, config.Overrides{Tunables: env.Tunables{DefaultMaxTokens: &newTokens}}); err != nil {
 		t.Fatalf("second SaveOverrides(): %v", err)
 	}
 	replaced, err := testStore.LoadOverrides(ctx)
