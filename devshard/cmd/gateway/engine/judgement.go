@@ -204,6 +204,16 @@ func (o RaceOutcome) IsWinner(a AttemptOutcome) bool {
 	return o.WinnerNonce != 0 && a.Nonce == o.WinnerNonce
 }
 
+// Winner returns the crowned attempt, nil when nobody was crowned.
+func (o RaceOutcome) Winner() *AttemptOutcome {
+	for index := range o.Attempts {
+		if o.IsWinner(o.Attempts[index]) {
+			return &o.Attempts[index]
+		}
+	}
+	return nil
+}
+
 func (o RaceOutcome) failureReason(a AttemptOutcome) string {
 	if a.PhaseTransitionAborted {
 		return string(TimeoutReasonPhaseAborted)

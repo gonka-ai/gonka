@@ -947,3 +947,16 @@ func TestEveryTerminalReportsItsVerdict(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Build an outcome whose second attempt won, and one with no winner.
+//  2. Assert Winner returns the crowned attempt, and nil when nobody was crowned.
+func TestWinnerReturnsTheCrownedAttempt(t *testing.T) {
+	crowned := RaceOutcome{WinnerNonce: 2, Attempts: []AttemptOutcome{{Nonce: 1}, {Nonce: 2}}}
+	if winner := crowned.Winner(); winner == nil || winner.Nonce != 2 {
+		t.Fatalf("Winner = %+v, want nonce 2", winner)
+	}
+	if winner := (RaceOutcome{Attempts: []AttemptOutcome{{Nonce: 1}}}).Winner(); winner != nil {
+		t.Fatalf("Winner = %+v, want nil", winner)
+	}
+}
