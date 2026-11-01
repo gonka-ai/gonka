@@ -20,6 +20,7 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 		name                string
 		utilization         float64
 		currentPrice        uint64
+		setZeroPrice        bool // force-store a literal 0 current price (harness skips SetModelCurrentPrice when currentPrice==0)
 		stabilityLowerBound float64
 		stabilityUpperBound float64
 		priceElasticity     float64
@@ -27,6 +28,7 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 		basePerTokenPrice   uint64
 		expectedOldPrice    uint64
 		expectedNewPrice    uint64
+		expectIncrease      bool
 		expectError         bool
 	}{
 		{
@@ -66,6 +68,7 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			basePerTokenPrice:   100,
 			expectedOldPrice:    100,
 			expectedNewPrice:    101, // 100 * (1 + (0.80-0.60) * 0.05) = 100 * 1.01 = 101
+			expectIncrease:      true,
 			expectError:         false,
 		},
 		{
@@ -105,6 +108,98 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			basePerTokenPrice:   100,
 			expectedOldPrice:    100,
 			expectedNewPrice:    102, // 100 * (1 + (1.00-0.60) * 0.05) = 100 * 1.02 = 102
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			name:                "Minimum price escapes increase truncation trap",
+			utilization:         1.00,
+			currentPrice:        1,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    1,
+			expectedNewPrice:    2,
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			name:                "Sub-50 price increases at capped boundary",
+			utilization:         1.00,
+			currentPrice:        49,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    49,
+			expectedNewPrice:    50,
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			name:                "Price 50 still increases by capped amount",
+			utilization:         1.00,
+			currentPrice:        50,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    50,
+			expectedNewPrice:    51,
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			name:                "Exact capped increase remains unchanged",
+			utilization:         1.00,
+			currentPrice:        1000,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    1000,
+			expectedNewPrice:    1020,
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			name:                "Sub-quantum increase rounds up",
+			utilization:         0.61,
+			currentPrice:        1000,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    1000,
+			expectedNewPrice:    1001,
+			expectIncrease:      true,
+			expectError:         false,
+		},
+		{
+			// Edge case: a literal stored price of 0 in the increase branch.
+			// newPriceDec = 0 * 1.02 = 0, Ceil(0) = 0, so the raw result is 0;
+			// the MinPerTokenPrice floor then clamps it up to minPrice (1 here).
+			// oldPrice is 0, so newPrice (1) > oldPrice (0) still holds — the
+			// quantum property assertion is skipped here by its explicit
+			// `oldPrice > 0` guard.
+			name:                "Zero current price, high utilization - clamped to min floor",
+			utilization:         1.00,
+			currentPrice:        0,
+			setZeroPrice:        true,
+			stabilityLowerBound: 0.40,
+			stabilityUpperBound: 0.60,
+			priceElasticity:     0.05,
+			minPerTokenPrice:    1,
+			basePerTokenPrice:   100,
+			expectedOldPrice:    0,
+			expectedNewPrice:    1,
+			expectIncrease:      true,
 			expectError:         false,
 		},
 		{
@@ -142,8 +237,8 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			}
 			k.SetParams(ctx, params)
 
-			// Set current price if specified
-			if tt.currentPrice > 0 {
+			// Set current price if specified (setZeroPrice forces a literal 0 to be stored)
+			if tt.currentPrice > 0 || tt.setZeroPrice {
 				err := k.SetModelCurrentPrice(sdk.UnwrapSDKContext(ctx), "test-model", tt.currentPrice)
 				require.NoError(t, err)
 			}
@@ -159,6 +254,29 @@ func TestCalculateModelDynamicPrice(t *testing.T) {
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expectedOldPrice, oldPrice)
 			assert.Equal(t, tt.expectedNewPrice, newPrice)
+			if tt.expectIncrease {
+				// Monotonicity guard: every increase-branch case must strictly
+				// rise above the current price (this is the whole point of the
+				// Ceil() fix — sub-quantum increases must never round back down).
+				assert.Greater(t, newPrice, oldPrice, "increase branch must strictly raise the price above currentPrice")
+
+				// Independent quantum property (derived from the trap arithmetic,
+				// NOT from the keeper's own clamp/Ceil expression, so it can
+				// actually fail): under the default 2% cap (upper=0.60,
+				// elasticity=0.05 => factor <= 1.02), any oldPrice below 50
+				// times a factor in (1, 1.02] lands strictly inside
+				// (oldPrice, oldPrice+1], so the result must rise by exactly one
+				// integer quantum. A missing Ceil (plain floor) would give +0 for
+				// every such price, and Round-half-up would give +0 for
+				// oldPrice<25 — both regressions are caught here. The exact
+				// expectedNewPrice assertions above independently pin the cap
+				// itself (e.g. 1000 -> 1020, 1000@0.61 -> 1001).
+				if oldPrice > 0 && oldPrice < 50 &&
+					tt.stabilityUpperBound == 0.60 && tt.priceElasticity == 0.05 {
+					assert.Equal(t, oldPrice+1, newPrice,
+						"sub-50 price under the 2% cap must rise by exactly one integer quantum")
+				}
+			}
 		})
 	}
 }
