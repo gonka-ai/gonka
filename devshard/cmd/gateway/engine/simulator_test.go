@@ -232,7 +232,7 @@ type simDispatchParams struct{ prompt string }
 type simPoster struct {
 	entered chan uint64
 	release chan struct{}
-	vote    string
+	vote    TimeoutKind
 	err     error
 
 	mu       sync.Mutex

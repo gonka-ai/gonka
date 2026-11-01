@@ -318,9 +318,9 @@ func (r *RaceRecorder) RecordTimeout(event engine.TimeoutEvent) {
 	r.markSeen(participant, model)
 	r.timeoutActions.WithLabelValues(
 		participant, model,
-		metricLabel(event.Kind, labelUnknown),
-		metricLabel(event.Action, labelUnknown),
-		metricLabel(event.Reason, reasonNone),
+		metricLabel(string(event.Kind), labelUnknown),
+		metricLabel(string(event.Action), labelUnknown),
+		metricLabel(string(event.Reason), reasonNone),
 	).Inc()
 	completeness := metricLabel(string(event.Completeness), labelUnknown)
 	for _, cause := range event.VerifyRejects {

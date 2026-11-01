@@ -5,6 +5,7 @@ package accounting
 import (
 	"time"
 
+	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
 	"devshard/types"
 )
@@ -57,17 +58,17 @@ type CounterKey struct {
 	SlotID      uint32      `json:"slot_id"`
 	Disposition Disposition `json:"disposition"`
 
-	GhostReason     string `json:"ghost_reason,omitempty"`
-	TimeoutKind     string `json:"timeout_kind,omitempty"`
-	TimeoutAction   string `json:"timeout_action,omitempty"`
-	TimeoutReason   string `json:"timeout_reason,omitempty"`
-	Terminal        string `json:"terminal,omitempty"`
-	Phase           Phase  `json:"phase,omitempty"`
-	SlowReceipt     bool   `json:"slow_receipt,omitempty"`
-	SlowChunk       bool   `json:"slow_chunk,omitempty"`
-	ClockDrifted    bool   `json:"clock_drifted,omitempty"`
-	SlowDecode      bool   `json:"slow_decode,omitempty"`
-	LogprobsDecoded bool   `json:"logprobs_decoded,omitempty"`
+	GhostReason     string               `json:"ghost_reason,omitempty"`
+	TimeoutKind     engine.TimeoutKind   `json:"timeout_kind,omitempty"`
+	TimeoutAction   engine.TimeoutAction `json:"timeout_action,omitempty"`
+	TimeoutReason   engine.TimeoutReason `json:"timeout_reason,omitempty"`
+	Terminal        string               `json:"terminal,omitempty"`
+	Phase           Phase                `json:"phase,omitempty"`
+	SlowReceipt     bool                 `json:"slow_receipt,omitempty"`
+	SlowChunk       bool                 `json:"slow_chunk,omitempty"`
+	ClockDrifted    bool                 `json:"clock_drifted,omitempty"`
+	SlowDecode      bool                 `json:"slow_decode,omitempty"`
+	LogprobsDecoded bool                 `json:"logprobs_decoded,omitempty"`
 }
 
 // Overcounted is the impossible case: more classified than the chain assigned.

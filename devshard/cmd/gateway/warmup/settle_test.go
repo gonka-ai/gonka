@@ -12,7 +12,7 @@ import (
 )
 
 type stubPoster struct {
-	vote  string
+	vote  engine.TimeoutKind
 	err   error
 	calls int
 }

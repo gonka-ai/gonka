@@ -327,9 +327,9 @@ func TestATimeoutVoteIsCountedWhateverItsAction(t *testing.T) {
 			expectCounter(t, telemetry, "devshard_gateway_timeout_actions_total", labels{
 				"participant_key": testCase.event.Participant,
 				"model":           testCase.event.Model,
-				"kind":            testCase.event.Kind,
-				"action":          testCase.event.Action,
-				"reason":          testCase.event.Reason,
+				"kind":            string(testCase.event.Kind),
+				"action":          string(testCase.event.Action),
+				"reason":          string(testCase.event.Reason),
 			}, 1)
 		})
 	}
@@ -412,10 +412,10 @@ func TestEmittedLabelValuesMatchTheirWireStrings(t *testing.T) {
 		{engine.VisibilityFailedNotFinished, "failed_not_finished"},
 		{engine.RolePrimary, "primary"},
 		{engine.RoleSpeculative, "speculative"},
-		{engine.TimeoutActionSkipped, "skipped"},
-		{engine.TimeoutActionStarted, "started"},
-		{engine.TimeoutActionCompleted, "completed"},
-		{engine.TimeoutActionFailed, "failed"},
+		{string(engine.TimeoutActionSkipped), "skipped"},
+		{string(engine.TimeoutActionStarted), "started"},
+		{string(engine.TimeoutActionCompleted), "completed"},
+		{string(engine.TimeoutActionFailed), "failed"},
 		{outcomeFailure, "failure"},
 	}
 	for _, label := range pinned {

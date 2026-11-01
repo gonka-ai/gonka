@@ -71,28 +71,40 @@ const (
 	VisibilityFailedNotFinished = "failed_not_finished"
 )
 
+// TimeoutKind is what a nonce was owed.
+type TimeoutKind string
+
+// TimeoutAction is what the gateway did about it.
+type TimeoutAction string
+
+// TimeoutReason is why.
+type TimeoutReason string
+
 // The vocabulary of a TimeoutEvent: what a nonce was owed, what the gateway did about it, and why. A
 // reason outside this set normalises to "unknown" in the ledger's report, and the fact becomes invisible.
 const (
-	TimeoutKindRefused   = "refused"
-	TimeoutKindExecution = "execution"
-	TimeoutKindErrorMiss = "error_miss"
+	TimeoutKindUnset     TimeoutKind = ""
+	TimeoutKindRefused   TimeoutKind = "refused"
+	TimeoutKindExecution TimeoutKind = "execution"
+	TimeoutKindErrorMiss TimeoutKind = "error_miss"
 
-	TimeoutActionSkipped   = "skipped"
-	TimeoutActionStarted   = "started"
-	TimeoutActionCompleted = "completed"
-	TimeoutActionFailed    = "failed"
-	TimeoutActionAbandoned = "abandoned_by_restart"
+	TimeoutActionUnset     TimeoutAction = ""
+	TimeoutActionSkipped   TimeoutAction = "skipped"
+	TimeoutActionStarted   TimeoutAction = "started"
+	TimeoutActionCompleted TimeoutAction = "completed"
+	TimeoutActionFailed    TimeoutAction = "failed"
+	TimeoutActionAbandoned TimeoutAction = "abandoned_by_restart"
 
-	TimeoutReasonNone            = "none"
-	TimeoutReasonNoPoster        = "no_poster"
-	TimeoutReasonPhaseAborted    = "phase_transition_aborted"
-	TimeoutReasonEmptyStream     = "empty_stream_without_non_empty_winner"
-	TimeoutReasonNonceFinished   = "nonce_already_finished"
-	TimeoutReasonLongResponse    = "long_response_after_content"
-	TimeoutReasonCollectionError = "timeout_collection_error"
-	TimeoutReasonNotApplied      = "timeout_not_applied"
-	TimeoutReasonEscrowGone      = "escrow_gone_from_hosts"
+	TimeoutReasonUnset           TimeoutReason = ""
+	TimeoutReasonNone            TimeoutReason = "none"
+	TimeoutReasonNoPoster        TimeoutReason = "no_poster"
+	TimeoutReasonPhaseAborted    TimeoutReason = "phase_transition_aborted"
+	TimeoutReasonEmptyStream     TimeoutReason = "empty_stream_without_non_empty_winner"
+	TimeoutReasonNonceFinished   TimeoutReason = "nonce_already_finished"
+	TimeoutReasonLongResponse    TimeoutReason = "long_response_after_content"
+	TimeoutReasonCollectionError TimeoutReason = "timeout_collection_error"
+	TimeoutReasonNotApplied      TimeoutReason = "timeout_not_applied"
+	TimeoutReasonEscrowGone      TimeoutReason = "escrow_gone_from_hosts"
 )
 
 // How an attempt ended, as the ledger, the metrics and the logs all name it.

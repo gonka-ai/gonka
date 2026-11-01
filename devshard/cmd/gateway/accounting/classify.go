@@ -1,6 +1,8 @@
 package accounting
 
-import "devshard/cmd/gateway/engine"
+import (
+	"devshard/cmd/gateway/engine"
+)
 
 // A burn's record carries the gateway's own prompt and reserve. See docs/accounting.md, "Money and tokens".
 func (e *escrowLedger) isGhost(nonce uint64) bool {
@@ -40,7 +42,7 @@ func classify(slotID uint32, record *nonceRecord) (CounterKey, bool) {
 	case record.finished:
 		key.Disposition = finishedDisposition(record.usage)
 		return raceFacts(key, record), true
-	case record.timeoutAction == "":
+	case record.timeoutAction == engine.TimeoutActionUnset:
 		return key, false
 	case !record.sent:
 		key.Disposition = DispositionUnfinishedRefused
@@ -88,7 +90,7 @@ func unfinishedDisposition(record *nonceRecord) Disposition {
 	switch {
 	case record.timeoutKind == engine.TimeoutKindRefused:
 		return DispositionUnfinishedRefused
-	case record.timeoutKind != "":
+	case record.timeoutKind != engine.TimeoutKindUnset:
 		return DispositionUnfinishedExecution
 	case record.acknowledged:
 		return DispositionUnfinishedExecution

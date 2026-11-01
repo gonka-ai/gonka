@@ -19,7 +19,7 @@ type recordedPost struct {
 
 type stubPoster struct {
 	posts  []recordedPost
-	vote   string
+	vote   TimeoutKind
 	detail string
 	err    error
 }
@@ -141,7 +141,7 @@ func TestTimeoutLadderSkipConditions(t *testing.T) {
 		name       string
 		attempt    AttemptOutcome
 		wantPosted bool
-		wantReason string
+		wantReason TimeoutReason
 	}{
 		{name: "no_skip_condition", attempt: unsettledAttempt(), wantPosted: true, wantReason: TimeoutReasonNone},
 		{name: "phase_transition_aborted", attempt: phaseAborted, wantReason: TimeoutReasonPhaseAborted},
@@ -223,7 +223,7 @@ func TestTimeoutKindFollowsReceipt(t *testing.T) {
 	testCases := []struct {
 		name     string
 		attempt  AttemptOutcome
-		wantKind string
+		wantKind TimeoutKind
 	}{
 		{name: "never_receipted", attempt: unsettledAttempt(), wantKind: TimeoutKindRefused},
 		{name: "receipted_then_failed", attempt: received, wantKind: TimeoutKindExecution},
@@ -369,7 +369,7 @@ func TestSettleTimeoutsCarriesTheVerifierFailureItWasGiven(t *testing.T) {
 		name       string
 		detail     string
 		err        error
-		wantReason string
+		wantReason TimeoutReason
 	}{
 		{"a named verifier failure", "verifier_unreachable", errors.New("collect"), "verifier_unreachable"},
 		{"an unnamed collection failure", "", errors.New("collect"), TimeoutReasonCollectionError},

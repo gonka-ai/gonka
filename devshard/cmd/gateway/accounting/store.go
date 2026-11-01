@@ -56,20 +56,20 @@ type SlotActivity struct {
 }
 
 type PersistedNonce struct {
-	Nonce           uint64 `json:"nonce"`
-	Sent            bool   `json:"sent"`
-	Acknowledged    bool   `json:"acknowledged"`
-	Usage           Usage  `json:"usage"`
-	TimeoutKind     string `json:"timeout_kind,omitempty"`
-	TimeoutAction   string `json:"timeout_action,omitempty"`
-	TimeoutReason   string `json:"timeout_reason,omitempty"`
-	Terminal        string `json:"terminal,omitempty"`
-	Phase           Phase  `json:"phase,omitempty"`
-	SlowReceipt     bool   `json:"slow_receipt,omitempty"`
-	SlowChunk       bool   `json:"slow_chunk,omitempty"`
-	ClockDrifted    bool   `json:"clock_drifted,omitempty"`
-	SlowDecode      bool   `json:"slow_decode,omitempty"`
-	LogprobsDecoded bool   `json:"logprobs_decoded,omitempty"`
+	Nonce           uint64               `json:"nonce"`
+	Sent            bool                 `json:"sent"`
+	Acknowledged    bool                 `json:"acknowledged"`
+	Usage           Usage                `json:"usage"`
+	TimeoutKind     engine.TimeoutKind   `json:"timeout_kind,omitempty"`
+	TimeoutAction   engine.TimeoutAction `json:"timeout_action,omitempty"`
+	TimeoutReason   engine.TimeoutReason `json:"timeout_reason,omitempty"`
+	Terminal        string               `json:"terminal,omitempty"`
+	Phase           Phase                `json:"phase,omitempty"`
+	SlowReceipt     bool                 `json:"slow_receipt,omitempty"`
+	SlowChunk       bool                 `json:"slow_chunk,omitempty"`
+	ClockDrifted    bool                 `json:"clock_drifted,omitempty"`
+	SlowDecode      bool                 `json:"slow_decode,omitempty"`
+	LogprobsDecoded bool                 `json:"logprobs_decoded,omitempty"`
 }
 
 type PersistedServiceCount struct {

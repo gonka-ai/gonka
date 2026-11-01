@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
 	"devshard/user"
 )
@@ -32,7 +33,7 @@ func (n *recordingWarmupNarrator) WarmupLedgerOpenFailed(escrowID string, err er
 	n.calls = append(n.calls, fmt.Sprintf("ledger open failed %s: %v", escrowID, err))
 }
 
-func (n *recordingWarmupNarrator) WarmupVoted(escrowID string, nonce uint64, action, reason string) {
+func (n *recordingWarmupNarrator) WarmupVoted(escrowID string, nonce uint64, action engine.TimeoutAction, reason engine.TimeoutReason) {
 	n.calls = append(n.calls, fmt.Sprintf("voted %s nonce %d %s %s", escrowID, nonce, action, reason))
 }
 

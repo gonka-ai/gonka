@@ -206,7 +206,7 @@ func (o RaceOutcome) IsWinner(a AttemptOutcome) bool {
 
 func (o RaceOutcome) failureReason(a AttemptOutcome) string {
 	if a.PhaseTransitionAborted {
-		return TimeoutReasonPhaseAborted
+		return string(TimeoutReasonPhaseAborted)
 	}
 	if reason := a.Terminal.reason(); reason != "" {
 		return reason

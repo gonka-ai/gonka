@@ -469,11 +469,11 @@ func TestEveryFindingCodeIsDocumented(t *testing.T) {
 //  1. For each gateway-caused timeout reason (phase aborted, collection error, not applied, no poster, long response), build a record of 100 assigned nonces, 50 finished and used, 50 unfinished-refused tagged with that reason.
 //  2. Assert the findings for each case carry no `FindingRefusals` code.
 func TestFailuresThisGatewayCausedAreNotChargedToTheHost(t *testing.T) {
-	for _, reason := range []string{
+	for _, reason := range []engine.TimeoutReason{
 		engine.TimeoutReasonPhaseAborted, engine.TimeoutReasonCollectionError,
 		engine.TimeoutReasonNotApplied, engine.TimeoutReasonNoPoster, engine.TimeoutReasonLongResponse,
 	} {
-		t.Run(reason, func(t *testing.T) {
+		t.Run(string(reason), func(t *testing.T) {
 			record := recordWith(100, map[Disposition]uint64{
 				DispositionFinishedUsed:      50,
 				DispositionUnfinishedRefused: 50,
