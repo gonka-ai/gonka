@@ -44,6 +44,8 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
 			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant),
 			logkey.FinishLagMS, step.FinishLag.Milliseconds())
+	default:
+		lines.Error("race step the journal has no line for", logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Kind, int(step.Kind))
 	}
 }
 

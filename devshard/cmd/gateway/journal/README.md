@@ -68,6 +68,7 @@ The `journal` step sits between `escrow sessions` and `nonce accounting` (`app/l
 | `KindWarmupProbe` | `warmup.Prober.record` through `ProbeRecorded` | `RecordProbe` | `escrow warmup could not settle its nonce`, Warn (`render_money.go`), when `RecordProbe` returns the book's refusal |
 | `KindNonceStranded` | `raceCoordinator.strand` through `RecordStep` (`engine/race.go`) | none | `nonce stranded`, Warn (`render_race.go`) |
 | `KindHostDiverged` | `raceCoordinator.stateDiverged` through `RecordStep` (`engine/report.go`) | none | `host blocked for state divergence` or `host rewound for state divergence`, Warn (`render_race.go`) |
+| `KindRaceStepUnnamed` | a `RaceStepKind` that `raceStepKind` does not list | none | `race step the journal has no line for`, Error (`render_race.go`) |
 | `KindNonceCommitted` | `raceCoordinator.launch` through `RecordStep` (`engine/pick.go`) | none | `nonce committed`, Info (`render_race.go`) |
 | `KindEscalationUnfilled` | `raceCoordinator.reportUnfilledPick` through `RecordStep` (`engine/pick.go`) | none | `escalation unfilled`, Info (`render_race.go`) |
 | `KindAttemptCrowned` | `raceCoordinator.crownWinner` through `RecordStep` (`engine/crown.go`) | none | `attempt crowned`, Info (`render_race.go`) |

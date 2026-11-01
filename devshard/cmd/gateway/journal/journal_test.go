@@ -403,3 +403,28 @@ func TestRaceStepKindMapsEveryStepToItsLane(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Map a race step kind the journal does not list.
+//  2. Assert it is not filed as a diverged host and stays off the money lane.
+//  3. Render it and assert an error line is written.
+func TestAnUnlistedRaceStepIsNamedAndLogged(t *testing.T) {
+	kind := raceStepKind(engine.RaceStepKind(250))
+	if kind != KindRaceStepUnnamed || kind.onMoneyLane() {
+		t.Fatalf("raceStepKind = %v on the money lane %v, want %v off it", kind, kind.onMoneyLane(), KindRaceStepUnnamed)
+	}
+
+	lines := &errorCountingLines{}
+	renderRaceStep(lines, &engine.RaceStep{Kind: engine.RaceStepKind(250), RequestID: "request-1", EscrowID: "escrow-1"})
+
+	if lines.errors != 1 {
+		t.Fatalf("error lines = %d, want one", lines.errors)
+	}
+}
+
+type errorCountingLines struct {
+	discardLines
+	errors int
+}
+
+func (lines *errorCountingLines) Error(string, ...any) { lines.errors++ }
