@@ -64,7 +64,6 @@ const (
 	actionSettleEscrow = "settle-escrow"
 )
 
-// txSigning is what every tx this client signs shares; ttl is caller-supplied so encoding stays deterministic.
 type txSigning struct {
 	signer        *signing.Secp256k1Signer
 	chainID       string
@@ -75,7 +74,6 @@ type txSigning struct {
 	ttl           time.Time
 }
 
-// signMessage assembles and signs an unordered tx around the message encode returns.
 func (s txSigning) signMessage(action, typeURL string, encode func() ([]byte, error)) ([]byte, error) {
 	if strings.TrimSpace(s.chainID) == "" {
 		return nil, fmt.Errorf("chain id is required")
@@ -99,14 +97,12 @@ func (s txSigning) signMessage(action, typeURL string, encode func() ([]byte, er
 	return encodeTxRaw(bodyBytes, authInfoBytes, truncated), nil
 }
 
-// buildCreateEscrowTx assembles and signs an unordered MsgCreateDevshardEscrow tx.
 func buildCreateEscrowTx(parameters txSigning, amount uint64, modelID string) ([]byte, error) {
 	return parameters.signMessage(actionCreateEscrow, createEscrowMsgTypeURL, func() ([]byte, error) {
 		return encodeMsgCreateDevshardEscrow(parameters.signer.Address(), amount, modelID)
 	})
 }
 
-// buildSettleEscrowTx assembles and signs an unordered MsgSettleDevshardEscrow tx; settler may differ from the broadcasting signer.
 func buildSettleEscrowTx(parameters txSigning, settler string, input SettlementInput) ([]byte, error) {
 	return parameters.signMessage(actionSettleEscrow, settleEscrowMsgTypeURL, func() ([]byte, error) {
 		return encodeMsgSettleDevshardEscrow(settler, input)

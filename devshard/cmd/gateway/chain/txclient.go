@@ -212,7 +212,6 @@ func (c *TxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Si
 	return SettleEscrowResult{EscrowID: input.EscrowID, TxHash: txHash, Settler: settler}, nil
 }
 
-// signingFor resolves what a tx of this signer needs from the chain.
 func (c *TxClient) signingFor(ctx context.Context, signer *signing.Secp256k1Signer) (txSigning, error) {
 	chainID, err := c.resolveChainID(ctx)
 	if err != nil {
@@ -233,7 +232,6 @@ func (c *TxClient) signingFor(ctx context.Context, signer *signing.Secp256k1Sign
 	}, nil
 }
 
-// broadcastPrepared records the intent before the tx can land, broadcasts it, and returns the hash both sides agree on.
 func (c *TxClient) broadcastPrepared(ctx context.Context, txBytes []byte, intent string, onPrepared func(txHash string) error) (string, error) {
 	txHash := txHashFromBytes(txBytes)
 	if onPrepared != nil {

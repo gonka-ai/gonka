@@ -126,7 +126,6 @@ func splitCommaSeparated(raw string) []string {
 	return cleaned
 }
 
-// applyTunables merges one layer of the settings both layers can set.
 func applyTunables(configuration *Config, tunables env.Tunables) {
 	overrideIfSet(&configuration.Limits.DefaultMaxTokens, tunables.DefaultMaxTokens)
 	overrideIfSet(&configuration.Limits.MaxTokensCap, tunables.MaxTokensCap)

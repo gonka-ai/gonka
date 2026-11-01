@@ -57,7 +57,6 @@ var (
 	}()
 )
 
-// terminalTraits is what the failure reason and the limiter verdict read from a terminal; an empty reason is a win or a loss.
 type terminalTraits struct {
 	reason     string
 	verdict    limits.Verdict

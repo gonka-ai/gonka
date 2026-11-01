@@ -702,7 +702,7 @@ func TestEveryRecoveredStatusRoundTripsThroughItsTerminal(t *testing.T) {
 //  2. Assert each one has a non-empty name that is not the unnamed/unknown placeholder.
 //  3. Assert a win and a loss both report an empty failure reason.
 func TestEveryTerminalHasAName(t *testing.T) {
-	for terminal := TerminalUnclassified; terminal < terminalCount; terminal++ {
+	for terminal := range terminalCount {
 		if terminal.String() == "" {
 			t.Fatalf("terminal %d has no name", terminal)
 		}
@@ -937,7 +937,7 @@ func TestEveryTerminalReportsItsVerdict(t *testing.T) {
 		TerminalEmptyStream: limits.ModelOutcome, TerminalBurnEmpty: limits.ModelOutcome, TerminalErrorStream: limits.ModelOutcome, TerminalCapabilityRefused: limits.ModelOutcome,
 		TerminalResponseTooLarge: limits.ModelOutcome, TerminalRequestTooLarge: limits.ModelOutcome, TerminalEscrowLookupLimited: limits.ModelOutcome,
 	}
-	for terminal := TerminalUnclassified; terminal < terminalCount; terminal++ {
+	for terminal := range terminalCount {
 		wanted, known := verdicts[terminal]
 		if !known {
 			wanted = limits.ModelOutcome

@@ -86,7 +86,6 @@ func assembleSSEBody(body []byte) []byte {
 	}
 }
 
-// decodeStreamedEvent decodes an event as decodePayload does, for the object it must be.
 func decodeStreamedEvent(payload []byte) (map[string]any, bool) {
 	decoded, _, ok := decodePayload(payload)
 	if !ok {

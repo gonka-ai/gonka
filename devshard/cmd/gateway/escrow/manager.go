@@ -73,7 +73,6 @@ type Manager struct {
 	cancel      context.CancelFunc
 }
 
-// settlementSlots is who may settle now: one slot per escrow, the two budgets, and the sweeps that may still retry.
 type settlementSlots struct {
 	inFlight     inFlightSet
 	budgeted     inFlightSet
@@ -81,7 +80,6 @@ type settlementSlots struct {
 	sweepRetries retryWindows
 }
 
-// deadlineWatch is what the deadline pass remembers between ticks.
 type deadlineWatch struct {
 	narrated map[string]bool
 	counts   deadlineCounter

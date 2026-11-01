@@ -18,7 +18,6 @@ import (
 	"devshard/user"
 )
 
-// nearBridgePrePoCWindows is how many pre-PoC windows before the switch count as near the bridge.
 const nearBridgePrePoCWindows = 3
 
 type modelReading struct {

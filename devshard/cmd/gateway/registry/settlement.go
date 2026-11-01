@@ -49,7 +49,6 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 	return errors.Join(work(session), session.Close())
 }
 
-// closeInProgress reports whether the session still owning the escrow's store is closing, so a second one must wait.
 func (r *Registry) closeInProgress(escrowID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
