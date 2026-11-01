@@ -86,23 +86,11 @@ func assembleSSEBody(body []byte) []byte {
 	}
 }
 
-// decodeStreamedEvent stays on the standard library with UseNumber, as stripInternalFields does.
+// decodeStreamedEvent decodes an event as decodePayload does, for the object it must be.
 func decodeStreamedEvent(payload []byte) (map[string]any, bool) {
-	decoder := stdjson.NewDecoder(bytes.NewReader(payload))
-	decoder.UseNumber()
-	var decoded any
-	// More() matches the strip: a payload carrying a second object is one no client can read.
-	if err := decoder.Decode(&decoded); err != nil || decoder.More() {
-		normalized, replaced := ReplaceNonFiniteNumbers(payload)
-		if !replaced {
-			return nil, false
-		}
-		decoder = stdjson.NewDecoder(bytes.NewReader(normalized))
-		decoder.UseNumber()
-		decoded = nil
-		if err := decoder.Decode(&decoded); err != nil || decoder.More() {
-			return nil, false
-		}
+	decoded, _, ok := decodePayload(payload)
+	if !ok {
+		return nil, false
 	}
 	object, isObject := decoded.(map[string]any)
 	return object, isObject
