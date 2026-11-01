@@ -729,3 +729,53 @@ func TestABridgeShortOfItsTempsPromotesInsteadOfRetiring(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Build a rotation manager whose create broadcasts, keeps its commitment and never confirms.
+//  2. Call prepareBridge three times for a model with a temp_count of one.
+//  3. Assert one create was broadcast and one commitment is open.
+func TestABridgeFillDoesNotBuyAgainWhileATempCommitmentIsOpen(t *testing.T) {
+	testStore := newFakeStore()
+	creates := 0
+	txClient := &fakeTxClient{createEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, _ uint64, _ string, onPrepared func(string) error) (chain.CreateEscrowResult, error) {
+		creates++
+		if err := onPrepared(fmt.Sprintf("TX-%d", creates)); err != nil {
+			return chain.CreateEscrowResult{}, err
+		}
+		return chain.CreateEscrowResult{}, errors.New("broadcast but not confirmed")
+	}}
+	m := newRotationManager(t, testStore, txClient, false)
+	models := []ModelConfig{{ModelID: "model-a", TempCount: 1, TargetCount: 3, Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}}
+
+	for range 3 {
+		_ = m.prepareBridge(context.Background(), servedSnapshot(9, 500, "model-a"), models, nil)
+	}
+
+	require.Equal(t, 1, creates)
+	commitments, err := testStore.LoadCommitments(context.Background())
+	require.NoError(t, err)
+	require.Len(t, commitments, 1)
+}
+
+// Test flow:
+//  1. Build a rotation manager holding one open temp commitment for the bridge label, with max_unsettled leaving room for one more escrow.
+//  2. Call prepareBridge for a model with a temp_count of two.
+//  3. Assert the second temp was created: the open commitment is not charged against both the target and the room.
+func TestABridgeFillChargesAnOpenTempCommitmentOnce(t *testing.T) {
+	testStore := newFakeStore()
+	snapshot := servedSnapshot(9, 500, "model-a")
+	open := store.Commitment{TxHash: "TX-OPEN", Model: "model-a", Role: roleTemp, Epoch: bridgeLabel(snapshot), PrivateKeyEnv: "MODEL_A_KEY"}
+	require.NoError(t, testStore.SaveCommitment(context.Background(), open))
+	creates := 0
+	createEscrow := succeedingCreateEscrowFn(200)
+	txClient := &fakeTxClient{createEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, model string, onPrepared func(string) error) (chain.CreateEscrowResult, error) {
+		creates++
+		return createEscrow(ctx, signer, amount, model, onPrepared)
+	}}
+	m := newRotationManager(t, testStore, txClient, false)
+	models := []ModelConfig{{ModelID: "model-a", TempCount: 2, TargetCount: 3, MaxUnsettled: 2, Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}}
+
+	_ = m.prepareBridge(context.Background(), snapshot, models, nil)
+
+	require.Equal(t, 1, creates)
+}

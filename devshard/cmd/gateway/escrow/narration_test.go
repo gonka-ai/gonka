@@ -277,7 +277,7 @@ func TestADepletedEscrowIsNarratedOnceWhenMarked(t *testing.T) {
 //  4. Assert the narrator recorded the "rotation skipped" line, since that is the only record of why nothing was created.
 func TestASkippedRotationIsNarrated(t *testing.T) {
 	narrator := &recordingLifecycleNarrator{}
-	manager := &Manager{narrator: narrator}
+	manager := &Manager{narrator: narrator, store: newFakeStore()}
 	snapshot := chain.PhaseSnapshot{
 		EpochIndex:            4,
 		FullWeightsByModel:    map[string]map[string]float64{"other-model": {"gonka1host": 1}},

@@ -25,8 +25,13 @@ type rotationFill struct {
 
 func (m *Manager) fillToLabel(ctx context.Context, role string, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []rotationFill {
 	fills := make([]rotationFill, len(models))
+	commitments, loadErr := m.store.LoadCommitments(ctx)
 	for index, model := range models {
-		wanted, err := m.createsWanted(role, label, targetOf(model), model, snapshot, devshards)
+		if loadErr != nil {
+			fills[index] = rotationFill{model: model, err: loadErr}
+			continue
+		}
+		wanted, err := m.createsWanted(role, label, targetOf(model), model, snapshot, devshards, commitments)
 		fills[index] = rotationFill{model: model, wanted: wanted, err: err}
 	}
 	for creating := true; creating; {
@@ -50,8 +55,8 @@ func (m *Manager) fillToLabel(ctx context.Context, role string, label uint64, mo
 	return fills
 }
 
-func (m *Manager) createsWanted(role string, label uint64, target int, model ModelConfig, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) (int, error) {
-	existing := countActive(devshards, model.ModelID, role, int64(label))
+func (m *Manager) createsWanted(role string, label uint64, target int, model ModelConfig, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord, commitments []store.Commitment) (int, error) {
+	existing := countActive(devshards, model.ModelID, role, int64(label)) + countOpenCreates(commitments, model.ModelID, role, label)
 	if existing >= target {
 		return 0, nil
 	}
@@ -77,10 +82,21 @@ func countActive(devshards []store.DevshardRecord, modelID, role string, epoch i
 	return count
 }
 
+// countOpenCreates counts broadcast creates of this role and label that may still land, which a fill must not buy again.
+func countOpenCreates(commitments []store.Commitment, modelID, role string, label uint64) int {
+	count := 0
+	for _, commitment := range commitments {
+		if commitment.Model == modelID && commitment.Role == role && commitment.Epoch == label {
+			count++
+		}
+	}
+	return count
+}
+
 // prepareBridge swaps temp escrows in ahead of an epoch switch, one model at a time, failure-isolated.
 func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapshot, models []ModelConfig, devshards []store.DevshardRecord) error {
 	label := bridgeLabel(snapshot)
-	room, err := m.bridgeRoom(ctx, models, devshards)
+	room, err := m.bridgeRoom(ctx, label, models, devshards)
 	if err != nil {
 		return fmt.Errorf("prepare bridge: %w", err)
 	}
@@ -140,7 +156,7 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 	return errors.Join(errs...)
 }
 
-func (m *Manager) bridgeRoom(ctx context.Context, models []ModelConfig, devshards []store.DevshardRecord) (map[string]int, error) {
+func (m *Manager) bridgeRoom(ctx context.Context, label uint64, models []ModelConfig, devshards []store.DevshardRecord) (map[string]int, error) {
 	room := map[string]int{}
 	if !slices.ContainsFunc(models, func(model ModelConfig) bool { return model.MaxUnsettled > 0 }) {
 		return room, nil
@@ -151,7 +167,7 @@ func (m *Manager) bridgeRoom(ctx context.Context, models []ModelConfig, devshard
 	}
 	for _, model := range models {
 		if model.MaxUnsettled > 0 {
-			room[model.ModelID] = model.MaxUnsettled - unsettledCount(model.ModelID, devshards, commitments)
+			room[model.ModelID] = model.MaxUnsettled - unsettledCount(model.ModelID, devshards, commitments) + countOpenCreates(commitments, model.ModelID, roleTemp, label)
 		}
 	}
 	return room, nil
