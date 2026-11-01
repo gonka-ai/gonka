@@ -51,6 +51,22 @@ func (c *Config) Validate() error {
 		problems = append(problems, fmt.Errorf(format, args...))
 	}
 
+	c.validateServer(complain)
+	c.validateChain(complain)
+	c.validateLimits(complain)
+	c.validateAccess(complain)
+	c.validateOperations(complain)
+	c.validatePerf(complain)
+	c.validateEngine(complain)
+	c.validateScheduler(complain)
+
+	if len(problems) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalid, errors.Join(problems...))
+	}
+	return nil
+}
+
+func (c *Config) validateServer(complain func(format string, args ...any)) {
 	if c.Server.Port < 1 || c.Server.Port > maxTCPPort {
 		complain("port: %d out of range 1..65535", c.Server.Port)
 	}
@@ -66,6 +82,9 @@ func (c *Config) Validate() error {
 	if c.HeightSync.QuietSettleDelayMS < 1 {
 		complain("quiet_settle_delay_ms: %d must be >= 1", c.HeightSync.QuietSettleDelayMS)
 	}
+}
+
+func (c *Config) validateChain(complain func(format string, args ...any)) {
 	checkBaseURL := func(name, value string) {
 		parsed, err := url.Parse(value)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -98,7 +117,9 @@ func (c *Config) Validate() error {
 	if c.Tx.PollTimeoutMS < c.Tx.PollIntervalMS {
 		complain("tx_poll_timeout_ms: %d must be >= tx_poll_interval_ms %d", c.Tx.PollTimeoutMS, c.Tx.PollIntervalMS)
 	}
+}
 
+func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	if c.Limits.DefaultMaxTokens < 1 || c.Limits.DefaultMaxTokens > int64(filters.MaxOutputTokens) {
 		complain("default_max_tokens: %d must be between 1 and %d", c.Limits.DefaultMaxTokens, filters.MaxOutputTokens)
 	}
@@ -155,6 +176,9 @@ func (c *Config) Validate() error {
 	if perfEjectionMaxMS := c.Perf.EjectionMaxSeconds * time.Second.Milliseconds(); c.Limits.HostCutoff.MaxMS > perfEjectionMaxMS {
 		complain("host_cutoff_max_ms: %d must be <= perf_ejection_max_seconds %d (ms) so perf stays the dominant ejection authority", c.Limits.HostCutoff.MaxMS, perfEjectionMaxMS)
 	}
+}
+
+func (c *Config) validateAccess(complain func(format string, args ...any)) {
 	// A guessable key is worse than none: "none" disables admin entirely, a weak one authenticates.
 	if c.Server.AdminAPIKey != "" && len(c.Server.AdminAPIKey) < minAdminAPIKeyLength {
 		complain("admin_api_key: must be at least %d characters when set (empty disables admin routes)", minAdminAPIKeyLength)
@@ -186,7 +210,9 @@ func (c *Config) Validate() error {
 			complain("model_limits[%s]: max_input_tokens_in_flight %d must be >= 0", model, *limit.MaxInputTokensInFlight)
 		}
 	}
+}
 
+func (c *Config) validateOperations(complain func(format string, args ...any)) {
 	if c.Modes.PoCMode != PoCModeOff && c.Modes.PoCMode != PoCModeRelaxed {
 		complain("poc_mode: %q is not %q or %q", c.Modes.PoCMode, PoCModeOff, PoCModeRelaxed)
 	}
@@ -240,7 +266,9 @@ func (c *Config) Validate() error {
 	if c.Stream.ClassifyMaxGlobalBytes < c.Stream.ClassifyMaxParticipantBytes {
 		complain("classify_max_global_bytes: %d must be >= classify_max_participant_bytes %d", c.Stream.ClassifyMaxGlobalBytes, c.Stream.ClassifyMaxParticipantBytes)
 	}
+}
 
+func (c *Config) validatePerf(complain func(format string, args ...any)) {
 	if c.Perf.EWMAHalfLifeSeconds < 1 {
 		complain("perf_ewma_half_life_seconds: %d must be >= 1", c.Perf.EWMAHalfLifeSeconds)
 	}
@@ -268,7 +296,9 @@ func (c *Config) Validate() error {
 	if c.Perf.HostStalenessSeconds < 1 {
 		complain("perf_host_staleness_seconds: %d must be >= 1", c.Perf.HostStalenessSeconds)
 	}
+}
 
+func (c *Config) validateEngine(complain func(format string, args ...any)) {
 	if c.Engine.ReceiptTimeoutMS < 1 {
 		complain("engine_receipt_timeout_ms: %d must be >= 1", c.Engine.ReceiptTimeoutMS)
 	}
@@ -313,7 +343,9 @@ func (c *Config) Validate() error {
 	if c.Engine.MaxAttemptsPerRequest < 0 {
 		complain("engine_max_attempts_per_request: %d must be >= 0 (0 = bounded only by the host group)", c.Engine.MaxAttemptsPerRequest)
 	}
+}
 
+func (c *Config) validateScheduler(complain func(format string, args ...any)) {
 	// The ceiling is a budget guard: a long grace parks a committed-cost nonce on the chance of a co-arrival.
 	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > maxMatchWaitMS {
 		complain("scheduler_match_wait_ms: %d must be in [0, 5000]", c.Scheduler.MatchWaitMS)
@@ -334,11 +366,6 @@ func (c *Config) Validate() error {
 			complain("scheduler_unthrottled_participants[%d]: %s", index, problem)
 		}
 	}
-
-	if len(problems) > 0 {
-		return fmt.Errorf("%w: %w", ErrInvalid, errors.Join(problems...))
-	}
-	return nil
 }
 
 func validateRequestWindow(name string, window RequestWindow, complain func(string, ...any)) {
