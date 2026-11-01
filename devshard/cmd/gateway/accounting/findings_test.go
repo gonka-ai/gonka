@@ -543,7 +543,7 @@ func TestALostRaceIsStillAnAnswerNobodyUsed(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case (an abandoned refusal, an abandoned execution), build a record of 100 assigned nonces, 60 finished and used, 40 in the case's disposition, all tagged terminal `TerminalClientCancelled`.
+//  1. For each table case (an abandoned refusal, an abandoned execution), build a record of 100 assigned nonces, 60 finished and used, 40 in the case's disposition, all tagged terminal `engine.ReasonClientCancelled`.
 //  2. Assert the findings for that case carry none of the case's finding code.
 func TestAClientThatStoppedWaitingIsNotChargedToTheHost(t *testing.T) {
 	tests := []struct {
@@ -561,7 +561,7 @@ func TestAClientThatStoppedWaitingIsNotChargedToTheHost(t *testing.T) {
 				testCase.disposition:    40,
 			})
 			record.Counters = []CounterRecord{{
-				CounterKey: CounterKey{Disposition: testCase.disposition, Terminal: TerminalClientCancelled},
+				CounterKey: CounterKey{Disposition: testCase.disposition, Terminal: engine.ReasonClientCancelled},
 				Count:      40,
 			}}
 
@@ -630,5 +630,14 @@ func TestAProbeThatFailedDoesNotEmptyTheDeliveredTotal(t *testing.T) {
 
 	if finding.Whole != 20 {
 		t.Fatalf("execution timeouts = %d of %d, want 10 of 20 -- the delivered answers still counted", finding.Part, finding.Whole)
+	}
+}
+
+// Test flow:
+//  1. Build a counter key whose terminal is the engine's name for a client cancel.
+//  2. Assert the ledger excuses it.
+func TestAClientCancelNamedByTheEngineIsExcused(t *testing.T) {
+	if !excused(CounterKey{Terminal: engine.ReasonClientCancelled}) {
+		t.Fatalf("a terminal of %q was not excused", engine.ReasonClientCancelled)
 	}
 }
