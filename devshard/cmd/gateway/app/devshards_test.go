@@ -13,7 +13,6 @@ import (
 	"devshard/cmd/gateway/api"
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
-	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/store"
 	"devshard/transport"
 )
@@ -114,27 +113,21 @@ func (recorder *deactivationRecorder) MarkDevshardGoneFromChain(_ context.Contex
 	return nil
 }
 
-func (recorder *deactivationRecorder) SetDevshardActive(_ context.Context, escrowID string, active bool) error {
-	recorder.calls = append(recorder.calls, fmt.Sprintf("active %s %t", escrowID, active))
-	return nil
-}
-
 func (recorder *deactivationRecorder) DeleteDevshard(_ context.Context, escrowID string) error {
 	recorder.calls = append(recorder.calls, "delete "+escrowID)
 	return nil
 }
 
 // Test flow:
-//  1. Deactivate one row boot found absent on chain and one whose key the environment lacks.
-//  2. Assert the first is marked gone from chain and the second only deactivated.
+//  1. Deactivate one row boot found absent on chain.
+//  2. Assert it is marked gone from chain.
 func TestABootDeactivationMarksAnEscrowTheChainLacksGone(t *testing.T) {
 	recorder := &deactivationRecorder{}
 	deactivate := unservableDeactivation(context.Background(), recorder)
 
 	_ = deactivate("absent", fmt.Errorf("opening session: %w", bridge.ErrEscrowNotFound))
-	_ = deactivate("keyless", fmt.Errorf("opening session: %w", env.ErrPrivateKeyMissing))
 
-	if want := []string{"gone absent", "active keyless false"}; !slices.Equal(recorder.calls, want) {
+	if want := []string{"gone absent"}; !slices.Equal(recorder.calls, want) {
 		t.Fatalf("deactivation calls = %v, want %v", recorder.calls, want)
 	}
 }

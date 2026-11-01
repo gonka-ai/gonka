@@ -97,20 +97,16 @@ func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
 
 type devshardDeactivator interface {
 	MarkDevshardGoneFromChain(ctx context.Context, escrowID string) error
-	SetDevshardActive(ctx context.Context, escrowID string, active bool) error
 	DeleteDevshard(ctx context.Context, escrowID string) error
 }
 
-// unservableDeactivation marks a row the chain lacks gone from chain and drops one it holds settled, as settlement would, so neither stays in the unsettled count; any other unservable row is only deactivated.
+// unservableDeactivation marks a row the chain lacks gone from chain and drops one it holds settled, as settlement would, so neither stays in the unsettled count.
 func unservableDeactivation(ctx context.Context, records devshardDeactivator) func(escrowID string, cause error) error {
 	return func(escrowID string, cause error) error {
-		switch {
-		case errors.Is(cause, bridge.ErrEscrowNotFound):
-			return records.MarkDevshardGoneFromChain(ctx, escrowID)
-		case errors.Is(cause, bridge.ErrEscrowSettled):
+		if errors.Is(cause, bridge.ErrEscrowSettled) {
 			return records.DeleteDevshard(ctx, escrowID)
 		}
-		return records.SetDevshardActive(ctx, escrowID, false)
+		return records.MarkDevshardGoneFromChain(ctx, escrowID)
 	}
 }
 
@@ -167,7 +163,7 @@ func publishEscrows(
 		escrowID := active[index].EscrowID
 		switch {
 		case err == nil:
-		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, bridge.ErrEscrowSettled), errors.Is(err, env.ErrPrivateKeyMissing):
+		case errors.Is(err, bridge.ErrEscrowNotFound), errors.Is(err, bridge.ErrEscrowSettled):
 			unservable(escrowID, err)
 			if deactivateErr := deactivate(escrowID, err); deactivateErr != nil {
 				problems = append(problems, fmt.Errorf("deactivating escrow %s: %w", escrowID, deactivateErr))
