@@ -11,6 +11,7 @@ import (
 
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/store"
 	"devshard/types"
 )
@@ -50,7 +51,7 @@ func (s *Server) handleAdminDevshards(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorFor(w, err)
 		return
 	}
-	auditAdmin("escrow registered", "escrow", request.EscrowID, "model", request.Model)
+	auditAdmin("escrow registered", logkey.Escrow, request.EscrowID, logkey.Model, request.Model)
 	writeJSON(w, http.StatusOK, map[string]any{"id": request.EscrowID})
 }
 
@@ -75,7 +76,7 @@ func (s *Server) handleAdminDevshardImport(w http.ResponseWriter, r *http.Reques
 		s.writeErrorFor(w, err)
 		return
 	}
-	auditAdmin("escrow imported", "escrow", request.EscrowID, "model", request.Model)
+	auditAdmin("escrow imported", logkey.Escrow, request.EscrowID, logkey.Model, request.Model)
 	writeJSON(w, http.StatusOK, map[string]any{"id": request.EscrowID})
 }
 
@@ -100,7 +101,7 @@ func (s *Server) handleAdminDevshardDelete(w http.ResponseWriter, r *http.Reques
 	if writeControlFailure(w, err) {
 		return
 	}
-	auditAdmin("escrow deleted with its session storage", "escrow", escrowID, "model", record.Model)
+	auditAdmin("escrow deleted with its session storage", logkey.Escrow, escrowID, logkey.Model, record.Model)
 	writeJSON(w, http.StatusOK, map[string]any{"id": escrowID, "deleted": true})
 }
 
@@ -133,7 +134,7 @@ func (s *Server) lifecycle(w http.ResponseWriter, r *http.Request, action string
 		s.writeErrorFor(w, err)
 		return
 	}
-	auditAdmin(action, "escrow", escrowID)
+	auditAdmin(action, logkey.Escrow, escrowID)
 	writeJSON(w, http.StatusOK, map[string]any{"id": escrowID})
 }
 
@@ -183,7 +184,7 @@ func (s *Server) handleDevshardCollectSignatures(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce %d is ahead of current nonce %d", nonce, current))
 		return
 	}
-	auditAdmin("collect signatures", "escrow", escrowID, "nonce", nonce)
+	auditAdmin("collect signatures", logkey.Escrow, escrowID, "nonce", nonce)
 	weight, threshold, total := session.UserSession().CollectSignatures(r.Context(), nonce)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"escrow_id":        escrowID,

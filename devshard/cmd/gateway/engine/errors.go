@@ -9,6 +9,8 @@ import (
 	"devshard/transport"
 )
 
+const maxHTTPStatus = 599
+
 const connectChatPath = "/chat/completions"
 
 // Errors the engine returns. See README.md, "Errors the engine returns".
@@ -93,5 +95,5 @@ func isThrottleStatus(status int) bool {
 }
 
 func isClientOrServerStatus(status int) bool {
-	return status >= 400 && status <= 599
+	return status >= http.StatusBadRequest && status <= maxHTTPStatus
 }

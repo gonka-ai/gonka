@@ -37,7 +37,8 @@ const (
 
 	minAddressDataLength = 4
 
-	maxTCPPort = 65535
+	maxTCPPort     = 65535
+	maxMatchWaitMS = 5_000
 )
 
 // ErrInvalid marks a configuration the operator got wrong, so the surface answers 400 rather than 502.
@@ -50,7 +51,7 @@ func (c *Config) Validate() error {
 		problems = append(problems, fmt.Errorf(format, args...))
 	}
 
-	if c.Server.Port < 1 || c.Server.Port > 65535 {
+	if c.Server.Port < 1 || c.Server.Port > maxTCPPort {
 		complain("port: %d out of range 1..65535", c.Server.Port)
 	}
 	if c.Server.MaxConcurrentRuntimeBuilds < 1 {
@@ -314,7 +315,7 @@ func (c *Config) Validate() error {
 	}
 
 	// The ceiling is a budget guard: a long grace parks a committed-cost nonce on the chance of a co-arrival.
-	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > 5_000 {
+	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > maxMatchWaitMS {
 		complain("scheduler_match_wait_ms: %d must be in [0, 5000]", c.Scheduler.MatchWaitMS)
 	}
 	if c.Scheduler.MaxConsecutiveBurns < 0 || c.Scheduler.MaxConsecutiveBurns > maxConsecutiveBurns {

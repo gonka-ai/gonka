@@ -11,6 +11,7 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/logkey"
 )
 
 type filterEntry struct {
@@ -81,7 +82,7 @@ func (s *Server) handleAdminModelFilter(w http.ResponseWriter, r *http.Request) 
 		if writeControlFailure(w, s.modelFilters.Delete(r.Context(), model)) {
 			return
 		}
-		auditAdmin("model filters removed", "model", model)
+		auditAdmin("model filters removed", logkey.Model, model)
 		s.writeFilterEntry(w, model)
 	default:
 		s.writeFilterEntry(w, model)
@@ -115,7 +116,7 @@ func (s *Server) putModelFilter(w http.ResponseWriter, r *http.Request, model st
 	if writeControlFailure(w, s.modelFilters.Put(r.Context(), model, setting)) {
 		return
 	}
-	auditAdmin("model filters set", "model", model, "preset", setting.PresetFor(model), "allow_off_chain", allowOffChain,
+	auditAdmin("model filters set", logkey.Model, model, "preset", setting.PresetFor(model), "allow_off_chain", allowOffChain,
 		"engine_crash_risk", profile.AddsThinkingBudgetTo(model))
 	s.writeFilterEntry(w, model)
 }

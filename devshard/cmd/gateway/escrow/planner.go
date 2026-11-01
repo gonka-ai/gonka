@@ -18,6 +18,9 @@ import (
 	"devshard/user"
 )
 
+// nearBridgePrePoCWindows is how many pre-PoC windows before the switch count as near the bridge.
+const nearBridgePrePoCWindows = 3
+
 type modelReading struct {
 	state    funding.ModelState
 	reserved uint64
@@ -116,7 +119,7 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 			RequestsBlocked: snapshot.RequestsBlocked, EpochKnown: !snapshotHasNoEpochYet(snapshot),
 			ServedByNetwork: served || !known, BreakerGated: m.breaker.open(model.ModelID, roleRegular),
 			InBridgeWindow:   blocksToSwitch >= 0 && blocksToSwitch <= prePoC,
-			NearBridgeWindow: blocksToSwitch > prePoC && blocksToSwitch <= 3*prePoC,
+			NearBridgeWindow: blocksToSwitch > prePoC && blocksToSwitch <= nearBridgePrePoCWindows*prePoC,
 			CurrentLabel:     int64(snapshot.EpochIndex),
 		},
 		report: FundingReport{
