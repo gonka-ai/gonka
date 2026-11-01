@@ -27,7 +27,7 @@ func (counter *deadlineCounter) add(model, reason string) {
 
 // DeadlineUnsettledCounts is how many escrows the deadline rule narrated unsettled, by model and reason, for the metrics collector.
 func (m *Manager) DeadlineUnsettledCounts() map[DeadlineUnsettled]uint64 {
-	m.deadlineCounts.mu.Lock()
-	defer m.deadlineCounts.mu.Unlock()
-	return maps.Clone(m.deadlineCounts.counts)
+	m.deadlines.counts.mu.Lock()
+	defer m.deadlines.counts.mu.Unlock()
+	return maps.Clone(m.deadlines.counts.counts)
 }

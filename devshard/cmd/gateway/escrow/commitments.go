@@ -7,12 +7,9 @@ import (
 	"math"
 	"slices"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 )
@@ -25,53 +22,6 @@ const (
 
 // ErrAmountBelowFloor marks a create refused before broadcast because its amount cannot pay one full-context request of its model. See README.md, "Creating an escrow".
 var ErrAmountBelowFloor = errors.New("escrow amount cannot pay one full-context request of its model")
-
-type Manager struct {
-	tx        escrowTxClient
-	store     escrowStore
-	snapshots snapshotSource
-	signer    SignerSource
-	breaker   *createBreaker
-	now       func() time.Time
-
-	config           *config.Holder
-	routePrefix      string
-	settlementSource SettlementSource
-	exhaustion       ExhaustionProbe
-	funds            FundingReader
-	chainFacts       escrowLookup
-	chainFactsAfter  string
-	prunedCheckAfter string
-	settlements      inFlightSet
-	budgetedSettles  inFlightSet
-	urgentSettles    inFlightSet
-	checks           inFlightSet
-
-	depleted            depletionMarks
-	missing             markSet
-	underfundedNarrated markSet
-	belowFloorNarrated  markSet
-	unresolvedNarrated  markSet
-	reserveTaken        markSet
-	moneyShort          markSet
-	deadlineNarrated    map[string]bool
-	deadlineCounts      deadlineCounter
-	pace                blockPace
-	stale               staleProjection
-	wakeup              chan struct{}
-
-	timeoutSweeper TimeoutSweeper
-	sweepRecorder  SweepRecorder
-	sweepRetries   retryWindows
-	narrator       lifecycleNarrator
-	sweeping       atomic.Bool
-	offTickWork    sync.WaitGroup
-	planner        fundingPlanner
-
-	lifecycleMu sync.Mutex
-	done        chan struct{}
-	cancel      context.CancelFunc
-}
 
 // CreateEscrow creates one escrow on demand, on the same durable-intent path rotation uses. See README.md, "Creating an escrow".
 func (m *Manager) CreateEscrow(ctx context.Context, model ModelConfig) (chain.CreateEscrowResult, error) {

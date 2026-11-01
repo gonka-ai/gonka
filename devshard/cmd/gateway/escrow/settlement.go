@@ -84,13 +84,13 @@ func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) erro
 func (m *Manager) admitParked(parked []pendingSettle) []admittedSettle {
 	var admitted []admittedSettle
 	for _, pending := range parked {
-		if m.settlements.has(pending.record.EscrowID) {
+		if m.settling.inFlight.has(pending.record.EscrowID) {
 			continue
 		}
 		urgent := pending.deadline.inMargin
-		slots, limit := &m.budgetedSettles, pendingSettleBudget
+		slots, limit := &m.settling.budgeted, pendingSettleBudget
 		if urgent {
-			slots, limit = &m.urgentSettles, urgentSettleBudget
+			slots, limit = &m.settling.urgent, urgentSettleBudget
 		}
 		if leave, entered := slots.enterWithin(pending.record.EscrowID, limit); entered {
 			admitted = append(admitted, admittedSettle{record: pending.record, urgent: urgent, leave: leave})
@@ -178,7 +178,7 @@ func parkNarrationOf(record store.DevshardRecord) parkNarration {
 
 // settle clears SettlementPending only once the broadcast is confirmed. See README.md, "Settlement and retirement".
 func (m *Manager) settle(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
-	leave, busy := m.settlements.enter(record.EscrowID)
+	leave, busy := m.settling.inFlight.enter(record.EscrowID)
 	if busy {
 		return chain.SettleEscrowResult{}, ErrSettlementInFlight
 	}
@@ -263,10 +263,10 @@ func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, forc
 	if !force && due >= budget && applied > 0 {
 		return fmt.Errorf("%w: escrow %s spent its timeout sweep budget with votes still landing", ErrDevshardBusy, escrowID)
 	}
-	if !force && failed > 0 && ctx.Err() == nil && m.sweepRetries.retrying(escrowID, m.now()) {
+	if !force && failed > 0 && ctx.Err() == nil && m.settling.sweepRetries.retrying(escrowID, m.now()) {
 		return fmt.Errorf("%w: escrow %s failed %d timeout votes; finalize waits to retry them", ErrDevshardBusy, escrowID, failed)
 	}
-	m.sweepRetries.forget(escrowID)
+	m.settling.sweepRetries.forget(escrowID)
 	return nil
 }
 
@@ -289,7 +289,7 @@ func nothingLeftToSettle(err error) bool {
 
 // settleAndDrop drops the row once nothing is left to settle: after a confirmed settlement, or once the chain has pruned or already settled the escrow.
 func (m *Manager) settleAndDrop(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
-	leave, busy := m.settlements.enter(record.EscrowID)
+	leave, busy := m.settling.inFlight.enter(record.EscrowID)
 	if busy {
 		return chain.SettleEscrowResult{}, ErrSettlementInFlight
 	}
@@ -372,7 +372,7 @@ func (m *Manager) deleteSettled(ctx context.Context, escrowID string) error {
 	if err := m.store.WithRetry(ctx, func() error { return m.store.DeleteDevshard(ctx, escrowID) }); err != nil {
 		return fmt.Errorf("deleting settled escrow %s: %w", escrowID, err)
 	}
-	m.sweepRetries.forget(escrowID)
+	m.settling.sweepRetries.forget(escrowID)
 	if m.narrator != nil {
 		m.narrator.SettledRecordDropped(escrowID)
 	}

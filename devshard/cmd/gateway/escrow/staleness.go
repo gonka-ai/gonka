@@ -19,18 +19,18 @@ func (m *Manager) projectStale(snapshot chain.PhaseSnapshot) chain.PhaseSnapshot
 	maxAge := time.Duration(m.config.Load().Chain.SnapshotMaxAgeSeconds) * time.Second
 	staleFor := m.now().Sub(snapshot.LastUpdatedAt)
 	if maxAge <= 0 || staleFor <= maxAge {
-		m.stale.narrated = false
+		m.deadlines.stale.narrated = false
 		return snapshot
 	}
-	blockTime, measured := m.pace.blockTime()
+	blockTime, measured := m.deadlines.pace.blockTime()
 	if !measured || blockTime < staleFallbackBlockTime {
 		blockTime = staleFallbackBlockTime
 	}
 	projected := snapshot
 	projected.BlockHeight += int64(staleFor / blockTime)
-	if !m.stale.narrated && m.narrator != nil {
+	if !m.deadlines.stale.narrated && m.narrator != nil {
 		m.narrator.EscrowDeadlinesProjected(snapshot.BlockHeight, projected.BlockHeight, staleFor)
 	}
-	m.stale.narrated = true
+	m.deadlines.stale.narrated = true
 	return projected
 }

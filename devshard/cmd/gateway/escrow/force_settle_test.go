@@ -68,14 +68,14 @@ func TestUnforcedSettleStillDefersWhileBusy(t *testing.T) {
 
 // Test flow:
 //  1. Build a busy manager with one active record.
-//  2. Claim the record's settlement slot directly via manager.settlements.enter, simulating a settlement already in flight.
+//  2. Claim the record's settlement slot directly via manager.settling.inFlight.enter, simulating a settlement already in flight.
 //  3. Call settle with force=true.
 //  4. Assert settle returns ErrSettlementInFlight and never broadcasts "SettleEscrow".
 func TestForcedSettleStillRefusesAConcurrentSettlement(t *testing.T) {
 	record := store.DevshardRecord{EscrowID: "13", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: true}
 	log := &callLog{}
 	manager, _ := busyManager(t, record, log)
-	leave, alreadyRunning := manager.settlements.enter(record.EscrowID)
+	leave, alreadyRunning := manager.settling.inFlight.enter(record.EscrowID)
 	if alreadyRunning {
 		t.Fatal("setup: the set must be free before the test claims it")
 	}

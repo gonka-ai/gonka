@@ -80,10 +80,10 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 	narrate := func(record store.DevshardRecord, deadline settleDeadline, reason deadlineUnsettled) {
 		key := record.EscrowID + "|" + string(reason)
 		narrated[key] = true
-		if m.deadlineNarrated[key] {
+		if m.deadlines.narrated[key] {
 			return
 		}
-		m.deadlineCounts.add(record.Model, string(reason))
+		m.deadlines.counts.add(record.Model, string(reason))
 		if m.narrator != nil {
 			m.narrator.EscrowDeadlineUnsettled(record.EscrowID, deadline.settleBy, string(reason))
 		}
@@ -119,7 +119,7 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 			updated[index].Active, updated[index].SettlementPending = false, true
 		}
 	}
-	m.deadlineNarrated = narrated
+	m.deadlines.narrated = narrated
 	return updated, errors.Join(errs...)
 }
 

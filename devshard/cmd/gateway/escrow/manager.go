@@ -3,6 +3,8 @@ package escrow
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"devshard/cmd/gateway/chain"
@@ -28,6 +30,63 @@ type Deps struct {
 	Config      *config.Holder
 	Now         func() time.Time
 	RoutePrefix string
+}
+
+type Manager struct {
+	tx        escrowTxClient
+	store     escrowStore
+	snapshots snapshotSource
+	signer    SignerSource
+	breaker   *createBreaker
+	now       func() time.Time
+
+	config           *config.Holder
+	routePrefix      string
+	settlementSource SettlementSource
+	exhaustion       ExhaustionProbe
+	funds            FundingReader
+	chainFacts       escrowLookup
+	chainFactsAfter  string
+	prunedCheckAfter string
+	checks           inFlightSet
+	settling         settlementSlots
+
+	depleted            depletionMarks
+	missing             markSet
+	underfundedNarrated markSet
+	belowFloorNarrated  markSet
+	unresolvedNarrated  markSet
+	reserveTaken        markSet
+	moneyShort          markSet
+	deadlines           deadlineWatch
+	wakeup              chan struct{}
+
+	timeoutSweeper TimeoutSweeper
+	sweepRecorder  SweepRecorder
+	narrator       lifecycleNarrator
+	sweeping       atomic.Bool
+	offTickWork    sync.WaitGroup
+	planner        fundingPlanner
+
+	lifecycleMu sync.Mutex
+	done        chan struct{}
+	cancel      context.CancelFunc
+}
+
+// settlementSlots is who may settle now: one slot per escrow, the two budgets, and the sweeps that may still retry.
+type settlementSlots struct {
+	inFlight     inFlightSet
+	budgeted     inFlightSet
+	urgent       inFlightSet
+	sweepRetries retryWindows
+}
+
+// deadlineWatch is what the deadline pass remembers between ticks.
+type deadlineWatch struct {
+	narrated map[string]bool
+	counts   deadlineCounter
+	pace     blockPace
+	stale    staleProjection
 }
 
 // NewManager refuses a dependency set it cannot run a tick with, rather than panicking on the first one.

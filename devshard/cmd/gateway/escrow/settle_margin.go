@@ -44,20 +44,20 @@ func (m *Manager) checkSettleMargin(snapshot chain.PhaseSnapshot) {
 	if observedAt.IsZero() {
 		observedAt = m.now()
 	}
-	blockTime, measured := m.pace.observe(snapshot.BlockHeight, observedAt)
+	blockTime, measured := m.deadlines.pace.observe(snapshot.BlockHeight, observedAt)
 	if !measured {
 		return
 	}
 	marginBlocks := m.config.Load().Rotation.SettleMarginBlocks
 	need := marginSettleWindows * commitmentReconcileGrace
 	if time.Duration(marginBlocks)*blockTime >= need {
-		m.pace.narratedMargin = 0
+		m.deadlines.pace.narratedMargin = 0
 		return
 	}
-	if m.pace.narratedMargin == marginBlocks {
+	if m.deadlines.pace.narratedMargin == marginBlocks {
 		return
 	}
-	m.pace.narratedMargin = marginBlocks
+	m.deadlines.pace.narratedMargin = marginBlocks
 	if m.narrator != nil {
 		m.narrator.SettleMarginShort(marginBlocks, blockTime, need)
 	}
