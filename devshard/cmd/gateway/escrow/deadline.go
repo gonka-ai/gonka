@@ -101,7 +101,7 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 		switch {
 		case !policy.settles(record.Model, ownEpochOver(record, snapshot)):
 			narrate(record, deadline, deadlineSettlementDisabled)
-		case !record.Active && !record.SettlementPending && record.SettleTxHash == "":
+		case !record.Active && !record.Parked():
 			narrate(record, deadline, m.deactivationReason(record))
 		case record.Active:
 			parked, err := m.parkIfServing(ctx, record.EscrowID)

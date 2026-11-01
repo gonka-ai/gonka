@@ -161,7 +161,7 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 	case goneFromChain(row):
 		reading.report.Counts[CountInactive]++
 		return
-	case !row.Active && (row.SettlementPending || row.SettleTxHash != ""):
+	case !row.Active && row.Parked():
 		reading.report.Counts[CountParked]++
 		if row.SettlementPending {
 			reading.state.Parking++

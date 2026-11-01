@@ -72,3 +72,21 @@ func TestColumnNameKeepsAcronymsWhole(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Table-driven: a serving row, a row waiting to settle, and a row with a settle transaction in flight.
+//  2. Assert Parked is true for the last two only.
+func TestARowIsParkedOnceSettlementOwnsIt(t *testing.T) {
+	for _, testCase := range []struct {
+		record DevshardRecord
+		want   bool
+	}{
+		{DevshardRecord{Active: true}, false},
+		{DevshardRecord{SettlementPending: true}, true},
+		{DevshardRecord{SettleTxHash: "ABC"}, true},
+	} {
+		if got := testCase.record.Parked(); got != testCase.want {
+			t.Errorf("%+v Parked = %v, want %v", testCase.record, got, testCase.want)
+		}
+	}
+}

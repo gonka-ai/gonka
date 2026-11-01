@@ -24,6 +24,11 @@ const (
 	unparkedCondition = `devshards.settlement_pending = 0 AND devshards.settle_tx_hash = ''`
 )
 
+// Parked reports a row settlement owns: waiting for its settle, or with one in flight. It is the Go form of unparkedCondition negated.
+func (r DevshardRecord) Parked() bool {
+	return r.SettlementPending || r.SettleTxHash != ""
+}
+
 // ErrDevshardNotFound is returned by updates/deletes that match no row.
 var ErrDevshardNotFound = errors.New("devshard not found")
 

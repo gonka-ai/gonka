@@ -167,7 +167,7 @@ func (o *operations) DeleteDevshard(ctx context.Context, id string) error {
 	if err != nil {
 		return unknownDevshard(id, err)
 	}
-	if isParked(record) {
+	if record.Parked() {
 		return parkedError(escrow.ErrDevshardBusy, id)
 	}
 	if record.Active || o.escrows.HoldsSession(id) {
@@ -232,7 +232,7 @@ func (o *operations) refuseServedStorage(escrowID string, active bool) error {
 
 // A parked escrow's balance is already committed: serving spends nonces the settlement misses.
 func refuseParkedRecord(record store.DevshardRecord) error {
-	if isParked(record) {
+	if record.Parked() {
 		return parkedError(api.ErrDevshardNotActivatable, record.EscrowID)
 	}
 	return nil
@@ -243,10 +243,6 @@ func unknownDevshard(escrowID string, err error) error {
 		return fmt.Errorf("%w: %s", api.ErrUnknownDevshard, escrowID)
 	}
 	return err
-}
-
-func isParked(record store.DevshardRecord) bool {
-	return record.SettlementPending || record.SettleTxHash != ""
 }
 
 func parkedError(refusal error, escrowID string) error {
