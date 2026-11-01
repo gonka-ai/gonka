@@ -309,7 +309,7 @@ func (f *fakeStore) DevshardSettleTxHash(_ context.Context, escrowID string) (st
 	return f.devshards[escrowID].SettleTxHash, f.settleTxAt[escrowID], nil
 }
 
-func (f *fakeStore) SetDevshardRotationRole(_ context.Context, escrowID, role string) error {
+func (f *fakeStore) SetDevshardRotationRole(_ context.Context, escrowID string, role store.Role) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.calls != nil {
@@ -369,7 +369,7 @@ func (f *fakeStore) SaveRotationStatus(ctx context.Context, s store.RotationStat
 	if f.saveRotationStatusErr != nil {
 		return f.saveRotationStatusErr
 	}
-	f.rotationStatuses[s.Model+"|"+s.Role] = s
+	f.rotationStatuses[s.Model+"|"+string(s.Role)] = s
 	return nil
 }
 
@@ -427,7 +427,7 @@ func TestCreateEscrowAbortsWhenIntentWriteFails(t *testing.T) {
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 5, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 5, createdForBridge, chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
 		t.Fatal("createFor() = nil, want error when the intent write fails")
 	}
 
@@ -462,7 +462,7 @@ func TestCreateEscrowSignerResolutionFailureNeverCallsChain(t *testing.T) {
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MISSING_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 5, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 5, createdForBridge, chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
 		t.Fatal("createFor() = nil, want error when signer resolution fails")
 	}
 	if txClient.createCalls != 0 {
@@ -500,7 +500,7 @@ func TestCreateEscrowHappyPathPersistsDevshardAndClearsCommitment(t *testing.T) 
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 7, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 7, createdForBridge, chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
 		t.Fatalf("createFor(): %v", err)
 	}
 
@@ -563,7 +563,7 @@ func TestCreateEscrowPersistFailureRecoversViaReconcile(t *testing.T) {
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 11, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 11, BlockHeight: 200}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 11, createdForBridge, chain.PhaseSnapshot{EpochIndex: 11, BlockHeight: 200}); err == nil {
 		t.Fatal("createFor() = nil, want error when the post-create registry write fails")
 	}
 	if devshards, _ := testStore.ListDevshards(context.Background()); len(devshards) != 0 {
@@ -865,7 +865,7 @@ func TestCreateEscrowRefusesAnAmountBelowTheModelsFloor(t *testing.T) {
 			txClient := &fakeTxClient{createEscrowFn: succeedingCreateEscrowFn(42)}
 			manager := floorManager(t, txClient, nil)
 
-			_, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: testCase.amount, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, testCase.snapshot.EpochIndex, string(createdForBridge), testCase.snapshot)
+			_, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: testCase.amount, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, testCase.snapshot.EpochIndex, createdForBridge, testCase.snapshot)
 
 			if refused := errors.Is(err, ErrAmountBelowFloor); refused != testCase.refused {
 				t.Fatalf("createFor() = %v, want refused=%v", err, testCase.refused)
@@ -889,7 +889,7 @@ func TestABelowFloorRefusalIsNarratedOnceUntilACreateSucceeds(t *testing.T) {
 	snapshot := pricedSnapshot(1, 10, 100)
 
 	for _, model := range []ModelConfig{short, short, funded, short} {
-		_, _ = manager.createFor(context.Background(), model, roleRegular, snapshot.EpochIndex, string(createdForBridge), snapshot)
+		_, _ = manager.createFor(context.Background(), model, roleRegular, snapshot.EpochIndex, createdForBridge, snapshot)
 	}
 
 	want := []string{

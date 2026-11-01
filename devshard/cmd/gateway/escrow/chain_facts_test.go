@@ -115,7 +115,7 @@ func TestACreatedEscrowReadsItsChainFactsAtOnce(t *testing.T) {
 	deps.ChainFacts = countingLookup(&calls, chain.EscrowInfo{EpochIndex: 7, Balance: 1000}, nil)
 	manager := mustManager(t, deps)
 
-	if _, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, 7, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
+	if _, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, 7, createdForBridge, chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
 		t.Fatalf("createFor() = %v, want nil", err)
 	}
 

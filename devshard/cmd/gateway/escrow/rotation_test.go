@@ -265,7 +265,7 @@ func TestPrepareBridgeTempReachesTargetRetiresRegulars(t *testing.T) {
 	if tempCount != 1 {
 		t.Fatalf("temp escrows for model-a = %d, want 1 (TempCount target)", tempCount)
 	}
-	status, ok := testStore.rotationStatuses["model-a|"+roleTemp]
+	status, ok := testStore.rotationStatuses["model-a|"+string(roleTemp)]
 	if !ok {
 		t.Fatal("no rotation status saved for model-a/temp")
 	}
@@ -310,7 +310,7 @@ func TestPrepareBridgeTempCreateFailsPromotesRegularsInstead(t *testing.T) {
 	if got.RotationRole != roleTemp {
 		t.Fatalf("reg-1.RotationRole = %q, want %q (promoted)", got.RotationRole, roleTemp)
 	}
-	status, ok := testStore.rotationStatuses["model-a|"+roleTemp]
+	status, ok := testStore.rotationStatuses["model-a|"+string(roleTemp)]
 	if !ok {
 		t.Fatal("no rotation status saved for model-a/temp")
 	}
@@ -385,14 +385,14 @@ func TestPrepareBridgeOneModelFailureDoesNotStopOthers(t *testing.T) {
 		t.Fatal("prepareBridge() error = nil, want model-a's failure surfaced")
 	}
 
-	statusB, ok := testStore.rotationStatuses["model-b|"+roleTemp]
+	statusB, ok := testStore.rotationStatuses["model-b|"+string(roleTemp)]
 	if !ok {
 		t.Fatal("no rotation status saved for model-b, want it processed despite model-a's failure")
 	}
 	if !statusB.Completed {
 		t.Fatalf("model-b rotation status = %+v, want Completed=true", statusB)
 	}
-	if statusA := testStore.rotationStatuses["model-a|"+roleTemp]; statusA.Completed {
+	if statusA := testStore.rotationStatuses["model-a|"+string(roleTemp)]; statusA.Completed {
 		t.Fatal("model-a rotation status Completed = true, want false")
 	}
 }
@@ -723,7 +723,7 @@ func TestABridgeShortOfItsTempsPromotesInsteadOfRetiring(t *testing.T) {
 			if got := testStore.devshards["reg-1"]; !got.Active || got.RotationRole != roleTemp {
 				t.Fatalf("reg-1 = %+v, want still active, relabelled temp", got)
 			}
-			if status := testStore.rotationStatuses["model-a|"+roleTemp]; !strings.Contains(status.CreateError, errBridgePartialFill.Error()) {
+			if status := testStore.rotationStatuses["model-a|"+string(roleTemp)]; !strings.Contains(status.CreateError, errBridgePartialFill.Error()) {
 				t.Fatalf("rotation status create error = %q, want it to name the partial fill", status.CreateError)
 			}
 		})

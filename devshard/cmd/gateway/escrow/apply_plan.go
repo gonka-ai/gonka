@@ -26,7 +26,7 @@ func (m *Manager) applyPlan(ctx context.Context, model ModelConfig, snapshot cha
 		if create.Standby {
 			role = RoleReserve
 		}
-		_, err := m.createFor(ctx, model, role, snapshot.EpochIndex, string(create.Reason), snapshot)
+		_, err := m.createFor(ctx, model, role, snapshot.EpochIndex, createReason(create.Reason), snapshot)
 		m.planner.recordCreate(model.ModelID, err, m.now())
 		if err == nil {
 			m.breaker.reset(model.ModelID, roleRegular)

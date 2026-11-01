@@ -36,7 +36,7 @@ func (n *recordingLifecycleNarrator) recorded() []string {
 	return append([]string(nil), n.calls...)
 }
 
-func (n *recordingLifecycleNarrator) EscrowCreated(escrowID, model, role, reason string, epoch uint64, txHash string) {
+func (n *recordingLifecycleNarrator) EscrowCreated(escrowID, model string, role store.Role, reason string, epoch uint64, txHash string) {
 	n.note("created %s %s %s epoch %d tx %s", escrowID, model, role, epoch, txHash)
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -52,11 +52,11 @@ func (n *recordingLifecycleNarrator) createdReasons() map[string]string {
 	return maps.Clone(n.reasons)
 }
 
-func (n *recordingLifecycleNarrator) EscrowRecovered(escrowID, model, role string, epoch uint64, txHash string) {
+func (n *recordingLifecycleNarrator) EscrowRecovered(escrowID, model string, role store.Role, epoch uint64, txHash string) {
 	n.note("recovered %s %s %s epoch %d tx %s", escrowID, model, role, epoch, txHash)
 }
 
-func (n *recordingLifecycleNarrator) CommitmentCleared(txHash, model, role string, epoch uint64, reason string) {
+func (n *recordingLifecycleNarrator) CommitmentCleared(txHash, model string, role store.Role, epoch uint64, reason string) {
 	n.note("cleared %s %s %s epoch %d: %s", txHash, model, role, epoch, reason)
 }
 
@@ -88,7 +88,7 @@ func (n *recordingLifecycleNarrator) EscrowMarkedForReplacement(escrowID, reason
 	n.note("marked for replacement %s: %s", escrowID, reason)
 }
 
-func (n *recordingLifecycleNarrator) RotationSkipped(model, role string, epoch uint64) {
+func (n *recordingLifecycleNarrator) RotationSkipped(model string, role store.Role, epoch uint64) {
 	n.note("rotation skipped %s %s epoch %d", model, role, epoch)
 }
 
@@ -106,11 +106,11 @@ func (n *recordingLifecycleNarrator) BridgeFinished(model string, epoch uint64, 
 
 func (n *recordingLifecycleNarrator) EscrowParked(escrowID string) { n.note("parked %s", escrowID) }
 
-func (n *recordingLifecycleNarrator) EscrowCreateUnderfunded(model, role string, have, need uint64) {
+func (n *recordingLifecycleNarrator) EscrowCreateUnderfunded(model string, role store.Role, have, need uint64) {
 	n.note("underfunded %s %s have %d need %d", model, role, have, need)
 }
 
-func (n *recordingLifecycleNarrator) EscrowCreateBelowFloor(model, role string, amount, floor uint64) {
+func (n *recordingLifecycleNarrator) EscrowCreateBelowFloor(model string, role store.Role, amount, floor uint64) {
 	n.note("below floor %s %s amount %d floor %d", model, role, amount, floor)
 }
 
@@ -181,7 +181,7 @@ func TestACreatedEscrowIsNarratedWithItsIDAsText(t *testing.T) {
 		narrator: narrator,
 	}
 
-	_, err := m.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}, roleTemp, 7, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500})
+	_, err := m.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}, roleTemp, 7, createdForBridge, chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500})
 
 	require.NoError(t, err)
 	require.Equal(t, []string{"created 42 model-a temp epoch 7 tx TX-HAPPY"}, narrator.recorded())

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/internal/logkey"
+	"devshard/cmd/gateway/store"
 )
 
 // EscrowServing renders an escrow published for routing. See README.md, "Lifecycle lines outside a race".
@@ -74,23 +75,23 @@ func (j *Journal) EscrowUnopened(escrowID string, err error) {
 }
 
 // EscrowCreated renders funds committed to a new escrow and why it was created; the id is text like every other escrow id.
-func (j *Journal) EscrowCreated(escrowID, model, role, reason string, epoch uint64, txHash string) {
+func (j *Journal) EscrowCreated(escrowID, model string, role store.Role, reason string, epoch uint64, txHash string) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		lines.Info("escrow created", logkey.Escrow, escrowID, logkey.Model, model, logkey.Role, role, logkey.Reason, reason, logkey.Epoch, epoch, logkey.Tx, txHash)
+		lines.Info("escrow created", logkey.Escrow, escrowID, logkey.Model, model, logkey.Role, string(role), logkey.Reason, reason, logkey.Epoch, epoch, logkey.Tx, txHash)
 	})
 }
 
 // EscrowCreateUnderfunded renders a create refused before broadcast because the wallet cannot pay for it.
-func (j *Journal) EscrowCreateUnderfunded(model, role string, have, need uint64) {
+func (j *Journal) EscrowCreateUnderfunded(model string, role store.Role, have, need uint64) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		lines.Warn("escrow create refused: wallet underfunded", logkey.Model, model, logkey.Role, role, logkey.Have, have, logkey.Need, need)
+		lines.Warn("escrow create refused: wallet underfunded", logkey.Model, model, logkey.Role, string(role), logkey.Have, have, logkey.Need, need)
 	})
 }
 
 // EscrowCreateBelowFloor renders a create refused before broadcast because the model's amount cannot pay one full-context request.
-func (j *Journal) EscrowCreateBelowFloor(model, role string, amount, floor uint64) {
+func (j *Journal) EscrowCreateBelowFloor(model string, role store.Role, amount, floor uint64) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		lines.Warn("escrow create refused: amount below the model's floor", logkey.Model, model, logkey.Role, role, logkey.Have, amount, logkey.Need, floor)
+		lines.Warn("escrow create refused: amount below the model's floor", logkey.Model, model, logkey.Role, string(role), logkey.Have, amount, logkey.Need, floor)
 	})
 }
 
@@ -102,16 +103,16 @@ func (j *Journal) EscrowReserveTaken(escrowID string) {
 }
 
 // EscrowRecovered renders a create that landed while the gateway was down.
-func (j *Journal) EscrowRecovered(escrowID, model, role string, epoch uint64, txHash string) {
+func (j *Journal) EscrowRecovered(escrowID, model string, role store.Role, epoch uint64, txHash string) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		lines.Info("escrow recovered from commitment", logkey.Escrow, escrowID, logkey.Model, model, logkey.Role, role, logkey.Epoch, epoch, logkey.Tx, txHash)
+		lines.Info("escrow recovered from commitment", logkey.Escrow, escrowID, logkey.Model, model, logkey.Role, string(role), logkey.Epoch, epoch, logkey.Tx, txHash)
 	})
 }
 
 // CommitmentCleared renders an abandoned creation intent and why.
-func (j *Journal) CommitmentCleared(txHash, model, role string, epoch uint64, reason string) {
+func (j *Journal) CommitmentCleared(txHash, model string, role store.Role, epoch uint64, reason string) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		lines.Warn("commitment cleared", logkey.Tx, txHash, logkey.Model, model, logkey.Role, role, logkey.Epoch, epoch, logkey.Reason, reason)
+		lines.Warn("commitment cleared", logkey.Tx, txHash, logkey.Model, model, logkey.Role, string(role), logkey.Epoch, epoch, logkey.Reason, reason)
 	})
 }
 
@@ -175,10 +176,10 @@ func (j *Journal) EscrowMarkedForReplacement(escrowID, reason string) {
 }
 
 // RotationSkipped renders a rotation that created nothing because the network serves no such model.
-func (j *Journal) RotationSkipped(model, role string, epoch uint64) {
+func (j *Journal) RotationSkipped(model string, role store.Role, epoch uint64) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
 		lines.Warn("rotation skipped, the network serves no such model",
-			logkey.Model, model, logkey.Role, role, logkey.Epoch, epoch)
+			logkey.Model, model, logkey.Role, string(role), logkey.Epoch, epoch)
 	})
 }
 

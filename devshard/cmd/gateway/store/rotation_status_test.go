@@ -106,7 +106,7 @@ func TestLoadRotationStatusesDeterministicOrder(t *testing.T) {
 		t.Fatalf("LoadRotationStatuses() = %d rows, want %d", len(loaded), len(wantOrder))
 	}
 	for i, want := range wantOrder {
-		if got := loaded[i].Model + "/" + loaded[i].Role; got != want {
+		if got := loaded[i].Model + "/" + string(loaded[i].Role); got != want {
 			t.Fatalf("LoadRotationStatuses()[%d] = %q, want %q (full order %+v)", i, got, want, loaded)
 		}
 	}

@@ -1,9 +1,11 @@
 package escrow
 
+import "devshard/cmd/gateway/store"
+
 const (
-	roleTemp    = "temp"
-	roleRegular = "regular"
-	RoleReserve = "reserve"
+	roleTemp    = store.RoleTemp
+	roleRegular = store.RoleRegular
+	RoleReserve = store.RoleReserve
 )
 
 const stagePrepareTemp = "prepare_temp"

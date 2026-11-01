@@ -16,6 +16,7 @@ import (
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/store"
 	"devshard/types"
 )
 
@@ -47,7 +48,7 @@ const ledgerSweepInterval = 10 * time.Second
 
 type servingEscrow struct {
 	escrowID string
-	role     string
+	role     store.Role
 	balance  uint64
 	label    int64
 }
@@ -63,7 +64,7 @@ type plannedFigures struct {
 type createCandidate struct {
 	createdID      string
 	model          string
-	role           string
+	role           store.Role
 	reason         string
 	reasonKnown    bool
 	serving        []servingEscrow
@@ -78,7 +79,7 @@ type createCandidate struct {
 
 type createLine struct {
 	reason string
-	role   string
+	role   store.Role
 	index  int
 }
 
@@ -255,9 +256,9 @@ func createLinesOf(entries []logcapture.Entry) map[string]createLine {
 		switch entry.Msg {
 		case "escrow created":
 			reason, _ := logcapture.Field(entry, logkey.Reason).(string)
-			lines[escrowID] = createLine{reason: reason, role: role, index: index}
+			lines[escrowID] = createLine{reason: reason, role: store.Role(role), index: index}
 		case "escrow recovered from commitment":
-			lines[escrowID] = createLine{reason: recoveredReason, role: role, index: index}
+			lines[escrowID] = createLine{reason: recoveredReason, role: store.Role(role), index: index}
 		}
 	}
 	return lines
@@ -396,7 +397,7 @@ func (h *gatewayHarness) resolveCandidates() bool {
 	if err != nil {
 		return false
 	}
-	rolesByID := make(map[string]string, len(rows))
+	rolesByID := make(map[string]store.Role, len(rows))
 	for _, row := range rows {
 		rolesByID[row.EscrowID] = row.RotationRole
 	}
@@ -425,14 +426,14 @@ func (h *gatewayHarness) resolveCandidates() bool {
 }
 
 // createdRole reads a create's role from its stored row, or from its create line once settlement has dropped the row.
-func createdRole(createdID string, rolesByID map[string]string, lines map[string]createLine) (string, bool) {
+func createdRole(createdID string, rolesByID map[string]store.Role, lines map[string]createLine) (store.Role, bool) {
 	if role, stored := rolesByID[createdID]; stored {
 		return role, true
 	}
 	if line, logged := lines[createdID]; logged && line.role != "" {
 		return line.role, true
 	}
-	return "", false
+	return store.RoleUnset, false
 }
 
 // takeDeferredCreateViolations judges, once the gateway has stopped and every tick has unwound, the creates still waiting for their role or reason.

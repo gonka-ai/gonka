@@ -155,7 +155,7 @@ func devshardViews(records []store.DevshardRecord) []devshardView {
 			PrivateKeyEnv:     record.PrivateKeyEnv,
 			Model:             record.Model,
 			Active:            record.Active,
-			RotationRole:      record.RotationRole,
+			RotationRole:      string(record.RotationRole),
 			RotationEpoch:     record.RotationEpoch,
 			ChainEpoch:        record.ChainEpoch,
 			Amount:            record.Amount,
@@ -173,7 +173,7 @@ func rotationViews(statuses []store.RotationStatus) []rotationView {
 	for _, status := range statuses {
 		views = append(views, rotationView{
 			Model:       status.Model,
-			Role:        status.Role,
+			Role:        string(status.Role),
 			Stage:       status.Stage,
 			Epoch:       status.Epoch,
 			Completed:   status.Completed,

@@ -27,7 +27,7 @@ func servingRegular(escrowID string, epoch int64) store.DevshardRecord {
 	return store.DevshardRecord{EscrowID: escrowID, Model: "model-a", Active: true, RotationRole: roleRegular, RotationEpoch: epoch, PrivateKeyEnv: "MODEL_A_KEY"}
 }
 
-func rowsInRole(testStore *fakeStore, role string) []store.DevshardRecord {
+func rowsInRole(testStore *fakeStore, role store.Role) []store.DevshardRecord {
 	testStore.mu.Lock()
 	defer testStore.mu.Unlock()
 	var rows []store.DevshardRecord

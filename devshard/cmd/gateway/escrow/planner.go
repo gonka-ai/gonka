@@ -147,7 +147,7 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 	return reading
 }
 
-func (reading *modelReading) countPendingCreate(role string) {
+func (reading *modelReading) countPendingCreate(role store.Role) {
 	switch role {
 	case RoleReserve:
 		reading.state.PendingStandbyCreates++

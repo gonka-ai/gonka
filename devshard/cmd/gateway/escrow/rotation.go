@@ -23,7 +23,7 @@ type rotationFill struct {
 	err     error
 }
 
-func (m *Manager) fillToLabel(ctx context.Context, role string, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []rotationFill {
+func (m *Manager) fillToLabel(ctx context.Context, role store.Role, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []rotationFill {
 	fills := make([]rotationFill, len(models))
 	commitments, loadErr := m.store.LoadCommitments(ctx)
 	for index, model := range models {
@@ -41,7 +41,7 @@ func (m *Manager) fillToLabel(ctx context.Context, role string, label uint64, mo
 			if fill.err != nil || fill.created >= fill.wanted {
 				continue
 			}
-			if _, err := m.createFor(ctx, fill.model, role, label, string(createdForBridge), snapshot); err != nil {
+			if _, err := m.createFor(ctx, fill.model, role, label, createdForBridge, snapshot); err != nil {
 				if !refusedBeforeBroadcast(err) {
 					m.breaker.recordFailure(fill.model.ModelID, role)
 				}
@@ -55,7 +55,7 @@ func (m *Manager) fillToLabel(ctx context.Context, role string, label uint64, mo
 	return fills
 }
 
-func (m *Manager) createsWanted(role string, label uint64, target int, model ModelConfig, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord, commitments []store.Commitment) (int, error) {
+func (m *Manager) createsWanted(role store.Role, label uint64, target int, model ModelConfig, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord, commitments []store.Commitment) (int, error) {
 	existing := countActive(devshards, model.ModelID, role, int64(label)) + countOpenCreates(commitments, model.ModelID, role, label)
 	if existing >= target {
 		return 0, nil
@@ -72,7 +72,7 @@ func (m *Manager) createsWanted(role string, label uint64, target int, model Mod
 	return target - existing, nil
 }
 
-func countActive(devshards []store.DevshardRecord, modelID, role string, epoch int64) int {
+func countActive(devshards []store.DevshardRecord, modelID string, role store.Role, epoch int64) int {
 	count := 0
 	for _, record := range devshards {
 		if record.Active && record.RotationRole == role && record.RotationEpoch == epoch && record.Model == modelID {
@@ -83,7 +83,7 @@ func countActive(devshards []store.DevshardRecord, modelID, role string, epoch i
 }
 
 // countOpenCreates counts broadcast creates of this role and label that may still land, which a fill must not buy again.
-func countOpenCreates(commitments []store.Commitment, modelID, role string, label uint64) int {
+func countOpenCreates(commitments []store.Commitment, modelID string, role store.Role, label uint64) int {
 	count := 0
 	for _, commitment := range commitments {
 		if commitment.Model == modelID && commitment.Role == role && commitment.Epoch == label {

@@ -12,9 +12,10 @@ import (
 	"devshard/cmd/gateway/funding"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/internal/logkey"
+	"devshard/cmd/gateway/store"
 )
 
-func rowsOfRole(harness *gatewayHarness, role string, active bool) int {
+func rowsOfRole(harness *gatewayHarness, role store.Role, active bool) int {
 	count := 0
 	for _, row := range harness.rows() {
 		if row.RotationRole == role && row.Active == active {
@@ -24,7 +25,7 @@ func rowsOfRole(harness *gatewayHarness, role string, active bool) int {
 	return count
 }
 
-func createdWithRole(harness *gatewayHarness, role string) []string {
+func createdWithRole(harness *gatewayHarness, role store.Role) []string {
 	lines := createLinesOf(harness.loggedEntries())
 	var escrowIDs []string
 	for _, created := range harness.chain.createsOf(testModelID) {

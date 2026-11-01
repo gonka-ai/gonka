@@ -36,7 +36,7 @@ type escrowStore interface {
 	ParkForSettlement(ctx context.Context, escrowID string) error
 	ParkForSettlementIfActive(ctx context.Context, escrowID string) (bool, error)
 	DevshardSettleTxHash(ctx context.Context, escrowID string) (string, time.Time, error)
-	SetDevshardRotationRole(ctx context.Context, escrowID, role string) error
+	SetDevshardRotationRole(ctx context.Context, escrowID string, role store.Role) error
 	SetDevshardSettleTxHash(ctx context.Context, escrowID, txHash string) error
 	DeleteDevshard(ctx context.Context, escrowID string) error
 	SaveCommitment(ctx context.Context, c store.Commitment) error
@@ -113,12 +113,12 @@ type FundingReader interface {
 
 // lifecycleNarrator is satisfied by *journal.Journal; each method names one transition an operator reads the log for. See README.md, "What this package expects of others".
 type lifecycleNarrator interface {
-	EscrowCreated(escrowID, model, role, reason string, epoch uint64, txHash string)
-	EscrowRecovered(escrowID, model, role string, epoch uint64, txHash string)
-	EscrowCreateUnderfunded(model, role string, have, need uint64)
-	EscrowCreateBelowFloor(model, role string, amount, floor uint64)
+	EscrowCreated(escrowID, model string, role store.Role, reason string, epoch uint64, txHash string)
+	EscrowRecovered(escrowID, model string, role store.Role, epoch uint64, txHash string)
+	EscrowCreateUnderfunded(model string, role store.Role, have, need uint64)
+	EscrowCreateBelowFloor(model string, role store.Role, amount, floor uint64)
 	EscrowReserveTaken(escrowID string)
-	CommitmentCleared(txHash, model, role string, epoch uint64, reason string)
+	CommitmentCleared(txHash, model string, role store.Role, epoch uint64, reason string)
 	EscrowGoneFromChain(escrowID string)
 	EscrowDeadlineReached(escrowID string, chainEpoch uint64, settleBy int64)
 	EscrowDeadlineUnsettled(escrowID string, settleBy int64, reason string)
@@ -126,7 +126,7 @@ type lifecycleNarrator interface {
 	EscrowDeadlinesProjected(height, projected int64, staleFor time.Duration)
 	EscrowChainFactsUnresolved(escrowID, reason string)
 	EscrowMarkedForReplacement(escrowID, reason string)
-	RotationSkipped(model, role string, epoch uint64)
+	RotationSkipped(model string, role store.Role, epoch uint64)
 	RegularsPromotedToTemp(model string, epoch uint64, promoted int)
 	BridgePrepared(model string, epoch uint64, created, retired int)
 	BridgeFinished(model string, epoch uint64, created, retired int)

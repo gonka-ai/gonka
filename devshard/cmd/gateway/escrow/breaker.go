@@ -1,6 +1,10 @@
 package escrow
 
-import "sync"
+import (
+	"sync"
+
+	"devshard/cmd/gateway/store"
+)
 
 const maxCreateBreakerCooldownTicks = 4
 
@@ -18,12 +22,12 @@ func newCreateBreaker() *createBreaker {
 	return &createBreaker{states: make(map[string]*createBreakerState)}
 }
 
-func createBreakerKey(model, role string) string {
-	return model + "|" + role
+func createBreakerKey(model string, role store.Role) string {
+	return model + "|" + string(role)
 }
 
 // gated decrements an open cooldown by one tick per call; ticks are call counts, not durations.
-func (b *createBreaker) gated(model, role string) bool {
+func (b *createBreaker) gated(model string, role store.Role) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -35,14 +39,14 @@ func (b *createBreaker) gated(model, role string) bool {
 	return true
 }
 
-func (b *createBreaker) open(model, role string) bool {
+func (b *createBreaker) open(model string, role store.Role) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	state, ok := b.states[createBreakerKey(model, role)]
 	return ok && state.cooldownTicks > 0
 }
 
-func (b *createBreaker) recordFailure(model, role string) {
+func (b *createBreaker) recordFailure(model string, role store.Role) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -56,7 +60,7 @@ func (b *createBreaker) recordFailure(model, role string) {
 	state.cooldownTicks = escalatedCooldownTicks(state.failures)
 }
 
-func (b *createBreaker) reset(model, role string) {
+func (b *createBreaker) reset(model string, role store.Role) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 

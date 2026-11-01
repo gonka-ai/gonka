@@ -26,11 +26,11 @@ var ErrAmountBelowFloor = errors.New("escrow amount cannot pay one full-context 
 // CreateEscrow creates one escrow on demand, on the same durable-intent path rotation uses. See README.md, "Creating an escrow".
 func (m *Manager) CreateEscrow(ctx context.Context, model ModelConfig) (chain.CreateEscrowResult, error) {
 	snapshot := m.snapshots.Snapshot()
-	return m.createFor(ctx, model, roleRegular, snapshot.EpochIndex, string(createdByOperator), snapshot)
+	return m.createFor(ctx, model, roleRegular, snapshot.EpochIndex, createdByOperator, snapshot)
 }
 
 // A failed intent-commitment write (in onPrepared) aborts before any chain broadcast: no broadcast without durable intent.
-func (m *Manager) createFor(ctx context.Context, model ModelConfig, role string, label uint64, reason string, snapshot chain.PhaseSnapshot) (chain.CreateEscrowResult, error) {
+func (m *Manager) createFor(ctx context.Context, model ModelConfig, role store.Role, label uint64, reason createReason, snapshot chain.PhaseSnapshot) (chain.CreateEscrowResult, error) {
 	if floor, priced := m.creationFloor(model.ModelID, snapshot); priced && model.Amount < floor {
 		m.narrateBelowFloor(model, role, floor)
 		return chain.CreateEscrowResult{}, fmt.Errorf("creating escrow for %s/%s: %w: amount %d, floor %d", model.ModelID, role, ErrAmountBelowFloor, model.Amount, floor)
@@ -64,7 +64,7 @@ func (m *Manager) createFor(ctx context.Context, model ModelConfig, role string,
 	}
 	escrowID := strconv.FormatUint(result.EscrowID, 10)
 	if m.narrator != nil {
-		m.narrator.EscrowCreated(escrowID, model.ModelID, role, reason, label, result.TxHash)
+		m.narrator.EscrowCreated(escrowID, model.ModelID, role, string(reason), label, result.TxHash)
 	}
 	return result, m.persistEscrow(ctx, escrowID, c)
 }
@@ -113,7 +113,7 @@ func (m *Manager) creationFloor(modelID string, snapshot chain.PhaseSnapshot) (u
 	return floor, true
 }
 
-func (m *Manager) narrateBelowFloor(model ModelConfig, role string, floor uint64) {
+func (m *Manager) narrateBelowFloor(model ModelConfig, role store.Role, floor uint64) {
 	if !m.belowFloorNarrated.mark(createBreakerKey(model.ModelID, role)) || m.narrator == nil {
 		return
 	}
@@ -121,7 +121,7 @@ func (m *Manager) narrateBelowFloor(model ModelConfig, role string, floor uint64
 }
 
 // narrateUnderfunded names a wallet that cannot pay once per (model, role), until a create of it succeeds.
-func (m *Manager) narrateUnderfunded(modelID, role string, err error) {
+func (m *Manager) narrateUnderfunded(modelID string, role store.Role, err error) {
 	var underfunded *chain.WalletUnderfundedError
 	if !errors.As(err, &underfunded) || !m.underfundedNarrated.mark(createBreakerKey(modelID, role)) || m.narrator == nil {
 		return

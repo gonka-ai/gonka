@@ -3,6 +3,8 @@ package escrow
 import (
 	"sync"
 	"testing"
+
+	"devshard/cmd/gateway/store"
 )
 
 const suppressionSafetyBound = 10
@@ -10,7 +12,7 @@ const suppressionSafetyBound = 10
 func countSuppressedCalls(b *createBreaker, model, role string) int {
 	count := 0
 	for count <= suppressionSafetyBound {
-		if !b.gated(model, role) {
+		if !b.gated(model, store.Role(role)) {
 			return count
 		}
 		count++
@@ -126,11 +128,11 @@ func TestCreateBreakerConcurrentAccess(t *testing.T) {
 			for i := range 200 {
 				switch i % 3 {
 				case 0:
-					b.recordFailure(model, role)
+					b.recordFailure(model, store.Role(role))
 				case 1:
-					b.gated(model, role)
+					b.gated(model, store.Role(role))
 				case 2:
-					b.reset(model, role)
+					b.reset(model, store.Role(role))
 				}
 			}
 		}(workerIndex)

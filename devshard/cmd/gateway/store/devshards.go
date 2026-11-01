@@ -38,7 +38,7 @@ type DevshardRecord struct {
 	PrivateKeyEnv     string `json:"private_key_env"`
 	Model             string `json:"model"`
 	Active            bool   `json:"active"`
-	RotationRole      string `json:"rotation_role"`
+	RotationRole      Role   `json:"rotation_role"`
 	RotationEpoch     int64  `json:"rotation_epoch"`
 	SettlementPending bool   `json:"settlement_pending"`
 	SettleTxHash      string `json:"settle_tx_hash"`
@@ -187,7 +187,7 @@ func (s *Store) DevshardSettleTxHash(ctx context.Context, escrowID string) (hash
 }
 
 // SetDevshardRotationRole touches nothing else: a whole-record upsert would carry the caller's stale copy back into the row.
-func (s *Store) SetDevshardRotationRole(ctx context.Context, escrowID, role string) error {
+func (s *Store) SetDevshardRotationRole(ctx context.Context, escrowID string, role Role) error {
 	return s.updateDevshardField(ctx,
 		`UPDATE devshards SET rotation_role = ?, updated_at = datetime('now') WHERE escrow_id = ?`, role, escrowID)
 }

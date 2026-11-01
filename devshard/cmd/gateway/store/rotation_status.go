@@ -9,7 +9,7 @@ import (
 // RotationStatus is the latest outcome of one (Model, Role) rotation stage, kept for admin-debug visibility only.
 type RotationStatus struct {
 	Model       string    `json:"model"`
-	Role        string    `json:"role"`
+	Role        Role      `json:"role"`
 	Stage       string    `json:"stage"`
 	Epoch       uint64    `json:"epoch"`
 	Completed   bool      `json:"completed"`

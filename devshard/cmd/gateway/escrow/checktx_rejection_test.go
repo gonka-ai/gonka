@@ -122,7 +122,7 @@ func TestACreateRejectedAtCheckTxDropsItsCommitment(t *testing.T) {
 			}
 			model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-			if _, err := m.createFor(context.Background(), model, roleRegular, 5, string(createdByOperator), chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
+			if _, err := m.createFor(context.Background(), model, roleRegular, 5, createdByOperator, chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
 				t.Fatal("createFor() = nil, want the broadcast error")
 			}
 
