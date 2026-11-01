@@ -105,16 +105,6 @@ func (t *Tracker) Pressure(participant, model string) Pressure {
 	}
 }
 
-func (t *Tracker) TimePerOutputTokenP75(participant, model string) (time.Duration, bool) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	host := t.hosts[hostKey{participant: participant, model: model}]
-	if host == nil {
-		return 0, false
-	}
-	return host.perf.decode.p75(latencyWindowMinimum)
-}
-
 // RecordServedMismatch costs a host one unresponsive sample for a stream its own Finish does not sign for, the same currency as a stall.
 func (t *Tracker) RecordServedMismatch(participant, model string) {
 	t.RecordSample(Sample{ParticipantKey: participant, Model: model, Responsive: false})

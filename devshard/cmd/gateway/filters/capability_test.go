@@ -120,7 +120,7 @@ func TestCapabilityLimitsIgnoresAPhraseWithoutDigits(t *testing.T) {
 
 // Test flow:
 //  1. Build an error body for each case's capability-refusal message via `errorBody`, varying the phrasing between a shortening-lowercase message, a message whose digits end it, and the tool-choice-unsupported message.
-//  2. Assert IsCacheableResponse reports the 400 response as not cacheable.
+//  2. Assert CacheRefusal reports the 400 response as not cacheable.
 //  3. Assert HasNonCacheableError reports the body as a non-cacheable error.
 func TestContextRefusalStaysOutOfTheCacheHoweverItIsSpelled(t *testing.T) {
 	t.Parallel()
@@ -136,7 +136,7 @@ func TestContextRefusalStaysOutOfTheCacheHoweverItIsSpelled(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			body := errorBody(t, testCase.message)
-			if IsCacheableResponse(400, body) {
+			if CacheRefusal(400, body) == CacheStorable {
 				t.Fatalf("cached a capability refusal the race would have retried: %q", testCase.message)
 			}
 			if !HasNonCacheableError(body) {

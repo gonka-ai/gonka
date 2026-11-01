@@ -325,7 +325,7 @@ The polarity is a blacklist: an error naming nothing recognisable is stored. Ref
 
 The engine reads these rules through `IsCacheableUpstreamError` to stop escalating on a trusted host's 400, so changing what they accept, their polarity included, moves the race's escalation with the cache (see [`docs/race.md`](../docs/race.md), "Escalation").
 
-`parseUpstreamErrorDetails` reads the error from plain JSON or from inside an SSE data event, and `DecodeUpstreamError` accepts both the nested `{"error":{...}}` shape and the flat `{"object":"error",...}` one vLLM still emits. The scan visits every event rather than stopping at the first decodable one: an empty `{"error":{}}` decodes while carrying nothing, so stopping there would leave a real error in a later event unseen — and a choice's terminal reason usually arrives after the events that carried its content. The first failure found is the one kept. A null `code` renders as absent rather than the literal text `<nil>`.
+`UpstreamFailure` reads the error from plain JSON or from inside an SSE data event, and `DecodeUpstreamError` accepts both the nested `{"error":{...}}` shape and the flat `{"object":"error",...}` one vLLM still emits. The scan visits every event rather than stopping at the first decodable one: an empty `{"error":{}}` decodes while carrying nothing, so stopping there would leave a real error in a later event unseen — and a choice's terminal reason usually arrives after the events that carried its content. The first failure found is the one kept. A null `code` renders as absent rather than the literal text `<nil>`.
 
 ### Finishing an answer
 

@@ -65,7 +65,7 @@ func BenchmarkIsCacheableResponse(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(stream)))
 	for b.Loop() {
-		if !IsCacheableResponse(200, stream) {
+		if CacheRefusal(200, stream) != CacheStorable {
 			b.Fatal("the production stream must stay cacheable")
 		}
 	}

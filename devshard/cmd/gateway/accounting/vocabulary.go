@@ -49,7 +49,6 @@ const (
 	TimeoutSkipped              TimeoutOutcome = "skipped"
 	TimeoutVoteCollectionFailed TimeoutOutcome = "vote_collection_failed"
 	TimeoutInsufficientVotes    TimeoutOutcome = "insufficient_votes"
-	TimeoutDiffSendFailed       TimeoutOutcome = "diff_send_failed"
 	TimeoutApplied              TimeoutOutcome = "applied"
 )
 

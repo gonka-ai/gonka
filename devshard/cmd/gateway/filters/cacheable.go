@@ -40,14 +40,9 @@ func CacheRefusal(status int, body []byte) string {
 	return CacheStorable
 }
 
-// IsCacheableResponse reports whether a completed upstream response may be stored and replayed.
-func IsCacheableResponse(status int, body []byte) bool {
-	return CacheRefusal(status, body) == CacheStorable
-}
-
 // HasNonCacheableError reports a failure that must not be replayed, so a poisoned entry drops itself on read.
 func HasNonCacheableError(body []byte) bool {
-	details, ok := parseUpstreamErrorDetails(body)
+	details, ok := UpstreamFailure(body)
 	return ok && !isCacheableErrorDetails(details)
 }
 
@@ -56,7 +51,7 @@ func IsCacheableUpstreamError(status int, body []byte) bool {
 	if status != http.StatusBadRequest {
 		return false
 	}
-	details, ok := parseUpstreamErrorDetails(body)
+	details, ok := UpstreamFailure(body)
 	if !ok {
 		return false
 	}
@@ -64,11 +59,7 @@ func IsCacheableUpstreamError(status int, body []byte) bool {
 }
 
 // UpstreamFailure reports the error a whole response body carries. See README.md, "Cacheability".
-func UpstreamFailure(body []byte) (UpstreamError, bool) {
-	return parseUpstreamErrorDetails(body)
-}
-
-func parseUpstreamErrorDetails(payload []byte) (UpstreamError, bool) {
+func UpstreamFailure(payload []byte) (UpstreamError, bool) {
 	scan := scanResponse(payload, false)
 	return scan.upstream, scan.failed
 }

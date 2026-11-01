@@ -203,7 +203,7 @@ The rule does not reach values. A struct the caller fills with already-checked n
 
 **No per-request cost accounting.** The request ledger records tokens and topology, not money. A breakdown computed as a read-time join against live session state would print zeros once an escrow settles. Money lives in chain settlement; the ledger answers "what did this request do", not "what did it cost".
 
-**No KV-cache affinity routing.** `scheduler.AffinityHint` is an empty struct with no caller — the extension point exists so adding affinity later is a local change inside the scheduler rather than a new selection mechanism bolted beside it.
+**No KV-cache affinity routing.** Adding it later is a local change inside the scheduler rather than a new selection mechanism bolted beside it.
 
 **No data-driven escalation beyond the first-token budget.** The escalation curve itself is a hardcoded quadratic in prompt size. One measured value stretches it: a host's own p75 to first content, which can only *extend* the budget, never shorten it (`engine/escalation.go`, `firstTokenBudget`). Nothing else in the ladder reads a percentile.
 
