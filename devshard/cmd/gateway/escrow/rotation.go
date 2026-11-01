@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/store"
@@ -82,7 +81,6 @@ func countActive(devshards []store.DevshardRecord, modelID string, role store.Ro
 	return count
 }
 
-// countOpenCreates counts broadcast creates of this role and label that may still land, which a fill must not buy again.
 func countOpenCreates(commitments []store.Commitment, modelID string, role store.Role, label uint64) int {
 	count := 0
 	for _, commitment := range commitments {
@@ -158,9 +156,6 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 
 func (m *Manager) bridgeRoom(ctx context.Context, label uint64, models []ModelConfig, devshards []store.DevshardRecord) (map[string]int, error) {
 	room := map[string]int{}
-	if !slices.ContainsFunc(models, func(model ModelConfig) bool { return model.MaxUnsettled > 0 }) {
-		return room, nil
-	}
 	commitments, err := m.store.LoadCommitments(ctx)
 	if err != nil {
 		return nil, err

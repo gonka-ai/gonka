@@ -779,3 +779,21 @@ func TestABridgeFillChargesAnOpenTempCommitmentOnce(t *testing.T) {
 
 	require.Equal(t, 1, creates)
 }
+
+// Test flow:
+//  1. Build a rotation manager with one active regular, no budget cap, and a store that cannot read commitments.
+//  2. Call prepareBridge.
+//  3. Assert it reports the failure, creates nothing, and leaves the regular in its role.
+func TestABridgeThatCannotReadCommitmentsPromotesNothing(t *testing.T) {
+	testStore := newFakeStore()
+	testStore.loadCommitmentsErr = errors.New("database is locked")
+	regular := store.DevshardRecord{EscrowID: "reg-1", Model: "model-a", Active: true, RotationRole: roleRegular, PrivateKeyEnv: "MODEL_A_KEY"}
+	testStore.devshards[regular.EscrowID] = regular
+	m := newRotationManager(t, testStore, &fakeTxClient{}, false)
+	models := []ModelConfig{{ModelID: "model-a", TempCount: 1, TargetCount: 3, Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}}
+
+	err := m.prepareBridge(context.Background(), servedSnapshot(9, 500, "model-a"), models, []store.DevshardRecord{regular})
+
+	require.ErrorIs(t, err, testStore.loadCommitmentsErr)
+	require.Equal(t, roleRegular, testStore.devshards[regular.EscrowID].RotationRole)
+}

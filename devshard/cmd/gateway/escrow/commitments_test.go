@@ -78,6 +78,7 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	saveCommitmentErr     error
+	loadCommitmentsErr    error
 	upsertDevshardErr     error
 	upsertDevshardErrByID map[string]error
 	rotationRoleErrByID   map[string]error
@@ -123,6 +124,9 @@ func (f *fakeStore) LoadCommitments(ctx context.Context) ([]store.Commitment, er
 	defer f.mu.Unlock()
 	if f.calls != nil {
 		f.calls.record("LoadCommitments")
+	}
+	if f.loadCommitmentsErr != nil {
+		return nil, f.loadCommitmentsErr
 	}
 	commitments := make([]store.Commitment, 0, len(f.commitments))
 	for _, c := range f.commitments {
