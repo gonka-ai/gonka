@@ -43,6 +43,9 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 	if err != nil {
 		return fmt.Errorf("rehydrating serving session for escrow %s: %w", escrowID, err)
 	}
+	if r.rehydrated != nil {
+		r.rehydrated(escrowID, session)
+	}
 	return errors.Join(work(session), session.Close())
 }
 
