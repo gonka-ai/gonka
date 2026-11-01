@@ -51,7 +51,6 @@ graph TD
     API --> ESC
     ENG --> SCH
     SCH --> LIM
-    SCH --> PRF
     SCH --> CHN
     ENG --> LIM
     ENG --> FIL
@@ -65,6 +64,12 @@ graph TD
     CFG --> ENV
     API --> CFG
     MET --> LIM
+    REG --> ESC
+    ACC --> ENG
+    ACC --> SCH
+    CFG --> CHN
+    CFG --> FIL
+    STO --> CFG
 ```
 
 `filters` depends on nothing: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.

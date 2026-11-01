@@ -455,6 +455,38 @@ An escrow hands out nonces one at a time, so its throughput is the inverse of th
 
 Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so cardinality does not grow with the escrow set. `/v1/admin/devshards/import` reports under the `/v1/admin/devshards/{id}` label so it lands in the same panel. A recorder keeps every label value it writes non-empty (`metrics/labels.go`, `metricLabel`): an empty label silently merges unrelated series, and a status with no recoverable code reports as `0` (`metrics/vocabulary.go`, `statusNoCode`) rather than as blank. A collector, by contrast, passes its source's values through unchanged, empty ones included.
 
+### Other families
+
+The families no question above needs, with the help text each one exports.
+
+| family | what it reports |
+| --- | --- |
+| `devshard_gateway_cache_entries` | Replies the response cache currently holds. |
+| `devshard_gateway_cache_misses_total` | Requests the response cache could not serve. Against hits this is the only measure of whether the cache earns its memory. |
+| `devshard_gateway_capacity_weights_unobserved_by_model` | 1 while escrow scoring for a model runs on the membership-share fallback because the chain has reported no weights. |
+| `devshard_gateway_captured_requests_failed_total` | Captures the sink could not write: the directory is unwritable, out of space, or gone. Distinct from refused, which is the byte cap doing its job. |
+| `devshard_gateway_captured_requests_refused_total` | Captures refused because the directory is at its byte cap. Nothing evicts capture files, so a rising count means capture is off until an operator empties the directory. |
+| `devshard_gateway_captured_requests_total` | Requests written to the capture directory. |
+| `devshard_gateway_chain_block_height` | Latest chain block height the observer published. |
+| `devshard_gateway_chain_block_reason` | Current request-block reason (1 for the active one). |
+| `devshard_gateway_chain_epoch_index` | Latest epoch index the observer published. |
+| `devshard_gateway_chain_epoch_switch_block_height` | Block height at which the current epoch switches. |
+| `devshard_gateway_chain_max_nonce` | Escrow max-nonce parameter; 0 means not yet fetched. |
+| `devshard_gateway_effective_max_input_tokens_in_flight` | Configured input-token cap, before per-model overrides and capacity scaling. |
+| `devshard_gateway_enforced_max_input_tokens_by_model` | Input-token cap a model's requests are judged against, after its overrides and capacity scaling. |
+| `devshard_gateway_escrow_drain_close_failures_total` | Drained escrows whose snapshot flush or session close failed. |
+| `devshard_gateway_escrow_weight` | Per-escrow effective host weight used by the capacity-aware picker. |
+| `devshard_gateway_host_seconds_per_output_token` | Slow-quartile decode cost per output token, measured from the first content chunk. |
+| `devshard_gateway_participant_first_content_seconds` | Time from inference send until first content by participant and model. |
+| `devshard_gateway_participant_inter_chunk_seconds` | Mean silence between streamed chunks within one attempt, by participant and model. |
+| `devshard_gateway_participant_max_inter_chunk_seconds` | Longest silence between two streamed chunks within one attempt, by participant and model. |
+| `devshard_gateway_participant_missed_deadlines_total` | Total receipt and first-token deadlines a participant missed on a model, each of which narrowed its window. |
+| `devshard_gateway_participant_output_tokens_total` | Output tokens a participant generated on a model: the host's usage completion_tokens, else the logprob entries it streamed. |
+| `devshard_gateway_participant_prefill_seconds_per_input_token` | Receipt-to-first-content time divided by input tokens, by participant and model. |
+| `devshard_gateway_participant_receipt_seconds` | Time from inference send until receipt confirmation by participant and model. |
+| `devshard_gateway_participant_total_attempt_seconds` | Total inference attempt time by participant and model. |
+| `devshard_gateway_served_bindings_total` | Total served streams checked against the Finish their host signed, by verdict. |
+
 ### Metric changes
 
 A dashboard or alert outside this repository may query a family this gateway does not emit; each row names the one to query instead, or says why none exists. devshardctl emits 95 families, and 19 `devshard_accounting_*` more with its stats on; 53 of the 95, and all 19, are not emitted here. The `participant_window_*` and `escalation_decisions_total` rows are this gateway's own former families.
