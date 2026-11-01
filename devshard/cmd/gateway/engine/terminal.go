@@ -35,6 +35,7 @@ const (
 	TerminalStalled
 	TerminalHardTimeout
 	TerminalEscrowLookupLimited
+	terminalCount
 )
 
 // See README.md, "Outcome, samples and verdicts".
@@ -56,6 +57,41 @@ var (
 	}()
 )
 
+// terminalTraits is what the failure reason and the limiter verdict read from a terminal; an empty reason is a win or a loss.
+type terminalTraits struct {
+	reason     string
+	verdict    limits.Verdict
+	hasVerdict bool
+}
+
+var terminalTable = [terminalCount]terminalTraits{
+	TerminalUnclassified:        {reason: ReasonUnknown},
+	TerminalWon:                 {verdict: limits.Success, hasVerdict: true},
+	TerminalLost:                {verdict: limits.Success, hasVerdict: true},
+	TerminalThrottled:           {reason: ReasonThrottled, verdict: limits.Overload, hasVerdict: true},
+	TerminalUnavailable:         {reason: ReasonUnavailable, verdict: limits.Overload, hasVerdict: true},
+	TerminalForbidden:           {reason: ReasonForbidden, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalNotFound:            {reason: ReasonNotFound, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalTimestampDrift:      {reason: ReasonTimestampDrift, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalRejected:            {reason: ReasonRejected},
+	TerminalUpstreamServerError: {reason: ReasonUpstreamServer, verdict: limits.UpstreamFault, hasVerdict: true},
+	TerminalOffPath:             {reason: ReasonOffPath},
+	TerminalDialFailure:         {reason: ReasonDialFailure, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalStreamTruncated:     {reason: ReasonStreamTruncated, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalUnexpectedEOF:       {reason: ReasonUnexpectedEOF, verdict: limits.TransportFault, hasVerdict: true},
+	TerminalResponseTooLarge:    {reason: ReasonResponseTooLarge, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalClientCancelled:     {reason: ReasonClientCancelled},
+	TerminalNoReceipt:           {reason: ReasonNoReceipt},
+	TerminalEmptyStream:         {reason: ReasonEmptyStream, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalBurnEmpty:           {reason: ReasonEmptyStream, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalErrorStream:         {reason: ReasonErrorStream, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalCapabilityRefused:   {reason: ReasonErrorStream, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalRequestTooLarge:     {reason: ReasonRequestTooLarge, verdict: limits.ModelOutcome, hasVerdict: true},
+	TerminalStalled:             {reason: ReasonStalled, verdict: limits.DecodeStalled, hasVerdict: true},
+	TerminalHardTimeout:         {reason: ReasonHardTimeout, verdict: limits.Overload, hasVerdict: true},
+	TerminalEscrowLookupLimited: {reason: ReasonEscrowLookupLimited, verdict: limits.ModelOutcome, hasVerdict: true},
+}
+
 // StatusFor reports the upstream status a terminal was recovered from, false for those that carried none.
 func StatusFor(terminal Terminal) (int, bool) {
 	status, known := terminalStatuses[terminal]
@@ -63,21 +99,8 @@ func StatusFor(terminal Terminal) (int, bool) {
 }
 
 func (t Terminal) verdict() (limits.Verdict, bool) {
-	switch t {
-	case TerminalWon, TerminalLost:
-		return limits.Success, true
-	case TerminalThrottled, TerminalUnavailable, TerminalHardTimeout:
-		return limits.Overload, true
-	case TerminalUpstreamServerError:
-		return limits.UpstreamFault, true
-	case TerminalForbidden, TerminalNotFound, TerminalTimestampDrift,
-		TerminalDialFailure, TerminalStreamTruncated, TerminalUnexpectedEOF:
-		return limits.TransportFault, true
-	case TerminalStalled:
-		return limits.DecodeStalled, true
-	case TerminalEmptyStream, TerminalBurnEmpty, TerminalErrorStream, TerminalCapabilityRefused,
-		TerminalResponseTooLarge, TerminalRequestTooLarge, TerminalEscrowLookupLimited:
-		return limits.ModelOutcome, true
+	if traits := t.traits(); traits.hasVerdict {
+		return traits.verdict, true
 	}
 	return limits.ModelOutcome, false
 }
@@ -98,50 +121,11 @@ func (t Terminal) String() string {
 	return TerminalNameUnnamed
 }
 
-func (t Terminal) reason() string {
-	switch t {
-	case TerminalWon, TerminalLost:
-		return ""
-	case TerminalThrottled:
-		return ReasonThrottled
-	case TerminalUnavailable:
-		return ReasonUnavailable
-	case TerminalForbidden:
-		return ReasonForbidden
-	case TerminalNotFound:
-		return ReasonNotFound
-	case TerminalTimestampDrift:
-		return ReasonTimestampDrift
-	case TerminalRejected:
-		return ReasonRejected
-	case TerminalUpstreamServerError:
-		return ReasonUpstreamServer
-	case TerminalOffPath:
-		return ReasonOffPath
-	case TerminalDialFailure:
-		return ReasonDialFailure
-	case TerminalStreamTruncated:
-		return ReasonStreamTruncated
-	case TerminalUnexpectedEOF:
-		return ReasonUnexpectedEOF
-	case TerminalRequestTooLarge:
-		return ReasonRequestTooLarge
-	case TerminalEscrowLookupLimited:
-		return ReasonEscrowLookupLimited
-	case TerminalResponseTooLarge:
-		return ReasonResponseTooLarge
-	case TerminalClientCancelled:
-		return ReasonClientCancelled
-	case TerminalNoReceipt:
-		return ReasonNoReceipt
-	case TerminalEmptyStream, TerminalBurnEmpty:
-		return ReasonEmptyStream
-	case TerminalErrorStream, TerminalCapabilityRefused:
-		return ReasonErrorStream
-	case TerminalStalled:
-		return ReasonStalled
-	case TerminalHardTimeout:
-		return ReasonHardTimeout
+func (t Terminal) reason() string { return t.traits().reason }
+
+func (t Terminal) traits() terminalTraits {
+	if t < 0 || t >= terminalCount {
+		return terminalTraits{reason: ReasonUnknown}
 	}
-	return ReasonUnknown
+	return terminalTable[t]
 }

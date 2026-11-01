@@ -698,11 +698,11 @@ func TestEveryRecoveredStatusRoundTripsThroughItsTerminal(t *testing.T) {
 }
 
 // Test flow:
-//  1. Walk every terminal from TerminalUnclassified to TerminalHardTimeout.
+//  1. Walk every terminal up to terminalCount.
 //  2. Assert each one has a non-empty name that is not the unnamed/unknown placeholder.
 //  3. Assert a win and a loss both report an empty failure reason.
 func TestEveryTerminalHasAName(t *testing.T) {
-	for terminal := TerminalUnclassified; terminal <= TerminalHardTimeout; terminal++ {
+	for terminal := TerminalUnclassified; terminal < terminalCount; terminal++ {
 		if terminal.String() == "" {
 			t.Fatalf("terminal %d has no name", terminal)
 		}
@@ -920,5 +920,30 @@ func TestUpstreamServerErrorsNarrowTheWindowAndClientErrorsDoNot(t *testing.T) {
 					verdict, moves, testCase.wantVerdict, testCase.wantMoves)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: every terminal with the limiter verdict it reports, or none.
+//  2. Assert verdict() returns exactly that, and a terminal with no verdict reports ModelOutcome and false.
+func TestEveryTerminalReportsItsVerdict(t *testing.T) {
+	verdicts := map[Terminal]limits.Verdict{
+		TerminalWon: limits.Success, TerminalLost: limits.Success,
+		TerminalThrottled: limits.Overload, TerminalUnavailable: limits.Overload, TerminalHardTimeout: limits.Overload,
+		TerminalUpstreamServerError: limits.UpstreamFault,
+		TerminalForbidden:           limits.TransportFault, TerminalNotFound: limits.TransportFault, TerminalTimestampDrift: limits.TransportFault,
+		TerminalDialFailure: limits.TransportFault, TerminalStreamTruncated: limits.TransportFault, TerminalUnexpectedEOF: limits.TransportFault,
+		TerminalStalled:     limits.DecodeStalled,
+		TerminalEmptyStream: limits.ModelOutcome, TerminalBurnEmpty: limits.ModelOutcome, TerminalErrorStream: limits.ModelOutcome, TerminalCapabilityRefused: limits.ModelOutcome,
+		TerminalResponseTooLarge: limits.ModelOutcome, TerminalRequestTooLarge: limits.ModelOutcome, TerminalEscrowLookupLimited: limits.ModelOutcome,
+	}
+	for terminal := TerminalUnclassified; terminal < terminalCount; terminal++ {
+		wanted, known := verdicts[terminal]
+		if !known {
+			wanted = limits.ModelOutcome
+		}
+		if got, gotKnown := terminal.verdict(); got != wanted || gotKnown != known {
+			t.Errorf("terminal %s verdict = %v, %v, want %v, %v", terminal, got, gotKnown, wanted, known)
+		}
 	}
 }
