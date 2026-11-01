@@ -535,3 +535,36 @@ func TestFinalizeDuringABackgroundCloseOpensNoSecondSession(t *testing.T) {
 		t.Fatalf("serving sessions opened = %d, want 1", got)
 	}
 }
+
+// Test flow:
+//  1. Build a registry with one escrow whose close fails, acquire and retire it, release the request and wait for the failed close.
+//  2. Let the store close, hold the escrow for settlement and release the hold.
+//  3. Assert the hold was granted and its release closed the session a second time.
+func TestAFailedCloseLetsTheNextHoldsReleaseTryAgain(t *testing.T) {
+	t.Parallel()
+	session := newFakeSession("hostA")
+	session.closeErr = errors.New("storage refused to close")
+	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Now: fixedClock()})
+	mustAdd(t, registry, "1", "qwen")
+	_, releaseRequest, acquired := registry.Acquire("1")
+	if !acquired {
+		t.Fatal("Acquire(1) = false, want true")
+	}
+	if err := registry.Retire("1"); err != nil {
+		t.Fatalf("Retire(1) = %v, want nil", err)
+	}
+	releaseRequest()
+	registry.closing.Wait()
+
+	session.closeErr = nil
+	_, releaseHold, held := registry.HoldSettlement("1")
+	if !held {
+		t.Fatal("HoldSettlement(1) after the failed close = false, want true")
+	}
+	releaseHold()
+	registry.closing.Wait()
+
+	if got := session.closeCalls.Load(); got != 2 {
+		t.Fatalf("Close calls = %d, want 2", got)
+	}
+}

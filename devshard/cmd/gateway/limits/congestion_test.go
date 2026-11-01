@@ -199,3 +199,21 @@ func TestAWindowWithNoStepCannotGrow(t *testing.T) {
 		t.Fatalf("window = %v, want it unchanged: a model with no price per request has no rung to climb", got)
 	}
 }
+
+// Test flow:
+//  1. Take and give back a peak of 60 on a window of 100, then narrow it to 50.
+//  2. Offer growth with nothing taken since the narrowing.
+//  3. Assert the window stays at 50: the peak from before the narrowing earns nothing.
+func TestAPeakFromBeforeANarrowingEarnsNoGrowth(t *testing.T) {
+	t.Parallel()
+	narrowed := window{tokens: 100}
+	narrowed.take(60)
+	narrowed.give(60)
+	narrowed.narrow(0.5, 1)
+
+	narrowed.growIfEarned(10, 10)
+
+	if narrowed.tokens != 50 {
+		t.Fatalf("window = %v, want 50: growth was earned by the peak from before the narrowing", narrowed.tokens)
+	}
+}
