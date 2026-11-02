@@ -217,14 +217,14 @@ func TestHostClockOffsetDoesNotReadTruncationAsDrift(t *testing.T) {
 // Test flow:
 //  1. Build a `HostApplicationError` whose raw payload is a 100,000-byte string.
 //  2. Render it via `loggedError`.
-//  3. Assert the result stays bounded near `maxLoggedErrorBytes` and ends with the truncation marker.
+//  3. Assert the result stays bounded near `MaxLoggedErrorBytes` and ends with the truncation marker.
 func TestLoggedErrorBoundsHostControlledText(t *testing.T) {
 	huge := &engine.HostApplicationError{Payload: strings.Repeat("A", 100_000)}
 
 	logged := loggedError(huge)
 
-	if len(logged) > maxLoggedErrorBytes+len("…(truncated)") {
-		t.Fatalf("logged error is %d bytes, want it bounded near %d", len(logged), maxLoggedErrorBytes)
+	if len(logged) > MaxLoggedErrorBytes+len("…(truncated)") {
+		t.Fatalf("logged error is %d bytes, want it bounded near %d", len(logged), MaxLoggedErrorBytes)
 	}
 	if !strings.HasSuffix(logged, "…(truncated)") {
 		t.Fatalf("logged = %q, want it to say it was cut", logged)
@@ -246,8 +246,8 @@ func TestLoggedErrorLeavesAShortErrorAlone(t *testing.T) {
 //  2. Render it via `loggedError`.
 //  3. Assert the truncated result is still valid UTF-8.
 func TestLoggedErrorCutsOnARuneBoundary(t *testing.T) {
-	if maxLoggedErrorBytes%3 == 0 {
-		t.Fatalf("maxLoggedErrorBytes = %d divides by the test rune width, so this asserts nothing", maxLoggedErrorBytes)
+	if MaxLoggedErrorBytes%3 == 0 {
+		t.Fatalf("MaxLoggedErrorBytes = %d divides by the test rune width, so this asserts nothing", MaxLoggedErrorBytes)
 	}
 	logged := loggedError(&engine.HostApplicationError{Payload: strings.Repeat("日", 1000)})
 

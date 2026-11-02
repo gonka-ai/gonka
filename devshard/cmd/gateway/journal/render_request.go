@@ -8,10 +8,10 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
-// See ../docs/operations.md, "The request record".
+// See ../docs/operations.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
 const (
 	loggedFieldSlots    = 32
-	maxLoggedErrorBytes = 256
+	MaxLoggedErrorBytes = 256
 
 	cacheHitOutcome = "cache_hit"
 )
@@ -117,10 +117,10 @@ func winnerOutputTokens(outcome engine.RaceOutcome) int64 {
 // loggedError cuts host-controlled text on a rune boundary. See docs/operations.md, "The request record".
 func loggedError(err error) string {
 	text := err.Error()
-	if len(text) <= maxLoggedErrorBytes {
+	if len(text) <= MaxLoggedErrorBytes {
 		return text
 	}
-	cut := maxLoggedErrorBytes
+	cut := MaxLoggedErrorBytes
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}

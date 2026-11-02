@@ -18,6 +18,7 @@ import (
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/internal/strictjson"
+	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
@@ -287,9 +288,6 @@ func writeJSON(w http.ResponseWriter, status int, payload any) {
 	_, _ = w.Write(append(body, '\n'))
 }
 
-// Bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
-const maxLoggedErrorBytes = 256
-
 // adminFailure exists because auditAdmin records only the successful path.
 func adminFailure(label string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -320,8 +318,8 @@ func (rec *failureRecorder) WriteHeader(status int) {
 }
 
 func (rec *failureRecorder) Write(data []byte) (int, error) {
-	if rec.status >= http.StatusBadRequest && len(rec.body) < maxLoggedErrorBytes {
-		rec.body = append(rec.body, data[:min(len(data), maxLoggedErrorBytes-len(rec.body))]...)
+	if rec.status >= http.StatusBadRequest && len(rec.body) < journal.MaxLoggedErrorBytes {
+		rec.body = append(rec.body, data[:min(len(data), journal.MaxLoggedErrorBytes-len(rec.body))]...)
 	}
 	return rec.ResponseWriter.Write(data)
 }
