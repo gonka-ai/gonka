@@ -30,7 +30,6 @@ type devshardDeactivator interface {
 	DeleteDevshard(ctx context.Context, escrowID string) error
 }
 
-// unservableDeactivation marks a row the chain lacks gone from chain and drops one it holds settled, as settlement would, so neither stays in the unsettled count.
 func unservableDeactivation(ctx context.Context, records devshardDeactivator) func(escrowID string, cause error) error {
 	return func(escrowID string, cause error) error {
 		if errors.Is(cause, bridge.ErrEscrowSettled) {

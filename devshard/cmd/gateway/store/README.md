@@ -48,6 +48,8 @@ Only a locked database is retried. Everything else — a missing row, a constrai
 
 ## The devshard registry
 
+The upsert, the condition that leaves a parked row alone and the columns a row is scanned from are constants in `devshards.go` (`upsertDevshardStatement`, `unparkedCondition`, `devshardColumns`), each shared by two statements; the upsert is kept apart so a test can read which columns it carries.
+
 A row names the escrow, the environment variable holding the key that can act on it — never the key itself — its model, whether it is active, its rotation role and epoch, whether a settlement is queued, the hash and time of the settle transaction it last broadcast, the route prefix it was created under, the epoch the chain stamped on the escrow and the amount it locked (both 0 until read), and whether the chain answered that it no longer holds the escrow. An update or delete matching no row returns `ErrDevshardNotFound`, except `ParkForSettlementIfActive` below, which reports a boolean instead.
 
 `UpsertDevshard` replaces every field of an existing row except six:

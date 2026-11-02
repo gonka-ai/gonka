@@ -151,6 +151,8 @@ The funding planner always runs and always executes: on every tick it reads each
 
 ## Gone from chain
 
+When the gateway publishes its escrows at start, a row the chain lacks is marked gone from chain and a row the chain holds as settled is deleted, as settlement would, so neither stays in the unsettled count (`app/devshards_publish.go`, `unservableDeactivation`).
+
 `checker.go`. A host reporting an escrow absent only *marks* it; `TriggerEscrowCheck` confirms with the chain on the next tick. Only a confirmed not-found deactivates: a lookup error and a found escrow both leave it serving. **Ambiguity is never a reason to deactivate.** Routing stops before the row is written, so a confirmed-absent escrow takes no further request even if the write fails. A confirmed absence also marks the row `gone_from_chain`, which takes it out of the `max_unsettled` count, out of the planner's parking and out of `settleOffTick`, even with `settlement_pending` still set: a gone escrow has nothing left to settle. Reactivating a row (`Activate`, or a re-registration with `active = 1`) clears the mark in the same write, so a row put back by hand and later parked counts and settles again (`store/devshards.go`, `SetDevshardActive`; `escrow/budget.go`, `goneFromChain`). A row already out of service needs no host report: once its settle deadline has passed and the chain answers it no longer holds the escrow, the tick marks it the same way (`escrow/deadline.go`, `markPrunedPastDeadline`; [`escrow/README.md`](../escrow/README.md), "Settlement by deadline").
 
 ## Settlement and retirement
