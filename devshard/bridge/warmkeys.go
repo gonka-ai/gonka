@@ -25,24 +25,26 @@ type WarmKeyEntry struct {
 	Grantee         string
 	GrantedAtHeight int64
 	RevokedAtHeight int64
-	ExpiresAtUnix   int64
+	// Unix nanoseconds; 0 when the grant has no expiration. The chain stores
+	// this on the grant and does not emit an expiry event.
+	ExpiresAtUnix int64
 	// End names how the entry ended: "" while live, otherwise the chain's
-	// WarmKeyLogEnd name (REVOKED, REPLACED, EXPIRED).
+	// WarmKeyLogEnd name (REVOKED or REPLACED).
 	End string
 }
 
 // Ended reports whether the chain has ended the entry.
 func (e WarmKeyEntry) Ended() bool { return e.RevokedAtHeight != 0 || e.End != "" }
 
-// LiveAt reports whether the entry is live at now: not ended on chain and not
-// past its expiration. The chain ends an expired entry in the block whose
-// time passes the expiration; a copy that has not seen that block yet reads
-// the expiration itself so it never counts a lapsed grant as live.
+// LiveAt reports whether the entry is live at now: not ended on chain, and
+// not past its expiration. ExpiresAtUnix is unix nanoseconds. A grant is
+// expired only when that instant is strictly before now, the same boundary
+// authz uses (Expiration.Before(blockTime)).
 func (e WarmKeyEntry) LiveAt(now time.Time) bool {
 	if e.Ended() {
 		return false
 	}
-	return e.ExpiresAtUnix == 0 || e.ExpiresAtUnix > now.Unix()
+	return e.ExpiresAtUnix == 0 || e.ExpiresAtUnix >= now.UnixNano()
 }
 
 // WarmKeyGrantSource is the grant source: the view of the chain's warm-key

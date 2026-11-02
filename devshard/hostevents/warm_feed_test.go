@@ -98,7 +98,7 @@ func TestPoller_UnsetHostAppliesCometWarmKey(t *testing.T) {
 func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 	fetch := &granterCounter{}
 	warm := bridge.NewWarmKeyLogCopy(fetch, time.Hour)
-	exp := time.Now().Add(time.Hour).Unix()
+	exp := time.Now().Add(time.Hour).UnixNano()
 	warm.Apply(bridge.WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "kept", ExpiresAtUnix: exp})
 	warm.Apply(bridge.WarmKeyEntry{Granter: "other", ID: 1, Grantee: "kept", ExpiresAtUnix: exp})
 	phase := atomic.Int32{}
@@ -225,7 +225,7 @@ func TestPoller_WarmLiveFollowsFeedThenComet(t *testing.T) {
 func TestNoteCometHeight_JumpResetsWithoutReading(t *testing.T) {
 	fetch := &granterCounter{}
 	warm := bridge.NewWarmKeyLogCopy(fetch, time.Hour)
-	exp := time.Now().Add(time.Hour).Unix()
+	exp := time.Now().Add(time.Hour).UnixNano()
 	warm.Apply(bridge.WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: exp})
 	_, err := warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
@@ -253,7 +253,7 @@ func TestNoteCometHeight_JumpResetsWithoutReading(t *testing.T) {
 func TestOnCometConnected_ResetsWithoutReading(t *testing.T) {
 	fetch := &granterCounter{}
 	warm := bridge.NewWarmKeyLogCopy(fetch, time.Hour)
-	exp := time.Now().Add(time.Hour).Unix()
+	exp := time.Now().Add(time.Hour).UnixNano()
 	warm.Apply(bridge.WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: exp})
 	_, err := warm.LiveWarmKeys("cold")
 	require.NoError(t, err)

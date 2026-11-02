@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"runtime"
 	"strconv"
 	"sync"
@@ -24,6 +23,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
@@ -37,6 +38,8 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 				"reservation_id", "11", "participant", "host-a", "credit_refunded", "20", "reason", "maintenance_disabled"),
 			abciEvent(maintenanceCanceledEvent, blockModeBegin,
 				"reservation_id", "99", "participant", "someone-else", "credit_refunded", "1"),
+			abciEvent(warmKeyGrantedEvent, blockModeEnd,
+				"granter", "gonka1gov", "grantee", "gonka1warm", "grant_id", "7", "height", "40", "expires_at", "1800000000"),
 		},
 		TxsResults: []*abcitypes.ExecTxResult{
 			{Events: []abcitypes.Event{abciEvent(escrowCreatedEvent, "", "escrow_id", "not-a-number")}},
@@ -46,12 +49,10 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 				"reservation_id", "9", "participant", "host-a", "start_height", "100", "duration_blocks", "50")}},
 			{Events: []abcitypes.Event{abciEvent(warmKeyGrantedEvent, "",
 				"granter", "gonka1cold", "grantee", "gonka1old", "grant_id", "2", "height", "40", "expires_at", "1700000000")}},
+			{Events: []abcitypes.Event{abciEvent(warmKeyRevokedEvent, "",
+				"granter", "gonka1cold", "grantee", "gonka1old", "grant_id", "1", "height", "40", "end", "WARM_KEY_LOG_END_REVOKED")}},
 		},
 	}
-	rpc.results[height].FinalizeBlockEvents = append(rpc.results[height].FinalizeBlockEvents,
-		abciEvent(warmKeyRevokedEvent, blockModeEnd,
-			"granter", "gonka1cold", "grantee", "gonka1old", "grant_id", "2", "height", "40", "end", "WARM_KEY_LOG_END_EXPIRED"))
-
 	epochs := mapEpochs{latestIdx: 3, latestStart: 30, ok: true}
 	escrow := &scriptEscrow{ours: map[string]bool{"42": true}}
 	f, _, ring := newTestFeed(t, rpc, epochs, escrow)
@@ -64,8 +65,9 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 		apiconfig.HostEventKindEscrowCreated,
 		apiconfig.HostEventKindMaintenanceScheduled,
 		apiconfig.HostEventKindWarmKeyGranted,
-		apiconfig.HostEventKindMaintenanceCanceled,
 		apiconfig.HostEventKindWarmKeyRevoked,
+		apiconfig.HostEventKindMaintenanceCanceled,
+		apiconfig.HostEventKindWarmKeyGranted,
 		apiconfig.HostEventKindBlock,
 	}, kindsOf(got))
 	require.Equal(t, "maintenance_disabled", got[0].Maintenance.Reason)
@@ -74,8 +76,11 @@ func TestHostEventFeed_OrdersHeightAndCarriesHeader(t *testing.T) {
 	require.Equal(t, "m1", got[1].Escrow.ModelID)
 	require.Equal(t, uint64(50), got[2].Maintenance.DurationBlocks)
 	require.Equal(t, int64(1700000000), got[3].WarmKey.ExpiresAtUnix)
-	require.Equal(t, uint64(2), got[4].Maintenance.ReservationID)
-	require.Equal(t, "WARM_KEY_LOG_END_EXPIRED", got[5].WarmKey.End)
+	require.Equal(t, uint64(1), got[4].WarmKey.GrantID)
+	require.Equal(t, "WARM_KEY_LOG_END_REVOKED", got[4].WarmKey.End)
+	require.Equal(t, uint64(2), got[5].Maintenance.ReservationID)
+	require.Equal(t, uint64(7), got[6].WarmKey.GrantID)
+	require.Equal(t, int64(1800000000), got[6].WarmKey.ExpiresAtUnix)
 
 	block := got[len(got)-1].Block
 	hdr := rpc.headers[height]
@@ -740,9 +745,64 @@ func (m mapEpochs) EpochStart(ctx context.Context, index uint64) (int64, error) 
 	}
 	st, ok := m.starts[index]
 	if !ok {
-		return 0, fmt.Errorf("missing epoch %d", index)
+		return 0, status.Errorf(codes.NotFound, "missing epoch %d", index)
 	}
 	return st, nil
+}
+
+func TestEpochBook_LabelReadsANewerEpochFromTheChain(t *testing.T) {
+	book := &epochBook{src: mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		starts: map[uint64]int64{4: 400, 5: 500},
+	}}
+	ctx := context.Background()
+
+	got, err := book.label(ctx, 350)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), got)
+
+	got, err = book.label(ctx, 400)
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), got)
+
+	got, err = book.label(ctx, 500)
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), got)
+}
+
+func TestEpochBook_LabelRetriesWhenTheNextEpochQueryFails(t *testing.T) {
+	book := &epochBook{src: mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		errOn: map[uint64]error{4: errors.New("epoch down")},
+	}}
+	_, err := book.label(context.Background(), 400)
+	require.Error(t, err)
+}
+
+func TestHostEventFeed_LabelsTheEpochTheChainHasStarted(t *testing.T) {
+	epochs := mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		starts: map[uint64]int64{4: 400},
+	}
+	f, _, ring := newTestFeed(t, newFeedRPC(), epochs, nil)
+	f.bo.updateStatus(400, true)
+	f.emitted.Store(398)
+	f.walk(t.Context())
+
+	got := ringEvents(t, ring)
+	require.Equal(t, []int64{399, 400}, heightsOf(got))
+	require.Equal(t, uint64(3), got[0].Block.EpochIndex)
+	require.Equal(t, uint64(4), got[1].Block.EpochIndex)
+
+	f, _, ring = newTestFeed(t, newFeedRPC(), mapEpochs{
+		latestIdx: 3, latestStart: 300, ok: true,
+		errOn: map[uint64]error{4: errors.New("epoch down")},
+	}, nil)
+	f.bo.updateStatus(400, true)
+	f.emitted.Store(399)
+	f.walk(t.Context())
+	require.Empty(t, ringEvents(t, ring))
+	require.Equal(t, int64(399), f.emitted.Load())
 }
 
 type scriptEscrow struct {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"common/chain"
@@ -33,11 +32,11 @@ func (s *phaseGateStoreQueryStub) ABCIQuery(_ context.Context, req *cmtservice.A
 }
 
 func (s *preservedSnapshotStub) WarmKeyEntry(context.Context, *inferencetypes.QueryWarmKeyEntryRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyEntryResponse, error) {
-	return nil, errors.New("not implemented")
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *preservedSnapshotStub) WarmKeyLog(context.Context, *inferencetypes.QueryWarmKeyLogRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyLogResponse, error) {
-	return nil, errors.New("not implemented")
+	return nil, fmt.Errorf("not implemented")
 }
 
 func (s *preservedSnapshotStub) PreservedNodesSnapshot(context.Context, *inferencetypes.QueryPreservedNodesSnapshotRequest, ...grpc.CallOption) (*inferencetypes.QueryPreservedNodesSnapshotResponse, error) {

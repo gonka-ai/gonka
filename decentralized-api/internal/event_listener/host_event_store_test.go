@@ -18,6 +18,8 @@ import (
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -119,7 +121,7 @@ func TestHostEventStore_PayloadIsProtobuf(t *testing.T) {
 			Kind:           apiconfig.HostEventKindWarmKeyGranted,
 			ObservedAtUnix: 13,
 			WarmKey: &apiconfig.WarmKeyPayload{
-				Granter: "cold", Grantee: "warm", GrantID: 2, Height: 8, ExpiresAtUnix: 99, End: "EXPIRED",
+				Granter: "cold", Grantee: "warm", GrantID: 2, Height: 8, ExpiresAtUnix: 99,
 			},
 		},
 		{
@@ -440,7 +442,12 @@ type liveEpoch struct {
 
 func (e *liveEpoch) LatestEpoch() (uint64, int64, bool) { return e.idx, e.start, true }
 
-func (e *liveEpoch) EpochStart(context.Context, uint64) (int64, error) { return e.start, nil }
+func (e *liveEpoch) EpochStart(_ context.Context, index uint64) (int64, error) {
+	if index != e.idx {
+		return 0, status.Errorf(codes.NotFound, "missing epoch %d", index)
+	}
+	return e.start, nil
+}
 
 func TestHostEventStore_SQLiteSynchronousFull(t *testing.T) {
 	dir := t.TempDir()
@@ -1022,7 +1029,7 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		s := open(t, "read-writer")
 		_, err := s.AppendHeight(t.Context(), 1, 5, heightRows(1, 5), at(s, 1, 0))
 		require.NoError(t, err)
-		_, err = s.AppendHeight(t.Context(), 2, 6, heightRows(2, 6), at(s, 4, 1))
+		_, err = s.AppendHeight(t.Context(), 2, 8, heightRows(2, 8), at(s, 4, 1))
 		require.NoError(t, err)
 		seq, found, _, err := s.ResolveBlock(t.Context(), 2)
 		require.NoError(t, err)
@@ -1041,11 +1048,19 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		require.Len(t, next, 1)
 		require.Greater(t, next[0].Seq, page[0].Seq)
 
+		_, err = s.AppendHeight(t.Context(), 3, 9, heightRows(3, 9), at(s, 7, 2))
+		require.NoError(t, err)
+
+		// Current epoch 10: the chain has removed escrows through epoch 8.
+		// Epoch 9 is the oldest row that stays.
 		require.NoError(t, s.Prune(t.Context(), 10))
 		_, found, _, err = s.ResolveBlock(t.Context(), 1)
 		require.NoError(t, err)
 		require.False(t, found)
 		_, found, _, err = s.ResolveBlock(t.Context(), 2)
+		require.NoError(t, err)
+		require.False(t, found)
+		_, found, _, err = s.ResolveBlock(t.Context(), 3)
 		require.NoError(t, err)
 		require.True(t, found)
 		left, _, err := s.Read(t.Context(), 0, []apiconfig.HostEventKind{
@@ -1058,11 +1073,11 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		for _, ev := range left {
 			switch ev.Kind {
 			case apiconfig.HostEventKindBlock:
-				require.Equal(t, int64(2), ev.Block.Height)
+				require.Equal(t, int64(3), ev.Block.Height)
 			case apiconfig.HostEventKindEscrowCreated:
-				require.Equal(t, uint64(2), ev.Escrow.EscrowID)
+				require.Equal(t, uint64(3), ev.Escrow.EscrowID)
 			case apiconfig.HostEventKindMaintenanceScheduled:
-				require.Equal(t, uint64(2), ev.Maintenance.ReservationID)
+				require.Equal(t, uint64(3), ev.Maintenance.ReservationID)
 			default:
 				t.Fatalf("unexpected kind %v", ev.Kind)
 			}

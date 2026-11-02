@@ -714,6 +714,11 @@ Mainnet verification:
 3. Verify 2/3+ slot-weighted signatures over (state_root || escrow_id || nonce)
 4. Settle: pay each host from escrow according to host_stats[slot].cost, refund remaining balance (escrow_amount - sum of all host costs) to user, record host_stats
 
+Host stats also feed participant invalidation SPRT (`ValidatedInferences` /
+`InvalidatedInferences`). How passes are counted is a per-protocol-name
+`pass_count` policy on the approved-version store — not a field the settler
+picks. See [devshard/docs/upgrade.md](../../devshard/docs/upgrade.md#settlement-pass_count).
+
 The Merkle proof is constant size: one sibling hash (rest_hash). Mainnet never sees individual inference records or balance.
 
 No balance field in the payload. Mainnet knows the escrow amount and computes the refund from the sum of host_stats[*].cost.

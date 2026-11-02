@@ -855,7 +855,7 @@ func TestPoller_ReplaysWarmKeyOnce(t *testing.T) {
 func TestPoller_ResetReloadsWarmKeys(t *testing.T) {
 	fetch := &failThenWarm{entry: bridge.WarmKeyEntry{
 		Granter: "cold", ID: 1, Grantee: "warm",
-		ExpiresAtUnix: time.Now().Add(time.Hour).Unix(),
+		ExpiresAtUnix: time.Now().Add(time.Hour).UnixNano(),
 	}}
 	warm := bridge.NewWarmKeyLogCopy(fetch, time.Hour)
 	got, err := warm.LiveWarmKeys("cold")

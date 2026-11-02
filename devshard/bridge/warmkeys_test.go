@@ -337,11 +337,11 @@ func (c *WarmKeyLogCopy) idle() bool {
 //  2. Assert each reload reads once per known granter and never a stranger, and a failed read keeps the stored grant, also after reset.
 func TestWarmKeyLogCopy_ReloadKnownOncePerGranter(t *testing.T) {
 	chain := &fakeWarmKeyFetcher{}
-	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
-	chain.set("other", WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).UnixNano()})
+	chain.set("other", WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).UnixNano()})
 	cp := NewWarmKeyLogCopy(chain, time.Hour)
-	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
-	cp.Apply(WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).Unix()})
+	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: time.Now().Add(time.Hour).UnixNano()})
+	cp.Apply(WarmKeyEntry{Granter: "other", ID: 2, Grantee: "second", ExpiresAtUnix: time.Now().Add(time.Hour).UnixNano()})
 	require.Equal(t, []string{"cold", "other"}, cp.KnownGranters())
 
 	before := chain.count()
@@ -382,7 +382,7 @@ func TestWarmKeyLogCopy_UnendedGrantIgnoresExpiration(t *testing.T) {
 	chain := &fakeWarmKeyFetcher{}
 	past := time.Unix(1_000, 0)
 	chain.set("cold",
-		WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: past.Unix()},
+		WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", ExpiresAtUnix: past.UnixNano()},
 		WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "old", RevokedAtHeight: 9, End: "WARM_KEY_LOG_END_REVOKED"},
 	)
 	cp := NewWarmKeyLogCopy(chain, time.Hour)

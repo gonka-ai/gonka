@@ -17,6 +17,8 @@ import (
 	cmttypes "github.com/cometbft/cometbft/types"
 	gogoproto "github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -168,6 +170,13 @@ func (b *epochBook) start(ctx context.Context, index uint64) (int64, error) {
 	return st, nil
 }
 
+// label reports the epoch of height. It starts from LatestEpoch, which the
+// block dispatcher updates only after this feed has been woken, and walks
+// back for an older height. A height at or after that epoch's start is
+// checked against the next epoch on the chain: the tracker can still name
+// epoch N when the chain has already started N+1. A missing next epoch means
+// this one contains the height. Any other failure is returned so the height
+// is retried instead of stored under N.
 func (b *epochBook) label(ctx context.Context, height int64) (uint64, error) {
 	if b == nil || b.src == nil {
 		return 0, fmt.Errorf("epoch label: no source")
@@ -178,23 +187,54 @@ func (b *epochBook) label(ctx context.Context, height int64) (uint64, error) {
 	}
 	b.put(idx, start)
 	for {
-		st, found := b.get(idx)
-		if !found {
-			var err error
-			st, err = b.src.EpochStart(ctx, idx)
-			if err != nil {
-				return 0, fmt.Errorf("epoch %d: %w", idx, err)
-			}
-			b.put(idx, st)
+		st, err := b.ensureStart(ctx, idx)
+		if err != nil {
+			return 0, err
 		}
-		if height >= st {
+		if height < st {
+			if idx == 0 {
+				return 0, fmt.Errorf("epoch label: height %d is before epoch 0", height)
+			}
+			idx--
+			continue
+		}
+		next, err := b.ensureStart(ctx, idx+1)
+		if err != nil {
+			if epochMissing(err) {
+				return idx, nil
+			}
+			return 0, err
+		}
+		if next <= st {
+			return 0, fmt.Errorf("epoch %d starts at %d, not after epoch %d at %d", idx+1, next, idx, st)
+		}
+		if height < next {
 			return idx, nil
 		}
-		if idx == 0 {
-			return 0, fmt.Errorf("epoch label: height %d is before epoch 0", height)
-		}
-		idx--
+		idx++
 	}
+}
+
+func (b *epochBook) ensureStart(ctx context.Context, index uint64) (int64, error) {
+	if st, found := b.get(index); found {
+		return st, nil
+	}
+	st, err := b.src.EpochStart(ctx, index)
+	if err != nil {
+		return 0, fmt.Errorf("epoch %d: %w", index, err)
+	}
+	b.put(index, st)
+	return st, nil
+}
+
+func epochMissing(err error) bool {
+	for err != nil {
+		if status.Code(err) == codes.NotFound {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
 
 func (b *epochBook) put(index uint64, start int64) {

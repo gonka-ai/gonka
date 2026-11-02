@@ -32,7 +32,8 @@ const (
 	// The granter granted the same grantee again (MsgGrant on a live pair); the
 	// new grant is the entry with the next id.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED WarmKeyLogEnd = 2
-	// The grant's expiration passed; the module ended the entry in EndBlock.
+	// Not written. Expiration is expires_at_unix on the grant. The module does
+	// not end the entry and does not emit an event when that time passes.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED WarmKeyLogEnd = 3
 )
 
@@ -62,8 +63,9 @@ func (WarmKeyLogEnd) EnumDescriptor() ([]byte, []int) {
 // from granter to grantee, as the module recorded it.
 //
 // The log is append-only: an entry is created when the grant appears and is
-// ended, never deleted, when the grant is revoked, replaced or expires. The
-// answer to "entry id of granter" therefore never changes, so devshard hosts
+// ended, never deleted, when the grant is revoked or replaced. Expiration is
+// expires_at_unix; it is not an end and not an event. The answer to "entry
+// id of granter" therefore never changes, so devshard hosts
 // that ask at different times, or long after the grant ended, all read the
 // same record. Ids increase per granter from 1, so a grant that replaces
 // another in the same block still orders after it.
@@ -74,7 +76,8 @@ type WarmKeyLogEntry struct {
 	GrantedAtHeight int64  `protobuf:"varint,4,opt,name=granted_at_height,json=grantedAtHeight,proto3" json:"granted_at_height,omitempty"`
 	// 0 while the entry is live.
 	RevokedAtHeight int64 `protobuf:"varint,5,opt,name=revoked_at_height,json=revokedAtHeight,proto3" json:"revoked_at_height,omitempty"`
-	// Unix seconds; 0 when the grant has no expiration.
+	// Unix nanoseconds; 0 when the grant has no expiration.
+	// Expired when strictly before the block time, as in authz Expiration.Before.
 	ExpiresAtUnix int64         `protobuf:"varint,6,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
 	End           WarmKeyLogEnd `protobuf:"varint,7,opt,name=end,proto3,enum=inference.inference.WarmKeyLogEnd" json:"end,omitempty"`
 }

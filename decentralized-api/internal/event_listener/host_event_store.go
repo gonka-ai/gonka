@@ -609,7 +609,10 @@ func (s *dbStore) Prune(ctx context.Context, currentEpoch uint64) (err error) {
 	}
 	s.mu.Lock()
 	s.pruneCalls++
-	if currentEpoch < 4 {
+	// Keep the current epoch and the previous one. The chain removes devshard
+	// escrows through currentEpoch-2, so epoch N-2 must not stay in the feed.
+	// A restart replays those ESCROW_CREATED rows and GetEscrow returns not found.
+	if currentEpoch < 2 {
 		s.mu.Unlock()
 		return nil
 	}
@@ -629,7 +632,7 @@ func (s *dbStore) Prune(ctx context.Context, currentEpoch uint64) (err error) {
 			return err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM host_events WHERE writer = ? AND epoch_index < ?`), s.writer, currentEpoch-4); err != nil {
+	if _, err := tx.ExecContext(ctx, s.q(`DELETE FROM host_events WHERE writer = ? AND epoch_index < ?`), s.writer, currentEpoch-1); err != nil {
 		return err
 	}
 	return tx.Commit()

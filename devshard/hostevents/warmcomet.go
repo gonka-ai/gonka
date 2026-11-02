@@ -109,6 +109,7 @@ func warmEntryFromABCI(ev abci.Event, txHeight int64) (bridge.WarmKeyEntry, bool
 		Grantee: grantee,
 	}
 	if raw := abciAttr(ev, "expires_at"); raw != "" {
+		// Chain attribute is unix nanoseconds, the same unit as ExpiresAtUnix.
 		expires, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return bridge.WarmKeyEntry{}, false

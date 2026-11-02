@@ -63,7 +63,7 @@ func TestWarmKeyLogDecoratorRecordsMarkerGrantsAndRevokes(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, grantee.String(), got[0].Grantee)
 	require.Equal(t, int64(42), got[0].GrantedAtHeight)
-	require.Equal(t, expires.Unix(), got[0].ExpiresAtUnix)
+	require.Equal(t, expires.UnixNano(), got[0].ExpiresAtUnix)
 
 	revoke := authz.NewMsgRevoke(granter, grantee, types.WarmKeyGrantMarkerTypeURL)
 	otherRevoke := authz.NewMsgRevoke(granter, grantee, "/cosmos.bank.v1beta1.MsgSend")
@@ -92,8 +92,35 @@ func TestWarmKeyLogDecoratorWalksMsgExec(t *testing.T) {
 }
 
 // Test flow:
-//  1. Run the decorator on a marker grant in CheckTx mode, in simulation, and with success=false.
-//  2. Assert nothing is recorded in any of the three.
+//  1. Wrap a marker grant in three MsgExec layers, then in nine.
+//  2. Assert the three-deep grant is recorded (block proposals are not bound by the CheckTx nesting rule) and
+//     the nine-deep one fails the transaction instead of escaping the log.
+func TestWarmKeyLogDecoratorBoundsMsgExecDepthByFailing(t *testing.T) {
+	d, ctx, entries := newWarmKeyLogTestDecorator(t)
+	granter, grantee, executor := postTestAddr(1), postTestAddr(2), postTestAddr(3)
+	grant, err := authz.NewMsgGrant(granter, grantee, authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL), nil)
+	require.NoError(t, err)
+	wrap := func(msg sdk.Msg, layers int) sdk.Msg {
+		for i := 0; i < layers; i++ {
+			exec := authz.NewMsgExec(executor, []sdk.Msg{msg})
+			msg = &exec
+		}
+		return msg
+	}
+
+	_, err = d.PostHandle(ctx, msgsTx{msgs: []sdk.Msg{wrap(grant, 3)}}, false, true, passThrough)
+	require.NoError(t, err)
+	require.Len(t, entries(granter), 1)
+
+	_, err = d.PostHandle(ctx, msgsTx{msgs: []sdk.Msg{wrap(grant, 9)}}, false, true, passThrough)
+	require.ErrorIs(t, err, errWarmKeyLogExecTooDeep)
+	require.Len(t, entries(granter), 1)
+}
+
+// Test flow:
+//  1. Run the decorator on a marker grant in CheckTx, in simulation, and with success=false.
+//  2. Assert CheckTx and the failed transaction record nothing. Simulation does the same
+//     writes as finalize, so the gas meter sees them. The SDK discards that cache.
 func TestWarmKeyLogDecoratorRecordsOnlyFinalizedSuccess(t *testing.T) {
 	d, ctx, entries := newWarmKeyLogTestDecorator(t)
 	granter, grantee := postTestAddr(1), postTestAddr(2)
@@ -103,9 +130,13 @@ func TestWarmKeyLogDecoratorRecordsOnlyFinalizedSuccess(t *testing.T) {
 
 	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeCheck), tx, false, true, passThrough)
 	require.NoError(t, err)
-	_, err = d.PostHandle(ctx, tx, true, true, passThrough)
-	require.NoError(t, err)
-	_, err = d.PostHandle(ctx, tx, false, false, passThrough)
-	require.NoError(t, err)
 	require.Empty(t, entries(granter))
+
+	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeSimulate), tx, true, true, passThrough)
+	require.NoError(t, err)
+	require.Len(t, entries(granter), 1)
+
+	_, err = d.PostHandle(ctx.WithExecMode(sdk.ExecModeFinalize), tx, false, false, passThrough)
+	require.NoError(t, err)
+	require.Len(t, entries(granter), 1)
 }

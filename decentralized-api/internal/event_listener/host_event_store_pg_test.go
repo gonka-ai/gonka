@@ -274,17 +274,17 @@ func TestHostEventStore_PostgresResolveBlockUsesPartialIndex(t *testing.T) {
 	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), "SET enable_seqscan = off")
 	require.NoError(t, err)
-	// host_events_height answers the same predicate. Drop it so a plan that
-	// cannot use the partial index has nothing left, with seq scans disabled.
-	_, err = conn.ExecContext(t.Context(), "DROP INDEX host_events_height")
+	// On a small table a bitmap scan of host_events_height is cheaper than an index
+	// scan of the partial index, even when kind is inlined. Index scans are what
+	// show that the partial predicate matched.
+	_, err = conn.ExecContext(t.Context(), "SET enable_bitmapscan = off")
 	require.NoError(t, err)
 	_, err = conn.ExecContext(t.Context(), "PREPARE resolve_block AS "+s.q(resolveBlockSelect()))
 	require.NoError(t, err)
-	// Literals, not $1/$2. pgx describes EXPLAIN EXECUTE as a utility statement
-	// with no parameters and rejects bind arguments. EXECUTE still runs the
-	// prepared statement, under force_generic_plan.
-	rows, err := conn.QueryContext(t.Context(), fmt.Sprintf(
-		"EXPLAIN EXECUTE resolve_block(%s, %d)", postgresLiteral(s.writer), int64(10)))
+	// EXPLAIN is a utility statement. pgx's extended protocol describes it as taking
+	// no parameters, so the prepared statement's arguments have to be inlined.
+	lit := "'" + strings.ReplaceAll(s.writer, "'", "''") + "'"
+	rows, err := conn.QueryContext(t.Context(), fmt.Sprintf("EXPLAIN EXECUTE resolve_block(%s, %d)", lit, 10))
 	require.NoError(t, err)
 	defer rows.Close()
 	var plan strings.Builder
@@ -298,10 +298,6 @@ func TestHostEventStore_PostgresResolveBlockUsesPartialIndex(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	require.Contains(t, plan.String(), "host_events_block_height")
-}
-
-func postgresLiteral(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func startHostEventPostgres(t *testing.T) string {
