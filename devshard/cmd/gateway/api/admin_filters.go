@@ -116,8 +116,8 @@ func (s *Server) putModelFilter(w http.ResponseWriter, r *http.Request, model st
 	if writeControlFailure(w, s.modelFilters.Put(r.Context(), model, setting)) {
 		return
 	}
-	auditAdmin("model filters set", logkey.Model, model, "preset", setting.PresetFor(model), "allow_off_chain", allowOffChain,
-		"engine_crash_risk", profile.AddsThinkingBudgetTo(model))
+	auditAdmin("model filters set", logkey.Model, model, logkey.Preset, setting.PresetFor(model), logkey.AllowOffChain, allowOffChain,
+		logkey.EngineCrashRisk, profile.AddsThinkingBudgetTo(model))
 	s.writeFilterEntry(w, model)
 }
 

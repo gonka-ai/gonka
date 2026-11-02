@@ -184,7 +184,7 @@ func (s *Server) handleDevshardCollectSignatures(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("nonce %d is ahead of current nonce %d", nonce, current))
 		return
 	}
-	auditAdmin("collect signatures", logkey.Escrow, escrowID, "nonce", nonce)
+	auditAdmin("collect signatures", logkey.Escrow, escrowID, logkey.Nonce, nonce)
 	weight, threshold, total := session.UserSession().CollectSignatures(r.Context(), nonce)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"escrow_id":        escrowID,

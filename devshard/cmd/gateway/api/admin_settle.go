@@ -64,7 +64,7 @@ func (s *Server) settleOne(ctx context.Context, escrowID string, forced bool) (c
 		return result, err
 	}
 	if forced {
-		auditAdmin("escrow settled under force", logkey.Escrow, escrowID, "in_flight", overridden)
+		auditAdmin("escrow settled under force", logkey.Escrow, escrowID, logkey.InFlight, overridden)
 	}
 	return result, nil
 }
