@@ -60,9 +60,7 @@ func (m *Manager) createsWanted(role store.Role, label uint64, target int, model
 		return 0, nil
 	}
 	if served, known := servedByNetwork(snapshot, model.ModelID); known && !served {
-		if m.narrator != nil {
-			m.narrator.RotationSkipped(model.ModelID, role, snapshot.EpochIndex)
-		}
+		m.narrator.RotationSkipped(model.ModelID, role, snapshot.EpochIndex)
 		return 0, nil
 	}
 	if m.breaker.gated(model.ModelID, role) {
@@ -114,7 +112,7 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 		if err != nil {
 			// degrade, don't abort: relabel existing regulars as temp so this epoch still has bridge coverage.
 			promoted, promoteErr := m.promoteRegularsToTemp(ctx, model, devshards)
-			if promoted > 0 && m.narrator != nil {
+			if promoted > 0 {
 				m.narrator.RegularsPromotedToTemp(model.ModelID, snapshot.EpochIndex, promoted)
 			}
 			if promoteErr != nil {
@@ -143,7 +141,7 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 				retired++
 			}
 		}
-		if (created > 0 || retired > 0) && m.narrator != nil {
+		if created > 0 || retired > 0 {
 			m.narrator.BridgePrepared(model.ModelID, snapshot.EpochIndex, created, retired)
 		}
 		status := store.RotationStatus{Model: model.ModelID, Role: roleTemp, Stage: stagePrepareTemp, Epoch: snapshot.EpochIndex, Completed: settleFailed == 0}

@@ -52,7 +52,7 @@ func TestPrunableOnChainReadsTheLabelOfAnUnresolvedRow(t *testing.T) {
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			manager := &Manager{snapshots: &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.effective, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}}}
+			manager := &Manager{narrator: silentNarrator{}, snapshots: &fakeSnapshotSource{snapshot: chain.PhaseSnapshot{EpochIndex: testCase.effective, EffectiveEpochIndex: testCase.effective, BlockHeight: 1_000}}}
 			record := store.DevshardRecord{EscrowID: "1", ChainEpoch: testCase.chainEpoch, RotationEpoch: testCase.rotationEpoch}
 
 			if got := manager.prunableOnChain(record); got != testCase.wantPrunable {

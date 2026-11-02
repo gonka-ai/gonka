@@ -164,3 +164,20 @@ func TestAWalletShortMarkClearsWhenNoRegularCreateIsWanted(t *testing.T) {
 
 	require.False(t, manager.planner.models["qwen"].walletShort, "walletShort once no regular create is wanted")
 }
+
+// Test flow:
+//  1. Build a manager with no narrator over a store holding a row.
+//  2. Drop the row, a step that narrates.
+//  3. Assert the step succeeds and the row is gone.
+func TestAManagerBuiltWithoutANarratorStaysSilent(t *testing.T) {
+	testStore := newFakeStore()
+	testStore.devshards["1"] = store.DevshardRecord{EscrowID: "1"}
+	cfg := config.Defaults()
+	deps := testManagerDeps(t, testStore, &fakeTxClient{}, &fakeSnapshotSource{snapshot: planningSnapshot()}, &cfg)
+	deps.Narrator = nil
+	manager := mustManager(t, deps)
+
+	require.NoError(t, manager.deleteSettled(context.Background(), "1"))
+
+	require.Empty(t, testStore.devshards)
+}

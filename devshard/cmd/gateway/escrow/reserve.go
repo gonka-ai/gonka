@@ -15,9 +15,7 @@ func (m *Manager) OnReserveTaken(escrowID string) {
 	if !m.reserveTaken.mark(escrowID) {
 		return
 	}
-	if m.narrator != nil {
-		m.narrator.EscrowReserveTaken(escrowID)
-	}
+	m.narrator.EscrowReserveTaken(escrowID)
 	select {
 	case m.wakeup <- struct{}{}:
 	default:

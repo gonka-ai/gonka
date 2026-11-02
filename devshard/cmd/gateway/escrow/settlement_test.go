@@ -131,6 +131,7 @@ func TestSettleBusyMarksPendingAndReturnsErrDevshardBusy(t *testing.T) {
 	txClient := &fakeTxClient{calls: log}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -173,6 +174,7 @@ func TestSettleHappyPathOrderAndClearsPendingOnSuccess(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -218,6 +220,7 @@ func TestSettleBroadcastFailureLeavesSettlementPendingSet(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -255,6 +258,7 @@ func TestRetireSettlementDisabledSkipsChainAndParksEscrow(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -285,6 +289,7 @@ func TestRetireSettlementEnabledHappyPathSettlesThenDeletes(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -318,6 +323,7 @@ func TestRetireSettlementEnabledBusyLeavesDevshardRegistered(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -362,6 +368,7 @@ func TestSettleDedupesConcurrentCallsForSameEscrow(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -412,6 +419,7 @@ func TestSettleRefusesNonceCommitsOnceTheSettlementIsBroadcast(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -446,6 +454,7 @@ func TestDedupedSettleLeavesTheRowForTheCallerThatIsReallySettling(t *testing.T)
 		},
 	}
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -502,6 +511,7 @@ func TestSettlePendingSettlesParkedEscrowAndDropsRow(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -528,6 +538,7 @@ func TestSettlePendingStillSettlesAfterAnUnrelatedUpsert(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -564,6 +575,7 @@ func TestSettlePendingBusyEscrowStaysParkedForTheNextTick(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -598,6 +610,7 @@ func TestSettlePendingRealFailureOfParkedEscrowIsReported(t *testing.T) {
 	finalizeErr := errors.New("finalize rejected")
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -622,6 +635,7 @@ func TestSettlePendingFailureReadingTheSettleTxNamesTheEscrow(t *testing.T) {
 	readErr := errors.New("settle tx read failed")
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            settleTxReadFailingStore{fakeStore: testStore, err: readErr},
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -653,6 +667,7 @@ func TestSettlePendingSettleInFlightIsDeferred(t *testing.T) {
 	txClient.txCommittedFn = func(string) (bool, error) { return false, chain.ErrTxNotFound }
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -687,6 +702,7 @@ func TestSettlePendingIsNoOpWhileSettlementDisabled(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -717,6 +733,7 @@ func TestSettlePendingIgnoresInactiveEscrowWithoutPendingMarker(t *testing.T) {
 	}
 
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -748,7 +765,8 @@ func TestASettleAlreadyOnChainIsReconciledInsteadOfRebroadcast(t *testing.T) {
 		txCommittedFn: func(string) (bool, error) { return true, nil },
 	}
 	m := &Manager{
-		tx: txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
+		narrator: silentNarrator{},
+		tx:       txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{},
 	}
 
@@ -783,7 +801,8 @@ func TestASettleThatNeverLandedIsRetried(t *testing.T) {
 		},
 	}
 	m := &Manager{
-		tx: txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
+		narrator: silentNarrator{},
+		tx:       txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{},
 	}
 
@@ -809,7 +828,8 @@ func TestASettleReadsTheHashFromTheRowNotTheCopyItWasHanded(t *testing.T) {
 	testStore.calls = log
 	txClient := &fakeTxClient{calls: log, txCommittedFn: func(string) (bool, error) { return true, nil }}
 	m := &Manager{
-		tx: txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
+		narrator: silentNarrator{},
+		tx:       txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{},
 	}
 	stale := stored
@@ -845,7 +865,8 @@ func TestASettleStillWithinItsTTLIsNotRebroadcast(t *testing.T) {
 		txCommittedFn: func(string) (bool, error) { return false, chain.ErrTxNotFound },
 	}
 	m := &Manager{
-		tx: txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
+		narrator: silentNarrator{},
+		tx:       txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
 		settlementSource: &fakeSettlementSource{}, now: time.Now,
 	}
 
@@ -872,9 +893,10 @@ func TestAnAlreadySettledEscrowIsStillTakenOutOfRouting(t *testing.T) {
 	testStore.calls = log
 	source := &fakeSettlementSource{calls: log}
 	m := &Manager{
-		tx:     &fakeTxClient{calls: log, txCommittedFn: func(string) (bool, error) { return true, nil }},
-		store:  testStore,
-		signer: &fakeSignerSource{signer: testSigner(t)}, settlementSource: source, now: time.Now,
+		narrator: silentNarrator{},
+		tx:       &fakeTxClient{calls: log, txCommittedFn: func(string) (bool, error) { return true, nil }},
+		store:    testStore,
+		signer:   &fakeSignerSource{signer: testSigner(t)}, settlementSource: source, now: time.Now,
 	}
 
 	if _, err := m.settle(context.Background(), record, false); err != nil {
@@ -916,6 +938,7 @@ func TestSettleDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 	calls := &callLog{}
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               prunedTxClient(t),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -947,6 +970,7 @@ func TestSettlePendingDropsAnEscrowTheChainNoLongerHolds(t *testing.T) {
 	record.ChainEpoch = 50
 	testStore.devshards[record.EscrowID] = record
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               prunedTxClient(t),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -995,6 +1019,7 @@ func TestSettleKeepsAnEscrowTheChainCannotHavePrunedYet(t *testing.T) {
 				},
 			}
 			m := &Manager{
+				narrator:         silentNarrator{},
 				tx:               tx,
 				store:            testStore,
 				signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -1037,6 +1062,7 @@ func TestSettlePendingFollowsAModelsOwnSettlementFlag(t *testing.T) {
 	testStore.devshards[ownFlag.EscrowID] = ownFlag
 	testStore.devshards[inherited.EscrowID] = inherited
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -1071,6 +1097,7 @@ func TestRetireParksAModelThatTurnsSettlementOff(t *testing.T) {
 		},
 	}
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -1104,6 +1131,7 @@ func TestSettlePendingSkipsARowGoneFromChain(t *testing.T) {
 		},
 	}
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -1137,6 +1165,7 @@ func TestSettlePendingSettlesARowReactivatedAfterItWasGoneFromChain(t *testing.T
 		t.Fatalf("ParkForSettlement() = %v, want nil", err)
 	}
 	m := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},

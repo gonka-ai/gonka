@@ -62,9 +62,7 @@ func (m *Manager) createFor(ctx context.Context, model ModelConfig, role store.R
 		return chain.CreateEscrowResult{}, failure
 	}
 	escrowID := strconv.FormatUint(result.EscrowID, 10)
-	if m.narrator != nil {
-		m.narrator.EscrowCreated(escrowID, model.ModelID, role, string(reason), label, result.TxHash)
-	}
+	m.narrator.EscrowCreated(escrowID, model.ModelID, role, string(reason), label, result.TxHash)
 	return result, m.persistEscrow(ctx, escrowID, c)
 }
 
@@ -113,7 +111,7 @@ func (m *Manager) creationFloor(modelID string, snapshot chain.PhaseSnapshot) (u
 }
 
 func (m *Manager) narrateBelowFloor(model ModelConfig, role store.Role, floor uint64) {
-	if !m.belowFloorNarrated.mark(createBreakerKey(model.ModelID, role)) || m.narrator == nil {
+	if !m.belowFloorNarrated.mark(createBreakerKey(model.ModelID, role)) {
 		return
 	}
 	m.narrator.EscrowCreateBelowFloor(model.ModelID, role, model.Amount, floor)
@@ -122,7 +120,7 @@ func (m *Manager) narrateBelowFloor(model ModelConfig, role store.Role, floor ui
 // narrateUnderfunded names a wallet that cannot pay once per (model, role), until a create of it succeeds.
 func (m *Manager) narrateUnderfunded(modelID string, role store.Role, err error) {
 	var underfunded *chain.WalletUnderfundedError
-	if !errors.As(err, &underfunded) || !m.underfundedNarrated.mark(createBreakerKey(modelID, role)) || m.narrator == nil {
+	if !errors.As(err, &underfunded) || !m.underfundedNarrated.mark(createBreakerKey(modelID, role)) {
 		return
 	}
 	m.narrator.EscrowCreateUnderfunded(modelID, role, underfunded.Have, underfunded.Need)
@@ -166,9 +164,7 @@ func (m *Manager) reconcileOne(ctx context.Context, c store.Commitment) error {
 		if persistErr := m.persistEscrow(ctx, escrowID, c); persistErr != nil {
 			return persistErr
 		}
-		if m.narrator != nil {
-			m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
-		}
+		m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
 		return nil
 	case err == nil && !found:
 		return m.clearCommitment(ctx, c, commitmentClearedNoEscrow) // committed but produced no escrow event: terminal
@@ -187,9 +183,7 @@ func (m *Manager) clearCommitment(ctx context.Context, c store.Commitment, reaso
 	if err := m.store.WithRetry(ctx, func() error { return m.store.DeleteCommitment(ctx, c.TxHash) }); err != nil {
 		return fmt.Errorf("clearing commitment %s: %w", c.TxHash, err)
 	}
-	if m.narrator != nil {
-		m.narrator.CommitmentCleared(c.TxHash, c.Model, c.Role, c.Epoch, reason)
-	}
+	m.narrator.CommitmentCleared(c.TxHash, c.Model, c.Role, c.Epoch, reason)
 	return nil
 }
 

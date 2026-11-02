@@ -28,7 +28,7 @@ func (m *Manager) projectStale(snapshot chain.PhaseSnapshot) chain.PhaseSnapshot
 	}
 	projected := snapshot
 	projected.BlockHeight += int64(staleFor / blockTime)
-	if !m.deadlines.stale.narrated && m.narrator != nil {
+	if !m.deadlines.stale.narrated {
 		m.narrator.EscrowDeadlinesProjected(snapshot.BlockHeight, projected.BlockHeight, staleFor)
 	}
 	m.deadlines.stale.narrated = true

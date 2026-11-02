@@ -59,7 +59,7 @@ func (m *Manager) retireBridgedTemps(ctx context.Context, snapshot chain.PhaseSn
 		}
 		retired++
 	}
-	if retired > 0 && m.narrator != nil {
+	if retired > 0 {
 		m.narrator.BridgeFinished(model.ModelID, snapshot.EpochIndex, 0, retired)
 	}
 	return errors.Join(errs...)

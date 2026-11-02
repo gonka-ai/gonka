@@ -167,7 +167,7 @@ func (m *Manager) stopRouting(escrowID string, narration parkNarration, cause re
 	if err := retire(escrowID); err != nil {
 		return fmt.Errorf("retiring escrow %s from routing: %w", escrowID, err)
 	}
-	if narration == narratePark && m.narrator != nil {
+	if narration == narratePark {
 		m.narrator.EscrowParked(escrowID)
 	}
 	return nil
@@ -239,9 +239,7 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 		}
 		return chain.SettleEscrowResult{}, failure
 	}
-	if m.narrator != nil {
-		m.narrator.EscrowSettled(record.EscrowID, record.Model, result.TxHash, result.Settler)
-	}
+	m.narrator.EscrowSettled(record.EscrowID, record.Model, result.TxHash, result.Settler)
 
 	if err := m.store.WithRetry(ctx, func() error {
 		return m.store.SetDevshardSettlementPending(ctx, record.EscrowID, false)
@@ -329,9 +327,7 @@ func (m *Manager) alreadySettled(ctx context.Context, record store.DevshardRecor
 	case !succeeded:
 		return "", false, m.clearSettleTxHash(ctx, record.EscrowID) // committed and rejected: retry is right
 	}
-	if m.narrator != nil {
-		m.narrator.SettlementReconciled(record.EscrowID, hash)
-	}
+	m.narrator.SettlementReconciled(record.EscrowID, hash)
 	return hash, true, nil
 }
 
@@ -381,8 +377,6 @@ func (m *Manager) deleteSettled(ctx context.Context, escrowID string) error {
 		return fmt.Errorf("deleting settled escrow %s: %w", escrowID, err)
 	}
 	m.settling.sweepRetries.forget(escrowID)
-	if m.narrator != nil {
-		m.narrator.SettledRecordDropped(escrowID)
-	}
+	m.narrator.SettledRecordDropped(escrowID)
 	return nil
 }

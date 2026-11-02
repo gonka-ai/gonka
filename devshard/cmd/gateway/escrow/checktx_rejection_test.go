@@ -32,6 +32,7 @@ func broadcastFailingManager(t *testing.T, record store.DevshardRecord, broadcas
 		},
 	}
 	return &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -107,6 +108,7 @@ func TestACreateRejectedAtCheckTxDropsItsCommitment(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			testStore := newFakeStore()
 			m := &Manager{
+				narrator: silentNarrator{},
 				tx: &fakeTxClient{
 					createEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, _ uint64, _ string, onPrepared func(string) error) (chain.CreateEscrowResult, error) {
 						if err := onPrepared("TX-CREATE"); err != nil {

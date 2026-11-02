@@ -58,7 +58,5 @@ func (m *Manager) checkSettleMargin(snapshot chain.PhaseSnapshot) {
 		return
 	}
 	m.deadlines.pace.narratedMargin = marginBlocks
-	if m.narrator != nil {
-		m.narrator.SettleMarginShort(marginBlocks, blockTime, need)
-	}
+	m.narrator.SettleMarginShort(marginBlocks, blockTime, need)
 }

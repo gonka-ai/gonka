@@ -43,7 +43,7 @@ func assertParked(t *testing.T, testStore *fakeStore, escrowID string) {
 //  1. Call `OnBalanceExhausted` for escrow "1" twice with the same reason, then once for escrow "2".
 //  2. Assert `depleted.reasons` holds exactly one entry per escrow, deduping the repeated call.
 func TestOnBalanceExhaustedMarksAndDedups(t *testing.T) {
-	manager := &Manager{}
+	manager := &Manager{narrator: silentNarrator{}}
 	manager.OnBalanceExhausted("1", "test")
 	manager.OnBalanceExhausted("1", "test")
 	manager.OnBalanceExhausted("2", "test")
@@ -95,7 +95,7 @@ func TestMarkSpentMarksOnlyServingEscrowsRoutingWouldRetire(t *testing.T) {
 	parked.Active = false
 	reserve := activeRecord("reserve", "model-a")
 	reserve.RotationRole = RoleReserve
-	manager := &Manager{exhaustion: fakeExhaustionProbe{
+	manager := &Manager{narrator: silentNarrator{}, exhaustion: fakeExhaustionProbe{
 		"spent":   scheduler.ExhaustionBalanceFloor,
 		"reserve": scheduler.ExhaustionNonceCap,
 		"parked":  scheduler.ExhaustionBalanceFloor,
@@ -114,7 +114,7 @@ func TestMarkSpentMarksOnlyServingEscrowsRoutingWouldRetire(t *testing.T) {
 //  2. Run `markSpent` over a serving escrow.
 //  3. Assert nothing is marked and nothing panics.
 func TestMarkSpentWithoutAProbeMarksNothing(t *testing.T) {
-	manager := &Manager{}
+	manager := &Manager{narrator: silentNarrator{}}
 
 	manager.markSpent([]store.DevshardRecord{activeRecord("spent", "model-a")})
 

@@ -94,7 +94,7 @@ func TestTriggerEscrowCheckNotFoundDeactivates(t *testing.T) {
 			return chain.EscrowInfo{}, false, nil
 		},
 	}
-	m := &Manager{tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
 
 	if err := m.TriggerEscrowCheck(context.Background(), "1"); err != nil {
 		t.Fatalf("TriggerEscrowCheck() = %v, want nil", err)
@@ -118,7 +118,7 @@ func TestTriggerEscrowCheckNotFoundStopsTraffic(t *testing.T) {
 			return chain.EscrowInfo{}, false, nil
 		},
 	}
-	m := &Manager{tx: txClient, store: testStore, settlementSource: routing}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, settlementSource: routing}
 	if !routing.commit() {
 		t.Fatal("precondition: the escrow must accept a nonce commit before the check runs")
 	}
@@ -147,7 +147,7 @@ func TestTriggerEscrowCheckFoundKeepsActive(t *testing.T) {
 			return chain.EscrowInfo{EscrowID: escrowID, Balance: 500}, true, nil
 		},
 	}
-	m := &Manager{tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
 
 	if err := m.TriggerEscrowCheck(context.Background(), "1"); err != nil {
 		t.Fatalf("TriggerEscrowCheck() = %v, want nil", err)
@@ -178,7 +178,7 @@ func TestTriggerEscrowCheckChainErrorKeepsActive(t *testing.T) {
 			return chain.EscrowInfo{}, false, chainErr
 		},
 	}
-	m := &Manager{tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
 
 	err := m.TriggerEscrowCheck(context.Background(), "1")
 	if err == nil || !errors.Is(err, chainErr) {
@@ -215,7 +215,7 @@ func TestTriggerEscrowCheckDedupesConcurrentCallers(t *testing.T) {
 			return chain.EscrowInfo{}, false, nil
 		},
 	}
-	m := &Manager{tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, settlementSource: &fakeSettlementSource{}}
 
 	done := make(chan struct{}, callerCount)
 	for range callerCount {

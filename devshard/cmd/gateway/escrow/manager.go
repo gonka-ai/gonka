@@ -1,6 +1,7 @@
 package escrow
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"sync"
@@ -117,7 +118,7 @@ func NewManager(d Deps) (*Manager, error) {
 		chainFacts:       d.ChainFacts,
 		timeoutSweeper:   d.Timeouts,
 		sweepRecorder:    d.Sweeps,
-		narrator:         d.Narrator,
+		narrator:         cmp.Or[lifecycleNarrator](d.Narrator, silentNarrator{}),
 		routePrefix:      d.RoutePrefix,
 		wakeup:           make(chan struct{}, 1),
 		planner:          fundingPlanner{models: map[string]*modelFunding{}, escrows: map[string]*escrowFunding{}},
@@ -155,7 +156,7 @@ func (m *Manager) Start(ctx context.Context) {
 }
 
 func (m *Manager) runTick(ctx context.Context, scheduled bool) {
-	if err := m.tickWith(ctx, scheduled); err != nil && m.narrator != nil {
+	if err := m.tickWith(ctx, scheduled); err != nil {
 		m.narrator.EscrowTickFailed(err)
 	}
 }
@@ -181,7 +182,7 @@ func (m *Manager) settleOffTick(ctx context.Context, snapshot chain.PhaseSnapsho
 		return
 	}
 	m.offTickWork.Go(func() {
-		if err := m.settleParked(ctx, parked); err != nil && m.narrator != nil {
+		if err := m.settleParked(ctx, parked); err != nil {
 			m.narrator.EscrowTickFailed(err)
 		}
 	})
@@ -209,7 +210,7 @@ func (m *Manager) recordSweep(due, applied, failed int) {
 	if m.sweepRecorder != nil {
 		m.sweepRecorder.RecordSweep(due, applied, failed)
 	}
-	if due == 0 || m.narrator == nil {
+	if due == 0 {
 		return
 	}
 	m.narrator.TimeoutsSwept(due, applied, failed)

@@ -40,6 +40,7 @@ func servedSnapshot(epoch uint64, blockHeight int64, modelID string) chain.Phase
 func newRotationManager(t *testing.T, testStore *fakeStore, txClient *fakeTxClient, settlementEnabled bool) *Manager {
 	t.Helper()
 	return &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -466,7 +467,8 @@ func TestPrepareBridgeSettlementEnabledSettlesRegularsBeforeRetiring(t *testing.
 		},
 	}
 	m := &Manager{
-		tx: txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
+		narrator: silentNarrator{},
+		tx:       txClient, store: testStore, signer: &fakeSignerSource{signer: testSigner(t)},
 		breaker: newCreateBreaker(), now: time.Now,
 		config:           holderWithSettlementEnabled(true),
 		settlementSource: &fakeSettlementSource{busy: false, calls: log},

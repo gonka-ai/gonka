@@ -80,7 +80,7 @@ func (m *Manager) readChainFacts(ctx context.Context, escrowID string) (chainEpo
 }
 
 func (m *Manager) narrateUnresolved(escrowID string, reason chainFactsFailure) {
-	if !m.unresolvedNarrated.mark(escrowID) || m.narrator == nil {
+	if !m.unresolvedNarrated.mark(escrowID) {
 		return
 	}
 	m.narrator.EscrowChainFactsUnresolved(escrowID, string(reason))

@@ -17,6 +17,7 @@ func busyManager(t *testing.T, record store.DevshardRecord, log *callLog) (*Mana
 	txClient.calls = log
 	txClient.settleTxHash = "SETTLE-TX"
 	return &Manager{
+		narrator:         silentNarrator{},
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},

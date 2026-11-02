@@ -217,9 +217,6 @@ func unreadEscrow(row store.DevshardRecord, state funding.ModelState) funding.Es
 }
 
 func (m *Manager) narratePlan(model string, state funding.ModelState, decision funding.Decision, transitions planTransitions) {
-	if m.narrator == nil {
-		return
-	}
 	for _, escrow := range transitions.starved {
 		m.narrator.EscrowStarved(escrow.ID, escrow.Money.Free)
 	}
@@ -241,9 +238,7 @@ func (m *Manager) narratePlan(model string, state funding.ModelState, decision f
 }
 
 func (m *Manager) narratePlanFailed(err error) {
-	if m.narrator != nil {
-		m.narrator.FundingPlanFailed(err)
-	}
+	m.narrator.FundingPlanFailed(err)
 }
 
 func newModelPricing(modelID string, snapshot chain.PhaseSnapshot, configuration *config.Config) modelPricing {
