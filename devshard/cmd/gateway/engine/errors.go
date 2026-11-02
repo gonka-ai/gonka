@@ -9,9 +9,10 @@ import (
 	"devshard/transport"
 )
 
-const maxHTTPStatus = 599
-
-const connectChatPath = "/chat/completions"
+const (
+	maxHTTPStatus   = 599
+	connectChatPath = "/chat/completions"
+)
 
 // Errors the engine returns. See README.md, "Errors the engine returns".
 var (

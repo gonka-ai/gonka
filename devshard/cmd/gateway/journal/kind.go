@@ -27,10 +27,8 @@ const (
 	KindFundingTransition
 	KindWinnerFinishLanded
 	KindRaceStepUnnamed
+	kindCount
 )
-
-// kindCount is one past the last kind, so a table indexed by kind has a slot for each.
-const kindCount = KindRaceStepUnnamed + 1
 
 var kindNames = [kindCount]string{
 	KindRaceReported:        "race_reported",

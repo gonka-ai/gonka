@@ -68,11 +68,12 @@ func retireListedAbsentHosts(hosts HostDirectory, marks absentHostMarks, escrows
 	return retired
 }
 
-// unopenedEscrowRetryDelay is the lifecycle tick, so an escrow that would not open is retried as often as rotation looks at it.
-const unopenedEscrowRetryDelay = escrow.TickInterval
-
-// absentHostProbeInterval bounds the chain lookups for dead slots to one per marked participant per lifecycle tick.
-const absentHostProbeInterval = escrow.TickInterval
+const (
+	// unopenedEscrowRetryDelay is the lifecycle tick, so an escrow that would not open is retried as often as rotation looks at it.
+	unopenedEscrowRetryDelay = escrow.TickInterval
+	// absentHostProbeInterval bounds the chain lookups for dead slots to one per marked participant per lifecycle tick.
+	absentHostProbeInterval = escrow.TickInterval
+)
 
 // modelServedThroughDrain reports whether retiring the escrow leaves its model served: it closes at once, another of the model's escrows with no absent mark routes, or another routes while none is out of routing.
 func modelServedThroughDrain(escrows liveEscrows, marked map[string][]string, candidate scheduler.Escrow) bool {
