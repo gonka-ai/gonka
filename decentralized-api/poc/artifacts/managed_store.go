@@ -303,6 +303,9 @@ func (m *ManagedArtifactStore) storeKey(pocStageStartHeight int64, modelID strin
 	if modelID == "" {
 		return storeKey{}, fmt.Errorf("model_id is required")
 	}
+	if modelID == "." || modelID == ".." {
+		return storeKey{}, fmt.Errorf("model_id must not be a dot segment")
+	}
 	return storeKey{stage: pocStageStartHeight, modelID: modelID}, nil
 }
 
