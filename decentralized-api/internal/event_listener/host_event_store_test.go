@@ -1000,7 +1000,7 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		events := []apiconfig.HostEvent{{Kind: apiconfig.HostEventKindEscrowSettled, Escrow: &apiconfig.EscrowPayload{EscrowID: 42}}}
 		for i := 0; i < grants; i++ {
 			events = append(events, apiconfig.HostEvent{Kind: apiconfig.HostEventKindWarmKeyGranted, WarmKey: &apiconfig.WarmKeyPayload{
-				Granter: "cold-" + strconv.Itoa(i), Grantee: "warm", GrantID: 1, Height: 2, ExpiresAtUnix: 1800000000,
+				Granter: "cold-" + strconv.Itoa(i), Grantee: "warm", GrantID: 1, Height: 2, ExpiresAtUnix: 1800000000000000456,
 			}})
 		}
 		events = append(events, blockOnly(2, 1))
@@ -1029,7 +1029,7 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		require.Equal(t, uint64(42), received[0].GetEscrow().GetEscrowId())
 		for i, ev := range received[1 : len(received)-1] {
 			require.Equal(t, "cold-"+strconv.Itoa(i), ev.GetWarmKey().GetGranter())
-			require.Equal(t, int64(1800000000), ev.GetWarmKey().GetExpiresAtUnix())
+			require.Equal(t, int64(1800000000000000456), ev.GetWarmKey().GetExpiresAtUnix())
 		}
 		require.Equal(t, int64(2), received[len(received)-1].GetBlock().GetHeight())
 		escrowOnly, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{

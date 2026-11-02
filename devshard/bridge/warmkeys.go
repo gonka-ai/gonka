@@ -25,7 +25,7 @@ type WarmKeyEntry struct {
 	Grantee         string
 	GrantedAtHeight int64
 	RevokedAtHeight int64
-	ExpiresAtUnix   int64
+	ExpiresAtUnix   int64 // Unix nanoseconds; 0 means no expiration.
 	// End names how the entry ended: "" while live, otherwise the chain's
 	// WarmKeyLogEnd name (REVOKED or REPLACED). Expiration uses ExpiresAtUnix.
 	End string
@@ -35,13 +35,13 @@ type WarmKeyEntry struct {
 func (e WarmKeyEntry) Ended() bool { return e.RevokedAtHeight != 0 || e.End != "" }
 
 // LiveAt reports whether the entry is live at now: not ended on chain and not
-// past its expiration in Unix seconds. Expiration does not end the entry on
+// past its expiration in Unix nanoseconds. Expiration does not end the entry on
 // chain or emit an event; the copy checks the timestamp itself.
 func (e WarmKeyEntry) LiveAt(now time.Time) bool {
 	if e.Ended() {
 		return false
 	}
-	return e.ExpiresAtUnix == 0 || e.ExpiresAtUnix > now.Unix()
+	return e.ExpiresAtUnix == 0 || now.Before(time.Unix(0, e.ExpiresAtUnix))
 }
 
 // WarmKeyGrantSource is the grant source: the view of the chain's warm-key

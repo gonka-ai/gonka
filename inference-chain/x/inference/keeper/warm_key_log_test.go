@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -50,7 +51,7 @@ func TestWarmKeyLogGrantReplaceRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), first.Id)
 	require.Equal(t, int64(100), first.GrantedAtHeight)
-	require.Equal(t, expires.Unix(), first.ExpiresAtUnix)
+	require.Equal(t, expires.UnixNano(), first.ExpiresAtUnix)
 	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, first.End)
 
 	ctx = ctx.WithBlockHeight(120)
@@ -196,7 +197,7 @@ func TestWarmKeyLogSeedFromAuthzGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 2)
 	require.Equal(t, a.String(), entries[0].Grantee)
-	require.Equal(t, future.Unix(), entries[0].ExpiresAtUnix)
+	require.Equal(t, future.UnixNano(), entries[0].ExpiresAtUnix)
 	require.Equal(t, c.String(), entries[1].Grantee)
 	require.Equal(t, int64(500), entries[1].GrantedAtHeight)
 
@@ -243,22 +244,80 @@ func TestWarmKeyLogQueries(t *testing.T) {
 }
 
 // Test flow:
-//  1. Grant a key expiring at 100.9 s, then replace it at 100.1 s.
-//  2. Assert its timestamp is rounded up to 101 seconds and the still-live grant records a replacement.
-func TestWarmKeyLogExpiryRoundsUpToTheNextSecond(t *testing.T) {
+//  1. Grant a key with a subsecond expiration and replace it one nanosecond before, at, and after expiration.
+//  2. Assert exact nanosecond storage and the same expiry boundary used by devshard LiveAt.
+func TestWarmKeyLogExpiryUnixNanoseconds(t *testing.T) {
+	for _, delta := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
+		t.Run(delta.String(), func(t *testing.T) {
+			k, ctx := keepertest.InferenceKeeper(t)
+			granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+			expires := time.Unix(100, 900_000_123)
+			ctx = ctx.WithBlockHeight(5).WithBlockTime(time.Unix(50, 0))
+			entry, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &expires)
+			require.NoError(t, err)
+			require.Equal(t, expires.UnixNano(), entry.ExpiresAtUnix)
+			require.Equal(t, "100900000123", attr(eventsOfType(ctx, keeper.EventTypeWarmKeyGranted)[0], keeper.AttributeKeyWarmKeyExpiresAt))
+
+			ctx = ctx.WithBlockHeight(6).WithBlockTime(expires.Add(delta))
+			_, err = k.RecordWarmKeyGrant(ctx, granter, grantee, nil)
+			require.NoError(t, err)
+			entries, err := k.WarmKeyLogEntries(ctx, granter)
+			require.NoError(t, err)
+			if delta < 0 {
+				require.Equal(t, int64(6), entries[0].RevokedAtHeight)
+				require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED, entries[0].End)
+			} else {
+				require.Zero(t, entries[0].RevokedAtHeight)
+				require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[0].End)
+			}
+		})
+	}
+}
+
+func TestWarmKeyLogExpiryRange(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
-	expires := time.Unix(100, 900_000_000)
 	ctx = ctx.WithBlockHeight(5).WithBlockTime(time.Unix(50, 0))
-	entry, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &expires)
+	max := time.Unix(0, math.MaxInt64)
+	entry, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &max)
 	require.NoError(t, err)
-	require.Equal(t, int64(101), entry.ExpiresAtUnix)
+	require.Equal(t, int64(math.MaxInt64), entry.ExpiresAtUnix)
+	beforeEvents := append(sdk.Events(nil), ctx.EventManager().Events()...)
 
-	ctx = ctx.WithBlockHeight(6).WithBlockTime(time.Unix(100, 100_000_000))
-	_, err = k.RecordWarmKeyGrant(ctx, granter, grantee, nil)
+	for _, unsupported := range []time.Time{max.Add(time.Nanosecond), time.Unix(0, math.MinInt64).Add(-time.Nanosecond), time.Unix(0, 0)} {
+		_, err := k.RecordWarmKeyGrant(ctx.WithBlockHeight(6), granter, grantee, &unsupported)
+		require.ErrorContains(t, err, "not representable")
+		entries, err := k.WarmKeyLogEntries(ctx, granter)
+		require.NoError(t, err)
+		require.Equal(t, []types.WarmKeyLogEntry{entry}, entries)
+		live, err := k.WarmKeyLive.Get(ctx, collections.Join(granter, grantee))
+		require.NoError(t, err)
+		require.Equal(t, entry.Id, live)
+		next, err := k.WarmKeyLogNextID.Get(ctx, granter)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), next)
+		require.Equal(t, beforeEvents, ctx.EventManager().Events())
+	}
+}
+
+func TestWarmKeyLogSeedSkipsUnsupportedExpiration(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	ctx = ctx.WithBlockHeight(500).WithBlockTime(time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC))
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+	expires := time.Unix(0, math.MaxInt64).Add(time.Nanosecond)
+	authorization, err := codectypes.NewAnyWithValue(authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL))
 	require.NoError(t, err)
+
+	n, err := k.SeedWarmKeyLog(ctx, func(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
+		require.False(t, handler(granter, grantee, authz.Grant{Authorization: authorization, Expiration: &expires}))
+		require.False(t, handler(granter, warmKeyTestAddr(3), authz.Grant{Authorization: authorization}))
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
 	entries, err := k.WarmKeyLogEntries(ctx, granter)
 	require.NoError(t, err)
-	require.Equal(t, int64(6), entries[0].RevokedAtHeight)
-	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED, entries[0].End)
+	require.Len(t, entries, 1)
+	require.Equal(t, warmKeyTestAddr(3).String(), entries[0].Grantee)
+	require.Equal(t, uint64(1), entries[0].Id)
+	require.Zero(t, entries[0].ExpiresAtUnix)
 }

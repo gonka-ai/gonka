@@ -51,7 +51,7 @@ func passThrough(ctx sdk.Context, _ sdk.Tx, _, _ bool) (sdk.Context, error) { re
 func TestWarmKeyLogDecoratorRecordsMarkerGrantsAndRevokes(t *testing.T) {
 	d, ctx, entries := newWarmKeyLogTestDecorator(t)
 	granter, grantee := postTestAddr(1), postTestAddr(2)
-	expires := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	expires := time.Date(2027, 1, 1, 0, 0, 0, 123, time.UTC)
 
 	grant, err := authz.NewMsgGrant(granter, grantee, authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL), &expires)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestWarmKeyLogDecoratorRecordsMarkerGrantsAndRevokes(t *testing.T) {
 	require.Len(t, got, 1)
 	require.Equal(t, grantee.String(), got[0].Grantee)
 	require.Equal(t, int64(42), got[0].GrantedAtHeight)
-	require.Equal(t, expires.Unix(), got[0].ExpiresAtUnix)
+	require.Equal(t, expires.UnixNano(), got[0].ExpiresAtUnix)
 
 	revoke := authz.NewMsgRevoke(granter, grantee, types.WarmKeyGrantMarkerTypeURL)
 	otherRevoke := authz.NewMsgRevoke(granter, grantee, "/cosmos.bank.v1beta1.MsgSend")

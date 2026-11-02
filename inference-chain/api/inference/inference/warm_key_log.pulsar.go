@@ -829,7 +829,7 @@ type WarmKeyLogEntry struct {
 	GrantedAtHeight int64  `protobuf:"varint,4,opt,name=granted_at_height,json=grantedAtHeight,proto3" json:"granted_at_height,omitempty"`
 	// 0 until an explicit revoke or replacement, including after expiration.
 	RevokedAtHeight int64 `protobuf:"varint,5,opt,name=revoked_at_height,json=revokedAtHeight,proto3" json:"revoked_at_height,omitempty"`
-	// Unix seconds, rounded up; 0 when the grant has no expiration.
+	// Unix nanoseconds; 0 when the grant has no expiration.
 	ExpiresAtUnix int64         `protobuf:"varint,6,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
 	End           WarmKeyLogEnd `protobuf:"varint,7,opt,name=end,proto3,enum=inference.inference.WarmKeyLogEnd" json:"end,omitempty"`
 }

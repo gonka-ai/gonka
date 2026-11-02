@@ -27,7 +27,7 @@ type WarmKeyPayload struct {
 	Grantee       string
 	GrantID       uint64
 	Height        int64
-	ExpiresAtUnix int64 // unix seconds, rounded up; 0 when the grant has no expiration
+	ExpiresAtUnix int64 // Unix nanoseconds; 0 when the grant has no expiration
 	End           string
 }
 

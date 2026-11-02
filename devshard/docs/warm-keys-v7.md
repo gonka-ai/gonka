@@ -76,11 +76,17 @@ WarmKeyLogEntry { granter, id, grantee, granted_at_height, revoked_at_height, ex
   sets `revoked_at_height` and `end` (`REVOKED`, `REPLACED`);
   nothing is deleted. A replacement in the same block as its predecessor gets
   a larger id, so ids order grants where heights cannot.
-- Expiration is stored in `expires_at_unix` as Unix seconds, rounded up so
-  fractional seconds do not expire a grant early. Passing that timestamp
+- Expiration is stored in `expires_at_unix` as Unix nanoseconds, preserving
+  the grant's fractional seconds without rounding. Passing that timestamp
   changes neither the historical entry nor its end fields and emits no event.
   There is no EndBlock walk over warm keys. A later grant or revoke removes
   the expired pair's index row lazily; its historical entry stays unchanged.
+  Expiration must fit in a nonzero signed 64-bit Unix nanosecond timestamp
+  (at most `2262-04-11T23:47:16.854775807Z`); zero means no expiration.
+  New grants with unsupported dates fail before an existing log entry is
+  changed. Seeding skips existing authz grants with unsupported expirations
+  and logs a warning, so they cannot block the upgrade. Those grants must be
+  renewed with a supported expiration before they can bind a v7 warm key.
 - The module learns about grants from a post handler on `MsgGrant`,
   `MsgRevoke` and the messages nested in `MsgExec`
   (`inference-chain/app/post_warm_key_log.go`), which runs in FinalizeBlock

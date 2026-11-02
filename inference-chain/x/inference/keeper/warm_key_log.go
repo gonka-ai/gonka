@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -53,6 +54,10 @@ func IsWarmKeyMarker(msgTypeURL string) bool {
 // both with the new one ordered after the old by id. An expired pair's index
 // row is removed without changing its historical entry or emitting an end.
 func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.AccAddress, expiration *time.Time) (types.WarmKeyLogEntry, error) {
+	expiresAtUnix, err := warmKeyExpiryUnixNano(expiration)
+	if err != nil {
+		return types.WarmKeyLogEntry{}, err
+	}
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	height := sdkCtx.BlockHeight()
 
@@ -80,9 +85,7 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 		Id:              nextID,
 		Grantee:         grantee.String(),
 		GrantedAtHeight: height,
-	}
-	if expiration != nil {
-		entry.ExpiresAtUnix = warmKeyExpiryUnix(*expiration)
+		ExpiresAtUnix:   expiresAtUnix,
 	}
 	if err := k.WarmKeyLogEntriesMap.Set(ctx, collections.Join(granter, nextID), entry); err != nil {
 		return types.WarmKeyLogEntry{}, err
@@ -104,14 +107,16 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 	return entry, nil
 }
 
-// warmKeyExpiryUnix is the expiration in Unix seconds, rounded up so the
-// seconds-only timestamp does not expire a grant before its fractional second.
-func warmKeyExpiryUnix(expiration time.Time) int64 {
-	unix := expiration.Unix()
-	if expiration.Nanosecond() > 0 {
-		unix++
+// warmKeyExpiryUnixNano rejects dates outside the wire format before any
+// existing grant is changed. Zero is reserved for a grant without expiration.
+func warmKeyExpiryUnixNano(expiration *time.Time) (int64, error) {
+	if expiration == nil {
+		return 0, nil
 	}
-	return unix
+	if expiration.Before(time.Unix(0, math.MinInt64)) || expiration.After(time.Unix(0, math.MaxInt64)) || expiration.Equal(time.Unix(0, 0)) {
+		return 0, fmt.Errorf("warm-key expiration %s is not representable as a nonzero int64 Unix nanosecond timestamp", expiration.Format(time.RFC3339Nano))
+	}
+	return expiration.UnixNano(), nil
 }
 
 // RecordWarmKeyRevoke ends the live entry for (granter, grantee) as REVOKED.
@@ -131,10 +136,10 @@ func (k Keeper) RecordWarmKeyRevoke(ctx context.Context, granter, grantee sdk.Ac
 	return true, k.endWarmKeyEntry(ctx, live, sdkCtx.BlockHeight(), types.WarmKeyLogEnd_WARM_KEY_LOG_END_REVOKED)
 }
 
-// warmKeyExpired uses the same seconds-only boundary as devshard LiveAt.
+// warmKeyExpired uses the same nanosecond boundary as devshard LiveAt.
 // It is checked only when a transaction touches the pair's index row.
 func warmKeyExpired(entry types.WarmKeyLogEntry, now time.Time) bool {
-	return entry.ExpiresAtUnix != 0 && entry.ExpiresAtUnix <= now.Unix()
+	return entry.ExpiresAtUnix != 0 && !now.Before(time.Unix(0, entry.ExpiresAtUnix))
 }
 
 // SeedWarmKeyLog fills an empty log from the authz grants that exist at the
@@ -158,10 +163,11 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockTime := sdkCtx.BlockTime()
 	var (
-		count    int
-		iterErr  error
-		skipped  int
-		expiredN int
+		count        int
+		iterErr      error
+		skipped      int
+		expiredN     int
+		unsupportedN int
 	)
 	iterate(ctx, func(granter, grantee sdk.AccAddress, grant authz.Grant) bool {
 		auth, ok := k.genericAuthorization(grant)
@@ -171,6 +177,12 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 		}
 		if grant.Expiration != nil && !grant.Expiration.After(blockTime) {
 			expiredN++
+			return false
+		}
+		if _, err := warmKeyExpiryUnixNano(grant.Expiration); err != nil {
+			unsupportedN++
+			k.LogWarn("skipping warm-key grant with unsupported expiration", types.Upgrades,
+				"granter", granter.String(), "grantee", grantee.String(), "error", err)
 			return false
 		}
 		if _, err := k.RecordWarmKeyGrant(ctx, granter, grantee, grant.Expiration); err != nil {
@@ -183,7 +195,7 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 	if iterErr != nil {
 		return count, iterErr
 	}
-	k.LogInfo("warm-key log seeded", types.Upgrades, "entries", count, "other_grants", skipped, "expired", expiredN)
+	k.LogInfo("warm-key log seeded", types.Upgrades, "entries", count, "other_grants", skipped, "expired", expiredN, "unsupported_expirations", unsupportedN)
 	return count, nil
 }
 
