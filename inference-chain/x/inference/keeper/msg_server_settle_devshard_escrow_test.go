@@ -2,8 +2,10 @@ package keeper_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
+	"cosmossdk.io/log"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	dcrdsecp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/stretchr/testify/require"
@@ -12,6 +14,19 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// captureSDKLogger records keeper Info/Warn lines after Logger().With(...).
+type captureSDKLogger struct {
+	infos *[]string
+	warns *[]string
+}
+
+func (c captureSDKLogger) Info(msg string, _ ...any) { *c.infos = append(*c.infos, msg) }
+func (c captureSDKLogger) Warn(msg string, _ ...any) { *c.warns = append(*c.warns, msg) }
+func (c captureSDKLogger) Error(string, ...any)      {}
+func (c captureSDKLogger) Debug(string, ...any)      {}
+func (c captureSDKLogger) With(...any) log.Logger    { return c }
+func (c captureSDKLogger) Impl() any                 { return nil }
 
 func setParticipantForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr string) {
 	t.Helper()
@@ -34,6 +49,14 @@ func setActiveParticipantsForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk
 		EpochId:      epoch,
 		Participants: participants,
 	}))
+}
+
+func enableApplySampledPassCount(t *testing.T, k keeper.Keeper, ctx context.Context) {
+	t.Helper()
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams.ApplySampledPassCount = true
+	require.NoError(t, k.SetParams(ctx, params))
 }
 
 func TestSettleDevshardEscrow_FeesSplitBySlotCount(t *testing.T) {
@@ -273,68 +296,248 @@ func TestSettleDevshardEscrow_ZeroCostSettlement(t *testing.T) {
 }
 
 func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
-	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
-
-	keyH1, err := dcrdsecp.GeneratePrivateKey()
-	require.NoError(t, err)
-	keyH2, err := dcrdsecp.GeneratePrivateKey()
-	require.NoError(t, err)
-
-	addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
-	addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
-	setParticipantForDevshardTest(t, k, ctx, addrH1)
-	setParticipantForDevshardTest(t, k, ctx, addrH2)
-	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
-	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
-
-	creator := sdk.AccAddress(make([]byte, 20))
-	creator[0] = 0x21
-	escrow := types.DevshardEscrow{
-		Id:         1,
-		Creator:    creator.String(),
-		Amount:     5_000,
-		Slots:      []string{addrH1, addrH1, addrH2, addrH2},
-		EpochIndex: 5,
-		Settled:    false,
+	// Old payload (no validated/finished). Invalid is 0 so sampled=0 does not
+	// trip SPRT slashing; derived still differs (assigned-missed).
+	tests := []struct {
+		name             string
+		setDerivedPolicy bool
+		setSampledPolicy bool
+		applySampled     bool
+		wantH1Validated  uint64
+		wantH2Validated  uint64
+	}{
+		{
+			name:            "missing policy is DERIVED and credits assigned-missed-invalid even if flag off",
+			wantH1Validated: 9,
+			wantH2Validated: 7,
+		},
+		{
+			name:             "DERIVED version ignores apply_sampled and credits assigned-missed-invalid",
+			setDerivedPolicy: true,
+			applySampled:     true,
+			wantH1Validated:  9,
+			wantH2Validated:  7,
+		},
+		{
+			name:             "SAMPLED version with flag off keeps derived punishment",
+			setSampledPolicy: true,
+			wantH1Validated:  9,
+			wantH2Validated:  7,
+		},
+		{
+			name:             "SAMPLED version with flag on credits sampled (0 on omitted validated)",
+			setSampledPolicy: true,
+			applySampled:     true,
+			wantH1Validated:  0,
+			wantH2Validated:  0,
+		},
 	}
-	_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
-	require.NoError(t, err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+			sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 
-	hostStats := []*types.DevshardSettlementHostStats{
-		{SlotId: 0, Missed: 1, Invalid: 2, Cost: 10},
-		{SlotId: 1, Missed: 0, Invalid: 1, Cost: 20},
-		{SlotId: 2, Missed: 2, Invalid: 0, Cost: 30},
-		{SlotId: 3, Missed: 1, Invalid: 1, Cost: 40},
+			keyH1, err := dcrdsecp.GeneratePrivateKey()
+			require.NoError(t, err)
+			keyH2, err := dcrdsecp.GeneratePrivateKey()
+			require.NoError(t, err)
+
+			addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+			addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+			setParticipantForDevshardTest(t, k, ctx, addrH1)
+			setParticipantForDevshardTest(t, k, ctx, addrH2)
+			require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+			setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+			if tc.applySampled {
+				enableApplySampledPassCount(t, k, ctx)
+			}
+			if tc.setDerivedPolicy {
+				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
+					Name:      "dev",
+					PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+				}))
+			}
+			if tc.setSampledPolicy {
+				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
+					Name:      "dev",
+					PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED,
+				}))
+			}
+
+			creator := sdk.AccAddress(make([]byte, 20))
+			creator[0] = 0x21
+			escrow := types.DevshardEscrow{
+				Id:         1,
+				Creator:    creator.String(),
+				Amount:     5_000,
+				Slots:      []string{addrH1, addrH1, addrH2, addrH2},
+				EpochIndex: 5,
+				Settled:    false,
+			}
+			_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+			require.NoError(t, err)
+
+			hostStats := []*types.DevshardSettlementHostStats{
+				{SlotId: 0, Missed: 1, Invalid: 0, Cost: 10},
+				{SlotId: 1, Missed: 0, Invalid: 0, Cost: 20},
+				{SlotId: 2, Missed: 2, Invalid: 0, Cost: 30},
+				{SlotId: 3, Missed: 1, Invalid: 0, Cost: 40},
+			}
+			msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 8, 20)
+
+			mocks.BankKeeper.EXPECT().
+				SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+				Return(nil)
+			mocks.BankKeeper.EXPECT().
+				LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				AnyTimes()
+
+			_, err = ms.SettleDevshardEscrow(ctx, msg)
+			require.NoError(t, err)
+
+			// assignedPerSlot = 20 / 4 = 5
+			// H1: completed = (5-1) + (5-0) = 9, derived = 9
+			participantH1, found := k.GetParticipant(ctx, addrH1)
+			require.True(t, found)
+			require.Equal(t, uint64(9), participantH1.CurrentEpochStats.InferenceCount)
+			require.Equal(t, uint64(1), participantH1.CurrentEpochStats.MissedRequests)
+			require.Equal(t, uint64(0), participantH1.CurrentEpochStats.InvalidatedInferences)
+			require.Equal(t, tc.wantH1Validated, participantH1.CurrentEpochStats.ValidatedInferences)
+
+			// H2: completed = (5-2) + (5-1) = 7, derived = 7
+			participantH2, found := k.GetParticipant(ctx, addrH2)
+			require.True(t, found)
+			require.Equal(t, uint64(7), participantH2.CurrentEpochStats.InferenceCount)
+			require.Equal(t, uint64(3), participantH2.CurrentEpochStats.MissedRequests)
+			require.Equal(t, uint64(0), participantH2.CurrentEpochStats.InvalidatedInferences)
+			require.Equal(t, tc.wantH2Validated, participantH2.CurrentEpochStats.ValidatedInferences)
+		})
 	}
-	msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 8, 20)
+}
 
-	mocks.BankKeeper.EXPECT().
-		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
-		Return(nil)
-	mocks.BankKeeper.EXPECT().
-		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-		AnyTimes()
+func TestSettleDevshardEscrow_PassCountWiring(t *testing.T) {
+	// nonce 20 / 4 slots → assigned 5. finished=5, validated=10, rate 10%
+	// cap = 2*5*1000/10000+2 = 3 → sampled 3/slot; derived = 5/slot.
+	const wantSampled, wantDerived = 6, 10
+	tests := []struct {
+		name           string
+		stampDerived   bool
+		putOmitted     bool
+		applySampled   bool
+		wantValidated  uint64
+		wantSampledLog bool
+	}{
+		{
+			name:          "upgrade-stamped DERIVED with flag off credits assigned-missed-invalid and does not log",
+			stampDerived:  true,
+			wantValidated: wantDerived,
+		},
+		{
+			name:          "upgrade-stamped DERIVED with flag on still credits assigned-missed-invalid and does not log",
+			stampDerived:  true,
+			applySampled:  true,
+			wantValidated: wantDerived,
+		},
+		{
+			name:           "Put omitted pass_count is SAMPLED; flag off keeps derived punishment and logs sampled",
+			putOmitted:     true,
+			wantValidated:  wantDerived,
+			wantSampledLog: true,
+		},
+		{
+			name:           "Put omitted pass_count is SAMPLED; flag on applies sampled for punishment",
+			putOmitted:     true,
+			applySampled:   true,
+			wantValidated:  wantSampled,
+			wantSampledLog: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			k, _, ctx, mocks := setupDevshardEscrowTest(t)
+			var infos, warns []string
+			k.SetLoggerForTesting(captureSDKLogger{infos: &infos, warns: &warns})
+			ms := keeper.NewMsgServerImpl(k)
 
-	_, err = ms.SettleDevshardEscrow(ctx, msg)
-	require.NoError(t, err)
+			keyH1, err := dcrdsecp.GeneratePrivateKey()
+			require.NoError(t, err)
+			keyH2, err := dcrdsecp.GeneratePrivateKey()
+			require.NoError(t, err)
+			addrH1 := cosmosAddressFromDcrdKey(keyH1).String()
+			addrH2 := cosmosAddressFromDcrdKey(keyH2).String()
+			setParticipantForDevshardTest(t, k, ctx, addrH1)
+			setParticipantForDevshardTest(t, k, ctx, addrH2)
+			require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+			setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+			if tc.applySampled {
+				enableApplySampledPassCount(t, k, ctx)
+			}
 
-	// assignedPerSlot = 20 / 4 = 5
-	// H1: completed = (5-1) + (5-0) = 9, validated = (4-2) + (5-1) = 6
-	participantH1, found := k.GetParticipant(ctx, addrH1)
-	require.True(t, found)
-	require.Equal(t, uint64(9), participantH1.CurrentEpochStats.InferenceCount)
-	require.Equal(t, uint64(1), participantH1.CurrentEpochStats.MissedRequests)
-	require.Equal(t, uint64(3), participantH1.CurrentEpochStats.InvalidatedInferences)
-	require.Equal(t, uint64(6), participantH1.CurrentEpochStats.ValidatedInferences)
+			version := validApprovedVersion(settlementVersion)
+			switch {
+			case tc.stampDerived:
+				require.NoError(t, k.SetApprovedVersion(ctx, version))
+				version.PassCount = types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED
+				require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
+					Name: version.Name, PassCount: version.PassCount,
+				}))
+				require.NoError(t, k.SetApprovedVersion(ctx, version))
+			case tc.putOmitted:
+				_, err = ms.PutDevshardApprovedVersion(ctx, &types.MsgPutDevshardApprovedVersion{
+					Authority: k.GetAuthority(),
+					Version:   version,
+				})
+				require.NoError(t, err)
+				pol, found, err := k.GetVersionPolicy(ctx, settlementVersion)
+				require.NoError(t, err)
+				require.True(t, found)
+				require.Equal(t, types.DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED, pol.PassCount)
+			}
 
-	// H2: completed = (5-2) + (5-1) = 7, validated = (3-0) + (4-1) = 6
-	participantH2, found := k.GetParticipant(ctx, addrH2)
-	require.True(t, found)
-	require.Equal(t, uint64(7), participantH2.CurrentEpochStats.InferenceCount)
-	require.Equal(t, uint64(3), participantH2.CurrentEpochStats.MissedRequests)
-	require.Equal(t, uint64(1), participantH2.CurrentEpochStats.InvalidatedInferences)
-	require.Equal(t, uint64(6), participantH2.CurrentEpochStats.ValidatedInferences)
+			creator := sdk.AccAddress(make([]byte, 20))
+			creator[0] = 0x23
+			escrow := types.DevshardEscrow{
+				Id:             1,
+				Creator:        creator.String(),
+				Amount:         5_000,
+				Slots:          []string{addrH1, addrH1, addrH2, addrH2},
+				EpochIndex:     5,
+				Settled:        false,
+				ValidationRate: 1000,
+			}
+			_, err = k.StoreDevshardEscrow(ctx, &escrow, 1)
+			require.NoError(t, err)
+
+			hostStats := []*types.DevshardSettlementHostStats{
+				{SlotId: 0, Missed: 0, Invalid: 0, Cost: 10, Validated: 10, Finished: 5},
+				{SlotId: 1, Missed: 0, Invalid: 0, Cost: 20, Validated: 10, Finished: 5},
+				{SlotId: 2, Missed: 0, Invalid: 0, Cost: 30, Validated: 10, Finished: 5},
+				{SlotId: 3, Missed: 0, Invalid: 0, Cost: 40, Validated: 10, Finished: 5},
+			}
+			msg := buildSettlementTestDataWithNonce(t, escrow, []*dcrdsecp.PrivateKey{keyH1, keyH1, keyH2, keyH2}, hostStats, 8, 20)
+
+			mocks.BankKeeper.EXPECT().
+				SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+				Return(nil)
+			mocks.BankKeeper.EXPECT().
+				LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				AnyTimes()
+
+			_, err = ms.SettleDevshardEscrow(ctx, msg)
+			require.NoError(t, err)
+
+			h1, found := k.GetParticipant(ctx, addrH1)
+			require.True(t, found)
+			require.Equal(t, tc.wantValidated, h1.CurrentEpochStats.ValidatedInferences)
+			h2, found := k.GetParticipant(ctx, addrH2)
+			require.True(t, found)
+			require.Equal(t, tc.wantValidated, h2.CurrentEpochStats.ValidatedInferences)
+
+			sampledLogged := slices.Contains(warns, "devshard derived pass count exceeds SPRT cap") ||
+				slices.Contains(infos, "devshard sampled pass count")
+			require.Equal(t, tc.wantSampledLog, sampledLogged)
+		})
+	}
 }
 
 func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *testing.T) {
@@ -352,6 +555,10 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 	setParticipantForDevshardTest(t, k, ctx, addrH2)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
 	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrH1, addrH2)
+	require.NoError(t, k.SetVersionPolicy(ctx, types.DevshardVersionPolicy{
+		Name:      "dev",
+		PassCount: types.DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED,
+	}))
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0x22

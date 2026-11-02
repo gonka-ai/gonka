@@ -132,12 +132,17 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
+	// Append-only pass_count records keyed by version name. Survives delete of
+	// the matching approved-version row so a later re-approval cannot flip SPRT
+	// scoring.
+	DevshardVersionPoliciesPrefix = collections.NewPrefix(114)
 	// Warm-key log (devshard key rotation): entries by (granter, id), the next
 	// id per granter, and the live entry id per (granter, grantee).
-	WarmKeyLogPrefix       = collections.NewPrefix(114)
+	// Prefix 114 belongs to version policies; keep the existing index prefixes.
+	WarmKeyLogPrefix       = collections.NewPrefix(117)
 	WarmKeyLogNextIDPrefix = collections.NewPrefix(115)
 	WarmKeyLivePrefix      = collections.NewPrefix(116)
-	ParamsKey                      = []byte("p_inference")
+	ParamsKey              = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

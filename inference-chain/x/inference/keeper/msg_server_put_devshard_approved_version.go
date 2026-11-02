@@ -26,6 +26,11 @@ func (k msgServer) PutDevshardApprovedVersion(goCtx context.Context, msg *types.
 		}
 	}
 
+	resolved, err := k.RecordVersionPassCount(ctx, msg.Version.Name, msg.Version.PassCount)
+	if err != nil {
+		return nil, err
+	}
+	msg.Version.PassCount = resolved
 	if err := k.SetApprovedVersion(ctx, msg.Version); err != nil {
 		return nil, err
 	}
