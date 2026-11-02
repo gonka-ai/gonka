@@ -165,25 +165,23 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 		return nil, types.ErrEffectiveEpochNotFound
 	}
 
-	// Only votes from validators with voting power in the segment's snapshot
-	// are counted when the segment is decided, so anything else is dropped
-	// here instead of occupying state until the decision.
-	snapshot, found, err := k.GetPoCValidationSnapshot(goCtx, snapshotKey)
+	// Keep model voters and enabled guardians, whose tiebreaker votes count
+	// even without model voting power. Use the same admission rule as regular
+	// PoC validations so unrelated accounts cannot accumulate challenge rows.
+	eligibility, found, err := k.BuildPocStageVoterEligibility(goCtx, snapshotKey, validator)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
 		return nil, sdkerrors.Wrapf(types.ErrPoCChallengeSnapshotMissing, "snapshot key %d", snapshotKey)
 	}
-	creatorPowerByModel := challengeVoterPowerByModel(snapshot, validator)
-
 	storedCount := 0
 	skippedNoPower := 0
 	for _, validation := range msg.Validations {
 		if validation == nil || validation.ParticipantAddress == "" || validation.ModelId == "" {
 			continue
 		}
-		if creatorPowerByModel[validation.ModelId] <= 0 {
+		if !eligibility.CanValidateModel(validation.ModelId) {
 			skippedNoPower++
 			continue
 		}
@@ -242,26 +240,6 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	k.LogInfo("[SubmitPoCChallengeValidations] Batch complete", types.PoC,
 		"validator", validator, "start", startBlockHeight, "storedCount", storedCount, "skippedNoPower", skippedNoPower)
 	return &types.MsgSubmitPoCChallengeValidationsResponse{}, nil
-}
-
-// challengeVoterPowerByModel returns the voting power the validator holds per
-// model in the snapshot. Snapshot addresses are canonical bech32, the same
-// spelling the segment decision keys votes by, so a plain string comparison
-// matches the decision exactly.
-func challengeVoterPowerByModel(snapshot types.PoCValidationSnapshot, validator string) map[string]int64 {
-	result := make(map[string]int64, len(snapshot.ModelVotingPowers))
-	for _, mvw := range snapshot.ModelVotingPowers {
-		if mvw == nil {
-			continue
-		}
-		for _, vp := range mvw.VotingPowers {
-			if vp != nil && vp.Address == validator {
-				result[mvw.ModelId] = vp.VotingPower
-				break
-			}
-		}
-	}
-	return result
 }
 
 // validateChallengeVoteWindow checks that the current height is inside an open

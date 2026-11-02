@@ -1,6 +1,7 @@
 package inference
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -604,4 +605,69 @@ func TestDecideCurrentChallengeSegment_HandlerVotesWithoutPowerDoNotReachDecisio
 	group, found := k.GetEpochGroupData(ctx, 2, "")
 	require.True(t, found)
 	require.Equal(t, int64(100), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDecideCurrentChallengeSegment_HandlerPreservesGuardianTiebreak(t *testing.T) {
+	for _, split := range []bool{false, true} {
+		t.Run(fmt.Sprintf("split=%t", split), func(t *testing.T) {
+			am, k, ctx := prepareChallengeEval(t, 800, 0, []challengeEvalModel{
+				{id: "m1", weight: 100, count: 50, accept: true},
+			})
+			target := sdk.MustAccAddressFromBech32(testutil.Executor)
+			validator := sdk.MustAccAddressFromBech32(testutil.Validator)
+			require.NoError(t, k.PoCChallengeValidations.Remove(ctx, collections.Join3(target, "m1", validator)))
+			snapshot := types.PoCValidationSnapshot{
+				PocStageStartHeight: 2000,
+				TotalNetworkWeight:  100,
+				ModelVotingPowers: []*types.ModelVotingPowers{{
+					ModelId: "m1",
+					VotingPowers: []*types.VotingPowerEntry{
+						{Address: testutil.Validator, VotingPower: 40},
+						{Address: testutil.Creator, VotingPower: 60},
+					},
+				}},
+			}
+			require.NoError(t, k.SetPoCValidationSnapshot(ctx, snapshot))
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			params.GenesisGuardianParams = &types.GenesisGuardianParams{
+				GuardianAddresses: []string{
+					sdk.ValAddress(validator).String(),
+					sdk.ValAddress(sdk.MustAccAddressFromBech32(testutil.Validator2)).String(),
+				},
+			}
+			require.NoError(t, k.SetParams(ctx, params))
+			require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{GenesisGuardianEnabled: true}))
+			k.SetModel(ctx, &types.Model{Id: "m1"})
+			for _, addr := range []string{testutil.Validator, testutil.Validator2} {
+				require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(addr), types.Participant{Index: addr, Address: addr}))
+			}
+			upcoming := types.NewEpochContext(types.Epoch{Index: 3, PocStartBlockHeight: 2000}, *params.EpochParams)
+			voteCtx := ctx.WithBlockHeight(upcoming.StartOfPoCValidation() + 1)
+			ms := keeper.NewMsgServerImpl(k)
+			for _, addr := range []string{testutil.Validator, testutil.Validator2} {
+				weight := int64(50)
+				if split && addr == testutil.Validator2 {
+					weight = -1
+				}
+				_, err := ms.SubmitPoCChallengeValidations(voteCtx, &types.MsgSubmitPoCChallengeValidations{
+					Creator: addr, PocStageStartBlockHeight: 100,
+					Validations: []*types.PoCValidationEntryV2{{ParticipantAddress: testutil.Executor, ModelId: "m1", ValidatedWeight: weight}},
+				})
+				require.NoError(t, err)
+			}
+			votes, err := k.ListChallengeValidations(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.Len(t, votes, 2)
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 2000, false))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			want := types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+			if split {
+				want = types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED
+			}
+			require.Equal(t, want, ch.State)
+		})
+	}
 }

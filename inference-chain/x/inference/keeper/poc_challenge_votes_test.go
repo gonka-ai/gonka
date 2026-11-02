@@ -138,6 +138,50 @@ func TestSubmitPoCChallengeValidations_ZeroPowerIsSkipped(t *testing.T) {
 	require.Empty(t, f.storedVotes(t))
 }
 
+func TestSubmitPoCChallengeValidations_GuardianWithoutPower(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, listed := range []bool{false, true} {
+			t.Run(fmt.Sprintf("enabled=%t/listed=%t", enabled, listed), func(t *testing.T) {
+				f := setupRegularChallengeVote(t)
+				powers := map[string]int64{testutil.Validator: 100}
+				if listed {
+					powers[testutil.Validator2] = 0
+				}
+				seedChallengeVoteSnapshot(t, f.k, f.ctx, 2000, map[string]map[string]int64{
+					challengeTestModel: powers,
+				})
+				guardian := sdk.MustAccAddressFromBech32(testutil.Validator2)
+				params, err := f.k.GetParams(f.ctx)
+				require.NoError(t, err)
+				params.GenesisGuardianParams = &types.GenesisGuardianParams{
+					GuardianAddresses: []string{sdk.ValAddress(guardian).String()},
+				}
+				require.NoError(t, f.k.SetParams(f.ctx, params))
+				require.NoError(t, f.k.SetGenesisOnlyParams(f.ctx, &types.GenesisOnlyParams{GenesisGuardianEnabled: enabled}))
+				f.k.SetModel(f.ctx, &types.Model{Id: "outside-snapshot"})
+				entries := []*types.PoCValidationEntryV2{
+					challengeVoteEntry(challengeTestModel),
+					challengeVoteEntry("outside-snapshot"),
+					challengeVoteEntry("unknown-model"),
+				}
+				// Repeating the vote must not create additional rows, including for guardians.
+				for i := 0; i < 2; i++ {
+					_, err = f.ms.SubmitPoCChallengeValidations(f.voteCtx, challengeVoteMsg(testutil.Validator2, entries...))
+					require.NoError(t, err)
+				}
+				votes := f.storedVotes(t)
+				if !enabled {
+					require.Empty(t, votes)
+					return
+				}
+				require.Len(t, votes, 1)
+				require.Equal(t, challengeTestModel, votes[0].ModelId)
+				require.Equal(t, testutil.Validator2, votes[0].ValidatorParticipantAddress)
+			})
+		}
+	}
+}
+
 func TestSubmitPoCChallengeValidations_MultiAccountStackingBounded(t *testing.T) {
 	f := setupRegularChallengeVote(t)
 	const spamModels = 50
