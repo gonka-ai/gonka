@@ -34,7 +34,15 @@ const hostEventStallBlocks = 3
 //
 // Start is resolved once per request. A wake or timeout re-read uses that sequence and ignores after_height.
 //
-// A page holds at most MaxHostEventsPage events. A full page sets next_cursor to the last returned sequence. A short page sets it to the head captured before the read. A start inside the ring is answered from the ring. A start older than the ring and still inside the store is answered from the store and does not wait. needs_reset carries no events, the current generation, and next_cursor = head. A long-poll that times out still at its cursor reports a stall as Unavailable. A client cancel or deadline on a store read returns that status. Any other store error is Unavailable.
+// A page holds at most MaxHostEventsPage events. A full page sets next_cursor to
+// the last returned sequence. A short page sets it to the head captured before
+// the read. With a durable store, a zero start always reads its retained window;
+// an empty captured head stays at zero. Nonzero starts inside the ring read the
+// ring. Older starts still inside the store read the store and do not wait.
+// needs_reset carries no events, the current generation, and next_cursor = head.
+// A long-poll that times out still at its cursor reports a stall as Unavailable.
+// A client cancel or deadline on a store read returns that status. Any other
+// store error is Unavailable.
 //
 // Until boot has restored the ring, head and generation come from the store. Pages use the store path up to that head. The ring's boot nonce is not returned. A client at that head gets Unavailable while the feed is stalled. A failed store head read returns Unavailable.
 func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
@@ -185,6 +193,14 @@ func (s *Server) collectHostEvents(
 	if start > head {
 		out.Reset = true
 		return out, start, nil
+	}
+	// Zero means the beginning of the durable window. SincePage(0) instead
+	// means the current ring tail, which may wrap after Bounds was captured.
+	if s.hostLog != nil && start == 0 {
+		if head == 0 {
+			return out, start, nil
+		}
+		return s.readHostEventStore(ctx, start, head, generation, subscribe)
 	}
 	if s.hostLog != nil && start < head && !ringHas(start, oldest, empty) {
 		return s.readHostEventStore(ctx, start, head, generation, subscribe)

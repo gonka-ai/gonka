@@ -68,6 +68,25 @@ func TestEscrowWarmSink_WarmEscrowChainErrorDoesNotCache(t *testing.T) {
 	require.ErrorIs(t, err, devshardstorage.ErrEscrowCacheNotFound)
 }
 
+func TestEscrowWarmSink_AbsentEscrowReplayIsHandled(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	require.NoError(t, store.PutEscrowCache(devshardstorage.EscrowCacheInfo{EscrowID: "1", EpochID: 3}))
+	br := &sinkFakeBridge{err: errors.Join(errors.New("wrapped chain query"), bridge.ErrEscrowNotFound)}
+	finalized := false
+	sink := newEscrowWarmSink(br, store, nil, func(string) error { finalized = true; return nil }, "")
+
+	require.NoError(t, sink.WarmEscrow("1"), "replaying a pruned creation must not block settlements or revocations")
+	_, err := store.GetEscrowCache("1")
+	require.ErrorIs(t, err, devshardstorage.ErrEscrowCacheNotFound)
+	require.False(t, finalized, "a node behind the event can also answer NotFound; only discard the cache hint")
+
+	br.err = nil
+	br.escrow = &bridge.EscrowInfo{EscrowID: "1", EpochID: 3}
+	require.NoError(t, sink.WarmEscrow("1"), "warming can succeed once a lagging query node catches up")
+	_, err = store.GetEscrowCache("1")
+	require.NoError(t, err)
+}
+
 func TestEscrowWarmSink_WarmFromInfoSkipsGetEscrow(t *testing.T) {
 	store := devshardstorage.NewMemory()
 	br := &sinkFakeBridge{err: errors.New("chain must not be queried")}

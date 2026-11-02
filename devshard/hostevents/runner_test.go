@@ -373,6 +373,36 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
 }
 
+func TestRun_FailedEventDoesNotSkipPageSuffix(t *testing.T) {
+	srv := &fakeHostEventsServer{}
+	const failedSeq = uint64(5)
+	rows := []*gen.HostEvent{
+		{Seq: failedSeq, Kind: gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, Escrow: &gen.EscrowPayload{EscrowId: 42}},
+		{Seq: 6, Kind: gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED, WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 1, Height: 100}},
+	}
+	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		resp := &gen.GetHostEventsResponse{Generation: 1, NextCursor: 6}
+		for _, ev := range rows {
+			if ev.Seq > req.Cursor {
+				resp.Events = append(resp.Events, ev)
+			}
+		}
+		return resp, nil
+	})
+	sink := &flakySettleSink{failures: 1 << 30}
+	client := dialFake(t, srv)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{Client: client, MaxDispatchAttempts: 2, ErrorBackoffMin: time.Millisecond, ErrorBackoffMax: time.Millisecond}, sink)
+	}()
+	t.Cleanup(func() { cancel(); <-done })
+	require.Eventually(t, func() bool { return len(sink.warmKeyEntries()) == 1 }, 3*time.Second, time.Millisecond,
+		"revocation after a permanently failed dispatch must be redelivered from its own cursor")
+	require.Equal(t, 3, sink.attemptCount())
+}
+
 // Test flow:
 //  1. Serve a warm-key grant and a warm-key end event and assert the subscribe set names both kinds.
 //  2. Assert the sink receives the grant with its granted-at height and the end with its revoked-at height and

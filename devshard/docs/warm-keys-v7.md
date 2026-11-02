@@ -273,11 +273,16 @@ append-only like the log, kept in memory by the bridge
    participant: a host needs the keys of every peer in its groups.
    A single writer reads committed block results in height order and stores
    the events durably before appending them to the ring, with `BLOCK(H)` last
-   for each height. The 4096-entry ring is only the hot tail: an older cursor
+   for each height. The bounded ring is only the hot tail: an older cursor
    reads pages of at most 1000 events from the store, so a burst of warm-key
    grants cannot evict escrow events from the catch-up window. The current
-   and previous epochs are retained, matching the feed's catch-up window
-   and avoiding replay of escrow creations the chain has already pruned.
+   and previous block epochs are retained. A block's PoC epoch can differ
+   from an escrow's effective epoch, so retained creations may name escrows
+   already pruned by the chain. A missing escrow is handled as a cache hint
+   that can no longer be warmed: its cache row is removed without finalizing
+   any live session. Lazy binding still fetches metadata if the query node
+   was merely behind. A dispatch that exhausts its retries advances past
+   only that event; the unprocessed suffix of its page is fetched again.
    The stream keeps its cursor and `needs_reset` contract: a generation
    change or a cursor older than the store requires a reset. devshardd marks
    its key copies incomplete and reloads from the chain on the next question. One
@@ -291,6 +296,14 @@ append-only like the log, kept in memory by the bridge
    `PG*` connection settings. Boot restores the generation, cursor and
    hot tail from the store and its head marker. A store read failure returns
    `Unavailable` without advancing the client cursor.
+   Initial zero cursors read the durable window, so a concurrent ring wrap
+   cannot silently truncate the first page. Pruning routes reads through
+   the store until the new retention boundary reaches the ring; a failed
+   boundary read retries restoration before normal publication resumes.
+   SQLite holds a per-writer file lock for the store's lifetime, including
+   fresh-file boot and corruption recovery. PostgreSQL uses a session advisory
+   lock. Escrow membership lookups preserve cancellation through the SDK's
+   ABCI HTTP path so their deadline bounds the single feed writer.
 2. Direct chain query, `WarmKeyLog(granter)` to fill a copy and
    `WarmKeyEntry(granter, id)` to confirm one entry, whenever the copy has no
    answer: an entry it has not seen, a granter it has never loaded, or a

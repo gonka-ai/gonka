@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -70,6 +71,17 @@ func (s *escrowWarmSink) OnWarmKeyEvent(entry bridge.WarmKeyEntry) error {
 // WarmEscrow fetches escrow metadata from chain and caches it for lazy bind.
 func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	info, err := s.bridge.GetEscrow(escrowID)
+	if errors.Is(err, bridge.ErrEscrowNotFound) {
+		// A retained creation can outlive its escrow: block PoC epochs and
+		// escrow effective epochs differ. Warming is only a cache hint. A node
+		// behind the event may also answer NotFound; lazy bind will fetch it
+		// later, so this must not finalize a potentially live session.
+		s.log.Debug("hostevents: skipping warm of absent escrow", "escrow_id", escrowID)
+		if err := s.store.DeleteEscrowCache(escrowID); err != nil {
+			return fmt.Errorf("drop absent escrow cache %s: %w", escrowID, err)
+		}
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("warm escrow %s: %w", escrowID, err)
 	}

@@ -121,6 +121,11 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 				"seq", seq,
 				"attempts", retries)
 			sink.RehydrateOpenEscrows()
+			// Only this event exhausted its retries. Resume after it, rather
+			// than skipping the unprocessed suffix of this entire page.
+			cursor = seq
+			backoff, retrySeq, retries = 0, 0, 0
+			continue
 		}
 
 		cursor = resp.GetNextCursor()

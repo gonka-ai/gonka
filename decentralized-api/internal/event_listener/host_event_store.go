@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -74,7 +75,7 @@ type StoreHead struct {
 type HostEventStore interface {
 	Writer() string
 	// HoldWriter takes this process's writer lock when it does not hold one.
-	// ErrWriterLocked means another process has it. SQLite always holds it.
+	// ErrWriterLocked means another process has it.
 	HoldWriter(ctx context.Context) error
 	AppendHeight(ctx context.Context, height int64, epoch uint64, events []apiconfig.HostEvent, expect AppendExpect) ([]apiconfig.HostEvent, error)
 	Read(ctx context.Context, afterSeq uint64, kinds []apiconfig.HostEventKind, limit int) (rows []apiconfig.HostEvent, generation uint64, err error)
@@ -92,14 +93,15 @@ type HostEventStore interface {
 }
 
 type dbStore struct {
-	dialect   string
-	writer    string
-	db        *sql.DB
-	lockKey   int64
-	mu        sync.Mutex
-	conn      *sql.Conn
-	reconnect bool
-	reloads   int
+	dialect    string
+	writer     string
+	db         *sql.DB
+	lockKey    int64
+	mu         sync.Mutex
+	conn       *sql.Conn
+	sqliteLock *os.File
+	reconnect  bool
+	reloads    int
 
 	generation     uint64
 	pruneCalls     int
@@ -132,14 +134,49 @@ func sqliteDSN(path string) string {
 }
 
 func openSQLiteStore(path, writer string) (*dbStore, error) {
+	canonical, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
+		canonical = resolved
+	} else {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(canonical))
+		if err != nil {
+			return nil, err
+		}
+		canonical = filepath.Join(dir, filepath.Base(canonical))
+	}
+	// Keep this lock file in place: unlinking it would let another opener
+	// lock a different inode while the current process still owns the old one.
+	lock, err := os.OpenFile(fmt.Sprintf("%s.writer-%x.lock", canonical, writerLockKey(writer)), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrWriterLocked
+		}
+		return nil, err
+	}
+	// Own the writer before opening or recovering the database, including the
+	// fresh-file case where no SQL transaction has acquired a lock yet.
+	path = canonical
 	s, err := openSQLiteFile(path, writer)
-	if err == nil || !sqliteRecreate(err) {
-		return s, err
+	if err != nil && sqliteRecreate(err) {
+		if mvErr := moveCorruptSQLite(path); mvErr != nil {
+			err = fmt.Errorf("%w (moving aside: %v)", err, mvErr)
+		} else {
+			s, err = openSQLiteFile(path, writer)
+		}
 	}
-	if mvErr := moveCorruptSQLite(path); mvErr != nil {
-		return nil, fmt.Errorf("%w (moving aside: %v)", err, mvErr)
+	if err != nil {
+		_ = lock.Close()
+		return nil, err
 	}
-	return openSQLiteFile(path, writer)
+	s.sqliteLock = lock
+	return s, nil
 }
 
 // sqliteRecreate reports a database image SQLite itself rejected.
@@ -370,6 +407,12 @@ func sessionLost(err error) bool {
 func (s *dbStore) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		if s.sqliteLock != nil {
+			_ = s.sqliteLock.Close()
+			s.sqliteLock = nil
+		}
+	}()
 	if s.conn != nil {
 		if s.dialect == "postgres" {
 			_, _ = s.conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", s.lockKey)

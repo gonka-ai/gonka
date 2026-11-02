@@ -437,6 +437,50 @@ func TestHostEventFeed_PruneOnEpochChange(t *testing.T) {
 	require.True(t, found)
 }
 
+type postPruneReadFailure struct {
+	HostEventStore
+	fail bool
+}
+
+func (s *postPruneReadFailure) Oldest(ctx context.Context) (uint64, bool, uint64, error) {
+	if s.fail {
+		s.fail = false
+		return 0, false, 0, errors.New("temporary post-prune read failure")
+	}
+	return s.HostEventStore.Oldest(ctx)
+}
+
+func TestHostEventFeed_RestoresPrunedWindowAfterReadFailure(t *testing.T) {
+	epochs := &liveEpoch{idx: 1, start: 1}
+	f, bo, ring := newTestFeed(t, newFeedRPC(), epochs, nil)
+	s, _ := openFeedSQLite(t, f, "writer-prune-error")
+	bo.updateStatus(1, true)
+	require.False(t, f.walk(t.Context()))
+	bo.updateStatus(2, true)
+	require.False(t, f.walk(t.Context()))
+	cursor := ringEvents(t, ring)[0].Seq
+	wrapped := &postPruneReadFailure{HostEventStore: s, fail: true}
+	f.store = wrapped
+	epochs.idx = 6
+	bo.updateStatus(3, true)
+	require.True(t, f.walk(t.Context()))
+	require.False(t, f.RingRestored())
+	require.True(t, f.Stalled())
+	require.Equal(t, uint64(1), f.prunedEpoch, "failed ring synchronization must not mark this epoch complete")
+
+	srv := nodemanager.NewServer(nil, nil, nil, nodemanager.WithHostEventRing(ring), nodemanager.WithHostEventLog(s), nodemanager.WithHostEventStatus(f))
+	resp, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{Cursor: cursor, Generation: ring.Generation(), Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_BLOCK}})
+	require.NoError(t, err)
+	require.True(t, resp.NeedsReset, "a failed Oldest must not leave the pruned prefix readable from the ring")
+
+	require.False(t, f.walk(t.Context()), "retry boot even when no new block arrives")
+	require.True(t, f.RingRestored())
+	require.Equal(t, []int64{3}, heightsOf(ringEvents(t, ring)))
+	bo.updateStatus(4, true)
+	require.False(t, f.walk(t.Context()))
+	require.Equal(t, uint64(6), f.prunedEpoch)
+}
+
 type liveEpoch struct {
 	idx   uint64
 	start int64

@@ -186,6 +186,54 @@ func allKinds() []gen.HostEventKind {
 	}
 }
 
+func TestNodeManager_GetHostEvents_CursorZeroWrapDuringResolution(t *testing.T) {
+	for _, initialBlock := range []bool{false, true} {
+		t.Run(fmt.Sprint(initialBlock), func(t *testing.T) {
+			const generation = 7
+			ring := apiconfig.NewHostEventRing(4, generation)
+			log := &memLog{generation: generation}
+			live := &memLive{emitted: 10, tip: 11}
+			if initialBlock {
+				log.rows = append(log.rows, seqEvent(1, apiconfig.HostEventKindEscrowSettled, 10), seqEvent(2, apiconfig.HostEventKindBlock, 10))
+				ring.AppendBatch(log.rows)
+			}
+			// ResolveBlock runs after Bounds but before the ring read. Publish
+			// a height larger than the ring while that first request is in flight.
+			log.afterResolve = func() {
+				var rows []apiconfig.HostEvent
+				height := int64(11)
+				if !initialBlock {
+					height = 10
+					rows = append(rows, seqEvent(1, apiconfig.HostEventKindEscrowSettled, 10))
+				}
+				for len(log.rows)+len(rows) < 12 {
+					rows = append(rows, seqEvent(uint64(len(log.rows)+len(rows)+1), apiconfig.HostEventKindWarmKeyGranted, height))
+				}
+				rows = append(rows, seqEvent(13, apiconfig.HostEventKindBlock, height))
+				log.rows = append(log.rows, rows...)
+				ring.AppendBatch(rows)
+			}
+			srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring), WithHostEventLog(log), WithHostEventStatus(live))
+			req := &gen.GetHostEventsRequest{Generation: generation, AfterHeight: 9, Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED}}
+			resp, err := srv.GetHostEvents(t.Context(), req)
+			require.NoError(t, err)
+			require.False(t, resp.NeedsReset)
+			if !initialBlock {
+				// The request captured an empty head. It must stay at zero,
+				// allowing the next request to see the whole durable window.
+				require.Zero(t, resp.NextCursor)
+				require.Empty(t, resp.Events)
+				resp, err = srv.GetHostEvents(t.Context(), req)
+				require.NoError(t, err)
+			}
+			require.False(t, resp.NeedsReset)
+			require.Len(t, resp.Events, 1)
+			require.Equal(t, uint64(1), resp.Events[0].Seq)
+			require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, resp.Events[0].Kind)
+		})
+	}
+}
+
 func TestNodeManager_GetHostEvents_SupportedKinds(t *testing.T) {
 	ring := testHostEventRing(t)
 	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
