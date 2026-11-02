@@ -321,8 +321,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 
-	v.stopGenerationOnAllNodes(nodes)
-
 	commitsResp, err := queryClient.AllPoCV2StoreCommitsForStage(context.Background(),
 		&types.QueryAllPoCV2StoreCommitsForStageRequest{
 			PocStageStartBlockHeight: pocStageStartBlockHeight,
@@ -1083,13 +1081,14 @@ func (v *OffChainValidator) getSamplingBlockHash(epochState *chainphase.EpochSta
 	return block.Block.Hash().String()
 }
 
-func (v *OffChainValidator) PrepareValidationNodes() {
+func (v *OffChainValidator) PrepareValidationNodes() bool {
 	nodes, err := v.getNodesWithRetry(0)
 	if err != nil || len(nodes) == 0 {
 		logging.Warn("OffChainValidator: no nodes available to stop before validation", types.PoC, "error", err)
-		return
+		return false
 	}
 	v.stopGenerationOnAllNodes(nodes)
+	return true
 }
 
 func (v *OffChainValidator) stopGenerationOnAllNodes(nodes []broker.NodeResponse) {
