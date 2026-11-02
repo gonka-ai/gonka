@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"math/bits"
@@ -23,8 +24,15 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if !found {
 		return nil, fmt.Errorf("escrow %d not found", msg.EscrowId)
 	}
-	if k.IsDevshardEscrowPendingSlots(goCtx, msg.EscrowId) {
-		return nil, fmt.Errorf("escrow %d is pending slot assignment", msg.EscrowId)
+
+	// A new escrow stores its creation block hash as its sampling seed. Require
+	// that block to commit before settlement can inspect the sampled committee;
+	// otherwise create+settle can atomically roll back every unfavorable draw.
+	// Simulation can carry the last committed header, so enforce this only when
+	// finalizing a block. Existing escrows keep their original stored seeds.
+	blockHash := ctx.HeaderInfo().Hash
+	if ctx.ExecMode() == sdk.ExecModeFinalize && len(blockHash) > 0 && escrow.AppHash == hex.EncodeToString(blockHash) {
+		return nil, fmt.Errorf("escrow %d cannot settle in its creation block", msg.EscrowId)
 	}
 
 	warmKeyChecker := func(granter, grantee string) bool {

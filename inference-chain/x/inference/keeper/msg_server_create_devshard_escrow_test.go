@@ -1,6 +1,9 @@
 package keeper_test
 
 import (
+	"bytes"
+	"encoding/hex"
+	"fmt"
 	"math"
 	"testing"
 
@@ -10,6 +13,7 @@ import (
 	"go.uber.org/mock/gomock"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -81,15 +85,8 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.NotNil(t, resp)
 	require.Equal(t, uint64(1), resp.EscrowId)
 
-	pending, found := k.GetDevshardEscrow(ctx, 1)
-	require.True(t, found)
-	require.Empty(t, pending.Slots)
-	require.True(t, k.IsDevshardEscrowPendingSlots(ctx, 1))
-
-	require.NoError(t, k.AssignPendingDevshardSlots(ctx))
 	escrow, found := k.GetDevshardEscrow(ctx, 1)
 	require.True(t, found)
-	require.False(t, k.IsDevshardEscrowPendingSlots(ctx, 1))
 	require.Equal(t, creator.String(), escrow.Creator)
 	require.Equal(t, amount, escrow.Amount)
 	require.Len(t, escrow.Slots, keeper.DevshardGroupSize)
@@ -285,7 +282,6 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 
-	require.NoError(t, k.AssignPendingDevshardSlots(ctx))
 	escrow, found := k.GetDevshardEscrow(ctx, resp.EscrowId)
 	require.True(t, found)
 	require.Len(t, escrow.Slots, 8)
@@ -324,4 +320,77 @@ func TestCreateDevshardEscrow_ModelGroupMustExist(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get epoch group for model")
+}
+
+// Keep the escrow ID and weights fixed across branches to isolate the entropy source.
+func TestCreateDevshardEscrow_CurrentBlockHashDeterminesSlots(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	addrs := makeDevshardAddrs(1, 20)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, addrs)
+	creator := sdk.AccAddress(bytes.Repeat([]byte{0xff}, 20))
+	weights := make(map[string]int64, len(addrs))
+	for _, addr := range addrs {
+		weights[addr] = 100
+	}
+	sorted, total := calculations.PrepareSortedEntries(weights)
+	draw := func(blockHash, appHash byte) []string {
+		t.Helper()
+		branch, _ := ctx.CacheContext()
+		info := branch.HeaderInfo()
+		info.Hash = bytes.Repeat([]byte{blockHash}, 32)
+		info.AppHash = bytes.Repeat([]byte{appHash}, 32)
+		branch = branch.WithHeaderInfo(info).WithExecMode(sdk.ExecModeFinalize).WithEventManager(sdk.NewEventManager())
+		mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), creator, types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
+		resp, err := ms.CreateDevshardEscrow(branch, &types.MsgCreateDevshardEscrow{Creator: creator.String(), Amount: 7_000_000_000, ModelId: testDevshardModelID})
+		require.NoError(t, err)
+		require.Equal(t, uint64(1), resp.EscrowId)
+		query, err := k.DevshardEscrow(branch, &types.QueryGetDevshardEscrowRequest{Id: resp.EscrowId})
+		require.NoError(t, err)
+		require.True(t, query.Found, "escrow must be queryable in the create transaction")
+		require.NotNil(t, query.Escrow)
+		require.Equal(t, hex.EncodeToString(info.Hash), query.Escrow.AppHash)
+		require.Equal(t, calculations.GetSlotsFromSorted(hex.EncodeToString(info.Hash), fmt.Sprintf("devshard_escrow:%d", resp.EscrowId), testDevshardModelID, sorted, total, keeper.DevshardGroupSize), query.Escrow.Slots)
+		var created bool
+		for _, event := range branch.EventManager().Events() {
+			if event.Type == "devshard_escrow_created" {
+				created = true
+			}
+		}
+		require.True(t, created, "create event must remain in the transaction result")
+		return query.Escrow.Slots
+	}
+	first := draw(0x11, 0x22)
+	require.Equal(t, first, draw(0x11, 0x33), "previous app hash must not affect the draw")
+	require.NotEqual(t, first, draw(0x44, 0x22), "a different current block must change this committee")
+}
+
+func TestCreateDevshardEscrow_FinalizeRequiresBlockHash(t *testing.T) {
+	k, ms, ctx, _ := setupDevshardEscrowTest(t)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, makeDevshardAddrs(1, 20))
+	info := ctx.HeaderInfo()
+	info.Hash = nil
+	info.AppHash = bytes.Repeat([]byte{0x22}, 32)
+	ctx = ctx.WithHeaderInfo(info).WithExecMode(sdk.ExecModeFinalize)
+	_, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{Creator: sdk.AccAddress(bytes.Repeat([]byte{0xff}, 20)).String(), Amount: 7_000_000_000, ModelId: testDevshardModelID})
+	require.ErrorContains(t, err, "block hash unavailable for devshard slot draw")
+	require.Zero(t, k.GetDevshardEscrowEpochCount(ctx, 5))
+	_, found := k.GetDevshardEscrow(ctx, 1)
+	require.False(t, found)
+	// No bank expectation: failure must happen before funds are locked.
+}
+
+func TestCreateDevshardEscrow_EmptyBlockHashOutsideFinalize(t *testing.T) {
+	for _, mode := range []sdk.ExecMode{sdk.ExecModeCheck, sdk.ExecModeReCheck, sdk.ExecModeSimulate} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+			setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, makeDevshardAddrs(1, 20))
+			info := ctx.HeaderInfo()
+			info.Hash = nil
+			ctx = ctx.WithHeaderInfo(info).WithExecMode(mode)
+			creator := sdk.AccAddress(bytes.Repeat([]byte{0xff}, 20))
+			mocks.BankKeeper.EXPECT().SendCoinsFromAccountToModule(gomock.Any(), creator, types.ModuleName, gomock.Any(), gomock.Any()).Return(nil)
+			_, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{Creator: creator.String(), Amount: 7_000_000_000, ModelId: testDevshardModelID})
+			require.NoError(t, err)
+		})
+	}
 }

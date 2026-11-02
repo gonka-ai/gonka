@@ -14,7 +14,7 @@ func (k Keeper) DevshardEscrow(ctx context.Context, req *types.QueryGetDevshardE
 	}
 
 	escrow, found := k.GetDevshardEscrow(ctx, req.Id)
-	if !found || k.IsDevshardEscrowPendingSlots(ctx, req.Id) {
+	if !found {
 		return &types.QueryGetDevshardEscrowResponse{Found: false}, nil
 	}
 
