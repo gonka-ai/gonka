@@ -13,8 +13,8 @@ import (
 
 // The inference module emits these on every change of its warm-key log
 // (inference-chain/x/inference/keeper/warm_key_log.go). Grants and revokes
-// come from transactions; an expiry comes from EndBlock, which the NewBlock
-// path handles through handleWarmKeyExpiryEvents.
+// come from transactions. Expiration is stored on grants and emits no event;
+// handleWarmKeyExpiryEvents still accepts EndBlock ends from older chains.
 const (
 	warmKeyGrantedEvent = "warm_key_granted"
 	warmKeyRevokedEvent = "warm_key_revoked"
@@ -44,9 +44,9 @@ func (e *WarmKeyRevokedEventHandler) Handle(event *chainevents.JSONRPCResponse, 
 	return appendWarmKeyEvents(el, event.Result.Events, warmKeyRevokedEvent, apiconfig.HostEventKindWarmKeyRevoked)
 }
 
-// handleWarmKeyExpiryEvents ingests the EndBlock-emitted warm_key_revoked
-// (end = EXPIRED). Tx-path ends are handled by WarmKeyRevokedEventHandler via
-// BlockObserver.
+// handleWarmKeyExpiryEvents accepts legacy EndBlock-emitted warm_key_revoked
+// (end = EXPIRED). Current chains use the grant's expiration timestamp instead.
+// Tx-path ends are handled by WarmKeyRevokedEventHandler via BlockObserver.
 func (el *EventListener) handleWarmKeyExpiryEvents(event *chainevents.JSONRPCResponse, workerName string) {
 	if len(event.Result.Events[warmKeyRevokedEvent+".grant_id"]) == 0 {
 		return

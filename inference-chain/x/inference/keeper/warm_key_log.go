@@ -21,11 +21,11 @@ import (
 // the same way for ever, so hosts that ask at different times, or replay old
 // diffs long after a revoke, reach the same key state. Entries are created
 // when a grant of the marker (types.WarmKeyGrantMarkerTypeURL) appears and
-// ended, never deleted, when it is revoked, replaced or expires.
+// ended, never deleted, when it is revoked or replaced. Expiration is stored
+// on the entry; it does not require an EndBlock walk or emit an end event.
 //
 // Writers: the post handler in app (MsgGrant, MsgRevoke, nested in MsgExec),
-// ExpireWarmKeys from EndBlock, and SeedWarmKeyLog from the migration that
-// introduces the log.
+// and SeedWarmKeyLog from the migration that introduces the log.
 
 // Events emitted by the log. decentralized-api forwards them to devshard
 // hosts as host events.
@@ -50,13 +50,18 @@ func IsWarmKeyMarker(msgTypeURL string) bool {
 // granter to grantee at the current height. A live entry for the same pair is
 // ended as REPLACED first: authz keeps one grant per (granter, grantee,
 // message type), so a second MsgGrant overwrites the first, and the log keeps
-// both with the new one ordered after the old by id.
+// both with the new one ordered after the old by id. An expired pair's index
+// row is removed without changing its historical entry or emitting an end.
 func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.AccAddress, expiration *time.Time) (types.WarmKeyLogEntry, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	height := sdkCtx.BlockHeight()
 
 	if live, found, err := k.liveWarmKeyEntry(ctx, granter, grantee); err != nil {
 		return types.WarmKeyLogEntry{}, err
+	} else if found && warmKeyExpired(live, sdkCtx.BlockTime()) {
+		if err := k.WarmKeyLive.Remove(ctx, collections.Join(granter, grantee)); err != nil {
+			return types.WarmKeyLogEntry{}, err
+		}
 	} else if found {
 		if err := k.endWarmKeyEntry(ctx, live, height, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED); err != nil {
 			return types.WarmKeyLogEntry{}, err
@@ -99,9 +104,8 @@ func (k Keeper) RecordWarmKeyGrant(ctx context.Context, granter, grantee sdk.Acc
 	return entry, nil
 }
 
-// warmKeyExpiryUnix is the expiration in whole seconds, rounded up: the log
-// ends an entry in the first block whose time is at or past this second, so
-// it never ends a grant before authz would.
+// warmKeyExpiryUnix is the expiration in Unix seconds, rounded up so the
+// seconds-only timestamp does not expire a grant before its fractional second.
 func warmKeyExpiryUnix(expiration time.Time) int64 {
 	unix := expiration.Unix()
 	if expiration.Nanosecond() > 0 {
@@ -113,45 +117,24 @@ func warmKeyExpiryUnix(expiration time.Time) int64 {
 // RecordWarmKeyRevoke ends the live entry for (granter, grantee) as REVOKED.
 // It reports false, with no error, when the pair has no live entry: a revoke
 // of a grant the log never saw (a legacy marker, or a grant from before the
-// log existed that the seeding skipped as expired) is not a fault.
+// log existed that the seeding skipped as expired) is not a fault. An expired
+// pair's index row is removed without changing its entry or emitting an end.
 func (k Keeper) RecordWarmKeyRevoke(ctx context.Context, granter, grantee sdk.AccAddress) (bool, error) {
 	live, found, err := k.liveWarmKeyEntry(ctx, granter, grantee)
 	if err != nil || !found {
 		return false, err
 	}
-	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
-	return true, k.endWarmKeyEntry(ctx, live, height, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REVOKED)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	if warmKeyExpired(live, sdkCtx.BlockTime()) {
+		return false, k.WarmKeyLive.Remove(ctx, collections.Join(granter, grantee))
+	}
+	return true, k.endWarmKeyEntry(ctx, live, sdkCtx.BlockHeight(), types.WarmKeyLogEnd_WARM_KEY_LOG_END_REVOKED)
 }
 
-// ExpireWarmKeys ends every live entry whose expiration is at or before the
-// block time. authz prunes the grant itself in its own BeginBlock; this is the
-// log's view of the same moment. The live index holds one entry per warm key
-// in the network, so the walk is small.
-func (k Keeper) ExpireWarmKeys(ctx context.Context) error {
-	sdkCtx := sdk.UnwrapSDKContext(ctx)
-	now := sdkCtx.BlockTime().Unix()
-	height := sdkCtx.BlockHeight()
-
-	var expired []types.WarmKeyLogEntry
-	err := k.WarmKeyLive.Walk(ctx, nil, func(key collections.Pair[sdk.AccAddress, sdk.AccAddress], id uint64) (bool, error) {
-		entry, err := k.WarmKeyLogEntriesMap.Get(ctx, collections.Join(key.K1(), id))
-		if err != nil {
-			return true, err
-		}
-		if entry.ExpiresAtUnix != 0 && entry.ExpiresAtUnix <= now {
-			expired = append(expired, entry)
-		}
-		return false, nil
-	})
-	if err != nil {
-		return err
-	}
-	for _, entry := range expired {
-		if err := k.endWarmKeyEntry(ctx, entry, height, types.WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED); err != nil {
-			return err
-		}
-	}
-	return nil
+// warmKeyExpired uses the same seconds-only boundary as devshard LiveAt.
+// It is checked only when a transaction touches the pair's index row.
+func warmKeyExpired(entry types.WarmKeyLogEntry, now time.Time) bool {
+	return entry.ExpiresAtUnix != 0 && entry.ExpiresAtUnix <= now.Unix()
 }
 
 // SeedWarmKeyLog fills an empty log from the authz grants that exist at the

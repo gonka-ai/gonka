@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"cosmossdk.io/collections"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
@@ -103,34 +104,50 @@ func attr(ev sdk.Event, key string) string {
 }
 
 // Test flow:
-//  1. Grant one key with an expiration and one without, then run ExpireWarmKeys before and after the expiration.
-//  2. Assert the expiring entry ends as EXPIRED at the block where the time passed and the other stays live.
-func TestWarmKeyLogExpiresAtBlockTime(t *testing.T) {
+//  1. Grant a timed key, then grant it again after expiration without an expiry event.
+//  2. Assert the historical entry is unchanged, no revoke is emitted, and the new grant gets the next id.
+func TestWarmKeyLogGrantAfterExpirationKeepsHistory(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
-	granter, timed, forever := warmKeyTestAddr(1), warmKeyTestAddr(2), warmKeyTestAddr(3)
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
 	expires := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 	ctx = ctx.WithBlockHeight(10).WithBlockTime(expires.Add(-time.Hour))
-	_, err := k.RecordWarmKeyGrant(ctx, granter, timed, &expires)
+	first, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &expires)
 	require.NoError(t, err)
-	_, err = k.RecordWarmKeyGrant(ctx, granter, forever, nil)
+	ctx = ctx.WithBlockHeight(12).WithBlockTime(expires.Add(time.Second)).WithEventManager(sdk.NewEventManager())
+	second, err := k.RecordWarmKeyGrant(ctx, granter, grantee, nil)
 	require.NoError(t, err)
-
-	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(11).WithBlockTime(expires.Add(-time.Second))))
+	require.Equal(t, first.Id+1, second.Id)
 	entries, err := k.WarmKeyLogEntries(ctx, granter)
 	require.NoError(t, err)
-	require.Zero(t, entries[0].RevokedAtHeight, "not expired yet")
-
-	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(12).WithBlockTime(expires)))
-	entries, err = k.WarmKeyLogEntries(ctx, granter)
+	require.Equal(t, []types.WarmKeyLogEntry{first, second}, entries)
+	require.Empty(t, eventsOfType(ctx, keeper.EventTypeWarmKeyRevoked))
+	id, err := k.WarmKeyLive.Get(ctx, collections.Join(granter, grantee))
 	require.NoError(t, err)
-	require.Equal(t, int64(12), entries[0].RevokedAtHeight)
-	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED, entries[0].End)
-	require.Zero(t, entries[1].RevokedAtHeight, "a grant without expiration never expires")
+	require.Equal(t, second.Id, id)
+}
 
-	ended, err := k.RecordWarmKeyRevoke(ctx, granter, timed)
+// Test flow:
+//  1. Touch an expired pair through the revoke recorder without any intervening sweep.
+//  2. Assert only its stale index row is removed; the historical grant and event stream stay unchanged.
+func TestWarmKeyLogRevokeAfterExpirationClearsOnlyIndex(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+	expires := time.Unix(100, 0)
+	ctx = ctx.WithBlockHeight(10).WithBlockTime(expires.Add(-time.Hour))
+	first, err := k.RecordWarmKeyGrant(ctx, granter, grantee, &expires)
 	require.NoError(t, err)
-	require.False(t, ended, "an expired entry is already ended")
+	ctx = ctx.WithBlockHeight(12).WithBlockTime(expires.Add(time.Second)).WithEventManager(sdk.NewEventManager())
+	ended, err := k.RecordWarmKeyRevoke(ctx, granter, grantee)
+	require.NoError(t, err)
+	require.False(t, ended)
+	found, err := k.WarmKeyLive.Has(ctx, collections.Join(granter, grantee))
+	require.NoError(t, err)
+	require.False(t, found)
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, []types.WarmKeyLogEntry{first}, entries)
+	require.Empty(t, ctx.EventManager().Events())
 }
 
 // Test flow:
@@ -226,9 +243,8 @@ func TestWarmKeyLogQueries(t *testing.T) {
 }
 
 // Test flow:
-//  1. Grant a key expiring at 100.9 s and run ExpireWarmKeys in blocks timestamped 100.1 s and 101.0 s.
-//  2. Assert the entry stores the expiration rounded up to 101 and ends only in the second block: the log never
-//     ends a grant before authz would.
+//  1. Grant a key expiring at 100.9 s, then replace it at 100.1 s.
+//  2. Assert its timestamp is rounded up to 101 seconds and the still-live grant records a replacement.
 func TestWarmKeyLogExpiryRoundsUpToTheNextSecond(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
@@ -238,14 +254,11 @@ func TestWarmKeyLogExpiryRoundsUpToTheNextSecond(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(101), entry.ExpiresAtUnix)
 
-	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(6).WithBlockTime(time.Unix(100, 100_000_000))))
+	ctx = ctx.WithBlockHeight(6).WithBlockTime(time.Unix(100, 100_000_000))
+	_, err = k.RecordWarmKeyGrant(ctx, granter, grantee, nil)
+	require.NoError(t, err)
 	entries, err := k.WarmKeyLogEntries(ctx, granter)
 	require.NoError(t, err)
-	require.Zero(t, entries[0].RevokedAtHeight, "100.1s is before the grant's 100.9s expiration")
-
-	require.NoError(t, k.ExpireWarmKeys(ctx.WithBlockHeight(7).WithBlockTime(time.Unix(101, 0))))
-	entries, err = k.WarmKeyLogEntries(ctx, granter)
-	require.NoError(t, err)
-	require.Equal(t, int64(7), entries[0].RevokedAtHeight)
-	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED, entries[0].End)
+	require.Equal(t, int64(6), entries[0].RevokedAtHeight)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED, entries[0].End)
 }

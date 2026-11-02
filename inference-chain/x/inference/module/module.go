@@ -410,13 +410,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	blockHeight := sdkCtx.BlockHeight()
 	blockTime := sdkCtx.BlockTime().Unix()
 
-	// End the warm-key log entries whose grant expired in this block. The
-	// log must not fall out of step with authz, so a failure here is a
-	// block failure, not a logged warning.
-	if err := am.keeper.ExpireWarmKeys(ctx); err != nil {
-		return fmt.Errorf("expire warm keys: %w", err)
-	}
-
 	// Handle confirmation PoC trigger decisions and phase transitions
 	err := am.handleConfirmationPoC(ctx, blockHeight)
 	if err != nil {

@@ -22,7 +22,8 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
-// WarmKeyLogEnd says how a warm-key log entry ended. NONE is a live entry.
+// WarmKeyLogEnd says how a warm-key log entry explicitly ended. NONE does not
+// imply the grant is live: its expires_at_unix may already have passed.
 type WarmKeyLogEnd int32
 
 const (
@@ -32,7 +33,8 @@ const (
 	// The granter granted the same grantee again (MsgGrant on a live pair); the
 	// new grant is the entry with the next id.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED WarmKeyLogEnd = 2
-	// The grant's expiration passed; the module ended the entry in EndBlock.
+	// Retained for compatibility. Expiration is checked from expires_at_unix;
+	// the module does not end entries or emit an event when that time passes.
 	WarmKeyLogEnd_WARM_KEY_LOG_END_EXPIRED WarmKeyLogEnd = 3
 )
 
@@ -62,8 +64,9 @@ func (WarmKeyLogEnd) EnumDescriptor() ([]byte, []int) {
 // from granter to grantee, as the module recorded it.
 //
 // The log is append-only: an entry is created when the grant appears and is
-// ended, never deleted, when the grant is revoked, replaced or expires. The
-// answer to "entry id of granter" therefore never changes, so devshard hosts
+// ended, never deleted, when the grant is revoked or replaced. Expiration is
+// stored in expires_at_unix without changing the entry or emitting an event.
+// The answer to "entry id of granter" therefore never changes, so devshard hosts
 // that ask at different times, or long after the grant ended, all read the
 // same record. Ids increase per granter from 1, so a grant that replaces
 // another in the same block still orders after it.
@@ -72,9 +75,9 @@ type WarmKeyLogEntry struct {
 	Id              uint64 `protobuf:"varint,2,opt,name=id,proto3" json:"id,omitempty"`
 	Grantee         string `protobuf:"bytes,3,opt,name=grantee,proto3" json:"grantee,omitempty"`
 	GrantedAtHeight int64  `protobuf:"varint,4,opt,name=granted_at_height,json=grantedAtHeight,proto3" json:"granted_at_height,omitempty"`
-	// 0 while the entry is live.
+	// 0 until an explicit revoke or replacement, including after expiration.
 	RevokedAtHeight int64 `protobuf:"varint,5,opt,name=revoked_at_height,json=revokedAtHeight,proto3" json:"revoked_at_height,omitempty"`
-	// Unix seconds; 0 when the grant has no expiration.
+	// Unix seconds, rounded up; 0 when the grant has no expiration.
 	ExpiresAtUnix int64         `protobuf:"varint,6,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
 	End           WarmKeyLogEnd `protobuf:"varint,7,opt,name=end,proto3,enum=inference.inference.WarmKeyLogEnd" json:"end,omitempty"`
 }

@@ -59,6 +59,20 @@ func (f *fakeWarmKeyFetcher) count() int {
 }
 
 // Test flow:
+//  1. Check an unended grant on both sides of its seconds-only expiration, including a date past UnixNano's range.
+//  2. Assert expiration requires no end event and a grant without expiration remains live.
+func TestWarmKeyEntryLiveAtUnixSeconds(t *testing.T) {
+	for _, expires := range []time.Time{time.Unix(101, 0), time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC)} {
+		e := WarmKeyEntry{ExpiresAtUnix: expires.Unix()}
+		require.False(t, e.Ended())
+		require.True(t, e.LiveAt(expires.Add(-time.Nanosecond)))
+		require.False(t, e.LiveAt(expires))
+		require.False(t, e.LiveAt(expires.Add(time.Second)))
+	}
+	require.True(t, (WarmKeyEntry{}).LiveAt(time.Date(2500, 1, 1, 0, 0, 0, 0, time.UTC)))
+}
+
+// Test flow:
 //  1. Load a granter with one live and one ended entry, then ask twice.
 //  2. Assert the first ask loads from the chain, the second answers from the copy, live entries exclude the
 //     ended one and an expired one, and the entry lookup finds both without another fetch.

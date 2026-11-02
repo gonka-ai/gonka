@@ -71,17 +71,22 @@ WarmKeyLogEntry { granter, id, grantee, granted_at_height, revoked_at_height, ex
 ```
 
 - A grant of the marker appends an entry with the next `id` for that granter
-  (ids start at 1 and never go back). A revoke, an expiry or a replacement
+  (ids start at 1 and never go back). A revoke or a replacement
   (a second `MsgGrant` for the same pair, which authz stores over the first)
-  sets `revoked_at_height` and `end` (`REVOKED`, `EXPIRED`, `REPLACED`);
+  sets `revoked_at_height` and `end` (`REVOKED`, `REPLACED`);
   nothing is deleted. A replacement in the same block as its predecessor gets
   a larger id, so ids order grants where heights cannot.
+- Expiration is stored in `expires_at_unix` as Unix seconds, rounded up so
+  fractional seconds do not expire a grant early. Passing that timestamp
+  changes neither the historical entry nor its end fields and emits no event.
+  There is no EndBlock walk over warm keys. A later grant or revoke removes
+  the expired pair's index row lazily; its historical entry stays unchanged.
 - The module learns about grants from a post handler on `MsgGrant`,
   `MsgRevoke` and the messages nested in `MsgExec`
   (`inference-chain/app/post_warm_key_log.go`), which runs in FinalizeBlock
   after the authz messages executed and fails the transaction if the log
-  cannot be written, so the log and authz never disagree. Expiry is the
-  module's EndBlock (`ExpireWarmKeys`), the same block time authz prunes by.
+  cannot be written. The log preserves authz's grants and explicit ends;
+  the gateway and hosts check expiration from the stored timestamp.
 - Queries: `WarmKeyEntry(granter, id)` returns one entry and that answer is
   the same for ever, on every node, however much state has been pruned
   since; `WarmKeyLog(granter)` returns all entries in id order. The log is
@@ -224,7 +229,11 @@ repair, gossip admission, transport membership and unbound payload fetches
 refuse a key the history still binds once the source answers that its grant
 has ended (`SlotActors.RefuseWarm`); a source that cannot answer leaves the
 history's verdict in place, so an outage never refuses a key consensus
-accepts. Expiry is one more end in the log, handled the same way. A grant
+accepts. Expiry needs no chain event: the grant source excludes a key at or
+after its `expires_at_unix`, and the gateway proposes `MsgWarmKeyRevoke` for
+the binding from that timestamp even while the entry's `end` is empty. This
+clock check only proposes a new diff or controls local admission; replay
+keeps using the binding history at the diff's nonce. A grant
 renewed on chain (the old entry replaced by a new one for the same key) is
 revoked and re-bound in one diff, the revoke first, so the key is never
 without a binding in between.
@@ -253,8 +262,8 @@ append-only like the log, kept in memory by the bridge
    gains `HOST_EVENT_KIND_WARM_KEY_GRANTED` and
    `HOST_EVENT_KIND_WARM_KEY_REVOKED` with `{granter, grantee, grant_id,
    height, expires_at_unix, end}`, produced by the dapi event listener from
-   the module's events, from transactions (grants, revokes) and from the
-   block's end events (expiry). They are not filtered by participant: a host
+   the module's grant and explicit-revoke events. Expiration is read from
+   the grant's timestamp and needs no event. They are not filtered by participant: a host
    needs the keys of every peer in its groups, and grants are rare. The
    stream keeps its cursor and `needs_reset` contract: on a reset devshardd
    drops its copies and reloads from the chain on the next question. One
@@ -348,7 +357,7 @@ a refresh interval and after a miss.
   entry's `revoked_at_height` already in the log. Until then the limitation
   in [Revocation](#revocation-and-what-the-log-cannot-enforce) stands.
 - Scope of the chain change: the log, the post handler, the two queries, the
-  expiry in EndBlock and the seeding migration. This note assumes the 0.2.18
+  stored expiration and the seeding migration. This note assumes the 0.2.18
   branch takes them.
 - Residual risk at settlement. A warm key compromised and then revoked can
   still have signed settlement material before the revoke, and the chain
@@ -371,7 +380,7 @@ one buildable and tested on its own.
 1. `signing/keyhistory.go`: the pure model and its acceptance rule, with
    tests.
 2. `inference-chain`: the warm-key log with ids, `WarmKeyEntry` and
-   `WarmKeyLog`, the post handler, the events, expiry in EndBlock, the
+   `WarmKeyLog`, the post handler, the events, expiration timestamps, the
    seeding migration at consensus version 16.
 3. `types`, `state`: `EscrowState.WarmKeyHistory`, its hash, the two
    transactions, staged application, journal undo/redo, snapshot codec,

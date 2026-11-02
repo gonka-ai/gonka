@@ -4,12 +4,123 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
 	"devshard/types"
 )
+
+// expiredGrantSource models an expiration that emits no chain event and
+// leaves the historical entry's end fields unset.
+type expiredGrantSource struct {
+	bridge.WarmKeyGrantSource
+	cold    string
+	grantID uint64
+}
+
+func (s expiredGrantSource) expired(e bridge.WarmKeyEntry) bridge.WarmKeyEntry {
+	if e.Granter == s.cold && e.ID == s.grantID {
+		e.ExpiresAtUnix = 1
+	}
+	return e
+}
+
+func (s expiredGrantSource) LiveWarmKeys(cold string) ([]bridge.WarmKeyEntry, error) {
+	entries, err := s.WarmKeyGrantSource.LiveWarmKeys(cold)
+	if err != nil {
+		return nil, err
+	}
+	var live []bridge.WarmKeyEntry
+	for _, e := range entries {
+		e = s.expired(e)
+		if e.LiveAt(time.Now()) {
+			live = append(live, e)
+		}
+	}
+	return live, nil
+}
+
+func (s expiredGrantSource) WarmKeyEntry(cold string, id uint64) (bridge.WarmKeyEntry, bool, error) {
+	e, found, err := s.WarmKeyGrantSource.WarmKeyEntry(cold, id)
+	return s.expired(e), found, err
+}
+
+// Test flow:
+//  1. Bind warm keys, expire one grant without an end event, optionally renew the same key, and compose.
+//  2. Assert the next diff revokes the expired binding, rebinds a renewal, and replays to the same root/history
+//     on a fresh host that first sees the log after expiration.
+func TestSession_ExpiredGrantRevokesWithoutChainEndEvent(t *testing.T) {
+	for _, renew := range []bool{false, true} {
+		name := "expire"
+		if renew {
+			name = "expire-and-renew"
+		}
+		t.Run(name, func(t *testing.T) {
+			session, coldKeys, warmKeys := setupWarmKeySession(t, 3)
+			_, err := session.SendInference(context.Background(), defaultParams)
+			require.NoError(t, err)
+			grants := session.warmKeySource.(*testutil.WarmKeyGrants)
+			source := expiredGrantSource{WarmKeyGrantSource: grants, cold: coldKeys[0].Address(), grantID: 1}
+			session.SetWarmKeyGrantSource(source)
+			if renew {
+				require.Equal(t, uint64(2), grants.Grant(coldKeys[0].Address(), warmKeys[0].Address()))
+			}
+			entry, found, err := source.WarmKeyEntry(coldKeys[0].Address(), 1)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.False(t, entry.Ended(), "there was no EXPIRED event")
+			require.False(t, entry.LiveAt(time.Now()))
+
+			session.mu.Lock()
+			nonce := session.sm.LatestNonce() + 1
+			proposals := session.warmKeyProposalsLocked(nonce)
+			session.mu.Unlock()
+			want := 1
+			if renew {
+				want++
+			}
+			require.Len(t, proposals, want)
+			require.Equal(t, &types.MsgWarmKeyRevoke{SlotId: 0, Address: warmKeys[0].Address(), GrantId: 1}, proposals[0].GetWarmKeyRevoke())
+			if renew {
+				require.Equal(t, &types.MsgWarmKeyBind{SlotId: 0, Address: warmKeys[0].Address(), GrantId: 2}, proposals[1].GetWarmKeyBind())
+			}
+			diff := testutil.SignDiff(t, session.signer.(*signing.Secp256k1Signer), session.escrowID, nonce, proposals)
+			root, err := session.sm.ApplyDiff(diff)
+			require.NoError(t, err)
+			history := session.sm.WarmKeyHistory()
+			require.Equal(t, nonce, history[0][0].RevokedAtNonce)
+			if renew {
+				require.Equal(t, []string{warmKeys[0].Address()}, history.Live(0))
+				require.Equal(t, uint64(2), history[0][1].GrantID)
+			} else {
+				require.Empty(t, history.Live(0))
+			}
+
+			config := session.sm.Config()
+			creator := session.signer.Address()
+			replay, err := state.NewStateMachine(session.escrowID, config, session.group, 100000, creator, session.verifier,
+				testutil.MustMemoryStore(t, session.escrowID, creator, config, session.group, 100000),
+				state.WithWarmKeyResolver(func(warm, cold string) (bool, error) {
+					return bridge.IsWarmKeyLive(source, cold, warm, time.Now())
+				}), state.WithWarmKeyConfirmer(func(cold, warm string, id uint64) error {
+					return bridge.ConfirmWarmKeyBind(source, cold, warm, id)
+				}))
+			require.NoError(t, err)
+			var replayRoot []byte
+			for _, d := range append(session.Diffs(), diff) {
+				replayRoot, err = replay.ApplyDiff(d)
+				require.NoError(t, err)
+			}
+			require.Equal(t, root, replayRoot)
+			require.Equal(t, history, replay.WarmKeyHistory())
+		})
+	}
+}
 
 // Test flow:
 //  1. Run a warm-key session, then renew slot 0's grant on chain: the old entry ends and a new one for the same

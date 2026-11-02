@@ -2,6 +2,7 @@ package user
 
 import (
 	"log/slog"
+	"time"
 
 	"devshard/bridge"
 	"devshard/signing"
@@ -12,7 +13,7 @@ import (
 // log. Before each diff the session compares the group's live grants with the
 // binding history and proposes a MsgWarmKeyBind for every live grant that has
 // no live binding on its slot and a MsgWarmKeyRevoke for every live binding
-// whose grant the log shows as ended. Nil means the session never proposes
+// whose grant has ended or expired. Nil means the session never proposes
 // key entries (tests, cold-key-only groups). See docs/warm-keys-v7.md.
 func WithWarmKeyGrantSource(src bridge.WarmKeyGrantSource) SessionOption {
 	return func(sess *Session) { sess.warmKeySource = src }
@@ -92,10 +93,12 @@ func (s *Session) warmKeyBindsForSlotLocked(history signing.WarmKeyHistory, slot
 
 // warmKeyRevokesForSlotLocked proposes a revoke for every live binding on
 // slot whose grant is no longer among cold's live grants: revoked, replaced
-// or expired on chain. A binding whose entry the source cannot see at all is
+// or expired. Expiration is read from the entry, without a chain end event.
+// A binding whose entry the source cannot see at all is
 // left alone; the source is append-only, so a missing entry is a gap in the
 // copy, not an end.
 func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, slot uint32, cold string, live []bridge.WarmKeyEntry) []*types.DevshardTx {
+	now := time.Now()
 	liveIDs := make(map[uint64]bool, len(live))
 	for _, g := range live {
 		liveIDs[g.ID] = true
@@ -106,7 +109,7 @@ func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, sl
 			continue
 		}
 		entry, found, err := s.warmKeySource.WarmKeyEntry(cold, b.GrantID)
-		if err != nil || !found || !entry.Ended() {
+		if err != nil || !found || entry.LiveAt(now) {
 			continue
 		}
 		out = append(out, &types.DevshardTx{Tx: &types.DevshardTx_WarmKeyRevoke{WarmKeyRevoke: &types.MsgWarmKeyRevoke{
