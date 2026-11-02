@@ -16,7 +16,7 @@ import (
 
 // ErrUnknownEscrow means the registry has no row for the escrow, ErrEscrowPruned that the chain pruned it after its settlement window, ErrEscrowSettledOnChain that the chain already holds its settlement. See README.md, "Settlement and retirement".
 var (
-	ErrDevshardBusy = errors.New("devshard busy")
+	ErrDevshardBusy = chain.ErrDevshardBusy
 
 	ErrUnknownEscrow = errors.New("unknown escrow")
 

@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/escrow"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
@@ -27,14 +26,14 @@ func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
 
 func (r *Registry) withServingSession(ctx context.Context, escrowID string, work func(EscrowSession) error) error {
 	if r.chainMaxNonce.Load() == unknownChainMaxNonce {
-		return fmt.Errorf("%w: escrow %s waits for the chain max_nonce before it is settled", escrow.ErrDevshardBusy, escrowID)
+		return fmt.Errorf("%w: escrow %s waits for the chain max_nonce before it is settled", chain.ErrDevshardBusy, escrowID)
 	}
 	if session, release, held := r.HoldSettlement(escrowID); held {
 		defer release()
 		return work(session)
 	}
 	if r.closeInProgress(escrowID) {
-		return fmt.Errorf("%w: escrow %s is closing its session", escrow.ErrDevshardBusy, escrowID)
+		return fmt.Errorf("%w: escrow %s is closing its session", chain.ErrDevshardBusy, escrowID)
 	}
 	if r.servingSessions == nil {
 		return fmt.Errorf("escrow %s: no serving session factory", escrowID)

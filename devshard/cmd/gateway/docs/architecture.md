@@ -64,7 +64,6 @@ graph TD
     CFG --> ENV
     API --> CFG
     MET --> LIM
-    REG --> ESC
     ACC --> ENG
     ACC --> SCH
     CFG --> CHN
