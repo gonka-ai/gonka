@@ -1,0 +1,248 @@
+package transport
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"connectrpc.com/connect"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+)
+
+func TestPeerRPCDialSetDefaultOn(t *testing.T) {
+	const inference = "http://versiond-router:8080/devshard/v6"
+	got, err := PeerRPCDialSetFrom(inference, "")
+	require.NoError(t, err)
+	require.Equal(t, inference, got.InferenceURL)
+	require.Equal(t, "http://versiond-router:8080", got.H2URL, "unset upgrade probes HTTP/2 on InferenceUrl's own origin")
+	require.Equal(t, []string{inference, "http://versiond-router:8080"}, got.Origins())
+}
+
+func TestPeerRPCDialSetUpgradeOff(t *testing.T) {
+	for _, raw := range []string{"0", "false", "no", "off", " OFF "} {
+		got, err := PeerRPCDialSetFrom("http://versiond-router:8080", raw)
+		require.NoError(t, err, raw)
+		require.Empty(t, got.H2URL, raw)
+		require.Equal(t, []string{"http://versiond-router:8080"}, got.Origins(), raw)
+	}
+	for _, raw := range []string{"", "1", "true", "yes", "on"} {
+		require.True(t, RPCH2UpgradeEnabled(raw), raw)
+	}
+}
+
+func TestPeerRPCDialSetHTTPSKeepsPortAndHost(t *testing.T) {
+	got, err := PeerRPCDialSetFrom("https://join.example.com:8443/v6?x=1#f", "true")
+	require.NoError(t, err)
+	require.Equal(t, "https://join.example.com:8443", got.H2URL)
+	require.Equal(t, "join.example.com", rpcH2ServerName(got.InferenceURL))
+	require.Equal(t, "join.example.com", rpcH2ServerName(got.H2URL), "same listen, same SNI")
+
+	require.True(t, RPCH2GRPCEnabled("1"))
+	require.True(t, RPCH2GRPCEnabled("true"))
+	require.True(t, RPCH2GRPCEnabled("yes"))
+	require.True(t, RPCH2GRPCEnabled("on"))
+	require.False(t, RPCH2GRPCEnabled(""), "native gRPC stays opt-in")
+}
+
+func TestPeerRPCDialSetFromEnv(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "")
+	got, err := PeerRPCDialSetFromEnv("http://versiond-router:8080")
+	require.NoError(t, err)
+	require.Equal(t, "http://versiond-router:8080", got.H2URL)
+
+	t.Setenv(envRPCH2Upgrade, "false")
+	got, err = PeerRPCDialSetFromEnv("http://versiond-router:8080")
+	require.NoError(t, err)
+	require.Empty(t, got.H2URL)
+}
+
+func TestPeerRPCDialSetRejectsBadInference(t *testing.T) {
+	_, err := PeerRPCDialSetFrom("", "")
+	require.Error(t, err)
+	_, err = PeerRPCDialSetFrom("versiond-router:8080", "")
+	require.Error(t, err, "no scheme")
+	_, err = PeerRPCDialSetFrom("ftp://versiond-router:8080", "")
+	require.Error(t, err, "not http(s)")
+}
+
+func TestRPCH2MissClassifiesSilentClose(t *testing.T) {
+	// A TLS terminator that drops an unsupported ClientHello without an
+	// alert, or a cleartext server that swallows the preface and closes,
+	// ends the handshake with a bare EOF. That is a miss: the peer must
+	// fall back instead of retrying HTTP/2 against a silent origin.
+	require.True(t, isRPCH2Miss(io.EOF))
+	require.True(t, isRPCH2Miss(io.ErrUnexpectedEOF))
+	require.True(t, isRPCH2Miss(fmt.Errorf("attach: %w", io.ErrUnexpectedEOF)))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(errAttachTTL))
+	// Watch reports a clean stream end as io.EOF; that reopens Watch on the
+	// same transport and must not read as a dead origin.
+	require.False(t, isRPCH2TransportMiss(io.EOF))
+	require.False(t, isRPCH2TransportMiss(io.ErrUnexpectedEOF))
+	require.True(t, watchReopen(io.EOF))
+}
+
+func TestH2MissCacheRemembersInferenceHost(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	InstallRPCH2MissCacheForTest(time.Minute, func() time.Time { return now })
+	t.Cleanup(ResetRPCH2MissCacheForTest)
+	const base = "http://Join.Example.com:8443/devshard/v6"
+	require.False(t, skipRPCH2(base))
+	rememberRPCH2Miss(base)
+	require.True(t, skipRPCH2(base))
+	require.False(t, skipRPCH2("https://join.example.com:443/other"), "different scheme and port must not share the miss")
+	require.True(t, skipRPCH2("http://join.example.com:8443/other"))
+	require.False(t, skipRPCH2("http://other.example.com:8443"))
+	now = now.Add(time.Minute)
+	require.False(t, skipRPCH2(base), "the next Attach after the TTL probes HTTP/2 again")
+}
+
+func TestInferenceHostKey(t *testing.T) {
+	require.Equal(t, "http://versiond-router:8080", inferenceHostKey("http://versiond-router:8080/v5"))
+	require.Equal(t, "https://versiond-router:443", inferenceHostKey("https://Versiond-Router:443"))
+	require.Equal(t, "http://127.0.0.1:18080", inferenceHostKey("http://127.0.0.1:18080"))
+}
+
+func TestH2MissCacheSkipAndTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var cur atomic.Pointer[time.Time]
+	cur.Store(&now)
+	c := newH2MissCache(DefaultRPCH2MissTTL, func() time.Time { return *cur.Load() })
+	c.jitter = func(d time.Duration) time.Duration { return d }
+	const host = "versiond-router"
+	require.False(t, c.skip(host))
+	c.remember(host)
+	require.True(t, c.skip(host))
+	later := now.Add(DefaultRPCH2MissTTL - time.Second)
+	cur.Store(&later)
+	require.True(t, c.skip(host))
+	expired := now.Add(DefaultRPCH2MissTTL)
+	cur.Store(&expired)
+	require.False(t, c.skip(host))
+}
+
+func TestH2MissCacheTTLJitterDesynchronizesHosts(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var cur atomic.Pointer[time.Time]
+	cur.Store(&now)
+	ttl := 30 * time.Minute
+	var n atomic.Int32
+	c := newH2MissCache(ttl, func() time.Time { return *cur.Load() })
+	c.jitter = func(d time.Duration) time.Duration {
+		if n.Add(1) == 1 {
+			return d - d/10
+		}
+		return d + d/10
+	}
+	c.remember("host-a")
+	c.remember("host-b")
+	atLow := now.Add(ttl - ttl/10)
+	cur.Store(&atLow)
+	require.False(t, c.skip("host-a"), "−10% TTL must expire first")
+	require.True(t, c.skip("host-b"))
+	atHigh := now.Add(ttl + ttl/10)
+	cur.Store(&atHigh)
+	require.False(t, c.skip("host-b"), "+10% TTL must still be pinned until then")
+}
+
+func TestJitterRPCH2MissTTLStaysInBand(t *testing.T) {
+	ttl := DefaultRPCH2MissTTL
+	span := time.Duration(float64(ttl) * DefaultRPCH2MissTTLJitter)
+	seen := map[time.Duration]struct{}{}
+	for i := 0; i < 200; i++ {
+		d := jitterRPCH2MissTTL(ttl)
+		require.GreaterOrEqual(t, d, ttl-span)
+		require.LessOrEqual(t, d, ttl+span)
+		seen[d] = struct{}{}
+	}
+	require.Greater(t, len(seen), 1, "jitter must not be a constant")
+}
+
+func TestIsRPCH2Miss(t *testing.T) {
+	require.False(t, isRPCH2Miss(nil))
+	require.False(t, isRPCH2Miss(errAttachTTL))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnauthenticated, errors.New("bad token"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeResourceExhausted, errors.New("rate"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("host initializing"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("connection refused"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnknown, errors.New("decode"))))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded))
+	require.False(t, isRPCH2Miss(context.Canceled))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
+	require.False(t, isRPCH2Miss(op))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, op)),
+		"connect wraps Do() failures as Unavailable; Unwrap must still see OpError")
+	require.False(t, isRPCH2Miss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
+	require.True(t, isRPCH2Miss(errors.New("http2: client conn could not be established")))
+	require.True(t, isRPCH2Miss(errors.New("http2: client conn is closed")))
+	require.True(t, isRPCH2Miss(fmt.Errorf("unavailable: %w", errors.New("http2: client conn is closed"))))
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeUnavailable, errors.New("http2: failed HTTP/2.0 intro"))))
+	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "http/1.1", "h2")))
+	require.True(t, isRPCH2Miss(fmt.Errorf("http2: unexpected ALPN protocol %q; want %q", "", "h2")))
+	require.False(t, isRPCH2Miss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
+	require.True(t, isRPCH2Miss(http2.ConnectionError(http2.ErrCodeProtocol)))
+}
+
+func TestIsRPCH2TransportMissOmitsDeadline(t *testing.T) {
+	require.False(t, isRPCH2TransportMiss(nil))
+	require.False(t, isRPCH2TransportMiss(errAttachTTL))
+	require.False(t, isRPCH2TransportMiss(context.DeadlineExceeded),
+		"live refresh timeout must not look like a dead origin")
+	require.False(t, isRPCH2TransportMiss(context.Canceled))
+	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+	require.False(t, isRPCH2Miss(context.DeadlineExceeded), "Attach deadline is not an h2 miss")
+	require.False(t, isRPCH2Miss(connect.NewError(connect.CodeDeadlineExceeded, context.DeadlineExceeded)))
+
+	op := &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("refused")}
+	require.True(t, isRPCH2TransportMiss(op))
+	require.True(t, isRPCH2TransportMiss(connect.NewError(connect.CodeUnavailable, op)))
+	require.True(t, isRPCH2TransportMiss(&net.DNSError{Name: "missing.invalid", IsNotFound: true}))
+	require.True(t, isRPCH2TransportMiss(errors.New("http2: client conn could not be established")))
+	require.True(t, isRPCH2TransportMiss(http2.StreamError{StreamID: 1, Code: http2.ErrCodeProtocol}))
+	require.True(t, isRPCH2TransportMiss(http2.ConnectionError(http2.ErrCodeProtocol)))
+	require.False(t, isRPCH2TransportMiss(connect.NewError(connect.CodeUnavailable, errors.New("refresh down"))))
+}
+
+func TestH2MissLogOncePerHostPerTTL(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	log := newH2MissLog(time.Minute, func() time.Time { return now })
+
+	require.True(t, log.first("host-a"))
+	require.False(t, log.first("host-a"), "same host inside the TTL is not another Warn")
+	require.True(t, log.first("host-b"), "a different InferenceUrl host warns on its own")
+
+	now = now.Add(time.Minute)
+	require.True(t, log.first("host-a"), "the next TTL window warns again")
+
+	var ready sync.WaitGroup
+	var done sync.WaitGroup
+	ready.Add(1)
+	firsts := 0
+	var mu sync.Mutex
+	for i := 0; i < 32; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			ready.Wait()
+			if log.first("host-c") {
+				mu.Lock()
+				firsts++
+				mu.Unlock()
+			}
+		}()
+	}
+	ready.Done()
+	done.Wait()
+	require.Equal(t, 1, firsts, "concurrent misses of one host warn once")
+
+	require.True(t, log.first(""), "an empty key is not cached")
+	require.True(t, log.first(""))
+}

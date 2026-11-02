@@ -22,7 +22,7 @@ func TestStackSmoke(t *testing.T) {
 	stack.RequireServicesRunning(t,
 		"mock-chain",
 		"mock-dapi",
-		"mock-openai",
+		"mock-openai-0",
 		"versiond-router",
 		"devshardctl",
 		"devshard-postgres",

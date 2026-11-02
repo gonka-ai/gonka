@@ -43,7 +43,7 @@ epoch_groups:
   - epoch_index: 1
     model_id: stub-model
     validation_threshold_value: 50
-    validation_threshold_exponent: 0
+    validation_threshold_exponent: -2
 hosts:
   - private_key_hex: "0000000000000000000000000000000000000000000000000000000000000011"
   - private_key_hex: "0000000000000000000000000000000000000000000000000000000000000012"

@@ -5,12 +5,12 @@ import (
 	"fmt"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"common/chain"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
+	"devshard/signing"
 )
 
 // chainIdentity wraps a common/chain.Client with signing identity metadata.
@@ -20,13 +20,13 @@ type chainIdentity struct {
 	client      *chain.Client
 	accountAddr string
 	signerAddr  string
-	keyring     *keyring.Keyring
+	payload     *signing.CachedCosmosSigner
 }
 
 func newChainIdentity(
 	client *chain.Client,
 	apiAccount ApiAccount,
-	kr keyring.Keyring,
+	payload *signing.CachedCosmosSigner,
 ) (*chainIdentity, error) {
 	accountAddr, err := apiAccount.AccountAddressBech32()
 	if err != nil {
@@ -40,7 +40,7 @@ func newChainIdentity(
 		client:      client,
 		accountAddr: accountAddr,
 		signerAddr:  signerAddr,
-		keyring:     &kr,
+		payload:     payload,
 	}, nil
 }
 
@@ -56,8 +56,11 @@ func (c *chainIdentity) GetSignerAddress() string {
 	return c.signerAddr
 }
 
-func (c *chainIdentity) GetKeyring() *keyring.Keyring {
-	return c.keyring
+func (c *chainIdentity) SignBytes(data []byte) (string, error) {
+	if c.payload == nil {
+		return "", fmt.Errorf("payload signer is not configured")
+	}
+	return c.payload.SignBytes(data)
 }
 
 func resolveChainID(ctx context.Context, chainClient *chain.Client, configured string) (string, error) {

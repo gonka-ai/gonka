@@ -1,6 +1,11 @@
 package heightsync
 
-import "devshard/types"
+import (
+	"encoding/hex"
+	"strings"
+
+	"devshard/types"
+)
 
 // StampPresent reports whether a Diff-resident (observed_height, observed_block_hash)
 // pair is a real claim. Proto3 uint64 gives 0 for both "no stamp" and a literal
@@ -11,6 +16,30 @@ import "devshard/types"
 // regression and INVALID every verifier.
 func StampPresent(observedBlockHash []byte) bool {
 	return len(observedBlockHash) > 0
+}
+
+// SectionObserved is the (height, hash) a response-leg HeightSyncSection
+// reports. ok is false when the section has no real stamp.
+func SectionObserved(sec *HeightSyncSection) (height uint64, hash []byte, ok bool) {
+	if sec == nil || sec.MainnetHeight <= 0 {
+		return 0, nil, false
+	}
+	hash, err := hex.DecodeString(strings.TrimSpace(sec.MainnetBlockHashHex))
+	if err != nil || !StampPresent(hash) {
+		return 0, nil, false
+	}
+	return uint64(sec.MainnetHeight), hash, true
+}
+
+// FinishObserved picks the reading a Finish is stamped with. The response-leg
+// envelope already attached to this hop wins over a later oracle tip, so the
+// signed stamp matches that envelope across a block boundary. The caller
+// still runs the result through its floor lift.
+func FinishObserved(envelopeH uint64, envelopeHash []byte, tipH uint64, tipHash []byte) (uint64, []byte) {
+	if envelopeH > 0 && StampPresent(envelopeHash) {
+		return envelopeH, append([]byte(nil), envelopeHash...)
+	}
+	return tipH, tipHash
 }
 
 // RefStamp returns the *reference height* stamped on tx: the height a producer

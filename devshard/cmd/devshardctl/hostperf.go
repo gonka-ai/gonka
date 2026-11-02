@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"log"
 	"math"
 	"sort"
@@ -107,16 +109,25 @@ func (r *hostRing) all() []RequestSample {
 	if r.count == 0 || len(r.samples) == 0 {
 		return nil
 	}
-	out := make([]RequestSample, r.count)
-	for i := 0; i < r.count; i++ {
-		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
-		out[i] = r.samples[idx]
+	out := make([]RequestSample, 0, r.count)
+	for sample := range r.oldestFirst() {
+		out = append(out, sample)
 	}
 	return out
 }
 
+func (r *hostRing) oldestFirst() iter.Seq[RequestSample] {
+	return func(yield func(RequestSample) bool) {
+		for i := 0; i < r.count; i++ {
+			if !yield(r.samples[(r.pos-r.count+i+len(r.samples))%len(r.samples)]) {
+				return
+			}
+		}
+	}
+}
+
 func (r *hostRing) hasHostIdx(hostIdx int) bool {
-	for _, sample := range r.all() {
+	for sample := range r.oldestFirst() {
 		if sample.HostIdx == hostIdx {
 			return true
 		}
@@ -153,27 +164,27 @@ func (r *hostRing) stats(participantKey string, hostIdx int, windowStart time.Ti
 	var receiptN, cttflN, totalN int
 	var total int
 
-	for _, s := range r.all() {
-		if !windowStart.IsZero() && s.SendTime.Before(windowStart) {
+	for sample := range r.oldestFirst() {
+		if !windowStart.IsZero() && sample.SendTime.Before(windowStart) {
 			continue
 		}
 		total++
-		if s.HostIdx >= 0 {
-			base.HostIdx = s.HostIdx
+		if sample.HostIdx >= 0 {
+			base.HostIdx = sample.HostIdx
 		}
-		if s.Responsive {
+		if sample.Responsive {
 			responsive++
 		}
-		if rm := s.ReceiptMs(); rm > 0 {
-			receiptSum += rm
+		if receiptMs := sample.ReceiptMs(); receiptMs > 0 {
+			receiptSum += receiptMs
 			receiptN++
 		}
-		if c := s.CTTFL(); c > 0 && !math.IsNaN(c) && !math.IsInf(c, 0) {
-			cttflSum += c
+		if cttfl := sample.CTTFL(); cttfl > 0 && !math.IsNaN(cttfl) && !math.IsInf(cttfl, 0) {
+			cttflSum += cttfl
 			cttflN++
 		}
-		if s.TotalTime > 0 {
-			totalSum += float64(s.TotalTime.Milliseconds())
+		if sample.TotalTime > 0 {
+			totalSum += float64(sample.TotalTime.Milliseconds())
 			totalN++
 		}
 	}
@@ -264,7 +275,7 @@ type PerfTracker struct {
 	toolRefusals      map[servedModel]uint64
 	contextRefusals   map[servedModel]uint64
 	pairwise          *PairwiseTracker
-	store             *PerfStore
+	store             PerfStore
 }
 
 type servedModel struct {
@@ -279,7 +290,7 @@ func servedModelLabel(served servedModel) string {
 	return served.participant + "|" + served.model
 }
 
-func NewPerfTracker(store *PerfStore) *PerfTracker {
+func NewPerfTracker(store PerfStore) *PerfTracker {
 	pt := &PerfTracker{
 		hosts:             make(map[string]*hostRing),
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
@@ -297,7 +308,7 @@ func NewPerfTracker(store *PerfStore) *PerfTracker {
 }
 
 func (t *PerfTracker) loadFromStore() {
-	samples, err := t.store.LoadSamples()
+	samples, err := t.store.LoadSamples(context.Background())
 	if err != nil {
 		log.Printf("perf: failed to load samples: %v", err)
 		return
@@ -315,7 +326,7 @@ func (t *PerfTracker) loadFromStore() {
 		ring.add(s)
 	}
 
-	records, err := t.store.LoadRequests()
+	records, err := t.store.LoadRequests(context.Background())
 	if err != nil {
 		log.Printf("perf: failed to load requests: %v", err)
 		return
@@ -354,7 +365,7 @@ func (t *PerfTracker) BackfillLegacyEscrowSamples(sourceEscrow, sourcePath strin
 	if t == nil || t.store == nil {
 		return nil
 	}
-	samples, err := t.store.BackfillLegacyEscrowSamples(sourceEscrow, sourcePath, participantKeys)
+	samples, err := t.store.BackfillLegacyEscrowSamples(context.Background(), sourceEscrow, sourcePath, participantKeys)
 	if err != nil {
 		return err
 	}
@@ -391,7 +402,7 @@ func (t *PerfTracker) Record(s RequestSample) {
 	t.mu.Unlock()
 
 	if t.store != nil {
-		if err := t.store.InsertSample(s); err != nil {
+		if err := t.store.InsertSample(context.Background(), s); err != nil {
 			log.Printf("perf: persist sample: %v", err)
 		}
 	}
@@ -473,7 +484,7 @@ func (t *PerfTracker) RecordRequest(rec RequestRecord) {
 	}
 
 	if t.store != nil {
-		if err := t.store.InsertRequest(rec); err != nil {
+		if err := t.store.InsertRequest(context.Background(), rec); err != nil {
 			log.Printf("perf: persist request: %v", err)
 		}
 	}

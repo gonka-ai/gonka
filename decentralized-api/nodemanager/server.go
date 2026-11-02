@@ -4,27 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmrpc"
-	"common/logging"
 	"common/nodemanager/gen"
+	commonobs "common/observability"
 	"common/runtimeconfig"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 
-	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"log/slog"
 )
 
 // brokerAcquirer is the subset of broker.Broker used by this server.
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
 	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
-	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
+	ReleaseMLNode(lockID string, outcome broker.InferenceResult) (nodeID string, err error)
 	TriggerStatusQuery(bypassDebounce bool)
 	GetNodes() ([]broker.NodeResponse, error)
 }
@@ -37,8 +38,32 @@ type Server struct {
 	phaseTracker  *chainphase.ChainPhaseTracker
 	runtimeConfig *runtimeconfig.Server
 	hostEvents    *apiconfig.HostEventRing
+	hostLog       HostEventLog
+	hostStatus    HostEventStatus
 	escrowLoad    *broker.EscrowLoadTracker
 	blockOracle   blocks.BlockOracle
+}
+
+// HostEventLog is the durable catch-up window behind the ring.
+// Reads do not take the writer lock.
+type HostEventLog interface {
+	Read(ctx context.Context, afterSeq uint64, kinds []apiconfig.HostEventKind, limit int) (rows []apiconfig.HostEvent, generation uint64, err error)
+	ResolveBlock(ctx context.Context, height int64) (seq uint64, found bool, generation uint64, err error)
+	Oldest(ctx context.Context) (seq uint64, empty bool, generation uint64, err error)
+	// FeedHead is the last committed sequence and the store generation.
+	// empty is true when this writer has no rows; seq is then 0.
+	// GetHostEvents uses it while the ring has not been restored.
+	FeedHead(ctx context.Context) (seq, generation uint64, empty bool, err error)
+}
+
+// HostEventStatus is the feed cursor. EmittedHeight 0 means nothing has been committed.
+// TipHeight is the node height. Stalled is the feed's stall flag.
+// RingRestored is false while boot has not loaded the ring from the store.
+type HostEventStatus interface {
+	Stalled() bool
+	EmittedHeight() int64
+	TipHeight() int64
+	RingRestored() bool
 }
 
 // ServerOption configures optional Server dependencies.
@@ -47,6 +72,16 @@ type ServerOption func(*Server)
 // WithHostEventRing enables GetHostEvents. Without it the RPC returns FailedPrecondition.
 func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
 	return func(s *Server) { s.hostEvents = ring }
+}
+
+// WithHostEventLog reads catch-up pages from the store when the cursor is older than the ring.
+func WithHostEventLog(log HostEventLog) ServerOption {
+	return func(s *Server) { s.hostLog = log }
+}
+
+// WithHostEventStatus supplies emitted height, chain tip, and the stall flag.
+func WithHostEventStatus(st HostEventStatus) ServerOption {
+	return func(s *Server) { s.hostStatus = st }
 }
 
 // WithEscrowLoadTracker attaches the per-escrow acquire rate tracker used to
@@ -85,34 +120,89 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		if s.escrowLoad != nil {
 			s.escrowLoad.Record(req.GetEscrowId())
 		}
+		logMLNodeStage(ctx, slog.LevelInfo, StageMLNodeAcquire,
+			"outcome", "acquired",
+			"node_id", nodeID,
+			"lock_id", lockID,
+			"endpoint", endpoint,
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"excluded", strings.Join(req.GetExcludedNodes(), ","),
+		)
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
-		logging.Error("[NodeManager] No nodes available", types.Nodes)
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
+			"outcome", "no_nodes_available",
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"excluded", strings.Join(req.GetExcludedNodes(), ","),
+		)
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
 	}
 	if ctx.Err() != nil {
-		logging.Error("[NodeManager] Context error", types.Nodes, "err", ctx.Err())
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
+			"outcome", "context_error",
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"error", ctx.Err().Error(),
+		)
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	// queue is full, so returning unavailable code
+	logMLNodeStage(ctx, slog.LevelError, StageMLNodeAcquire,
+		"outcome", "unavailable",
+		"model", req.GetModel(),
+		"escrow_id", req.GetEscrowId(),
+		"error", err.Error(),
+	)
 	return nil, status.Error(codes.Unavailable, err.Error())
 }
 
-func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
+func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
+	lockID := req.GetLockId()
 	outcome := outcomeFromProto(req.Outcome)
-	err := s.broker.ReleaseMLNode(req.LockId, outcome)
+	nodeID, err := s.broker.ReleaseMLNode(lockID, outcome)
 	if err == nil {
 		if req.Outcome == gen.ReleaseOutcome_TRANSPORT_ERROR || req.Outcome == gen.ReleaseOutcome_TIMEOUT {
 			s.broker.TriggerStatusQuery(false)
 		}
+		logMLNodeStage(ctx, slog.LevelInfo, StageMLNodeRelease,
+			"lock_id", lockID,
+			"node_id", nodeID,
+			"outcome", req.GetOutcome().String(),
+			"released", true,
+		)
 		return &gen.ReleaseMLNodeResponse{}, nil
 	}
 	if errors.Is(err, broker.ErrLockNotFound) {
-		logging.Error("[NodeManager] Lock not found ", types.Nodes)
+		logMLNodeStage(ctx, slog.LevelError, StageMLNodeRelease,
+			"lock_id", lockID,
+			"node_id", "",
+			"outcome", req.GetOutcome().String(),
+			"released", false,
+		)
 		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
+	logMLNodeStage(ctx, slog.LevelError, StageMLNodeRelease,
+		"lock_id", lockID,
+		"node_id", nodeID,
+		"outcome", req.GetOutcome().String(),
+		"released", false,
+		"error", err.Error(),
+	)
 	return nil, status.Error(codes.Internal, err.Error())
+}
+
+// logMLNodeStage emits the node-selection line. Failures stay at Error and
+// keep subsystem=Nodes, the field the previous logging.Error calls carried.
+func logMLNodeStage(ctx context.Context, level slog.Level, stage string, kv ...any) {
+	args := make([]any, 0, 2+len(kv))
+	if level >= slog.LevelError {
+		args = append(args, "subsystem", "Nodes")
+	}
+	args = append(args, kv...)
+	commonobs.StageLevel(ctx, level, stage, args...)
 }
 
 func (s *Server) ListNodeCapacity(_ context.Context, _ *gen.ListNodeCapacityRequest) (*gen.ListNodeCapacityResponse, error) {

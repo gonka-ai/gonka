@@ -287,6 +287,17 @@ func New(
 		panic(err)
 	}
 
+	// Needs authz Keeper.SetGrantHooks, which is not in
+	// github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability. Until that
+	// tag is the dependency, WarmKeyLogDecorator records marker MsgGrant and
+	// MsgRevoke. Uncomment this and remove that post handler in the same
+	// change: both writers would record one transaction grant twice.
+	//
+	// The authz keeper is a value, and the message server holds another copy.
+	// SetGrantHooks writes a shared slot, so this reaches every copy. It has
+	// to be in place before InitChain and the upgrade PreBlock.
+	// app.AuthzKeeper.SetGrantHooks(app.InferenceKeeper.WarmKeyAuthzHooks())
+
 	app.CollateralKeeper.SetRequiredCollateralProvider(app.InferenceKeeper)
 	app.CollateralKeeper.SetMaintenanceChecker(&app.InferenceKeeper)
 

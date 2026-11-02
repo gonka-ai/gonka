@@ -1,0 +1,10 @@
+schema_version: v1
+profile: realistic
+
+# Deterministic first version of a normal serving profile. The harness can
+# later add seeded jitter without changing scenario names.
+ttft: 250ms
+token_interval: 20ms
+workers: 100
+queue: 500
+failures: []

@@ -14,7 +14,7 @@ import (
 )
 
 func TestHandleRequestAccountingReturnsJoinedInferenceCosts(t *testing.T) {
-	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	store, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	perf := NewPerfTracker(store)
@@ -117,7 +117,7 @@ func TestHandleRequestAccountingReturnsJoinedInferenceCosts(t *testing.T) {
 }
 
 func TestHandleRequestAccountingResolvesCachedRequestAliasCosts(t *testing.T) {
-	store, err := NewPerfStore(filepath.Join(t.TempDir(), "perf.db"))
+	store, err := newSQLitePerfStore(filepath.Join(t.TempDir(), "perf.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	perf := NewPerfTracker(store)

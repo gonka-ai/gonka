@@ -11,24 +11,34 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const (
-	pgConnectTimeout = 2 * time.Second
-)
+const defaultPGConnectTimeout = 2 * time.Second
 
 // HybridStorage uses PostgreSQL as primary storage with file-based fallback.
 // Store: tries PG first (with lazy reconnection), falls back to file on error.
 // Retrieve: tries PG first (no reconnection delay), on error OR not found also checks file.
 // PruneEpoch: prunes both (best effort, no reconnection delay).
 type HybridStorage struct {
-	pg            *PostgresStorage
-	file          *FileStorage
-	mu            sync.Mutex
-	lastRetry     time.Time
-	retryInterval time.Duration
+	pg             *PostgresStorage
+	file           *FileStorage
+	mu             sync.Mutex
+	lastRetry      time.Time
+	retryInterval  time.Duration
+	connectTimeout time.Duration
 }
 
-func NewHybridStorage(pg *PostgresStorage, file *FileStorage, retryInterval time.Duration) *HybridStorage {
-	return &HybridStorage{pg: pg, file: file, retryInterval: retryInterval}
+func NewHybridStorage(pg *PostgresStorage, file *FileStorage, retryInterval, connectTimeout time.Duration) *HybridStorage {
+	if retryInterval <= 0 {
+		retryInterval = 240 * time.Second
+	}
+	if connectTimeout <= 0 {
+		connectTimeout = defaultPGConnectTimeout
+	}
+	return &HybridStorage{
+		pg:             pg,
+		file:           file,
+		retryInterval:  retryInterval,
+		connectTimeout: connectTimeout,
+	}
 }
 
 // shouldAttemptConnect checks if reconnection should be attempted.
@@ -66,7 +76,7 @@ func (h *HybridStorage) getOrConnectPg(ctx context.Context) *PostgresStorage {
 		return pg
 	}
 
-	connectCtx, cancel := context.WithTimeout(ctx, pgConnectTimeout)
+	connectCtx, cancel := context.WithTimeout(ctx, h.connectTimeout)
 	defer cancel()
 
 	newPg, err := NewPostgresStorage(connectCtx)

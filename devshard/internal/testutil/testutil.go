@@ -1,6 +1,9 @@
 package testutil
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,7 +18,7 @@ import (
 	"devshard/types"
 )
 
-// TestMaxTokens is the happy-path reservation used by fixtures: it sits at the executor's MinTokensFloor so payloads pass the floor guard (declared max_tokens >= floor).
+// TestMaxTokens is the happy-path reservation used by fixtures.
 const TestMaxTokens = completionapi.MinTokensFloor
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
@@ -26,13 +29,24 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 var TestPrompt = mustTestPrompt(TestMaxTokens)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
 
+// TestResponseHash and TestServedHash are Finish hashes of the length the state machine requires.
+var (
+	TestResponseHash = sha256Of("response")
+	TestServedHash   = sha256Of("served")
+)
+
+func sha256Of(value string) []byte {
+	sum := sha256.Sum256([]byte(value))
+	return sum[:]
+}
+
 func mustTestPrompt(maxTokens uint64) []byte {
 	const total = 100
 	prefix := `{"model":"llama","messages":[{"role":"user","content":"`
 	suffix := fmt.Sprintf(`"}],"max_tokens":%d}`, maxTokens)
 	n := total - len(prefix) - len(suffix)
 	if n < 1 {
-		panic("testutil: TestPrompt cannot stay 100 bytes at this MinTokensFloor")
+		panic("testutil: TestPrompt cannot stay 100 bytes at this TestMaxTokens")
 	}
 	return []byte(prefix + strings.Repeat("x", n) + suffix)
 }
@@ -110,7 +124,7 @@ func SignDiffWithRoot(t *testing.T, signer signing.Signer, escrowID string, nonc
 
 func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []byte {
 	t.Helper()
-	data, err := deterministicMarshal.Marshal(msg)
+	data, err := types.CanonicalSignedBytes(msg)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -154,7 +168,7 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 		Reason:      reason,
 		Accept:      accept,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -172,7 +186,7 @@ func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inf
 		Accept:       accept,
 		ResponseHash: responseHash,
 	}
-	data, err := deterministicMarshal.Marshal(content)
+	data, err := types.CanonicalSignedBytes(content)
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
@@ -232,4 +246,22 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
+}
+
+// StartTxVersioned is StartTx with protocol_version set (gateway start proof).
+func StartTxVersioned(inferenceID uint64, version string) *types.DevshardTx {
+	tx := StartTx(inferenceID)
+	tx.GetStartInference().ProtocolVersion = version
+	return tx
+}
+
+// MustGzip compresses body the way a sender puts it on the wire.
+func MustGzip(t *testing.T, body []byte) []byte {
+	t.Helper()
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write(body)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return compressed.Bytes()
 }

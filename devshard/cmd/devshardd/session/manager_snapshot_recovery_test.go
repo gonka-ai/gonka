@@ -44,6 +44,37 @@ func (s *recordingStore) ranges() []diffRange {
 	return out
 }
 
+// pageRanges is the GetDiffs windows ReadDiffPages issues for [from, to] when
+// no page reaches the byte budget: one read per DiffPageMaxNonces nonces.
+func pageRanges(from, to uint64) []diffRange {
+	var out []diffRange
+	for n := from; n <= to; {
+		end := to
+		if to-n >= storage.DiffPageMaxNonces {
+			end = n + storage.DiffPageMaxNonces - 1
+		}
+		out = append(out, diffRange{n, end})
+		if end == to {
+			break
+		}
+		n = end + 1
+	}
+	return out
+}
+
+// replayThenObs is a paged replay of [from, to], then the same pages for the
+// validation-obs rebuild, then the same pages for the sealed-inference fold.
+// The background job reads after RecoverSessions returns, so callers compare
+// ranges only after WaitRecoveryRepairs.
+func replayThenObs(from, to uint64) []diffRange {
+	pages := pageRanges(from, to)
+	out := make([]diffRange, 0, len(pages)*3)
+	out = append(out, pages...)
+	out = append(out, pages...)
+	out = append(out, pages...)
+	return out
+}
+
 // obsCallStore counts the destructive obs rebuild entry point, and can hold it
 // open so a test can observe recovery finishing without it.
 type obsCallStore struct {
@@ -144,7 +175,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20,
+		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 10, OutputTokens: 20,
 		ExecutorSlot: 1, EscrowId: "1",
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
@@ -272,11 +303,10 @@ func TestRecoverSessions_RestoresSnapshotAndReplaysOnlyTail(t *testing.T) {
 	require.Equal(t, want.Balance, got.Balance)
 	require.Equal(t, want.Phase, got.Phase)
 
-	require.Equal(t, []diffRange{
-		{1, 7},  // RestoreStateWithFloor rebuilds the height-sync floor from the journal
-		{7, 7},  // root check against the journal at the snapshot nonce
-		{8, 10}, // the tail is the only range applied: obs tops up from it too
-	}, store.ranges())
+	ranges := pageRanges(1, 7)                    // the height-sync fold is one page
+	ranges = append(ranges, diffRange{7, 7})      // root check against the journal at the snapshot nonce
+	ranges = append(ranges, pageRanges(8, 10)...) // the tail is one page
+	require.Equal(t, ranges, store.ranges())
 }
 
 func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
@@ -290,8 +320,10 @@ func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(10), got.LatestNonce)
-	require.Equal(t, []diffRange{{1, 10}, {10, 10}}, store.ranges(),
-		"a current snapshot rebuilds the height-sync floor from the journal, then reads one diff for the root check")
+	ranges := pageRanges(1, 10)
+	ranges = append(ranges, diffRange{10, 10})
+	require.Equal(t, ranges, store.ranges(),
+		"a current snapshot folds the height-sync journal one page at a time, then reads one diff for the root check")
 }
 
 func TestRecoverSessions_NoSnapshotReplaysFromOne(t *testing.T) {
@@ -301,10 +333,11 @@ func TestRecoverSessions_NoSnapshotReplaysFromOne(t *testing.T) {
 	store := &recordingStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(10), got.LatestNonce)
-	require.Equal(t, []diffRange{{1, 10}}, store.ranges())
+	require.Equal(t, replayThenObs(1, 10), store.ranges())
 }
 
 func TestRecoverSessions_SavesSnapshotAfterFullReplay(t *testing.T) {
@@ -334,10 +367,11 @@ func TestRecoverSessions_CorruptSnapshotReplaysFromOne(t *testing.T) {
 	store := &recordingStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(6), got.LatestNonce)
-	require.Equal(t, []diffRange{{1, 6}}, store.ranges(), "undecodable snapshot must fall back to a full replay")
+	require.Equal(t, replayThenObs(1, 6), store.ranges(), "undecodable snapshot must fall back to a full replay")
 }
 
 func TestRecoverSessions_SnapshotAheadOfLatestIgnored(t *testing.T) {
@@ -349,10 +383,11 @@ func TestRecoverSessions_SnapshotAheadOfLatestIgnored(t *testing.T) {
 	store := &recordingStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(5), got.LatestNonce)
-	require.Equal(t, []diffRange{{1, 5}}, store.ranges(), "snapshot nonce past latest_nonce must be ignored")
+	require.Equal(t, replayThenObs(1, 5), store.ranges(), "snapshot nonce past latest_nonce must be ignored")
 }
 
 func TestRecoverSessions_LoadSnapshotErrorReplaysFromOne(t *testing.T) {
@@ -371,8 +406,9 @@ func TestRecoverSessions_EmptySnapshotBlobReplaysFromOne(t *testing.T) {
 	store := &recordingStore{Storage: &snapshotBlobStore{Storage: inner, nonce: 2, data: nil}}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
 	require.Equal(t, uint64(3), recoveredHostState(t, mgr).LatestNonce)
-	require.Equal(t, []diffRange{{1, 3}}, store.ranges())
+	require.Equal(t, replayThenObs(1, 3), store.ranges())
 }
 
 // A snapshot is not self-authenticating and the store can be shared between
@@ -386,8 +422,12 @@ func TestRecoverSessions_SnapshotRootMismatchReplaysFromOne(t *testing.T) {
 	store := &recordingStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
 
-	require.Equal(t, []diffRange{{1, 5}, {7, 7}, {1, 10}}, store.ranges(),
+	ranges := pageRanges(1, 5) // height-sync fold of the restored state, whose latest nonce is 5
+	ranges = append(ranges, diffRange{7, 7})
+	ranges = append(ranges, replayThenObs(1, 10)...)
+	require.Equal(t, ranges, store.ranges(),
 		"a rejected snapshot must fall back to a full replay")
 
 	got := recoveredHostState(t, mgr)
@@ -465,6 +505,80 @@ func TestRecoverSessions_FullReplayRebuildsValidationObsInBackground(t *testing.
 	close(store.release)
 	mgr.WaitRecoveryRepairs()
 	require.Equal(t, 1, store.clearCalls(), "the background rebuild must still run")
+}
+
+// obsRepairFaultStore fails the rebuild's drain, after its clear, or reports
+// the rebuild lock as held by another replica.
+type obsRepairFaultStore struct {
+	storage.Storage
+	failDrain bool
+	lockHeld  bool
+}
+
+func (s *obsRepairFaultStore) DrainInferenceValidationObsBatch(escrowID string, ids []uint64) error {
+	if s.failDrain {
+		return errors.New("drain refused")
+	}
+	return s.Storage.DrainInferenceValidationObsBatch(escrowID, ids)
+}
+
+func (s *obsRepairFaultStore) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	if s.lockHeld {
+		return nil, false, nil
+	}
+	return s.Storage.LockValidationObsRebuild(escrowID)
+}
+
+func requireObsRebuildPending(t *testing.T, store storage.Storage, want bool) {
+	t.Helper()
+	pending, err := store.ValidationObsRebuildPending("1")
+	require.NoError(t, err)
+	require.Equal(t, want, pending)
+}
+
+// The full replay saves its snapshot before the background rebuild runs. A
+// rebuild that dies after its clear is repeated by the next restart, which
+// restores that snapshot and would otherwise skip obs.
+func TestRecoverSessions_FailedObsRepairRepeatsAfterRestart(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+
+	first := recoverTestManager(t, &obsRepairFaultStore{Storage: inner, failDrain: true}, hostSigner, user, group)
+	require.NoError(t, first.RecoverSessions())
+	first.WaitRecoveryRepairs()
+	requireObsRebuildPending(t, inner, true)
+	snapNonce, _, err := inner.LoadSnapshot("1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(10), snapNonce, "the snapshot landed before the rebuild failed")
+
+	restarted := &obsCallStore{Storage: inner}
+	second := recoverTestManager(t, restarted, hostSigner, user, group)
+	require.NoError(t, second.RecoverSessions())
+	second.WaitRecoveryRepairs()
+	require.Equal(t, 1, restarted.clearCalls(), "the snapshot restore repeats the unfinished rebuild")
+	requireObsRebuildPending(t, inner, false)
+
+	settled := &obsCallStore{Storage: inner}
+	third := recoverTestManager(t, settled, hostSigner, user, group)
+	require.NoError(t, third.RecoverSessions())
+	third.WaitRecoveryRepairs()
+	require.Zero(t, settled.clearCalls(), "a finished rebuild is not repeated")
+}
+
+// A replica that finds the rebuild lock held leaves the rows and the mark to
+// the holder instead of rebuilding on top of it.
+func TestRecoverSessions_ObsRepairSkipsWhileAnotherReplicaHoldsTheLock(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveSnapshotThrough(t, inner, 10)
+	require.NoError(t, inner.SetValidationObsRebuildPending("1", true))
+
+	busy := &obsCallStore{Storage: &obsRepairFaultStore{Storage: inner, lockHeld: true}}
+	mgr := recoverTestManager(t, busy, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
+	require.Zero(t, busy.clearCalls())
+	requireObsRebuildPending(t, inner, true)
 }
 
 func TestRecoverSessions_SnapshotPathLeavesSealedInferenceRows(t *testing.T) {

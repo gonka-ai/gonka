@@ -67,10 +67,13 @@ func penalizePerInferenceScaled32(rateBasisPoints, validatorSlotCount, totalSlot
 // Uses integer math only (no float64) to avoid architecture-dependent state root splits.
 //
 // Float reference (not used at runtime):
-//   rate = rateBasisPoints / 10000
-//   probability = rate * validatorSlotCount / (totalSlots - executorSlotCount)
+//
+//	rate = rateBasisPoints / 10000
+//	probability = rate * validatorSlotCount / (totalSlots - executorSlotCount)
+//
 // Combined (single division):
-//   probability = (rateBasisPoints * validatorSlotCount) / ((totalSlots - executorSlotCount) * 10000)
+//
+//	probability = (rateBasisPoints * validatorSlotCount) / ((totalSlots - executorSlotCount) * 10000)
 //
 // Conceptually: accept iff deterministicHash(seed, id) / 2^64 < probability (uniform draw in [0,1)).
 // Implemented with 32-bit precision: (hash >> 32) < floor(probability * 2^32), using uint64ProbabilityScale32.
@@ -83,4 +86,30 @@ func ShouldValidate(seed int64, inferenceID uint64, validatorSlotCount, executor
 	threshold := uint64ProbabilityScale32(numer, denom)
 	hashInt := deterministicHash(seed, inferenceID)
 	return (hashInt >> 32) < threshold
+}
+
+// OwedValidation reports whether a host still owes a validation for rec.
+// Finished inferences are sampled with ShouldValidate. Challenged inferences
+// are mandatory so VoteThreshold stays reachable. Work this host executed, or
+// already participated in, is not owed.
+//
+// mySlots is the host's slot set. The predicate is pure: same inputs, same
+// answer, so the owed set can be maintained at each record write.
+func OwedValidation(seed int64, inferenceID uint64, rec *types.InferenceRecord, mySlots map[uint32]bool, mySlotCount, executorSlotCount, totalSlots, rateBasisPoints uint32) bool {
+	if rec == nil || mySlots[rec.ExecutorSlot] {
+		return false
+	}
+	for slot := range mySlots {
+		if rec.ValidatedBy.IsSet(slot) {
+			return false
+		}
+	}
+	switch rec.Status {
+	case types.StatusChallenged:
+		return true
+	case types.StatusFinished:
+		return ShouldValidate(seed, inferenceID, mySlotCount, executorSlotCount, totalSlots, rateBasisPoints)
+	default:
+		return false
+	}
 }

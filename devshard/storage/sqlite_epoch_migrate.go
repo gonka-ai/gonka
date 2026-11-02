@@ -129,6 +129,11 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
 	// The SQLite lease store
 	// is now a no-op (single-instance; see storage/leases.go),
 	// so we skip creating the validation_leases table
+	{
+		ID:         8,
+		Name:       "sessions_obs_rebuild_pending",
+		Statements: []string{`ALTER TABLE sessions ADD COLUMN obs_rebuild_pending INTEGER NOT NULL DEFAULT 0`},
+	},
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

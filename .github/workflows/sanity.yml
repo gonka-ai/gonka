@@ -27,10 +27,12 @@ jobs:
     permissions:
       contents: read
       checks: write
-      packages: write
+      packages: read
 
     uses: ./.github/workflows/test-workflow.yml
-    secrets: inherit
+    secrets:
+      GCP_SERVICE_ACCOUNT_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
     
     with:
       test_name: "Sanity Tests"

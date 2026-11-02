@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.4
-
 FROM golang:1.25.9-alpine3.23 AS devshardctl-builder
 
 ARG DEVSHARD_VERSION=dev
@@ -12,9 +10,10 @@ COPY common/ /app/common
 WORKDIR /app/devshard
 COPY devshard/go.mod devshard/go.sum ./
 
+ENV GOPROXY=https://proxy.golang.org,direct
 RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
-    go mod download
+    sh -c 'n=0; until go mod download; do n=$((n+1)); [ "$n" -ge 8 ] && exit 1; echo "go mod download retry $n"; sleep $((n*8)); done'
 
 COPY devshard/. .
 

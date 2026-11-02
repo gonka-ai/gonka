@@ -10,6 +10,8 @@ import (
 	devshardpkg "devshard"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
@@ -17,6 +19,11 @@ const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
 // warmKeyQueryTimeout bounds a single grantee lookup. WarmKeyResolver has no
 // context parameter, so the deadline has to be applied here.
 const warmKeyQueryTimeout = 10 * time.Second
+
+// hostInfoQueryTimeout bounds a single Participant lookup. GetHostInfo has no
+// context parameter, so a stalled chain endpoint would otherwise hold the
+// caller forever.
+const hostInfoQueryTimeout = 10 * time.Second
 
 type warmCacheKey struct {
 	host string
@@ -66,7 +73,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, ClassifyQueryError(fmt.Errorf("DevshardEscrow %s: %w", escrowID, err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, ErrEscrowNotFound
@@ -79,10 +86,15 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	if b == nil || b.client == nil {
 		return nil, fmt.Errorf("grpc bridge: chain client is nil")
 	}
-	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
+	ctx, cancel := context.WithTimeout(context.Background(), hostInfoQueryTimeout)
+	defer cancel()
+	resp, err := b.client.InferenceQueryClient().Participant(ctx,
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
+	if status.Code(err) == codes.NotFound {
+		return nil, fmt.Errorf("Participant %s: %w", address, ErrParticipantNotFound)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, ClassifyQueryError(fmt.Errorf("Participant %s: %w", address, err))
 	}
 	if resp == nil || resp.Participant.Address == "" {
 		return nil, ErrParticipantNotFound

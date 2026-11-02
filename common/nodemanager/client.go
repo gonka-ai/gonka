@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"common/nodemanager/gen"
+	"common/observability"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -33,8 +34,14 @@ type Client struct {
 
 // NewClient dials node-manager at addr and returns a Client.
 // The connection uses insecure credentials — TLS is terminated at the network layer.
+// Trace interceptors carry traceparent + request id so node selection lands on
+// the caller's trace (T5).
 func NewClient(addr string) (*Client, error) {
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(observability.UnaryClientTraceInterceptor()),
+		grpc.WithStreamInterceptor(observability.StreamClientTraceInterceptor()),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("nodemanager: dial %s: %w", addr, err)
 	}
