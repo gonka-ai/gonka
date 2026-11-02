@@ -16,6 +16,7 @@ import (
 
 	"common/probe"
 
+	"devshard/host"
 	"devshard/transport"
 )
 
@@ -331,7 +332,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		errorMissVerifyRejects: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_error_miss_verify_rejects_total",
-				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body, other) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
 			},
 			[]string{"cause", "completeness"},
 		),
@@ -750,9 +751,22 @@ func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string
 		return
 	}
 	m.errorMissVerifyRejects.WithLabelValues(
-		metricLabel(cause, "unknown"),
+		errorMissVerifyRejectCause(cause),
 		metricLabel(completeness, "unknown"),
 	).Inc()
+}
+
+// errorMissVerifyRejectCause keeps the peer-supplied reject_cause to the
+// verifier's named causes; anything else is "other".
+func errorMissVerifyRejectCause(cause string) string {
+	cause = strings.TrimSpace(cause)
+	if cause == "" {
+		return "unknown"
+	}
+	if _, ok := metricsRejectCauses[cause]; ok {
+		return cause
+	}
+	return metricsOtherLabel
 }
 
 func (m *DevshardMetrics) RecordServedBinding(verdict string) {
@@ -1464,6 +1478,8 @@ var (
 	)
 	metricsAdminActions = setOf("activate", "deactivate", "settle", "participants")
 	metricsMethods      = setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+	metricsRejectCauses = setOf(host.ErrorTimeoutRejectNoFinishTx, host.ErrorTimeoutRejectNoPayload,
+		host.ErrorTimeoutRejectSig, host.ErrorTimeoutRejectHashMismatch, host.ErrorTimeoutRejectNotErrorBody)
 )
 
 const metricsOtherLabel = "other"
