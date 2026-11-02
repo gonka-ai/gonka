@@ -3,7 +3,7 @@ new file mode 100644
 index 000000000..5a2d131fe
 --- /dev/null
 +++ b/testermint/src/test/kotlin/UpgradeRehearsalPrepTests.kt
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,125 @@
 +import com.productscience.*
 +import org.assertj.core.api.Assertions.assertThat
 +import org.junit.jupiter.api.Tag
@@ -49,7 +49,11 @@ index 000000000..5a2d131fe
 +            modelId = defaultModel,
 +        )
 +
-+        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
++        val handle = genesis.startDevshardProxy(
++            escrowId = escrowId,
++            keyName = user.keyName,
++            routePrefix = devshardVersionedRoutePrefix(),
++        )
 +        var devshardRequests = 0
 +        var settlementVersion = ""
 +        try {
@@ -70,7 +74,7 @@ index 000000000..5a2d131fe
 +                escrowAmount,
 +                requireCompletedValidations = false,
 +            )
-+            settlementVersion = settlement.parsed.version
++            settlementVersion = settlement.parsed.stateRootAndProtocolVersion
 +        } finally {
 +            genesis.stopDevshardProxy(escrowId)
 +        }
