@@ -1,4 +1,4 @@
-// Package safemath keeps a counter inside int64 instead of wrapping it. See rules.md, "10. Counters saturate".
+// Package safemath keeps a counter inside int64 or uint64 instead of wrapping it. See rules.md, "10. Counters saturate".
 package safemath
 
 import "math"
