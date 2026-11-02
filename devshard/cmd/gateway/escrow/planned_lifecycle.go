@@ -43,7 +43,7 @@ func (m *Manager) drainPlannedMarks(ctx context.Context, devshards []store.Devsh
 			m.planner.ignoreMark(record.Model, string(reason), m.now())
 			continue
 		}
-		if err := m.retire(retiringAtNonceCap(ctx), record); err != nil && !deferredRetire(err) {
+		if err := m.retireFor(ctx, record, retireForNonceCap); err != nil && !deferredRetire(err) {
 			errs = append(errs, fmt.Errorf("retiring nonce-capped escrow %s: %w", record.EscrowID, err))
 		}
 	}

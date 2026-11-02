@@ -79,18 +79,6 @@ type nonceCapRetirer interface {
 	RetireAtNonceCap(escrowID string) error
 }
 
-// nonceCapRetirement marks the ctx of a retirement for the escrow's nonce cap, the one reason routing exempts.
-type nonceCapRetirement struct{}
-
-func retiringAtNonceCap(ctx context.Context) context.Context {
-	return context.WithValue(ctx, nonceCapRetirement{}, true)
-}
-
-func atNonceCap(ctx context.Context) bool {
-	capped, _ := ctx.Value(nonceCapRetirement{}).(bool)
-	return capped
-}
-
 // ExhaustionProbe names the reason routing would retire an escrow on, empty while it may still be picked. See README.md, "Depletion marks".
 type ExhaustionProbe interface {
 	Exhaustion(escrowID string) scheduler.ExhaustionReason
