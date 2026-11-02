@@ -139,4 +139,12 @@ func (app *App) registerMigrations() {
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 14, func(ctx sdk.Context) error {
 		return app.InferenceKeeper.MigrateFeeParamsToTree(ctx)
 	})
+
+	// Consensus version 16: the warm-key log. Seed it from the authz grants
+	// that exist at the upgrade so every warm key in use has an entry to
+	// point at without a new grant transaction.
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 15, func(ctx sdk.Context) error {
+		_, err := app.InferenceKeeper.SeedWarmKeyLog(ctx, app.AuthzKeeper.IterateGrants)
+		return err
+	})
 }

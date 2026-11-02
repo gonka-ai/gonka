@@ -106,6 +106,8 @@ const (
 	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
 	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 	Query_DevshardApprovedVersions_FullMethodName                  = "/inference.inference.Query/DevshardApprovedVersions"
+	Query_WarmKeyEntry_FullMethodName                              = "/inference.inference.Query/WarmKeyEntry"
+	Query_WarmKeyLog_FullMethodName                                = "/inference.inference.Query/WarmKeyLog"
 	Query_OpenPoCChallenges_FullMethodName                         = "/inference.inference.Query/OpenPoCChallenges"
 )
 
@@ -260,6 +262,11 @@ type QueryClient interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(ctx context.Context, in *QueryDevshardApprovedVersionsRequest, opts ...grpc.CallOption) (*QueryDevshardApprovedVersionsResponse, error)
+	// Queries one entry of a participant's warm-key log by id. The answer never
+	// changes once the entry exists.
+	WarmKeyEntry(ctx context.Context, in *QueryWarmKeyEntryRequest, opts ...grpc.CallOption) (*QueryWarmKeyEntryResponse, error)
+	// Queries a participant's whole warm-key log, live and ended entries, in id order.
+	WarmKeyLog(ctx context.Context, in *QueryWarmKeyLogRequest, opts ...grpc.CallOption) (*QueryWarmKeyLogResponse, error)
 	OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error)
 }
 
@@ -1054,6 +1061,24 @@ func (c *queryClient) DevshardApprovedVersions(ctx context.Context, in *QueryDev
 	return out, nil
 }
 
+func (c *queryClient) WarmKeyEntry(ctx context.Context, in *QueryWarmKeyEntryRequest, opts ...grpc.CallOption) (*QueryWarmKeyEntryResponse, error) {
+	out := new(QueryWarmKeyEntryResponse)
+	err := c.cc.Invoke(ctx, Query_WarmKeyEntry_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) WarmKeyLog(ctx context.Context, in *QueryWarmKeyLogRequest, opts ...grpc.CallOption) (*QueryWarmKeyLogResponse, error) {
+	out := new(QueryWarmKeyLogResponse)
+	err := c.cc.Invoke(ctx, Query_WarmKeyLog_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) OpenPoCChallenges(ctx context.Context, in *QueryOpenPoCChallengesRequest, opts ...grpc.CallOption) (*QueryOpenPoCChallengesResponse, error) {
 	out := new(QueryOpenPoCChallengesResponse)
 	err := c.cc.Invoke(ctx, Query_OpenPoCChallenges_FullMethodName, in, out, opts...)
@@ -1214,6 +1239,11 @@ type QueryServer interface {
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error)
+	// Queries one entry of a participant's warm-key log by id. The answer never
+	// changes once the entry exists.
+	WarmKeyEntry(context.Context, *QueryWarmKeyEntryRequest) (*QueryWarmKeyEntryResponse, error)
+	// Queries a participant's whole warm-key log, live and ended entries, in id order.
+	WarmKeyLog(context.Context, *QueryWarmKeyLogRequest) (*QueryWarmKeyLogResponse, error)
 	OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
@@ -1482,6 +1512,12 @@ func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListC
 }
 func (UnimplementedQueryServer) DevshardApprovedVersions(context.Context, *QueryDevshardApprovedVersionsRequest) (*QueryDevshardApprovedVersionsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardApprovedVersions not implemented")
+}
+func (UnimplementedQueryServer) WarmKeyEntry(context.Context, *QueryWarmKeyEntryRequest) (*QueryWarmKeyEntryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WarmKeyEntry not implemented")
+}
+func (UnimplementedQueryServer) WarmKeyLog(context.Context, *QueryWarmKeyLogRequest) (*QueryWarmKeyLogResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method WarmKeyLog not implemented")
 }
 func (UnimplementedQueryServer) OpenPoCChallenges(context.Context, *QueryOpenPoCChallengesRequest) (*QueryOpenPoCChallengesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method OpenPoCChallenges not implemented")
@@ -3065,6 +3101,42 @@ func _Query_DevshardApprovedVersions_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_WarmKeyEntry_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryWarmKeyEntryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).WarmKeyEntry(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_WarmKeyEntry_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).WarmKeyEntry(ctx, req.(*QueryWarmKeyEntryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_WarmKeyLog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryWarmKeyLogRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).WarmKeyLog(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_WarmKeyLog_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).WarmKeyLog(ctx, req.(*QueryWarmKeyLogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_OpenPoCChallenges_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryOpenPoCChallengesRequest)
 	if err := dec(in); err != nil {
@@ -3437,6 +3509,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DevshardApprovedVersions",
 			Handler:    _Query_DevshardApprovedVersions_Handler,
+		},
+		{
+			MethodName: "WarmKeyEntry",
+			Handler:    _Query_WarmKeyEntry_Handler,
+		},
+		{
+			MethodName: "WarmKeyLog",
+			Handler:    _Query_WarmKeyLog_Handler,
 		},
 		{
 			MethodName: "OpenPoCChallenges",
