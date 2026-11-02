@@ -91,6 +91,59 @@ func TestHostEventStore_SQLiteWriterLockDanglingSymlink(t *testing.T) {
 	}
 }
 
+func TestHostEventStore_SQLiteWriterLockSymlinkParentTraversal(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		absolute bool
+		existing bool
+		direct   bool
+	}{
+		{name: "relative_existing", existing: true},
+		{name: "relative_missing"},
+		{name: "absolute_existing", absolute: true, existing: true},
+		{name: "absolute_missing", absolute: true},
+		{name: "direct_existing", direct: true, existing: true},
+		{name: "direct_missing", direct: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(dir, "real", "sub"), 0o700))
+			require.NoError(t, os.Symlink("real/sub", filepath.Join(dir, "link")))
+			target := filepath.Join(dir, "real", "events.sqlite")
+			if tc.existing {
+				seed, err := openSQLiteStore(target, "same-writer")
+				require.NoError(t, err)
+				require.NoError(t, seed.Reset(t.Context(), 77))
+				require.NoError(t, seed.Close())
+			}
+			linkTarget := "link/../events.sqlite"
+			if tc.absolute || tc.direct {
+				linkTarget = dir + "/" + linkTarget
+			}
+			path := linkTarget
+			if !tc.direct {
+				path = filepath.Join(dir, hostEventDBFile)
+				require.NoError(t, os.Symlink(linkTarget, path))
+			}
+			first, err := openSQLiteStore(path, "same-writer")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = first.Close() })
+			require.FileExists(t, target)
+			require.NoFileExists(t, filepath.Join(dir, "events.sqlite"), "do not create a different journal")
+			if tc.existing {
+				head, err := first.Head(t.Context())
+				require.NoError(t, err)
+				require.Equal(t, uint64(77), head.Generation, "preserve the existing journal")
+			}
+			second, err := openSQLiteStore(target, "same-writer")
+			if second != nil {
+				_ = second.Close()
+			}
+			require.ErrorIs(t, err, ErrWriterLocked)
+		})
+	}
+}
+
 func TestHostEventStore_SQLiteWriterLockSymlinkLoop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, hostEventDBFile)

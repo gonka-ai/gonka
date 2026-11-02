@@ -136,16 +136,22 @@ func sqliteDSN(path string) string {
 // canonicalSQLitePath resolves links even when their final target does not yet
 // exist, so creating the database cannot change the writer lock's identity.
 func canonicalSQLitePath(path string) (string, error) {
-	path, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	for hops := 0; ; hops++ {
-		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if !filepath.IsAbs(path) {
+		wd, err := os.Getwd()
 		if err != nil {
 			return "", err
 		}
-		path = filepath.Join(dir, filepath.Base(path))
+		path = wd + string(os.PathSeparator) + path
+	}
+	for hops := 0; ; hops++ {
+		// Split preserves link/.. in the parent; Dir and Join would clean it
+		// before the filesystem has resolved the link's actual destination.
+		dir, name := filepath.Split(path)
+		dir, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(dir, name)
 		info, err := os.Lstat(path)
 		if os.IsNotExist(err) {
 			return path, nil
@@ -166,7 +172,7 @@ func canonicalSQLitePath(path string) (string, error) {
 		if filepath.IsAbs(target) {
 			path = target
 		} else {
-			path = filepath.Join(dir, target)
+			path = dir + string(os.PathSeparator) + target
 		}
 	}
 }
