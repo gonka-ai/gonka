@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayproto"
 	"devshard/transport"
 )
 
@@ -895,7 +896,7 @@ func TestAnAttemptOutlivingItsRaceReleasesItsHeldFinish(t *testing.T) {
 	close(reported)
 	released := false
 	spec := AttemptSpec{Events: make(chan AttemptEvent), Reported: reported}
-	outcome := &AttemptOutcome{MissProof: &MissProof{releaseFinish: func() { released = true }}}
+	outcome := &AttemptOutcome{MissProof: &MissProof{finish: gatewayproto.NewFinishHold(func() { released = true })}}
 
 	done := make(chan struct{})
 	go func() {

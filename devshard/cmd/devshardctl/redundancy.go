@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"devshard/accounting"
+	"devshard/gatewayproto"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/observability"
@@ -26,8 +27,6 @@ import (
 	"devshard/types"
 	"devshard/user"
 	"go.opentelemetry.io/otel/trace"
-
-	"common/completionapi"
 )
 
 // errEmptyStream marks an attempt that completed successfully at the transport
@@ -978,19 +977,9 @@ type inflight struct {
 	// capability faults that must not emit a miss.
 	errorTerminal bool
 
-	// errorStreamLines is the attempt's verbatim data: lines from reassembled
-	// parseable SSE (post id-injection, pre rewriteStreamingPayload, excluding
-	// protocol envelopes). Accumulated from the first write so a later error
-	// still reconstructs the full Finish payload (content-then-error). Dropped
-	// when the stream ends without an error, and capped by maxErrorStreamBytes.
-	errorStreamLines []string
-	// errorStreamComplete is true when a data: [DONE] line was retained.
-	// Cancelled speculative attempts keep a truncated prefix and stay false.
-	errorStreamComplete bool
-	// errorStreamTruncated is true when retention hit maxErrorStreamBytes.
-	// Distinguishable from cancelled (prefix) and drift (full read, hash miss).
-	errorStreamTruncated bool
-	errorStreamBytes     int
+	// errorStream retains verbatim host events, completeness and byte accounting.
+	// The adapter resets retention when the stream ends without an error.
+	errorStream *gatewayproto.EvidenceCollector
 
 	// emptyResponseBodySample preserves the pre-content bytes for file-based
 	// capture after pendingBuf is discarded to avoid accidental forwarding.
@@ -2007,7 +1996,7 @@ func (rw *raceWriter) abortPendingPrelude(reason string, limit int64, chunk int)
 
 func (rw *raceWriter) retainErrorStreamLines(parseable []byte) {
 	inf := rw.inf
-	if inf == nil || inf.errorStreamTruncated {
+	if inf == nil || inf.errorStream.Truncated() {
 		return
 	}
 	rw.appendErrorStreamLines(ssePayloadDataLines(parseable))
@@ -2023,27 +2012,19 @@ func (rw *raceWriter) clearErrorStreamRetention() {
 
 func (rw *raceWriter) appendErrorStreamLines(lines []string) {
 	inf := rw.inf
-	if inf == nil || inf.errorStreamTruncated {
+	if inf == nil {
 		return
 	}
-	for _, line := range lines {
-		n := len(line) + 1
-		if inf.errorStreamBytes+n > maxErrorStreamBytes {
-			inf.errorStreamTruncated = true
-			return
-		}
-		if inf.participantClassifyBytes != nil {
-			if reason := inf.reserveClassifyBytes(int64(n)); reason != "" {
-				inf.errorStreamTruncated = true
-				return
+	if inf.errorStream == nil {
+		inf.errorStream = gatewayproto.NewEvidenceCollector(maxErrorStreamBytes, func(n int) bool {
+			return inf.participantClassifyBytes == nil || inf.reserveClassifyBytes(int64(n)) == ""
+		}, func(n int) {
+			if inf.participantClassifyBytes != nil {
+				inf.adjustClassifyBytes(-int64(n))
 			}
-		}
-		inf.errorStreamLines = append(inf.errorStreamLines, line)
-		inf.errorStreamBytes += n
-		if strings.TrimSpace(strings.TrimPrefix(line, "data: ")) == "[DONE]" {
-			inf.errorStreamComplete = true
-		}
+		})
 	}
+	inf.errorStream.AppendLines(lines)
 }
 
 const (
@@ -2101,49 +2082,23 @@ func (inf *inflight) releasePendingBuf() {
 }
 
 func (inf *inflight) releaseErrorStreamRetention() {
-	if inf == nil {
-		return
+	if inf != nil {
+		inf.errorStream.Reset()
 	}
-	if inf.participantClassifyBytes != nil && inf.errorStreamBytes > 0 {
-		inf.adjustClassifyBytes(-int64(inf.errorStreamBytes))
-	}
-	inf.errorStreamLines = nil
-	inf.errorStreamBytes = 0
-	inf.errorStreamComplete = false
-	inf.errorStreamTruncated = false
 }
 
-func ssePayloadDataLines(p []byte) []string {
-	if len(p) == 0 {
-		return nil
-	}
-	var lines []string
-	for raw := range bytes.SplitSeq(p, []byte("\n")) {
-		line := strings.TrimRight(string(raw), "\r")
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		if isDevshardProtocolDataLine(line) {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
+func ssePayloadDataLines(p []byte) []string { return gatewayproto.EventDataLines(p) }
 
-func isDevshardProtocolDataLine(line string) bool {
-	data := strings.TrimPrefix(line, "data: ")
-	return strings.Contains(data, `"devshard_receipt"`) || strings.Contains(data, `"devshard_meta"`)
-}
+func isDevshardProtocolDataLine(line string) bool { return gatewayproto.IsProtocolDataLine(line) }
 
 func errorMissRejectLabel(inf *inflight) string {
 	if inf == nil {
 		return "drift"
 	}
-	if inf.errorStreamTruncated {
+	if inf.errorStream.Truncated() {
 		return "truncated"
 	}
-	if inf.errorStreamComplete {
+	if inf.errorStream.Complete() {
 		return "drift"
 	}
 	return "cancelled"
@@ -2159,30 +2114,27 @@ func errorMissArtifacts(inf *inflight, session *user.Session) (finishTx, respons
 	if len(finishTx) == 0 && session != nil {
 		finishTx = session.FinishTxFor(inf.nonce)
 	}
-	if len(inf.errorStreamLines) > 0 {
-		responsePayload, _ = json.Marshal(completionapi.SerializedStreamedResponse{Events: inf.errorStreamLines})
-	}
+	responsePayload = inf.errorStream.Payload()
 	return finishTx, responsePayload
 }
 
 func (e *Redundancy) inferenceTimeoutPayload(params user.InferenceParams) *host.InferencePayload {
-	return &host.InferencePayload{
-		Prompt:      params.Prompt,
-		Model:       params.Model,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
-	}
+	return gatewayproto.TimeoutPayload(params)
 }
 
 func (e *Redundancy) runHandleTimeout(ctx context.Context, inf *inflight, params user.InferenceParams, errorMiss bool) (user.TimeoutResult, error) {
+	var claim *gatewayproto.MissClaim
 	if errorMiss {
 		finishTx, responsePayload := errorMissArtifacts(inf, e.session)
 		if len(finishTx) > 0 {
-			return e.session.HandleErrorMiss(ctx, inf.nonce, finishTx, responsePayload)
+			claim = &gatewayproto.MissClaim{FinishTx: finishTx, ResponsePayload: responsePayload}
 		}
 	}
-	return e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, e.inferenceTimeoutPayload(params))
+	var payload *host.InferencePayload
+	if claim == nil {
+		payload = e.inferenceTimeoutPayload(params)
+	}
+	return gatewayproto.HandleProtocolTimeout(ctx, e.session, inf.nonce, inf.sendTime, payload, claim)
 }
 
 // runVoteTimeout votes an already-due protocol timeout without sleeping. When
@@ -4651,10 +4603,7 @@ func (e *Redundancy) escrowStateBlockReason(participantKey string) (string, bool
 }
 
 func isStateRootDivergenceError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "post_state_root does not match computed state root")
+	return gatewayproto.IsLegacyStateRootDivergence(err)
 }
 
 func isRetriableCapabilityErrorMessage(msg string) bool {
@@ -5288,10 +5237,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 }
 
 func probeParams(params user.InferenceParams) user.InferenceParams {
-	params.Prompt = pocProbePromptBody
-	params.InputLength = uint64(len(pocProbePromptBody))
-	params.MaxTokens = pocProbeMaxTokens
-	return params
+	return gatewayproto.ProbeParams(params, pocProbePromptBody, pocProbeMaxTokens)
 }
 
 // ghostProbeParams returns the params for a synthetic probe that is not

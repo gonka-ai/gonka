@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/gatewayproto"
 )
 
 type heldFinishResponse struct {
@@ -82,7 +84,7 @@ func TestSettlingARaceReleasesTheFinishItsMissWasClaimedAgainstOnlyAfterTheClaim
 	registration := races.admit()
 	attempt := unsettledAttempt()
 	attempt.Terminal = TerminalErrorStream
-	attempt.MissProof = &MissProof{ResponsePayload: []byte(`{}`), releaseFinish: func() { released.Add(1) }}
+	attempt.MissProof = &MissProof{ResponsePayload: []byte(`{}`), finish: gatewayproto.NewFinishHold(func() { released.Add(1) })}
 
 	races.settle(race(attempt), nil, registration)
 	harness.fire(0)

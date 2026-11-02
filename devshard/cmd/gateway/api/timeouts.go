@@ -6,6 +6,7 @@ import (
 
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
+	"devshard/gatewayproto"
 	"devshard/host"
 	"devshard/types"
 	"devshard/user"
@@ -50,11 +51,5 @@ func (v escrowVotes) VoteDeadline(nonce uint64, startedAt time.Time) time.Time {
 
 // timeoutPayload rebuilds what the host was asked for, reading every field but the prompt back from the record.
 func timeoutPayload(record types.InferenceRecord, prompt []byte) *host.InferencePayload {
-	return &host.InferencePayload{
-		Prompt:      prompt,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   record.StartedAt,
-	}
+	return gatewayproto.TimeoutPayloadForRecord(record, prompt)
 }

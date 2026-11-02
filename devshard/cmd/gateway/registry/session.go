@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayproto"
 	"devshard/heightsync"
 	"devshard/state"
 	"devshard/types"
@@ -125,36 +126,9 @@ func (h sessionHandle) SweepBeforeFinalize(ctx context.Context, budget int) (use
 	return h.Session.SweepExecutionTimeouts(ctx, noRaceGrace, budget), nil
 }
 
-type finalizeLock chan struct{}
+type finalizeLock = gatewayproto.Gate
 
-func newFinalizeLock() finalizeLock { return make(finalizeLock, 1) }
-
-func (l finalizeLock) Lock() { l <- struct{}{} }
-
-func (l finalizeLock) Unlock() {
-	select {
-	case <-l:
-	default:
-	}
-}
-
-func (l finalizeLock) TryLock() bool {
-	select {
-	case l <- struct{}{}:
-		return true
-	default:
-		return false
-	}
-}
-
-func (l finalizeLock) LockContext(ctx context.Context) error {
-	select {
-	case l <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
+func newFinalizeLock() finalizeLock { return gatewayproto.NewGate() }
 
 func (h sessionHandle) Phase() types.SessionPhase        { return h.machine.Phase() }
 func (h sessionHandle) SnapshotState() types.EscrowState { return h.machine.SnapshotState() }
@@ -302,11 +276,5 @@ func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceI
 
 // StartedAt is seconds, not milliseconds, or the refusal deadline goes negative. See host/timeout.go, VerifyRefusedTimeout.
 func (s nonceStream) ghostParams() user.InferenceParams {
-	return user.InferenceParams{
-		Model:       s.model,
-		Prompt:      ghostPrompt,
-		InputLength: uint64(len(ghostPrompt)),
-		MaxTokens:   ghostMaxTokens,
-		StartedAt:   s.now().Unix(),
-	}
+	return gatewayproto.ProbeParams(user.InferenceParams{Model: s.model, StartedAt: s.now().Unix()}, ghostPrompt, ghostMaxTokens)
 }

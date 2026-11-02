@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"devshard/gatewayproto"
 	"devshard/host"
 	"devshard/user"
 )
@@ -49,10 +50,11 @@ func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (
 }
 
 func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (user.TimeoutResult, error) {
+	var claim *gatewayproto.MissClaim
 	if step.Kind == SettleByMissClaim && step.Proof != nil {
 		if finishTx := s.handler.FinishTxFor(step.Nonce); len(finishTx) > 0 {
-			return s.handler.HandleErrorMiss(ctx, step.Nonce, finishTx, step.Proof.ResponsePayload)
+			claim = &gatewayproto.MissClaim{FinishTx: finishTx, ResponsePayload: step.Proof.ResponsePayload}
 		}
 	}
-	return s.handler.HandleTimeout(ctx, step.Nonce, step.StartedAt, s.payload)
+	return gatewayproto.HandleProtocolTimeout(ctx, s.handler, step.Nonce, step.StartedAt, s.payload, claim)
 }

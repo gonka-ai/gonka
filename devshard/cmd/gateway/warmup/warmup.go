@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
+	"devshard/gatewayproto"
 	"devshard/host"
 	"devshard/state"
 	"devshard/user"
@@ -169,13 +170,7 @@ func catchUpAllHosts(ctx context.Context, session registry.EscrowSession) error 
 }
 
 func probeParams(model string, startedAt int64) user.InferenceParams {
-	return user.InferenceParams{
-		Model:       model,
-		Prompt:      probePrompt,
-		InputLength: uint64(len(probePrompt)),
-		MaxTokens:   probeMaxTokens,
-		StartedAt:   startedAt,
-	}
+	return gatewayproto.ProbeParams(user.InferenceParams{Model: model, StartedAt: startedAt}, probePrompt, probeMaxTokens)
 }
 
 func dispatchProbe(ctx context.Context, session registry.EscrowSession, params user.InferenceParams, nonceCommitted func()) (uint64, bool, error) {
@@ -194,14 +189,14 @@ func dispatchProbe(ctx context.Context, session registry.EscrowSession, params u
 	// Taken as it arrives: a host that receipts and then hangs never returns the reply to read it from.
 	var acknowledged atomic.Bool
 	response, sendErr := registry.SendRecovering(sendCtx, session.UserSession(), prepared, nil, func() { acknowledged.Store(true) })
-	if sendErr != nil {
-		return nonce, acknowledged.Load(), sendErr
-	}
-	return nonce, acknowledged.Load() || executorAcknowledged(response), session.UserSession().ProcessResponse(hostIdx, response, nonce)
+	acknowledgedReply, applyErr := gatewayproto.ApplyProbeResponse(response, sendErr, acknowledged.Load(), func() error {
+		return session.UserSession().ProcessResponse(hostIdx, response, nonce)
+	})
+	return nonce, acknowledgedReply, applyErr
 }
 
 func executorAcknowledged(response *host.HostResponse) bool {
-	return response != nil && len(response.Receipt) > 0
+	return gatewayproto.ExecutorAcknowledged(response)
 }
 
 // Not left to the ledger's own sweep, which has not necessarily run on a just-published escrow.

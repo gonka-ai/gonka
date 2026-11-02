@@ -10,9 +10,8 @@ import (
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayproto"
 	"devshard/host"
-	"devshard/state"
-	"devshard/types"
 	"devshard/user"
 )
 
@@ -113,7 +112,7 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 
 // divergedState reads a rejected post state root from either side of the wire: the host's diff or the local hash.
 func divergedState(err error) bool {
-	return state.IsPostStateRootMismatchError(err) || errors.Is(err, types.ErrStateHashMismatch)
+	return gatewayproto.IsStateRootDivergence(err)
 }
 
 type hostReply struct {

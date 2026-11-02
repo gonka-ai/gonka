@@ -7,6 +7,7 @@ import (
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
+	"devshard/gatewayproto"
 	"devshard/signing"
 )
 
@@ -19,36 +20,7 @@ func encodeMsgCreateDevshardEscrow(creator string, amount uint64, modelID string
 }
 
 func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byte, error) {
-	hostStats := make([]*inferencetypes.DevshardSettlementHostStats, 0, len(input.HostStats))
-	for _, hostStat := range input.HostStats {
-		hostStats = append(hostStats, &inferencetypes.DevshardSettlementHostStats{
-			SlotId:               hostStat.SlotID,
-			Missed:               hostStat.Missed,
-			Invalid:              hostStat.Invalid,
-			Cost:                 hostStat.Cost,
-			RequiredValidations:  hostStat.RequiredValidations,
-			CompletedValidations: hostStat.CompletedValidations,
-		})
-	}
-	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(input.SlotSigs))
-	for _, slotSig := range input.SlotSigs {
-		signatures = append(signatures, &inferencetypes.DevshardSlotSignature{
-			SlotId:    uint32(slotSig.SlotID),
-			Signature: slotSig.Signature,
-		})
-	}
-	message := &inferencetypes.MsgSettleDevshardEscrow{
-		Settler:                     settler,
-		EscrowId:                    input.EscrowID,
-		StateRoot:                   input.StateRoot,
-		Nonce:                       input.Nonce,
-		RestHash:                    input.RestHash,
-		HostStats:                   hostStats,
-		Signatures:                  signatures,
-		Fees:                        input.Fees,
-		StateRootAndProtocolVersion: input.Version,
-	}
-	return message.Marshal()
+	return gatewayproto.MarshalProtoSettlement(settler, input)
 }
 
 // truncateSignature drops the recovery byte so only r||s (64 bytes) goes into the tx.

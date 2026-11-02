@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/gatewayproto"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
@@ -124,14 +125,13 @@ func (r *Registry) buildSettlement(escrowID string, session EscrowSession) (chai
 	if unverifiable := cmp.Or(settlementUnverifiable(verified, snapshot), shortfall); unverifiable != nil && r.narrator != nil {
 		r.narrator.SettlementUnverifiable(escrowID, nonce, unverifiable)
 	}
-	hostStatsHash, err := state.ComputeHostStatsHash(hostStats)
+	root, err := gatewayproto.SettlementRoot(*payload, hostStats)
 	if err != nil {
 		return chain.SettlementInput{}, fmt.Errorf("hashing host stats for escrow %s: %w", escrowID, err)
 	}
 	return chain.SettlementInput{
-		EscrowID: numericID,
-		StateRoot: state.ComputeStateRootFromRestHash(
-			hostStatsHash, payload.RestHash, payload.Fees, types.PhaseSettlement, payload.StateRootAndProtocolVersion),
+		EscrowID:  numericID,
+		StateRoot: root,
 		Nonce:     payload.Nonce,
 		RestHash:  payload.RestHash,
 		HostStats: settlementHostStats(hostStats),
@@ -142,38 +142,15 @@ func (r *Registry) buildSettlement(escrowID string, session EscrowSession) (chai
 }
 
 func statsPerPresentSlot(perSlot map[uint32]*types.HostStats) map[uint32]*types.HostStats {
-	present := make(map[uint32]*types.HostStats, len(perSlot))
-	for slotID, hostStats := range perSlot {
-		if hostStats == nil {
-			continue
-		}
-		present[slotID] = hostStats
-	}
-	return present
+	return gatewayproto.StatsPerPresentSlot(perSlot)
 }
 
 func settlementHostStats(perSlot map[uint32]*types.HostStats) []chain.SettlementHostStat {
-	stats := make([]chain.SettlementHostStat, 0, len(perSlot))
-	for _, slotID := range sortedKeys(perSlot) {
-		hostStats := perSlot[slotID]
-		stats = append(stats, chain.SettlementHostStat{
-			SlotID:               slotID,
-			Missed:               hostStats.Missed,
-			Invalid:              hostStats.Invalid,
-			Cost:                 hostStats.Cost,
-			RequiredValidations:  hostStats.RequiredValidations,
-			CompletedValidations: hostStats.CompletedValidations,
-		})
-	}
-	return stats
+	return gatewayproto.SortedHostStats(perSlot)
 }
 
 func settlementSlotSigs(perSlot map[uint32][]byte) []chain.SettlementSlotSig {
-	sigs := make([]chain.SettlementSlotSig, 0, len(perSlot))
-	for _, slotID := range sortedKeys(perSlot) {
-		sigs = append(sigs, chain.SettlementSlotSig{SlotID: uint64(slotID), Signature: perSlot[slotID]})
-	}
-	return sigs
+	return gatewayproto.SortedSlotSignatures(perSlot)
 }
 
 // settlementUnverifiable reports what the chain would refuse. See README.md, "Settlement and inspection".

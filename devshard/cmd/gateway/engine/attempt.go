@@ -10,6 +10,7 @@ import (
 
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayproto"
 )
 
 const maxUpstreamBodyLogged = 256
@@ -210,7 +211,7 @@ func holdFinishForClaim(response Response, outcome *AttemptOutcome) {
 		return
 	}
 	if outcome.claimsMiss() {
-		outcome.MissProof.releaseFinish = response.ReleaseFinish
+		outcome.MissProof.finish = gatewayproto.NewFinishHold(response.ReleaseFinish)
 		return
 	}
 	response.ReleaseFinish()

@@ -3,6 +3,8 @@ package engine
 import (
 	"sync/atomic"
 	"testing"
+
+	"devshard/gatewayproto"
 )
 
 const attemptsOutlivingTheirRace = 200
@@ -18,7 +20,7 @@ func TestAnAttemptFinishingIntoAReportedRacesBufferReleasesItsHeldFinish(t *test
 	var released atomic.Int64
 
 	for range attemptsOutlivingTheirRace {
-		outcome := &AttemptOutcome{MissProof: &MissProof{releaseFinish: func() { released.Add(1) }}}
+		outcome := &AttemptOutcome{MissProof: &MissProof{finish: gatewayproto.NewFinishHold(func() { released.Add(1) })}}
 		spec.finish(AttemptEvent{Kind: AttemptDone, Outcome: outcome})
 	}
 
@@ -36,7 +38,7 @@ func TestAFinishTheRaceTookIsNotReleasedByTheAttempt(t *testing.T) {
 	reported := make(chan struct{})
 	spec := AttemptSpec{Events: events, Reported: reported}
 	var released atomic.Int64
-	outcome := &AttemptOutcome{MissProof: &MissProof{releaseFinish: func() { released.Add(1) }}}
+	outcome := &AttemptOutcome{MissProof: &MissProof{finish: gatewayproto.NewFinishHold(func() { released.Add(1) })}}
 
 	taken := make(chan struct{})
 	go func() {
@@ -50,5 +52,21 @@ func TestAFinishTheRaceTookIsNotReleasedByTheAttempt(t *testing.T) {
 
 	if got := released.Load(); got != 0 {
 		t.Fatalf("held Finish released %d times by the attempt, want 0: the race took it", got)
+	}
+}
+
+func TestCopiedMissProofSharesItsFinishOwner(t *testing.T) {
+	var released atomic.Int32
+	proof := MissProof{finish: gatewayproto.NewFinishHold(func() { released.Add(1) })}
+	copied := proof
+	copied.takeHeldFinish()
+	proof.releaseUntakenFinish()
+	if released.Load() != 0 {
+		t.Fatal("original released ownership transferred through copy")
+	}
+	proof.releaseHeldFinish()
+	copied.releaseHeldFinish()
+	if released.Load() != 1 {
+		t.Fatal("copies released a Finish twice")
 	}
 }
