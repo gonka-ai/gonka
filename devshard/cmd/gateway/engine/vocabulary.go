@@ -71,8 +71,8 @@ const (
 // How an attempt ended, and what the client saw of it. Visibility is the only account of a race that
 // produced an answer nobody received.
 const (
-	AttemptOutcomeSuccess AttemptResult = "success"
-	AttemptOutcomeFailed  AttemptResult = "failed"
+	AttemptResultSuccess AttemptResult = "success"
+	AttemptResultFailed  AttemptResult = "failed"
 
 	VisibilityWinner            AttemptVisibility = "user_visible_winner"
 	VisibilityWinnerClientGone  AttemptVisibility = "winner_client_gone"
@@ -127,7 +127,7 @@ const (
 
 // Why an attempt did not win. A terminal that names no reason is one that won or lost on merit.
 const (
-	ReasonUnset                 FailureReason = ""
+	ReasonUnset                FailureReason = ""
 	ReasonThrottled            FailureReason = "http_429"
 	ReasonUnavailable          FailureReason = "http_503"
 	ReasonForbidden            FailureReason = "http_forbidden"

@@ -174,12 +174,12 @@ func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 		Participant: a.Participant,
 		Model:       o.Model,
 		Role:        role,
-		Outcome:     AttemptOutcomeFailed,
+		Outcome:     AttemptResultFailed,
 		Visibility:  o.visibility(a, served),
 		Reason:      o.failureReason(a),
 	}
 	if served {
-		labels.Outcome = AttemptOutcomeSuccess
+		labels.Outcome = AttemptResultSuccess
 		labels.Reason = ""
 	}
 	return labels

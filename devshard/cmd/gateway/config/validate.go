@@ -68,7 +68,7 @@ func (c *Config) Validate() error {
 
 func (c *Config) validateServer(complain func(format string, args ...any)) {
 	if c.Server.Port < 1 || c.Server.Port > maxTCPPort {
-		complain("port: %d out of range 1..65535", c.Server.Port)
+		complain("port: %d out of range 1..%d", c.Server.Port, maxTCPPort)
 	}
 	if c.Server.MaxConcurrentRuntimeBuilds < 1 {
 		complain("max_concurrent_runtime_builds: %d must be >= 1", c.Server.MaxConcurrentRuntimeBuilds)
@@ -348,7 +348,7 @@ func (c *Config) validateEngine(complain func(format string, args ...any)) {
 func (c *Config) validateScheduler(complain func(format string, args ...any)) {
 	// The ceiling is a budget guard: a long grace parks a committed-cost nonce on the chance of a co-arrival.
 	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > maxMatchWaitMS {
-		complain("scheduler_match_wait_ms: %d must be in [0, 5000]", c.Scheduler.MatchWaitMS)
+		complain("scheduler_match_wait_ms: %d must be in [0, %d]", c.Scheduler.MatchWaitMS, maxMatchWaitMS)
 	}
 	if c.Scheduler.MaxConsecutiveBurns < 0 || c.Scheduler.MaxConsecutiveBurns > maxConsecutiveBurns {
 		complain("scheduler_max_consecutive_burns: %d must be in [0, %d]", c.Scheduler.MaxConsecutiveBurns, maxConsecutiveBurns)

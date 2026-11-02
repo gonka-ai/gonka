@@ -218,7 +218,7 @@ func (r *RaceRecorder) RecordAwaitedFinish(outcome engine.RaceOutcome, attempt e
 
 func (r *RaceRecorder) countTerminal(participant, model, role string, labels engine.AttemptLabels, attempt engine.AttemptOutcome) (string, bool) {
 	r.attemptsTerminal.WithLabelValues(participant, model, role, string(labels.Outcome), string(labels.Visibility)).Inc()
-	if labels.Outcome != engine.AttemptOutcomeFailed {
+	if labels.Outcome != engine.AttemptResultFailed {
 		return "", false
 	}
 	reason := metricLabel(string(labels.Reason), labelUnknown)
@@ -231,7 +231,7 @@ func (r *RaceRecorder) countTerminal(participant, model, role string, labels eng
 
 func otherAttemptFailed(outcome engine.RaceOutcome) bool {
 	for _, attempt := range outcome.Attempts {
-		if !outcome.FinishAwaited(attempt) && outcome.Labels(attempt).Outcome == engine.AttemptOutcomeFailed {
+		if !outcome.FinishAwaited(attempt) && outcome.Labels(attempt).Outcome == engine.AttemptResultFailed {
 			return true
 		}
 	}
@@ -240,7 +240,7 @@ func otherAttemptFailed(outcome engine.RaceOutcome) bool {
 
 func (r *RaceRecorder) recordRequest(model string, outcome engine.RaceOutcome, firstFailure string) {
 	if outcome.Succeeded {
-		r.requests.WithLabelValues(model, string(engine.AttemptOutcomeSuccess), reasonNone).Inc()
+		r.requests.WithLabelValues(model, string(engine.AttemptResultSuccess), reasonNone).Inc()
 		if firstFailure != "" {
 			r.hiddenFailures.WithLabelValues(model, firstFailure).Inc()
 		}
