@@ -24,11 +24,17 @@ type memLog struct {
 	generation   uint64
 	afterOldest  func()
 	afterResolve func()
+	beforeRead   func()
 }
 
 func (m *memLog) Read(_ context.Context, afterSeq uint64, kinds []apiconfig.HostEventKind, limit int) ([]apiconfig.HostEvent, uint64, error) {
 	if m.readErr != nil {
 		return nil, 0, m.readErr
+	}
+	if m.beforeRead != nil {
+		h := m.beforeRead
+		m.beforeRead = nil
+		h()
 	}
 	want := map[apiconfig.HostEventKind]struct{}{}
 	for _, k := range kinds {
@@ -684,6 +690,42 @@ func TestNodeManager_GetHostEvents_StoreGenerationMismatchNeedsReset(t *testing.
 	require.True(t, after.NeedsReset)
 	require.Empty(t, after.Events)
 	require.Equal(t, uint64(9), after.Generation)
+}
+
+func TestNodeManager_GetHostEvents_ResetDuringStoreReadNeedsReset(t *testing.T) {
+	rows := make([]apiconfig.HostEvent, 0, 52)
+	for seq := uint64(40); seq <= 91; seq++ {
+		rows = append(rows, seqEvent(seq, apiconfig.HostEventKindBlock, int64(seq)))
+	}
+	ring := apiconfig.NewHostEventRing(16, 6)
+	ring.Restore(6, 92, []apiconfig.HostEvent{
+		seqEvent(90, apiconfig.HostEventKindBlock, 90),
+		seqEvent(91, apiconfig.HostEventKindBlock, 91),
+	})
+	log := &memLog{generation: 6, rows: rows}
+	log.beforeRead = func() {
+		ring.ResetGeneration(7)
+		log.generation = 7
+		log.rows = []apiconfig.HostEvent{
+			seqEvent(1, apiconfig.HostEventKindBlock, 200),
+			seqEvent(2, apiconfig.HostEventKindEscrowCreated, 200),
+		}
+	}
+	srv := NewServer(&mockBroker{}, nil, nil,
+		WithHostEventRing(ring),
+		WithHostEventLog(log),
+		WithHostEventStatus(&memLive{emitted: 91, tip: 91}),
+	)
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Cursor:     50,
+		Subscribe:  allKinds(),
+		Generation: 6,
+	})
+	require.NoError(t, err)
+	require.True(t, resp.NeedsReset)
+	require.Empty(t, resp.Events)
+	require.Equal(t, uint64(7), resp.Generation)
+	require.Equal(t, uint64(2), resp.NextCursor)
 }
 
 func TestNodeManager_GetHostEvents_PruneBetweenOldestAndReadNeedsReset(t *testing.T) {

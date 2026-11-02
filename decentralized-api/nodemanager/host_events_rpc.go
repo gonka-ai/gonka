@@ -377,7 +377,12 @@ func (s *Server) readHostEventStore(
 	if err != nil {
 		return out, start, err
 	}
-	if s.storeGenerationMismatch(readGen) {
+	// readGen is the generation this read observed. generation is the one
+	// captured for this response. A reset can move the store and the ring
+	// together, so the ring then matches readGen and the new rows would ship
+	// under the old cursor. A read generation of 0 means the store has no
+	// feed row, which is not a new cursor space.
+	if (readGen != 0 && readGen != generation) || s.storeGenerationMismatch(readGen) {
 		return s.resetFromStore(ctx, readGen, head), start, nil
 	}
 	// A prune can run between the first Oldest and Read. Re-check so a
