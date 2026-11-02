@@ -1,5 +1,7 @@
 package filters
 
+import "devshard/cmd/gateway/internal/tokensource"
+
 // The strings a cacheability answer puts into the record, one per reason a reply may not be stored.
 const (
 	CacheStorable          = ""
@@ -45,19 +47,14 @@ var (
 	}
 )
 
-// InputTokensSource names where the gateway's count of a request's prompt tokens came from. See docs/request.md, "The prompt token count".
-type InputTokensSource string
+// InputTokensSource names where the gateway's count of a request's prompt tokens came from.
+type InputTokensSource = tokensource.Source
 
 const (
-	InputTokensTokenizerExact   InputTokensSource = "tokenizer_exact"
-	InputTokensTokenizerSampled InputTokensSource = "tokenizer_sampled"
-	InputTokensBytesEstimate    InputTokensSource = "bytes_estimate"
+	InputTokensTokenizerExact   = tokensource.TokenizerExact
+	InputTokensTokenizerSampled = tokensource.TokenizerSampled
+	InputTokensBytesEstimate    = tokensource.BytesEstimate
 )
-
-// Tokenized reports whether the count came from the model's tokenizer; any other source, the unset one included, is the byte estimate.
-func (s InputTokensSource) Tokenized() bool {
-	return s == InputTokensTokenizerExact || s == InputTokensTokenizerSampled
-}
 
 // PresetName names a built-in filter preset an operator binds a model to. See README.md, "Model profiles".
 type PresetName string
