@@ -8,9 +8,15 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
-const authzCacheTTL = 2 * time.Minute
+const (
+	authzCacheTTL = 2 * time.Minute
+	// authzCacheErrorTTL bounds how often a failing granter lookup reaches the chain.
+	authzCacheErrorTTL = 5 * time.Second
+)
 
 // SignerInfo holds address and pubkey for an authorized signer.
 type SignerInfo struct {
@@ -20,6 +26,7 @@ type SignerInfo struct {
 
 type cachedEntry struct {
 	signers   []SignerInfo // all authorized signers (granter + grantees)
+	err       error        // failed lookup, served until expiresAt
 	expiresAt time.Time
 }
 
@@ -73,26 +80,45 @@ func (c *AuthzCache) GetPubKeyForSigner(ctx context.Context, granterAddress, sig
 }
 
 // getSigners returns all authorized signers for the granter/msgType combination.
-// Uses caching to avoid repeated chain queries.
+// Uses caching to avoid repeated chain queries. The chain is queried without holding
+// the lock, so concurrent misses for the same key may each query it.
 func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl string) ([]SignerInfo, error) {
 	cacheKey := granterAddress + "|" + msgTypeUrl
 
 	c.mu.RLock()
 	if entry, ok := c.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		signers := entry.signers
+		signers, err := entry.signers, entry.err
 		c.mu.RUnlock()
-		return signers, nil
+		return signers, err
 	}
 	c.mu.RUnlock()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Double-check after acquiring write lock
-	if entry, ok := c.cache[cacheKey]; ok && time.Now().Before(entry.expiresAt) {
-		return entry.signers, nil
+	signers, err := c.fetchSigners(ctx, granterAddress, msgTypeUrl)
+	if err != nil {
+		// A canceled caller or an unknown address says nothing about the granter, and
+		// caching unknown addresses would let arbitrary input grow the map.
+		if ctx.Err() == nil && status.Code(err) != codes.NotFound {
+			c.mu.Lock()
+			c.cache[cacheKey] = &cachedEntry{err: err, expiresAt: time.Now().Add(authzCacheErrorTTL)}
+			c.mu.Unlock()
+		}
+		return nil, err
 	}
 
+	c.mu.Lock()
+	c.cache[cacheKey] = &cachedEntry{
+		signers:   signers,
+		expiresAt: time.Now().Add(authzCacheTTL),
+	}
+	c.mu.Unlock()
+
+	logging.Debug("Cached authz signers", types.Validation,
+		"granterAddress", granterAddress, "count", len(signers))
+
+	return signers, nil
+}
+
+func (c *AuthzCache) fetchSigners(ctx context.Context, granterAddress, msgTypeUrl string) ([]SignerInfo, error) {
 	logging.Debug("Fetching authz signers", types.Validation,
 		"granterAddress", granterAddress, "msgTypeUrl", msgTypeUrl)
 
@@ -127,14 +153,6 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 		Address: granterAddress,
 		PubKey:  participant.Pubkey,
 	})
-
-	c.cache[cacheKey] = &cachedEntry{
-		signers:   signers,
-		expiresAt: time.Now().Add(authzCacheTTL),
-	}
-
-	logging.Debug("Cached authz signers", types.Validation,
-		"granterAddress", granterAddress, "count", len(signers))
 
 	return signers, nil
 }
