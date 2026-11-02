@@ -1,8 +1,6 @@
 package accounting
 
-import (
-	"devshard/cmd/gateway/engine"
-)
+import "devshard/cmd/gateway/engine"
 
 // A burn's record carries the gateway's own prompt and reserve. See docs/accounting.md, "Money and tokens".
 func (e *escrowLedger) isGhost(nonce uint64) bool {

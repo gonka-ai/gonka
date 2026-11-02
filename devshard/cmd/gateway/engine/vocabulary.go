@@ -81,13 +81,13 @@ const (
 	VisibilityFailedNotFinished AttemptVisibility = "failed_not_finished"
 )
 
-// TimeoutKind is what a nonce was owed.
+// TimeoutKind is what a timeout vote on a nonce was owed for.
 type TimeoutKind string
 
-// TimeoutAction is what the gateway did about it.
+// TimeoutAction is what the gateway did about a timeout vote.
 type TimeoutAction string
 
-// TimeoutReason is why.
+// TimeoutReason is why the gateway took that action on a timeout vote.
 type TimeoutReason string
 
 // The vocabulary of a TimeoutEvent: what a nonce was owed, what the gateway did about it, and why. A

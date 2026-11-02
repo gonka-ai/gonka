@@ -1,7 +1,7 @@
 // Package tokensource names where a prompt token count came from, for the packages that carry the count without reading a request.
 package tokensource
 
-// Source names where the gateway's count of a request's prompt tokens came from. See docs/request.md, "The prompt token count".
+// Source names where the gateway's count of a request's prompt tokens came from. See ../../docs/request.md, "The prompt token count".
 type Source string
 
 const (

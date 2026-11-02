@@ -1,6 +1,6 @@
 package env
 
-// Tunables is every setting an operator can set both in the environment and through the admin settings; nil = unset. See config/README.md, "Overrides".
+// Tunables is every setting an operator can set both in the environment and through the admin settings; nil = unset. See ../config/README.md, "Overrides".
 type Tunables struct {
 	DefaultMaxTokens                       *int64   `json:"default_max_tokens,omitempty"`
 	MaxTokensCap                           *int64   `json:"max_tokens_cap,omitempty"`
