@@ -72,7 +72,7 @@ func TestTheBridgeFillCreatesExactlyTheShortfall(t *testing.T) {
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 	snapshot := servedSnapshot(5, 100, "model-a")
 
-	fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, []store.DevshardRecord{existing})[0]
+	fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, []store.DevshardRecord{existing})[0]
 	created, err := fill.created, fill.err
 	if err != nil {
 		t.Fatalf("fillToLabel(): %v", err)
@@ -111,7 +111,7 @@ func TestTheBridgeFillAtOrOverTargetCreatesNothing(t *testing.T) {
 			model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 			snapshot := servedSnapshot(5, 100, "model-a")
 
-			fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return tt.target }, snapshot, devshards)[0]
+			fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return tt.target }, snapshot, devshards)[0]
 			created, err := fill.created, fill.err
 			if err != nil {
 				t.Fatalf("fillToLabel(): %v", err)
@@ -137,7 +137,7 @@ func TestTheBridgeFillAtTargetDoesNotConsumeBreakerCooldown(t *testing.T) {
 	snapshot := chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}
 	existing := []store.DevshardRecord{{EscrowID: "existing-1", Model: "model-a", Active: true, RotationRole: roleTemp, RotationEpoch: 5}}
 
-	fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, existing)[0]
+	fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, existing)[0]
 	created, err := fill.created, fill.err
 	if err != nil {
 		t.Fatalf("fillToLabel(): %v", err)
@@ -160,7 +160,7 @@ func TestTheBridgeFillSkipsAModelTheNetworkDoesNotServe(t *testing.T) {
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 	snapshot := servedSnapshot(5, 100, "model-b")
 
-	fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
+	fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
 	created, err := fill.created, fill.err
 	if err != nil {
 		t.Fatalf("fillToLabel(): %v", err)
@@ -181,7 +181,7 @@ func TestTheBridgeFillReportsSuppressionWhenTheBreakerIsGated(t *testing.T) {
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 	snapshot := servedSnapshot(5, 100, "model-a")
 
-	fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
+	fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
 	created, err := fill.created, fill.err
 	if !errors.Is(err, errCreateSuppressed) {
 		t.Fatalf("fillToLabel() = %v, want errCreateSuppressed: a gated create is not a success the bridge may retire against", err)
@@ -208,7 +208,7 @@ func TestTheBridgeFillStopsOnTheFirstErrorAndGatesTheBreaker(t *testing.T) {
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 	snapshot := servedSnapshot(5, 100, "model-a")
 
-	fill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
+	fill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
 	created, err := fill.created, fill.err
 	if err == nil {
 		t.Fatal("fillToLabel() error = nil, want the broadcast failure surfaced")
@@ -220,7 +220,7 @@ func TestTheBridgeFillStopsOnTheFirstErrorAndGatesTheBreaker(t *testing.T) {
 		t.Fatalf("createCalls = %d, want 1 (stop at the first error)", txClient.createCalls)
 	}
 
-	secondFill := m.fillToLabel(context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
+	secondFill := fillFromStore(t, m, context.Background(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 3 }, snapshot, nil)[0]
 	created2, err2 := secondFill.created, secondFill.err
 	if !errors.Is(err2, errCreateSuppressed) {
 		t.Fatalf("second fillToLabel() = %v, want errCreateSuppressed (the now-gated breaker)", err2)
@@ -660,16 +660,16 @@ func TestAnUnderfundedCreateIsRetriedEveryTickAndNarratedOncePerEpisode(t *testi
 	snapshot := chain.PhaseSnapshot{EpochIndex: 3, BlockHeight: 10}
 
 	for range 3 {
-		err := m.fillToLabel(t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
+		err := fillFromStore(t, m, t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
 		require.ErrorIs(t, err, chain.ErrWalletUnderfunded)
 	}
 	require.Equal(t, 3, txClient.createCalls, "an underfunded wallet must not open the create breaker")
 
 	underfunded = false
-	err := m.fillToLabel(t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
+	err := fillFromStore(t, m, t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
 	require.NoError(t, err)
 	underfunded = true
-	err = m.fillToLabel(t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
+	err = fillFromStore(t, m, t.Context(), roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
 	require.ErrorIs(t, err, chain.ErrWalletUnderfunded)
 
 	refusals := 0
@@ -798,4 +798,34 @@ func TestABridgeThatCannotReadCommitmentsPromotesNothing(t *testing.T) {
 
 	require.ErrorIs(t, err, testStore.loadCommitmentsErr)
 	require.Equal(t, roleRegular, testStore.devshards[regular.EscrowID].RotationRole)
+}
+
+func fillFromStore(t *testing.T, m *Manager, ctx context.Context, role store.Role, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []rotationFill {
+	t.Helper()
+	commitments, err := m.store.LoadCommitments(ctx)
+	require.NoError(t, err)
+	return m.fillToLabel(ctx, role, label, models, targetOf, snapshot, devshards, commitments)
+}
+
+// Test flow:
+//  1. Build a rotation manager with one active regular, a store that records its calls, and a model with a bridge to fund.
+//  2. Call prepareBridge.
+//  3. Assert the store was asked for commitments once, so room and fill judge one reading and a failing read cannot reach the fill alone.
+func TestABridgeReadsCommitmentsOnce(t *testing.T) {
+	testStore := newFakeStore()
+	testStore.calls = &callLog{}
+	regular := store.DevshardRecord{EscrowID: "reg-1", Model: "model-a", Active: true, RotationRole: roleRegular, PrivateKeyEnv: "MODEL_A_KEY"}
+	testStore.devshards[regular.EscrowID] = regular
+	m := newRotationManager(t, testStore, &fakeTxClient{createEscrowFn: succeedingCreateEscrowFn(800)}, false)
+	models := []ModelConfig{{ModelID: "model-a", TempCount: 1, TargetCount: 3, Amount: 1000, MaxUnsettled: 5, PrivateKeyEnv: "MODEL_A_KEY"}}
+
+	_ = m.prepareBridge(context.Background(), servedSnapshot(9, 500, "model-a"), models, []store.DevshardRecord{regular})
+
+	reads := 0
+	for _, call := range testStore.calls.snapshot() {
+		if call == "LoadCommitments" {
+			reads++
+		}
+	}
+	require.Equal(t, 1, reads)
 }

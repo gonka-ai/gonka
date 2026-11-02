@@ -284,7 +284,7 @@ func TestASkippedRotationIsNarrated(t *testing.T) {
 		CurrentWeightsByModel: map[string]map[string]float64{"other-model": {"gonka1host": 1}},
 	}
 
-	fill := manager.fillToLabel(context.Background(), roleRegular, snapshot.EpochIndex, []ModelConfig{{ModelID: "qwen"}}, func(ModelConfig) int { return 1 }, snapshot, nil)[0]
+	fill := fillFromStore(t, manager, context.Background(), roleRegular, snapshot.EpochIndex, []ModelConfig{{ModelID: "qwen"}}, func(ModelConfig) int { return 1 }, snapshot, nil)[0]
 
 	require.NoError(t, fill.err)
 	require.Zero(t, fill.created)

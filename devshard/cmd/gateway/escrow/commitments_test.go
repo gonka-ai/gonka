@@ -933,7 +933,7 @@ func TestABelowFloorRefusalLeavesTheCreateBreakerClosed(t *testing.T) {
 
 	snapshot := pricedSnapshot(1, 10, 100)
 
-	fills := manager.fillToLabel(context.Background(), roleRegular, snapshot.EpochIndex, models, func(model ModelConfig) int { return model.TargetCount }, snapshot, nil)
+	fills := fillFromStore(t, manager, context.Background(), roleRegular, snapshot.EpochIndex, models, func(model ModelConfig) int { return model.TargetCount }, snapshot, nil)
 
 	if len(fills) != 1 || !errors.Is(fills[0].err, ErrAmountBelowFloor) {
 		t.Fatalf("fills = %+v, want one refused below the floor", fills)

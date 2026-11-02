@@ -22,14 +22,9 @@ type rotationFill struct {
 	err     error
 }
 
-func (m *Manager) fillToLabel(ctx context.Context, role store.Role, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord) []rotationFill {
+func (m *Manager) fillToLabel(ctx context.Context, role store.Role, label uint64, models []ModelConfig, targetOf func(ModelConfig) int, snapshot chain.PhaseSnapshot, devshards []store.DevshardRecord, commitments []store.Commitment) []rotationFill {
 	fills := make([]rotationFill, len(models))
-	commitments, loadErr := m.store.LoadCommitments(ctx)
 	for index, model := range models {
-		if loadErr != nil {
-			fills[index] = rotationFill{model: model, err: loadErr}
-			continue
-		}
 		wanted, err := m.createsWanted(role, label, targetOf(model), model, snapshot, devshards, commitments)
 		fills[index] = rotationFill{model: model, wanted: wanted, err: err}
 	}
@@ -92,10 +87,11 @@ func countOpenCreates(commitments []store.Commitment, modelID string, role store
 // prepareBridge swaps temp escrows in ahead of an epoch switch, one model at a time, failure-isolated.
 func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapshot, models []ModelConfig, devshards []store.DevshardRecord) error {
 	label := bridgeLabel(snapshot)
-	room, err := m.bridgeRoom(ctx, label, models, devshards)
+	commitments, err := m.store.LoadCommitments(ctx)
 	if err != nil {
 		return fmt.Errorf("prepare bridge: %w", err)
 	}
+	room := bridgeRoom(label, models, devshards, commitments)
 	targetOf := func(model ModelConfig) int {
 		limit, capped := room[model.ModelID]
 		if !capped {
@@ -104,7 +100,7 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 		return min(model.TempCount, countActive(devshards, model.ModelID, roleTemp, int64(label))+max(limit, 0))
 	}
 	var errs []error
-	for _, fill := range m.fillToLabel(ctx, roleTemp, label, models, targetOf, snapshot, devshards) {
+	for _, fill := range m.fillToLabel(ctx, roleTemp, label, models, targetOf, snapshot, devshards, commitments) {
 		model, created, err := fill.model, fill.created, fill.err
 		if funded := countActive(devshards, model.ModelID, roleTemp, int64(label)) + created; err == nil && funded < model.TempCount {
 			err = fmt.Errorf("%w: %d of %d for %s", errBridgePartialFill, funded, model.TempCount, model.ModelID)
@@ -152,18 +148,14 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 	return errors.Join(errs...)
 }
 
-func (m *Manager) bridgeRoom(ctx context.Context, label uint64, models []ModelConfig, devshards []store.DevshardRecord) (map[string]int, error) {
+func bridgeRoom(label uint64, models []ModelConfig, devshards []store.DevshardRecord, commitments []store.Commitment) map[string]int {
 	room := map[string]int{}
-	commitments, err := m.store.LoadCommitments(ctx)
-	if err != nil {
-		return nil, err
-	}
 	for _, model := range models {
 		if model.MaxUnsettled > 0 {
 			room[model.ModelID] = model.MaxUnsettled - unsettledCount(model.ModelID, devshards, commitments) + countOpenCreates(commitments, model.ModelID, roleTemp, label)
 		}
 	}
-	return room, nil
+	return room
 }
 
 func isActiveTemp(record store.DevshardRecord, modelID string, epoch int64) bool {
