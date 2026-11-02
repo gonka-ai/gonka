@@ -1,11 +1,5 @@
 # Proposal: DAPI-only early PoC share guard
 
-Implementation update: [Commitment depth growth](commitment-depth-growth.md)
-adds commitment-specific depth persistence and readiness checks. With that change,
-present legacy rows with unknown depth abstain; completely missed captures retain
-the guard skip behavior. Neither establishes readiness for consensus depth-growth
-activation. The original fail-open proposal below is historical.
-
 ## Summary
 
 Add a DAPI-only validation guard for PoC v2 / CPoC v2 that detects participants who deliver too little of their final PoC output during the first third of the generation window.
