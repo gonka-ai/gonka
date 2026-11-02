@@ -60,6 +60,9 @@ type EventListener struct {
 
 	ws            *websocket.Conn
 	blockObserver *BlockObserver
+	feed          *HostEventFeed
+	hostStore     HostEventStore
+	hostDataDir   string
 }
 
 type EventListenerOption func(*EventListener)
@@ -67,6 +70,14 @@ type EventListenerOption func(*EventListener)
 func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
 	return func(el *EventListener) {
 		el.statsStorage = storage
+	}
+}
+
+// WithHostEventPersistence attaches the durable feed store. dataDir holds host_events.head.
+func WithHostEventPersistence(store HostEventStore, dataDir string) EventListenerOption {
+	return func(el *EventListener) {
+		el.hostStore = store
+		el.hostDataDir = dataDir
 	}
 }
 
@@ -157,8 +168,23 @@ func NewEventListener(
 	// event that would have been handled. Barrier events bypass this filter in
 	// processBlock, so per-block progress still advances.
 	bo.SetRelevanceFilter(el.hasHandler)
+	if bo.tmClient != nil {
+		bo.results = newBlockResultsCache(bo.tmClient, blockResultsCacheSize)
+	}
+	if el.hostEvents != nil {
+		el.feed = newHostEventFeed(el)
+		bo.feedNotify = el.feed.notify
+	}
 
 	return el
+}
+
+// HostEventFeed is the feed whose cursor and stall flag GetHostEvents reads.
+func (el *EventListener) HostEventFeed() *HostEventFeed {
+	if el == nil {
+		return nil
+	}
+	return el.feed
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
@@ -191,8 +217,11 @@ func (el *EventListener) Start(ctx context.Context) {
 	defer blockEventQueue.Close()
 	el.processBlockEvents(ctx, blockEventQueue)
 
-	// Start BlockObserver
+	// Start BlockObserver and the ordered host-event feed.
 	go el.blockObserver.Process(ctx)
+	if el.feed != nil {
+		go el.feed.Run(ctx)
+	}
 
 	el.listen(ctx, blockEventQueue, el.blockObserver.Queue)
 }
@@ -314,6 +343,7 @@ func (el *EventListener) startSyncStatusChecker() {
 		isSynced := !status.SyncInfo.CatchingUp
 		wasAlreadySynced := el.isNodeSynced()
 		el.updateNodeSyncStatus(isSynced)
+		el.recordSyncHeights(status.SyncInfo.EarliestBlockHeight, status.SyncInfo.LatestBlockHeight)
 
 		if isSynced && !wasAlreadySynced && !hasTriedVersionSync {
 			hasTriedVersionSync = true
@@ -330,6 +360,16 @@ func (el *EventListener) startSyncStatusChecker() {
 		// Note: Sync status is now handled by the dispatcher during block processing
 		logging.Debug("Updated sync status", types.EventProcessing, "caughtUp", isSynced, "height", status.SyncInfo.LatestBlockHeight)
 	}
+}
+
+// recordSyncHeights stores the node's earliest height and raises the observer
+// tip when LatestBlockHeight is ahead of NewBlock.
+func (el *EventListener) recordSyncHeights(earliest, latest int64) {
+	if el.blockObserver == nil {
+		return
+	}
+	el.blockObserver.noteEarliest(earliest)
+	el.blockObserver.noteLatest(latest)
 }
 
 func (el *EventListener) isNodeSynced() bool {
@@ -349,10 +389,6 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		if el.isNodeSynced() {
 			// Check for BLS events in NewBlock events (emitted from EndBlocker)
 			el.handleBLSEvents(event, workerName)
-			// BeginBlock maintenance_canceled (e.g. maintenance_disabled) is not in TxsResults.
-			el.handleMaintenanceLifecycleEvents(event, workerName)
-			// EndBlock warm_key_revoked (expiry) is not in TxsResults either.
-			el.handleWarmKeyExpiryEvents(event, workerName)
 		}
 
 		// Parse the event into NewBlockInfo

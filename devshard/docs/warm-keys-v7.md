@@ -263,15 +263,28 @@ append-only like the log, kept in memory by the bridge
    `HOST_EVENT_KIND_WARM_KEY_REVOKED` with `{granter, grantee, grant_id,
    height, expires_at_unix, end}`, produced by the dapi event listener from
    the module's grant and explicit-revoke events. Expiration is read from
-   the grant's timestamp and needs no event. They are not filtered by participant: a host
-   needs the keys of every peer in its groups, and grants are rare. The
-   stream keeps its cursor and `needs_reset` contract: on a reset devshardd
-   drops its copies and reloads from the chain on the next question. One
+   the grant's timestamp and needs no event. They are not filtered by
+   participant: a host needs the keys of every peer in its groups.
+   A single writer reads committed block results in height order and stores
+   the events durably before appending them to the ring, with `BLOCK(H)` last
+   for each height. The 4096-entry ring is only the hot tail: an older cursor
+   reads pages of at most 1000 events from the store, so a burst of warm-key
+   grants cannot evict escrow events from the catch-up window. The current
+   and previous epochs are retained, matching the feed's catch-up window
+   and avoiding replay of escrow creations the chain has already pruned.
+   The stream keeps its cursor and `needs_reset` contract: a generation
+   change or a cursor older than the store requires a reset. devshardd marks
+   its key copies incomplete and reloads from the chain on the next question. One
    existing loss path in dapi closes with this: a poll that times out
    re-reads the ring and advances `NextCursor` while returning no events
    (`decentralized-api/nodemanager/host_events_rpc.go`), so an event that
    arrived between the timeout and the re-read was skipped for good; the
    timeout response now returns what the re-read found.
+   dapi stores the feed in `/root/.dapi/data/host_events.sqlite` by default;
+   `DAPI_HOST_EVENTS_STORE=postgres` selects PostgreSQL using the standard
+   `PG*` connection settings. Boot restores the generation, cursor and
+   hot tail from the store and its head marker. A store read failure returns
+   `Unavailable` without advancing the client cursor.
 2. Direct chain query, `WarmKeyLog(granter)` to fill a copy and
    `WarmKeyEntry(granter, id)` to confirm one entry, whenever the copy has no
    answer: an entry it has not seen, a granter it has never loaded, or a
