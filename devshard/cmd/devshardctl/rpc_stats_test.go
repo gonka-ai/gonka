@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -181,7 +182,7 @@ func TestGatewayRPCStatsEmitCapsSnapshotLabels(t *testing.T) {
 	for i := 0; i < rpcStatsMaxShardRows+10; i++ {
 		n := uint64(i + 1)
 		snap.Shards = append(snap.Shards, transport.RPCStatsShard{
-			EscrowID: fmt.Sprintf("e-%04d", i),
+			EscrowID: fmt.Sprintf("%d", 1000+i),
 			Requests: n,
 			Banned:   1,
 			Endpoints: []transport.RPCStatsEndpoint{
@@ -232,8 +233,8 @@ func TestGatewayRPCStatsEmitCapsSnapshotLabels(t *testing.T) {
 
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "42"}, 1_000_000)
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_endpoint_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "42", "endpoint": "GetDiffs"}, 1_000_000)
-	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "e-0000"})
-	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "e-0137"}, 138)
+	requireMetricGaugeAbsent(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "1000"})
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "1137"}, 138)
 	// "_" shard must not overwrite the process total. Its 50 plus the 12
 	// smallest invented escrows (1+...+12) land on escrow "other".
 	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_requests_last_minute", map[string]string{"host": "gonka1a", "escrow": "other"}, 128)
@@ -465,4 +466,31 @@ func TestGunzipLimitedRoundTrip(t *testing.T) {
 	out, err := gunzipLimited(buf.Bytes(), rpcStatsMaxBodyBytes)
 	require.NoError(t, err)
 	require.Equal(t, payload, out)
+}
+
+func TestGatewayRPCStatsCollectorFoldsHostSuppliedLabels(t *testing.T) {
+	long := strings.Repeat("x", 4096)
+	snap := transport.RPCStatsSnapshot{MinuteUnix: 1}
+	for i := 0; i < 4; i++ {
+		snap.Shards = append(snap.Shards, transport.RPCStatsShard{EscrowID: fmt.Sprintf("%d%s", i, long), Requests: 1})
+	}
+	snap.Shards = append(snap.Shards, transport.RPCStatsShard{EscrowID: "007", Requests: 1}, transport.RPCStatsShard{EscrowID: "42", Requests: 1})
+	snap.Host.Reconnects = []transport.RPCStatsReconnect{
+		{Peer: long, Reason: transport.ReconnectWatch, Attempts: 1},
+		{Peer: "gonka1abc@v7", Reason: transport.ReconnectWatch, Attempts: 1},
+	}
+	d := newRPCStatsDescs()
+	ch := make(chan prometheus.Metric, 256)
+	d.emit(ch, []rpcStatsHostState{{Participant: "gonka1a", Up: true, HasSnap: true, Snap: snap}})
+	close(ch)
+	for m := range ch {
+		var pb dto.Metric
+		require.NoError(t, m.Write(&pb))
+		for _, l := range pb.GetLabel() {
+			if l.GetName() == "escrow" {
+				require.Contains(t, []string{rpcStatsProcessEscrow, transport.RPCStatsOtherLabel, "42"}, l.GetValue())
+			}
+			require.LessOrEqual(t, len(l.GetValue()), rpcStatsMaxPeerLabelLen)
+		}
+	}
 }

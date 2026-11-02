@@ -49,6 +49,7 @@ const (
 	// are bounded. The busiest rows stay; the rest sum into "other".
 	rpcStatsMaxReconnectRows = 128
 	rpcStatsMaxShardRows     = 128
+	rpcStatsMaxPeerLabelLen  = 128
 )
 
 var errRPCStatsTooLarge = errors.New("rpc stats body too large")
