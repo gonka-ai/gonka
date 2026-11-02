@@ -176,7 +176,7 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 	money, live := m.funds.EscrowMoney(row.EscrowID)
 	if !live {
 		reading.report.Counts[CountUnread]++
-		if row.Amount > 0 {
+		if _, err := m.signer.SignerFor(row.PrivateKeyEnv); err == nil && row.Amount > 0 {
 			reading.state.Escrows = append(reading.state.Escrows, unreadEscrow(row, reading.state))
 		}
 		return
