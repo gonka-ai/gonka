@@ -25,7 +25,7 @@ const (
 // EscalationStage names the condition that earned an attempt one more attempt beside it.
 type EscalationStage string
 
-func (s EscalationStage) Reason() string {
+func (s EscalationStage) Reason() StartReason {
 	switch s {
 	case StageSuspicious:
 		return EscalationReasonSuspicious
@@ -114,7 +114,7 @@ type EscalationAttempt struct {
 // StartPlan is how a race begins; ImmediateAttempts counts the primary.
 type StartPlan struct {
 	ImmediateAttempts int
-	Reason            string
+	Reason            StartReason
 }
 
 // ArmedEscalation is a deadline to arm, deliberately not a permission to escalate; only Confirm converts it. See race.md, "Escalation".

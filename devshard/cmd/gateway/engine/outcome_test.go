@@ -610,7 +610,7 @@ func TestLabels(t *testing.T) {
 func TestTerminalFailureReasons(t *testing.T) {
 	tests := []struct {
 		terminal Terminal
-		want     string
+		want     FailureReason
 	}{
 		{TerminalUnclassified, "unknown"},
 		{TerminalWon, ""},
@@ -706,7 +706,7 @@ func TestEveryTerminalHasAName(t *testing.T) {
 		if terminal.String() == "" {
 			t.Fatalf("terminal %d has no name", terminal)
 		}
-		if terminal.String() == TerminalNameUnnamed || terminal.String() == ReasonUnknown {
+		if terminal.String() == TerminalNameUnnamed || terminal.String() == string(ReasonUnknown) {
 			t.Fatalf("terminal %d fell through to a placeholder, so a new terminal was added without a name", terminal)
 		}
 	}

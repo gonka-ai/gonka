@@ -27,10 +27,10 @@ const (
 type AttemptLabels struct {
 	Participant string
 	Model       string
-	Role        string
-	Outcome     string
-	Visibility  string
-	Reason      string
+	Role        AttemptRole
+	Outcome     AttemptResult
+	Visibility  AttemptVisibility
+	Reason      FailureReason
 }
 
 // longResponseExempt gates on ContentSource, not ContentChunks, which counts error events too. See rules.md, "1. A committed nonce is always settled".
@@ -166,7 +166,7 @@ func (o RaceOutcome) DeniesCrowning(a AttemptOutcome) bool {
 
 func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 	role := a.Role
-	if role == "" {
+	if role == RoleUnset {
 		role = RolePrimary
 	}
 	served := o.served(a)
@@ -185,7 +185,7 @@ func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 	return labels
 }
 
-func (o RaceOutcome) visibility(a AttemptOutcome, served bool) string {
+func (o RaceOutcome) visibility(a AttemptOutcome, served bool) AttemptVisibility {
 	switch {
 	case served && o.IsWinner(a) && o.Lifecycle.ClientGone:
 		return VisibilityWinnerClientGone
@@ -214,11 +214,11 @@ func (o RaceOutcome) Winner() *AttemptOutcome {
 	return nil
 }
 
-func (o RaceOutcome) failureReason(a AttemptOutcome) string {
+func (o RaceOutcome) failureReason(a AttemptOutcome) FailureReason {
 	if a.PhaseTransitionAborted {
-		return string(TimeoutReasonPhaseAborted)
+		return ReasonPhaseAborted
 	}
-	if reason := a.Terminal.reason(); reason != "" {
+	if reason := a.Terminal.reason(); reason != ReasonNone {
 		return reason
 	}
 	if !a.NonceFinished {

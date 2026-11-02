@@ -13,7 +13,7 @@ import (
 func TestABodyTheGatewayRefusedToSendLeavesTheHostsRatesAlone(t *testing.T) {
 	t.Parallel()
 
-	refused := CounterKey{Terminal: engine.ReasonRequestTooLarge}
+	refused := CounterKey{Terminal: string(engine.ReasonRequestTooLarge)}
 
 	if !excused(refused) {
 		t.Fatal("a body the gateway refused to send counted against the host's failure rate")
@@ -29,7 +29,7 @@ func TestABodyTheGatewayRefusedToSendLeavesTheHostsRatesAlone(t *testing.T) {
 func TestAnEscrowLookupRefusalLeavesTheHostsFailureRateAlone(t *testing.T) {
 	t.Parallel()
 
-	refused := CounterKey{Terminal: engine.ReasonEscrowLookupLimited}
+	refused := CounterKey{Terminal: string(engine.ReasonEscrowLookupLimited)}
 
 	if !excused(refused) {
 		t.Fatal("excused(escrow lookup limited) = false, want true: strangers spent the host's lookup budget")

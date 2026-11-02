@@ -24,7 +24,7 @@ type RaceStep struct {
 	Nonce         uint64
 	Participant   string
 	Slot          int
-	Role          string
+	Role          AttemptRole
 	Reason        string
 	Attempts      int
 	Err           error

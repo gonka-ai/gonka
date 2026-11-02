@@ -61,7 +61,7 @@ func (c *raceCoordinator) heldAttempts() int {
 }
 
 // startPick runs at most one speculative pick beside the race, never on the coordinator's goroutine and never for a client that has left. See race.md, "Escalation" and "Client departure and the drain".
-func (c *raceCoordinator) startPick(reason string, params any) {
+func (c *raceCoordinator) startPick(reason StartReason, params any) {
 	if c.picking() || c.budgetSpent() || c.owedNoFurtherAttempt() {
 		return
 	}
@@ -108,7 +108,7 @@ func (c *raceCoordinator) reportUnfilledPick(err error) {
 	}
 	c.traceStep(RaceStep{
 		Kind: RaceStepEscalationUnfilled, RequestID: c.request.RequestID, EscrowID: c.escrowID,
-		Reason: c.pickReason, Attempts: len(c.attempts), Err: err,
+		Reason: string(c.pickReason), Attempts: len(c.attempts), Err: err,
 	})
 }
 
@@ -133,7 +133,7 @@ func (c *raceCoordinator) observedFirstContent(participant string) time.Duration
 	return observed
 }
 
-func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startReason string) {
+func (c *raceCoordinator) launch(assignment scheduler.Assignment, role AttemptRole, startReason StartReason) {
 	// The race holds the escrow for as long as its vote is owed, so the commit's own hold goes back.
 	assignment.ReleaseEscrow()
 	nonce := assignment.Nonce.Nonce()
@@ -162,7 +162,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role, startRea
 	c.deps.Perf.Acquire(attempt.participant)
 	c.traceStep(RaceStep{
 		Kind: RaceStepNonceCommitted, RequestID: c.request.RequestID, EscrowID: assignment.Escrow, Nonce: nonce,
-		Participant: attempt.participant, Slot: attempt.hostIdx, Role: role, Reason: startReason,
+		Participant: attempt.participant, Slot: attempt.hostIdx, Role: role, Reason: string(startReason),
 	})
 
 	go runAttempt(attemptCtx, AttemptSpec{

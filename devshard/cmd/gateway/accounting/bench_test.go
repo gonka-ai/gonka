@@ -40,7 +40,7 @@ func benchBook(b *testing.B) *Book {
 	book := NewBook(func() time.Time { return time.Unix(1700000000, 0).UTC() })
 	terminals := []string{
 		engine.TerminalWon.String(), engine.TerminalLost.String(), TerminalWarmupProbe,
-		engine.ReasonClientCancelled, engine.TerminalNameUnnamed, "http_error",
+		string(engine.ReasonClientCancelled), engine.TerminalNameUnnamed, "http_error",
 	}
 	for escrowIndex := range benchEscrows {
 		escrowID := benchEscrowID(escrowIndex)

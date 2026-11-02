@@ -561,7 +561,7 @@ func TestAClientThatStoppedWaitingIsNotChargedToTheHost(t *testing.T) {
 				testCase.disposition:    40,
 			})
 			record.Counters = []CounterRecord{{
-				CounterKey: CounterKey{Disposition: testCase.disposition, Terminal: engine.ReasonClientCancelled},
+				CounterKey: CounterKey{Disposition: testCase.disposition, Terminal: string(engine.ReasonClientCancelled)},
 				Count:      40,
 			}}
 
@@ -637,7 +637,7 @@ func TestAProbeThatFailedDoesNotEmptyTheDeliveredTotal(t *testing.T) {
 //  1. Build a counter key whose terminal is the engine's name for a client cancel.
 //  2. Assert the ledger excuses it.
 func TestAClientCancelNamedByTheEngineIsExcused(t *testing.T) {
-	if !excused(CounterKey{Terminal: engine.ReasonClientCancelled}) {
-		t.Fatalf("a terminal of %q was not excused", engine.ReasonClientCancelled)
+	if !excused(CounterKey{Terminal: string(engine.ReasonClientCancelled)}) {
+		t.Fatalf("a terminal of %q was not excused", string(engine.ReasonClientCancelled))
 	}
 }

@@ -72,8 +72,8 @@ type AttemptSpec struct {
 	Participant string
 	HostIdx     int
 	HostLabel   string
-	Role        string
-	StartReason string
+	Role        AttemptRole
+	StartReason StartReason
 	Suspicious  bool
 
 	Nonce scheduler.Prepared

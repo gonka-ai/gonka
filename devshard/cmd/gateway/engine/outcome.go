@@ -30,7 +30,7 @@ type RaceOutcome struct {
 	InputTokensSource    filters.InputTokensSource
 	InputTokensFromBytes uint64
 	OutputTokens         uint64
-	Decision             string
+	Decision             StartReason
 	ClientStream         bool
 
 	ModelContextLength uint64
@@ -49,8 +49,8 @@ type AttemptOutcome struct {
 	HostIdx     int
 	HostLabel   string
 	Nonce       uint64
-	Role        string
-	StartReason string
+	Role        AttemptRole
+	StartReason StartReason
 	Suspicious  bool
 
 	StartedAt    time.Time

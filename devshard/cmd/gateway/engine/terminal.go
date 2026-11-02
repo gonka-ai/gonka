@@ -58,7 +58,7 @@ var (
 )
 
 type terminalTraits struct {
-	reason     string
+	reason     FailureReason
 	verdict    limits.Verdict
 	hasVerdict bool
 }
@@ -114,13 +114,13 @@ func (t Terminal) String() string {
 	case TerminalUnclassified:
 		return TerminalNameUnclassified
 	}
-	if reason := t.reason(); reason != "" {
-		return reason
+	if reason := t.reason(); reason != ReasonNone {
+		return string(reason)
 	}
 	return TerminalNameUnnamed
 }
 
-func (t Terminal) reason() string { return t.traits().reason }
+func (t Terminal) reason() FailureReason { return t.traits().reason }
 
 func (t Terminal) traits() terminalTraits {
 	if t < 0 || t >= terminalCount {

@@ -404,14 +404,14 @@ var _ interface {
 //  2. Assert each constant's value still equals its pinned wire string.
 func TestEmittedLabelValuesMatchTheirWireStrings(t *testing.T) {
 	pinned := []struct{ emitted, want string }{
-		{engine.AttemptOutcomeSuccess, "success"},
-		{engine.AttemptOutcomeFailed, "failed"},
-		{engine.VisibilityWinner, "user_visible_winner"},
-		{engine.VisibilityNoWinner, "no_winner"},
-		{engine.VisibilitySuppressedLoser, "suppressed_loser"},
-		{engine.VisibilityFailedNotFinished, "failed_not_finished"},
-		{engine.RolePrimary, "primary"},
-		{engine.RoleSpeculative, "speculative"},
+		{string(engine.AttemptOutcomeSuccess), "success"},
+		{string(engine.AttemptOutcomeFailed), "failed"},
+		{string(engine.VisibilityWinner), "user_visible_winner"},
+		{string(engine.VisibilityNoWinner), "no_winner"},
+		{string(engine.VisibilitySuppressedLoser), "suppressed_loser"},
+		{string(engine.VisibilityFailedNotFinished), "failed_not_finished"},
+		{string(engine.RolePrimary), "primary"},
+		{string(engine.RoleSpeculative), "speculative"},
 		{string(engine.TimeoutActionSkipped), "skipped"},
 		{string(engine.TimeoutActionStarted), "started"},
 		{string(engine.TimeoutActionCompleted), "completed"},
